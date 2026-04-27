@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
 import { api } from '../services/api'
 
+// Axis index to G-code letter mapping (X=0, Y=1, Z=2)
+const AXIS_NAMES = ['X', 'Y', 'Z'];
+
+// Sentinel value accepted by the backend /machine/home endpoint to home all axes
+const HOME_ALL_AXES = -1;
+
 export const useMachineStore = defineStore('machine', {
   state: () => ({
     connectionStatus: 'disconnected', // 'disconnected', 'connecting', 'connected'
@@ -174,6 +180,32 @@ export const useMachineStore = defineStore('machine', {
         await api.jogStop(axis);
       } catch (e) {
         console.error("Failed to stop jog", e);
+      }
+    },
+
+    async homeAxis(axis) {
+      try {
+        await api.homeAxis(axis);
+      } catch (e) {
+        console.error("Failed to home axis", axis, e);
+      }
+    },
+
+    async homeAll() {
+      try {
+        await api.homeAxis(HOME_ALL_AXES);
+      } catch (e) {
+        console.error("Failed to home all axes", e);
+      }
+    },
+
+    async setPosition(axis, value) {
+      const axisName = AXIS_NAMES[axis];
+      if (!axisName) return;
+      try {
+        await api.sendMdi(`G92 ${axisName}${value}`);
+      } catch (e) {
+        console.error("Failed to set position for axis", axis, e);
       }
     }
   }
