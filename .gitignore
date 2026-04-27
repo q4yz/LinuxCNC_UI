@@ -1,0 +1,29 @@
+*.pyc
+__pycache__/
+
+# LinuxCNC artifacts
+cnc_ini/*.var
+cnc_ini/*.bak
+cnc_ini/*.txt
+
+# Logs & Databases
+*.db
+*.log
+log/
+
+# Backend virtual environment
+backend/venv/
+backend/.env
+
+# Frontend build & dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+
+# Old legacy ignores (safe to keep)
+templates/gb_*
+static/examples/*
+static/gcodes/*
+build/
+img/

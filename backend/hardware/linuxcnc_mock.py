@@ -1,0 +1,221 @@
+import time
+import threading
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("linuxcnc_mock")
+
+# --- LinuxCNC Constants ---
+STATE_ESTOP = 1
+STATE_ESTOP_RESET = 2
+STATE_OFF = 3
+STATE_ON = 4
+
+MODE_MANUAL = 1
+MODE_AUTO = 2
+MODE_MDI = 3
+
+RCS_DONE = 1
+RCS_EXEC = 2
+RCS_ERROR = 3
+
+# Jogging
+JOG_STOP = 0
+JOG_CONTINUOUS = 1
+JOG_INCREMENT = 2
+
+# Auto/Program
+AUTO_RUN = 0
+AUTO_PAUSE = 1
+AUTO_RESUME = 2
+AUTO_STEP = 3
+
+# Interpreter
+INTERP_IDLE = 1
+INTERP_READING = 2
+INTERP_PAUSED = 3
+INTERP_WAITING = 4
+
+# Errors
+NML_ERROR = 1
+OPERATOR_ERROR = 2
+OPERATOR_TEXT = 3
+OPERATOR_DISPLAY = 4
+
+# --- Shared State ---
+class SharedMachineState:
+    def __init__(self):
+        self.task_state = STATE_ESTOP
+        self.estop = 1
+        self.task_mode = MODE_MANUAL
+        self.position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.actual_position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.state = 1  # 1 = Idle, 2 = Running
+        self.file = ""
+        self.homed = [0, 0, 0]
+        self.interp_state = INTERP_IDLE
+        self.current_line = 0
+        
+        self.lock = threading.Lock()
+        
+        # Jog simulation state
+        self.jogging_axis = None
+        self.jogging_velocity = 0.0
+        self.jog_thread = None
+        self.jog_stop_event = threading.Event()
+
+_machine_state = SharedMachineState()
+
+def _jog_simulation_loop():
+    """Background thread to actually move coordinates during a continuous jog in the mock"""
+    while not _machine_state.jog_stop_event.is_set():
+        with _machine_state.lock:
+            if _machine_state.jogging_axis is not None:
+                # Velocity is units/min. Update 10 times a sec (0.1s tick)
+                delta = (_machine_state.jogging_velocity / 60.0) * 0.1
+                _machine_state.position[_machine_state.jogging_axis] += delta
+                _machine_state.actual_position[_machine_state.jogging_axis] += delta
+        time.sleep(0.1)
+
+# --- Mock Stat Class ---
+class stat:
+    def __init__(self):
+        self._update_attrs()
+
+    def _update_attrs(self):
+        """Syncs instance attributes with the shared state."""
+        with _machine_state.lock:
+            self.task_state = _machine_state.task_state
+            self.estop = _machine_state.estop
+            self.task_mode = _machine_state.task_mode
+            self.position = tuple(_machine_state.position)
+            self.actual_position = tuple(_machine_state.actual_position)
+            self.state = _machine_state.state
+            self.file = _machine_state.file
+            self.homed = tuple(_machine_state.homed)
+            self.interp_state = _machine_state.interp_state
+            self.current_line = _machine_state.current_line
+
+    def poll(self):
+        """Simulates polling the machine state."""
+        self._update_attrs()
+
+# --- Mock Command Class ---
+class command:
+    def __init__(self):
+        pass
+
+    def wait_complete(self, timeout=None):
+        """Mocks the block for command completion."""
+        return RCS_DONE
+
+    def state(self, new_state):
+        with _machine_state.lock:
+            _machine_state.task_state = new_state
+            if new_state == STATE_ESTOP:
+                _machine_state.estop = 1
+                logger.info("Command: ESTOP Triggered")
+            elif new_state == STATE_ESTOP_RESET:
+                _machine_state.estop = 0
+                logger.info("Command: ESTOP Reset")
+            elif new_state == STATE_ON:
+                logger.info("Command: Machine ON")
+            elif new_state == STATE_OFF:
+                logger.info("Command: Machine OFF")
+
+    def mode(self, new_mode):
+        with _machine_state.lock:
+            _machine_state.task_mode = new_mode
+            mode_str = {1: "MANUAL", 2: "AUTO", 3: "MDI"}.get(new_mode, "UNKNOWN")
+            logger.info(f"Command: Mode set to {mode_str}")
+
+    def mdi(self, cmd):
+        with _machine_state.lock:
+            if _machine_state.task_state != STATE_ON:
+                logger.warning(f"Ignored MDI (Machine not ON): {cmd}")
+                return
+            if _machine_state.task_mode != MODE_MDI:
+                logger.warning(f"Ignored MDI (Not in MDI mode): {cmd}")
+                return
+            
+            logger.info(f"Command: Executing MDI -> {cmd}")
+            # Extremely basic G0/G1 mock parsing for DRO updates
+            if cmd.upper().startswith("G0 ") or cmd.upper().startswith("G1 "):
+                parts = cmd.upper().split()
+                for part in parts:
+                    if part.startswith("X"): _machine_state.position[0] = float(part[1:])
+                    if part.startswith("Y"): _machine_state.position[1] = float(part[1:])
+                    if part.startswith("Z"): _machine_state.position[2] = float(part[1:])
+                _machine_state.actual_position = list(_machine_state.position)
+
+    def abort(self):
+        with _machine_state.lock:
+            _machine_state.state = 1
+            _machine_state.interp_state = INTERP_IDLE
+            logger.info("Command: Abort / Stop")
+
+    def home(self, axis):
+        with _machine_state.lock:
+            if axis >= 0 and axis < len(_machine_state.homed):
+                _machine_state.homed[axis] = 1
+            logger.info(f"Command: Home Axis {axis}")
+
+    def jog(self, jog_type, jjogmode, axis, velocity=0, distance=0):
+        with _machine_state.lock:
+            # Mock incremental jog to actually move the DRO
+            if jog_type == JOG_INCREMENT and distance != 0:
+                if axis >= 0 and axis < len(_machine_state.position):
+                    _machine_state.position[axis] += distance
+                    _machine_state.actual_position[axis] += distance
+            elif jog_type == JOG_CONTINUOUS:
+                _machine_state.jogging_axis = axis
+                _machine_state.jogging_velocity = velocity
+                _machine_state.jog_stop_event.clear()
+                if _machine_state.jog_thread is None or not _machine_state.jog_thread.is_alive():
+                    _machine_state.jog_thread = threading.Thread(target=_jog_simulation_loop, daemon=True)
+                    _machine_state.jog_thread.start()
+                logger.info(f"Mock: JOG_CONTINUOUS started on Axis {axis} at Vel {velocity}")
+            elif jog_type == JOG_STOP:
+                if _machine_state.jogging_axis == axis:
+                    _machine_state.jog_stop_event.set()
+                    _machine_state.jogging_axis = None
+                logger.info(f"Mock: JOG_STOP received for Axis {axis}")
+        logger.info(f"Command: Jog Axis {axis} (Type: {jog_type}, Vel: {velocity}, Dist: {distance})")
+
+    def auto(self, auto_cmd, line=0):
+        with _machine_state.lock:
+            if auto_cmd == AUTO_RUN:
+                _machine_state.interp_state = INTERP_READING
+                _machine_state.current_line = line
+                logger.info(f"Command: Auto Run from line {line}")
+            elif auto_cmd == AUTO_PAUSE:
+                _machine_state.interp_state = INTERP_PAUSED
+                logger.info("Command: Auto Pause")
+            elif auto_cmd == AUTO_RESUME:
+                _machine_state.interp_state = INTERP_READING
+                logger.info("Command: Auto Resume")
+            elif auto_cmd == AUTO_STEP:
+                _machine_state.current_line += 1
+                logger.info("Command: Auto Step")
+
+    def program_open(self, filepath):
+        with _machine_state.lock:
+            _machine_state.file = filepath
+            _machine_state.current_line = 0
+            logger.info(f"Command: Program Open -> {filepath}")
+
+    def reset_interpreter(self):
+        with _machine_state.lock:
+            _machine_state.interp_state = INTERP_IDLE
+            _machine_state.current_line = 0
+            logger.info("Command: Reset Interpreter")
+
+# --- Mock Error Channel ---
+class error_channel:
+    def __init__(self):
+        self.errors = []
+
+    def poll(self):
+        if self.errors:
+            return self.errors.pop(0)
+        return None
