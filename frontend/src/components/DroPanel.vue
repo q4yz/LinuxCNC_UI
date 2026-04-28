@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
+import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 
 const store = useMachineStore()
 // Destructure reactive properties with storeToRefs to maintain reactivity
@@ -24,6 +25,14 @@ async function applySetPosition() {
   if (!isFinite(parsed)) return
   await store.setPosition(axis, parsed)
   closeSetPosition()
+}
+
+function updateWcs(event) {
+  const newIndex = parseInt(event.target.value)
+  const system = WORK_COORDINATE_SYSTEMS.find(s => s.index === newIndex)
+  if (system) {
+    store.setCoordinateSystem(system.name)
+  }
 }
 </script>
 
@@ -65,15 +74,33 @@ async function applySetPosition() {
       <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between">
         <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolhead / DRO</h2>
         <!-- Home All Button -->
-        <button
-          @click="store.homeAll()"
-          :disabled="!isMachineOn"
-          class="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          title="Home All Axes"
-        >
-          <span>⌂</span>
-          <span>HOME ALL</span>
-        </button>
+        <div class="flex items-center space-x-2">
+          <!-- WCS Dropdown -->
+          <select 
+            v-model="status.g5x_index"
+            @change="updateWcs"
+            class="bg-gray-900 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 outline-none font-bold"
+            title="Work Coordinate System"
+            :disabled="!isMachineOn"
+          >
+            <option 
+              v-for="sys in WORK_COORDINATE_SYSTEMS" 
+              :key="sys.index" 
+              :value="sys.index"
+            >
+              {{ sys.name }}
+            </option>
+          </select>
+          <button
+            @click="store.homeAll()"
+            :disabled="!isMachineOn"
+            class="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Home All Axes"
+          >
+            <span>⌂</span>
+            <span>HOME ALL</span>
+          </button>
+        </div>
       </div>
       
       <div class="p-6 space-y-4 font-mono text-3xl text-right tracking-tight">

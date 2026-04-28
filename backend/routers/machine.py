@@ -82,6 +82,8 @@ def home_axis(cmd: HomeCommand):
 def run_mdi(cmd: MdiCommand):
     """Execute a single MDI command."""
     logger.info(f"Running MDI: {cmd.command}")
+    # Force switch to MDI mode before executing
+    execute_sync_cmd("mode", 5, getattr(linuxcnc, 'MODE_MDI', 3))
     return execute_sync_cmd("mdi", 0, cmd.command)
 
 

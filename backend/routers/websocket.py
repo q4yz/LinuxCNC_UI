@@ -47,6 +47,7 @@ def parse_status() -> dict:
     # Safe fallback if attributes don't exist in mock yet
     interp_state = getattr(machine_stat, 'interp_state', 0)
     current_line = getattr(machine_stat, 'current_line', 0)
+    g5x_index = getattr(machine_stat, 'g5x_index', 1)
     
     return {
         "type": "status",
@@ -60,7 +61,8 @@ def parse_status() -> dict:
             "file": machine_stat.file,
             "homed": machine_stat.homed,
             "interp_state": interp_state,
-            "current_line": current_line
+            "current_line": current_line,
+            "g5x_index": g5x_index
         }
     }
 
