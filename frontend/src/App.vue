@@ -4,6 +4,7 @@ import { useMachineStore } from './stores/machine'
 import DroPanel from './components/DroPanel.vue'
 import JogControls from './components/JogControls.vue'
 import GCodeViewer from './components/GCodeViewer.vue'
+import ConsolePanel from './components/ConsolePanel.vue'
 
 const store = useMachineStore()
 
@@ -52,14 +53,22 @@ onMounted(() => {
           <JogControls />
         </div>
 
-        <!-- 3D Viewer / Console -->
-        <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl lg:col-span-2 min-h-[400px] overflow-hidden flex flex-col">
-          <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
-            <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
+        <!-- Right Column: 3D Viewer & Console -->
+        <div class="lg:col-span-2 flex flex-col space-y-6">
+          
+          <!-- 3D Viewer -->
+          <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl min-h-[400px] overflow-hidden flex flex-col">
+            <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
+              <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
+            </div>
+            <div class="flex-1 relative">
+              <GCodeViewer />
+            </div>
           </div>
-          <div class="flex-1 relative">
-            <GCodeViewer />
-          </div>
+          
+          <!-- Terminal / Console -->
+          <ConsolePanel />
+
         </div>
 
       </div>

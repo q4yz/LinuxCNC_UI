@@ -55,6 +55,7 @@ class SharedMachineState:
         self.homed = [0, 0, 0]
         self.interp_state = INTERP_IDLE
         self.current_line = 0
+        self.g5x_index = 1  # 1 = G54 (default)
         
         self.lock = threading.Lock()
         
@@ -95,6 +96,7 @@ class stat:
             self.homed = tuple(_machine_state.homed)
             self.interp_state = _machine_state.interp_state
             self.current_line = _machine_state.current_line
+            self.g5x_index = _machine_state.g5x_index
 
     def poll(self):
         """Simulates polling the machine state."""
@@ -139,9 +141,21 @@ class command:
                 return
             
             logger.info(f"Command: Executing MDI -> {cmd}")
+            
+            # Mock WCS switching (G54 - G59.3)
+            cmd_upper = cmd.upper()
+            wcs_map = {
+                "G54": 1, "G55": 2, "G56": 3, "G57": 4, "G58": 5,
+                "G59": 6, "G59.1": 7, "G59.2": 8, "G59.3": 9
+            }
+            if cmd_upper in wcs_map:
+                _machine_state.g5x_index = wcs_map[cmd_upper]
+                logger.info(f"Mock: Switched WCS to {cmd_upper} (Index: {_machine_state.g5x_index})")
+                return
+
             # Extremely basic G0/G1 mock parsing for DRO updates
-            if cmd.upper().startswith("G0 ") or cmd.upper().startswith("G1 "):
-                parts = cmd.upper().split()
+            if cmd_upper.startswith("G0 ") or cmd_upper.startswith("G1 "):
+                parts = cmd_upper.split()
                 for part in parts:
                     if part.startswith("X"): _machine_state.position[0] = float(part[1:])
                     if part.startswith("Y"): _machine_state.position[1] = float(part[1:])

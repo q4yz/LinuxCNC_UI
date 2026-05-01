@@ -1,3 +1,5 @@
+import { generateSetOffset } from '../config/gcodes';
+
 const API_BASE = '/api/v1';
 
 async function postJson(endpoint, payload = {}) {
@@ -36,7 +38,14 @@ export const api = {
     return postJson('/machine/jog/keepalive', { axis });
   },
   jogStop: (axis) => postJson('/machine/jog/stop', { axis }),
-  sendMdi: (command) => postJson('/machine/mdi', { command }),
+  sendMdiCommand: (command) => postJson('/machine/mdi', { command }),
+  
+  // Work Offsets
+  setWorkOffset: (axisName, value) => {
+    const cmd = generateSetOffset(axisName, value);
+    return postJson('/machine/mdi', { command: cmd });
+  },
+  setCoordinateSystem: (gcodeStr) => postJson('/machine/mdi', { command: gcodeStr }),
   
   // Program Execution
   runProgram: (lineNumber = 0) => postJson(`/program/run?line_number=${lineNumber}`),

@@ -6,9 +6,9 @@ from hardware import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.routers.machine")
 
-router = APIRouter(prefix="/api/v1/machine", tags=["machine"])
-program_router = APIRouter(prefix="/api/v1/program", tags=["program"])
-file_router = APIRouter(prefix="/api/v1/file", tags=["file"])
+router = APIRouter(prefix="/api/v1/machine", tags=["Machine State"])
+program_router = APIRouter(prefix="/api/v1/program", tags=["Program Execution"])
+file_router = APIRouter(prefix="/api/v1/file", tags=["File Management"])
 
 
 class StateCommand(BaseModel):
@@ -37,7 +37,7 @@ class GcodeFile(BaseModel):
     content: str
 
 
-@router.post("/state")
+@router.post("/state", summary="Set Machine State", description="Toggle machine E-Stop or Power state.")
 def set_state(cmd: StateCommand):
     """Toggle machine E-Stop or Power state."""
     states = {
@@ -51,7 +51,7 @@ def set_state(cmd: StateCommand):
     return execute_sync_cmd("state", 3, states[cmd.state])
 
 
-@router.post("/mode")
+@router.post("/mode", summary="Set Machine Mode", description="Change the machine task mode (manual, auto, mdi).")
 def set_mode(cmd: ModeCommand):
     """Change the machine task mode (manual, auto, mdi)."""
     modes = {
@@ -64,7 +64,7 @@ def set_mode(cmd: ModeCommand):
     return execute_sync_cmd("mode", 5, modes[cmd.mode])
 
 
-@router.post("/home")
+@router.post("/home", summary="Home Axis", description="Home a specific axis, or all axes if axis=-1.")
 def home_axis(cmd: HomeCommand):
     """Home a specific axis, or all axes if axis=-1."""
     execute_sync_cmd("mode", 0, getattr(linuxcnc, 'MODE_MANUAL', 1))
@@ -78,39 +78,41 @@ def home_axis(cmd: HomeCommand):
         return execute_sync_cmd("home", 3, cmd.axis)
 
 
-@router.post("/mdi")
+@router.post("/mdi", summary="Run MDI Command", description="Execute a single MDI (G-Code) command. Automatically switches the machine to MDI mode.")
 def run_mdi(cmd: MdiCommand):
     """Execute a single MDI command."""
     logger.info(f"Running MDI: {cmd.command}")
+    # Force switch to MDI mode before executing
+    execute_sync_cmd("mode", 5, getattr(linuxcnc, 'MODE_MDI', 3))
     return execute_sync_cmd("mdi", 0, cmd.command)
 
 
-@program_router.post("/run")
+@program_router.post("/run", summary="Run Program", description="Start or resume the loaded G-code program from a specific line.")
 def run_program(line_number: int = 0):
     """Start the loaded G-code program."""
     execute_sync_cmd("mode", 3, getattr(linuxcnc, 'MODE_AUTO', 2))
     return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RUN', 0), line_number)
 
 
-@program_router.post("/stop")
+@program_router.post("/stop", summary="Stop Program", description="Stop/abort the currently running program.")
 def stop_program():
     """Stop/abort the currently running program."""
     return execute_sync_cmd("abort")
 
 
-@program_router.post("/pause")
+@program_router.post("/pause", summary="Pause Program", description="Pause the currently running program.")
 def pause_program():
     """Pause the currently running program."""
     return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_PAUSE', 1))
 
 
-@program_router.post("/resume")
+@program_router.post("/resume", summary="Resume Program", description="Resume a paused program.")
 def resume_program():
     """Resume a paused program."""
     return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RESUME', 2))
 
 
-@file_router.post("/load")
+@file_router.post("/load", summary="Load G-Code File", description="Upload and load a G-code file onto the CNC controller.")
 def load_gcode(file: GcodeFile):
     """Load a G-code file onto the CNC controller."""
     path = os.path.join("/tmp", file.name)
