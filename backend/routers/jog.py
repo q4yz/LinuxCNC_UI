@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from hardware import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.routers.jog")
-router = APIRouter(prefix="/api/v1/machine", tags=["jog"])
+router = APIRouter(prefix="/api/v1/machine", tags=["Jogging"])
 
 # Track active continuous jogs and last-ping timestamps
 active_jogs = {}
@@ -44,7 +44,7 @@ async def jog_watchdog():
                 execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_STOP', 0), True, axis)
 
 
-@router.post("/jog")
+@router.post("/jog", summary="Jog Axis", description="Initiates a jog. Supports step, continuous, or stop commands depending on parameters.")
 def jog_axis(cmd: JogCommand):
     """
     Initiates a jog. Supports step, continuous, or stop commands
@@ -63,7 +63,7 @@ def jog_axis(cmd: JogCommand):
         return execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_CONTINUOUS', 1), True, cmd.axis, cmd.velocity)
 
 
-@router.post("/jog/keepalive")
+@router.post("/jog/keepalive", summary="Jog Keep-Alive", description="Refreshes the watchdog timer for an actively jogging axis. Must be called frequently.")
 def jog_keepalive(cmd: JogStopCommand):
     """
     Refreshes the watchdog timer for an actively jogging axis.
@@ -75,7 +75,7 @@ def jog_keepalive(cmd: JogStopCommand):
     return {"status": "ok"}
 
 
-@router.post("/jog/stop")
+@router.post("/jog/stop", summary="Stop Jogging", description="Explicitly stops a continuous jog and removes it from the watchdog.")
 def stop_jog(cmd: JogStopCommand):
     """
     Explicitly stops a continuous jog and removes it from the watchdog.

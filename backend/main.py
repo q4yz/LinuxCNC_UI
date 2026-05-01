@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LinuxCNC Web API", 
     description="Modern, modular REST API and WebSocket interface for LinuxCNC", 
+    version="1.0.0",
     lifespan=lifespan
 )
 

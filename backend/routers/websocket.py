@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error
 
 logger = logging.getLogger("backend.routers.websocket")
-router = APIRouter(prefix="/ws", tags=["websocket"])
+router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])
 
 
 class ConnectionManager:
