@@ -5,6 +5,8 @@ import DroPanel from './components/DroPanel.vue'
 import JogControls from './components/JogControls.vue'
 import GCodeViewer from './components/GCodeViewer.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
+import TemperaturePanel from './components/TemperaturePanel.vue'
+import DebugPanel from './components/DebugPanel.vue'
 
 const store = useMachineStore()
 
@@ -50,24 +52,32 @@ onMounted(() => {
         <!-- Left Column: DRO & Controls -->
         <div class="col-span-1 flex flex-col">
           <DroPanel />
+          <TemperaturePanel />
           <JogControls />
         </div>
 
         <!-- Right Column: 3D Viewer & Console -->
-        <div class="lg:col-span-2 flex flex-col space-y-6">
+        <div class="lg:col-span-2 flex flex-col space-y-6 h-[calc(100vh-4rem)]">
           
           <!-- 3D Viewer -->
-          <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl min-h-[400px] overflow-hidden flex flex-col">
+          <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col min-h-[300px]">
             <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
               <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
             </div>
-            <div class="flex-1 relative">
+            <div class="flex-1 relative min-h-[300px]">
               <GCodeViewer />
             </div>
           </div>
           
           <!-- Terminal / Console -->
-          <ConsolePanel />
+          <div class="flex-1 min-h-[200px]">
+            <ConsolePanel />
+          </div>
+
+          <!-- Debug Panel (Throttled Raw State) -->
+          <div class="shrink-0 h-64">
+            <DebugPanel />
+          </div>
 
         </div>
 
