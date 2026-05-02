@@ -89,7 +89,7 @@ const getMessageClass = (type) => {
     </div>
 
     <!-- Message Area -->
-    <div ref="messageContainer" class="flex-1 p-4 overflow-y-auto space-y-1 font-mono text-sm min-h-[200px] max-h-[300px]">
+    <div ref="messageContainer" class="flex-1 p-4 overflow-y-auto space-y-1 font-mono text-sm">
       <div v-if="consoleStore.messages.length === 0" class="text-gray-600 italic">Console ready...</div>
       <div 
         v-for="msg in consoleStore.messages" 
@@ -102,7 +102,7 @@ const getMessageClass = (type) => {
     </div>
 
     <!-- Input Area -->
-    <div class="p-3 bg-gray-900 border-t border-gray-700 flex items-center space-x-2">
+    <div class="p-3 bg-gray-900 border-t border-gray-700 flex items-center space-x-2 mt-auto">
       <span class="text-blue-500 font-bold font-mono">></span>
       <input 
         v-model="commandInput"

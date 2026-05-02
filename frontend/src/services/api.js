@@ -46,6 +46,9 @@ export const api = {
     return postJson('/machine/mdi', { command: cmd });
   },
   setCoordinateSystem: (gcodeStr) => postJson('/machine/mdi', { command: gcodeStr }),
+
+  // Temperatures
+  setTargetTemperature: (sensorName, target) => postJson('/machine/temperature', { sensor_name: sensorName, target }),
   
   // Program Execution
   runProgram: (lineNumber = 0) => postJson(`/program/run?line_number=${lineNumber}`),

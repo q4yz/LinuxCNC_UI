@@ -31,6 +31,12 @@ class MdiCommand(BaseModel):
     command: str
 
 
+class TempCommand(BaseModel):
+    """Pydantic model for setting target temperature."""
+    sensor_name: str
+    target: float
+
+
 class GcodeFile(BaseModel):
     """Pydantic model for uploading/loading a G-code file."""
     name: str
@@ -85,6 +91,12 @@ def run_mdi(cmd: MdiCommand):
     # Force switch to MDI mode before executing
     execute_sync_cmd("mode", 5, getattr(linuxcnc, 'MODE_MDI', 3))
     return execute_sync_cmd("mdi", 0, cmd.command)
+
+
+@router.post("/temperature", summary="Set Target Temperature", description="Set the target temperature for a specified heater/sensor.")
+def set_temperature(cmd: TempCommand):
+    """Set the target temperature for a specified sensor."""
+    return execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
 
 
 @program_router.post("/run", summary="Run Program", description="Start or resume the loaded G-code program from a specific line.")

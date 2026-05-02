@@ -22,11 +22,13 @@ export const useMachineStore = defineStore('machine', {
       homed: [0, 0, 0],
       interp_state: 1,
       current_line: 0,
-      g5x_index: 1
+      g5x_index: 1,
+      temperatures: {}
     },
     errors: [],
     socket: null,
-    jogIntervals: {} // Map to hold active interval IDs for each axis
+    jogIntervals: {}, // Map to hold active interval IDs for each axis
+    temperatureHistory: [] // Array of { time: timestamp, sensors: payload.status.temperatures }
   }),
 
   getters: {
@@ -74,6 +76,24 @@ export const useMachineStore = defineStore('machine', {
             this.$patch({
               status: payload.data
             });
+            
+            // Append to temperature history array
+            const now = new Date();
+            const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            
+            // Deep copy the temperatures dictionary so history states are distinct
+            const currentTemps = JSON.parse(JSON.stringify(payload.data.temperatures || {}));
+            
+            this.temperatureHistory.push({
+              time: timeLabel,
+              sensors: currentTemps
+            });
+            
+            // Keep a rolling window of 100 data points to prevent memory leaks
+            if (this.temperatureHistory.length > 100) {
+              this.temperatureHistory.shift();
+            }
+            
           } else if (payload.type === 'error') {
             this.errors.push(payload.data);
             console.error("Machine Error:", payload.data.text);
@@ -252,6 +272,17 @@ export const useMachineStore = defineStore('machine', {
       } catch (e) {
         consoleStore.addMessage(`Failed to switch Coordinate System: ${e.message}`, 'error')
         console.error("Failed to switch coordinate system", e);
+      }
+    },
+    
+    async setTargetTemperature(sensorName, targetTemp) {
+      const consoleStore = useConsoleStore()
+      try {
+        consoleStore.addMessage(`Setting ${sensorName} target temperature to ${targetTemp}°C`, 'command')
+        await api.setTargetTemperature(sensorName, targetTemp);
+      } catch (e) {
+        consoleStore.addMessage(`Failed to set ${sensorName} target temperature: ${e.message}`, 'error')
+        console.error("Failed to set temperature", e);
       }
     }
   }
