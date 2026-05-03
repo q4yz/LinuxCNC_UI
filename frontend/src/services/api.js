@@ -48,11 +48,47 @@ export const api = {
   setCoordinateSystem: (gcodeStr) => postJson('/machine/mdi', { command: gcodeStr }),
 
   // Temperatures
-  setTargetTemperature: (sensorName, target) => postJson('/machine/temperature', { sensor_name: sensorName, target }),
+  setTargetTemperature: (target) => postJson('/machine/temperature', { target }),
   
   // Program Execution
   runProgram: (lineNumber = 0) => postJson(`/program/run?line_number=${lineNumber}`),
   stopProgram: () => postJson('/program/stop'),
   pauseProgram: () => postJson('/program/pause'),
-  resumeProgram: () => postJson('/program/resume')
+  resumeProgram: () => postJson('/program/resume'),
+
+  // Files
+  fetchFiles: async () => {
+    const res = await fetch(`${API_BASE}/files`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  uploadFile: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/files/upload`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  deleteFile: async (filename) => {
+    const res = await fetch(`${API_BASE}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  loadProgram: (filename) => postJson('/file/load_program', { filename }),
+
+  // Configs
+  fetchConfigs: async () => {
+    const res = await fetch(`${API_BASE}/config`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  readConfig: async (filename) => {
+    const res = await fetch(`${API_BASE}/config/${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  saveConfig: (filename, content) => postJson(`/config/${encodeURIComponent(filename)}`, { content }),
+  
+  // Parser
+  triggerParser: () => postJson('/config/parse')
 };

@@ -48,7 +48,8 @@ def parse_status() -> dict:
     interp_state = getattr(machine_stat, 'interp_state', 0)
     current_line = getattr(machine_stat, 'current_line', 0)
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
-    temperatures = getattr(machine_stat, 'temperatures', {})
+    target_temp = getattr(machine_stat, 'target_temp', 0.0)
+    actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
     
     return {
         "type": "status",
@@ -64,7 +65,8 @@ def parse_status() -> dict:
             "interp_state": interp_state,
             "current_line": current_line,
             "g5x_index": g5x_index,
-            "temperatures": temperatures
+            "target_temp": target_temp,
+            "actual_temp": actual_temp
         }
     }
 

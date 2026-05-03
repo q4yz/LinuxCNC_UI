@@ -1,0 +1,147 @@
+<script setup>
+import { ref, onMounted } from 'vue'
+import { api } from '../services/api'
+import { useConsoleStore } from '../stores/console'
+
+const files = ref([])
+const isUploading = ref(false)
+const consoleStore = useConsoleStore()
+const fileInput = ref(null)
+
+const fetchFiles = async () => {
+  try {
+    files.value = await api.fetchFiles()
+  } catch (error) {
+    consoleStore.addMessage(`Failed to fetch files: ${error.message}`, 'error')
+  }
+}
+
+const handleUpload = async (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+
+  isUploading.value = true
+  try {
+    await api.uploadFile(file)
+    consoleStore.addMessage(`Successfully uploaded ${file.name}`, 'success')
+    await fetchFiles()
+  } catch (error) {
+    consoleStore.addMessage(`Upload failed: ${error.message}`, 'error')
+  } finally {
+    isUploading.value = false
+    // Reset input so the same file can be uploaded again if needed
+    if (fileInput.value) fileInput.value.value = ''
+  }
+}
+
+const triggerFileInput = () => {
+  if (fileInput.value) fileInput.value.click()
+}
+
+const deleteFile = async (filename) => {
+  if (!confirm(`Are you sure you want to delete ${filename}?`)) return
+  
+  try {
+    await api.deleteFile(filename)
+    consoleStore.addMessage(`Deleted file ${filename}`, 'success')
+    await fetchFiles()
+  } catch (error) {
+    consoleStore.addMessage(`Failed to delete ${filename}: ${error.message}`, 'error')
+  }
+}
+
+const loadFile = async (filename) => {
+  try {
+    consoleStore.addMessage(`Loading file ${filename}...`, 'command')
+    await api.loadProgram(filename)
+    consoleStore.addMessage(`Loaded ${filename}`, 'success')
+  } catch (error) {
+    consoleStore.addMessage(`Failed to load ${filename}: ${error.message}`, 'error')
+  }
+}
+
+const formatSize = (bytes) => {
+  if (bytes < 1024) return bytes + ' B'
+  else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
+  else return (bytes / 1048576).toFixed(1) + ' MB'
+}
+
+onMounted(() => {
+  fetchFiles()
+})
+</script>
+
+<template>
+  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6 flex flex-col">
+    <!-- Header & Upload -->
+    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
+      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
+        <span class="mr-2">📂</span> G-Code Files
+      </h2>
+      
+      <div>
+        <input 
+          type="file" 
+          ref="fileInput" 
+          class="hidden" 
+          accept=".ngc,.gcode,.nc" 
+          @change="handleUpload"
+        >
+        <button 
+          @click="triggerFileInput"
+          :disabled="isUploading"
+          class="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white rounded font-semibold transition-colors text-sm flex items-center"
+        >
+          <span v-if="isUploading" class="mr-2">⏳</span>
+          Upload File
+        </button>
+      </div>
+    </div>
+    
+    <!-- File List -->
+    <div class="p-0 max-h-64 overflow-y-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-gray-900/50 text-gray-400 text-xs uppercase tracking-wider">
+            <th class="px-4 py-2 font-medium">Filename</th>
+            <th class="px-4 py-2 font-medium w-24">Size</th>
+            <th class="px-4 py-2 font-medium w-32 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="files.length === 0">
+            <td colspan="3" class="px-4 py-6 text-center text-gray-500 text-sm">
+              No G-code files found. Upload one to get started.
+            </td>
+          </tr>
+          <tr 
+            v-for="file in files" 
+            :key="file.filename"
+            class="border-t border-gray-700/50 hover:bg-gray-700/30 transition-colors"
+          >
+            <td class="px-4 py-2 text-sm text-gray-300 font-mono truncate max-w-[200px]" :title="file.filename">
+              {{ file.filename }}
+            </td>
+            <td class="px-4 py-2 text-xs text-gray-400">
+              {{ formatSize(file.size_bytes) }}
+            </td>
+            <td class="px-4 py-2 text-right space-x-2">
+              <button 
+                @click="loadFile(file.filename)"
+                class="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs transition-colors"
+              >
+                Load
+              </button>
+              <button 
+                @click="deleteFile(file.filename)"
+                class="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs transition-colors"
+              >
+                Delete
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</template>

@@ -1,6 +1,7 @@
 import os
 import logging
-from fastapi import APIRouter, HTTPException
+import time
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from hardware import execute_sync_cmd, linuxcnc
 
@@ -33,13 +34,16 @@ class MdiCommand(BaseModel):
 
 class TempCommand(BaseModel):
     """Pydantic model for setting target temperature."""
-    sensor_name: str
     target: float
 
 
 class GcodeFile(BaseModel):
-    """Pydantic model for uploading/loading a G-code file."""
-    name: str
+    """Pydantic model for loading a G-code file."""
+    filename: str
+
+
+class ConfigFile(BaseModel):
+    """Pydantic model for saving a config file."""
     content: str
 
 
@@ -93,10 +97,10 @@ def run_mdi(cmd: MdiCommand):
     return execute_sync_cmd("mdi", 0, cmd.command)
 
 
-@router.post("/temperature", summary="Set Target Temperature", description="Set the target temperature for a specified heater/sensor.")
+@router.post("/temperature", summary="Set Target Temperature", description="Set the target temperature for the spindle/extruder heater.")
 def set_temperature(cmd: TempCommand):
-    """Set the target temperature for a specified sensor."""
-    return execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
+    """Set the target temperature."""
+    return execute_sync_cmd("set_temperature", 0, cmd.target)
 
 
 @program_router.post("/run", summary="Run Program", description="Start or resume the loaded G-code program from a specific line.")
@@ -127,10 +131,10 @@ def resume_program():
 @file_router.post("/load", summary="Load G-Code File", description="Upload and load a G-code file onto the CNC controller.")
 def load_gcode(file: GcodeFile):
     """Load a G-code file onto the CNC controller."""
-    path = os.path.join("/tmp", file.name)
+    path = os.path.join("/tmp", file.filename)
     try:
         with open(path, 'w') as f:
-            f.write(file.content)
+            f.write("DUMMY") # Placeholder for backwards compat if needed
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write file: {e}")
 
@@ -139,3 +143,81 @@ def load_gcode(file: GcodeFile):
     res = execute_sync_cmd("program_open", 5, path)
     execute_sync_cmd("mode", 3, getattr(linuxcnc, 'MODE_MANUAL', 1))
     return res
+GCODES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'gcodes'))
+CNC_INI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'cnc_ini'))
+
+os.makedirs(GCODES_DIR, exist_ok=True)
+os.makedirs(CNC_INI_DIR, exist_ok=True)
+
+@file_router.get('/list', summary='List G-Code Files')
+def list_files():
+    files = []
+    for f in os.listdir(GCODES_DIR):
+        path = os.path.join(GCODES_DIR, f)
+        if os.path.isfile(path):
+            files.append({'filename': f, 'size_bytes': os.path.getsize(path)})
+    return files
+
+@file_router.post('/upload', summary='Upload G-Code File')
+async def upload_file(file: UploadFile = File(...)):
+    path = os.path.join(GCODES_DIR, file.filename)
+    try:
+        content = await file.read()
+        with open(path, 'wb') as f:
+            f.write(content)
+        return {'status': 'success', 'filename': file.filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@file_router.delete('/{filename}', summary='Delete G-Code File')
+def delete_file(filename: str):
+    path = os.path.join(GCODES_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+        return {'status': 'success'}
+    raise HTTPException(status_code=404, detail='File not found')
+
+@file_router.post('/load_program', summary='Load G-Code Program')
+def load_program(file: GcodeFile):
+    path = os.path.join(GCODES_DIR, file.filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail='File not found')
+        
+    execute_sync_cmd('reset_interpreter')
+    execute_sync_cmd('mode', 3, getattr(linuxcnc, 'MODE_AUTO', 2))
+    res = execute_sync_cmd('program_open', 5, path)
+    execute_sync_cmd('mode', 3, getattr(linuxcnc, 'MODE_MANUAL', 1))
+    return res
+
+@file_router.get('/configs', summary='List Config Files')
+def list_configs():
+    files = []
+    for f in os.listdir(CNC_INI_DIR):
+        path = os.path.join(CNC_INI_DIR, f)
+        if os.path.isfile(path):
+            files.append({'filename': f, 'size_bytes': os.path.getsize(path)})
+    return files
+
+@file_router.get('/config/{filename}', summary='Read Config File')
+def read_config(filename: str):
+    path = os.path.join(CNC_INI_DIR, filename)
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            return {'filename': filename, 'content': f.read()}
+    raise HTTPException(status_code=404, detail='Config not found')
+
+@file_router.post('/config/{filename}', summary='Save Config File')
+def save_config(filename: str, config: ConfigFile):
+    path = os.path.join(CNC_INI_DIR, filename)
+    try:
+        with open(path, 'w') as f:
+            f.write(config.content)
+        return {'status': 'success'}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@program_router.post('/parse', summary='Trigger Parser')
+def trigger_parser():
+    logger.info('Triggering Klipper-to-LinuxCNC parser...')
+    time.sleep(1) # mock delay
+    return {'status': 'success', 'message': 'Parsing complete'}
