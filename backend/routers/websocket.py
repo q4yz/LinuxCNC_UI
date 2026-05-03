@@ -50,6 +50,8 @@ def parse_status() -> dict:
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
     target_temp = getattr(machine_stat, 'target_temp', 0.0)
     actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
+    # Multi-sensor temperatures dict (if available)
+    temperatures = getattr(machine_stat, 'temperatures', None)
     
     return {
         "type": "status",
@@ -66,7 +68,8 @@ def parse_status() -> dict:
             "current_line": current_line,
             "g5x_index": g5x_index,
             "target_temp": target_temp,
-            "actual_temp": actual_temp
+            "actual_temp": actual_temp,
+            "temperatures": temperatures
         }
     }
 

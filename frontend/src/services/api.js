@@ -48,7 +48,7 @@ export const api = {
   setCoordinateSystem: (gcodeStr) => postJson('/machine/mdi', { command: gcodeStr }),
 
   // Temperatures
-  setTargetTemperature: (target) => postJson('/machine/temperature', { target }),
+  setTargetTemperature: (sensorName, targetValue) => postJson('/machine/temperature', { sensor_name: sensorName, target: parseFloat(targetValue) }),
   
   // Program Execution
   runProgram: (lineNumber = 0) => postJson(`/program/run?line_number=${lineNumber}`),
@@ -91,4 +91,12 @@ export const api = {
   
   // Parser
   triggerParser: () => postJson('/config/parse')
+  ,
+  // System utilities
+  triggerUpdate: () => postJson('/system/update', {}),
+  getVersionInfo: async () => {
+    const res = await fetch(`${API_BASE}/system/version`)
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }
 };

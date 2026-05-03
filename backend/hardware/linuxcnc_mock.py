@@ -57,9 +57,16 @@ class SharedMachineState:
         self.current_line = 0
         self.g5x_index = 1  # 1 = G54 (default)
         
-        # Temperature Simulation State
-        self.target_temp = 0.0
-        self.actual_temp = 25.0  # Ambient
+        # Temperature Simulation State (multi-sensor dictionary)
+        # Example sensors: extruder, bed, cpu
+        self.temperatures = {
+            'extruder': {'actual': 25.0, 'target': 0.0},
+            'bed': {'actual': 25.0, 'target': 0.0},
+            'cpu': {'actual': 40.0}  # CPU has no controllable target
+        }
+        # Backwards-compatible single-sensor fields (kept for older callers)
+        self.target_temp = self.temperatures.get('extruder', {}).get('target', 0.0)
+        self.actual_temp = self.temperatures.get('extruder', {}).get('actual', 25.0)
         
         self.lock = threading.Lock()
         
@@ -80,17 +87,31 @@ def _jog_simulation_loop():
                 delta = (_machine_state.jogging_velocity / 60.0) * 0.1
                 _machine_state.position[_machine_state.jogging_axis] += delta
                 _machine_state.actual_position[_machine_state.jogging_axis] += delta
-                
-            # Simulate heater physics
-            if _machine_state.target_temp > _machine_state.actual_temp:
-                _machine_state.actual_temp += min(1.0, _machine_state.target_temp - _machine_state.actual_temp)
-            elif _machine_state.target_temp < _machine_state.actual_temp:
-                # Cool down, but don't drop below ambient (25.0)
-                ambient = 25.0
-                if _machine_state.actual_temp > ambient:
-                    _machine_state.actual_temp -= min(0.3, _machine_state.actual_temp - max(ambient, _machine_state.target_temp))
 
         time.sleep(0.1)
+
+
+def _temp_simulation_loop():
+    """Background thread to simulate heater physics for all temperature sensors."""
+    while True:
+        with _machine_state.lock:
+            ambient = 25.0
+            for sensor_name, sensor_values in _machine_state.temperatures.items():
+                actual = sensor_values.get('actual', ambient)
+
+                if 'target' in sensor_values:
+                    target = sensor_values.get('target', 0.0)
+                    if target > actual:
+                        sensor_values['actual'] = actual + min(1.0, target - actual)
+                    elif target < actual and actual > ambient:
+                        sensor_values['actual'] = actual - min(0.3, actual - max(ambient, target))
+
+            extruder = _machine_state.temperatures.get('extruder')
+            if extruder:
+                _machine_state.actual_temp = extruder.get('actual', _machine_state.actual_temp)
+                _machine_state.target_temp = extruder.get('target', _machine_state.target_temp)
+
+        time.sleep(0.5)
 
 # --- Mock Stat Class ---
 class stat:
@@ -111,6 +132,10 @@ class stat:
             self.interp_state = _machine_state.interp_state
             self.current_line = _machine_state.current_line
             self.g5x_index = _machine_state.g5x_index
+            # Expose multi-sensor temperatures as a dict for callers
+            # (shallow copy to avoid exposing internal lock-managed dict directly)
+            self.temperatures = {k: dict(v) for k, v in _machine_state.temperatures.items()}
+            # Backwards-compatible single-sensor fields
             self.target_temp = _machine_state.target_temp
             self.actual_temp = _machine_state.actual_temp
 
@@ -240,14 +265,26 @@ class command:
             _machine_state.current_line = 0
             logger.info("Command: Reset Interpreter")
 
-    def set_temperature(self, temp):
+    def set_temperature(self, sensor_name, temp):
         with _machine_state.lock:
-            _machine_state.target_temp = temp
-            # Ensure the simulation loop is running
-            if _machine_state.jog_thread is None or not _machine_state.jog_thread.is_alive():
-                _machine_state.jog_thread = threading.Thread(target=_jog_simulation_loop, daemon=True)
-                _machine_state.jog_thread.start()
-            logger.info(f"Command: Set Temperature Target to {temp}°C")
+            # Create sensor entry if missing
+            if sensor_name not in _machine_state.temperatures:
+                _machine_state.temperatures[sensor_name] = {'actual': 25.0, 'target': float(temp)}
+            else:
+                _machine_state.temperatures[sensor_name]['target'] = float(temp)
+
+            # Keep single-sensor compatibility fields in sync with 'extruder'
+            extruder = _machine_state.temperatures.get('extruder')
+            if extruder:
+                _machine_state.target_temp = extruder.get('target', _machine_state.target_temp)
+                _machine_state.actual_temp = extruder.get('actual', _machine_state.actual_temp)
+
+        # Ensure the dedicated temperature simulation loop is running
+        if not hasattr(_machine_state, 'temp_thread') or _machine_state.temp_thread is None or not _machine_state.temp_thread.is_alive():
+            _machine_state.temp_thread = threading.Thread(target=_temp_simulation_loop, daemon=True)
+            _machine_state.temp_thread.start()
+
+        logger.info(f"Command: Set Temperature Target for {sensor_name} to {temp}°C")
 
 # --- Mock Error Channel ---
 class error_channel:

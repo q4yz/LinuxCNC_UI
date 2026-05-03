@@ -32,8 +32,9 @@ class MdiCommand(BaseModel):
     command: str
 
 
-class TempCommand(BaseModel):
-    """Pydantic model for setting target temperature."""
+class TemperatureRequest(BaseModel):
+    """Pydantic model for setting a sensor target temperature."""
+    sensor_name: str
     target: float
 
 
@@ -98,9 +99,9 @@ def run_mdi(cmd: MdiCommand):
 
 
 @router.post("/temperature", summary="Set Target Temperature", description="Set the target temperature for the spindle/extruder heater.")
-def set_temperature(cmd: TempCommand):
-    """Set the target temperature."""
-    return execute_sync_cmd("set_temperature", 0, cmd.target)
+def set_temperature(cmd: TemperatureRequest):
+    """Set the target temperature for a named sensor (e.g., 'extruder', 'bed')."""
+    return execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
 
 
 @program_router.post("/run", summary="Run Program", description="Start or resume the loaded G-code program from a specific line.")

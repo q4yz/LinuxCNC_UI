@@ -2,20 +2,32 @@
 import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
+import { api } from '../services/api'
 
 const store = useMachineStore()
-const { status, temperatureHistory } = storeToRefs(store)
+const { status, temperatureHistory, temperatures } = storeToRefs(store)
 
 const inputTemps = ref({})
 
-const setTemp = (name) => {
-  const t = parseFloat(inputTemps.value[name] || 0)
-  store.setTargetTemperature(name, t)
+const setTemp = async (name) => {
+  const raw = inputTemps.value[name]
+  const t = parseFloat(raw || 0)
+  try {
+    console.log(`Setting target temperature for ${name} to ${t}°C`)
+    await api.setTargetTemperature(name, t)
+    // Optionally clear the input or keep it
+  } catch (e) {
+    console.error('Failed to set temperature', e)
+  }
 }
 
-const turnOff = (name) => {
+const turnOff = async (name) => {
   inputTemps.value[name] = 0
-  store.setTargetTemperature(name, 0)
+  try {
+    await api.setTargetTemperature(name, 0)
+  } catch (e) {
+    console.error('Failed to turn off temperature for', name, e)
+  }
 }
 
 // Chart Options Computation
@@ -29,7 +41,7 @@ const chartOptions = computed(() => {
     cpu: '#10B981',      // Green
   };
 
-  const temps = status.value.temperatures || {};
+  const temps = temperatures.value || {};
   
   Object.keys(temps).forEach((key) => {
     const color = colors[key] || '#A855F7';
@@ -96,7 +108,7 @@ const chartOptions = computed(() => {
     
     <div class="p-4 bg-gray-700/20 border-b border-gray-600 flex flex-wrap gap-4 items-start">
       <div 
-        v-for="(data, name) in status.temperatures" 
+        v-for="(data, name) in temperatures" 
         :key="name"
         class="bg-gray-800 border border-gray-600 rounded-lg p-3 flex flex-col space-y-2 min-w-[200px] shadow-sm"
       >

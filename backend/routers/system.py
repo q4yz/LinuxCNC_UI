@@ -1,3 +1,38 @@
+import time
+import threading
+import logging
+from fastapi import APIRouter, BackgroundTasks
+
+logger = logging.getLogger("backend.routers.system")
+
+router = APIRouter(prefix="/api/v1/system", tags=["System"])
+
+
+def _perform_update():
+    """Simulate a time-consuming update task."""
+    logger.info("System update: starting simulated update task...")
+    # Simulate work
+    time.sleep(5)
+    logger.info("System update: simulated update complete.")
+
+
+@router.get('/version', summary='Get Version Info')
+def get_version():
+    # In a real system this would check the current package, VCS, or remote API
+    # Provide both legacy `version` (commit/tag) and detailed fields
+    return {
+        "version": "496aec4",
+        "current_version": "v1.0.0",
+        "latest_version": "v1.0.1",
+        "update_available": True
+    }
+
+
+@router.post('/update', summary='Trigger System Update')
+def trigger_update(background_tasks: BackgroundTasks):
+    # Schedule the simulated update to run after returning the response
+    background_tasks.add_task(_perform_update)
+    return {"status": "update started"}
 import logging
 import subprocess
 import os

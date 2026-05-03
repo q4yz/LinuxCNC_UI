@@ -35,7 +35,7 @@ import DebugPanel from '../components/DebugPanel.vue'
         </div>
         
         <!-- Terminal / Console -->
-        <div class="flex-1 min-h-[300px]">
+        <div class="h-[300px]">
           <ConsolePanel />
         </div>
 

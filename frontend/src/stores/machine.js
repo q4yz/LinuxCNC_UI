@@ -26,8 +26,11 @@ export const useMachineStore = defineStore('machine', {
       target_temp: 0.0,
       actual_temp: 0.0
     },
+    // Multi-sensor temperatures dictionary (populated from telemetry)
+    temperatures: {},
     errors: [],
     socket: null,
+    isUpdating: false,
     jogIntervals: {}, // Map to hold active interval IDs for each axis
     temperatureHistory: [] // Array of { time: timestamp, actual: temp, target: temp }
   }),
@@ -73,21 +76,22 @@ export const useMachineStore = defineStore('machine', {
           const payload = JSON.parse(event.data);
           
           if (payload.type === 'status') {
-            // Use Pinia's $patch for safe, deep reactivity merging
+            // Merge status and temperatures separately to keep shape predictable
+            const sensors = payload.data.temperatures || {};
             this.$patch({
-              status: payload.data
+              status: payload.data,
+              temperatures: sensors
             });
-            
-            // Append to temperature history array
+
+            // Append to temperature history array as a snapshot of sensor values
             const now = new Date();
             const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-            
+
             this.temperatureHistory.push({
               time: timeLabel,
-              actual: payload.data.actual_temp || 0,
-              target: payload.data.target_temp || 0
+              sensors: sensors
             });
-            
+
             // Keep a rolling window of 100 data points to prevent memory leaks
             if (this.temperatureHistory.length > 100) {
               this.temperatureHistory.shift();
@@ -274,13 +278,13 @@ export const useMachineStore = defineStore('machine', {
       }
     },
     
-    async setTargetTemperature(targetTemp) {
+    async setTargetTemperature(sensorName, targetValue) {
       const consoleStore = useConsoleStore()
       try {
-        consoleStore.addMessage(`Setting target temperature to ${targetTemp}°C`, 'command')
-        await api.setTargetTemperature(targetTemp);
+        consoleStore.addMessage(`Setting ${sensorName} target temperature to ${targetValue}°C`, 'command')
+        await api.setTargetTemperature(sensorName, targetValue);
       } catch (e) {
-        consoleStore.addMessage(`Failed to set target temperature: ${e.message}`, 'error')
+        consoleStore.addMessage(`Failed to set ${sensorName} target temperature: ${e.message}`, 'error')
         console.error("Failed to set temperature", e);
       }
     }

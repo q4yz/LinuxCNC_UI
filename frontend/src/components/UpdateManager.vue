@@ -9,15 +9,21 @@ const store = useMachineStore()
 const consoleStore = useConsoleStore()
 const { isUpdating } = storeToRefs(store)
 
-const version = ref('loading...')
+const currentVersion = ref('loading...')
+const latestVersion = ref('unknown')
 
 const fetchVersion = async () => {
   try {
-    const res = await api.getVersion()
-    version.value = res.version || 'unknown'
+    const res = await api.getVersionInfo()
+    // Prefer the simple `version` field (commit hash) if present
+    currentVersion.value = res.version || res.current_version || 'unknown'
+    latestVersion.value = res.latest_version || res.version || 'unknown'
+    if (res.update_available) {
+      consoleStore.addMessage('Update available', 'info')
+    }
   } catch (error) {
     consoleStore.addMessage(`Failed to fetch version: ${error.message}`, 'error')
-    version.value = 'error'
+    currentVersion.value = 'error'
   }
 }
 
@@ -58,7 +64,9 @@ onMounted(() => {
     <div class="p-4 flex items-center justify-between">
       <div class="flex flex-col">
         <span class="text-gray-400 text-xs">Current Version</span>
-        <span class="font-mono text-lg font-bold text-gray-200">{{ version }}</span>
+        <span class="font-mono text-lg font-bold text-gray-200">{{ currentVersion }}</span>
+        <span class="text-gray-400 text-xs">Latest</span>
+        <span class="font-mono text-sm text-gray-400">{{ latestVersion }}</span>
       </div>
       
       <button 
