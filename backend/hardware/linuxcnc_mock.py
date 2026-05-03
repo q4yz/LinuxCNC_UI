@@ -58,11 +58,8 @@ class SharedMachineState:
         self.g5x_index = 1  # 1 = G54 (default)
         
         # Temperature Simulation State
-        self.temperatures = {
-            "extruder": {"actual": 25.0, "target": 0},
-            "bed": {"actual": 25.0, "target": 0},
-            "cpu": {"actual": 40.0}
-        }
+        self.target_temp = 0.0
+        self.actual_temp = 25.0  # Ambient
         
         self.lock = threading.Lock()
         
@@ -85,16 +82,13 @@ def _jog_simulation_loop():
                 _machine_state.actual_position[_machine_state.jogging_axis] += delta
                 
             # Simulate heater physics
-            ambient = 25.0
-            for name, data in _machine_state.temperatures.items():
-                if "target" in data:
-                    target = data["target"]
-                    actual = data["actual"]
-                    if target > actual:
-                        data["actual"] += min(1.0, target - actual)
-                    elif target < actual:
-                        if actual > ambient:
-                            data["actual"] -= min(0.3, actual - max(ambient, target))
+            if _machine_state.target_temp > _machine_state.actual_temp:
+                _machine_state.actual_temp += min(1.0, _machine_state.target_temp - _machine_state.actual_temp)
+            elif _machine_state.target_temp < _machine_state.actual_temp:
+                # Cool down, but don't drop below ambient (25.0)
+                ambient = 25.0
+                if _machine_state.actual_temp > ambient:
+                    _machine_state.actual_temp -= min(0.3, _machine_state.actual_temp - max(ambient, _machine_state.target_temp))
 
         time.sleep(0.1)
 
@@ -117,7 +111,8 @@ class stat:
             self.interp_state = _machine_state.interp_state
             self.current_line = _machine_state.current_line
             self.g5x_index = _machine_state.g5x_index
-            self.temperatures = {k: v.copy() for k, v in _machine_state.temperatures.items()}
+            self.target_temp = _machine_state.target_temp
+            self.actual_temp = _machine_state.actual_temp
 
     def poll(self):
         """Simulates polling the machine state."""
@@ -245,15 +240,14 @@ class command:
             _machine_state.current_line = 0
             logger.info("Command: Reset Interpreter")
 
-    def set_temperature(self, sensor_name, target):
+    def set_temperature(self, temp):
         with _machine_state.lock:
-            if sensor_name in _machine_state.temperatures:
-                _machine_state.temperatures[sensor_name]["target"] = target
+            _machine_state.target_temp = temp
             # Ensure the simulation loop is running
             if _machine_state.jog_thread is None or not _machine_state.jog_thread.is_alive():
                 _machine_state.jog_thread = threading.Thread(target=_jog_simulation_loop, daemon=True)
                 _machine_state.jog_thread.start()
-            logger.info(f"Command: Set {sensor_name} Temperature Target to {target}°C")
+            logger.info(f"Command: Set Temperature Target to {temp}°C")
 
 # --- Mock Error Channel ---
 class error_channel:

@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import our new modular routers
-from routers import machine, jog, websocket
+from routers import machine, jog, websocket, files, system, config
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +54,9 @@ app.add_middleware(
 # Include modular routers
 app.include_router(machine.router)
 app.include_router(machine.program_router)
-app.include_router(machine.file_router)
+app.include_router(files.router)
+app.include_router(system.router)
+app.include_router(config.router)
 app.include_router(jog.router)
 app.include_router(websocket.router)
 

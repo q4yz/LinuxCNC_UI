@@ -23,12 +23,13 @@ export const useMachineStore = defineStore('machine', {
       interp_state: 1,
       current_line: 0,
       g5x_index: 1,
-      temperatures: {}
+      target_temp: 0.0,
+      actual_temp: 0.0
     },
     errors: [],
     socket: null,
     jogIntervals: {}, // Map to hold active interval IDs for each axis
-    temperatureHistory: [] // Array of { time: timestamp, sensors: payload.status.temperatures }
+    temperatureHistory: [] // Array of { time: timestamp, actual: temp, target: temp }
   }),
 
   getters: {
@@ -81,12 +82,10 @@ export const useMachineStore = defineStore('machine', {
             const now = new Date();
             const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
             
-            // Deep copy the temperatures dictionary so history states are distinct
-            const currentTemps = JSON.parse(JSON.stringify(payload.data.temperatures || {}));
-            
             this.temperatureHistory.push({
               time: timeLabel,
-              sensors: currentTemps
+              actual: payload.data.actual_temp || 0,
+              target: payload.data.target_temp || 0
             });
             
             // Keep a rolling window of 100 data points to prevent memory leaks
@@ -275,13 +274,13 @@ export const useMachineStore = defineStore('machine', {
       }
     },
     
-    async setTargetTemperature(sensorName, targetTemp) {
+    async setTargetTemperature(targetTemp) {
       const consoleStore = useConsoleStore()
       try {
-        consoleStore.addMessage(`Setting ${sensorName} target temperature to ${targetTemp}°C`, 'command')
-        await api.setTargetTemperature(sensorName, targetTemp);
+        consoleStore.addMessage(`Setting target temperature to ${targetTemp}°C`, 'command')
+        await api.setTargetTemperature(targetTemp);
       } catch (e) {
-        consoleStore.addMessage(`Failed to set ${sensorName} target temperature: ${e.message}`, 'error')
+        consoleStore.addMessage(`Failed to set target temperature: ${e.message}`, 'error')
         console.error("Failed to set temperature", e);
       }
     }
