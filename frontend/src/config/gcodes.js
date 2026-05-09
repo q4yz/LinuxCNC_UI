@@ -1,4 +1,4 @@
-export const COORDINATE_SYSTEMS = [
+export const WORK_COORDINATE_SYSTEMS = [
   { index: 1, name: 'G54' },
   { index: 2, name: 'G55' },
   { index: 3, name: 'G56' },
@@ -11,6 +11,15 @@ export const COORDINATE_SYSTEMS = [
 ];
 
 export const generateCoordinateSystemCommand = (index) => {
-  const system = COORDINATE_SYSTEMS.find(sys => sys.index === index);
+  const system = WORK_COORDINATE_SYSTEMS.find(sys => sys.index === index);
   return system ? system.name : 'G54';
+};
+
+/**
+ * Generates the MDI command to set the current position of a specific axis.
+ * Uses G10 L20 P0, which sets the active coordinate system offset.
+ */
+export const generateSetOffset = (axisName, value) => {
+  // E.g., if axisName='X' and value=0, returns "G10 L20 P0 X0"
+  return `G10 L20 P0 ${axisName}${value}`;
 };
