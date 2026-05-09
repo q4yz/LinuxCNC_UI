@@ -17,6 +17,7 @@ export const useMachineStore = defineStore('machine', {
       task_mode: 1,  // 1=MANUAL, 2=AUTO, 3=MDI
       position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
       actual_position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      relative_position: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
       state: 1,
       file: "",
       homed: [0, 0, 0],
@@ -37,9 +38,9 @@ export const useMachineStore = defineStore('machine', {
 
   getters: {
     // Format coordinates to 3 decimal places for the DRO
-    droX: (state) => state.status.position[0].toFixed(3),
-    droY: (state) => state.status.position[1].toFixed(3),
-    droZ: (state) => state.status.position[2].toFixed(3),
+    droX: (state) => state.status.relative_position[0].toFixed(3),
+    droY: (state) => state.status.relative_position[1].toFixed(3),
+    droZ: (state) => state.status.relative_position[2].toFixed(3),
     
     // Derived booleans for UI state
     isEstop: (state) => state.status.estop === 1,

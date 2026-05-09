@@ -52,6 +52,20 @@ def parse_status() -> dict:
     actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
     # Multi-sensor temperatures dict (if available)
     temperatures = getattr(machine_stat, 'temperatures', None)
+
+    # Calculate Relative Work Coordinates for the DRO
+    actual_position = getattr(machine_stat, 'actual_position', (0.0,) * 9)
+    g5x_offset = getattr(machine_stat, 'g5x_offset', (0.0,) * 9)
+    g92_offset = getattr(machine_stat, 'g92_offset', (0.0,) * 9)
+    tool_offset = getattr(machine_stat, 'tool_offset', (0.0,) * 9)
+
+    relative_position = []
+    for i in range(len(actual_position)):
+        g5x = g5x_offset[i] if g5x_offset and i < len(g5x_offset) else 0.0
+        g92 = g92_offset[i] if g92_offset and i < len(g92_offset) else 0.0
+        tool = tool_offset[i] if tool_offset and i < len(tool_offset) else 0.0
+        rel_axis = actual_position[i] - g5x - g92 - tool
+        relative_position.append(rel_axis)
     
     return {
         "type": "status",
@@ -61,6 +75,7 @@ def parse_status() -> dict:
             "task_mode": machine_stat.task_mode,
             "position": machine_stat.position,
             "actual_position": machine_stat.actual_position,
+            "relative_position": relative_position,
             "state": machine_stat.state,
             "file": machine_stat.file,
             "homed": machine_stat.homed,
