@@ -17,6 +17,22 @@ machine_stat = linuxcnc.stat()
 machine_cmd = linuxcnc.command()
 machine_error = linuxcnc.error_channel()
 
+# Optional injected MachineConfig instance (set during FastAPI startup)
+machine_config = None
+
+def set_machine_config(cfg) -> None:
+    """Inject a parsed MachineConfig instance into the hardware layer.
+
+    Call this from application startup so downstream hardware code may
+    read configuration metadata (axes, heaters, steppers) if needed.
+    """
+    global machine_config
+    machine_config = cfg
+    try:
+        logger.info(f"Machine configuration injected (path={getattr(cfg, 'config_path', 'unknown')})")
+    except Exception:
+        logger.info("Machine configuration injected")
+
 
 def get_machine_stat():
     """Returns the global machine stat object."""

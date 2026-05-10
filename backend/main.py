@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import our new modular routers
-from routers import machine, jog, websocket, files, system, config
+from routers import machine, jog, websocket, files, system, config, camera
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -20,13 +20,29 @@ async def lifespan(app: FastAPI):
     background threads for the WebSocket telemetry and safety watchdogs.
     """
     logger.info("Starting LinuxCNC background tasks...")
-    
+
+    # Load machine configuration and inject into hardware layer
+    try:
+        cfg = MachineConfig()  # uses machine_config/machine.cfg by default
+        app.state.config = cfg
+        try:
+            connection.set_machine_config(cfg)
+        except Exception as e:
+            logger.warning("Failed to inject machine config into hardware connection: %s", e)
+        logger.info("Loaded machine.cfg from machine_config/")
+    except FileNotFoundError as e:
+        logger.warning("Machine config not found at startup: %s", e)
+        app.state.config = None
+    except Exception as e:
+        logger.error("Failed to load machine config: %s", e)
+        raise
+
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(websocket.telemetry_loop())
-    
+
     # Start the jog safety watchdog
     task_watchdog = asyncio.create_task(jog.jog_watchdog())
-    
+
     yield
     
     # Shutdown gracefully
