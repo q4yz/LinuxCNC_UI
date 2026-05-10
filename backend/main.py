@@ -75,6 +75,7 @@ app.include_router(system.router)
 app.include_router(config.router)
 app.include_router(jog.router)
 app.include_router(websocket.router)
+app.include_router(camera.router)
 
 @app.get("/")
 def read_root():
@@ -85,4 +86,3 @@ if __name__ == "__main__":
     import uvicorn
     # Run the server on all interfaces, port 8000
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-

@@ -7,6 +7,8 @@ import GCodeViewer from '../components/GCodeViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import TemperaturePanel from '../components/TemperaturePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
+import { Camera } from 'three/src/Three.Core.js'
+import CameraPanel from '../components/CameraPanel.vue'
 </script>
 
 <template>
@@ -37,8 +39,9 @@ import DebugPanel from '../components/DebugPanel.vue'
         <!-- Terminal / Console -->
         <div class="h-[300px]">
           <ConsolePanel />
+          
         </div>
-
+          <CameraPanel />
       
 
       </div>

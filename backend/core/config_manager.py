@@ -58,7 +58,7 @@ class MachineConfig:
             ValidationError: If a heater's or extruder's config cannot be validated.
         """
         heaters = {}
-        
+
         for section in self.parser.sections():
             try:
                 if section == "heater_bed":
@@ -71,10 +71,10 @@ class MachineConfig:
                         heater_data["control"] = self.parser.get(section, "control")
                     if self.parser.has_option(section, "sensor_type"):
                         heater_data["sensor_type"] = self.parser.get(section, "sensor_type")
-                    
+
                     heaters[section] = HeaterConfig(**heater_data)
                     logger.info(f"Loaded heater config: {section}")
-                    
+
                 elif section.startswith("extruder"):
                     # Parse extruder configuration: requires both heater and stepper
                     heater_data = {
@@ -85,9 +85,9 @@ class MachineConfig:
                         heater_data["control"] = self.parser.get(section, "control")
                     if self.parser.has_option(section, "sensor_type"):
                         heater_data["sensor_type"] = self.parser.get(section, "sensor_type")
-                    
+
                     heater_config = HeaterConfig(**heater_data)
-                    
+
                     # Parse stepper configuration for this extruder
                     stepper_data = {
                         "step_pin": self.parser.get(section, "step_pin", fallback=None),
@@ -96,21 +96,21 @@ class MachineConfig:
                         "microsteps": self.parser.getint(section, "microsteps", fallback=16),
                         "rotation_distance": self.parser.getfloat(section, "rotation_distance", fallback=40.0),
                     }
-                    
+
                     stepper_config = StepperConfig(**stepper_data)
-                    
+
                     # Combine into ExtruderConfig
                     extruder_config = ExtruderConfig(heater=heater_config, stepper=stepper_config)
                     heaters[section] = extruder_config
                     logger.info(f"Loaded extruder config: {section}")
-                    
+
             except ValidationError as e:
                 logger.error(f"Validation error in heater/extruder section [{section}]: {e}")
                 raise
             except (ValueError, TypeError) as e:
                 logger.error(f"Type conversion error in heater/extruder section [{section}]: {e}")
                 raise
-                
+
         return heaters
 
     def get_printer_limits(self) -> PrinterLimitsConfig:
@@ -131,7 +131,7 @@ class MachineConfig:
                 "minimum_cruise_ratio": 0.5,
                 "square_corner_velocity": 5.0,
             }
-            
+
             if self.parser.has_section("printer"):
                 if self.parser.has_option("printer", "kinematics"):
                     limits_data["kinematics"] = self.parser.get("printer", "kinematics")
@@ -143,11 +143,11 @@ class MachineConfig:
                     limits_data["minimum_cruise_ratio"] = self.parser.getfloat("printer", "minimum_cruise_ratio")
                 if self.parser.has_option("printer", "square_corner_velocity"):
                     limits_data["square_corner_velocity"] = self.parser.getfloat("printer", "square_corner_velocity")
-            
+
             limits = PrinterLimitsConfig(**limits_data)
             logger.info("Loaded printer limits config")
             return limits
-            
+
         except ValidationError as e:
             logger.error(f"Validation error in printer limits: {e}")
             raise
@@ -158,17 +158,17 @@ class MachineConfig:
     def get_steppers(self) -> Dict[str, AxisConfig]:
         """
         Parse stepper configurations grouped by base axis letter and return validated AxisConfig models.
-        
+
         Handles Klipper's flat INI structure by grouping multiple steppers (e.g., stepper_y, stepper_y1)
         into a single AxisConfig for the base axis ('y').
-        
+
         Position limits (position_min, position_max) are extracted only from primary stepper sections
         (e.g., stepper_y, not stepper_y1) to avoid conflicts.
-        
+
         Returns:
             Dict[str, AxisConfig]: Dictionary mapping base axis letter to validated AxisConfig.
                                    e.g., {"x": AxisConfig(...), "y": AxisConfig(...), "z": AxisConfig(...)}
-            
+
         Raises:
             ValidationError: If a stepper's or endstop's config cannot be validated.
         """
@@ -176,25 +176,25 @@ class MachineConfig:
         axis_steppers: Dict[str, List[StepperConfig]] = {}
         axis_endstops: Dict[str, List[EndstopConfig]] = {}
         axis_limits: Dict[str, tuple] = {}  # (position_min, position_max) per base axis
-        
+
         for section in self.parser.sections():
             try:
                 if section.startswith("stepper_"):
                     # Extract the suffix after "stepper_" (e.g., "stepper_y1" -> "y1")
                     stepper_suffix = section.replace("stepper_", "").lower()
-                    
+
                     # Extract base axis letter (first character: "y1" -> "y", "z" -> "z")
                     base_axis = stepper_suffix[0] if stepper_suffix else None
-                    
+
                     if not base_axis:
                         logger.warning(f"Skipping malformed stepper section: {section}")
                         continue
-                    
+
                     # Initialize axis tracking if not seen before
                     if base_axis not in axis_steppers:
                         axis_steppers[base_axis] = []
                         axis_endstops[base_axis] = []
-                    
+
                     # Parse stepper configuration
                     stepper_data = {
                         "step_pin": self.parser.get(section, "step_pin", fallback=None),
@@ -203,11 +203,11 @@ class MachineConfig:
                         "microsteps": self.parser.getint(section, "microsteps", fallback=16),
                         "rotation_distance": self.parser.getfloat(section, "rotation_distance", fallback=40.0),
                     }
-                    
+
                     stepper_config = StepperConfig(**stepper_data)
                     axis_steppers[base_axis].append(stepper_config)
                     logger.info(f"Loaded stepper config: {section} (base axis: {base_axis})")
-                    
+
                     # Parse endstop if defined in stepper section
                     if self.parser.has_option(section, "endstop_pin"):
                         endstop_data = {
@@ -217,7 +217,7 @@ class MachineConfig:
                         endstop_config = EndstopConfig(**endstop_data)
                         axis_endstops[base_axis].append(endstop_config)
                         logger.info(f"Loaded endstop config for stepper: {section} (base axis: {base_axis})")
-                    
+
                     # CRITICAL: Only extract position_min/position_max from primary stepper
                     # (e.g., "stepper_y", not "stepper_y1") to initialize AxisConfig
                     if stepper_suffix == base_axis and base_axis not in axis_limits:
@@ -225,19 +225,19 @@ class MachineConfig:
                         position_max = self.parser.getfloat(section, "position_max", fallback=200.0)
                         axis_limits[base_axis] = (position_min, position_max)
                         logger.info(f"Set position limits for axis {base_axis}: [{position_min}, {position_max}]")
-                    
+
             except ValidationError as e:
                 logger.error(f"Validation error in stepper section [{section}]: {e}")
                 raise
             except (ValueError, TypeError) as e:
                 logger.error(f"Type conversion error in stepper section [{section}]: {e}")
                 raise
-        
+
         # Construct AxisConfig for each base axis
         for base_axis, steppers_list in axis_steppers.items():
             try:
                 position_min, position_max = axis_limits.get(base_axis, (0.0, 200.0))
-                
+
                 axis_config = AxisConfig(
                     position_min=position_min,
                     position_max=position_max,
@@ -246,9 +246,9 @@ class MachineConfig:
                 )
                 axes[base_axis] = axis_config
                 logger.info(f"Created AxisConfig for base axis '{base_axis}' with {len(steppers_list)} stepper(s)")
-                
+
             except ValidationError as e:
                 logger.error(f"Validation error creating AxisConfig for axis [{base_axis}]: {e}")
                 raise
-        
+
         return axes
