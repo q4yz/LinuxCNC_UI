@@ -4,14 +4,14 @@
 sleep 2
 
 # Go to your project directory
-cd /absolute/path/to/your/backend
+cd /home/linuxcnc/Downloads/LinuxCNC_UI/backend
 
 # 1. Start the FastAPI backend in the background
 source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
-cd /absolute/path/to/your/project/frontend
+cd /home/linuxcnc/Downloads/LinuxCNC_UI/frontend
 # 2. Start the Vue frontend in the background
 npm run dev -- --host &
 FRONTEND_PID=$!
@@ -28,6 +28,6 @@ wait
 
 #[APPLICATIONS]
 ## LinuxCNC will run this script automatically after Axis starts
-#APP = /absolute/path/to/start_dev.sh
+#APP = /home/linuxcnc/Downloads/LinuxCNC_UI/start_dev.sh
 
-#chmod +x /absolute/path/to/start_dev.sh
+#chmod +x /home/linuxcnc/Downloads/LinuxCNC_UI/start_dev.sh
