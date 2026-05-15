@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 #Test
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from core.config_manager import MachineConfig
+from hardware.connection import connection
+
 
 # Import our new modular routers
 from routers import machine, jog, websocket, files, system, config, camera

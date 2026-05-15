@@ -90,3 +90,31 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
     except Exception as e:
         logger.error(f"Command execution failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class Connection:
+    """Thin wrapper exposing the hardware interface as an object.
+
+    This provides a `set_machine_config` method and mirrors the
+    module-level helper functions so other code can import a
+    singleton `connection` object.
+    """
+
+    def set_machine_config(self, cfg) -> None:
+        return set_machine_config(cfg)
+
+    def get_machine_stat(self):
+        return get_machine_stat()
+
+    def get_machine_cmd(self):
+        return get_machine_cmd()
+
+    def get_machine_error(self):
+        return get_machine_error()
+
+    def execute_sync_cmd(self, cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
+        return execute_sync_cmd(cmd_name, cmd_timeout, *args)
+
+
+# Export a module-level singleton named `connection` for imports
+connection = Connection()
