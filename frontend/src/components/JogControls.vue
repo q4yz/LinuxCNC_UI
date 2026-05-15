@@ -1,161 +1,249 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { useMachineStore } from '../stores/machine'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import axios from 'axios'
 
-const store = useMachineStore()
-const JOG_SPEED = 500;
+const API_BASE = `http://${window.location.hostname}:8000/api/v1/machine`
+const http = axios.create({ baseURL: API_BASE })
+const MAX_JOG_SPEED = 3.602
 
-const isContinuous = ref(true);
-const stepSize = ref(10);
-const pressedKeys = new Set(); // Track pressed keys to avoid duplicates
+const activeAxes = ref({})
+const sliderPos = ref(2)
+const jogSpeed = computed(() => Math.pow(10, sliderPos.value))
+let heartbeatInterval = null
 
-const startJog = (axis, dir) => {
-  if (!isContinuous.value) {
-    store.jog(axis, stepSize.value * Math.sign(dir));
-    return;
-  }
-  
-  // Hand off continuous logic completely to the Pinia store
-  store.jogContinuous(axis, JOG_SPEED * Math.sign(dir));
+const KEY_BINDINGS = {
+  ArrowRight: { axis: 0, direction: 1 },
+  ArrowLeft: { axis: 0, direction: -1 },
+  ArrowUp: { axis: 1, direction: 1 },
+  ArrowDown: { axis: 1, direction: -1 },
+  PageUp: { axis: 2, direction: 1 },
+  PageDown: { axis: 2, direction: -1 }
 }
 
-const stopJog = (axis) => {
-  if (!isContinuous.value) return; // Incremental stops automatically
-  store.jogStop(axis);
+const isTypingInField = () => {
+  const element = document.activeElement
+  return Boolean(
+    element &&
+      (element.tagName === 'INPUT' ||
+        element.tagName === 'TEXTAREA' ||
+        element.isContentEditable)
+  )
 }
 
-// Global Keydown Handler
-const handleKeyDown = (event) => {
-  // CRITICAL SAFETY: Prevent multiple events firing while the key is held down
-  if (event.repeat) return;
+const clearHeartbeat = () => {
+  if (heartbeatInterval !== null) {
+    clearInterval(heartbeatInterval)
+    heartbeatInterval = null
+  }
+}
 
-  // Do not trigger jogging if the user is typing in an input field
-  if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-
-  let axis = -1;
-  let dir = 0;
-
-  switch (event.code) {
-    case 'ArrowRight': axis = 0; dir = 1; break;
-    case 'ArrowLeft': axis = 0; dir = -1; break;
-    case 'ArrowUp': axis = 1; dir = 1; break;
-    case 'ArrowDown': axis = 1; dir = -1; break;
-    case 'PageUp': axis = 2; dir = 1; break;
-    case 'PageDown': axis = 2; dir = -1; break;
+const ensureHeartbeat = () => {
+  if (heartbeatInterval !== null) {
+    return
   }
 
-  if (axis !== -1) {
-    // Only trigger if we aren't already tracking this exact key
-    if (!pressedKeys.has(event.code)) {
-      pressedKeys.add(event.code);
-      startJog(axis, dir);
+  heartbeatInterval = setInterval(async () => {
+    const axesToPing = Object.keys(activeAxes.value).map(Number)
+    if (!axesToPing.length) {
+      clearHeartbeat()
+      return
     }
-    event.preventDefault();
+
+    try {
+      await http.post('/jog/keepalive', { axes: axesToPing })
+    } catch (error) {
+      console.error('Failed to send jog keepalive', error)
+    }
+  }, 250)
+}
+
+const startJog = async (axis, direction) => {
+  const velocity = direction * jogSpeed.value
+  activeAxes.value[axis] = velocity
+
+  try {
+    await http.post('/jog', {
+      velocities: activeAxes.value,
+      distance: 0.0
+    })
+    ensureHeartbeat()
+  } catch (error) {
+    delete activeAxes.value[axis]
+    if (!Object.keys(activeAxes.value).length) {
+      clearHeartbeat()
+    }
+    console.error(`Failed to start jog for axis ${axis}`, error)
   }
 }
 
-// Global Keyup Handler
-const handleKeyUp = (event) => {
-  let axis = -1;
-  switch (event.code) {
-    case 'ArrowRight': 
-    case 'ArrowLeft': axis = 0; break;
-    case 'ArrowUp': 
-    case 'ArrowDown': axis = 1; break;
-    case 'PageUp': 
-    case 'PageDown': axis = 2; break;
+const stopJog = async (axis) => {
+  delete activeAxes.value[axis]
+
+  try {
+    await http.post('/jog/stop', { axes: [axis] })
+  } catch (error) {
+    console.error(`Failed to stop jog for axis ${axis}`, error)
   }
 
-  if (axis !== -1 && pressedKeys.has(event.code)) {
-    pressedKeys.delete(event.code);
-    stopJog(axis);
-    event.preventDefault();
+  if (Object.keys(activeAxes.value).length === 0) {
+    clearHeartbeat()
   }
+}
+
+const stopAllJogging = async () => {
+  const axes = Object.keys(activeAxes.value).map(Number)
+  activeAxes.value = {}
+  clearHeartbeat()
+
+  if (!axes.length) {
+    return
+  }
+
+  try {
+    await http.post('/jog/stop', { axes })
+  } catch (error) {
+    console.error('Failed to stop all jogging axes', error)
+  }
+}
+
+const handleKeyDown = (event) => {
+  if (event.repeat || isTypingInField()) {
+    return
+  }
+
+  const binding = KEY_BINDINGS[event.code]
+  if (!binding) {
+    return
+  }
+
+  event.preventDefault()
+  void startJog(binding.axis, binding.direction)
+}
+
+const handleKeyUp = (event) => {
+  const binding = KEY_BINDINGS[event.code]
+  if (!binding) {
+    return
+  }
+
+  event.preventDefault()
+  void stopJog(binding.axis)
+}
+
+const handleWindowBlur = () => {
+  void stopAllJogging()
 }
 
 onMounted(() => {
-  window.addEventListener('keydown', handleKeyDown);
-  window.addEventListener('keyup', handleKeyUp);
+  window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('keyup', handleKeyUp)
+  window.addEventListener('blur', handleWindowBlur)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleKeyDown);
-  window.removeEventListener('keyup', handleKeyUp);
+  window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('keyup', handleKeyUp)
+  window.removeEventListener('blur', handleWindowBlur)
+  void stopAllJogging()
 })
 </script>
 
 <template>
-  <!-- Jog / Control Panel -->
   <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6">
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Jog Controls</h2>
-      
-      <!-- Jog Mode Toggle -->
-      <div class="flex items-center space-x-2">
-        <div class="flex bg-gray-900 rounded overflow-hidden border border-gray-600">
-          <button 
-            @click="isContinuous = true" 
-            class="px-3 py-1 text-xs font-semibold transition-colors"
-            :class="isContinuous ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'"
-          >
-            Continuous
-          </button>
-          <button 
-            @click="isContinuous = false" 
-            class="px-3 py-1 text-xs font-semibold transition-colors border-l border-gray-600"
-            :class="!isContinuous ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'"
-          >
-            Step
-          </button>
-        </div>
-        
-        <select v-if="!isContinuous" v-model="stepSize" class="bg-gray-900 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 outline-none">
-          <option :value="0.1">0.1 mm</option>
-          <option :value="1">1.0 mm</option>
-          <option :value="10">10 mm</option>
-          <option :value="50">50 mm</option>
-        </select>
-      </div>
+      <span class="text-xs text-gray-400">Hold buttons or arrow keys for continuous motion</span>
     </div>
-    
+
+    <div class="px-4 pt-4">
+      <label class="block text-sm font-medium text-gray-300 mb-2">
+        Jog Speed: {{ jogSpeed < 10 ? jogSpeed.toFixed(2) : jogSpeed.toFixed(1) }} mm/s
+      </label>
+      <input
+        v-model.number="sliderPos"
+        type="range"
+        min="-1"
+        :max="MAX_JOG_SPEED"
+        step="0.001"
+        class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+      />
+    </div>
+
     <div class="p-6 grid grid-cols-3 gap-3 text-center">
-      <!-- Y and Z controls -->
       <div class="col-start-2">
-        <button 
-          @mousedown="startJog(1, 1)" @mouseup="stopJog(1)" @mouseleave="stopJog(1)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">Y+ (↑)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(1, 1)"
+          @touchstart.prevent="startJog(1, 1)"
+          @mouseup="stopJog(1)"
+          @mouseleave="stopJog(1)"
+          @touchend="stopJog(1)"
+          @touchcancel="stopJog(1)"
+        >Y+ (↑)</button>
       </div>
+
       <div class="col-start-3">
-        <button 
-          @mousedown="startJog(2, 1)" @mouseup="stopJog(2)" @mouseleave="stopJog(2)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">Z+ (PgUp)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(2, 1)"
+          @touchstart.prevent="startJog(2, 1)"
+          @mouseup="stopJog(2)"
+          @mouseleave="stopJog(2)"
+          @touchend="stopJog(2)"
+          @touchcancel="stopJog(2)"
+        >Z+ (PgUp)</button>
       </div>
-      
-      <!-- X controls -->
+
       <div class="col-start-1">
-        <button 
-          @mousedown="startJog(0, -1)" @mouseup="stopJog(0)" @mouseleave="stopJog(0)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">X- (←)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(0, -1)"
+          @touchstart.prevent="startJog(0, -1)"
+          @mouseup="stopJog(0)"
+          @mouseleave="stopJog(0)"
+          @touchend="stopJog(0)"
+          @touchcancel="stopJog(0)"
+        >X- (←)</button>
       </div>
+
       <div class="col-start-2 flex items-center justify-center">
         <div class="h-4 w-4 rounded-full bg-gray-600 shadow-inner"></div>
       </div>
+
       <div class="col-start-3">
-        <button 
-          @mousedown="startJog(0, 1)" @mouseup="stopJog(0)" @mouseleave="stopJog(0)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">X+ (→)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(0, 1)"
+          @touchstart.prevent="startJog(0, 1)"
+          @mouseup="stopJog(0)"
+          @mouseleave="stopJog(0)"
+          @touchend="stopJog(0)"
+          @touchcancel="stopJog(0)"
+        >X+ (→)</button>
       </div>
-      
-      <!-- Y and Z down -->
+
       <div class="col-start-2">
-        <button 
-          @mousedown="startJog(1, -1)" @mouseup="stopJog(1)" @mouseleave="stopJog(1)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">Y- (↓)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(1, -1)"
+          @touchstart.prevent="startJog(1, -1)"
+          @mouseup="stopJog(1)"
+          @mouseleave="stopJog(1)"
+          @touchend="stopJog(1)"
+          @touchcancel="stopJog(1)"
+        >Y- (↓)</button>
       </div>
+
       <div class="col-start-3">
-        <button 
-          @mousedown="startJog(2, -1)" @mouseup="stopJog(2)" @mouseleave="stopJog(2)"
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors">Z- (PgDn)</button>
+        <button
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          @mousedown.prevent="startJog(2, -1)"
+          @touchstart.prevent="startJog(2, -1)"
+          @mouseup="stopJog(2)"
+          @mouseleave="stopJog(2)"
+          @touchend="stopJog(2)"
+          @touchcancel="stopJog(2)"
+        >Z- (PgDn)</button>
       </div>
     </div>
   </div>

@@ -31,13 +31,24 @@ export const api = {
   
   // Movement
   homeAxis: (axis) => postJson('/machine/home', { axis }),
-  jogAxis: (axis, velocity, distance) => postJson('/machine/jog', { axis, velocity, distance }),
-  jogKeepalive: async (axis) => {
-    // Explicit keep-alive function with debugging
-    // console.log(`API: Sending keep-alive for axis ${axis}`);
-    return postJson('/machine/jog/keepalive', { axis });
+  jogAxis: (axisOrVelocities, velocity, distance = 0) => {
+    if (axisOrVelocities && typeof axisOrVelocities === 'object' && !Array.isArray(axisOrVelocities)) {
+      return postJson('/machine/jog', axisOrVelocities);
+    }
+
+    return postJson('/machine/jog', {
+      velocities: { [axisOrVelocities]: velocity },
+      distance,
+    });
   },
-  jogStop: (axis) => postJson('/machine/jog/stop', { axis }),
+  jogKeepalive: async (axes) => {
+    const axisList = Array.isArray(axes) ? axes : [axes];
+    return postJson('/machine/jog/keepalive', { axes: axisList });
+  },
+  jogStop: (axes) => {
+    const axisList = Array.isArray(axes) ? axes : [axes];
+    return postJson('/machine/jog/stop', { axes: axisList });
+  },
   sendMdiCommand: (command) => postJson('/machine/mdi', { command }),
   
   // Work Offsets

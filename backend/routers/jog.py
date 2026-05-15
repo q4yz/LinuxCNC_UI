@@ -2,6 +2,7 @@ import time
 import threading
 import asyncio
 import logging
+from typing import Dict, List
 from fastapi import APIRouter
 from pydantic import BaseModel
 from hardware import execute_sync_cmd, linuxcnc
@@ -16,14 +17,17 @@ active_jogs_lock = threading.Lock()
 
 class JogCommand(BaseModel):
     """Pydantic model for executing a jog."""
-    axis: int
-    velocity: float
+    velocities: Dict[int, float]
     distance: float = 0.0
 
 
 class JogStopCommand(BaseModel):
     """Pydantic model for stopping a jog or sending a keep-alive ping."""
-    axis: int
+    axes: List[int]
+
+
+def _stop_axis(axis: int) -> None:
+    execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_STOP', 0), True, axis)
 
 
 async def jog_watchdog():
@@ -35,13 +39,15 @@ async def jog_watchdog():
     while True:
         await asyncio.sleep(0.1)
         now = time.time()
+        expired_axes = []
         with active_jogs_lock:
             # Find axes that haven't been pinged in 500ms
             expired_axes = [axis for axis, t in active_jogs.items() if now - t > 0.5]
             for axis in expired_axes:
                 logger.warning(f"SAFETY WATCHDOG: Missed keep-alive for Axis {axis}. Executing STOP!")
                 del active_jogs[axis]
-                execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_STOP', 0), True, axis)
+        for axis in expired_axes:
+            _stop_axis(axis)
 
 
 @router.post("/jog", summary="Jog Axis", description="Initiates a jog. Supports step, continuous, or stop commands depending on parameters.")
@@ -51,16 +57,35 @@ def jog_axis(cmd: JogCommand):
     depending on the velocity and distance parameters.
     """
     execute_sync_cmd("mode", 0, getattr(linuxcnc, 'MODE_MANUAL', 1))
-    
-    if cmd.velocity == 0:
-        return execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_STOP', 0), True, cmd.axis)
-    elif cmd.distance != 0:
-        return execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_INCREMENT', 2), True, cmd.axis, cmd.velocity, cmd.distance)
-    else:
-        # Register the start of a continuous jog for the watchdog
-        with active_jogs_lock:
-            active_jogs[cmd.axis] = time.time()
-        return execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_CONTINUOUS', 1), True, cmd.axis, cmd.velocity)
+
+    results = {}
+    for axis, velocity in cmd.velocities.items():
+        if velocity == 0:
+            continue
+
+        if cmd.distance != 0:
+            results[axis] = execute_sync_cmd(
+                "jog",
+                0,
+                getattr(linuxcnc, 'JOG_INCREMENT', 2),
+                True,
+                axis,
+                velocity,
+                cmd.distance,
+            )
+        else:
+            with active_jogs_lock:
+                active_jogs[axis] = time.time()
+            results[axis] = execute_sync_cmd(
+                "jog",
+                0,
+                getattr(linuxcnc, 'JOG_CONTINUOUS', 1),
+                True,
+                axis,
+                velocity,
+            )
+
+    return {"status": "ok", "results": results}
 
 
 @router.post("/jog/keepalive", summary="Jog Keep-Alive", description="Refreshes the watchdog timer for an actively jogging axis. Must be called frequently.")
@@ -70,8 +95,9 @@ def jog_keepalive(cmd: JogStopCommand):
     Must be called frequently (e.g., every 250ms) during continuous jogging.
     """
     with active_jogs_lock:
-        if cmd.axis in active_jogs:
-            active_jogs[cmd.axis] = time.time()
+        for axis in cmd.axes:
+            if axis in active_jogs:
+                active_jogs[axis] = time.time()
     return {"status": "ok"}
 
 
@@ -80,7 +106,11 @@ def stop_jog(cmd: JogStopCommand):
     """
     Explicitly stops a continuous jog and removes it from the watchdog.
     """
-    execute_sync_cmd("mode", 0, getattr(linuxcnc, 'MODE_MANUAL', 1))
     with active_jogs_lock:
-        active_jogs.pop(cmd.axis, None)
-    return execute_sync_cmd("jog", 0, getattr(linuxcnc, 'JOG_STOP', 0), True, cmd.axis)
+        for axis in cmd.axes:
+            active_jogs.pop(axis, None)
+
+    for axis in cmd.axes:
+        _stop_axis(axis)
+
+    return {"status": "ok"}
