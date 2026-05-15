@@ -1,10 +1,10 @@
 import { generateSetOffset } from '../config/gcodes';
 
-const API_BASE = '/api/v1';
+const API_BASE_URL = `http://${window.location.hostname}:8000/api/v1`;
 
 async function postJson(endpoint, payload = {}) {
   try {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -58,19 +58,19 @@ export const api = {
 
   // Files
   fetchFiles: async () => {
-    const res = await fetch(`${API_BASE}/files`);
+    const res = await fetch(`${API_BASE_URL}/files`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   uploadFile: async (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${API_BASE}/files/upload`, { method: 'POST', body: formData });
+    const res = await fetch(`${API_BASE_URL}/files/upload`, { method: 'POST', body: formData });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   deleteFile: async (filename) => {
-    const res = await fetch(`${API_BASE}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const res = await fetch(`${API_BASE_URL}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
@@ -78,12 +78,12 @@ export const api = {
 
   // Configs
   fetchConfigs: async () => {
-    const res = await fetch(`${API_BASE}/config`);
+    const res = await fetch(`${API_BASE_URL}/config`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   readConfig: async (filename) => {
-    const res = await fetch(`${API_BASE}/config/${encodeURIComponent(filename)}`);
+    const res = await fetch(`${API_BASE_URL}/config/${encodeURIComponent(filename)}`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
@@ -95,7 +95,7 @@ export const api = {
   // System utilities
   triggerUpdate: () => postJson('/system/update', {}),
   getVersionInfo: async () => {
-    const res = await fetch(`${API_BASE}/system/version`)
+    const res = await fetch(`${API_BASE_URL}/system/version`)
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }

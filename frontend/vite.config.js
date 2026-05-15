@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [vue(),tailwindcss(),],
   server: {
+    host: '0.0.0.0',
     proxy: {
       // Change '/api' to whatever your backend routes start with. 
       // If it's just '/status', use that.

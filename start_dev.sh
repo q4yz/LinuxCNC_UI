@@ -13,7 +13,7 @@ BACKEND_PID=$!
 
 cd /absolute/path/to/your/project/frontend
 # 2. Start the Vue frontend in the background
-npm run dev &
+npm run dev -- --host &
 FRONTEND_PID=$!
 
 # 3. Open the browser to your dev server

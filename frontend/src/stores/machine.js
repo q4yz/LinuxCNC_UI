@@ -61,9 +61,8 @@ export const useMachineStore = defineStore('machine', {
       
       this.connectionStatus = 'connecting';
       
-      // Use the Vite proxy if in dev, or standard host in prod
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
+      const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/telemetry`;
       
       this.socket = new WebSocket(wsUrl);
       
