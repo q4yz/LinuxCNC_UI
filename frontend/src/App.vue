@@ -10,6 +10,7 @@ import ConfigEditor from './components/ConfigEditor.vue'
 const store = useMachineStore()
 const currentView = ref('dashboard')
 const editorFile = ref(null)
+const editorReadOnly = ref(false)
 
 onMounted(() => {
   store.connect()
@@ -19,11 +20,12 @@ onMounted(() => {
   if (params.has('editor')) {
     editorFile.value = params.get('editor')
   }
+  editorReadOnly.value = params.get('readonly') === '1' || params.get('readonly') === 'true'
 })
 </script>
 
 <template>
-  <ConfigEditor v-if="editorFile" :filename="editorFile" />
+  <ConfigEditor v-if="editorFile" :filename="editorFile" :read-only="editorReadOnly" />
   <div v-else class="flex h-screen overflow-hidden bg-gray-900 text-white font-sans">
     
     <!-- Sidebar Navigation -->

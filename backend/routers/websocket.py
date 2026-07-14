@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 import json
 import logging
 from datetime import datetime
@@ -35,9 +36,33 @@ class ConnectionManager:
                 logger.error(f"Error broadcasting to client: {e}")
 
 manager = ConnectionManager()
+last_broadcast_state: dict = {}
 
 
-def parse_status() -> dict:
+def get_dict_diff(new_dict: dict, old_dict: dict) -> dict:
+    """Return only the keys that changed or are new in new_dict."""
+    diff = {}
+
+    for key, new_value in new_dict.items():
+        old_value = old_dict.get(key)
+
+        if isinstance(new_value, dict):
+            if isinstance(old_value, dict):
+                nested_diff = get_dict_diff(new_value, old_value)
+                if nested_diff:
+                    diff[key] = nested_diff
+            else:
+                diff[key] = new_value
+        elif isinstance(new_value, list):
+            if new_value != old_value:
+                diff[key] = new_value
+        elif new_value != old_value:
+            diff[key] = new_value
+
+    return diff
+
+
+def get_current_state() -> dict:
     """
     Reads the current machine status from the LinuxCNC stat object
     and formats it as a JSON-serializable dictionary.
@@ -68,24 +93,21 @@ def parse_status() -> dict:
         relative_position.append(rel_axis)
     
     return {
-        "type": "status",
-        "data": {
-            "task_state": machine_stat.task_state,
-            "estop": machine_stat.estop,
-            "task_mode": machine_stat.task_mode,
-            "position": machine_stat.position,
-            "actual_position": machine_stat.actual_position,
-            "relative_position": relative_position,
-            "state": machine_stat.state,
-            "file": machine_stat.file,
-            "homed": machine_stat.homed,
-            "interp_state": interp_state,
-            "current_line": current_line,
-            "g5x_index": g5x_index,
-            "target_temp": target_temp,
-            "actual_temp": actual_temp,
-            "temperatures": temperatures
-        }
+        "task_state": machine_stat.task_state,
+        "estop": machine_stat.estop,
+        "task_mode": machine_stat.task_mode,
+        "position": machine_stat.position,
+        "actual_position": machine_stat.actual_position,
+        "relative_position": relative_position,
+        "state": machine_stat.state,
+        "file": machine_stat.file,
+        "homed": machine_stat.homed,
+        "interp_state": interp_state,
+        "current_line": current_line,
+        "g5x_index": g5x_index,
+        "target_temp": target_temp,
+        "actual_temp": actual_temp,
+        "temperatures": temperatures
     }
 
 
@@ -101,6 +123,7 @@ async def telemetry_loop():
         try:
             # Poll status
             machine_stat.poll()
+            current_state = get_current_state()
             
             # Poll errors
             error = machine_error.poll()
@@ -116,9 +139,12 @@ async def telemetry_loop():
                 }
                 await manager.broadcast(json.dumps(error_payload))
 
-            # Broadcast status
-            if manager.active_connections:
-                await manager.broadcast(json.dumps(parse_status()))
+            global last_broadcast_state
+            delta = get_dict_diff(current_state, last_broadcast_state)
+            if delta and manager.active_connections:
+                await manager.broadcast(json.dumps({"type": "delta", "data": delta}))
+                last_broadcast_state.clear()
+                last_broadcast_state.update(deepcopy(current_state))
 
         except Exception as e:
             logger.error(f"Error in telemetry loop: {e}")
@@ -135,6 +161,15 @@ async def websocket_telemetry(websocket: WebSocket):
     """
     await manager.connect(websocket)
     try:
+        machine_stat = get_machine_stat()
+        machine_stat.poll()
+        current_state = get_current_state()
+
+        await websocket.send_text(json.dumps({"type": "full_state", "data": current_state}))
+
+        last_broadcast_state.clear()
+        last_broadcast_state.update(deepcopy(current_state))
+
         while True:
             # We don't expect messages from the client on this channel,
             # but we need to wait for a disconnect
