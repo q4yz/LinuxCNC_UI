@@ -1,6 +1,5 @@
 import logging
 import subprocess
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks
@@ -11,7 +10,7 @@ router = APIRouter(prefix="/api/v1/system", tags=["System"])
 
 
 def _project_root() -> Path:
-    """Return the repository root (three levels above this file: routers/ -> backend/ -> repo)."""
+    """Return the repository root (two levels above this file: routers/ -> backend/ -> repo)."""
     return Path(__file__).resolve().parents[2]
 
 
@@ -32,11 +31,33 @@ def _current_commit_hash() -> str:
         return "unknown"
 
 
-def _perform_update() -> None:
-    """Simulate a time-consuming update task in the background."""
-    logger.info("System update: starting simulated update task...")
-    time.sleep(5)
-    logger.info("System update: simulated update complete.")
+def _run_update_script() -> None:
+    """Execute scripts/update.sh in the background (git pull + pip install).
+
+    This is the real update routine — it was previously replaced by a placeholder
+    that merely slept. The frontend expects this to perform an actual update.
+    """
+    script_path = _project_root() / "scripts" / "update.sh"
+    if not script_path.exists():
+        logger.error("Update script not found at %s", script_path)
+        return
+
+    try:
+        result = subprocess.run(
+            ["bash", str(script_path)],
+            cwd=str(_project_root()),
+            capture_output=True,
+            text=True,
+        )
+        logger.info("Update script finished with code %s", result.returncode)
+        if result.stdout:
+            logger.info("Update script stdout:\n%s", result.stdout)
+        if result.stderr:
+            logger.error("Update script stderr:\n%s", result.stderr)
+    except FileNotFoundError:
+        logger.error("bash executable not found; cannot run update.sh")
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to run update script")
 
 
 @router.get(
@@ -56,8 +77,9 @@ def get_version() -> dict:
 @router.post(
     "/update",
     summary="Trigger System Update",
-    description="Schedule a simulated system update to run after the response is returned.",
+    description="Schedule scripts/update.sh (git pull + pip install) to run after the response is returned.",
 )
 def trigger_update(background_tasks: BackgroundTasks) -> dict:
-    background_tasks.add_task(_perform_update)
+    logger.warning("System update initiated via API.")
+    background_tasks.add_task(_run_update_script)
     return {"status": "update started"}
