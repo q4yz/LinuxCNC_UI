@@ -1,6 +1,8 @@
-import time
-import threading
 import logging
+import subprocess
+import time
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks
 
 logger = logging.getLogger("backend.routers.system")
@@ -8,70 +10,54 @@ logger = logging.getLogger("backend.routers.system")
 router = APIRouter(prefix="/api/v1/system", tags=["System"])
 
 
-def _perform_update():
-    """Simulate a time-consuming update task."""
+def _project_root() -> Path:
+    """Return the repository root (three levels above this file: routers/ -> backend/ -> repo)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _current_commit_hash() -> str:
+    """Return the short git commit hash for the repo, or 'unknown' if it cannot be determined."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_project_root()),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        return result.stdout.strip() or "unknown"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("Unable to determine git commit hash: %s", exc)
+        return "unknown"
+
+
+def _perform_update() -> None:
+    """Simulate a time-consuming update task in the background."""
     logger.info("System update: starting simulated update task...")
-    # Simulate work
     time.sleep(5)
     logger.info("System update: simulated update complete.")
 
 
-@router.get('/version', summary='Get Version Info')
-def get_version():
-    # In a real system this would check the current package, VCS, or remote API
-    # Provide both legacy `version` (commit/tag) and detailed fields
+@router.get(
+    "/version",
+    summary="Get Version Info",
+    description="Return the current build version, latest known release, and whether an update is available.",
+)
+def get_version() -> dict:
     return {
-        "version": "496aec4",
+        "version": _current_commit_hash(),
         "current_version": "v1.0.0",
         "latest_version": "v1.0.1",
-        "update_available": True
+        "update_available": True,
     }
 
 
-@router.post('/update', summary='Trigger System Update')
-def trigger_update(background_tasks: BackgroundTasks):
-    # Schedule the simulated update to run after returning the response
+@router.post(
+    "/update",
+    summary="Trigger System Update",
+    description="Schedule a simulated system update to run after the response is returned.",
+)
+def trigger_update(background_tasks: BackgroundTasks) -> dict:
     background_tasks.add_task(_perform_update)
     return {"status": "update started"}
-import logging
-import subprocess
-import os
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-
-logger = logging.getLogger("backend.routers.system")
-router = APIRouter(prefix="/api/v1/system", tags=["System"])
-
-def run_update_script():
-    """Executes the update.sh script in the background."""
-    script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts", "update.sh")
-    try:
-        # Use bash to run the script
-        result = subprocess.run(["bash", script_path], capture_output=True, text=True)
-        logger.info(f"Update script finished with code {result.returncode}")
-        logger.info(f"Update script stdout: {result.stdout}")
-        if result.stderr:
-            logger.error(f"Update script stderr: {result.stderr}")
-    except Exception as e:
-        logger.error(f"Failed to run update script: {e}")
-
-@router.get("/version", summary="Get System Version", description="Returns the current Git commit hash.")
-def get_version():
-    try:
-        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], 
-            cwd=root_dir,
-            capture_output=True, 
-            text=True, 
-            check=True
-        )
-        return {"version": result.stdout.strip()}
-    except Exception as e:
-        logger.error(f"Failed to get git version: {e}")
-        return {"version": "unknown"}
-
-@router.post("/update", summary="Update System", description="Pulls the latest code and updates dependencies.")
-def update_system(background_tasks: BackgroundTasks):
-    logger.warning("System update initiated via API.")
-    background_tasks.add_task(run_update_script)
-    return {"status": "Update started"}
