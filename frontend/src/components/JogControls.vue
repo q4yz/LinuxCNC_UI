@@ -1,15 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import axios from 'axios'
+import { storeToRefs } from 'pinia'
+import { useMachineStore } from '../stores/machine'
 
-const API_BASE = `http://${window.location.hostname}:8000/api/v1/machine`
-const http = axios.create({ baseURL: API_BASE })
 const MAX_JOG_SPEED = 3.602
 
-const activeAxes = ref({})
+const machineStore = useMachineStore()
+const { jogIntervals } = storeToRefs(machineStore)
+
 const sliderPos = ref(2)
 const jogSpeed = computed(() => Math.pow(10, sliderPos.value))
-let heartbeatInterval = null
 
 const KEY_BINDINGS = {
   ArrowRight: { axis: 0, direction: 1 },
@@ -30,79 +30,19 @@ const isTypingInField = () => {
   )
 }
 
-const clearHeartbeat = () => {
-  if (heartbeatInterval !== null) {
-    clearInterval(heartbeatInterval)
-    heartbeatInterval = null
-  }
-}
-
-const ensureHeartbeat = () => {
-  if (heartbeatInterval !== null) {
-    return
-  }
-
-  heartbeatInterval = setInterval(async () => {
-    const axesToPing = Object.keys(activeAxes.value).map(Number)
-    if (!axesToPing.length) {
-      clearHeartbeat()
-      return
-    }
-
-    try {
-      await http.post('/jog/keepalive', { axes: axesToPing })
-    } catch (error) {
-      console.error('Failed to send jog keepalive', error)
-    }
-  }, 250)
-}
-
 const startJog = async (axis, direction) => {
   const velocity = direction * jogSpeed.value
-  activeAxes.value[axis] = velocity
-
-  try {
-    await http.post('/jog', {
-      velocities: activeAxes.value,
-      distance: 0.0
-    })
-    ensureHeartbeat()
-  } catch (error) {
-    delete activeAxes.value[axis]
-    if (!Object.keys(activeAxes.value).length) {
-      clearHeartbeat()
-    }
-    console.error(`Failed to start jog for axis ${axis}`, error)
-  }
+  await machineStore.jogContinuous(axis, velocity)
 }
 
 const stopJog = async (axis) => {
-  delete activeAxes.value[axis]
-
-  try {
-    await http.post('/jog/stop', { axes: [axis] })
-  } catch (error) {
-    console.error(`Failed to stop jog for axis ${axis}`, error)
-  }
-
-  if (Object.keys(activeAxes.value).length === 0) {
-    clearHeartbeat()
-  }
+  await machineStore.jogStop(axis)
 }
 
 const stopAllJogging = async () => {
-  const axes = Object.keys(activeAxes.value).map(Number)
-  activeAxes.value = {}
-  clearHeartbeat()
-
-  if (!axes.length) {
-    return
-  }
-
-  try {
-    await http.post('/jog/stop', { axes })
-  } catch (error) {
-    console.error('Failed to stop all jogging axes', error)
+  const axes = Object.keys(jogIntervals.value).map(Number)
+  for (const axis of axes) {
+    await machineStore.jogStop(axis)
   }
 }
 
