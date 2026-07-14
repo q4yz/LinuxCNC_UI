@@ -85,7 +85,7 @@ export const api = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  loadProgram: (filename) => postJson('/file/load_program', { filename }),
+  loadProgram: (filename) => postJson('/files/load_program', { filename }),
 
   // Configs
   fetchConfigs: async () => {

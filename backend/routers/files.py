@@ -2,6 +2,8 @@ import os
 import logging
 from typing import List
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from hardware import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.routers.files")
 
@@ -12,6 +14,11 @@ NC_FILES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "nc_file
 
 # Ensure the directory exists
 os.makedirs(NC_FILES_DIR, exist_ok=True)
+
+
+class LoadProgramRequest(BaseModel):
+    """Pydantic model for selecting a G-code file to load into the controller."""
+    filename: str
 
 
 @router.get("", summary="List Files", description="Returns a list of all G-code files in the nc_files directory.")
@@ -52,10 +59,24 @@ def delete_file(filename: str):
     filepath = os.path.join(NC_FILES_DIR, filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found.")
-    
+
     try:
         os.remove(filepath)
         return {"status": "success", "message": f"Deleted {filename}"}
     except Exception as e:
         logger.error(f"Failed to delete file {filename}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete file.")
+
+
+@router.post("/load_program", summary="Load G-Code Program", description="Loads a previously uploaded G-code file into the LinuxCNC interpreter.")
+def load_program(payload: LoadProgramRequest):
+    """Loads a G-code program onto the CNC controller."""
+    filepath = os.path.join(NC_FILES_DIR, payload.filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    execute_sync_cmd("reset_interpreter")
+    execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_AUTO", 2))
+    res = execute_sync_cmd("program_open", 5, filepath)
+    execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_MANUAL", 1))
+    return res
