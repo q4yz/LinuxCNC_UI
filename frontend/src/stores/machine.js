@@ -8,6 +8,32 @@ const AXIS_NAMES = ['X', 'Y', 'Z'];
 // Sentinel value accepted by the backend /machine/home endpoint to home all axes
 const HOME_ALL_AXES = -1;
 
+// Temperature history rolling window (10 seconds)
+const TIME_WINDOW_MS = 10000;
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const applyDelta = (target, delta) => {
+  if (!isPlainObject(target) || !isPlainObject(delta)) {
+    return target;
+  }
+
+  Object.keys(delta).forEach((key) => {
+    const deltaValue = delta[key];
+
+    if (isPlainObject(deltaValue)) {
+      if (!isPlainObject(target[key])) {
+        target[key] = {};
+      }
+      applyDelta(target[key], deltaValue);
+    } else {
+      target[key] = deltaValue;
+    }
+  });
+
+  return target;
+};
+
 export const useMachineStore = defineStore('machine', {
   state: () => ({
     connectionStatus: 'disconnected', // 'disconnected', 'connecting', 'connected'
@@ -25,7 +51,8 @@ export const useMachineStore = defineStore('machine', {
       current_line: 0,
       g5x_index: 1,
       target_temp: 0.0,
-      actual_temp: 0.0
+      actual_temp: 0.0,
+      temperatures: {}
     },
     // Multi-sensor temperatures dictionary (populated from telemetry)
     temperatures: {},
@@ -33,7 +60,8 @@ export const useMachineStore = defineStore('machine', {
     socket: null,
     isUpdating: false,
     jogIntervals: {}, // Map to hold active interval IDs for each axis
-    temperatureHistory: [] // Array of { time: timestamp, actual: temp, target: temp }
+    temperatureHistory: [], // Array of { time: timestamp, sensors: {...} }
+    temperaturePollingInterval: null // Fixed-interval polling for zero-order hold
   }),
 
   getters: {
@@ -69,33 +97,44 @@ export const useMachineStore = defineStore('machine', {
       this.socket.onopen = () => {
         console.log("Connected to LinuxCNC Telemetry");
         this.connectionStatus = 'connected';
+        
+        // Start fixed-interval polling for temperature history (zero-order hold pattern)
+        // This ensures chart points are recorded every 1 second, regardless of diff arrival timing
+        this.temperaturePollingInterval = setInterval(() => {
+          const now = Date.now(); // Millisecond timestamp for pruning logic
+          const nowDate = new Date();
+          const timeLabel = `${nowDate.getHours().toString().padStart(2, '0')}:${nowDate.getMinutes().toString().padStart(2, '0')}:${nowDate.getSeconds().toString().padStart(2, '0')}`;
+
+          // Read fully-merged state (zero-order hold): use last known values even if not in recent diff
+          // IMPORTANT: Deep copy temperatures to avoid storing object references
+          this.temperatureHistory.push({
+            timestamp: now,          // For pruning logic (milliseconds)
+            time: timeLabel,         // For chart display (HH:MM:SS)
+            sensors: JSON.parse(JSON.stringify(this.status.temperatures || {}))
+          });
+
+          // Prune data older than 10 seconds (strict rolling window)
+          const cutoff = now - TIME_WINDOW_MS;
+          this.temperatureHistory = this.temperatureHistory.filter(point => point.timestamp >= cutoff);
+        }, 1000); // Poll every 1 second for smooth 1-second intervals
       };
       
       this.socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
           
-          if (payload.type === 'status') {
-            // Merge status and temperatures separately to keep shape predictable
-            const sensors = payload.data.temperatures || {};
-            this.$patch({
-              status: payload.data,
-              temperatures: sensors
-            });
+          if (payload.type === 'full_state') {
+            // Full state: replace entire status and keep temperatures in sync
+            this.status = payload.data;
+            this.temperatures = this.status.temperatures || {};
 
-            // Append to temperature history array as a snapshot of sensor values
-            const now = new Date();
-            const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-
-            this.temperatureHistory.push({
-              time: timeLabel,
-              sensors: sensors
-            });
-
-            // Keep a rolling window of 100 data points to prevent memory leaks
-            if (this.temperatureHistory.length > 100) {
-              this.temperatureHistory.shift();
-            }
+          } else if (payload.type === 'delta') {
+            // Delta: merge into existing status, then sync temperatures reference
+            applyDelta(this.status, payload.data);
+            
+            // Always sync this.temperatures to the fully-merged this.status.temperatures
+            // This ensures the UI stays in sync with merged state, not just the last delta
+            this.temperatures = this.status.temperatures || {};
             
           } else if (payload.type === 'error') {
             this.errors.push(payload.data);
@@ -111,6 +150,12 @@ export const useMachineStore = defineStore('machine', {
         this.connectionStatus = 'disconnected';
         this.socket = null;
         
+        // Clean up temperature polling interval
+        if (this.temperaturePollingInterval) {
+          clearInterval(this.temperaturePollingInterval);
+          this.temperaturePollingInterval = null;
+        }
+        
         // Auto-reconnect
         setTimeout(() => {
           this.connect();
@@ -124,6 +169,21 @@ export const useMachineStore = defineStore('machine', {
           this.socket.close();
         }
       };
+    },
+
+    disconnect() {
+      // Explicitly disconnect and clean up resources
+      if (this.temperaturePollingInterval) {
+        clearInterval(this.temperaturePollingInterval);
+        this.temperaturePollingInterval = null;
+      }
+      
+      if (this.socket) {
+        this.socket.close();
+        this.socket = null;
+      }
+      
+      this.connectionStatus = 'disconnected';
     },
 
     // --- Hardware Control Actions ---

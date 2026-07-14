@@ -10,7 +10,8 @@ const fileInput = ref(null)
 
 const fetchFiles = async () => {
   try {
-    files.value = await api.fetchFiles()
+    const response = await api.fetchFiles()
+    files.value = Array.isArray(response) ? response : (response.files || [])
   } catch (error) {
     consoleStore.addMessage(`Failed to fetch files: ${error.message}`, 'error')
   }
