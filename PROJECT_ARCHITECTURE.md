@@ -625,6 +625,122 @@ Candidates for future work (maintain this architecture):
 
 ---
 
+## 14. Module System (Phase 2b/2c)
+
+New features are added as **isolated modules** rather than edits to
+the global shell. A module is a self-contained Python package
+(`backend/modules/<id>/`) plus an optional JS counterpart under
+(`frontend/src/modules/<id>/`) that plugs into the registry-driven
+discovery layer.
+
+### 14.1 Discovery & Lifecycle
+
+1. The backend's `ModuleRegistry` scans `backend/modules/*/` at
+   startup for sub-packages exposing a `setup()` factory.
+2. The `MODULES_ENABLED` env var (comma-separated module ids) filters
+   the list. Empty / unset mounts everything. Unknown ids log
+   `WARN unknown module id '<id>'` but never abort the boot.
+3. Each surviving module is wired into the shared `EventBus`,
+   handed a `ModuleContext`, and has its `on_load(ctx)` hook
+   invoked. Module HTTP routers are mounted at
+   `/api/v1/modules/<id>` automatically.
+4. On shutdown, `on_unload` is called in reverse registration order
+   and is **idempotent** (the registry may call it more than once
+   under `--reload`).
+5. The registry emits one summary log line so CI can grep it:
+
+   ```
+   registry: mounted=[a,b] skipped=0 missing=0
+   ```
+
+### 14.2 Frontend Mirroring
+
+The frontend `FrontendRegistry` mirrors the backend registry:
+
+- Modules live under `frontend/src/modules/<id>/index.js` with a
+  default export `{ manifest, onLoad, onUnload }`.
+- Discovery uses `import.meta.glob('../modules/*/index.js', { eager: false })`
+  — **never `eager: true`** (Gotcha #1).
+- The same `MODULES_ENABLED` env var filters the list.
+- The static sidebar list (Dashboard / Files / Config / Settings) is
+  always rendered; module-contributed sidebar entries are merged in
+  sorted by their `order` field.
+- The `SettingsView.vue` renders one tab per module that declares
+  `manifest.settingsPanel = true`. With zero modules mounted it
+  shows the literal header **"Settings (no modules mounted)"**.
+
+### 14.3 Authoritative Contract Documents
+
+- [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md)
+- [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md)
+- [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md)
+
+The contract documents are the source of truth for what a module
+**must** implement. The Python / JS code under `core/` mirrors
+those contracts and the included tests verify they hold.
+
+### 14.4 Anti-Patterns
+
+| ❌ Anti-Pattern | ✅ Correct | Reason |
+|---|---|---|
+| Edit `backend/main.py` to register a new router | Add a module under `backend/modules/<id>/` | Keeps `main.py` shell-only. |
+| Hardcode a feature in `frontend/src/App.vue` | Register a module, contribute sidebar entries via the manifest | Lets the shell stay unchanged. |
+| Use `import.meta.glob(..., { eager: true })` | Use `eager: false` | Prevents pulling disabled modules into the bundle. |
+| `defineStore('camera', ...)` inside a module | `defineStore('module_camera', ...)` | Passes the `^module_[a-z][a-z0-9_]+$` lint. |
+| Mutate an `EventBus` payload | Treat the payload as frozen / read-only | A subscriber's mutation must not leak across subscribers. |
+
+---
+
+## 15. Settings Subsystem
+
+Per-module persistent settings are owned by `SettingsStore` and
+exposed via four canonical REST endpoints.
+
+### 15.1 Storage Layout
+
+```
+<data_root>/modules/<module_id>/settings.json
+```
+
+`data_root` defaults to `./data` (relative to the backend's working
+directory). Each module owns one file; there is no shared schema or
+migration layer.
+
+### 15.2 Endpoints
+
+| Method | Path                                | Purpose                        |
+|--------|-------------------------------------|--------------------------------|
+| `GET`  | `/api/v1/modules/{id}/settings`     | Read merged payload (defaults + persisted). |
+| `GET`  | `/api/v1/modules/{id}/settings/{k}` | Read a single key. |
+| `PUT`  | `/api/v1/modules/{id}/settings`     | Bulk replace, returns merged. |
+| `PUT`  | `/api/v1/modules/{id}/settings/{k}` | Upsert a single key. |
+
+Modules **must not** add their own settings endpoints — the four
+above are sufficient for any JSON-serialisable settings object.
+
+### 15.3 Atomic Write
+
+Every `PUT` writes via `tempfile.mkstemp` + `fsync` + `os.replace`.
+A crash mid-write leaves the previous `settings.json` intact; the
+temp file is cleaned up on failure. The contract is verified by
+`backend/tests/test_settings_store.py`.
+
+### 15.4 Defaults
+
+`SettingsStore(module_id, data_root, defaults=<Pydantic model>)`
+fills in missing keys from the model on every read. This means new
+settings keys can be added in a later release without breaking
+older deployments.
+
+### 15.5 Frontend Wrapper
+
+`frontend/src/core/modules/settings.js` exposes `createModuleSettings(id)`
+which returns a typed wrapper around the four endpoints. Modules
+receive one instance in their `ModuleContext.settings` field so they
+never build URLs by hand.
+
+---
+
 ## Final Note
 
 This document is **living and evolving**. If you discover new patterns, anti-patterns, or constraints, update this file and commit the changes with a clear explanation.

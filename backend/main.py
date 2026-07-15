@@ -49,9 +49,10 @@ async def lifespan(app: FastAPI):
 
     # Discover / load pluggable hardware modules. ``registry`` injects
     # the EventBus into each module and mounts any routers they expose
-    # under ``/api/v1/modules/{name}``. Missing or empty ``modules/``
-    # package is logged but never fatal.
-    registry.discover_and_load(app)
+    # under ``/api/v1/modules/{id}``. Missing or empty ``modules/``
+    # package is logged but never fatal; the ``MODULES_ENABLED`` env
+    # var (comma-separated) restricts which discovered modules boot.
+    registry.boot(app)
     app.state.module_registry = registry
 
     yield
