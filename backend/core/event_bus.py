@@ -6,16 +6,34 @@ This module provides a lightweight event bus that lets backend modules
 other directly. Modules publish events to topics and subscribe to topics
 of interest. Subscribers are async callables invoked concurrently.
 
-To prevent high-frequency publishers (e.g. encoder or temperature
-samplers) from causing telemetry back-pressure, the bus optionally
-deduplicates state topics by skipping payloads whose value is unchanged
-from the most recently published payload on that topic.
+Two guarantees are enforced:
+
+1.  **Payload immutability.** Every :meth:`EventBus.publish` call
+    re-instantiates a fresh Pydantic model from
+    ``payload.model_dump()`` before fanning out, so a buggy subscriber
+    mutating the payload cannot affect other subscribers. This is the
+    rule from ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #3.
+
+2.  **State-topic rate-limiting.** Topics prefixed with ``"state."``
+    are deduplicated: if the incoming payload equals the last value
+    cached for that topic, the publish call becomes a no-op. This keeps
+    high-frequency publishers (encoder, temperature sampler) from
+    flooding downstream subscribers.
+
+The two rules are deliberately orthogonal: ``TelemetryBus`` (see
+:mod:`core.telemetry.bus`) gets a *by-reference* path explicitly
+opted-in by its consumers, because the 100 Hz telemetry stream cannot
+afford the cost of re-instantiating Pydantic models on every tick.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
 from collections import defaultdict
 from typing import Any, Callable, Dict, List
+
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +49,8 @@ class EventBus:
     Topics prefixed with ``"state."`` are deduplicated: if the incoming
     payload is equal to the last value published on that topic, the
     publish call becomes a no-op. This is the rate-limiting mechanism
-    referenced in the issue (state caching).
+    referenced in ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #3 (state
+    caching).
     """
 
     def __init__(self) -> None:
@@ -51,7 +70,7 @@ class EventBus:
                 ``await callback(topic, payload)`` on each publish.
         """
         self._subscribers[topic].append(callback)
-        logger.debug(f"Subscribed to topic: {topic}")
+        logger.debug("Subscribed to topic: %s", topic)
 
     def unsubscribe(self, topic: str, callback: Callable) -> bool:
         """Remove a previously registered callback.
@@ -74,20 +93,27 @@ class EventBus:
     async def publish(self, topic: str, payload: Any) -> None:
         """Publish an event to all subscribers of ``topic``.
 
-        For topics prefixed with ``"state."``, the payload is compared
-        against the last value cached for the topic and the publish is
-        skipped when they are equal. This is a cheap rate-limiting
-        mechanism that prevents high-frequency modules from causing
-        redundant work downstream.
+        Three rules apply, in order:
 
-        Subscribers are invoked concurrently; one failing subscriber is
-        logged but does not prevent the others from running.
+        1.  **State-topic rate-limit.** For topics prefixed with
+            ``"state."``, if the incoming payload equals the last cached
+            payload, the call is a no-op (rate-limit).
+        2.  **Payload immutability.** If ``payload`` is a Pydantic
+            :class:`BaseModel`, every subscriber receives a *fresh copy*
+            re-instantiated via ``type(payload).model_validate(payload.model_dump())``.
+            A subscriber mutating its copy cannot affect any other
+            subscriber or the publisher.
+        3.  **Concurrent fan-out.** Subscribers are invoked
+            concurrently via :func:`asyncio.gather`; one failing
+            subscriber is logged but does not block the others.
 
         Args:
             topic: The topic name to publish to.
-            payload: An arbitrary JSON-serialisable value to forward.
+            payload: An arbitrary value. Pydantic models are deep-copied
+                before delivery; plain dicts/lists/scalars are passed
+                through by reference (this bus does not clone them).
         """
-        # Rate-limit / state-cache: skip redundant state.* updates.
+        # 1. Rate-limit / state-cache: skip redundant state.* updates.
         if topic.startswith("state."):
             if self._state_cache.get(topic) == payload:
                 return
@@ -97,8 +123,33 @@ class EventBus:
         if not callbacks:
             return
 
-        tasks = [self._safe_invoke(cb, topic, payload) for cb in callbacks]
+        # Give every subscriber its own freshly-copied payload so a
+        # subscriber mutating its copy cannot leak into the publisher's
+        # copy or any other subscriber's copy.
+        tasks = [
+            self._safe_invoke(cb, topic, self._copy_payload(payload))
+            for cb in callbacks
+        ]
         await asyncio.gather(*tasks)
+
+    @staticmethod
+    def _copy_payload(payload: Any) -> Any:
+        """Return an immutable-friendly copy of ``payload``.
+
+        Pydantic v2 ``BaseModel`` instances are deep-copied via
+        :meth:`BaseModel.model_copy` so the new object is fully
+        independent — including nested lists/dicts/models. A subscriber
+        mutating any field cannot leak into the publisher or any other
+        subscriber.
+
+        Plain dicts/lists/scalars are returned by reference because
+        deep-copying arbitrary JSON would surprise perf-sensitive
+        modules (see the TelemetryBus sibling for the by-reference
+        escape hatch).
+        """
+        if isinstance(payload, BaseModel):
+            return payload.model_copy(deep=True)
+        return payload
 
     async def _safe_invoke(
         self, callback: Callable, topic: str, payload: Any
@@ -112,7 +163,7 @@ class EventBus:
             await callback(topic, payload)
         except Exception as exc:  # noqa: BLE001 - we explicitly want to swallow all errors here
             logger.error(
-                f"Subscriber error on topic '{topic}': {exc}", exc_info=True
+                "Subscriber error on topic '%s': %s", topic, exc, exc_info=True
             )
 
     def clear_cache(self) -> None:
@@ -129,3 +180,6 @@ class EventBus:
 # Modules should ``from core.event_bus import bus`` and call
 # ``bus.subscribe(...)`` / ``await bus.publish(...)``.
 bus = EventBus()
+
+
+__all__ = ["EventBus", "bus"]
