@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config_manager import MachineConfig
+from core.module_registry import registry
 from hardware.connection import connection
 
 
@@ -46,12 +47,20 @@ async def lifespan(app: FastAPI):
     # Start the jog safety watchdog
     task_watchdog = asyncio.create_task(jog.jog_watchdog())
 
+    # Discover / load pluggable hardware modules. ``registry`` injects
+    # the EventBus into each module and mounts any routers they expose
+    # under ``/api/v1/modules/{name}``. Missing or empty ``modules/``
+    # package is logged but never fatal.
+    registry.discover_and_load(app)
+    app.state.module_registry = registry
+
     yield
-    
+
     # Shutdown gracefully
     logger.info("Shutting down LinuxCNC background tasks...")
     task_telemetry.cancel()
     task_watchdog.cancel()
+    registry.unload()
 
 # Initialize FastAPI app
 app = FastAPI(

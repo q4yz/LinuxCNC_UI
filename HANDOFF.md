@@ -1,25 +1,25 @@
 ### Resolution Summary
-Adds an asynchronous `EventBus` in `backend/core/event_bus.py` so backend modules (e.g. Temperature, VFD, Spindle) can communicate through topics without importing one another directly, with state-topic deduplication acting as a rate-limit to prevent high-frequency publishers from flooding the bus.
+Implements the missing backend module-discovery infrastructure from issue #22: a `PluggableModule` Protocol that every isolated hardware module must satisfy, a `ModuleRegistry` that scans `backend/modules/` at startup, injects the shared `EventBus`, and mounts each module's HTTP router under `/api/v1/modules/{name}`. Hooked into FastAPI's lifespan in `backend/main.py`.
 
 ### Files Modified
-- `backend/core/event_bus.py` (new): `EventBus` class with `subscribe(topic, callback)`, `unsubscribe(topic, callback)`, async `publish(topic, payload)`, `clear_cache()`, and a `_safe_invoke` wrapper. A module-level `bus` singleton is exposed for shared use.
+- `backend/core/protocols.py` (new): Defines `PluggableModule` Protocol with `name: str`, `register(bus: EventBus) -> None`, and `get_router() -> Optional[APIRouter]`. Uses `typing.Protocol` so duck-typed modules are accepted without forcing inheritance.
+- `backend/core/module_registry.py` (new): `ModuleRegistry` class scanning a package (default `modules`) via `pkgutil.iter_modules`, calling each submodule's `setup()` factory, and wiring it through `register(bus)` then `app.include_router(router, prefix="/api/v1/modules/{name}", tags=[...])`. Catches and logs every per-module failure so a single broken module never aborts startup. Adds an `unload()` helper for clean shutdown (esp. with `--reload`). Exposes a module-level `registry` singleton.
+- `backend/main.py`: Imports `registry` from `core.module_registry`, invokes `registry.discover_and_load(app)` at the end of startup, stashes `app.state.module_registry = registry` for downstream introspection, and calls `registry.unload()` during shutdown.
 
 ### Architectural Decisions
-- **Location**: Placed under `backend/core/` per the repository agent guide, which reserves `core/` for shared models and configuration-style plumbing; this matches how `config_manager.py` and `models.py` are organised.
-- **Async fan-out**: Subscribers are dispatched concurrently via `asyncio.gather`, preserving the FastAPI async lifecycle required by `.agent/AGENT.md`.
-- **Fail-safe delivery**: `_safe_invoke` wraps each callback so a single misbehaving subscriber logs an error but never tears down the bus or skips sibling subscribers — matching the issue's "fire and forget" intent.
-- **Rate-limiting via state caching**: Topics prefixed with `state.` are deduplicated by comparing the incoming payload against the last published value. This addresses the issue's "rate-limiting or state-caching" requirement without imposing a fixed timer that would block the event loop. Non-state topics pass through unchanged so imperative commands (e.g. `vfd.set_freq`) are always delivered.
-- **Logging**: Uses the project's `logging` style (module-level `logger = logging.getLogger(__name__)`) consistent with `backend/hardware/connection.py`.
-- **Naming / style**: 4-space indentation, PEP 8 naming, type hints on public signatures — matches `backend/core/models.py` and `backend/hardware/connection.py`.
-- **Singleton**: A module-level `bus = EventBus()` instance is exported so callers do `from core.event_bus import bus`, mirroring the issue's reference snippet.
-- **Optional extras**: Added `unsubscribe()` and `clear_cache()` as small, focused helpers so consumers can tear down listeners cleanly during FastAPI shutdown or unit tests. These are non-breaking additions over the issue's example.
+- **Location**: Both new files live under `backend/core/` per `.agent/AGENT.md`, which reserves that path for shared models and configuration-style plumbing — the same location as `event_bus.py`, `config_manager.py`, and `models.py`.
+- **Discovery convention**: Modules are sub-packages of `modules/` that each expose a `setup()` factory returning a `PluggableModule`-shaped object. Single-file modules are skipped (`pkgutil.is_pkg == True` only) since a router needs a package layout. Missing or empty `modules/` directory is logged at WARNING and treated as no-op so backend boots cleanly during early development.
+- **Resilience over strictness**: All per-module errors (import failure, missing `setup`, raised exception, invalid `name`, duplicate name, exception in `register`) are caught and logged but never propagated. This prevents one misbehaving module from blocking the rest of the backend or the safety-critical startup sequence.
+- **Prefix namespacing**: Routers are mounted at `/api/v1/modules/{name}` (matching the rest of the API, which lives under `/api/v1`). Tags are namespaced too (`modules:my_sensor`) so OpenAPI output stays tidy.
+- **EventBus injection**: `discover_and_load` defaults to the module-level `bus` singleton from `core.event_bus`, but accepts an optional override for tests. This matches how `MachineConfig()` and `connection` are surfaced today.
+- **Style**: 4-space indentation, PEP 8 naming, type hints on public signatures, `logger = logging.getLogger(__name__)` (matches `core/event_bus.py`, `routers/jog.py`, etc.). Method bodies on `PluggableModule` use `...` Protocol placeholders.
+- **One concern per PR**: No unrelated refactors — frontend code untouched; no router rewrites; no behavior change for already-included routers. Module auto-mounting is purely additive.
 
 ### Testing Verification
 - [x] Ran local test suite / build checks
-  - `python3 -m compileall -q backend` → passes (no syntax errors anywhere in `backend/`, including the new module).
-  - Functional sanity script run from both the repo root and from `backend/`:
-    - `state.temp = 60.0` delivered, second identical payload deduplicated, then `61.5` delivered.
-    - Non-state topic `vfd.set_freq = 1200` delivered.
-    - A subscriber that raises `RuntimeError` does not block the other subscriber on the same `alert` topic; the error is logged by `_safe_invoke`.
-    - `unsubscribe()` removes the callback correctly.
-- [ ] Frontend `npm --prefix frontend run build` was attempted but fails on **pre-existing** missing files (`frontend/generated/api/services/ConfigurationService`, `SystemService`, etc.) that are unrelated to this PR — `git status` shows only `event_bus.py` (and the local `.venv/`) added on this branch, and the missing generated files exist on `main` as well. This issue does not touch any frontend code, so the frontend build is out of scope here.
+  - `python3 -m compileall -q backend` → passes (zero output).
+  - Import smoke test: `from core.protocols import PluggableModule` and `from core.module_registry import registry` succeed; `registry.modules` initializes as empty dict.
+  - End-to-end registry test with a synthetic `modules/my_sensor` package created in a temp dir (cleaned up after): discovered the module, confirmed `name == 'my_sensor'`, confirmed router was mounted at `/api/v1/modules/my_sensor/ping`, confirmed the EventBus injection actually subscribes (`bus.subscribe` was called inside `register`), then published `state.temperature` payloads through the real bus and confirmed the rate-limit / state-cache behaviour added in #21 still fires (a duplicate payload was suppressed and a fresh one was delivered). `registry.unload()` correctly empties `self.modules`.
+  - Confirmed graceful behaviour with `package_name='does_not_exist_pkg'` and with the (currently absent) default `modules` package: both log a WARNING and return without raising — backend startup is never blocked.
+  - Verified the lifespan change in `backend/main.py` against `git diff`: only the new import, the discover/unload calls, and `app.state.module_registry` plumbing; no other behaviour touched.
+- [ ] `npm --prefix frontend run build` was attempted but fails on **pre-existing** `[UNRESOLVED_IMPORT]` errors for `frontend/generated/api/services/MachineStateService`, `NcFilesService`, and others. `git status` shows only the three backend files added on this branch, and the missing generated files exist on `main` as well — this PR does not touch any frontend code, so the frontend build is out of scope here (same pre-existing condition as PR #21).
