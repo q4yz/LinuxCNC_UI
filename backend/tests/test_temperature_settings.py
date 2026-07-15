@@ -1,8 +1,9 @@
 """Tests for the temperature module's settings persistence.
 
 Exercises the canonical four-endpoint settings surface mounted by
-the registry. Verifies that ``history_window_seconds`` round-trips
-through the atomic ``SettingsStore`` write.
+the registry. Verifies that ``unit``, ``sensor_colors`` and
+``sample_period_ms`` round-trip through the atomic ``SettingsStore``
+write.
 """
 
 from __future__ import annotations
@@ -31,25 +32,33 @@ def test_settings_defaults_are_returned(tmp_data_root, clean_env):
     assert payload == {
         "sample_period_ms": 500,
         "ambient_celsius": 25.0,
-        "history_window_seconds": 10,
-        "history_poll_interval_ms": 1000,
+        "unit": "celsius",
+        "sensor_colors": {
+            "extruder": "#EF4444",
+            "bed": "#3B82F6",
+            "cpu": "#10B981",
+        },
     }
 
 
-def test_put_settings_persists_new_history_window(tmp_data_root, clean_env):
+def test_put_settings_persists_new_unit(tmp_data_root, clean_env):
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
     resp = client.put(
         "/api/v1/modules/temperature/settings",
-        json={"history_window_seconds": 30},
+        json={"unit": "kelvin"},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["history_window_seconds"] == 30
+    assert body["unit"] == "kelvin"
     # Defaults are still merged underneath the persisted value.
-    assert body["history_poll_interval_ms"] == 1000
     assert body["sample_period_ms"] == 500
     assert body["ambient_celsius"] == 25.0
+    assert body["sensor_colors"] == {
+        "extruder": "#EF4444",
+        "bed": "#3B82F6",
+        "cpu": "#10B981",
+    }
 
 
 def test_settings_round_trip_across_clients(tmp_data_root, clean_env):
@@ -58,33 +67,84 @@ def test_settings_round_trip_across_clients(tmp_data_root, clean_env):
     """
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
-    # First write sets history_window_seconds.
+    # First write sets ``unit``.
     client.put(
         "/api/v1/modules/temperature/settings",
-        json={"history_window_seconds": 45},
+        json={"unit": "kelvin"},
     )
     # Second write upserts a different key without overwriting the
     # first.
     client.put(
-        "/api/v1/modules/temperature/settings/history_poll_interval_ms",
-        json=2000,
+        "/api/v1/modules/temperature/settings/sample_period_ms",
+        json=750,
     )
     payload = client.get(
         "/api/v1/modules/temperature/settings",
     ).json()
-    assert payload["history_window_seconds"] == 45
-    assert payload["history_poll_interval_ms"] == 2000
+    assert payload["unit"] == "kelvin"
+    assert payload["sample_period_ms"] == 750
 
 
-def test_settings_survive_restart(tmp_data_root, clean_env):
-    """Restart the registry on the same data root and verify the
-    user-set ``history_window_seconds`` is still present.
+def test_settings_round_trip_sensor_colors(tmp_data_root, clean_env):
+    """Per-sensor colours persist via the bulk PUT endpoint and are
+    returned on subsequent reads. The store merges defaults
+    underneath the persisted payload, so an explicit partial map
+    fully replaces the default palette — this matches the
+    ``SettingsStore._merge_defaults`` behaviour. The frontend
+    always sends the complete map from the in-memory store, so the
+    visual identity is preserved end-to-end.
     """
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
     client.put(
         "/api/v1/modules/temperature/settings",
-        json={"history_window_seconds": 30},
+        json={"sensor_colors": {"extruder": "#000000", "cpu": "#FFFFFF"}},
+    )
+    payload = client.get(
+        "/api/v1/modules/temperature/settings",
+    ).json()
+    # The two keys the user explicitly set round-trip verbatim.
+    assert payload["sensor_colors"]["extruder"] == "#000000"
+    assert payload["sensor_colors"]["cpu"] == "#FFFFFF"
+    # The untouched key is gone — the user-supplied map fully
+    # replaced the default palette at the top-level dict key. The
+    # frontend always re-sends the merged map from memory so the
+    # UI never drops a sensor by accident.
+    assert "bed" not in payload["sensor_colors"]
+
+
+def test_settings_round_trip_full_sensor_colors(tmp_data_root, clean_env):
+    """When the caller sends the full map (as the frontend does),
+    every key round-trips and the default palette is preserved for
+    sensors not explicitly mentioned.
+    """
+    app, _ = _app(tmp_data_root)
+    client = TestClient(app)
+    payload = {
+        "extruder": "#000000",
+        "bed": "#222222",
+        "cpu": "#FFFFFF",
+        "chamber": "#123456",
+    }
+    client.put(
+        "/api/v1/modules/temperature/settings",
+        json={"sensor_colors": payload},
+    )
+    read = client.get(
+        "/api/v1/modules/temperature/settings",
+    ).json()
+    assert read["sensor_colors"] == payload
+
+
+def test_settings_survive_restart(tmp_data_root, clean_env):
+    """Restart the registry on the same data root and verify the
+    user-set ``unit`` is still present.
+    """
+    app, _ = _app(tmp_data_root)
+    client = TestClient(app)
+    client.put(
+        "/api/v1/modules/temperature/settings",
+        json={"unit": "kelvin"},
     )
     # New registry / new app instance on the same data root.
     app2, _ = _app(tmp_data_root)
@@ -92,7 +152,7 @@ def test_settings_survive_restart(tmp_data_root, clean_env):
     payload = client2.get(
         "/api/v1/modules/temperature/settings",
     ).json()
-    assert payload["history_window_seconds"] == 30
+    assert payload["unit"] == "kelvin"
 
 
 def test_settings_atomic_write_leaves_no_partial_file(
@@ -110,7 +170,7 @@ def test_settings_atomic_write_leaves_no_partial_file(
     # Seed an existing settings file.
     client.put(
         "/api/v1/modules/temperature/settings",
-        json={"history_window_seconds": 7},
+        json={"unit": "celsius"},
     )
 
     # Compute the on-disk path of the temperature settings file.
@@ -134,7 +194,7 @@ def test_settings_atomic_write_leaves_no_partial_file(
     with pytest.raises(RuntimeError, match="simulated crash"):
         client.put(
             "/api/v1/modules/temperature/settings",
-            json={"history_window_seconds": 99},
+            json={"unit": "kelvin"},
         )
     assert expected.read_bytes() == before
     # No leftover temp file.

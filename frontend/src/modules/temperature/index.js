@@ -20,12 +20,18 @@
 //   2. If the user only ever opens the Settings tab (no temperature
 //      panel), there is no reason to start the polling loop.
 //
+// As of issue #35 the module also exports a ``settingsPanel``
+// component so the Settings tab gets a fully-themed UI (unit
+// dropdown + per-sensor colour swatches) instead of the legacy
+// placeholder.
+//
 // References:
 //   * MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1 — lazy imports.
 //   * MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #2 — store id naming.
 
 import manifest from "./manifest.js";
 import TemperaturePanel from "./components/TemperaturePanel.vue";
+import TemperatureSettingsPanel from "./components/TemperatureSettingsPanel.vue";
 
 export default {
   manifest,
@@ -41,6 +47,15 @@ export default {
     // cleanup is not required here. Kept as a no-op for the
     // contract.
   },
+  // Phase 5 polish per issue #35 — the Settings view mounts this
+  // component inside the temperature tab so operators can flip the
+  // unit and pick per-sensor colours without leaving the Settings
+  // page.
+  settingsPanel: TemperatureSettingsPanel,
 };
 
-export { manifest, TemperaturePanel };
+export {
+  manifest,
+  TemperaturePanel,
+  TemperatureSettingsPanel,
+};

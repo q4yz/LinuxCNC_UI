@@ -44,6 +44,10 @@
  * @property {(ctx: ModuleContext) => void | Promise<void>} onLoad  Lifecycle hook.
  * @property {() => void} [onUnload] Optional teardown hook.
  * @property {SidebarEntry} [sidebar] Optional sidebar entry (mirrors manifest.sidebar).
+ * @property {import('vue').Component} [settingsPanel] Optional settings-tab component
+ *   rendered inside the Settings view when ``manifest.settingsPanel`` is
+ *   true. The component is mounted with no props — modules must
+ *   consume the registry's settings client / Pinia store directly.
  */
 
 /**

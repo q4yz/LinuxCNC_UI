@@ -6,9 +6,12 @@
 //   * ``sensors`` — the latest sensor dict, updated whenever the
 //     machine module publishes a ``state.temperatures`` event on the
 //     event bus (or when the dashboard renders and starts polling).
-//   * ``history`` — the rolling ``windowMs``-second chart history. The
-//     ``snapshot()`` action pushes a point at ``pollMs`` cadence
-//     (zero-order hold) and prunes anything older than ``windowMs``.
+//   * ``history`` — the rolling 30 s chart history (fixed window per
+//     issue #35). The ``snapshot()`` action pushes a point at
+//     ``pollMs`` cadence and prunes anything outside the window.
+//   * ``unit`` — display unit toggle (``"celsius"`` / ``"kelvin"``).
+//   * ``visibleSensors`` — per-sensor chart visibility toggles.
+//   * ``sensorColors`` — per-sensor colour map shared with the chart.
 //
 // The store id is namespaced under the ``module_`` prefix per
 // ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #2 so it can never
@@ -22,17 +25,21 @@ import { onScopeDispose, ref } from "vue";
 
 import manifest from "./manifest.js";
 import { eventBus } from "../../core/modules/event-bus.js";
+import { createModuleSettings } from "../../core/modules/settings.js";
 
-// Defaults mirror the backend ``TemperatureSettings`` Pydantic model
-// (see ``backend/modules/temperature/settings.py``). The frontend
-// receives ``history_window_seconds`` and ``history_poll_interval_ms``
-// from the settings endpoint on startup; thereafter those values are
-// treated as immutable configuration sourced from the backend.
-// Settings are read **once** at boot — the chart shape is fixed by
-// the user's config and not something the dashboard needs to
-// renegotiate over and over (see issue #32 § 6.6).
-const DEFAULT_WINDOW_MS = 10_000;
+// Issue #35 § 5.1 / § 5.2: the chart is locked to a fixed 30 s
+// window of 1 s ticks. The historical ``history_window_seconds`` /
+// ``history_poll_interval_ms`` knobs were removed because they were
+// never honoured by the chart anyway.
+const WINDOW_SECONDS = 30;
 const DEFAULT_POLL_MS = 1_000;
+const FALLBACK_COLOR = "#A855F7"; // Purple — used when the backend
+// introduces a sensor the frontend has no colour for yet.
+const DEFAULT_SENSOR_COLORS = {
+  extruder: "#EF4444",
+  bed: "#3B82F6",
+  cpu: "#10B981",
+};
 
 const TOPIC = "state.temperatures";
 
@@ -43,6 +50,18 @@ const TOPIC = "state.temperatures";
 // (``frontend/scripts/check-store-ids.mjs``) doesn't false-positive
 // on the comment above.
 const STORE_ID = `module_${manifest.id}`;
+
+// Singleton settings client for the canonical four-endpoint
+// settings surface. Created lazily so a missing module store (e.g.
+// a unit test that mounts Pinia but no event bus) never trips the
+// registry bootstrap order.
+let settingsClientSingleton = null;
+function settingsClient() {
+  if (!settingsClientSingleton) {
+    settingsClientSingleton = createModuleSettings(manifest.id);
+  }
+  return settingsClientSingleton;
+}
 
 /**
  * Structured clone for arbitrary JSON-serialisable payloads. Falls
@@ -64,16 +83,33 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function roundTo(value, decimals) {
+  if (!Number.isFinite(value)) return 0;
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
 export const useTemperatureStore = defineStore(
   STORE_ID,
   () => {
     // --- reactive state ------------------------------------------- //
     const sensors = ref({});
     const history = ref([]);
-    // Settings pulled from the backend on first read. We keep the
-    // values reactive so the chart window can react to live changes.
-    const windowMs = ref(DEFAULT_WINDOW_MS);
+    // Locked to 30 s — see issue #35 § 2.2. The chart shape is no
+    // longer configurable.
+    const windowMs = ref(WINDOW_SECONDS * 1000);
     const pollMs = ref(DEFAULT_POLL_MS);
+    // Display unit. Backed by ``settings.unit``; flips the
+    // chart Y-axis and the control-box labels without touching the
+    // raw value.
+    const unit = ref("celsius");
+    // Per-sensor chart-visibility toggle. Defaults to true on first
+    // sighting.
+    const visibleSensors = ref({});
+    // Per-sensor colour. Sourced from ``settings.sensor_colors``;
+    // any sensor the backend introduces falls back to the legacy
+    // purple ``#A855F7``.
+    const sensorColors = ref({ ...DEFAULT_SENSOR_COLORS });
 
     // --- non-reactive handles ------------------------------------- //
     let pollHandle = null;
@@ -85,21 +121,124 @@ export const useTemperatureStore = defineStore(
 
     // --- helpers -------------------------------------------------- //
 
+    function seedVisibility() {
+      const next = {};
+      for (const name of Object.keys(sensors.value || {})) {
+        if (typeof visibleSensors.value[name] === "boolean") {
+          next[name] = visibleSensors.value[name];
+        } else {
+          next[name] = true;
+        }
+      }
+      visibleSensors.value = next;
+    }
+
     function applySettings(settings) {
       if (!settings || typeof settings !== "object") return;
-      if (Number.isFinite(settings.history_window_seconds)) {
-        windowMs.value = Math.max(1, settings.history_window_seconds) * 1000;
+      // ``unit``: only overwrite when the backend has something to
+      // say about it; otherwise keep the in-memory state so the UI
+      // doesn't flicker between renders.
+      if (settings.unit === "celsius" || settings.unit === "kelvin") {
+        unit.value = settings.unit;
       }
-      if (Number.isFinite(settings.history_poll_interval_ms)) {
-        pollMs.value = Math.max(100, settings.history_poll_interval_ms);
+      // ``sensor_colors``: deep-merge so a partial backend payload
+      // (e.g. only one entry) doesn't wipe the rest of the palette.
+      if (settings.sensor_colors && typeof settings.sensor_colors === "object") {
+        const next = { ...DEFAULT_SENSOR_COLORS, ...sensorColors.value };
+        for (const [name, hex] of Object.entries(settings.sensor_colors)) {
+          if (typeof hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
+            next[name] = hex;
+          }
+        }
+        sensorColors.value = next;
       }
+    }
+
+    /**
+     * Format a Celsius value for display in the active unit.
+     * Rounded to two decimals — see issue #35 § 5.1 / § 6.
+     *
+     * @param {number|null|undefined} celsius
+     * @returns {number}
+     */
+    function displayTemp(celsius) {
+      if (!Number.isFinite(celsius)) return 0;
+      const value = unit.value === "kelvin" ? celsius + 273.15 : celsius;
+      return roundTo(value, 2);
+    }
+
+    /**
+     * Toggle the display unit. Persists via the backend so the next
+     * page reload picks up the same choice.
+     *
+     * @param {"celsius"|"kelvin"} nextUnit
+     */
+    async function setUnit(nextUnit) {
+      if (nextUnit !== "celsius" && nextUnit !== "kelvin") return;
+      if (unit.value === nextUnit) return;
+      unit.value = nextUnit;
+      try {
+        await settingsClient().writeKey("unit", nextUnit);
+      } catch (_) {
+        // Best-effort — the in-memory state is already updated.
+      }
+    }
+
+    /**
+     * Flip the chart visibility for a single sensor. The control-box
+     * row stays rendered so operators can still set the target.
+     *
+     * @param {string} name
+     */
+    function toggleSensorVisibility(name) {
+      const current = visibleSensors.value[name];
+      visibleSensors.value = {
+        ...visibleSensors.value,
+        [name]: !(current !== false),
+      };
+    }
+
+    /**
+     * Update a sensor's chart + control-box colour. Persists via
+     * ``PUT /settings/sensor_colors`` so the choice survives a
+     * reload.
+     *
+     * @param {string} name
+     * @param {string} hex
+     */
+    async function setSensorColor(name, hex) {
+      if (!name || typeof name !== "string") return;
+      if (typeof hex !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return;
+      const next = { ...sensorColors.value, [name]: hex };
+      sensorColors.value = next;
+      try {
+        await settingsClient().writeKey("sensor_colors", {
+          ...next,
+        });
+      } catch (_) {
+        // Best-effort — the in-memory state is already updated.
+      }
+    }
+
+    /**
+     * Return the colour for ``name`` — defaults to the legacy
+     * purple when the backend introduces a sensor the palette
+     * doesn't know about.
+     *
+     * @param {string} name
+     */
+    function colorFor(name) {
+      return sensorColors.value[name] || FALLBACK_COLOR;
     }
 
     function snapshot() {
       const now = Date.now();
       const date = new Date(now);
       const pad = (n) => n.toString().padStart(2, "0");
-      const label = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+      const cents = Math.floor(date.getMilliseconds() / 10);
+      const label = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
+        date.getSeconds(),
+      )}.${cents.toString().padStart(2, "0")}`;
       // Deep clone so a frozen payload stays deep-frozen in our
       // rolling buffer; mutating one history point can't corrupt
       // another point's ``sensors`` snapshot.
@@ -165,6 +304,7 @@ export const useTemperatureStore = defineStore(
       }
       if (next && typeof next === "object") {
         sensors.value = clone(next);
+        seedVisibility();
       }
     }
 
@@ -176,9 +316,7 @@ export const useTemperatureStore = defineStore(
      */
     async function refreshSettings() {
       try {
-        const settings = await fetch(
-          `/api/v1/modules/${manifest.id}/settings`,
-        ).then(async (r) => (r.ok ? r.json() : null));
+        const settings = await settingsClient().readAll();
         if (settings) applySettings(settings);
       } catch (_) {
         // Settings are best-effort — fall back to defaults.
@@ -213,8 +351,8 @@ export const useTemperatureStore = defineStore(
       ingest(payload);
     });
 
-    // Read settings ONCE at boot. The user changes ``windowMs`` /
-    // ``pollMs`` from the Settings UI; that UI calls
+    // Read settings ONCE at boot. The user changes ``unit`` /
+    // ``sensor_colors`` from the Settings UI; that UI calls
     // ``refreshSettings`` explicitly after a successful PUT. Periodic
     // re-fetches were unnecessary overhead — the chart shape is
     // determined by the backend config and is effectively static.
@@ -225,7 +363,13 @@ export const useTemperatureStore = defineStore(
     // ``temperaturePollingInterval`` if the user navigated away —
     // this hook fixes that risk for the module store per issue #32
     // § 6.4.
-    onScopeDispose(stop);
+    onScopeDispose(() => {
+      stop();
+      if (busUnsub) {
+        busUnsub();
+        busUnsub = null;
+      }
+    });
 
     // Public surface.
     return {
@@ -233,12 +377,20 @@ export const useTemperatureStore = defineStore(
       history,
       windowMs,
       pollMs,
+      unit,
+      visibleSensors,
+      sensorColors,
       ingest,
       snapshot,
       start,
       stop,
       refreshSettings,
       refreshSensors,
+      displayTemp,
+      setUnit,
+      toggleSensorVisibility,
+      setSensorColor,
+      colorFor,
     };
   },
 );
