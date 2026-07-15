@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api } from '../services/api'
+import { CompilerService } from '../services/api/services/CompilerService'
 import { useConsoleStore } from '../stores/console'
 import ConfigEditor from './ConfigEditor.vue'
 
@@ -60,7 +60,7 @@ const closeViewModal = () => {
 
 const loadProfiles = async () => {
   try {
-    const response = await api.fetchCompilerProfiles()
+    const response = await CompilerService.listCompilerProfiles()
     profiles.value = Array.isArray(response.profiles) ? response.profiles : []
     if (!selectedProfile.value && profiles.value.length > 0) {
       selectedProfile.value = profiles.value[0]
@@ -78,8 +78,14 @@ const generateFiles = async (filename) => {
 
   isGenerating.value = true
   try {
-    const response = await api.generateProfile(filename)
-    generatedFiles.value = response.files || { ini: '', hal: '', json: '' }
+    const response = await CompilerService.generateCompilerArtifacts(filename)
+    const previews = response.generated_files || {}
+    generatedFiles.value = {
+      source_cfg: '',
+      ini: previews.ini || '',
+      hal: previews.hal || '',
+      json: previews.json || '',
+    }
     consoleStore.addMessage(response.message || `Generated staged files for ${selectedProfile.value}`, 'success')
   } catch (error) {
     consoleStore.addMessage(`Generation Failed: ${error.message}`, 'error')
@@ -95,7 +101,7 @@ const deploy = async () => {
 
   isDeploying.value = true
   try {
-    const response = await api.deployCompilerStage()
+    const response = await CompilerService.deployCompilerArtifacts()
     consoleStore.addMessage(response.message || 'Deploy complete. Restart LinuxCNC backend.', 'success')
     if (response.restart_required) {
       consoleStore.addMessage('LinuxCNC restart is required to activate the new configuration.', 'warning')

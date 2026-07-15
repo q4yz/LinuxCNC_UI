@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { api } from '../services/api'
+import { ConfigurationService } from '../services/api/services/ConfigurationService'
+import { ProgramExecutionService } from '../services/api/services/ProgramExecutionService'
 import { useConsoleStore } from '../stores/console'
 
 const consoleStore = useConsoleStore()
@@ -8,7 +9,7 @@ const configs = ref([])
 
 const loadConfigs = async () => {
   try {
-    configs.value = await api.fetchConfigs()
+    configs.value = await ConfigurationService.listConfigs()
   } catch (e) {
     consoleStore.addMessage(`Failed to fetch configs: ${e.message}`, 'error')
   }
@@ -17,7 +18,7 @@ const loadConfigs = async () => {
 const parseKlipper = async () => {
   try {
     consoleStore.addMessage("Triggering Klipper-to-LinuxCNC parser...", 'command')
-    await api.triggerParser()
+    await ProgramExecutionService.triggerParser()
     consoleStore.addMessage("Parsing started in background.", 'info')
   } catch (e) {
     consoleStore.addMessage(`Parser failed: ${e.message}`, 'error')

@@ -3,7 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { ini } from '@codemirror/lang-ini'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { api } from '../services/api'
+import { ConfigurationService } from '../services/api/services/ConfigurationService'
 import { useConsoleStore } from '../stores/console'
 
 const props = defineProps({
@@ -47,7 +47,7 @@ const loadFile = async () => {
       }
     }
 
-    const res = await api.readConfig(props.filename)
+    const res = await ConfigurationService.readConfig(props.filename)
     fileContent.value = res.content
     isLoaded.value = true
   } catch (e) {
@@ -63,7 +63,7 @@ const saveCurrentFile = async () => {
 
   isSaving.value = true
   try {
-    await api.saveConfig(props.filename, fileContent.value)
+    await ConfigurationService.saveConfig(props.filename, { content: fileContent.value })
     consoleStore.addMessage(`Saved config ${props.filename}`, 'success')
   } catch (e) {
     consoleStore.addMessage(`Failed to save ${props.filename}: ${e.message}`, 'error')

@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
-import { api } from '../services/api'
+import { generateSetOffset } from '../config/gcodes'
+import { JoggingService } from '../services/api/services/JoggingService'
+import { MachineStateService } from '../services/api/services/MachineStateService'
 import { useConsoleStore } from './console'
 
 // Axis index to G-code letter mapping (X=0, Y=1, Z=2)
@@ -193,7 +195,7 @@ export const useMachineStore = defineStore('machine', {
       // If currently Estopped, send Reset. Otherwise send Estop.
       const targetState = this.isEstop ? 'estop_reset' : 'estop';
       try {
-        await api.setMachineState(targetState);
+        await MachineStateService.setMachineState({ state: targetState });
         if (targetState === 'estop') {
           consoleStore.addMessage("E-STOP Engaged", 'error');
         } else {
@@ -214,7 +216,7 @@ export const useMachineStore = defineStore('machine', {
       }
       const targetState = this.isMachineOn ? 'off' : 'on';
       try {
-        await api.setMachineState(targetState);
+        await MachineStateService.setMachineState({ state: targetState });
         if (targetState === 'on') {
           consoleStore.addMessage("Machine Power ON", 'success');
         } else {
@@ -232,11 +234,14 @@ export const useMachineStore = defineStore('machine', {
       // Standard velocity for UI testing
       const velocity = 500;
       const axisName = AXIS_NAMES[axis];
-      
+
       // Ensure the machine is in manual mode first, though the backend handles this
       try {
         consoleStore.addMessage(`Jogging ${axisName} axis ${distance}mm`, 'info');
-        await api.jogAxis(axis, velocity, distance);
+        await JoggingService.jogAxis({
+          velocities: { [axis]: velocity },
+          distance,
+        });
       } catch (e) {
         consoleStore.addMessage(`Failed to jog ${axisName}: ${e.message}`, 'error');
         console.error("Failed to jog axis", axis, e);
@@ -254,12 +259,15 @@ export const useMachineStore = defineStore('machine', {
 
         // 2. Send the initial Start command
         consoleStore.addMessage(`Jogging ${axisName} axis continuously...`, 'info');
-        await api.jogAxis(axis, velocity, 0);
+        await JoggingService.jogAxis({
+          velocities: { [axis]: velocity },
+          distance: 0,
+        });
 
         // 3. Start the Keep-Alive loop
         this.jogIntervals[axis] = setInterval(async () => {
           try {
-            await api.jogKeepalive(axis);
+            await JoggingService.jogKeepalive({ axes: [axis] });
           } catch (e) {
             console.error(`Keepalive ping failed for axis ${axis}:`, e);
           }
@@ -282,7 +290,7 @@ export const useMachineStore = defineStore('machine', {
         }
 
         // 2. Send the explicit Stop command
-        await api.jogStop(axis);
+        await JoggingService.jogStop({ axes: [axis] });
         consoleStore.addMessage(`${axisName} Jog stopped`, 'info');
       } catch (e) {
         consoleStore.addMessage(`Failed to stop jog: ${e.message}`, 'error');
@@ -294,7 +302,7 @@ export const useMachineStore = defineStore('machine', {
       const consoleStore = useConsoleStore()
       try {
         consoleStore.addMessage(`Homing axis index ${axisIndex}...`, 'info')
-        await api.homeAxis(axisIndex);
+        await MachineStateService.homeAxis({ axis: axisIndex });
         consoleStore.addMessage(`Homed axis ${axisIndex} successfully`, 'success')
       } catch (e) {
         consoleStore.addMessage(`Failed to home axis ${axisIndex}: ${e.message}`, 'error')
@@ -306,7 +314,7 @@ export const useMachineStore = defineStore('machine', {
       const consoleStore = useConsoleStore()
       try {
         consoleStore.addMessage("Homing all axes...", 'info')
-        await api.homeAxis(HOME_ALL_AXES);
+        await MachineStateService.homeAxis({ axis: HOME_ALL_AXES });
         consoleStore.addMessage("All axes homed successfully", 'success')
       } catch (e) {
         consoleStore.addMessage(`Failed to home all axes: ${e.message}`, 'error')
@@ -320,7 +328,8 @@ export const useMachineStore = defineStore('machine', {
       if (!axisName) return;
       try {
         consoleStore.addMessage(`Setting work offset for ${axisName} to ${value}...`, 'command')
-        await api.setWorkOffset(axisName, value);
+        const cmd = generateSetOffset(axisName, value);
+        await MachineStateService.runMdiCommand({ command: cmd });
       } catch (e) {
         consoleStore.addMessage(`Failed to set position for ${axisName}: ${e.message}`, 'error')
         console.error("Failed to set position for axis", axisIndex, e);
@@ -331,18 +340,21 @@ export const useMachineStore = defineStore('machine', {
       const consoleStore = useConsoleStore()
       try {
         consoleStore.addMessage(`Switching to Coordinate System: ${gcodeString}`, 'command')
-        await api.setCoordinateSystem(gcodeString);
+        await MachineStateService.runMdiCommand({ command: gcodeString });
       } catch (e) {
         consoleStore.addMessage(`Failed to switch Coordinate System: ${e.message}`, 'error')
         console.error("Failed to switch coordinate system", e);
       }
     },
-    
+
     async setTargetTemperature(sensorName, targetValue) {
       const consoleStore = useConsoleStore()
       try {
         consoleStore.addMessage(`Setting ${sensorName} target temperature to ${targetValue}°C`, 'command')
-        await api.setTargetTemperature(sensorName, targetValue);
+        await MachineStateService.setTargetTemperature({
+          sensor_name: sensorName,
+          target: parseFloat(targetValue),
+        });
       } catch (e) {
         consoleStore.addMessage(`Failed to set ${sensorName} target temperature: ${e.message}`, 'error')
         console.error("Failed to set temperature", e);

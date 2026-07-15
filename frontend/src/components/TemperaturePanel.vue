@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
-import { api } from '../services/api'
+import { MachineStateService } from '../services/api/services/MachineStateService'
 
 const store = useMachineStore()
 const { status, temperatureHistory, temperatures } = storeToRefs(store)
@@ -14,7 +14,7 @@ const setTemp = async (name) => {
   const t = parseFloat(raw || 0)
   try {
     console.log(`Setting target temperature for ${name} to ${t}°C`)
-    await api.setTargetTemperature(name, t)
+    await MachineStateService.setTargetTemperature({ sensor_name: name, target: t })
     // Optionally clear the input or keep it
   } catch (e) {
     console.error('Failed to set temperature', e)
@@ -24,7 +24,7 @@ const setTemp = async (name) => {
 const turnOff = async (name) => {
   inputTemps.value[name] = 0
   try {
-    await api.setTargetTemperature(name, 0)
+    await MachineStateService.setTargetTemperature({ sensor_name: name, target: 0 })
   } catch (e) {
     console.error('Failed to turn off temperature for', name, e)
   }

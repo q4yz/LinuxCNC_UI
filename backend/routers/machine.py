@@ -1,7 +1,8 @@
 import logging
 import time
+from typing import Optional
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from hardware import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.routers.machine")
@@ -12,32 +13,49 @@ program_router = APIRouter(prefix="/api/v1/program", tags=["Program Execution"])
 
 class StateCommand(BaseModel):
     """Pydantic model for setting machine power state."""
-    state: str  # 'on', 'off', 'estop', 'estop_reset'
+    state: str = Field(..., description="Target machine state: 'on', 'off', 'estop', or 'estop_reset'")
 
 
 class ModeCommand(BaseModel):
     """Pydantic model for setting machine task mode."""
-    mode: str  # 'manual', 'mdi', 'auto'
+    mode: str = Field(..., description="Target task mode: 'manual', 'mdi', or 'auto'")
 
 
 class HomeCommand(BaseModel):
     """Pydantic model for homing an axis."""
-    axis: int
+    axis: int = Field(..., description="Axis index to home (0=X, 1=Y, 2=Z). Use -1 to home all axes.")
 
 
 class MdiCommand(BaseModel):
     """Pydantic model for executing MDI commands."""
-    command: str
+    command: str = Field(..., description="G-code / MDI command string to execute")
 
 
 class TemperatureRequest(BaseModel):
     """Pydantic model for setting a sensor target temperature."""
-    sensor_name: str
-    target: float
+    sensor_name: str = Field(..., description="Logical sensor identifier (e.g., 'extruder', 'bed')")
+    target: float = Field(..., description="Target temperature in Celsius")
 
 
-@router.post("/state", summary="Set Machine State", description="Toggle machine E-Stop or Power state.")
-def set_state(cmd: StateCommand):
+class StatusResponse(BaseModel):
+    """Generic response model for endpoints that return a status string."""
+    status: str = Field(..., description="Outcome reported by the hardware layer (e.g., 'success')")
+
+
+class ParseResponse(BaseModel):
+    """Response model for the Klipper-to-LinuxCNC parser trigger."""
+    status: str = Field(..., description="Outcome of the parser trigger")
+    message: str = Field(..., description="Human-readable status message")
+
+
+@router.post(
+    "/state",
+    summary="Set Machine State",
+    description="Toggle machine E-Stop or Power state.",
+    operation_id="setMachineState",
+    response_model=StatusResponse,
+)
+def set_state(cmd: StateCommand) -> StatusResponse:
     """Toggle machine E-Stop or Power state."""
     states = {
         "on": getattr(linuxcnc, 'STATE_ON', 4),
@@ -47,11 +65,18 @@ def set_state(cmd: StateCommand):
     }
     if cmd.state not in states:
         raise HTTPException(status_code=400, detail="Invalid state")
-    return execute_sync_cmd("state", 3, states[cmd.state])
+    result = execute_sync_cmd("state", 3, states[cmd.state])
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@router.post("/mode", summary="Set Machine Mode", description="Change the machine task mode (manual, auto, mdi).")
-def set_mode(cmd: ModeCommand):
+@router.post(
+    "/mode",
+    summary="Set Machine Mode",
+    description="Change the machine task mode (manual, auto, mdi).",
+    operation_id="setMachineMode",
+    response_model=StatusResponse,
+)
+def set_mode(cmd: ModeCommand) -> StatusResponse:
     """Change the machine task mode (manual, auto, mdi)."""
     modes = {
         "manual": getattr(linuxcnc, 'MODE_MANUAL', 1),
@@ -60,65 +85,121 @@ def set_mode(cmd: ModeCommand):
     }
     if cmd.mode not in modes:
         raise HTTPException(status_code=400, detail="Invalid mode")
-    return execute_sync_cmd("mode", 5, modes[cmd.mode])
+    result = execute_sync_cmd("mode", 5, modes[cmd.mode])
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@router.post("/home", summary="Home Axis", description="Home a specific axis, or all axes if axis=-1.")
-def home_axis(cmd: HomeCommand):
+@router.post(
+    "/home",
+    summary="Home Axis",
+    description="Home a specific axis, or all axes if axis=-1.",
+    operation_id="homeAxis",
+    response_model=StatusResponse,
+)
+def home_axis(cmd: HomeCommand) -> StatusResponse:
     """Home a specific axis, or all axes if axis=-1."""
     execute_sync_cmd("mode", 0, getattr(linuxcnc, 'MODE_MANUAL', 1))
-    
+
     if cmd.axis == -1:
         # Assuming 3 axes (X, Y, Z) for baseline
         for i in range(3):
             execute_sync_cmd("home", 3, i)
-        return {"status": "success"}
+        return StatusResponse(status="success")
     else:
-        return execute_sync_cmd("home", 3, cmd.axis)
+        result = execute_sync_cmd("home", 3, cmd.axis)
+        return StatusResponse(status=result.get("status", "success"))
 
 
-@router.post("/mdi", summary="Run MDI Command", description="Execute a single MDI (G-Code) command. Automatically switches the machine to MDI mode.")
-def run_mdi(cmd: MdiCommand):
+@router.post(
+    "/mdi",
+    summary="Run MDI Command",
+    description="Execute a single MDI (G-Code) command. Automatically switches the machine to MDI mode.",
+    operation_id="runMdiCommand",
+    response_model=StatusResponse,
+)
+def run_mdi(cmd: MdiCommand) -> StatusResponse:
     """Execute a single MDI command."""
     logger.info(f"Running MDI: {cmd.command}")
     # Force switch to MDI mode before executing
     execute_sync_cmd("mode", 5, getattr(linuxcnc, 'MODE_MDI', 3))
-    return execute_sync_cmd("mdi", 0, cmd.command)
+    result = execute_sync_cmd("mdi", 0, cmd.command)
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@router.post("/temperature", summary="Set Target Temperature", description="Set the target temperature for the spindle/extruder heater.")
-def set_temperature(cmd: TemperatureRequest):
+@router.post(
+    "/temperature",
+    summary="Set Target Temperature",
+    description="Set the target temperature for the spindle/extruder heater.",
+    operation_id="setTargetTemperature",
+    response_model=StatusResponse,
+)
+def set_temperature(cmd: TemperatureRequest) -> StatusResponse:
     """Set the target temperature for a named sensor (e.g., 'extruder', 'bed')."""
-    return execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
+    result = execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@program_router.post("/run", summary="Run Program", description="Start or resume the loaded G-code program from a specific line.")
-def run_program(line_number: int = 0):
+@program_router.post(
+    "/run",
+    summary="Run Program",
+    description="Start or resume the loaded G-code program from a specific line.",
+    operation_id="runProgram",
+    response_model=StatusResponse,
+)
+def run_program(line_number: int = 0) -> StatusResponse:
     """Start the loaded G-code program."""
     execute_sync_cmd("mode", 3, getattr(linuxcnc, 'MODE_AUTO', 2))
-    return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RUN', 0), line_number)
+    result = execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RUN', 0), line_number)
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@program_router.post("/stop", summary="Stop Program", description="Stop/abort the currently running program.")
-def stop_program():
+@program_router.post(
+    "/stop",
+    summary="Stop Program",
+    description="Stop/abort the currently running program.",
+    operation_id="stopProgram",
+    response_model=StatusResponse,
+)
+def stop_program() -> StatusResponse:
     """Stop/abort the currently running program."""
-    return execute_sync_cmd("abort")
+    result = execute_sync_cmd("abort")
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@program_router.post("/pause", summary="Pause Program", description="Pause the currently running program.")
-def pause_program():
+@program_router.post(
+    "/pause",
+    summary="Pause Program",
+    description="Pause the currently running program.",
+    operation_id="pauseProgram",
+    response_model=StatusResponse,
+)
+def pause_program() -> StatusResponse:
     """Pause the currently running program."""
-    return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_PAUSE', 1))
+    result = execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_PAUSE', 1))
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@program_router.post("/resume", summary="Resume Program", description="Resume a paused program.")
-def resume_program():
+@program_router.post(
+    "/resume",
+    summary="Resume Program",
+    description="Resume a paused program.",
+    operation_id="resumeProgram",
+    response_model=StatusResponse,
+)
+def resume_program() -> StatusResponse:
     """Resume a paused program."""
-    return execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RESUME', 2))
+    result = execute_sync_cmd("auto", 0, getattr(linuxcnc, 'AUTO_RESUME', 2))
+    return StatusResponse(status=result.get("status", "success"))
 
 
-@program_router.post('/parse', summary='Trigger Parser')
-def trigger_parser():
+@program_router.post(
+    '/parse',
+    summary='Trigger Parser',
+    description='Manually trigger the Klipper-to-LinuxCNC configuration parser.',
+    operation_id='triggerParser',
+    response_model=ParseResponse,
+)
+def trigger_parser() -> ParseResponse:
     logger.info('Triggering Klipper-to-LinuxCNC parser...')
     time.sleep(1) # mock delay
-    return {'status': 'success', 'message': 'Parsing complete'}
+    return ParseResponse(status='success', message='Parsing complete')

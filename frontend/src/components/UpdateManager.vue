@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
 import { useConsoleStore } from '../stores/console'
-import { api } from '../services/api'
+import { SystemService } from '../services/api/services/SystemService'
 
 const store = useMachineStore()
 const consoleStore = useConsoleStore()
@@ -14,7 +14,7 @@ const latestVersion = ref('unknown')
 
 const fetchVersion = async () => {
   try {
-    const res = await api.getVersionInfo()
+    const res = await SystemService.getVersionInfo()
     // Prefer the simple `version` field (commit hash) if present
     currentVersion.value = res.version || res.current_version || 'unknown'
     latestVersion.value = res.latest_version || res.version || 'unknown'
@@ -31,13 +31,13 @@ const updateSystem = async () => {
   if (!confirm("Are you sure you want to update the system? The machine will stop and connection may be lost.")) {
     return
   }
-  
+
   try {
     store.$patch({ isUpdating: true })
     consoleStore.addMessage("System update initiated. Connection may be lost temporarily...", 'warning')
-    await api.triggerUpdate()
-    
-    // We expect the websocket to drop or page to reload eventually, 
+    await SystemService.triggerSystemUpdate()
+
+    // We expect the websocket to drop or page to reload eventually,
     // but we can optionally reload after a timeout.
     setTimeout(() => {
       window.location.reload()

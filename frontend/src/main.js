@@ -2,6 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import './style.css'
 import App from './App.vue'
+// Side-effecting import: configures the generated OpenAPI client's BASE URL.
+import './services/apiClient.js'
 
 // ECharts imports
 import ECharts from 'vue-echarts'

@@ -3,10 +3,24 @@ import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("backend.routers.system")
 
 router = APIRouter(prefix="/api/v1/system", tags=["System"])
+
+
+class VersionInfoResponse(BaseModel):
+    """Response model for GET /system/version."""
+    version: str = Field(..., description="Short git commit hash identifying the running build")
+    current_version: str = Field(..., description="Human-readable current release tag")
+    latest_version: str = Field(..., description="Human-readable latest known release tag")
+    update_available: bool = Field(..., description="Whether a newer release is known to be available")
+
+
+class SystemUpdateResponse(BaseModel):
+    """Response model for POST /system/update."""
+    status: str = Field(..., description="Outcome summary describing the update state")
 
 
 def _project_root() -> Path:
@@ -64,22 +78,26 @@ def _run_update_script() -> None:
     "/version",
     summary="Get Version Info",
     description="Return the current build version, latest known release, and whether an update is available.",
+    operation_id="getVersionInfo",
+    response_model=VersionInfoResponse,
 )
-def get_version() -> dict:
-    return {
-        "version": _current_commit_hash(),
-        "current_version": "v1.0.0",
-        "latest_version": "v1.0.1",
-        "update_available": True,
-    }
+def get_version() -> VersionInfoResponse:
+    return VersionInfoResponse(
+        version=_current_commit_hash(),
+        current_version="v1.0.0",
+        latest_version="v1.0.1",
+        update_available=True,
+    )
 
 
 @router.post(
     "/update",
     summary="Trigger System Update",
     description="Schedule scripts/update.sh (git pull + pip install) to run after the response is returned.",
+    operation_id="triggerSystemUpdate",
+    response_model=SystemUpdateResponse,
 )
-def trigger_update(background_tasks: BackgroundTasks) -> dict:
+def trigger_update(background_tasks: BackgroundTasks) -> SystemUpdateResponse:
     logger.warning("System update initiated via API.")
     background_tasks.add_task(_run_update_script)
-    return {"status": "update started"}
+    return SystemUpdateResponse(status="update started")

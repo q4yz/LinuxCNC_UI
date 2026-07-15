@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Dict, List
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from hardware import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.routers.jog")
@@ -17,13 +17,33 @@ active_jogs_lock = threading.Lock()
 
 class JogCommand(BaseModel):
     """Pydantic model for executing a jog."""
-    velocities: Dict[int, float]
-    distance: float = 0.0
+    velocities: Dict[int, float] = Field(
+        ...,
+        description="Mapping of axis index (0=X, 1=Y, 2=Z) to signed jog velocity in user units per minute",
+    )
+    distance: float = Field(
+        default=0.0,
+        description="Absolute step distance in mm; non-zero enables an incremental jog instead of continuous",
+    )
 
 
 class JogStopCommand(BaseModel):
     """Pydantic model for stopping a jog or sending a keep-alive ping."""
-    axes: List[int]
+    axes: List[int] = Field(..., description="Axis indices affected by this stop / keepalive call")
+
+
+class JogResponse(BaseModel):
+    """Response model for a jog command."""
+    status: str = Field(..., description="Outcome summary (e.g., 'ok')")
+    results: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-axis hardware layer results keyed by axis index (as string for JSON friendliness)",
+    )
+
+
+class JogStatusResponse(BaseModel):
+    """Response model for keepalive / stop jog endpoints."""
+    status: str = Field(..., description="Outcome summary (e.g., 'ok')")
 
 
 def _stop_axis(axis: int) -> None:
@@ -50,21 +70,27 @@ async def jog_watchdog():
             _stop_axis(axis)
 
 
-@router.post("/jog", summary="Jog Axis", description="Initiates a jog. Supports step, continuous, or stop commands depending on parameters.")
-def jog_axis(cmd: JogCommand):
+@router.post(
+    "/jog",
+    summary="Jog Axis",
+    description="Initiates a jog. Supports step, continuous, or stop commands depending on parameters.",
+    operation_id="jogAxis",
+    response_model=JogResponse,
+)
+def jog_axis(cmd: JogCommand) -> JogResponse:
     """
     Initiates a jog. Supports step, continuous, or stop commands
     depending on the velocity and distance parameters.
     """
     execute_sync_cmd("mode", 0, getattr(linuxcnc, 'MODE_MANUAL', 1))
 
-    results = {}
+    results: Dict[str, str] = {}
     for axis, velocity in cmd.velocities.items():
         if velocity == 0:
             continue
 
         if cmd.distance != 0:
-            results[axis] = execute_sync_cmd(
+            result = execute_sync_cmd(
                 "jog",
                 0,
                 getattr(linuxcnc, 'JOG_INCREMENT', 2),
@@ -76,7 +102,7 @@ def jog_axis(cmd: JogCommand):
         else:
             with active_jogs_lock:
                 active_jogs[axis] = time.time()
-            results[axis] = execute_sync_cmd(
+            result = execute_sync_cmd(
                 "jog",
                 0,
                 getattr(linuxcnc, 'JOG_CONTINUOUS', 1),
@@ -84,12 +110,19 @@ def jog_axis(cmd: JogCommand):
                 axis,
                 velocity,
             )
+        results[str(axis)] = result.get("status", "success")
 
-    return {"status": "ok", "results": results}
+    return JogResponse(status="ok", results=results)
 
 
-@router.post("/jog/keepalive", summary="Jog Keep-Alive", description="Refreshes the watchdog timer for an actively jogging axis. Must be called frequently.")
-def jog_keepalive(cmd: JogStopCommand):
+@router.post(
+    "/jog/keepalive",
+    summary="Jog Keep-Alive",
+    description="Refreshes the watchdog timer for an actively jogging axis. Must be called frequently.",
+    operation_id="jogKeepalive",
+    response_model=JogStatusResponse,
+)
+def jog_keepalive(cmd: JogStopCommand) -> JogStatusResponse:
     """
     Refreshes the watchdog timer for an actively jogging axis.
     Must be called frequently (e.g., every 250ms) during continuous jogging.
@@ -98,11 +131,17 @@ def jog_keepalive(cmd: JogStopCommand):
         for axis in cmd.axes:
             if axis in active_jogs:
                 active_jogs[axis] = time.time()
-    return {"status": "ok"}
+    return JogStatusResponse(status="ok")
 
 
-@router.post("/jog/stop", summary="Stop Jogging", description="Explicitly stops a continuous jog and removes it from the watchdog.")
-def stop_jog(cmd: JogStopCommand):
+@router.post(
+    "/jog/stop",
+    summary="Stop Jogging",
+    description="Explicitly stops a continuous jog and removes it from the watchdog.",
+    operation_id="jogStop",
+    response_model=JogStatusResponse,
+)
+def stop_jog(cmd: JogStopCommand) -> JogStatusResponse:
     """
     Explicitly stops a continuous jog and removes it from the watchdog.
     """
@@ -113,4 +152,4 @@ def stop_jog(cmd: JogStopCommand):
     for axis in cmd.axes:
         _stop_axis(axis)
 
-    return {"status": "ok"}
+    return JogStatusResponse(status="ok")

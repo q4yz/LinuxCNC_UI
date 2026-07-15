@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { api } from '../services/api'
+import { NcFilesService } from '../services/api/services/NcFilesService'
 import { useConsoleStore } from '../stores/console'
 
 const files = ref([])
@@ -10,8 +10,7 @@ const fileInput = ref(null)
 
 const fetchFiles = async () => {
   try {
-    const response = await api.fetchFiles()
-    files.value = Array.isArray(response) ? response : (response.files || [])
+    files.value = await NcFilesService.listFiles()
   } catch (error) {
     consoleStore.addMessage(`Failed to fetch files: ${error.message}`, 'error')
   }
@@ -23,7 +22,7 @@ const handleUpload = async (event) => {
 
   isUploading.value = true
   try {
-    await api.uploadFile(file)
+    await NcFilesService.uploadFile({ file })
     consoleStore.addMessage(`Successfully uploaded ${file.name}`, 'success')
     await fetchFiles()
   } catch (error) {
@@ -41,9 +40,9 @@ const triggerFileInput = () => {
 
 const deleteFile = async (filename) => {
   if (!confirm(`Are you sure you want to delete ${filename}?`)) return
-  
+
   try {
-    await api.deleteFile(filename)
+    await NcFilesService.deleteFile(filename)
     consoleStore.addMessage(`Deleted file ${filename}`, 'success')
     await fetchFiles()
   } catch (error) {
@@ -54,7 +53,7 @@ const deleteFile = async (filename) => {
 const loadFile = async (filename) => {
   try {
     consoleStore.addMessage(`Loading file ${filename}...`, 'command')
-    await api.loadProgram(filename)
+    await NcFilesService.loadProgram({ filename })
     consoleStore.addMessage(`Loaded ${filename}`, 'success')
   } catch (error) {
     consoleStore.addMessage(`Failed to load ${filename}: ${error.message}`, 'error')
