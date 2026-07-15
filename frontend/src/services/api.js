@@ -86,48 +86,49 @@ export const api = {
     return res.json();
   },
   loadProgram: (filename) => postJson('/file/load', { filename }),
+  loadProgram: (filename) => postJson('/files/load_program', { filename }),
 
+  // Configs
+  fetchConfigs: async () => {
+      const res = await fetch(`${API_BASE_URL}/config`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+  },
   // Compiler Pipeline
   fetchCompilerProfiles: async () => {
-    const res = await fetch(`${API_BASE_URL}/compiler/profiles`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+      const res = await fetch(`${API_BASE_URL}/compiler/profiles`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
   },
   generateCompilerProfile: (profileName) => postJson(`/compiler/generate/${encodeURIComponent(profileName)}`),
   deployCompilerStage: () => postJson('/compiler/deploy'),
 
   generateProfile: async (filename) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/config/compile/generate/${encodeURIComponent(filename)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-      })
+      try {
+          const res = await fetch(`${API_BASE_URL}/config/compile/generate/${encodeURIComponent(filename)}`, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json'
+              },
+          })
 
-      if (!res.ok) {
-        let detail = ''
-        try {
-          const errorBody = await res.json()
-          detail = errorBody?.detail || ''
-        } catch {
-          detail = await res.text()
-        }
-        throw new Error(detail || `API Error (${res.status})`)
+          if (!res.ok) {
+              let detail = ''
+              try {
+                  const errorBody = await res.json()
+                  detail = errorBody?.detail || ''
+              } catch {
+                  detail = await res.text()
+              }
+              throw new Error(detail || `API Error (${res.status})`)
+          }
+
+          return res.json()
+      } catch (err) {
+          throw new Error(err.response?.data?.detail || err.message)
       }
-
-      return res.json()
-    } catch (err) {
-      throw new Error(err.response?.data?.detail || err.message)
-    }
   },
 
-  // Configs
-  fetchConfigs: async () => {
-    const res = await fetch(`${API_BASE_URL}/config`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
   readConfig: async (filename) => {
     const res = await fetch(`${API_BASE_URL}/config/${encodeURIComponent(filename)}`);
     if (!res.ok) throw new Error(await res.text());
