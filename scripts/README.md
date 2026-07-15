@@ -35,7 +35,7 @@ cp scripts/.env.example .env
 
 ```bash
 # pick whichever python already has the backend venv (it has fastapi+uvicorn)
-python scripts/minimax_local.py
+python ./scripts/minimax_local.py
 # or activate the backend venv first:
 #   source backend/venv/bin/activate     (Linux/macOS)
 #   .\backend\venv\Scripts\activate     (Windows PowerShell)

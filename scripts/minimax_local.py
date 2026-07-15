@@ -156,11 +156,66 @@ def health() -> Dict[str, Any]:
         "api_key_present": bool(API_KEY),
     }
 
+@app.get("/api/tags")
+async def api_tags():
+    """Spoof the Ollama /api/tags endpoint."""
+    return {
+        "models": [
+            {
+                "name": "MiniMax-M3",
+                "model": "MiniMax-M3",
+                "modified_at": "2026-06-01T00:00:00Z",
+                "size": 0,
+                "digest": "sha256:minimaxm3...",
+                "details": {"format": "gguf", "family": "minimax"}
+            },
+            {
+                "name": "abab6.5-chat",
+                "model": "abab6.5-chat",
+                "modified_at": "2023-06-16T05:30:02Z",
+                "size": 0,
+                "digest": "sha256:abab65...",
+                "details": {"format": "gguf", "family": "minimax"}
+            },
+            {
+                "name": "abab6.5s-chat",
+                "model": "abab6.5s-chat",
+                "modified_at": "2023-06-16T05:30:02Z",
+                "size": 0,
+                "digest": "sha256:abab65s...",
+                "details": {"format": "gguf", "family": "minimax"}
+            }
+        ]
+    }
 
+
+@app.get("/models")
 @app.get("/v1/models")
-def list_models() -> Dict[str, Any]:
-    return _post_upstream("/models", {}, stream=False)
-
+async def list_models():
+    """Spoof the OpenAI models endpoint so the IDE plugin connects successfully."""
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "MiniMax-M3",
+                "object": "model",
+                "created": 1780272000,
+                "owned_by": "minimax"
+            },
+            {
+                "id": "abab6.5-chat",
+                "object": "model",
+                "created": 1686935002,
+                "owned_by": "minimax"
+            },
+            {
+                "id": "abab6.5s-chat",
+                "object": "model",
+                "created": 1686935002,
+                "owned_by": "minimax"
+            }
+        ]
+    }
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionRequest) -> Any:
