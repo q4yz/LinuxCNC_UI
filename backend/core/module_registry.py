@@ -296,6 +296,43 @@ class ModuleRegistry:
     # Mount helpers                                                      #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _resolve_settings_model(instance: PluggableModule) -> Optional[BaseModel]:
+        """Return the Pydantic defaults instance a module wants, if any.
+
+        Modules opt-in by defining ``get_settings_model()``. We tolerate
+        missing methods, raised exceptions, and non-BaseModel return
+        values so a buggy module never crashes the boot path.
+        """
+        getter = getattr(instance, "get_settings_model", None)
+        if getter is None:
+            return None
+        try:
+            model = getter()
+        except Exception as exc:  # noqa: BLE001 - intentional broad catch
+            logger.error(
+                "Module %s.get_settings_model() raised: %s",
+                getattr(instance, "manifest", None)
+                and instance.manifest.id
+                or "?",
+                exc,
+                exc_info=True,
+            )
+            return None
+        if model is None:
+            return None
+        if not isinstance(model, BaseModel):
+            logger.error(
+                "Module %s.get_settings_model() must return a BaseModel "
+                "instance, got %s",
+                getattr(instance, "manifest", None)
+                and instance.manifest.id
+                or "?",
+                type(model).__name__,
+            )
+            return None
+        return model
+
     def _mount(
         self,
         app: FastAPI,
@@ -308,31 +345,14 @@ class ModuleRegistry:
         logger.info("Mounting module: %s (%s)", module_id, manifest.title)
 
         # 1. Settings store + ModuleContext (cheap, no I/O yet).
-        # If the module exposes a ``settings_model`` attribute pointing
-        # to a Pydantic model **class**, the registry instantiates it
-        # and merges it under the persisted payload so freshly mounted
-        # modules still surface sensible defaults before the first
-        # PUT. Modules that don't ship defaults (the common case for
-        # early-stage modules) fall back to ``defaults=None``.
-        settings_defaults = None
-        settings_model_cls = getattr(instance, "settings_model", None)
-        if isinstance(settings_model_cls, type) and issubclass(
-            settings_model_cls, BaseModel
-        ):
-            try:
-                settings_defaults = settings_model_cls()
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Module %s.settings_model() could not be instantiated: %s",
-                    module_id,
-                    exc,
-                )
-                settings_defaults = None
-
+        # Modules may expose a Pydantic ``defaults`` model via the
+        # optional ``get_settings_model()`` hook; absent that, the
+        # store starts with no schema and persists arbitrary JSON.
+        defaults_model = self._resolve_settings_model(instance)
         settings = SettingsStore(
             module_id=module_id,
             data_root=self._data_root,
-            defaults=settings_defaults,
+            defaults=defaults_model,
         )
         ctx = ModuleContext(
             module_id=module_id,

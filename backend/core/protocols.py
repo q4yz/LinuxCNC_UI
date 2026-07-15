@@ -165,6 +165,22 @@ class PluggableModule(Protocol):
         """
         ...
 
+    def get_settings_model(self) -> Optional[BaseModel]:
+        """Return a Pydantic defaults instance, if any.
+
+        The registry constructs a per-module :class:`SettingsStore`
+        and passes the returned model as the ``defaults`` argument.
+        ``None`` means the module has no Pydantic schema and the store
+        stores arbitrary JSON (current behaviour for modules without
+        a schema).
+
+        The method is **optional**. Modules that don't need typed
+        defaults can omit it. The registry uses :func:`getattr` and
+        tolerates ``AttributeError`` so older module code keeps
+        working unchanged.
+        """
+        ...
+
 
 ModuleFactory = Callable[[], PluggableModule]
 """Callable that produces a :class:`PluggableModule` instance.

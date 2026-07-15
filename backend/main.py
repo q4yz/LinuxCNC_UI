@@ -10,7 +10,7 @@ from hardware.connection import connection
 
 
 # Import our new modular routers
-from routers import machine, jog, websocket, files, system, config, camera, compiler
+from routers import machine, jog, websocket, files, system, config, compiler
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -88,7 +88,6 @@ app.include_router(system.router)
 app.include_router(config.router)
 app.include_router(jog.router)
 app.include_router(websocket.router)
-app.include_router(camera.router)
 app.include_router(compiler.router)
 
 @app.get("/")

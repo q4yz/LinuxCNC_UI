@@ -133,6 +133,9 @@ recipe.
 | 6     | Settings UI form generator           | 📋 planned    | Replaces the placeholder panels in `SettingsView.vue`. |
 | 7     | SQLite storage promotion             | 📋 planned    | Replaces `SettingsStore`'s flat JSON. |
 
+(2b and 2c are tracked together under issue #29 because the
+issue's acceptance criteria cover both layers in one PR.)
+
 ## 10. References
 
 - [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md)
@@ -140,7 +143,7 @@ recipe.
 - [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md)
 - Issue #29 — this phase
 - Issue #22 — predecessor (Phase 2a)
-- Issue #2 — successor (Phase 2d camera migration)
+- Issue #31 — successor (Phase 2d camera migration)
 
 ## 11. Glossary
 
