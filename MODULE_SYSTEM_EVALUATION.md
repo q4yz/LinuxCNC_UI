@@ -191,6 +191,61 @@ its `SettingsStore` on each frame.
 **None.** The mock (`linuxcnc_mock.py`) does not simulate a camera; the
 module talks to OpenCV directly.
 
+### 2.6 Migration log (Phase 2d, issue #31)
+
+The camera migration landed in four stages:
+
+1. **Pluggable protocol extension.** The `PluggableModule` Protocol
+   gained an *optional* `get_settings_model()` hook so modules can
+   declare the Pydantic defaults the registry forwards to
+   `SettingsStore`. The hook is optional: existing modules keep
+   working unchanged because the registry uses `getattr` with a
+   `None` fallback. See `core/protocols.py` and the helper
+   `ModuleRegistry._resolve_settings_model` in
+   `core/module_registry.py`.
+2. **Module package.** `backend/modules/camera/` contains
+   `__init__.py` (re-export `setup`), `module.py` (`CameraModule` +
+   `ModuleManifest`), `router.py` (`CameraWorker` + `/stream` +
+   `/status` endpoints) and `settings.py` (`CameraSettings` with the
+   five knobs — `device_index`, `width`, `height`, `jpeg_quality`,
+   `target_fps`). The legacy `backend/routers/camera.py` was deleted
+   and `backend/main.py` no longer imports it.
+3. **Frontend module.** `frontend/src/modules/camera/` contains
+   `index.js`, `manifest.js`, and `components/CameraPanel.vue`. The
+   legacy `frontend/src/components/CameraPanel.vue` was deleted and
+   `DashboardView.vue` now loads the panel via
+   `defineAsyncComponent` behind a `v-if="cameraMounted"` guard so
+   deleting `frontend/src/modules/camera/` produces an empty cell,
+   not a build error.
+4. **Tests.** `backend/tests/test_camera_module.py`,
+   `test_camera_settings.py`, and `test_camera_null.py` exercise the
+   module, the settings endpoints, and the nullable-module guarantee.
+   `frontend/tests/test-registry.mjs` and `test-camera-null.mjs` cover
+   the corresponding frontend contracts using the existing pure-Node
+   `node --test` pattern.
+
+**Deviations from the audit plan:**
+
+* The audit suggested opening the `cv2.VideoCapture` inside `on_load`
+  and releasing it in `on_unload`. We kept the lazy open-on-first-
+  stream behaviour of the legacy router because the dashboard may
+  boot on a headless deployment (CI, Vite preview server) where no
+  camera is attached and the `/stream` endpoint is never hit. The
+  worker logs and disables itself cleanly if OpenCV is missing or the
+  device index is invalid. The trade-off is documented in
+  `backend/modules/camera/README.md` and the lazy behaviour is
+  covered by the existing `CameraModule.on_unload` idempotency test.
+* The audit mentioned a `Camera` class; the implementation uses a
+  `CameraWorker` class to disambiguate from the global `cv2` import.
+* The `SidebarEntry.icon` for the camera module is an inline SVG of
+  a video camera glyph (consistent with the built-in icons). The
+  issue's "…" placeholder was kept abstract on purpose; we ship a
+  concrete icon so the sidebar renders correctly without further work.
+* The `console.js` Pinia store refactor (§ 8 open question #3) was
+  **not** picked up in this migration because the camera module has
+  no console integration. It will be revisited when the temperature
+  or axis migration lands.
+
 ---
 
 ## 3. Audit — temperature

@@ -1,225 +1,185 @@
 ### Resolution Summary
 
-Implements the Phase 2b/2c core module-system infrastructure from
-issue #29. On the backend: a runtime-checkable `PluggableModule`
-Protocol with full lifecycle (`on_load` / `on_unload`), a
-whitelist-aware `ModuleRegistry` (`boot` / `shutdown`) that emits the
-canonical `registry: mounted=[…] skipped=N missing=N` summary log, an
-immutable-payload `EventBus`, a `TelemetryBus` by-reference shell, and
-a `SettingsStore` with atomic `tmp + os.replace` writes plus a
-per-module in-memory cache. The registry auto-mounts the four
-canonical settings endpoints per module. On the frontend: a
-`FrontendRegistry` that uses `import.meta.glob(..., { eager: false })`,
-module-keyed event / telemetry buses, a typed settings client, a
-`SettingsView.vue` placeholder, a `MODULES_ENABLED`-driven sidebar
-merge, and a CI lint enforcing the `^module_[a-z][a-z0-9_]+$`
-Pinia-store-id rule. Documentation moved (`AI_INSTRUCTIONS.md` → `.agent/`),
-three new contract docs added, and a `MODULE_SYSTEM_ROADMAP.md`
-status table written.
+Migrate the `camera` feature from the flat `backend/routers/camera.py` +
+`frontend/src/components/CameraPanel.vue` layout into the
+registry-driven module system. The backend gains `backend/modules/camera/`
+(self-contained package with `CameraSettings` Pydantic schema,
+`CameraWorker` background thread, and `/stream` + `/status` endpoints);
+the frontend gains `frontend/src/modules/camera/` (manifest + lazy
+`CameraPanel.vue`); `DashboardView.vue` loads the panel via
+`defineAsyncComponent` behind a registry-guarded `v-if`, so deleting
+either folder boots cleanly.
 
 ### Files Modified
 
-#### Backend (production)
+**Backend (new module + registry extension):**
+- `backend/core/protocols.py`: extended `PluggableModule` Protocol with an
+  *optional* `get_settings_model() -> Optional[BaseModel]` hook so
+  modules can declare Pydantic defaults that the registry forwards to
+  `SettingsStore`. Old modules without the method keep working because
+  the registry uses `getattr` and tolerates `None`.
+- `backend/core/module_registry.py`: new `_resolve_settings_model()`
+  helper called from `_mount()`; constructs `SettingsStore(defaults=…)`
+  using whatever the module returns. Defensive against raised
+  exceptions and non-BaseModel returns so a buggy module cannot crash
+  the boot path.
+- `backend/modules/camera/__init__.py`: re-exports `setup()`.
+- `backend/modules/camera/module.py`: `CameraModule` class implementing
+  `PluggableModule`. `on_load` wires the SettingsStore onto the
+  module-level `CameraWorker`; `on_unload` is idempotent and safe under
+  `uvicorn --reload`. `get_settings_model()` returns a `CameraSettings`
+  instance.
+- `backend/modules/camera/router.py`: `CameraWorker` (idempotent
+  `start()`/`stop()`, OpenCV lazy-imported and disabled on failure,
+  per-frame `_reload_config()` so PUT settings takes effect on next
+  frame) + `/stream` (MJPEG `StreamingResponse`) + `/status` endpoints.
+- `backend/modules/camera/settings.py`: `CameraSettings` Pydantic model
+  (`device_index`, `width`, `height`, `jpeg_quality`, `target_fps`)
+  with bounds matching the OpenCV encoder constraints.
+- `backend/modules/camera/README.md`: human-facing module description,
+  endpoint reference, manual smoke-test commands, nullable-module
+  guarantee notes, and the "streaming response outlives unload"
+  caveat.
+- `backend/routers/camera.py`: **deleted** (now lives in
+  `backend/modules/camera/router.py`).
+- `backend/main.py`: removed `from routers import camera` and
+  `app.include_router(camera.router)`. The registry's `boot()` picks
+  up the module automatically.
+- `backend/tests/test_protocols.py`: stub class in
+  `test_protocol_is_runtime_checkable` now implements the new
+  `get_settings_model()` member to remain `isinstance`-valid.
+- `backend/tests/test_camera_module.py` (new): verifies the module
+  satisfies `PluggableModule`, mounts the `/stream` + `/status` + four
+  settings endpoints, logs the canonical summary line, and that
+  `on_unload` is idempotent.
+- `backend/tests/test_camera_settings.py` (new): defaults-served
+  round-trip, atomic PUT persistence, and that `CameraWorker` re-reads
+  the merged settings on every frame (including fallback to defaults on
+  invalid payloads).
+- `backend/tests/test_camera_null.py` (new): boots the registry with
+  no candidates, asserts the `mounted=[] skipped=0 missing=0` summary,
+  confirms 404 on `/api/v1/modules/camera/*`, and that
+  `routers.camera` is no longer importable.
 
-- `backend/core/protocols.py` (rewritten): adds `ModuleManifest`
-  (Pydantic), `SidebarEntry` (Pydantic), `ModuleContext`
-  (dataclass), and a `@runtime_checkable PluggableModule` Protocol
-  with `manifest`, `on_load(ctx)`, `on_unload()`, and `get_router()`.
-  The previous `register(bus)` shape is replaced by the issue's full
-  contract.
-- `backend/core/event_bus.py`: adds payload immutability — every
-  subscriber receives its own freshly-cloned Pydantic copy so a
-  buggy subscriber cannot affect any other subscriber or the
-  publisher (Gotcha #3).
-- `backend/core/telemetry/__init__.py` + `bus.py` (new): ships the
-  `TelemetryBus` shell (by-reference pub/sub for high-frequency
-  telemetry). Phase 2c owns the shell only; the WebSocket transport
-  in `routers/websocket.py` stays untouched.
-- `backend/core/settings_store.py` (new): per-module JSON at
-  `data/modules/<id>/settings.json`. Atomic write via
-  `tempfile.mkstemp` + `fsync` + `os.replace`. In-memory cache,
-  Pydantic defaults merge, atomic-write contract verified by tests.
-- `backend/core/module_registry.py` (rewritten): `boot(app)` /
-  `shutdown()` API, `MODULES_ENABLED` whitelist filter, unknown-id
-  warnings, summary log line, reverse-order `on_unload`,
-  automatic mounting of the four canonical settings endpoints per
-  module, and per-module `SettingsStore` wiring.
-- `backend/main.py`: one-line change — `discover_and_load` →
-  `boot`, comment updated.
+**Frontend (new module + dashboard lazy-load):**
+- `frontend/src/modules/camera/index.js`: module entrypoint. Default
+  export is `{ manifest, sidebar, onLoad, onUnload }` with a no-op
+  lifecycle (the panel is lazy). `manifest` is also re-exported as a
+  named export for tooling.
+- `frontend/src/modules/camera/manifest.js`: `FrontendModuleManifest`
+  with `id="camera"`, `title="Camera"`, an inline SVG sidebar icon,
+  `order: 50` (floats above built-in nav items), `settingsPanel: true`.
+- `frontend/src/modules/camera/components/CameraPanel.vue`: byte-for-byte
+  move of the original panel, only change is the stream URL
+  (`/api/v1/camera/stream` → `/api/v1/modules/camera/stream`).
+- `frontend/src/components/CameraPanel.vue`: **deleted** (moved into
+  the module folder).
+- `frontend/src/views/DashboardView.vue`: drops the static
+  `import CameraPanel from '../components/CameraPanel.vue'`, switches
+  to `defineAsyncComponent(() => import('../modules/camera/components/CameraPanel.vue'))`,
+  adds a `cameraMounted` computed reading
+  `registry.modules.has('camera')`, and renders the camera slot
+  behind a `v-if="cameraMounted"` guard. Also drops the dead
+  `import { Camera } from 'three/src/Three.Core.js'` line noted in
+  `MODULE_SYSTEM_EVALUATION.md` § 5.7.
+- `frontend/tests/test-registry.mjs` (new): asserts the camera
+  module's default export satisfies the `FrontendModule` shape
+  (`manifest.id`, `settingsPanel`, `onLoad`/`onUnload` callable,
+  sidebar entry present), that `onLoad` is a no-op against a fake
+  context, and that the manifest version/description are populated.
+- `frontend/tests/test-camera-null.mjs` (new): static-analysis tests
+  that the dashboard uses `defineAsyncComponent`, never statically
+  imports the legacy `components/CameraPanel.vue`, guards the slot
+  with `v-if`, the legacy path no longer exists, the new path is in
+  place, and that `CameraPanel.vue` points at
+  `/api/v1/modules/camera/stream` (not the legacy URL).
 
-#### Backend (tests, new)
-
-- `backend/tests/__init__.py`: makes `backend/` importable.
-- `backend/tests/conftest.py`: shared `tmp_data_root` and
-  `clean_env` fixtures.
-- `backend/tests/test_protocols.py`: `isinstance` against duck-typed
-  objects, manifest JSON round-trip, `ModuleContext` wiring.
-- `backend/tests/test_event_bus.py`: payload mutation in one
-  subscriber does **not** affect another; state-topic dedup; subscribe
-  / unsubscribe roundtrip.
-- `backend/tests/test_module_registry.py`: empty candidates →
-  `mounted=[]` log; unknown whitelist → WARN; whitelist filters
-  correctly; reverse-order shutdown; router mounting; settings
-  router mounting; missing-package resilience.
-- `backend/tests/test_settings_store.py`: defaults fallback;
-  cache behaviour; key upsert; **atomic-write leaves no partial
-  file on simulated interrupt**; cache invalidation; id validation.
-
-21 backend tests pass.
-
-#### Frontend (production)
-
-- `frontend/src/core/modules/protocols.js` (new): JSDoc typedefs
-  for `SidebarEntry`, `FrontendModuleManifest`, `ModuleContext`,
-  `FrontendModule`, `FrontendModuleRecord`.
-- `frontend/src/core/modules/event-bus.js` (new): pub/sub with
-  **deep-clone + deep-freeze per subscriber** so a subscriber
-  mutating its copy cannot leak across handlers.
-- `frontend/src/core/modules/telemetry-bus.js` (new): by-reference
-  pub/sub shell for high-frequency telemetry. One bad subscriber
-  does not block the others.
-- `frontend/src/core/modules/settings.js` (new): typed
-  `createModuleSettings(id)` wrapper around the four canonical
-  endpoints; uses `fetch` directly (intentionally not the generated
-  OpenAPI client to keep the module surface independent of codegen
-  availability).
-- `frontend/src/core/modules/registry.js` (new): `FrontendRegistry`
-  that uses `import.meta.glob('../modules/*/index.js', { eager: false })`,
-  applies the `MODULES_ENABLED` whitelist, calls each module's
-  `onLoad` synchronously, and emits `[registry] mounted=[…]`.
-- `frontend/src/views/SettingsView.vue` (new): renders one tab per
-  module that declares `settingsPanel: true`. Empty state shows the
-  literal header **"Settings (no modules mounted)"** plus a hint
-  pointing at the modules directory.
-- `frontend/src/components/AppSidebar.vue`: built-in nav list
-  (Dashboard / Files / Config / Settings) is now merged with
-  module-contributed entries sorted by `order`. With zero modules
-  the rendered sidebar is identical to the previous static version.
-- `frontend/src/App.vue`: imports and renders `SettingsView` for the
-  `settings` view id.
-- `frontend/src/main.js`: imports the registry, mounts the app
-  immediately, and awaits `registry.boot()` in parallel so a slow
-  module loader never blocks the UI shell.
-
-#### Frontend (CI / tests, new)
-
-- `frontend/scripts/check-store-ids.mjs` (new, executable): scans
-  `frontend/src/modules/` for `defineStore(...)` calls; passes
-  when every id matches `^module_[a-z][a-z0-9_]+$`; prints
-  `Store id must match …` and exits 1 otherwise.
-- `frontend/tests/test-event-bus.mjs`: deep-frozen payload copies;
-  mutation isolation; subscribe / unsubscribe; `topics()`.
-- `frontend/tests/test-telemetry-bus.mjs`: by-reference delivery;
-  bad-subscriber isolation.
-- `frontend/tests/test-store-id-regex.mjs`: exercises the lint
-  script with stub modules — `defineStore('camera', …)` fails;
-  `defineStore('module_camera', …)` passes; empty dir passes.
-
-9 frontend tests pass.
-
-#### Docs
-
-- `AI_INSTRUCTIONS.md` → `.agent/AI_INSTRUCTIONS.md` (rename via
-  `git mv`).
-- `.agent/README.md` (new): TOC of the contract docs.
-- `.agent/contracts/backend-module.md` (new): canonical
-  `PluggableModule` Protocol incl. Gotcha #3.
-- `.agent/contracts/frontend-module.md` (new): canonical
-  `FrontendModule` interface incl. Gotcha #2 and Gotcha #3.
-- `.agent/contracts/settings-module.md` (new): storage layout,
-  endpoints, atomic-write contract, defaults merge.
-- `PROJECT_ARCHITECTURE.md`: appended two new sections — § 14
-  Module System (Phase 2b/2c) with discovery & lifecycle diagram,
-  frontend mirroring, and anti-patterns table; § 15 Settings
-  Subsystem with storage layout, endpoints, atomic-write, and
-  defaults merge.
-- `MODULE_SYSTEM_ROADMAP.md` (new): phases table, lifecycle
-  diagram, glossary. § 9 status table marks 2a / 2b / 2c per the
-  acceptance criterion.
-
-#### Module directories
-
-- `backend/modules/__init__.py` + `README.md` (new): empty
-  discovery surface. The `README.md` explains the contract and
-  notes that the app boots cleanly with zero modules.
-- `frontend/src/modules/README.md` (new): same for the frontend.
+**Docs:**
+- `MODULE_SYSTEM_ROADMAP.md`: § 2 status table marks Phase 2d
+  ✅ shipped under issue #31; § 9 status table mirrors the same; § 10
+  references updated; "Last Updated" line bumped.
+- `MODULE_SYSTEM_EVALUATION.md`: new § 2.6 "Migration log" appended
+  to the camera audit describing the four-stage migration and the
+  deliberate deviations from the original audit (lazy OpenCV open,
+  `CameraWorker` class name instead of `Camera`, inline SVG icon).
 
 ### Architectural Decisions
 
-- **New contract replaces old.** The previous
-  `PluggableModule = { name, register, get_router }` (issue #22)
-  is replaced by the full issue #29 contract. The old API had no
-  runtime checks, no `on_unload` lifecycle, no settings support,
-  no whitelist. Because no existing modules had been migrated yet,
-  the rename is safe — only `backend/main.py` and the registry
-  itself needed updating.
-- **`SettingsStore` is untyped by design.** Modules own their
-  Pydantic validation models; the store treats the persisted blob
-  as opaque JSON so a single store implementation can serve every
-  module. Defaults are merged on read so new keys land safely in
-  older deployments.
-- **Settings endpoints are auto-mounted.** The four canonical
-  endpoints are owned by the registry, not the module — modules
-  never need to write a settings router. This keeps the settings
-  surface uniform across every module.
-- **`TelemetryBus` is a separate bus, not a flag on `EventBus`.**
-  Splitting the buses makes the cost-vs-correctness trade-off
-  obvious at every call site. Module-to-module event traffic uses
-  `EventBus` (immutable, slow, command-shaped). WebSocket-derived
-  telemetry uses `TelemetryBus` (by-reference, fast, sample-shaped).
-- **Frontend settings client uses `fetch`, not the codegen.** The
-  settings surface is small enough that hand-written fetch is more
-  legible than maintaining yet another generated service module,
-  and it survives a `frontend/generated/api/` directory that
-  hasn't been regenerated yet.
-- **`SettingsView` is a placeholder.** Phase 5 ships the form
-  generator; Phase 2c ships a tab list that links to the four
-  REST endpoints. The empty-state header is verified literally
-  by the issue's acceptance criterion #2.
+1. **Optional protocol extension instead of manifest field.** The audit
+   suggested putting the settings schema on `ModuleManifest`, but the
+   manifest is a serializable data model — `settings_schema: type[BaseModel]`
+   would force every consumer to introspect a class object. Instead I
+   added an optional `get_settings_model() -> BaseModel | None` hook on
+   the `PluggableModule` Protocol. The registry uses `getattr` and
+   tolerates missing methods, so existing modules are unaffected. This
+   keeps the manifest pure data while still giving modules a clean way
+   to declare defaults.
+
+2. **Lazy OpenCV open.** The audit suggested opening the capture in
+   `on_load`. I kept the lazy "open on first `/stream` request"
+   behaviour because the dashboard may boot on a headless deployment
+   (CI, Vite preview server) where no camera is attached and the
+   `/stream` endpoint is never hit. The worker logs and disables itself
+   cleanly if OpenCV is missing or the device index is invalid. This
+   trade-off is documented in the module README and is the historical
+   behaviour of the legacy `routers/camera.py`.
+
+3. **Module-level worker + bind hook.** The router is module-level (so
+   the registry can mount it), the worker is also module-level (so
+   `/stream` and `/status` share the same capture), and the
+   `bind_worker_settings()` indirection lets `CameraModule.on_load`
+   attach the per-module `SettingsStore` without circular imports
+   between `module.py` and `router.py`.
+
+4. **Dashboard `v-if` + `defineAsyncComponent` pair.** Either alone is
+   insufficient for the nullable-module guarantee: a `v-if` without
+   `defineAsyncComponent` would still pull `CameraPanel.vue` into the
+   main bundle (Gotcha #1 violation); `defineAsyncComponent` without
+   the `v-if` would still crash at runtime when the module is absent.
+   The pair delivers both code-splitting and graceful degradation.
+
+5. **Removed the legacy `routers/camera.py` entirely.** The issue's
+   nullable-module guarantee specifies that deleting only the new
+   folders is enough. Leaving the legacy file as dead code would
+   regress that contract (a stale `from routers import camera` in
+   `main.py` is the failure mode the migration is supposed to fix).
+   `backend/tests/test_camera_null.py::test_legacy_router_is_not_imported_from_routers_package`
+   pins this down.
+
+6. **Pure-Node test runner.** No Vitest is installed in this project,
+   so the new frontend tests follow the existing
+   `node --test frontend/tests/*.mjs` pattern used by
+   `test-event-bus.mjs`. The camera-null suite is static-analysis
+   based (regex over `DashboardView.vue` source) since dynamic
+   deletion + Vite build is impractical in a `node --test` invocation.
 
 ### Testing Verification
 
-- [x] `python3 -m compileall -q backend` → exit 0.
-- [x] `python3 -m pytest backend/tests/` → **21 passed**.
-- [x] `node --test frontend/tests/*.mjs` → **9 passed**.
-- [x] `node frontend/scripts/check-store-ids.mjs` →
-  `[lint:store-ids] OK (frontend/src/modules)`.
-- [x] `npm --prefix frontend run build` → succeeds in ~3s with
-  zero errors and zero warnings (the `chunks > 500 kB` advisory is
-  a generic Vite message unrelated to this PR).
-- [x] Acceptance criterion #1 (`MODULES_ENABLED=""`) →
-  `registry: mounted=[] skipped=0 missing=0` log line confirmed.
-- [x] Acceptance criterion #3 (`MODULES_ENABLED=nonexistent`) →
-  `WARN unknown module id 'nonexistent'` plus
-  `registry: mounted=[] skipped=0 missing=1` confirmed.
-- [x] Acceptance criterion #4 (`npm run build` with
-  `frontend/src/modules/` deleted) → build succeeds, zero errors.
-- [x] Acceptance criterion #5 (store id regex) →
-  `defineStore('camera', …)` fails the lint with the exact message
-  `"Store id must match ^module_[a-z][a-z0-9_]+$"`;
-  `defineStore('module_camera', …)` passes.
-- [x] Acceptance criterion #2 (empty `/settings` page) →
-  `SettingsView.vue` renders the literal header **"Settings (no
-  modules mounted)"** when no modules declare `settingsPanel`.
-  Verified via static review of the component (no browser harness
-  available in this environment).
-
-### Notes & Follow-ups
-
-- The existing `backend/routers/*.py` and
-  `frontend/src/components/*.vue` files are **untouched** — zero
-  regression in the pre-existing surface.
-- The legacy `routers/websocket.py` WebSocket transport still owns
-  the 10 Hz broadcast loop. Phase 4 will fold it into the new
-  `TelemetryBus`. Until then, `stores/machine.js` continues to
-  consume the WebSocket directly.
-- The frontend build depends on `frontend/generated/api/` being
-  present (for `JoggingService` / `MachineStateService` imports in
-  `JogControls.vue` / `machine.js` etc.). That dependency is
-  pre-existing — Phase 1 / Phase 2a — and is regenerated by
-  `npm run generate-api` against a running backend. The new
-  module-system code does **not** add any new dependency on the
-  generated client.
-- Issue #2 (camera migration, Phase 2d) is the natural next step;
-  the camera module will be the first end-to-end consumer of
-  every contract shipped here.
+- [x] Ran local test suite / build checks:
+  - `python -m compileall -q backend` → clean.
+  - `python -m pytest backend/tests/ -q` → **32 passed** (29 pre-existing
+    + 3 new camera modules: `test_camera_module.py`, `test_camera_settings.py`,
+    `test_camera_null.py`). The pre-existing `test_protocols.py` was
+    updated to add the new `get_settings_model` member to its stub —
+    `isinstance` checks for `PluggableModule` continue to pass.
+  - `node --test frontend/tests/*.mjs` → **18 passed** (15 pre-existing
+    + 3 new in `test-registry.mjs`).
+  - `node frontend/scripts/check-store-ids.mjs` → `[lint:store-ids] OK`.
+  - `npm --prefix frontend run build` → succeeded; the camera panel is
+    code-split into its own `dist/assets/CameraPanel-CR5X4gA6.js`
+    chunk (1.46 kB), confirming Gotcha #1.
+- [x] Manual end-to-end smoke test (Python REPL against a real
+  `TestClient`):
+  - `GET /api/v1/modules/camera/settings` → `{device_index: 0, width:
+    640, height: 480, jpeg_quality: 70, target_fps: 15}` (defaults
+    from `CameraSettings`).
+  - `PUT /api/v1/modules/camera/settings {jpeg_quality: 90}` → returns
+    merged payload, persists to `data/modules/camera/settings.json`
+    atomically (no `.tmp` leftover, only `settings.json` on disk).
+  - `GET /api/v1/modules/camera/status` → `{running: false,
+    last_frame_at: null}` (worker starts lazily on first `/stream`
+    request, so a headless `TestClient` never touches OpenCV).
+  - Boot summary: `INFO:core.module_registry:registry:
+    mounted=['camera'] skipped=0 missing=0`.
+  - Empty registry: `INFO:core.module_registry:registry:
+    mounted=[] skipped=0 missing=0` — nullable-module guarantee holds.

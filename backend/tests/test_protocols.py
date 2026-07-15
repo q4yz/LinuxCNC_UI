@@ -40,6 +40,13 @@ def test_protocol_is_runtime_checkable():
         def get_router(self):
             return None
 
+        # ``get_settings_model`` is part of the protocol as of Phase 2d
+        # (see Issue #31 / module system extension). Modules that don't
+        # ship a Pydantic defaults model return ``None`` — same shape
+        # the registry's ``_resolve_settings_model`` accepts.
+        def get_settings_model(self):
+            return None
+
     assert isinstance(Stub(), PluggableModule)
 
 

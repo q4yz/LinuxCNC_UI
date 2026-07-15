@@ -1,9 +1,9 @@
 # LinuxCNC Web UI — Module System Roadmap
 
-**Status:** Phase 2a (Protocol + Registry skeleton) — **shipped** in #22.
+**Status:** Phase 2d (Camera migration as the template) — **shipped** in #31.
 **In Flight:** Phase 2b/2c (Settings + EventBus + TelemetryBus shells)
                 — issue #29.
-**Next:** Phase 2d (Camera migration as the template) — issue #2.
+**Next:** Phase 3 (Module authoring docs & DX) — TBD.
 
 This document captures the architecture plan for turning the
 LinuxCNC Web UI into a **registry-driven platform** so new features
@@ -32,9 +32,9 @@ without touching the global shell.
 |-------|--------------------------------------|-------|--------|-------|
 | 1     | Flat router layout                   | core  | ✅ shipped | n/a |
 | 2a    | Protocol + Registry skeleton         | core  | ✅ shipped | #22 |
-| 2b    | Settings subsystem + EventBus shells | core  | 🔧 in progress | #29 |
+| 2b    | Settings + EventBus shells (backend) | core  | 🔧 in progress | #29 |
 | 2c    | TelemetryBus + frontend registry     | core  | 🔧 in progress | #29 |
-| 2d    | Camera module migration (template)   | apps  | 📋 next | #2 |
+| 2d    | Camera migration (template)          | apps  | ✅ shipped | #31 |
 | 3     | Module authoring docs & DX           | docs  | 📋 planned | — |
 | 4     | Telemetry transport refactor         | core  | 📋 planned | — |
 | 5     | Settings UI form generator           | apps  | 📋 planned | — |
@@ -126,8 +126,8 @@ recipe.
 | 2a    | Protocol + Registry skeleton         | ✅ shipped    | Issue #22 — `PluggableModule` Protocol + `ModuleRegistry` with `discover_and_load`. |
 | 2b    | Settings + EventBus shells (backend) | 🔧 in progress | Issue #29 — `SettingsStore` (atomic write + defaults merge), `EventBus` payload immutability, four canonical settings endpoints. |
 | 2c    | Frontend registry + telemetry shell  | 🔧 in progress | Issue #29 — `FrontendRegistry` with `import.meta.glob` (lazy), `TelemetryBus` by-reference shell, `SettingsView.vue` empty-state placeholder. |
-| 2d    | Camera migration (template)          | 📋 next       | Issue #2 — first end-to-end module under the new contract. |
-| 3     | Module authoring docs & DX           | 📋 planned    | Follow-up to #29 once 2d lands. |
+| 2d    | Camera migration (template)          | ✅ shipped    | Issue #31 — first end-to-end module under the new contract. `backend/modules/camera/` + `frontend/src/modules/camera/`. |
+| 3     | Module authoring docs & DX           | 📋 planned    | Follow-up to #31 once 2d lands. |
 | 4     | Telemetry transport refactor         | 📋 planned    | Fold `routers/websocket.py` broadcast loop into `TelemetryBus`. |
 | 5     | Settings UI form generator           | 📋 planned    | Replaces the placeholder panels in `SettingsView.vue`. |
 | 6     | SQLite storage promotion             | 📋 planned    | Replaces `SettingsStore`'s flat JSON. |
@@ -142,7 +142,7 @@ issue's acceptance criteria cover both layers in one PR.)
 - [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md)
 - Issue #29 — this phase
 - Issue #22 — predecessor (Phase 2a)
-- Issue #2 — successor (Phase 2d camera migration)
+- Issue #31 — successor (Phase 2d camera migration)
 
 ## 11. Glossary
 
@@ -160,4 +160,4 @@ issue's acceptance criteria cover both layers in one PR.)
 
 ---
 
-**Last Updated:** Phase 2b/2c in flight (issue #29).
+**Last Updated:** Phase 2d shipped (issue #31).

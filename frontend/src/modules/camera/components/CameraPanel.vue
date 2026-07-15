@@ -3,10 +3,11 @@ import { ref, computed } from 'vue'
 
 const hasError = ref(false)
 
-// Dynamically grabs the stream through the Vite proxy or relative production path.
-// We append a timestamp cache-buster so the browser re-fetches if the connection drops.
+// Streams the live MJPEG feed from the module-mounted endpoint. The
+// `?t=...` cache-buster keeps the browser from holding onto a stale
+// image after a reconnect.
 const streamUrl = computed(() => {
-  return `/api/v1/camera/stream?t=${new Date().getTime()}`
+  return `/api/v1/modules/camera/stream?t=${new Date().getTime()}`
 })
 
 const handleError = () => {
@@ -20,7 +21,7 @@ const retryCamera = () => {
 
 <template>
   <div class="camera-panel w-full h-full min-h-[300px] bg-gray-900 rounded-lg overflow-hidden relative flex items-center justify-center border border-gray-700">
-    
+
     <!-- Loading / Fallback UI -->
     <div v-if="hasError" class="absolute flex flex-col items-center justify-center text-gray-400 z-10">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mb-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -33,14 +34,14 @@ const retryCamera = () => {
     </div>
 
     <!-- Native MJPEG HTML Stream -->
-    <img 
+    <img
       v-if="!hasError"
-      :src="streamUrl" 
+      :src="streamUrl"
       @error="handleError"
-      alt="Live Webcam" 
+      alt="Live Webcam"
       class="w-full h-full object-cover"
     />
-    
+
     <!-- Overlay Label -->
     <div class="absolute top-4 left-4 pointer-events-none">
       <div class="bg-gray-900/80 backdrop-blur text-xs text-gray-300 px-3 py-1.5 rounded border border-gray-700 shadow font-mono">
