@@ -202,6 +202,11 @@ class FrontendRegistry {
       manifest: instance.manifest,
       context: ctx,
       sidebar: instance.sidebar ?? instance.manifest.sidebar ?? null,
+      // Module-supplied settings-tab component (Phase 5 polish per
+      // issue #35). Optional — modules without one still get a tab
+      // via ``settingsPanels()`` so the legacy placeholder keeps
+      // working.
+      settingsPanel: instance.settingsPanel ?? null,
     });
   }
 
@@ -219,14 +224,20 @@ class FrontendRegistry {
   }
 
   /**
-   * @returns {Array<{id: string, title: string}>} Settings panels
-   *   contributed by modules, in registry order.
+   * @returns {Array<{id: string, title: string, panel: (() => any) | null}>}
+   *   Settings panels contributed by modules, in registry order.
+   *   ``panel`` is a Vue component (or ``null`` when the module
+   *   hasn't shipped one yet — callers fall back to the placeholder).
    */
   settingsPanels() {
     const panels = [];
     for (const record of this.modules.values()) {
       if (record.manifest.settingsPanel) {
-        panels.push({ id: record.manifest.id, title: record.manifest.title });
+        panels.push({
+          id: record.manifest.id,
+          title: record.manifest.title,
+          panel: record.settingsPanel ?? null,
+        });
       }
     }
     return panels;

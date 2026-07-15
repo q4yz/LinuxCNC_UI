@@ -59,11 +59,16 @@ def test_temperature_module_boots_and_registers_router(
     resp = client.get("/api/v1/modules/temperature/settings")
     assert resp.status_code == 200
     body = resp.json()
-    # Defaults from ``TemperatureSettings`` should be present.
-    assert body["history_window_seconds"] == 10
-    assert body["history_poll_interval_ms"] == 1000
+    # Defaults from ``TemperatureSettings`` should be present. The
+    # ``history_*`` fields have been retired — see issue #35.
     assert body["sample_period_ms"] == 500
     assert body["ambient_celsius"] == 25.0
+    assert body["unit"] == "celsius"
+    assert body["sensor_colors"] == {
+        "extruder": "#EF4444",
+        "bed": "#3B82F6",
+        "cpu": "#10B981",
+    }
 
 
 def test_legacy_temperature_endpoint_is_gone(tmp_data_root, clean_env):
