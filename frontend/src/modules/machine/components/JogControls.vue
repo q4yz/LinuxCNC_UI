@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine'
+import { useMachineStore } from '../store.js'
 
 const MAX_JOG_SPEED = 3.602
 
@@ -39,6 +39,12 @@ const stopJog = async (axis) => {
   await machineStore.jogStop(axis)
 }
 
+// ``stopAllJogging`` is critical for safety: when the user
+// navigates away or the component is unmounted (including via
+// ``v-if``), every in-flight jog must be stopped.  The store
+// also tears down its keep-alive intervals in
+// ``useMachineStore().disconnect()`` so a hot-reload during a
+// jog releases the axis within the watchdog timeout.
 const stopAllJogging = async () => {
   const axes = Object.keys(jogIntervals.value).map(Number)
   for (const axis of axes) {

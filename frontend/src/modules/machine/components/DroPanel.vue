@@ -1,8 +1,8 @@
 <script setup>
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine'
-import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
+import { useMachineStore } from '../store.js'
+import { WORK_COORDINATE_SYSTEMS } from '../../../config/gcodes.js'
 
 const store = useMachineStore()
 // Destructure reactive properties with storeToRefs to maintain reactivity

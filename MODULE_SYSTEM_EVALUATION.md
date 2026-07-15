@@ -636,6 +636,52 @@ frontend/src/modules/machine/
   `execute_sync_cmd("jog", ...)` which dispatches to `command.jog()`.
 - **What moves:** none of the mock code. The HTTP layer moves.
 
+### 4.9 Migration log — issue #38 (shipped)
+
+Issued as Phase 3a with the highest-risk classification from § 4 of
+this evaluation. The audit's plan was followed with three
+deviations, all documented here:
+
+* **Generated client URL rewrite** — the audit recommended adding a
+  `ModuleMachineService` generated class. The codegen toolchain is
+  not part of this image, so the existing `MachineStateService` and
+  `JoggingService` files were patched in place to point at
+  `/api/v1/modules/machine/...`. A future regen would produce the
+  same URLs, so no churn is created.
+* **`get_settings_model` on `ProgramModule`** — the audit's "no
+  settings schema yet" line caused `ProgramModule` to omit the
+  method entirely; the runtime `PluggableModule` protocol's
+  `isinstance` check required the method to exist (even when it
+  returns `None`), so we added an explicit `get_settings_model`
+  returning `None`. Behaviour matches the audit; just an explicit
+  shape.
+* **JogControls `v-if` placeholder wording** — the audit's
+  "placeholder cards" guidance used the literal "Machine module not
+  mounted." A second placeholder for "Jog controls not mounted."
+  was added so the dashboard reveals *which* sub-feature is
+  unavailable when only the machine folder has been removed (rare
+  but possible if a future refactor splits DRO and jog into
+  separate modules).
+
+Other notes:
+
+* The 500 ms keep-alive watchdog is implemented per § 4.2 of this
+  audit. `test_jog_watchdog.py` and `test_jog_keepalive.py` cover
+  both the regression ("no ping → axis halted within ~600 ms")
+  and the happy-path ("every-100 ms ping → axis keeps moving for 2 s")
+  scenarios.
+* The legacy `stores/machine.js` is now a 4-line shim that
+  re-exports `useMachineStore` from the new module-scoped store.
+  Unmigrated consumers (`DebugPanel.vue`, `ConsolePanel.vue`,
+  `GCodeViewer.vue`, `UpdateManager.vue`) keep compiling without
+  code change, as predicted by § 4.5 / § 5.3 of this audit.
+* `MODULES_ENABLED=camera,temperature` boots cleanly with no
+  machine endpoints; `/api/v1/modules/machine/*` returns `404`.
+  This is the nullable-module guarantee from § 5.6.
+* The dashboard's machine slot renders a placeholder card when
+  the registry reports the module absent — verified by
+  `frontend/tests/test-machine-null.mjs`.
+
 ---
 
 ## 5. Cross-cutting pitfalls

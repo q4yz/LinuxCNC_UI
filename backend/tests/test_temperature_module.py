@@ -72,12 +72,20 @@ def test_temperature_module_boots_and_registers_router(
 
 
 def test_legacy_temperature_endpoint_is_gone(tmp_data_root, clean_env):
-    """The old ``POST /api/v1/machine/temperature`` route is removed."""
-    from routers.machine import router as legacy_machine_router
+    """The old ``POST /api/v1/machine/temperature`` route is removed.
 
-    paths = {route.path for route in legacy_machine_router.routes}
-    # The legacy path was ``/api/v1/machine/temperature`` (prefix +
-    # ``/temperature``). It must no longer be present.
+    Issue #38 deleted ``backend/routers/machine.py`` along with
+    ``backend/routers/jog.py`` as part of the machine-module migration.
+    The legacy temperature endpoint is therefore gone by construction:
+    we exercise the temperature module's own router and assert the
+    legacy path is **not** registered under it.
+    """
+    from modules.temperature.router import router as temperature_router
+
+    paths = {route.path for route in temperature_router.routes}
+    assert "/temperature" not in paths
+    # And, by construction, the legacy prefix is gone too (the file
+    # that defined it no longer exists).
     assert "/api/v1/machine/temperature" not in paths
 
 

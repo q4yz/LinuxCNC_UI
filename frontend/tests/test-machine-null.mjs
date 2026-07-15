@@ -1,0 +1,271 @@
+// Nullable-module guarantee for the frontend machine module.
+//
+// Run with: node --test frontend/tests/test-machine-null.mjs
+//
+// Mirrors ``frontend/tests/test-camera-null.mjs``.  We assert the
+// static structure that lets a developer delete
+// ``frontend/src/modules/machine/`` without breaking the dashboard
+// build:
+//
+//   * ``DashboardView.vue`` lazily imports the machine panel via
+//     ``defineAsyncComponent`` + ``import.meta.glob``.
+//   * The DRO and JogControls slots gate on ``v-if="machineMounted"``.
+//   * The legacy ``components/DroPanel.vue`` and
+//     ``components/JogControls.vue`` are gone.
+//   * The new ``modules/machine/components/DroPanel.vue`` and
+//     ``modules/machine/components/JogControls.vue`` are in place.
+//   * The legacy shim at ``stores/machine.js`` re-exports the new
+//     store so unmigrated consumers (ConsolePanel, DebugPanel,
+//     GCodeViewer, UpdateManager) keep working without code change.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "../..");
+
+const dashboardPath = resolve(
+  repoRoot,
+  "frontend/src/views/DashboardView.vue",
+);
+const legacyDroPanel = resolve(
+  repoRoot,
+  "frontend/src/components/DroPanel.vue",
+);
+const legacyJogControls = resolve(
+  repoRoot,
+  "frontend/src/components/JogControls.vue",
+);
+const newDroPanel = resolve(
+  repoRoot,
+  "frontend/src/modules/machine/components/DroPanel.vue",
+);
+const newJogControls = resolve(
+  repoRoot,
+  "frontend/src/modules/machine/components/JogControls.vue",
+);
+const newStore = resolve(
+  repoRoot,
+  "frontend/src/modules/machine/store.js",
+);
+const legacyStoreShim = resolve(
+  repoRoot,
+  "frontend/src/stores/machine.js",
+);
+
+test("DashboardView uses defineAsyncComponent for the machine panel", () => {
+  const source = readFileSync(dashboardPath, "utf-8");
+  assert.match(
+    source,
+    /defineAsyncComponent/,
+    "DashboardView must use defineAsyncComponent so the machine chunk is split",
+  );
+  // The machine panels are loaded via the generic `panelFor`
+  // helper, which performs the dynamic import at runtime — not
+  // a literal ``import('.../DroPanel.vue')`` call. The regex
+  // below looks for that helper invocation so a regression that
+  // re-adds a static import is still caught.
+  assert.match(
+    source,
+    /panelFor\(\s*['"]machine['"]\s*,\s*['"]DroPanel['"]\s*\)/,
+    "DashboardView must lazily resolve DroPanel via panelFor",
+  );
+  assert.match(
+    source,
+    /panelFor\(\s*['"]machine['"]\s*,\s*['"]JogControls['"]\s*\)/,
+    "DashboardView must lazily resolve JogControls via panelFor",
+  );
+});
+
+test("DashboardView guards the machine slots with v-if and a placeholder", () => {
+  const source = readFileSync(dashboardPath, "utf-8");
+  // The machine slots gate on a reactive ``machineMounted`` flag.
+  assert.match(source, /v-if="machineMounted"/);
+  assert.match(
+    source,
+    /registry\.modules\.has\(['"]machine['"]\)/,
+    "machineMounted computed must read from the registry",
+  );
+  // When the module is not mounted the dashboard renders a
+  // placeholder card rather than throwing — keep the layout
+  // consistent.
+  assert.match(source, /v-else/);
+  assert.match(source, /not mounted/i);
+});
+
+test("DashboardView does not statically import the legacy machine paths", () => {
+  const source = readFileSync(dashboardPath, "utf-8");
+  // A regression where someone re-adds
+  // ``import DroPanel from '../components/DroPanel.vue'`` would
+  // re-introduce the "deleting the module folder breaks the
+  // build" failure mode (Gotcha #1).
+  assert.doesNotMatch(
+    source,
+    /from\s+['"]\.\.\/components\/DroPanel\.vue['"]/,
+    "DashboardView must not statically import the legacy DRO path",
+  );
+  assert.doesNotMatch(
+    source,
+    /from\s+['"]\.\.\/components\/JogControls\.vue['"]/,
+    "DashboardView must not statically import the legacy JogControls path",
+  );
+});
+
+test("legacy components/DroPanel.vue and JogControls.vue are removed", () => {
+  assert.equal(
+    existsSync(legacyDroPanel),
+    false,
+    `expected ${legacyDroPanel} to be removed after migration`,
+  );
+  assert.equal(
+    existsSync(legacyJogControls),
+    false,
+    `expected ${legacyJogControls} to be removed after migration`,
+  );
+});
+
+test("new modules/machine/components/ files exist", () => {
+  assert.ok(existsSync(newDroPanel), `expected ${newDroPanel}`);
+  assert.ok(existsSync(newJogControls), `expected ${newJogControls}`);
+});
+
+test("module store file exposes useMachineStore", () => {
+  assert.ok(existsSync(newStore));
+  const text = readFileSync(newStore, "utf-8");
+  assert.match(
+    text,
+    /export\s+const\s+useMachineStore\s*=\s*defineStore/,
+    "machine store must export useMachineStore via defineStore",
+  );
+});
+
+test("legacy stores/machine.js shim re-exports useMachineStore", () => {
+  assert.ok(existsSync(legacyStoreShim));
+  const text = readFileSync(legacyStoreShim, "utf-8");
+  // The shim must re-export useMachineStore from the new module
+  // location so the unmigrated consumers (DebugPanel, etc.) keep
+  // working.
+  assert.match(
+    text,
+    /export\s*\{\s*useMachineStore\s*[,\s]\s*useMachineRefs\s*\}\s*from\s*['"]\.\.\/modules\/machine\/store\.js['"]/,
+    "legacy shim must re-export the module-scoped store",
+  );
+});
+
+test("App.vue connects only when the machine module is not mounted", () => {
+  // The module's ``onLoad`` already opens the WebSocket;
+  // App.vue's connect() must guard against a double-socket by
+  // checking ``registry.modules.has('machine')`` first. The
+  // ``connect()`` action itself is also idempotent per the
+  // store implementation.
+  const appPath = resolve(repoRoot, "frontend/src/App.vue");
+  const source = readFileSync(appPath, "utf-8");
+  assert.match(
+    source,
+    /registry\.modules\.has\(\s*['"]machine['"]\s*\)/,
+    "App.vue must consult the registry before calling store.connect()",
+  );
+});
+
+test("machine module JogControls unmount stops all in-flight jogs", () => {
+  const jogPath = resolve(
+    repoRoot,
+    "frontend/src/modules/machine/components/JogControls.vue",
+  );
+  const text = readFileSync(jogPath, "utf-8");
+  // Issue #38 § 6 Risk #5 — the component must call
+  // ``stopAllJogging`` from ``onBeforeUnmount`` so navigating
+  // away releases the axis within the watchdog window.
+  assert.match(
+    text,
+    /onBeforeUnmount/,
+    "JogControls must register an onBeforeUnmount hook",
+  );
+  assert.match(text, /stopAllJogging/);
+});
+
+test("machine module uses the module-scoped URL prefixes", () => {
+  // The frontend's generated services were updated to point
+  // at the module URLs (``/api/v1/modules/machine/...``). The
+  // original flat URLs must no longer appear in the service
+  // definitions.
+  const machineSvc = resolve(
+    repoRoot,
+    "frontend/generated/api/services/MachineStateService.ts",
+  );
+  const jogSvc = resolve(
+    repoRoot,
+    "frontend/generated/api/services/JoggingService.ts",
+  );
+  const programSvc = resolve(
+    repoRoot,
+    "frontend/generated/api/services/ProgramExecutionService.ts",
+  );
+
+  const machineText = readFileSync(machineSvc, "utf-8");
+  const jogText = readFileSync(jogSvc, "utf-8");
+  const programText = readFileSync(programSvc, "utf-8");
+
+  // Spot-check the URLs that the store actually calls.
+  for (const url of [
+    "/api/v1/modules/machine/state",
+    "/api/v1/modules/machine/mode",
+    "/api/v1/modules/machine/home",
+    "/api/v1/modules/machine/mdi",
+  ]) {
+    assert.match(
+      machineText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `MachineStateService must use ${url}`,
+    );
+  }
+  for (const url of [
+    "/api/v1/modules/machine/jog",
+    "/api/v1/modules/machine/jog/keepalive",
+    "/api/v1/modules/machine/jog/stop",
+  ]) {
+    assert.match(
+      jogText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `JoggingService must use ${url}`,
+    );
+  }
+  // The legacy ``/api/v1/machine/...`` URLs must no longer
+  // appear anywhere in the machine-related generated services.
+  for (const url of [
+    "/api/v1/machine/state",
+    "/api/v1/machine/mode",
+    "/api/v1/machine/home",
+    "/api/v1/machine/jog",
+  ]) {
+    assert.doesNotMatch(
+      machineText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `MachineStateService must not use legacy ${url}`,
+    );
+    assert.doesNotMatch(
+      jogText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `JoggingService must not use legacy ${url}`,
+    );
+  }
+
+  // Program endpoints moved to /api/v1/modules/program/...
+  for (const url of [
+    "/api/v1/modules/program/run",
+    "/api/v1/modules/program/stop",
+    "/api/v1/modules/program/pause",
+    "/api/v1/modules/program/resume",
+    "/api/v1/modules/program/parse",
+  ]) {
+    assert.match(
+      programText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `ProgramExecutionService must use ${url}`,
+    );
+  }
+  assert.doesNotMatch(programText, /\/api\/v1\/program\//);
+});

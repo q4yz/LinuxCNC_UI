@@ -1,8 +1,8 @@
 # LinuxCNC Web UI — Module System Roadmap
 
-**Status:** Phase 3 (Temperature module migration) — **shipped** in #32.
-**In Flight:** Phase 3 (Axis migration) — issue #04.
-**Next:** Phase 4 (Telemetry transport refactor) — pending.
+**Status:** Phase 3a (Machine module migration) — **shipped** in #38.
+**In Flight:** Phase 4 (Module authoring docs & DX) — pending.
+**Next:** Phase 5 (Telemetry transport refactor) — pending.
 
 This document captures the architecture plan for turning the
 LinuxCNC Web UI into a **registry-driven platform** so new features
@@ -127,11 +127,13 @@ recipe.
 | 2b    | Settings + EventBus shells (backend) | ✅ shipped    | Issue #29 — `SettingsStore` (atomic write + defaults merge), `EventBus` payload immutability, four canonical settings endpoints. |
 | 2c    | Frontend registry + telemetry shell  | ✅ shipped    | Issue #29 — `FrontendRegistry` with `import.meta.glob` (lazy), `TelemetryBus` by-reference shell, `SettingsView.vue` empty-state placeholder. |
 | 2d    | Camera migration (template)          | ✅ shipped    | Issue #2 — first end-to-end module under the new contract. |
-| 3     | Temperature migration                | ✅ shipped    | Issue #32 — temperature HTTP surface, UI, Pinia store, settings, nullable-module guarantee. |
-| 4     | Module authoring docs & DX           | 📋 planned    | Follow-up to #32 once the machine module lands. |
+| 3a    | Machine migration (highest risk)     | ✅ shipped    | Issue #38 — DRO / jog / state / MDI / home + 500 ms keep-alive watchdog. Companion `modules/program/` stub hosts the program-lifecycle endpoints so `routers/machine.py` could be deleted. Legacy `stores/machine.js` becomes a thin shim; `MachineStateService` / `JoggingService` URLs updated to `/api/v1/modules/machine/...`. Nullable-module guarantee verified. |
+| 3b    | Temperature migration                | ✅ shipped    | Issue #32 — temperature HTTP surface, UI, Pinia store, settings, nullable-module guarantee. |
+| 4     | Module authoring docs & DX           | 📋 planned    | Follow-up to #38 once the machine module lands. |
 | 5     | Telemetry transport refactor         | 📋 planned    | Fold `routers/websocket.py` broadcast loop into `TelemetryBus`. |
 | 6     | Settings UI form generator           | 📋 planned    | Replaces the placeholder panels in `SettingsView.vue`. |
 | 7     | SQLite storage promotion             | 📋 planned    | Replaces `SettingsStore`'s flat JSON. |
+| 8     | Program UI / autonomous lifecycle    | 📋 planned    | Phase 3 follow-up. The `modules/program/` stub hosts the HTTP surface today; the UI + autonomous lifecycle land here. |
 
 (2b and 2c are tracked together under issue #29 because the
 issue's acceptance criteria cover both layers in one PR.)
@@ -161,4 +163,4 @@ issue's acceptance criteria cover both layers in one PR.)
 
 ---
 
-**Last Updated:** Phase 3 (temperature migration) shipped in issue #32.
+**Last Updated:** Phase 3a (machine migration) shipped in issue #38.

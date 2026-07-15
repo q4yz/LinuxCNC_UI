@@ -9,8 +9,12 @@ from core.module_registry import registry
 from hardware.connection import connection
 
 
-# Import our new modular routers
-from routers import machine, jog, websocket, files, system, config, compiler
+# Import our remaining flat-file routers. The ``machine`` /
+# ``jog`` / ``program`` routers were migrated to the
+# ``modules/machine`` + ``modules/program`` sub-packages in
+# issue #38; the registry picks them up automatically via
+# ``registry.boot(app)`` further down.
+from routers import websocket, files, system, config, compiler
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -44,14 +48,17 @@ async def lifespan(app: FastAPI):
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(websocket.telemetry_loop())
 
-    # Start the jog safety watchdog
-    task_watchdog = asyncio.create_task(jog.jog_watchdog())
-
     # Discover / load pluggable hardware modules. ``registry`` injects
     # the EventBus into each module and mounts any routers they expose
     # under ``/api/v1/modules/{id}``. Missing or empty ``modules/``
     # package is logged but never fatal; the ``MODULES_ENABLED`` env
     # var (comma-separated) restricts which discovered modules boot.
+    #
+    # The jog safety watchdog (formerly in ``routers/jog.py``) now
+    # ships inside ``modules/machine/jog_watchdog.py`` and is
+    # started/stopped by ``MachineModule.on_load`` /
+    # ``MachineModule.on_unload`` — the registry ``boot`` /
+    # ``unload`` pair below manages it for us.
     registry.boot(app)
     app.state.module_registry = registry
 
@@ -60,7 +67,6 @@ async def lifespan(app: FastAPI):
     # Shutdown gracefully
     logger.info("Shutting down LinuxCNC background tasks...")
     task_telemetry.cancel()
-    task_watchdog.cancel()
     registry.unload()
 
 # Initialize FastAPI app
@@ -80,13 +86,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include modular routers
-app.include_router(machine.router)
-app.include_router(machine.program_router)
+# Include modular routers. The ``machine`` / ``program`` routers are
+# mounted by the ``registry.boot(app)`` call inside ``lifespan`` (see
+# above), which routes them under ``/api/v1/modules/{id}``. Keeping
+# the include order flat means the legacy flat-file routers mount
+# first and the module-mounted routers layer on top with no conflict.
 app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(config.router)
-app.include_router(jog.router)
 app.include_router(websocket.router)
 app.include_router(compiler.router)
 
