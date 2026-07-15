@@ -1,9 +1,8 @@
 # LinuxCNC Web UI — Module System Roadmap
 
-**Status:** Phase 2a (Protocol + Registry skeleton) — **shipped** in #22.
-**In Flight:** Phase 2b/2c (Settings + EventBus + TelemetryBus shells)
-                — issue #29.
-**Next:** Phase 2d (Camera migration as the template) — issue #2.
+**Status:** Phase 3 (Temperature module migration) — **shipped** in #32.
+**In Flight:** Phase 3 (Axis migration) — issue #04.
+**Next:** Phase 4 (Telemetry transport refactor) — pending.
 
 This document captures the architecture plan for turning the
 LinuxCNC Web UI into a **registry-driven platform** so new features
@@ -32,13 +31,14 @@ without touching the global shell.
 |-------|--------------------------------------|-------|--------|-------|
 | 1     | Flat router layout                   | core  | ✅ shipped | n/a |
 | 2a    | Protocol + Registry skeleton         | core  | ✅ shipped | #22 |
-| 2b    | Settings subsystem + EventBus shells | core  | 🔧 in progress | #29 |
-| 2c    | TelemetryBus + frontend registry     | core  | 🔧 in progress | #29 |
-| 2d    | Camera module migration (template)   | apps  | 📋 next | #2 |
-| 3     | Module authoring docs & DX           | docs  | 📋 planned | — |
-| 4     | Telemetry transport refactor         | core  | 📋 planned | — |
-| 5     | Settings UI form generator           | apps  | 📋 planned | — |
-| 6     | SQLite storage promotion             | core  | 📋 planned | — |
+| 2b    | Settings subsystem + EventBus shells | core  | ✅ shipped | #29 |
+| 2c    | TelemetryBus + frontend registry     | core  | ✅ shipped | #29 |
+| 2d    | Camera module migration (template)   | apps  | ✅ shipped | #2 |
+| 3     | Temperature module migration         | apps  | ✅ shipped | #32 |
+| 4     | Module authoring docs & DX           | docs  | 📋 planned | — |
+| 5     | Telemetry transport refactor         | core  | 📋 planned | — |
+| 6     | Settings UI form generator           | apps  | 📋 planned | — |
+| 7     | SQLite storage promotion             | core  | 📋 planned | — |
 
 (Phase 2b and 2c are tracked together under issue #29 because the
 acceptance criteria from the issue's plan cover both layers.)
@@ -124,16 +124,14 @@ recipe.
 | Phase | Title                                | Status        | Notes |
 |-------|--------------------------------------|---------------|-------|
 | 2a    | Protocol + Registry skeleton         | ✅ shipped    | Issue #22 — `PluggableModule` Protocol + `ModuleRegistry` with `discover_and_load`. |
-| 2b    | Settings + EventBus shells (backend) | 🔧 in progress | Issue #29 — `SettingsStore` (atomic write + defaults merge), `EventBus` payload immutability, four canonical settings endpoints. |
-| 2c    | Frontend registry + telemetry shell  | 🔧 in progress | Issue #29 — `FrontendRegistry` with `import.meta.glob` (lazy), `TelemetryBus` by-reference shell, `SettingsView.vue` empty-state placeholder. |
-| 2d    | Camera migration (template)          | 📋 next       | Issue #2 — first end-to-end module under the new contract. |
-| 3     | Module authoring docs & DX           | 📋 planned    | Follow-up to #29 once 2d lands. |
-| 4     | Telemetry transport refactor         | 📋 planned    | Fold `routers/websocket.py` broadcast loop into `TelemetryBus`. |
-| 5     | Settings UI form generator           | 📋 planned    | Replaces the placeholder panels in `SettingsView.vue`. |
-| 6     | SQLite storage promotion             | 📋 planned    | Replaces `SettingsStore`'s flat JSON. |
-
-(2b and 2c are tracked together under issue #29 because the
-issue's acceptance criteria cover both layers in one PR.)
+| 2b    | Settings + EventBus shells (backend) | ✅ shipped    | Issue #29 — `SettingsStore` (atomic write + defaults merge), `EventBus` payload immutability, four canonical settings endpoints. |
+| 2c    | Frontend registry + telemetry shell  | ✅ shipped    | Issue #29 — `FrontendRegistry` with `import.meta.glob` (lazy), `TelemetryBus` by-reference shell, `SettingsView.vue` empty-state placeholder. |
+| 2d    | Camera migration (template)          | ✅ shipped    | Issue #2 — first end-to-end module under the new contract. |
+| 3     | Temperature migration                | ✅ shipped    | Issue #32 — temperature HTTP surface, UI, Pinia store, settings, nullable-module guarantee. |
+| 4     | Module authoring docs & DX           | 📋 planned    | Follow-up to #32 once the machine module lands. |
+| 5     | Telemetry transport refactor         | 📋 planned    | Fold `routers/websocket.py` broadcast loop into `TelemetryBus`. |
+| 6     | Settings UI form generator           | 📋 planned    | Replaces the placeholder panels in `SettingsView.vue`. |
+| 7     | SQLite storage promotion             | 📋 planned    | Replaces `SettingsStore`'s flat JSON. |
 
 ## 10. References
 
@@ -160,4 +158,4 @@ issue's acceptance criteria cover both layers in one PR.)
 
 ---
 
-**Last Updated:** Phase 2b/2c in flight (issue #29).
+**Last Updated:** Phase 3 (temperature migration) shipped in issue #32.

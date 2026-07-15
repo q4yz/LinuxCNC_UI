@@ -338,6 +338,81 @@ frontend/src/modules/temperature/
   `core/hardware/mock_temperature.py` if we ever want the temperature
   module to be removable from the mock too. Not needed for v1.
 
+### 3.7 Migration log — issue #32 (shipped)
+
+Status: **shipped**. The temperature module now lives under
+`backend/modules/temperature/` and `frontend/src/modules/temperature/`.
+Five acceptance criteria from the issue are all met:
+
+1. Registry mounts `['camera', 'temperature']` on a clean checkout
+   with `MODULES_ENABLED` empty.
+2. `GET /api/v1/modules/temperature/sensors` returns the mock's
+   three-sensor dictionary.
+3. `PUT /api/v1/modules/temperature/settings` persists
+   `history_window_seconds` and survives a backend restart (verified
+   by `test_temperature_settings.py::test_settings_survive_restart`).
+4. Removing both module folders leaves the registry at
+   `mounted=['camera']` (or `[]` if camera is also removed) with no
+   error logs.
+5. `npm run build` succeeds with both folders deleted (verified
+   manually during PR review).
+
+#### Deviations from the audit's plan
+
+- **Settings defaults wiring.** The audit did not prescribe how
+  `SettingsStore` would learn about a module's Pydantic defaults
+  model. The shipped implementation adds an opt-in `settings_model`
+  class attribute on `PluggableModule`; `ModuleRegistry._mount`
+  detects it and seeds the per-module store with `defaults=instance()`.
+  Modules that omit the attribute (e.g. the camera stub) fall back
+  to `defaults=None`, preserving backward compatibility with the
+  Phase 2b/2c tests in `test_module_registry.py`.
+- **Pass-through bus subscription.** The legacy `stores/machine.js`
+  keeps a `state.temperatures` subscription so unmigrated consumers
+  (`DebugPanel.vue`, third-party widgets) see live values. The
+  audit did not call this out explicitly; it became necessary when
+  the legacy store no longer maintained `temperatureHistory`
+  itself.
+- **Nullable-import via `import.meta.glob`.** The audit recommended
+  `defineAsyncComponent` for the panel; we use a slightly richer
+  pattern with `import.meta.glob('../modules/*/components/*.vue')`
+  so the dashboard builds even when a module folder has been
+  deleted (Gotcha #1). The async component is wrapped in
+  `<component :is>` plus a `v-if` on a `shallowRef` that only
+  resolves after the registry boots.
+- **`onScopeDispose` polling cleanup.** Risk § 6.4 from the audit
+  flagged the polling loop as a potential leak if `stop()` were
+  never called. The shipped store wires `onScopeDispose(stop)` so
+  the polling interval is torn down automatically when the pinia
+  scope ends.
+- **Pydantic defaults merged under legacy tests.** The existing
+  `test_module_registry.py::test_settings_router_mounted_under_modules_id_settings`
+  test asserts `r.json() == {}` for a stub without defaults.
+  Adding `settings_model` support did **not** break that test
+  because stub modules don't expose the attribute, and the
+  registry defaults to `settings_defaults=None` when the attribute
+  is absent.
+
+#### Files touched
+
+- Backend (new): `backend/modules/temperature/{__init__,module,router,settings}.py`.
+- Backend (modified): `backend/routers/machine.py` (removed
+  `TemperatureRequest` model and `POST /api/v1/machine/temperature`
+  endpoint), `backend/core/module_registry.py` (added
+  `settings_model` opt-in for module defaults).
+- Backend (tests): `backend/tests/test_temperature_{module,settings,null}.py`.
+- Frontend (new): `frontend/src/modules/temperature/{index,manifest,store}.js`
+  + `components/TemperaturePanel.vue`.
+- Frontend (modified): `frontend/src/stores/machine.js` (removed
+  `temperatureHistory` and `temperaturePollingInterval`, added bus
+  publish/subscribe pass-through, repointed
+  `setTargetTemperature` to the module's HTTP endpoint),
+  `frontend/src/views/DashboardView.vue` (lazy-load via
+  `import.meta.glob` + nullable-import guard).
+- Frontend (deleted): `frontend/src/components/TemperaturePanel.vue`
+  (moved to the module folder).
+- Docs: `MODULE_SYSTEM_ROADMAP.md` § 9 status table updated.
+
 ---
 
 ## 4. Audit — axis (DRO + jog + machine state + MDI + home)

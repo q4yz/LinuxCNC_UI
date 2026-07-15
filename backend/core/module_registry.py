@@ -308,10 +308,31 @@ class ModuleRegistry:
         logger.info("Mounting module: %s (%s)", module_id, manifest.title)
 
         # 1. Settings store + ModuleContext (cheap, no I/O yet).
+        # If the module exposes a ``settings_model`` attribute pointing
+        # to a Pydantic model **class**, the registry instantiates it
+        # and merges it under the persisted payload so freshly mounted
+        # modules still surface sensible defaults before the first
+        # PUT. Modules that don't ship defaults (the common case for
+        # early-stage modules) fall back to ``defaults=None``.
+        settings_defaults = None
+        settings_model_cls = getattr(instance, "settings_model", None)
+        if isinstance(settings_model_cls, type) and issubclass(
+            settings_model_cls, BaseModel
+        ):
+            try:
+                settings_defaults = settings_model_cls()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Module %s.settings_model() could not be instantiated: %s",
+                    module_id,
+                    exc,
+                )
+                settings_defaults = None
+
         settings = SettingsStore(
             module_id=module_id,
             data_root=self._data_root,
-            defaults=None,
+            defaults=settings_defaults,
         )
         ctx = ModuleContext(
             module_id=module_id,
