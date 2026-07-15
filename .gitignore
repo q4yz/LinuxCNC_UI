@@ -10,6 +10,7 @@ cnc_ini/*.txt
 *.db
 *.log
 log/
+.env
 
 # Backend virtual environment
 backend/venv/
