@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { NcFilesService } from '../services/api/services/NcFilesService'
+import { NcFilesService } from '../../generated/api/services/NcFilesService'
 import { useConsoleStore } from '../stores/console'
 
 const files = ref([])

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { generateSetOffset } from '../config/gcodes'
-import { JoggingService } from '../services/api/services/JoggingService'
-import { MachineStateService } from '../services/api/services/MachineStateService'
+import { JoggingService } from '../../generated/api/services/JoggingService'
+import { MachineStateService } from '../../generated/api/services/MachineStateService'
 import { useConsoleStore } from './console'
 
 // Axis index to G-code letter mapping (X=0, Y=1, Z=2)

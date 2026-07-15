@@ -1,11 +1,16 @@
 // Fetch the FastAPI OpenAPI schema from the running backend and regenerate the
-// strongly-typed client under src/services/api.
+// strongly-typed client under `generated/api/` (gitignored — never committed).
 //
 // Why a wrapper instead of pointing openapi-typescript-codegen directly at the
 // URL: the generator's underlying json-schema-ref-parser chokes when handed a
 // remote URL because it tries to interpret the URL itself as a $ref pointer.
 // Downloading the spec to a local file first sidesteps that limitation while
 // still respecting the workflow described in issue #19.
+//
+// Why `generated/api/` (outside `src/`): a single, recognisable home for every
+// auto-generated artifact in the project — nothing hand-written lives there.
+// It is matched by `frontend/generated/` in the root `.gitignore`, so a
+// successful regen never produces a noisy diff.
 //
 // Usage:
 //   npm run generate-api                       # uses http://127.0.0.1:8000
@@ -20,8 +25,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
 
 const openApiUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8000/openapi.json';
-const outputDir = path.join(projectRoot, 'src', 'services', 'api');
-const cacheDir = path.join(projectRoot, '.openapi-cache');
+const generatedDir = path.join(projectRoot, 'generated');
+const outputDir = path.join(generatedDir, 'api');
+const cacheDir = path.join(generatedDir, '.openapi-cache');
 const specPath = path.join(cacheDir, 'openapi.json');
 
 const generatorArgs = [

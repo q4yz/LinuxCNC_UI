@@ -3,7 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { ini } from '@codemirror/lang-ini'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { ConfigurationService } from '../services/api/services/ConfigurationService'
+import { ConfigurationService } from '../../generated/api/services/ConfigurationService'
 import { useConsoleStore } from '../stores/console'
 
 const props = defineProps({

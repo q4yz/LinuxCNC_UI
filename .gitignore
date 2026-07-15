@@ -20,7 +20,12 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env
 frontend/.env.*
-frontend/.openapi-cache/
+# Auto-generated artifacts (OpenAPI client + its download cache).
+# Anything under `generated/` is produced by `npm run generate-api`
+# and must never be committed. The README is the one exception — it is
+# the in-repo marker explaining the rule, so it stays tracked.
+frontend/generated/*
+!frontend/generated/README.md
 
 # Old legacy ignores (safe to keep)
 templates/gb_*

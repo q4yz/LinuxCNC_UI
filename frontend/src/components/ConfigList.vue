@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ConfigurationService } from '../services/api/services/ConfigurationService'
-import { ProgramExecutionService } from '../services/api/services/ProgramExecutionService'
+import { ConfigurationService } from '../../generated/api/services/ConfigurationService'
+import { ProgramExecutionService } from '../../generated/api/services/ProgramExecutionService'
 import { useConsoleStore } from '../stores/console'
 
 const consoleStore = useConsoleStore()

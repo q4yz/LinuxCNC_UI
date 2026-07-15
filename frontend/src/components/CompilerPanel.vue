@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { CompilerService } from '../services/api/services/CompilerService'
+import { CompilerService } from '../../generated/api/services/CompilerService'
 import { useConsoleStore } from '../stores/console'
 import ConfigEditor from './ConfigEditor.vue'
 

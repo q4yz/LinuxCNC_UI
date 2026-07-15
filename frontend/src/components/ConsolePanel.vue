@@ -2,7 +2,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useConsoleStore } from '../stores/console'
 import { useMachineStore } from '../stores/machine'
-import { MachineStateService } from '../services/api/services/MachineStateService'
+import { MachineStateService } from '../../generated/api/services/MachineStateService'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()

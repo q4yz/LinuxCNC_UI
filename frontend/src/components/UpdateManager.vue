@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
 import { useConsoleStore } from '../stores/console'
-import { SystemService } from '../services/api/services/SystemService'
+import { SystemService } from '../../generated/api/services/SystemService'
 
 const store = useMachineStore()
 const consoleStore = useConsoleStore()
