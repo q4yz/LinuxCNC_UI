@@ -216,7 +216,7 @@ async def list_models():
             }
         ]
     }
-
+@app.post("/api/chat")
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionRequest) -> Any:
     payload = req.model_dump(exclude_none=True)
