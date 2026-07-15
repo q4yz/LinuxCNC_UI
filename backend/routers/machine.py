@@ -31,12 +31,6 @@ class MdiCommand(BaseModel):
     command: str = Field(..., description="G-code / MDI command string to execute")
 
 
-class TemperatureRequest(BaseModel):
-    """Pydantic model for setting a sensor target temperature."""
-    sensor_name: str = Field(..., description="Logical sensor identifier (e.g., 'extruder', 'bed')")
-    target: float = Field(..., description="Target temperature in Celsius")
-
-
 class StatusResponse(BaseModel):
     """Generic response model for endpoints that return a status string."""
     status: str = Field(..., description="Outcome reported by the hardware layer (e.g., 'success')")
@@ -123,19 +117,6 @@ def run_mdi(cmd: MdiCommand) -> StatusResponse:
     # Force switch to MDI mode before executing
     execute_sync_cmd("mode", 5, getattr(linuxcnc, 'MODE_MDI', 3))
     result = execute_sync_cmd("mdi", 0, cmd.command)
-    return StatusResponse(status=result.get("status", "success"))
-
-
-@router.post(
-    "/temperature",
-    summary="Set Target Temperature",
-    description="Set the target temperature for the spindle/extruder heater.",
-    operation_id="setTargetTemperature",
-    response_model=StatusResponse,
-)
-def set_temperature(cmd: TemperatureRequest) -> StatusResponse:
-    """Set the target temperature for a named sensor (e.g., 'extruder', 'bed')."""
-    result = execute_sync_cmd("set_temperature", 0, cmd.sensor_name, cmd.target)
     return StatusResponse(status=result.get("status", "success"))
 
 

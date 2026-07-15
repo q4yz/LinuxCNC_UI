@@ -1,35 +1,63 @@
 <script setup>
-// Dashboard composition. Each module-owned panel is loaded via
-// ``defineAsyncComponent`` so removing the corresponding
+// Dashboard composition. Module-owned panels (``camera``,
+// ``temperature``) are loaded via ``defineAsyncComponent`` resolved
+// at runtime through ``import.meta.glob`` so removing either
 // ``frontend/src/modules/<id>/`` folder leaves the build intact
 // (MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1).
 //
-// The dashboard then reads ``registry.modules`` to decide whether to
-// render the panel at all. The legacy static imports were dropped
-// because they would re-introduce the very "deleting a folder breaks
-// the build" failure mode the module system is designed to avoid.
-import { defineAsyncComponent, computed } from 'vue'
+// The unmigrated panels (``DroPanel``/``JogControls``/
+// ``GCodeViewer``/``ConsolePanel``/``DebugPanel``) keep static
+// imports for now; they will convert to async when those features
+// migrate.
+//
+// Reactivity: ``registry.modules`` is a Vue-reactive Map (see
+// ``frontend/src/core/modules/registry.js``), so the ``computed``s
+// below re-evaluate the moment the registry flips a module into
+// its mounted set after boot completes.
+
+import { computed, defineAsyncComponent } from 'vue'
 import registry from '../core/modules/registry'
+
 import DroPanel from '../components/DroPanel.vue'
 import JogControls from '../components/JogControls.vue'
 import GCodeViewer from '../components/GCodeViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
-import TemperaturePanel from '../components/TemperaturePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 
-// Lazy camera panel. The ``() => import(...)`` callback is only
-// evaluated if the dashboard actually renders ``<CameraPanel />``,
-// which only happens when the module is mounted.
-const CameraPanel = defineAsyncComponent(
-  () => import('../modules/camera/components/CameraPanel.vue'),
+// ``import.meta.glob`` with ``eager: false`` records dynamic-import
+// functions keyed by file path; the dashboard keeps building with
+// an empty ``modules/`` folder because Vite doesn't try to resolve
+// the paths at build time.
+const modulePanelImports = import.meta.glob(
+  '../modules/*/components/*.vue',
+  { eager: false },
 )
 
-// Track whether each module is currently mounted so the dashboard
-// can render placeholder slots in their place when missing. Today
-// only the camera uses this — but having the pattern in place means
-// the temperature migration can adopt the same shape without
-// re-litigating the layout.
-const cameraMounted = computed(() => registry.modules.has('camera'))
+/**
+ * Resolve a module panel by id at component-creation time.
+ * Returns ``null`` when the module folder has been deleted, which
+ * the dashboard ``v-if`` gate ignores as "do not render" — this is
+ * the nullable-module guarantee from Gotcha #1.
+ */
+function panelFor(folder, name) {
+  return defineAsyncComponent(async () => {
+    const target = Object.keys(modulePanelImports).find(
+      (p) => p.includes(`/${folder}/`) && p.endsWith(`/${name}.vue`),
+    )
+    if (!target) return null
+    const mod = await modulePanelImports[target]()
+    return mod.default ?? mod
+  })
+}
+
+const CameraPanel      = panelFor('camera',     'CameraPanel')
+const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
+
+// Mounted? ``registry.modules`` is a reactive Map (see
+// ``registry.js``) so ``.has`` is tracked; the computed flips
+// once the registry boots and mounts the module.
+const cameraMounted      = computed(() => registry.modules.has('camera'))
+const temperatureMounted = computed(() => registry.modules.has('temperature'))
 </script>
 
 <template>
@@ -40,7 +68,11 @@ const cameraMounted = computed(() => registry.modules.has('camera'))
       <!-- Left Column: DRO, Heater & Controls -->
       <div class="col-span-1 flex flex-col space-y-6">
         <DroPanel />
-        <TemperaturePanel />
+        <!-- Temperature panel: only rendered when the module folder
+             is on disk AND the registry reports the module mounted
+             (Gotcha #1). When the folder has been deleted, the slot
+             is left empty so the dashboard still lays out cleanly. -->
+        <TemperaturePanel v-if="temperatureMounted" />
         <JogControls />
       </div>
 
@@ -72,6 +104,7 @@ const cameraMounted = computed(() => registry.modules.has('camera'))
         <div v-if="cameraMounted" class="lg:col-span-2">
           <CameraPanel />
         </div>
+
 
       </div>
 

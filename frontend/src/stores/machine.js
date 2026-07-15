@@ -3,6 +3,7 @@ import { generateSetOffset } from '../config/gcodes'
 import { JoggingService } from '../../generated/api/services/JoggingService'
 import { MachineStateService } from '../../generated/api/services/MachineStateService'
 import { useConsoleStore } from './console'
+import { eventBus } from '../core/modules/event-bus'
 
 // Axis index to G-code letter mapping (X=0, Y=1, Z=2)
 const AXIS_NAMES = ['X', 'Y', 'Z'];
@@ -10,8 +11,11 @@ const AXIS_NAMES = ['X', 'Y', 'Z'];
 // Sentinel value accepted by the backend /machine/home endpoint to home all axes
 const HOME_ALL_AXES = -1;
 
-// Temperature history rolling window (10 seconds)
-const TIME_WINDOW_MS = 10000;
+// Bus topic published by the temperature module (and subscribed by
+// us as a thin pass-through). Anything pushed to this topic keeps the
+// legacy ``temperatures`` reference in sync so unmigrated consumers
+// (``DebugPanel.vue`` and any third-party widget) keep working.
+const STATE_TEMPERATURES_TOPIC = 'state.temperatures'
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -62,8 +66,10 @@ export const useMachineStore = defineStore('machine', {
     socket: null,
     isUpdating: false,
     jogIntervals: {}, // Map to hold active interval IDs for each axis
-    temperatureHistory: [], // Array of { time: timestamp, sensors: {...} }
-    temperaturePollingInterval: null // Fixed-interval polling for zero-order hold
+    // Legacy ``temperatureHistory`` and ``temperaturePollingInterval``
+    // removed in issue #32. The rolling chart history now lives in
+    // the temperature module's Pinia store
+    // (``frontend/src/modules/temperature/store.js``).
   }),
 
   getters: {
@@ -99,26 +105,6 @@ export const useMachineStore = defineStore('machine', {
       this.socket.onopen = () => {
         console.log("Connected to LinuxCNC Telemetry");
         this.connectionStatus = 'connected';
-        
-        // Start fixed-interval polling for temperature history (zero-order hold pattern)
-        // This ensures chart points are recorded every 1 second, regardless of diff arrival timing
-        this.temperaturePollingInterval = setInterval(() => {
-          const now = Date.now(); // Millisecond timestamp for pruning logic
-          const nowDate = new Date();
-          const timeLabel = `${nowDate.getHours().toString().padStart(2, '0')}:${nowDate.getMinutes().toString().padStart(2, '0')}:${nowDate.getSeconds().toString().padStart(2, '0')}`;
-
-          // Read fully-merged state (zero-order hold): use last known values even if not in recent diff
-          // IMPORTANT: Deep copy temperatures to avoid storing object references
-          this.temperatureHistory.push({
-            timestamp: now,          // For pruning logic (milliseconds)
-            time: timeLabel,         // For chart display (HH:MM:SS)
-            sensors: JSON.parse(JSON.stringify(this.status.temperatures || {}))
-          });
-
-          // Prune data older than 10 seconds (strict rolling window)
-          const cutoff = now - TIME_WINDOW_MS;
-          this.temperatureHistory = this.temperatureHistory.filter(point => point.timestamp >= cutoff);
-        }, 1000); // Poll every 1 second for smooth 1-second intervals
       };
       
       this.socket.onmessage = (event) => {
@@ -126,9 +112,13 @@ export const useMachineStore = defineStore('machine', {
           const payload = JSON.parse(event.data);
           
           if (payload.type === 'full_state') {
-            // Full state: replace entire status and keep temperatures in sync
+            // Full state: replace entire status and republish to bus
+            // so module stores (e.g. temperature) can pick it up.
             this.status = payload.data;
             this.temperatures = this.status.temperatures || {};
+            eventBus.publish(STATE_TEMPERATURES_TOPIC, {
+              temperatures: this.status.temperatures || {},
+            });
 
           } else if (payload.type === 'delta') {
             // Delta: merge into existing status, then sync temperatures reference
@@ -137,6 +127,11 @@ export const useMachineStore = defineStore('machine', {
             // Always sync this.temperatures to the fully-merged this.status.temperatures
             // This ensures the UI stays in sync with merged state, not just the last delta
             this.temperatures = this.status.temperatures || {};
+            // Republish the merged view so the temperature module's
+            // store can ingest the latest values via the event bus.
+            eventBus.publish(STATE_TEMPERATURES_TOPIC, {
+              temperatures: this.status.temperatures || {},
+            });
             
           } else if (payload.type === 'error') {
             this.errors.push(payload.data);
@@ -151,12 +146,6 @@ export const useMachineStore = defineStore('machine', {
         console.warn("WebSocket disconnected. Retrying in 2 seconds...");
         this.connectionStatus = 'disconnected';
         this.socket = null;
-        
-        // Clean up temperature polling interval
-        if (this.temperaturePollingInterval) {
-          clearInterval(this.temperaturePollingInterval);
-          this.temperaturePollingInterval = null;
-        }
         
         // Auto-reconnect
         setTimeout(() => {
@@ -175,11 +164,6 @@ export const useMachineStore = defineStore('machine', {
 
     disconnect() {
       // Explicitly disconnect and clean up resources
-      if (this.temperaturePollingInterval) {
-        clearInterval(this.temperaturePollingInterval);
-        this.temperaturePollingInterval = null;
-      }
-      
       if (this.socket) {
         this.socket.close();
         this.socket = null;
@@ -348,13 +332,32 @@ export const useMachineStore = defineStore('machine', {
     },
 
     async setTargetTemperature(sensorName, targetValue) {
+      // Legacy wrapper kept so any third-party widget still importing
+      // ``useMachineStore().setTargetTemperature`` keeps working.
+      // The temperature module's panel now calls the temperature
+      // module's HTTP endpoint directly; this action routes through
+      // the module's ``/api/v1/modules/temperature/sensors/{name}/target``
+      // endpoint. ``MachineStateService.setTargetTemperature`` is no
+      // longer generated by the backend, so we use a hand-written
+      // fetch.
       const consoleStore = useConsoleStore()
       try {
         consoleStore.addMessage(`Setting ${sensorName} target temperature to ${targetValue}°C`, 'command')
-        await MachineStateService.setTargetTemperature({
-          sensor_name: sensorName,
-          target: parseFloat(targetValue),
-        });
+        const res = await fetch(
+          `/api/v1/modules/temperature/sensors/${encodeURIComponent(sensorName)}/target`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sensor_name: sensorName,
+              target: parseFloat(targetValue),
+            }),
+          },
+        )
+        if (!res.ok) {
+          const detail = await res.text().catch(() => res.statusText)
+          throw new Error(`set target failed: ${res.status} ${detail}`)
+        }
       } catch (e) {
         consoleStore.addMessage(`Failed to set ${sensorName} target temperature: ${e.message}`, 'error')
         console.error("Failed to set temperature", e);
@@ -362,3 +365,34 @@ export const useMachineStore = defineStore('machine', {
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// Pass-through bus subscription.
+//
+// ``useTemperatureStore`` (the new module-scoped store under the
+// ``module_temperature`` id) is the source of truth for temperature
+// data once issue #32 lands. This subscription keeps the legacy
+// ``temperatures`` field on this store in sync via the event bus so
+// components that have not migrated yet (e.g. ``DebugPanel.vue``,
+// which renders ``JSON.stringify(useMachineStore())``) keep showing
+// the live values. The bus delivers a deep-frozen, deep-cloned copy
+// of every published payload (Gotcha #3), so subscribing to our own
+// publication does not cause a feedback loop — we receive a fresh
+// copy that is safe to assign.
+//
+// We subscribe at module load time because the legacy store has no
+// teardown lifecycle; the subscription lives for the lifetime of the
+// page, matching the WebSocket subscription above.
+// ---------------------------------------------------------------------------
+if (typeof window !== 'undefined' && eventBus && typeof eventBus.subscribe === 'function') {
+  eventBus.subscribe(STATE_TEMPERATURES_TOPIC, (_topic, payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const next = payload.temperatures;
+    if (next && typeof next === 'object') {
+      // The bus hands us a frozen copy. Pinia state wants a plain
+      // object, so we keep the reference as-is — Pinia does not
+      // mutate, it only reads.
+      useMachineStore().temperatures = next;
+    }
+  });
+}
