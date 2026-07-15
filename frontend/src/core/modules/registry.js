@@ -23,6 +23,7 @@
 // because they are expected to be cheap wiring code; long-running
 // I/O must be scheduled by the module itself.
 
+import { reactive } from "vue";
 import { eventBus } from "./event-bus";
 import { telemetryBus } from "./telemetry-bus";
 import { createModuleSettings } from "./settings";
@@ -33,7 +34,14 @@ import { createModuleSettings } from "./settings";
 // ``{ import: 'default' }`` returns each module's default export, so
 // authors write ``export default { manifest, onLoad, ... }``.
 //
-// The trailing ``/index.js`` matches ``frontend/src/modules/<id>/index.js``.
+// The glob resolves to ``frontend/src/modules/<id>/index.js``. Note
+// the **two** ``..`` segments: registry.js lives at
+// ``frontend/src/core/modules/`` so a single ``..`` would land in
+// ``frontend/src/core/`` (wrong folder). DashboardView lives at
+// ``frontend/src/views/`` so it gets away with one ``..``; copying
+// that pattern here silently breaks discovery — this comment is
+// the tripwire.
+//
 // We deliberately keep the import path shape narrow: a module is
 // either a folder with an ``index.js`` or it doesn't exist.
 //
@@ -41,7 +49,7 @@ import { createModuleSettings } from "./settings";
 // ``frontend/src/modules/`` is empty (or deleted) this resolves to
 // ``{}`` and the registry boots cleanly with zero modules.
 const moduleImports = import.meta.glob(
-  "../modules/*/index.js",
+  "../../modules/*/index.js",
   { eager: false },
 );
 
@@ -74,9 +82,15 @@ function parseEnabled() {
 class FrontendRegistry {
   constructor() {
     /**
+     * Vue-reactive Map. ``computed(() => registry.modules.has(id))``
+     * and other consumers track Map mutations (``.set``/``.delete``/
+     * ``.clear``) without needing a manual re-snapshot. Vue 3's
+     * collection handlers transparently wrap ``Map``/``Set`` so
+     * standard iteration (``for..of``, ``Object.keys``) keeps
+     * working in tests.
      * @type {Map<string, import('./protocols').FrontendModuleRecord>}
      */
-    this.modules = new Map();
+    this.modules = reactive(new Map());
     /** @type {import('./event-bus').EventBus} */
     this.eventBus = eventBus;
     /** @type {import('./telemetry-bus').TelemetryBus} */

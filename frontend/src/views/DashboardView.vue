@@ -1,102 +1,63 @@
 <script setup>
-// Dashboard composition. Each module-owned panel is loaded via
-// ``defineAsyncComponent`` so removing the corresponding
+// Dashboard composition. Module-owned panels (``camera``,
+// ``temperature``) are loaded via ``defineAsyncComponent`` resolved
+// at runtime through ``import.meta.glob`` so removing either
 // ``frontend/src/modules/<id>/`` folder leaves the build intact
 // (MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1).
 //
-// The dashboard then reads ``registry.modules`` to decide whether to
-// render the panel at all. The legacy static imports were dropped
-// because they would re-introduce the very "deleting a folder breaks
-// the build" failure mode the module system is designed to avoid.
-import { defineAsyncComponent, computed } from 'vue'
-import registry from '../core/modules/registry'
-// This view acts as a wrapper containing the main UI grid components.
-// Panels that have been migrated into the module system are loaded
-// via ``import.meta.glob`` so removing a module folder does not
-// break the build (Gotcha #1: lazy imports). Panels that have not
-// yet been migrated are imported statically below.
+// The unmigrated panels (``DroPanel``/``JogControls``/
+// ``GCodeViewer``/``ConsolePanel``/``DebugPanel``) keep static
+// imports for now; they will convert to async when those features
+// migrate.
 //
-// Migration status:
-//   * TemperaturePanel → ``frontend/src/modules/temperature``
-//     (issue #32).
-//   * CameraPanel, DroPanel, JogControls, GCodeViewer, ConsolePanel,
-//     DebugPanel — not yet migrated; static imports kept.
+// Reactivity: ``registry.modules`` is a Vue-reactive Map (see
+// ``frontend/src/core/modules/registry.js``), so the ``computed``s
+// below re-evaluate the moment the registry flips a module into
+// its mounted set after boot completes.
 
-import { computed, defineAsyncComponent, shallowRef } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
+import registry from '../core/modules/registry'
+
 import DroPanel from '../components/DroPanel.vue'
 import JogControls from '../components/JogControls.vue'
 import GCodeViewer from '../components/GCodeViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
-import CameraPanel from '../components/CameraPanel.vue'
 
-import { registry } from '../core/modules/registry'
-
-// ``import.meta.glob`` with ``eager: false`` builds a record of
-// dynamic-import functions keyed by file path. Vite does not
-// resolve these at build time when ``eager: false`` is set, so
-// the dashboard keeps building even when a module folder is
-// deleted (Gotcha #1). When the folder is present, the dashboard
-// can lazy-import the component on demand.
-//
-// The glob is rooted at ``./modules/`` and matches the
-// ``components/<PascalName>.vue`` convention used by every module.
-const moduleComponentImports = import.meta.glob(
+// ``import.meta.glob`` with ``eager: false`` records dynamic-import
+// functions keyed by file path; the dashboard keeps building with
+// an empty ``modules/`` folder because Vite doesn't try to resolve
+// the paths at build time.
+const modulePanelImports = import.meta.glob(
   '../modules/*/components/*.vue',
   { eager: false },
 )
 
-// ``registry.modules`` is the canonical source of truth for which
-// modules have been mounted at runtime. We use it as the gate so
-// the dashboard renders an empty slot when the module folder has
-// been deleted — this is the nullable-module guarantee from
-// MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1.
-const temperatureMounted = computed(() => registry.modules.has('temperature'))
-
-// Resolve the temperature component only when the module is
-// mounted AND the glob found a matching file (i.e. the folder
-// hasn't been deleted). ``shallowRef`` keeps Vue from recursively
-// observing the component definition, which would be wasteful for
-// a static component object.
-const AsyncTemperaturePanel = shallowRef(null)
-temperatureMounted.value && resolveTemperature()
-
-async function resolveTemperature() {
-  if (!temperatureMounted.value) {
-    AsyncTemperaturePanel.value = null
-    return
-  }
-  // Find the glob entry for the temperature panel. The path looks
-  // like ``../modules/temperature/components/TemperaturePanel.vue``.
-  const target = Object.keys(moduleComponentImports).find((p) =>
-    /\/modules\/temperature\/components\/TemperaturePanel\.vue$/.test(p),
-  )
-  if (!target) {
-    AsyncTemperaturePanel.value = null
-    return
-  }
-  const loader = moduleComponentImports[target]
-  AsyncTemperaturePanel.value = defineAsyncComponent(loader)
+/**
+ * Resolve a module panel by id at component-creation time.
+ * Returns ``null`` when the module folder has been deleted, which
+ * the dashboard ``v-if`` gate ignores as "do not render" — this is
+ * the nullable-module guarantee from Gotcha #1.
+ */
+function panelFor(folder, name) {
+  return defineAsyncComponent(async () => {
+    const target = Object.keys(modulePanelImports).find(
+      (p) => p.includes(`/${folder}/`) && p.endsWith(`/${name}.vue`),
+    )
+    if (!target) return null
+    const mod = await modulePanelImports[target]()
+    return mod.default ?? mod
+  })
 }
 
-// Re-resolve when the registry flips mounted/unmounted (e.g. after
-// a hot reload deletes the folder).
-import { watch } from 'vue'
-watch(temperatureMounted, () => resolveTemperature())
+const CameraPanel      = panelFor('camera',     'CameraPanel')
+const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
 
-// Lazy camera panel. The ``() => import(...)`` callback is only
-// evaluated if the dashboard actually renders ``<CameraPanel />``,
-// which only happens when the module is mounted.
-const CameraPanel = defineAsyncComponent(
-  () => import('../modules/camera/components/CameraPanel.vue'),
-)
-
-// Track whether each module is currently mounted so the dashboard
-// can render placeholder slots in their place when missing. Today
-// only the camera uses this — but having the pattern in place means
-// the temperature migration can adopt the same shape without
-// re-litigating the layout.
-const cameraMounted = computed(() => registry.modules.has('camera'))
+// Mounted? ``registry.modules`` is a reactive Map (see
+// ``registry.js``) so ``.has`` is tracked; the computed flips
+// once the registry boots and mounts the module.
+const cameraMounted      = computed(() => registry.modules.has('camera'))
+const temperatureMounted = computed(() => registry.modules.has('temperature'))
 </script>
 
 <template>
@@ -111,7 +72,7 @@ const cameraMounted = computed(() => registry.modules.has('camera'))
              is on disk AND the registry reports the module mounted
              (Gotcha #1). When the folder has been deleted, the slot
              is left empty so the dashboard still lays out cleanly. -->
-        <component :is="AsyncTemperaturePanel" v-if="AsyncTemperaturePanel" />
+        <TemperaturePanel v-if="temperatureMounted" />
         <JogControls />
       </div>
 

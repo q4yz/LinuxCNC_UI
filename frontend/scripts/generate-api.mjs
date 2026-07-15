@@ -24,6 +24,17 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
 
+// ``installMode`` is enabled when invoked via the ``postinstall`` npm
+// hook — typically a fresh checkout, no backend running. In that
+// mode a missing backend logs a warning instead of failing the
+// install; the user can run ``npm run generate-api`` once the
+// backend is reachable. Detection uses the standard npm env var
+// (set on every lifecycle hook) plus an explicit flag for direct
+// invocation: ``node scripts/generate-api.mjs --install``.
+const installMode =
+  process.argv.includes('--install') ||
+  Boolean(process.env.npm_lifecycle_event);
+
 const openApiUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8000/openapi.json';
 const generatedDir = path.join(projectRoot, 'generated');
 const outputDir = path.join(generatedDir, 'api');
@@ -57,8 +68,23 @@ async function downloadSpec() {
 
 function runGenerator() {
   return new Promise((resolve, reject) => {
-    const bin = path.join(projectRoot, 'node_modules', '.bin', 'openapi');
-    const child = spawn(bin, generatorArgs, { stdio: 'inherit' });
+    const isWin = process.platform === 'win32';
+    // Windows ships the CLI as ``node_modules/.bin/openapi.cmd``.
+    // Node's ``spawn`` does not auto-resolve the ``.cmd`` extension
+    // unless ``shell: true`` is set; with ``shell: true`` the OS
+    // shell (cmd.exe on Windows, /bin/sh elsewhere) parses the
+    // command and handles extensions + spaces correctly. We pass
+    // the binary + args as a single shell-quoted string so paths
+    // containing spaces (``C:\Users\...``) survive intact.
+    const binExt = isWin ? '.cmd' : '';
+    const bin = path.join(projectRoot, 'node_modules', '.bin', `openapi${binExt}`);
+    const quoted = generatorArgs
+      .map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
+      .join(' ');
+    const child = spawn(`"${bin}" ${quoted}`, {
+      stdio: 'inherit',
+      shell: true,
+    });
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolve();
@@ -71,6 +97,13 @@ async function main() {
   try {
     await downloadSpec();
   } catch (error) {
+    if (installMode) {
+      console.warn(`[generate-api] Skipped (install mode): ${error.message}`);
+      console.warn('[generate-api] Backend is not reachable — generated client was not regenerated.');
+      console.warn('[generate-api] Once the FastAPI backend is running on', openApiUrl, 'run:');
+      console.warn('    npm run generate-api');
+      process.exit(0);
+    }
     console.error(`[generate-api] ${error.message}`);
     console.error('[generate-api] Is the FastAPI backend running on the expected port?');
     process.exit(1);

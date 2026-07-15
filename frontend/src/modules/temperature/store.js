@@ -25,11 +25,14 @@ import { eventBus } from "../../core/modules/event-bus.js";
 
 // Defaults mirror the backend ``TemperatureSettings`` Pydantic model
 // (see ``backend/modules/temperature/settings.py``). The frontend
-// may receive a smaller or larger ``history_window_seconds`` from
-// the settings endpoint, in which case the new value wins.
+// receives ``history_window_seconds`` and ``history_poll_interval_ms``
+// from the settings endpoint on startup; thereafter those values are
+// treated as immutable configuration sourced from the backend.
+// Settings are read **once** at boot — the chart shape is fixed by
+// the user's config and not something the dashboard needs to
+// renegotiate over and over (see issue #32 § 6.6).
 const DEFAULT_WINDOW_MS = 10_000;
 const DEFAULT_POLL_MS = 1_000;
-const SETTINGS_REFRESH_MS = 5_000;
 
 const TOPIC = "state.temperatures";
 
@@ -74,7 +77,7 @@ export const useTemperatureStore = defineStore(
 
     // --- non-reactive handles ------------------------------------- //
     let pollHandle = null;
-    let settingsTimer = null;
+    let sensorsPollHandle = null;
     let busUnsub = null;
     // Tracks whether the store has been started by ``onLoad`` so
     // hot-reloads / double-mounts don't accumulate intervals.
@@ -112,8 +115,14 @@ export const useTemperatureStore = defineStore(
     function start() {
       if (running) return;
       running = true;
-      // Push a point immediately so the chart isn't empty on first
-      // render, then poll at the configured cadence.
+      // Fetch sensor state immediately so the chart isn't empty on
+      // first render, then poll at the configured cadence. The state
+      // endpoint is the source of truth — we don't rely on the
+      // (currently disabled) telemetry WebSocket for chart updates.
+      refreshSensors();
+      sensorsPollHandle = setInterval(refreshSensors, pollMs.value);
+      // Push a history point immediately so the chart has data, then
+      // roll forward at the same cadence.
       snapshot();
       pollHandle = setInterval(snapshot, pollMs.value);
     }
@@ -124,9 +133,9 @@ export const useTemperatureStore = defineStore(
         clearInterval(pollHandle);
         pollHandle = null;
       }
-      if (settingsTimer !== null) {
-        clearInterval(settingsTimer);
-        settingsTimer = null;
+      if (sensorsPollHandle !== null) {
+        clearInterval(sensorsPollHandle);
+        sensorsPollHandle = null;
       }
     }
 
@@ -139,9 +148,21 @@ export const useTemperatureStore = defineStore(
      */
     function ingest(payload) {
       if (!payload) return;
-      const next = payload.temperatures
-        ? payload.temperatures
-        : payload;
+      // Accept three shapes:
+      //   1. The temperature sensors endpoint returns
+      //      ``{ sensors: { extruder: {...}, ... } }``.
+      //   2. The legacy machine module publishes
+      //      ``{ temperatures: { ... } }`` on the event bus.
+      //   3. Some publishers hand us the raw sensors dict directly.
+      let next = payload;
+      if (payload.sensors && typeof payload.sensors === "object") {
+        next = payload.sensors;
+      } else if (
+        payload.temperatures &&
+        typeof payload.temperatures === "object"
+      ) {
+        next = payload.temperatures;
+      }
       if (next && typeof next === "object") {
         sensors.value = clone(next);
       }
@@ -149,8 +170,9 @@ export const useTemperatureStore = defineStore(
 
     /**
      * Read the settings endpoint once and apply. Exposed so the
-     * dashboard can refresh after a settings change without waiting
-     * for the next periodic tick.
+     * dashboard can re-pull after a settings PUT without waiting for
+     * any periodic tick — settings are no longer polled, so the only
+     * way to pick up changes is to call this explicitly.
      */
     async function refreshSettings() {
       try {
@@ -163,18 +185,40 @@ export const useTemperatureStore = defineStore(
       }
     }
 
+    /**
+     * Pull the live sensor state from the backend. The backend
+     * ``GET /api/v1/modules/temperature/sensors`` returns
+     * ``{ sensors: { extruder: { actual, target }, ... } }`` which is
+     * the canonical source of truth for the chart. The telemetry
+     * WebSocket would be the lower-latency alternative, but it
+     * currently 404s because ``websockets`` isn't installed; this
+     * poll keeps the UI alive until that bridge lands.
+     */
+    async function refreshSensors() {
+      try {
+        const data = await fetch(
+          `/api/v1/modules/${manifest.id}/sensors`,
+        ).then(async (r) => (r.ok ? r.json() : null));
+        if (data) ingest(data);
+      } catch (_) {
+        // Best-effort — keep the last known sensors visible.
+      }
+    }
+
     // Wire the bus subscriber once per module lifecycle. The bus
     // delivers deep-frozen payloads; we deep-clone before storing
-    // (see Gotcha #3).
+    // (see Gotcha #3). This stays as a forward-compatible hook for
+    // the eventual telemetry WebSocket bridge.
     busUnsub = eventBus.subscribe(TOPIC, (_topic, payload) => {
       ingest(payload);
     });
 
-    // Refresh settings periodically; the user can change
-    // ``history_window_seconds`` from the Settings UI while the
-    // dashboard is open.
+    // Read settings ONCE at boot. The user changes ``windowMs`` /
+    // ``pollMs`` from the Settings UI; that UI calls
+    // ``refreshSettings`` explicitly after a successful PUT. Periodic
+    // re-fetches were unnecessary overhead — the chart shape is
+    // determined by the backend config and is effectively static.
     refreshSettings();
-    settingsTimer = setInterval(refreshSettings, SETTINGS_REFRESH_MS);
 
     // Auto-stop when the pinia scope goes away (component unmount,
     // app teardown). The legacy machine store would leak
@@ -194,6 +238,7 @@ export const useTemperatureStore = defineStore(
       start,
       stop,
       refreshSettings,
+      refreshSensors,
     };
   },
 );

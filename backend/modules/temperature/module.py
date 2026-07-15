@@ -19,6 +19,7 @@ so they can be tuned at runtime from the Settings UI.
 """
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter
 
@@ -40,9 +41,9 @@ class TemperatureModule:
     The :attr:`manifest` is class-level so the registry can read it
     without instantiating the module. ``settings_panel=True`` causes
     the registry to render a Settings tab for this module. The
-    :attr:`settings_model` attribute points at the Pydantic defaults
-    model that the registry merges under the user's persisted
-    settings on every read.
+    :meth:`get_settings_model` hook returns a fresh
+    :class:`TemperatureSettings` instance which the registry merges
+    under the user's persisted settings on every read.
     """
 
     manifest = ModuleManifest(
@@ -52,12 +53,6 @@ class TemperatureModule:
         description="Heater target / actual sensor monitoring.",
         settings_panel=True,
     )
-
-    # Class-level pointer to the Pydantic defaults model. The registry
-    # recognises this attribute (see ``ModuleRegistry._mount``) and
-    # instantiates it to seed the per-module ``SettingsStore``. Modules
-    # that omit ``settings_model`` fall back to no defaults.
-    settings_model = TemperatureSettings
 
     def on_load(self, ctx: ModuleContext) -> None:
         """Boot the temperature module.
@@ -86,6 +81,18 @@ class TemperatureModule:
         ``modules:temperature``.
         """
         return _router
+
+    def get_settings_model(self) -> Optional[TemperatureSettings]:
+        """Return a fresh :class:`TemperatureSettings` defaults model.
+
+        The :class:`PluggableModule` protocol requires this method (it
+        is part of the ``isinstance`` check) even though the registry
+        tolerates ``None`` returns. Returning the defaults instance
+        seeds the per-module :class:`SettingsStore` so the four
+        canonical settings endpoints expose typed values instead of
+        arbitrary JSON.
+        """
+        return TemperatureSettings()
 
 
 def setup() -> PluggableModule:

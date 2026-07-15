@@ -6,11 +6,19 @@
 // ``FrontendModule`` contract documented in
 // ``.agent/contracts/frontend-module.md``.
 //
-// The ``onLoad`` hook wires up the module-scoped Pinia store. We
-// intentionally do **not** start the polling loop from ``onLoad`` —
-// the store's own ``onScopeDispose`` hook stops it automatically
-// when the pinia scope tears down. The store lazily initialises on
-// first ``useTemperatureStore()`` call inside the panel component.
+// The store is **lazily** initialised on first ``useTemperatureStore()``
+// call inside ``TemperaturePanel.vue``. We deliberately do not call
+// the store factory from ``onLoad`` because:
+//
+//   1. The registry boots modules as part of ``main.js`` and the
+//      timing of ``app.use(pinia)`` relative to module ``onLoad`` is
+//      fragile — Pinia 3.x's ``useStore`` reads ``pinia._s`` and
+//      throws ``Cannot read properties of undefined (reading 'has')``
+//      when ``activePinia`` has not yet been wired through Vite's
+//      pre-bundled Pinia instance. Letting the panel trigger the
+//      first call sidesteps that race entirely.
+//   2. If the user only ever opens the Settings tab (no temperature
+//      panel), there is no reason to start the polling loop.
 //
 // References:
 //   * MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1 — lazy imports.
@@ -18,17 +26,15 @@
 
 import manifest from "./manifest.js";
 import TemperaturePanel from "./components/TemperaturePanel.vue";
-import { useTemperatureStore } from "./store.js";
 
 export default {
   manifest,
   // Sidebar entry is not contributed by this module — temperature
   // lives inside the dashboard grid, not as a top-level nav item.
-  onLoad(ctx) {
-    // Touch the store so its bus subscription / settings timer
-    // spin up immediately, regardless of whether the panel ever
-    // renders (e.g. when only the Settings tab is open).
-    useTemperatureStore(ctx.id);
+  onLoad(/* ctx */) {
+    // No-op. The store factory runs the first time the panel
+    // component calls ``useTemperatureStore()``. See the long-form
+    // comment above for the boot-timing rationale.
   },
   onUnload() {
     // Pinia tears the store down with the parent scope, so explicit
@@ -37,4 +43,4 @@ export default {
   },
 };
 
-export { manifest, TemperaturePanel, useTemperatureStore };
+export { manifest, TemperaturePanel };
