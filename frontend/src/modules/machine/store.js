@@ -30,8 +30,7 @@ import { computed, reactive, ref } from "vue";
 
 import manifest from "./manifest.js";
 import { generateSetOffset } from "../../config/gcodes.js";
-import { JoggingService } from "../../../generated/api/services/JoggingService";
-import { MachineStateService } from "../../../generated/api/services/MachineStateService";
+import { ModulesMachineService } from "../../../generated/api/services/ModulesMachineService";
 import { useConsoleStore } from "../../stores/console.js";
 import { eventBus } from "../../core/modules/event-bus.js";
 
@@ -230,7 +229,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // it; otherwise we engage it.
     const targetState = status.estop === 1 ? "estop_reset" : "estop";
     try {
-      await MachineStateService.setMachineState({ state: targetState });
+      await ModulesMachineService.setMachineState({ state: targetState });
       if (targetState === "estop") {
         consoleStore.addMessage("E-STOP Engaged", "error");
       } else {
@@ -260,7 +259,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
     const targetState = isOn ? "off" : "on";
     try {
-      await MachineStateService.setMachineState({ state: targetState });
+      await ModulesMachineService.setMachineState({ state: targetState });
       if (targetState === "on") {
         consoleStore.addMessage("Machine Power ON", "success");
       } else {
@@ -285,7 +284,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Jogging ${axisName} axis ${distance}mm`,
         "info",
       );
-      await JoggingService.jogAxis({
+      await ModulesMachineService.jogAxis({
         velocities: { [axis]: velocity },
         distance,
       });
@@ -313,7 +312,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Jogging ${axisName} axis continuously...`,
         "info",
       );
-      await JoggingService.jogAxis({
+      await ModulesMachineService.jogAxis({
         velocities: { [axis]: velocity },
         distance: 0,
       });
@@ -322,7 +321,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       //    — the historical value preserved by this migration.
       jogIntervals[axis] = setInterval(async () => {
         try {
-          await JoggingService.jogKeepalive({ axes: [axis] });
+          await ModulesMachineService.jogKeepalive({ axes: [axis] });
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error(
@@ -352,7 +351,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
 
       // 2. Send the explicit stop command.
-      await JoggingService.jogStop({ axes: [axis] });
+      await ModulesMachineService.jogStop({ axes: [axis] });
       consoleStore.addMessage(`${axisName} Jog stopped`, "info");
     } catch (err) {
       consoleStore.addMessage(
@@ -368,7 +367,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       consoleStore.addMessage(`Homing axis index ${axisIndex}...`, "info");
-      await MachineStateService.homeAxis({ axis: axisIndex });
+      await ModulesMachineService.homeAxis({ axis: axisIndex });
       consoleStore.addMessage(
         `Homed axis ${axisIndex} successfully`,
         "success",
@@ -387,7 +386,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       consoleStore.addMessage("Homing all axes...", "info");
-      await MachineStateService.homeAxis({ axis: HOME_ALL });
+      await ModulesMachineService.homeAxis({ axis: HOME_ALL });
       consoleStore.addMessage("All axes homed successfully", "success");
     } catch (err) {
       consoleStore.addMessage(
@@ -409,7 +408,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         "command",
       );
       const cmd = generateSetOffset(axisName, value);
-      await MachineStateService.runMdiCommand({ command: cmd });
+      await ModulesMachineService.runMdiCommand({ command: cmd });
     } catch (err) {
       consoleStore.addMessage(
         `Failed to set position for ${axisName}: ${err.message}`,
@@ -427,7 +426,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Switching to Coordinate System: ${gcodeString}`,
         "command",
       );
-      await MachineStateService.runMdiCommand({ command: gcodeString });
+      await ModulesMachineService.runMdiCommand({ command: gcodeString });
     } catch (err) {
       consoleStore.addMessage(
         `Failed to switch Coordinate System: ${err.message}`,

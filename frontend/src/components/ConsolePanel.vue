@@ -2,7 +2,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useConsoleStore } from '../stores/console'
 import { useMachineStore } from '../stores/machine'
-import { MachineStateService } from '../../generated/api/services/MachineStateService'
+import { ModulesMachineService } from '../../generated/api/services/ModulesMachineService'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()
@@ -38,7 +38,7 @@ const submitCommand = async () => {
     if (machineStore.isEstop) {
        consoleStore.addMessage("Machine is in ESTOP. Command rejected.", 'error')
     } else {
-       await MachineStateService.runMdiCommand({ command: cmd })
+       await ModulesMachineService.runMdiCommand({ command: cmd })
        consoleStore.addMessage(`Executed: ${cmd}`, 'success')
     }
   } catch (e) {

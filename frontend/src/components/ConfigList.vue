@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ConfigurationService } from '../../generated/api/services/ConfigurationService'
-import { ProgramExecutionService } from '../../generated/api/services/ProgramExecutionService'
+import { ModulesProgramService } from '../../generated/api/services/ModulesProgramService'
 import { useConsoleStore } from '../stores/console'
 
 const consoleStore = useConsoleStore()
@@ -18,7 +18,7 @@ const loadConfigs = async () => {
 const parseKlipper = async () => {
   try {
     consoleStore.addMessage("Triggering Klipper-to-LinuxCNC parser...", 'command')
-    await ProgramExecutionService.triggerParser()
+    await ModulesProgramService.triggerParser()
     consoleStore.addMessage("Parsing started in background.", 'info')
   } catch (e) {
     consoleStore.addMessage(`Parser failed: ${e.message}`, 'error')
