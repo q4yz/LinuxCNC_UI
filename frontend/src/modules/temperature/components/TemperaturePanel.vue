@@ -250,7 +250,7 @@ const chartOptions = computed(() => {
 const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
 </script>
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6 flex flex-col min-w-[570px]">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6 flex flex-col ">
     <!-- Header & Controls -->
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">

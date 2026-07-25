@@ -67,44 +67,29 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
 
 <template>
   <div class="h-full overflow-y-auto pr-2">
-    <!-- Grid Layout for Panels -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-8">
+    <!-- Changed from grid to flex flex-wrap -->
+    <div class="flex flex-wrap gap-6 pb-8">
 
-      <!-- Left Column: DRO, Heater & Controls -->
-      <div class="col-span-1 flex flex-col space-y-6">
-        <!-- DRO slot: rendered when the machine module folder is on
-             disk AND the registry reports the module mounted.
-             Otherwise the slot shows the "Machine module not
-             mounted." placeholder so the layout stays consistent. -->
+      <!-- Left Column: flex-1 tells it to take 1 part space, but NEVER go below 570px -->
+      <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
+
         <DroPanel v-if="machineMounted" />
-        <div
-          v-else
-          class="bg-gray-800 rounded-lg p-6 text-gray-500"
-        >
+        <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
           Machine module not mounted.
         </div>
 
-        <!-- Temperature panel: only rendered when the module folder
-             is on disk AND the registry reports the module mounted
-             (Gotcha #1). When the folder has been deleted, the slot
-             is left empty so the dashboard still lays out cleanly. -->
         <TemperaturePanel v-if="temperatureMounted" />
 
-        <!-- Jog controls slot: same nullable-module pattern as the
-             DRO. -->
         <JogControls v-if="machineMounted" />
-        <div
-          v-else
-          class="bg-gray-800 rounded-lg p-6 text-gray-500"
-        >
+        <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
           Jog controls not mounted.
         </div>
       </div>
 
-      <!-- Right Column: 3D Viewer & Console -->
-      <div class="lg:col-span-2 flex flex-col space-y-6">
+      <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->
+      <!-- min-w-[600px] ensures the 3D viewer doesn't get crushed -->
+      <div class="flex-[2] min-w-[600px] flex flex-col space-y-6">
 
-        <!-- 3D Viewer -->
         <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[400px] shrink-0">
           <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
             <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
@@ -114,22 +99,13 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
           </div>
         </div>
 
-        <!-- Terminal / Console -->
         <div class="h-[300px]">
           <ConsolePanel />
-
         </div>
 
-        <!--
-          Camera slot: rendered only when the camera module is mounted.
-          ``v-if`` + ``CameraPanel`` as an async component keeps the
-          camera bundle out of the initial chunk (Gotcha #1) and lets
-          us delete ``frontend/src/modules/camera/`` cleanly.
-        -->
-        <div v-if="cameraMounted" class="lg:col-span-2">
+        <div v-if="cameraMounted">
           <CameraPanel />
         </div>
-
 
       </div>
 

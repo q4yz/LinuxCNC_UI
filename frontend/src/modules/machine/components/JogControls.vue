@@ -11,6 +11,9 @@ const { jogIntervals } = storeToRefs(machineStore)
 const sliderPos = ref(2)
 const jogSpeed = computed(() => Math.pow(10, sliderPos.value))
 
+const containerRef = ref(null)
+const isActive = ref(false)
+
 const KEY_BINDINGS = {
   ArrowRight: { axis: 0, direction: 1 },
   ArrowLeft: { axis: 0, direction: -1 },
@@ -19,6 +22,12 @@ const KEY_BINDINGS = {
   PageUp: { axis: 2, direction: 1 },
   PageDown: { axis: 2, direction: -1 }
 }
+
+// All keys that can cause a browser scroll
+const SCROLL_KEYS = [
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'PageUp', 'PageDown', 'Space', 'Home', 'End'
+]
 
 const isTypingInField = () => {
   const element = document.activeElement
@@ -30,6 +39,40 @@ const isTypingInField = () => {
   )
 }
 
+const blockScroll = (e) => {
+  // Allow touch dragging on the speed slider, but block everything else
+  if (e.type === 'touchmove' && e.target.tagName === 'INPUT') return
+  e.preventDefault()
+}
+
+const activate = () => {
+  if (!isActive.value) {
+    isActive.value = true
+
+    // Use capture: true to intercept the scroll BEFORE the overflow-y-auto div sees it
+    // window.addEventListener('wheel', blockScroll, { passive: false, capture: true })
+    // window.addEventListener('touchmove', blockScroll, { passive: false, capture: true })
+  }
+}
+
+const deactivate = () => {
+  if (isActive.value) {
+    isActive.value = false
+
+    // Remove the capturing listeners
+    // window.removeEventListener('wheel', blockScroll, { capture: true })
+    // window.removeEventListener('touchmove', blockScroll, { capture: true })
+
+    void stopAllJogging()
+  }
+}
+
+const handleFocusOut = (event) => {
+  if (containerRef.value && !containerRef.value.contains(event.relatedTarget)) {
+    deactivate()
+  }
+}
+
 const startJog = async (axis, direction) => {
   const velocity = direction * jogSpeed.value
   await machineStore.jogContinuous(axis, velocity)
@@ -39,12 +82,6 @@ const stopJog = async (axis) => {
   await machineStore.jogStop(axis)
 }
 
-// ``stopAllJogging`` is critical for safety: when the user
-// navigates away or the component is unmounted (including via
-// ``v-if``), every in-flight jog must be stopped.  The store
-// also tears down its keep-alive intervals in
-// ``useMachineStore().disconnect()`` so a hot-reload during a
-// jog releases the axis within the watchdog timeout.
 const stopAllJogging = async () => {
   const axes = Object.keys(jogIntervals.value).map(Number)
   for (const axis of axes) {
@@ -53,31 +90,33 @@ const stopAllJogging = async () => {
 }
 
 const handleKeyDown = (event) => {
-  if (event.repeat || isTypingInField()) {
-    return
+  if (!isActive.value || isTypingInField()) return
+
+  // Aggressively prevent default for ANY key that might scroll the page
+  if (SCROLL_KEYS.includes(event.code)) {
+    event.preventDefault()
   }
+
+  if (event.repeat) return
 
   const binding = KEY_BINDINGS[event.code]
-  if (!binding) {
-    return
-  }
+  if (!binding) return
 
-  event.preventDefault()
   void startJog(binding.axis, binding.direction)
 }
 
 const handleKeyUp = (event) => {
+  if (!isActive.value) return
+
   const binding = KEY_BINDINGS[event.code]
-  if (!binding) {
-    return
-  }
+  if (!binding) return
 
   event.preventDefault()
   void stopJog(binding.axis)
 }
 
 const handleWindowBlur = () => {
-  void stopAllJogging()
+  deactivate()
 }
 
 onMounted(() => {
@@ -90,14 +129,27 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('keyup', handleKeyUp)
   window.removeEventListener('blur', handleWindowBlur)
-  void stopAllJogging()
+  deactivate()
 })
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Jog Controls</h2>
+  <div
+    ref="containerRef"
+    tabindex="0"
+    @focusin="activate"
+    @focusout="handleFocusOut"
+    class="bg-gray-800 rounded-lg shadow-xl overflow-hidden mt-6 outline-none transition-all duration-200 border"
+    :class="isActive ? 'border-blue-400 ring-2 ring-blue-400/30' : 'border-gray-700'"
+  >
+    <div
+      class="px-4 py-3 border-b border-gray-600 flex justify-between items-center transition-colors duration-200"
+      :class="isActive ? 'bg-blue-900/40' : 'bg-gray-700/50'"
+    >
+      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
+        Jog Controls
+        <span v-if="isActive" class="ml-3 px-2 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30">Active</span>
+      </h2>
       <span class="text-xs text-gray-400">Hold buttons or arrow keys for continuous motion</span>
     </div>
 
@@ -111,85 +163,85 @@ onBeforeUnmount(() => {
         min="-1"
         :max="MAX_JOG_SPEED"
         step="0.001"
-        class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+        class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
       />
     </div>
 
     <div class="p-6 grid grid-cols-3 gap-3 text-center">
       <div class="col-start-2">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(1, 1)"
           @touchstart.prevent="startJog(1, 1)"
           @mouseup="stopJog(1)"
           @mouseleave="stopJog(1)"
           @touchend="stopJog(1)"
           @touchcancel="stopJog(1)"
-        >Y+ (↑)</button>
+        >Y+</button>
       </div>
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(2, 1)"
           @touchstart.prevent="startJog(2, 1)"
           @mouseup="stopJog(2)"
           @mouseleave="stopJog(2)"
           @touchend="stopJog(2)"
           @touchcancel="stopJog(2)"
-        >Z+ (PgUp)</button>
+        >Z+</button>
       </div>
 
       <div class="col-start-1">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(0, -1)"
           @touchstart.prevent="startJog(0, -1)"
           @mouseup="stopJog(0)"
           @mouseleave="stopJog(0)"
           @touchend="stopJog(0)"
           @touchcancel="stopJog(0)"
-        >X- (←)</button>
+        >X-</button>
       </div>
 
       <div class="col-start-2 flex items-center justify-center">
-        <div class="h-4 w-4 rounded-full bg-gray-600 shadow-inner"></div>
+        <div class="h-4 w-4 rounded-full shadow-inner transition-colors duration-200" :class="isActive ? 'bg-blue-500' : 'bg-gray-600'"></div>
       </div>
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(0, 1)"
           @touchstart.prevent="startJog(0, 1)"
           @mouseup="stopJog(0)"
           @mouseleave="stopJog(0)"
           @touchend="stopJog(0)"
           @touchcancel="stopJog(0)"
-        >X+ (→)</button>
+        >X+</button>
       </div>
 
       <div class="col-start-2">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(1, -1)"
           @touchstart.prevent="startJog(1, -1)"
           @mouseup="stopJog(1)"
           @mouseleave="stopJog(1)"
           @touchend="stopJog(1)"
           @touchcancel="stopJog(1)"
-        >Y- (↓)</button>
+        >Y-</button>
       </div>
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none"
+          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
           @mousedown.prevent="startJog(2, -1)"
           @touchstart.prevent="startJog(2, -1)"
           @mouseup="stopJog(2)"
           @mouseleave="stopJog(2)"
           @touchend="stopJog(2)"
           @touchcancel="stopJog(2)"
-        >Z- (PgDn)</button>
+        >Z-</button>
       </div>
     </div>
   </div>
