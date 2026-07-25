@@ -27,6 +27,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from hardware import execute_sync_cmd, linuxcnc
+from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.modules.machine.router")
 
@@ -168,9 +169,25 @@ def home_axis(cmd: HomeCommand) -> StatusResponse:
 def run_mdi(cmd: MdiCommand) -> StatusResponse:
     """Execute a single MDI command."""
     logger.info("Running MDI: %s", cmd.command)
-    execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_MDI", 3))
-    result = execute_sync_cmd("mdi", 0, cmd.command)
-    return StatusResponse(status=result.get("status", "success"))
+    # Mirror the command to the persistent console history so the
+    # on-disk log shows every command the operator issued, even if
+    # the in-browser console clears its buffer.
+    console_logger = get_console_logger()
+    console_logger.log_command(cmd.command)
+    try:
+        execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_MDI", 3))
+        result = execute_sync_cmd("mdi", 0, cmd.command)
+        console_logger.log_response(
+            f"Executed: {cmd.command}",
+            level=LogLevel.INFO,
+        )
+        return StatusResponse(status=result.get("status", "success"))
+    except HTTPException as exc:
+        console_logger.log_response(
+            f"Error: {exc.detail}",
+            level=LogLevel.ERROR,
+        )
+        raise
 
 
 __all__ = [

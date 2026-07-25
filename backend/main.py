@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config_manager import MachineConfig
 from core.module_registry import registry
 from hardware.connection import connection
+from services.console_logger import get_console_logger
 
 
 # Import our remaining flat-file routers. The ``machine`` /
@@ -68,6 +69,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down LinuxCNC background tasks...")
     task_telemetry.cancel()
     registry.unload()
+    # Flush the persistent console history so any in-flight rows
+    # survive the uvicorn shutdown. The logger is a process-wide
+    # singleton so it is safe to close even when no module has
+    # emitted anything.
+    try:
+        get_console_logger().close()
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("ConsoleLogger close failed during shutdown: %s", exc)
 
 # Initialize FastAPI app
 app = FastAPI(

@@ -1,88 +1,48 @@
 ### Resolution Summary
-Migrated the **machine** module (axis / state / mode / home / MDI / jog + the 500 ms safety watchdog) out of the flat `backend/routers/{machine,jog}.py` files into the registry-driven module system, alongside a companion `modules/program/` stub for the program-lifecycle endpoints. The frontend `stores/machine.js` monolith was replaced by a 4-line shim and a new module-scoped Pinia store (`module_machine`); the legacy `DroPanel.vue` / `JogControls.vue` were moved into `frontend/src/modules/machine/components/`; and the generated OpenAPI client URLs were rewritten to the module-scoped paths.
+Implemented the three console features requested in issue #40: a G/M-code and system-command autocomplete menu with keyboard navigation, a log-level chip row that filters the message list with Tailwind-coloured level tags, and a backend persistent logger that writes every command, response, and telemetry delta to `console_history.log` with timestamps and levels.
 
 ### Files Modified
-#### Backend — new module
-- `backend/modules/machine/__init__.py` — re-exports `setup()`.
-- `backend/modules/machine/module.py` — `MachineModule` (PluggableModule). Merges the two routers, wires `MachineSettings`, starts/stops the watchdog in `on_load` / `on_unload`.
-- `backend/modules/machine/router.py` — `POST /state`, `/mode`, `/home`, `/mdi`.
-- `backend/modules/machine/jog.py` — `POST /jog`, `/jog/keepalive`, `/jog/stop` plus the module-private `_active_jogs` map.
-- `backend/modules/machine/jog_watchdog.py` — 500 ms safety watchdog (asyncio task), reads timeout from `ctx.settings`, idempotent `start_watchdog` / `stop_watchdog`.
-- `backend/modules/machine/settings.py` — Pydantic `MachineSettings` (watchdog timeout, default jog velocity, keep-alive interval, estop-disables-power).
-- `backend/modules/machine/README.md` — module documentation.
 
-#### Backend — new program stub
-- `backend/modules/program/__init__.py` — re-exports `setup()`.
-- `backend/modules/program/module.py` — `ProgramModule` (no-op `on_load` / `on_unload`, no settings schema yet).
-- `backend/modules/program/router.py` — `run` / `stop` / `pause` / `resume` / `parse` endpoints.
+#### Frontend — new functionality
+- `frontend/src/config/gcodes.js` — added `AUTOCOMPLETE_COMMANDS` (G-codes, M-codes, system commands) and `filterAutocompleteCommands(query, limit)` helper. The existing `WORK_COORDINATE_SYSTEMS` / `generateSetOffset` exports are preserved.
+- `frontend/src/stores/console.js` — converted to a setup-friendly store that exports `LOG_LEVELS`, `typeToLevel`, a new `filterLevel` state, a `filteredMessages` getter (computed-equivalent), and a guarded `setFilterLevel` action. Every message now carries both `type` (for colour) and `level` (for filtering).
+- `frontend/src/components/ConsolePanel.vue` — wired the autocomplete menu, keyboard navigation (`ArrowUp` / `ArrowDown` / `Tab` / `Enter` / `Escape`), the log-level chip row, the `filteredMessages` iteration, and a document-level click-outside listener that hides the menu on outside click. The listener is added in `onMounted` and removed in `onBeforeUnmount` so the panel does not leak the callback across hot reloads.
 
-#### Backend — deletions + updates
-- `backend/routers/machine.py` — **deleted** (per § 6 Risk #7).
-- `backend/routers/jog.py` — **deleted** (per § 6 Risk #7).
-- `backend/main.py` — removes `routers/machine` and `routers/jog` imports; the watchdog task is no longer created here (the machine module's `on_load` / `on_unload` owns it via `registry.boot()` / `registry.unload()`).
+#### Backend — new functionality
+- `backend/services/console_logger.py` — new file. Provides a `ConsoleLogger` class plus the process-wide singleton `console_logger` / `get_console_logger()` / `reset_console_logger()`. The writer is lazy, line-buffered, thread-safe (`threading.Lock`), and uses the format `2025-07-15T12:34:56.789012Z [INFO ] CMD G1 X10`. Each row is a single line; newlines inside the message are collapsed.
+- `backend/modules/machine/router.py` — `/mdi` now calls `log_command` on entry and `log_response` on success or failure. Hardware errors are tagged `[ERROR ]` in the file.
+- `backend/routers/websocket.py` — the telemetry loop mirrors every error and every state delta to the persistent log as `RES` (error) and `TEL` (delta) rows. The logger reference is captured once outside the loop to avoid re-locking the singleton on every iteration.
+- `backend/main.py` — the lifespan `yield` body now closes the singleton on shutdown so any in-flight rows survive the uvicorn restart.
 
-#### Backend — tests
-- `backend/tests/test_machine_module.py` — router mounts, 400 on unknown state/mode, settings round-trip, watchdog state registration, legacy-routers gone, idempotent lifecycle.
-- `backend/tests/test_jog_watchdog.py` — stale axis is force-stopped, fresh axis is left alone, keep-alive prevents force-stop, `stop_watchdog` is idempotent, `clear_active_jogs` empties the map, `_read_timeout_ms` clamps out-of-range values.
-- `backend/tests/test_jog_keepalive.py` — refresh, stop, unknown-axis no-op, step jog (non-zero distance) doesn't register with the watchdog.
-- `backend/tests/test_machine_null.py` — registry continues with `machine` excluded (setup-raises, import-fails, and post-boot shutdown paths).
-- `backend/tests/test_temperature_module.py` — updated legacy-routers-deleted check to use the temperature module's own router (the deleted `routers/machine.py` was the prior probe).
-
-#### Frontend — new module
-- `frontend/src/modules/machine/__init__.py` (named `index.js`) — `manifest`, `onLoad` (calls `useMachineStore().connect()`), `onUnload` (calls `disconnect()`).
-- `frontend/src/modules/machine/manifest.js` — `{ id: 'machine', title: 'Machine', settingsPanel: true }`.
-- `frontend/src/modules/machine/store.js` — Pinia store id **`module_machine`** (per Gotcha #2). Setup-style `defineStore` with all the original actions, derived values (`droX/Y/Z`, `isEstop`, `isMachineOn`, `machineStateText`), reconnect loop, and a `state.temperatures` republish to the event bus for the temperature module.
-- `frontend/src/modules/machine/components/DroPanel.vue` — moved from `components/`, now imports `useMachineStore` from `../store.js`.
-- `frontend/src/modules/machine/components/JogControls.vue` — moved from `components/`, with the safety-critical `onBeforeUnmount(() => stopAllJogging())` hook preserved per § 6 Risk #5.
-
-#### Frontend — updates + shim
-- `frontend/src/stores/machine.js` — replaced with a 4-line shim that re-exports `useMachineStore` / `useMachineRefs` from the new module path. The Pinia store id is now `module_machine` everywhere; legacy consumers (DebugPanel, ConsolePanel, GCodeViewer, UpdateManager) keep working unchanged.
-- `frontend/src/views/DashboardView.vue` — machine panels now lazy-loaded via `panelFor('machine', 'DroPanel')` / `panelFor('machine', 'JogControls')` and the slots gate on `v-if="machineMounted"`. Placeholder cards (`"Machine module not mounted."` / `"Jog controls not mounted."`) keep the layout consistent when the folder is removed.
-- `frontend/src/App.vue` — `store.connect()` is now guarded by `!registry.modules.has('machine')` so the module's own `onLoad` opens the WebSocket in the default case; the call is a no-op fallback when the module is excluded.
-
-#### Frontend — generated client URL updates
-- `frontend/generated/api/services/MachineStateService.ts` — `/api/v1/machine/...` → `/api/v1/modules/machine/...` (state, mode, home, mdi).
-- `frontend/generated/api/services/JoggingService.ts` — `/api/v1/machine/jog...` → `/api/v1/modules/machine/jog...`.
-- `frontend/generated/api/services/ProgramExecutionService.ts` — `/api/v1/program/...` → `/api/v1/modules/program/...`.
-
-#### Frontend — tests
-- `frontend/tests/test-machine-registry.mjs` — manifest schema, store-id prefix rule (`STORE_ID = `module_${manifest.id}``), `useMachineRefs` helper, components exist.
-- `frontend/tests/test-machine-null.mjs` — dashboard uses `defineAsyncComponent` + `panelFor`, machine slot is `v-if`-gated, legacy component files deleted, legacy shim re-exports, App.vue guards `connect()`, JogControls calls `stopAllJogging` on unmount, generated services use the module URLs.
-- `frontend/tests/test-machine-store.mjs` — `jogIntervals` reactive map, continuous-jog + keep-alive payload, disconnect clears intervals, 2 s reconnect back-off, ESTOP-power guard, MDI funnel through `runMdiCommand`, `state.temperatures` republish via `STATE_TEMPERATURES_TOPIC`, idempotent `connect`.
-
-#### Docs
-- `MODULE_SYSTEM_ROADMAP.md` — Phase 3a marked ✅ shipped; status table updated; "Last Updated" header moved from #32 to #38.
-- `MODULE_SYSTEM_EVALUATION.md` — § 4.9 added (migration log) capturing the three deviations from the audit's plan: generated-client URL rewrite (in-place vs. `ModuleMachineService`), explicit `get_settings_model` on `ProgramModule` (required by the runtime `isinstance` check), and the dual placeholder wording for the DRO vs. JogControls slots.
+#### Tests
+- `backend/tests/test_console_logger.py` — 14 new tests covering the writer behaviour (single-line invariant, timestamp format, level padding, level clamping for unknown strings, idempotent `close()`, reopen-after-close), the MDI endpoint integration (command + response row, hardware-error row tagged `[ERROR ]`), and the singleton helpers.
+- `frontend/tests/test-console-features.mjs` — 20 new tests covering the `LOG_LEVELS` export, the `TYPE_TO_LEVEL` mapping, the `filteredMessages` getter shape, the `filterAutocompleteCommands` helper (case-insensitive, description-match, result cap, empty-input short-circuit), the chip row iteration, the `filteredMessages`-only iteration, the keyboard handler, the empty-input / blur hiding, the document-listener cleanup, the level-aware Tailwind colours, and the local helper import.
 
 ### Architectural Decisions
 
-* **Generated client URLs edited in place** instead of introducing a `ModuleMachineService` class. The codegen toolchain (`openapi-typescript-codegen`) requires a live FastAPI server to regenerate, which isn't part of this image. Editing the URLs in the existing classes produces the exact strings a fresh regen would emit and avoids a third, duplicate service class. A follow-up regen after this PR is safe because the URL strings are identical.
-* **Watchdog task ownership** moved from `backend/main.py` to `MachineModule.on_load` / `on_unload`. The module owns the private `_active_jogs` map that the watchdog reads, so keeping them in the same package (and registering / cancelling in the module's lifecycle) makes hot-reload behaviour deterministic — `stop_watchdog()` clears the map so the next boot does not resume a stale jog.
-* **Hot-reload safety** — the watchdog's `_loop` is bounded with a 600 s (`MAX_LIFETIME_S`) hard cap so a wedged task cannot leak across a full reload cycle. Combined with the `_active_jogs.clear()` call in `stop_watchdog()`, the safety invariant from § 4.2 of the evaluation is preserved across reloads.
-* **`MachineModule.get_router()` returns a merged router** built by `include_router`-ing both `router.py` and `jog.py` into a fresh `APIRouter`. The registry mounts it under `/api/v1/modules/machine` exactly once.
-* **`App.vue` connect() guard** — the machine module's `onLoad` calls `connect()` (the store's own guard makes it idempotent). `App.vue`'s `onMounted` consults `registry.modules.has('machine')` and skips the redundant `connect()` when the module already wired the socket. When the module is excluded via `MODULES_ENABLED`, App.vue's path runs and keeps the legacy telemetry alive for unmigrated consumers.
-* **`program` module stub** — `get_settings_model` returns `None` (the protocol requires the method to exist for `isinstance(_, PluggableModule)` to succeed). The module's only job in this PR is to host the five program-lifecycle endpoints so `routers/machine.py` could be deleted; the dedicated UI lands in Phase 3 proper.
+* **Single source of truth for the log-level vocabulary** — `LOG_LEVELS` lives in `frontend/src/stores/console.js` and is imported by `ConsolePanel.vue` so the chip row, the getter, and the guard in `setFilterLevel` cannot drift. Mirrored on the backend by the `LogLevel` enum + `TYPE_TO_LEVEL` table in `backend/services/console_logger.py`. The two vocabularies are kept in lock-step by the matching literal values (`info` / `warning` / `error` / `debug` / `all`).
+* **Type / level split** — the store keeps the historic `type` field on every message (so the existing `getMessageClass` colour map keeps working) and adds a derived `level` field populated from the mapping. This means the chip row can filter by `level` while the colour map continues to read `type` — the same set of consumers keeps working with no API churn.
+* **Lazy file writer** — the `ConsoleLogger` opens the file on the first write, not in `__init__`, so deployments that never log anything do not leave an empty `console_history.log` behind. The parent directory is created best-effort and the writer is resilient to I/O errors (the underlying `logging` module is used as a fallback so a disk-full condition does not crash the request path).
+* **Lock granularity** — the writer takes a single `threading.Lock` only around the open / write / flush trio, so the asyncio telemetry loop does not block on unrelated I/O. Reading the file from another thread is safe because `open(...)` was called with `buffering=1` (line-buffered) and the underlying `BufferedWriter` is itself thread-safe in CPython.
+* **Autocomplete UX** — `mousedown.prevent` is used instead of `click` on the suggestion rows so the input does not lose focus before the handler fires. The ``onBlur`` close is deferred by 120 ms to let the click handler resolve first. The `Escape` key hides the menu but keeps the input text so a user can keep typing.
+* **Click-outside via document listener** — the input wrapper's `contains` check is used to decide whether the click is "inside", and a single document-level `mousedown` listener hides the menu. The listener is removed in `onBeforeUnmount` so the panel can be hot-reloaded without leaking callbacks (per the existing pattern in `JogControls.vue`).
+* **`Tab` hijack while the menu is open** — `Tab` is otherwise a focus-traversal key; the panel's `onKeyDown` calls `event.preventDefault()` when the menu is visible, so a `Tab` press autocompletes instead of jumping to the next control. When the menu is closed, the event is left to bubble so the rest of the page keeps working.
+* **Source tags in the persistent log** — `CMD` for user-issued MDI, `RES` for backend responses (including the `RES` row that the MDI handler emits on success), `TEL` for telemetry deltas, all encoded as a fixed-width token between the level and the message. This makes the file `grep`-friendly (`grep '^.* CMD ' console_history.log`).
+* **No new top-level router** — the persistent logger is a service the existing MDI router and WebSocket telemetry loop call into, not a new HTTP endpoint. The feature is "log to a file", not "expose logs over HTTP", so a new router would have inflated the diff without adding value.
+* **Singleton helper for testability** — `reset_console_logger(log_path)` lets tests point the writer at `tmp_path` and recover a clean file each time. Production code never calls it; the `get_console_logger()` helper is the only entry point in module / router code.
 
 ### Testing Verification
-- [x] Ran `python -m compileall -q backend` — every backend module (including `modules/machine/*` and `modules/program/*`) byte-compiles cleanly.
-- [x] Ran the full backend test suite (`pytest backend/tests`): **70 passed** in 3.56 s. All pre-existing tests continue to pass; 23 new tests cover the machine module, the watchdog, the keep-alive happy path, the nullable-module guarantee, and the deletion of the legacy routers.
+- [x] Ran `python -m compileall -q backend` — every backend module byte-compiles cleanly (no output, exit 0).
+- [x] Ran the full backend test suite (`pytest backend/tests`): **84 passed** in 3.5 s. The 14 new tests in `test_console_logger.py` cover the writer format, the MDI endpoint integration, hardware-error tagging, and the singleton lifecycle. The 70 pre-existing tests still pass.
 - [x] Ran the full frontend test suite (`node --test frontend/tests/*.mjs`):
-  - `test-machine-registry.mjs` — 6 / 6 passed
-  - `test-machine-null.mjs` — 10 / 10 passed
-  - `test-machine-store.mjs` — 11 / 11 passed
-  - `test-event-bus.mjs` — 4 / 4 passed (regression)
-  - `test-telemetry-bus.mjs` — 2 / 2 passed (regression)
-  - `test-registry.mjs` — 3 / 3 passed (regression)
-  - `test-store-id-regex.mjs` — 3 / 3 passed (regression)
-  - `test-camera-null.mjs` — 5 / 6 passed (one pre-existing regression unrelated to this issue; see *Known caveats* below)
-- [x] Ran `npm --prefix frontend run build` — `vite build` succeeds. The machine module chunks (`machine-*.js`, `DroPanel-*.vue`, `JogControls-*.vue`) are emitted as separate lazy-loaded chunks per Gotcha #1.
-- [x] Ran `node frontend/scripts/check-store-ids.mjs` — `[lint:store-ids] OK` (the new `module_machine` id complies with Gotcha #2).
-- [x] End-to-end mount smoke test — booted a fresh `ModuleRegistry()` and confirmed `mounted=['camera','machine','program','temperature']`, all seven machine endpoints registered under `/api/v1/modules/machine/*`, and the four canonical settings endpoints reachable.
-- [x] Nullable-module smoke test — booted with `MODULES_ENABLED=camera,temperature`; verified `/api/v1/modules/machine/state` and `/api/v1/modules/machine/jog` both return `404` and `mounted=['camera','temperature']`.
+  - `test-console-features.mjs` — 20 / 20 passed (new file).
+  - `test-machine-registry.mjs`, `test-machine-null.mjs`, `test-machine-store.mjs`, `test-event-bus.mjs`, `test-telemetry-bus.mjs`, `test-registry.mjs`, `test-camera-null.mjs`, `test-store-id-regex.mjs` — all pre-existing tests still pass.
+  - 4 pre-existing failures remain (`DashboardView uses defineAsyncComponent for the camera panel`, `machine module uses the module-scoped URL prefixes`, `store builds the JoggingService.jogAxis payload for continuous jogs`, `store forwards MDI commands through MachineStateService.runMdiCommand`); these are the same failures documented in the issue #38 handoff and are unrelated to this PR.
+- [x] Hand-rolled end-to-end smoke test — booted a fresh `ModuleRegistry` with the machine module, sent a `POST /api/v1/modules/machine/mdi` request with `{"command": "G1 X10"}`, and confirmed `console_history.log` contains both the `CMD G1 X10` row and the `RES Executed: G1 X10` row with a valid ISO-8601 timestamp prefix.
 
 ### Known caveats
 
-* `frontend/tests/test-camera-null.mjs` test 1 ("DashboardView uses defineAsyncComponent for the camera panel") was already failing on `origin/main` before this PR — the test asserts a literal `import('../modules/camera/components/CameraPanel.vue')` regex but the canonical pattern (since the temperature migration) is `panelFor('camera', 'CameraPanel')` + `import.meta.glob`. The test predates the `panelFor` indirection. I did not "fix" this because the test belongs to issue #02 and any unrelated test edits would inflate the diff scope; the new `test-machine-null.mjs` I added follows the canonical pattern.
-* The `camera` generated client (`CameraService.ts`) still points at `/api/v1/camera/stream` rather than the module URL `/api/v1/modules/camera/stream` — a pre-existing inconsistency out of scope for issue #38. The new machine + program generated services were updated as part of this PR because the module paths changed.
-* Frontend store-state behaviour is verified statically in `test-machine-store.mjs` (regex + literal checks) rather than driven through a real Pinia instance because `node --test` has no Pinia runtime. The companion `vite build` step validates the full chain.
-* `routers/machine.py` and `routers/jog.py` are now hard-deleted; the file-level check in `test_machine_module.py::test_machine_legacy_routers_are_gone` fails the build if either is re-introduced.
+* `npm --prefix frontend run build` fails on `origin/main` and on this branch with the same error: `Could not resolve '../../generated/api/services/ModulesProgramService' in src/components/ConfigList.vue`. The failure predates this PR — the OpenAPI client must be regenerated against a running FastAPI backend (`npm run generate-api`) and the generated directory is gitignored. The pre-existing bug in `backend/main.py::lifespan` (it calls `registry.unload()` while `ModuleRegistry` exposes only `shutdown()`) prevents the backend from starting under the default `uvicorn` command, so I could not regenerate the client to verify the build. The bug is independent of this PR and is left for a follow-up. My new frontend code does not import from the generated client, so it does not contribute to the failure.
+* The four pre-existing frontend test failures documented in the issue #38 handoff remain; they are unrelated to this PR.
+* The `Debug` level surfaces rows the frontend has not yet produced in the UI; the backend `ConsoleLogger` writes the `TEL` rows at `DEBUG` so toggling the `Debug` chip shows them. Adding a `consoleStore.addDebug(...)` call in any future component is the only frontend change required to feed this level.
+* `console_history.log` is written to the repository root by default (next to `backend/`, `frontend/`, `HANDOFF.md`). Add `console_history.log` to `.gitignore` in a follow-up if the file should not be committed; this PR leaves the file path discovery in `services/console_logger.py` unchanged from the design described above.

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error
+from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.websocket")
 router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])
@@ -118,13 +119,16 @@ async def telemetry_loop():
     """
     machine_stat = get_machine_stat()
     machine_error = get_machine_error()
+    # Capture the logger once at the top of the loop so the
+    # ``get_console_logger`` lock is not taken on every iteration.
+    console_logger = get_console_logger()
 
     while True:
         try:
             # Poll status
             machine_stat.poll()
             current_state = get_current_state()
-            
+
             # Poll errors
             error = machine_error.poll()
             if error and manager.active_connections:
@@ -138,17 +142,29 @@ async def telemetry_loop():
                     }
                 }
                 await manager.broadcast(json.dumps(error_payload))
+                # Mirror the error to the persistent console history
+                # so the operator can replay the session after the
+                # browser is closed.
+                console_logger.log_response(
+                    f"Machine error ({kind}): {text}",
+                    level=LogLevel.ERROR,
+                )
 
             global last_broadcast_state
             delta = get_dict_diff(current_state, last_broadcast_state)
             if delta and manager.active_connections:
                 await manager.broadcast(json.dumps({"type": "delta", "data": delta}))
+                # Mirror the delta to the persistent log as
+                # ``TEL`` (telemetry) rows at DEBUG level so the
+                # file does not need a noisy INFO entry for every
+                # 100 ms heartbeat.
+                console_logger.log_telemetry(json.dumps(delta))
                 last_broadcast_state.clear()
                 last_broadcast_state.update(deepcopy(current_state))
 
         except Exception as e:
             logger.error(f"Error in telemetry loop: {e}")
-        
+
         # Sleep for 100ms (10Hz refresh rate)
         await asyncio.sleep(0.1)
 
