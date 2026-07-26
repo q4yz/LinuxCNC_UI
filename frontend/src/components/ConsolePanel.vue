@@ -1,11 +1,8 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
-import { useMachineStore } from '../stores/machine'
 import { ModulesMachineService } from '../../generated/api/services/ModulesMachineService'
 import { filterAutocompleteCommands } from '../config/gcodes'
-import { ref, watch, nextTick } from 'vue'
-import { useConsoleStore } from '../stores/console'
 import { useMachineStore } from '../stores/machine-compat'
 import { machineApi } from '../services/machineApi'
 
