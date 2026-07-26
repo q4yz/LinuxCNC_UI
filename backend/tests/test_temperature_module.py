@@ -18,7 +18,10 @@ import logging
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.event_bus import EventBus
 from core.module_registry import ModuleRegistry
+from core.protocols import ModuleContext
+from core.settings_store import SettingsStore
 
 
 def _build_app(tmp_data_root) -> tuple[FastAPI, ModuleRegistry]:
@@ -155,3 +158,110 @@ def test_set_target_validates_range(tmp_data_root, clean_env):
         json={"sensor_name": "extruder", "target": 999.0},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for module lifecycle & factory (issue #43 § 1).
+#
+# These tests exercise the module's surface in isolation, without booting
+# the full registry or routing through the HTTP layer. They use direct
+# imports to verify the contract documented in the
+# ``backend-module`` contract.
+# ---------------------------------------------------------------------------
+
+
+def test_setup_returns_fresh_temperature_module(tmp_data_root, clean_env):
+    """``setup()`` must return a fresh :class:`TemperatureModule`
+    instance, per the factory contract documented in
+    ``module.py`` (issue #43 § 1).
+    """
+    from modules.temperature.module import TemperatureModule, setup
+
+    instance = setup()
+    assert isinstance(instance, TemperatureModule)
+    # The factory must construct a fresh instance — not return a
+    # cached module-level singleton.
+    assert instance is not setup()
+
+
+def test_setup_returns_isolated_instances(tmp_data_root, clean_env):
+    """Two ``setup()`` calls must produce independent objects so
+    test runs cannot leak state across reloads.
+    """
+    from modules.temperature.module import setup
+
+    a = setup()
+    b = setup()
+    assert a is not b
+    # Mutating one instance must not be visible on the other.
+    a._scratch = {"marker": 1}
+    assert not hasattr(b, "_scratch")
+
+
+def test_on_load_executes_without_error(tmp_data_root, clean_env):
+    """``on_load`` is a no-op today; it must execute without raising
+    and must accept a :class:`ModuleContext` (issue #43 § 1).
+    """
+    from core.event_bus import EventBus
+    from core.settings_store import SettingsStore
+    from modules.temperature.module import TemperatureModule
+
+    instance = TemperatureModule()
+    ctx = ModuleContext(
+        module_id="temperature",
+        event_bus=EventBus(),
+        settings=SettingsStore(
+            module_id="temperature",
+            data_root=tmp_data_root,
+            defaults=None,
+        ),
+    )
+    # Should not raise.
+    instance.on_load(ctx)
+
+
+def test_on_unload_executes_without_error(tmp_data_root, clean_env):
+    """``on_unload`` is idempotent and must execute without raising
+    even when called repeatedly (issue #43 § 1 + module-protocol
+    contract).
+    """
+    from modules.temperature.module import TemperatureModule
+
+    instance = TemperatureModule()
+    instance.on_unload()
+    # Second call must also be a no-op (per the contract, ``on_unload``
+    # is required to be idempotent).
+    instance.on_unload()
+
+
+def test_get_settings_model_returns_temperature_settings(tmp_data_root, clean_env):
+    """``get_settings_model`` must return a fresh
+    :class:`TemperatureSettings` instance (issue #43 § 1).
+    """
+    from modules.temperature.module import TemperatureModule
+    from modules.temperature.settings import TemperatureSettings
+
+    instance = TemperatureModule()
+    model = instance.get_settings_model()
+    assert isinstance(model, TemperatureSettings)
+    # It must be a fresh instance — subsequent calls must not share
+    # state.
+    other = instance.get_settings_model()
+    assert model is not other
+
+
+def test_get_router_returns_apirouter(tmp_data_root, clean_env):
+    """``get_router`` must return the module's :class:`APIRouter`
+    (issue #43 § 1).
+    """
+    from fastapi import APIRouter
+
+    from modules.temperature.module import TemperatureModule
+
+    instance = TemperatureModule()
+    router = instance.get_router()
+    assert isinstance(router, APIRouter)
+    # The router must expose the two documented endpoints.
+    paths = {route.path for route in router.routes}
+    assert "/sensors" in paths
+    assert "/sensors/{name}/target" in paths
