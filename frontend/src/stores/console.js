@@ -75,39 +75,49 @@ export const useConsoleStore = defineStore('console', {
     },
   },
   actions: {
-    addMessage(text, type = 'info') {
+    _addMessage(text, type = 'info') {
       const level = typeToLevel(type)
       this.messages.push({
         id: Date.now() + Math.random().toString(36).substring(2, 11),
         timestamp: new Date().toLocaleTimeString(),
-        text: `[${level.toUpperCase()}${level !== type ? "-"+ type.toUpperCase(): ''  }] ${text}`,
+        text: `[${level.toUpperCase()}] ${text}`,
         type,
         level,
       });
     },
 
+    /**
+     * @deprecated Use the specific level methods (e.g., info(), error()) instead.
+     */
+    addMessage(text, type = 'info') {
+        console.warn('[ConsoleStore] addMessage() is deprecated. Please use the specific level actions like info(), debug(), or error() instead.')
+        this.warning('[ConsoleStore] addMessage() is deprecated. Please use the specific level actions like info(), debug(), or error() instead.')
+        this._addMessage(text, type)
+
+    },
+
     error(text) {
-      this.addMessage(text, 'error')
+      this._addMessage(text, 'error')
     },
 
     info(text) {
-      this.addMessage(text, 'info')
+      this._addMessage(text, 'info')
     },
 
     debug(text) {
-      this.addMessage(text, 'debug')
+      this._addMessage(text, 'debug')
     },
 
     warning(text) {
-      this.addMessage(text, 'warning')
+      this._addMessage(text, 'warning')
     },
 
     command(text) {
-      this.addMessage(text, 'command')
+      this._addMessage(text, 'command')
     },
 
     success(text) {
-      this.addMessage(text, 'success')
+      this._addMessage(text, 'success')
     },
 
     setFilterLevel(level) {
