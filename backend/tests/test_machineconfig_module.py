@@ -170,7 +170,14 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
     from modules.machineconfig.compilers import registry
 
     compiler = registry.get("klipper-to-linuxcnc")
-    src = Path("/app/workspaces/q4yz/LinuxCNC_UI/machine_config/profiles/printer.cfg")
+    src = tmp_data_root / "printer.cfg"
+    src.write_text(
+        "[printer]\n"
+        "kinematics: cartesian\n"
+        "max_velocity: 300\n\n"
+        "[stepper_x]\n"
+        "step_pin: PF13\n"
+    )
     out = tmp_data_root / "staged"
     out.mkdir()
 
