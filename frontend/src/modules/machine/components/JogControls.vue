@@ -1,14 +1,19 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../store.js'
 
 const MAX_JOG_SPEED = 3.602
 
 const machineStore = useMachineStore()
-const { jogIntervals } = storeToRefs(machineStore)
+const { jogIntervals, defaultJogVelocity } = storeToRefs(machineStore)
 
 const sliderPos = ref(2)
+const sliderTouched = ref(false)
+watch(defaultJogVelocity, (velocity) => {
+  if (sliderTouched.value || !Number.isFinite(velocity) || velocity <= 0) return
+  sliderPos.value = Math.min(MAX_JOG_SPEED, Math.max(-1, Math.log10(velocity)))
+}, { immediate: true })
 const jogSpeed = computed(() => Math.pow(10, sliderPos.value))
 
 const containerRef = ref(null)
@@ -129,7 +134,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('keyup', handleKeyUp)
   window.removeEventListener('blur', handleWindowBlur)
-  deactivate()
+  // Do not rely on focus state here: a component can be destroyed
+  // while a jog request is still in flight or after focus moved away.
+  isActive.value = false
+  void stopAllJogging()
 })
 </script>
 
@@ -159,6 +167,7 @@ onBeforeUnmount(() => {
       </label>
       <input
         v-model.number="sliderPos"
+        @input="sliderTouched = true"
         type="range"
         min="-1"
         :max="MAX_JOG_SPEED"

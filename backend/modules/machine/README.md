@@ -2,7 +2,7 @@
 
 Axis, state, jog, MDI, home, and set-position endpoints migrated from
 `backend/routers/machine.py` + `backend/routers/jog.py` into the
-registry-driven module system (issue #38).
+registry-driven module system.
 
 ## Layout
 
@@ -17,10 +17,15 @@ modules/machine/
 └── README.md          # this file
 ```
 
+The former `set_temperature` endpoint is intentionally not part of this
+package; it is owned by `backend/modules/temperature/` at
+`/api/v1/modules/temperature/sensors/{name}/target`.
+
 The companion `modules/program/` package hosts the program-lifecycle
 endpoints (run / stop / pause / resume / parse) so that
-`routers/machine.py` could be deleted in issue #38. Program's UI lands
-in Phase 3 — the package today exposes the HTTP surface only.
+`routers/machine.py` could be deleted during the machine
+migration. Program's UI lands in Phase 3 — the package today exposes
+the HTTP surface only.
 
 ## Endpoints
 
@@ -77,7 +82,7 @@ v1 behaviour from `MODULE_SYSTEM_ROADMAP.md § 4`.
 | `jog_watchdog_timeout_ms`| int   | 500     | 100 — 5 000       | Continuous-jog watchdog window. |
 | `default_jog_velocity`   | float | 500.0   | `>= 1.0`          | Default velocity for a fresh continuous jog. |
 | `keepalive_interval_ms`  | int   | 250     | 50 — 2 000        | Frontend-side keep-alive cadence hint. |
-| `estop_disables_power`   | bool  | True    | —                 | Whether engaging E-STOP also drops power. |
+| `estop_disables_power`   | bool  | True    | —                 | Persisted E-STOP/power policy flag. |
 
 The schema is consumed by `SettingsStore(defaults=…)` so new keys
 appear automatically on the next `read_all` without forcing a
@@ -116,9 +121,11 @@ Removing both `backend/modules/machine/` and
   JogControls slots because `registry.modules.has('machine')` returns
   `false`; the slots render the placeholder cards.
 * `npm run build` still succeeds because the Vite glob is lazy
-  (`import.meta.glob('../../modules/*/index.js', { eager: false })`)
-  and the legacy shim at `frontend/src/stores/machine.js` re-exports
-  the new module's store under the legacy import path.
+  (`import.meta.glob('../../modules/*/index.js', { eager: false })`).
+  The public legacy shim remains available when the module is mounted,
+  while shell components use
+  `frontend/src/stores/machine-compat.js` to avoid resolving an optional
+  module import during a null build.
 * See `MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1` for the design
   rationale.
 

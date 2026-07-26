@@ -10,7 +10,7 @@
 //
 //   * ``jogContinuous`` + ``jogStop`` round-trip populates and
 //     empties ``jogIntervals``.
-//   * The store calls ``JoggingService.jogKeepalive`` while a
+//   * The store calls ``ModulesMachineService.jogKeepalive`` while a
 //     continuous jog is active.
 //   * Disconnecting from the store clears every keep-alive
 //     interval.
@@ -45,21 +45,21 @@ test("store exposes jogIntervals as a reactive map", () => {
   assert.match(text, /jogIntervals\s*,/);
 });
 
-test("store builds the JoggingService.jogAxis payload for continuous jogs", () => {
+test("store builds the ModulesMachineService.jogAxis payload for continuous jogs", () => {
   const text = readStore();
   // ``jogContinuous`` posts a ``jogAxis`` request with
   // ``distance: 0`` and the supplied velocity.  The store
   // breaks the call across two lines (object literal), so
   // the regex tolerates the newline and trailing whitespace.
-  assert.match(text, /JoggingService\.jogAxis\s*\(\s*\{/);
-  assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
+  assert.match(text, /ModulesMachineService\.jogAxis\s*\(\s*\{/);
+  assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*jogVelocity/);
   assert.match(text, /distance:\s*0/);
-  // After the initial command, the store schedules a setInterval
-  // that pings the keepalive endpoint every 250 ms — the
-  // historical value preserved by the migration.
-  assert.match(text, /setInterval\s*\(/);
-  assert.match(text, /JoggingService\.jogKeepalive/);
-  assert.match(text, /,\s*250\s*\)/);
+  // The cadence is read from the module settings and falls back to
+  // the historical 250 ms value.
+  assert.match(text, /setInterval\([\s\S]*intervalMs\)/);
+  assert.match(text, /DEFAULT_KEEPALIVE_INTERVAL_MS\s*=\s*250/);
+  assert.match(text, /interval\s*<=\s*2000/);
+
 });
 
 test("store clears jogIntervals on stop and disconnect", () => {
@@ -75,7 +75,7 @@ test("store clears jogIntervals on stop and disconnect", () => {
 
 test("store auto-reconnects on socket close with a 2 s back-off", () => {
   const text = readStore();
-  assert.match(text, /setTimeout\(\s*\(\s*\)\s*=>\s*connect\(\)\s*,\s*2000\s*\)/);
+  assert.match(text, /reconnectTimer\s*=\s*setTimeout\([\s\S]*connect\(\)[\s\S]*2000/);
 });
 
 test("store rejects ESTOP-driven power-on", () => {
@@ -86,11 +86,11 @@ test("store rejects ESTOP-driven power-on", () => {
   assert.match(text, /Cannot turn on machine while ESTOP/);
 });
 
-test("store forwards MDI commands through MachineStateService.runMdiCommand", () => {
+test("store forwards MDI commands through ModulesMachineService.runMdiCommand", () => {
   const text = readStore();
   // ``setPosition`` and ``setCoordinateSystem`` both funnel
   // through the legacy MDI endpoint.
-  assert.match(text, /MachineStateService\.runMdiCommand\(\s*\{\s*command:/);
+  assert.match(text, /ModulesMachineService\.runMdiCommand\(\s*\{\s*command:/);
 });
 
 test("store converts setPosition to G10 L20 P0 via generateSetOffset", () => {

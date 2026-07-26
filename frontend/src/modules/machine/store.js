@@ -18,12 +18,10 @@
 // ``scripts/check-store-ids.mjs`` enforces this; CI fails the build
 // for any other id).
 //
-// The temperature fields (``temperatures``, ``target_temp``,
-// ``actual_temp``) are removed here — the temperature module owns
-// those (issue #03 / #32).  The legacy ``stores/machine.js`` shim
-// re-publishes a ``state.temperatures`` payload from the WebSocket
-// to the event bus so the temperature module keeps receiving
-// updates without the machine store owning the data.
+// The temperature fields are intentionally not stored here; they are
+// owned by the temperature module. The machine store republishes
+// telemetry on the event bus so that module can ingest updates without
+// taking ownership of the WebSocket transport.
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
@@ -32,6 +30,7 @@ import manifest from "./manifest.js";
 import { generateSetOffset } from "../../config/gcodes.js";
 import { ModulesMachineService } from "../../../generated/api/services/ModulesMachineService";
 import { useConsoleStore } from "../../stores/console.js";
+import { createModuleSettings } from "../../core/modules/settings.js";
 import { eventBus } from "../../core/modules/event-bus.js";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
@@ -39,11 +38,14 @@ const AXIS_NAMES = ["X", "Y", "Z"];
 
 // Sentinel accepted by the backend ``/home`` endpoint to home all axes.
 const HOME_ALL = -1;
+const DEFAULT_JOG_VELOCITY = 500;
+const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
 // Bus topic published by the machine store so the temperature module
 // (or any other listener) can ingest sensor updates without the
 // machine store owning the data.
 const STATE_TEMPERATURES_TOPIC = "state.temperatures";
+const machineSettings = createModuleSettings(manifest.id);
 
 // Pinia store id — see Gotcha #2. Built from the manifest id with
 // the required ``module_`` prefix so it never collides with the
@@ -99,6 +101,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   });
   const errors = ref([]);
   const jogIntervals = reactive({});
+  const defaultJogVelocity = ref(DEFAULT_JOG_VELOCITY);
+  const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
+  const isUpdating = ref(false);
 
   // ----------------------------------------------------------------- //
   // Derived values (formerly getters in the options-API store)         //
@@ -123,6 +128,40 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   // ----------------------------------------------------------------- //
 
   let socket = null;
+  let reconnectTimer = null;
+  let shouldReconnect = true;
+  let settingsLoaded = false;
+
+  // ----------------------------------------------------------------- //
+  // Module settings                                                    //
+  // ----------------------------------------------------------------- //
+
+  async function refreshSettings() {
+    try {
+      const settings = await machineSettings.readAll();
+      if (!settings || typeof settings !== "object") {
+        settingsLoaded = true;
+        return;
+      }
+
+      const velocity = Number(settings.default_jog_velocity);
+      if (Number.isFinite(velocity) && velocity >= 1) {
+        defaultJogVelocity.value = velocity;
+      }
+
+      const interval = Number(settings.keepalive_interval_ms);
+      if (Number.isFinite(interval) && interval >= 50 && interval <= 2000) {
+        keepaliveIntervalMs.value = interval;
+      }
+      settingsLoaded = true;
+    } catch (err) {
+      // Settings are optional while the machine module is disabled or
+      // during the first frontend render. Keep safe historical defaults.
+      settingsLoaded = true;
+      // eslint-disable-next-line no-console
+      console.warn("Machine settings unavailable; using defaults", err);
+    }
+  }
 
   // ----------------------------------------------------------------- //
   // WebSocket transport                                                //
@@ -136,20 +175,34 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       return;
     }
 
+    shouldReconnect = true;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (!settingsLoaded) {
+      void refreshSettings();
+    }
+
+    if (typeof window === "undefined" || typeof WebSocket === "undefined") {
+      connectionStatus.value = "disconnected";
+      return;
+    }
+
     connectionStatus.value = "connecting";
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/telemetry`;
+    const currentSocket = new WebSocket(wsUrl);
+    socket = currentSocket;
 
-    socket = new WebSocket(wsUrl);
-
-    socket.onopen = () => {
+    currentSocket.onopen = () => {
       // eslint-disable-next-line no-console
       console.log("Connected to LinuxCNC Telemetry");
       connectionStatus.value = "connected";
     };
 
-    socket.onmessage = (event) => {
+    currentSocket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
 
@@ -182,7 +235,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
     };
 
-    socket.onclose = () => {
+    currentSocket.onclose = () => {
+      // Ignore a close event from a socket that was explicitly replaced
+      // or disconnected. This prevents stale sockets from changing the
+      // status of a newer connection.
+      if (socket !== currentSocket) return;
+
       // eslint-disable-next-line no-console
       console.warn(
         "WebSocket disconnected. Retrying in 2 seconds...",
@@ -190,25 +248,33 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       connectionStatus.value = "disconnected";
       socket = null;
 
-      // Auto-reconnect. The setTimeout is harmless to leave in flight
-      // when ``disconnect()`` is also called because the new socket
-      // reference is stored separately and the next ``onclose``
-      // would no-op (the guard above).
-      setTimeout(() => connect(), 2000);
+      if (shouldReconnect && reconnectTimer === null) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, 2000);
+      }
     };
 
-    socket.onerror = (err) => {
+    currentSocket.onerror = (err) => {
       // eslint-disable-next-line no-console
       console.error("WebSocket error:", err);
-      if (socket) socket.close();
+      if (socket === currentSocket) currentSocket.close();
     };
   }
 
   function disconnect() {
-    if (socket) {
-      socket.close();
-      socket = null;
+    shouldReconnect = false;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
+
+    const currentSocket = socket;
+    // Clear the reference before closing so its asynchronous onclose
+    // handler cannot schedule a reconnect during module teardown.
+    socket = null;
+    if (currentSocket) currentSocket.close();
     connectionStatus.value = "disconnected";
 
     // Clear any running keep-alive intervals to release timers in
@@ -278,8 +344,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   async function jog(axis, distance) {
     const consoleStore = useConsoleStore();
     const axisName = AXIS_NAMES[axis];
-    const velocity = 500;
     try {
+      if (!settingsLoaded) await refreshSettings();
+      const velocity = Number.isFinite(defaultJogVelocity.value)
+        ? defaultJogVelocity.value
+        : DEFAULT_JOG_VELOCITY;
       consoleStore.addMessage(
         `Jogging ${axisName} axis ${distance}mm`,
         "info",
@@ -302,9 +371,22 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     const axisName = AXIS_NAMES[axis];
     try {
+      // Load persisted defaults before the first jog if the module was
+      // mounted before its settings request completed.
+      if (!settingsLoaded) await refreshSettings();
+
+      const requestedVelocity = Number(velocity);
+      const jogVelocity = Number.isFinite(requestedVelocity)
+        ? requestedVelocity
+        : defaultJogVelocity.value;
+      const intervalMs = Number.isFinite(keepaliveIntervalMs.value)
+        ? keepaliveIntervalMs.value
+        : DEFAULT_KEEPALIVE_INTERVAL_MS;
+
       // 1. Clear any existing interval to prevent ghost loops.
       if (jogIntervals[axis]) {
         clearInterval(jogIntervals[axis]);
+        delete jogIntervals[axis];
       }
 
       // 2. Send the initial start command.
@@ -313,12 +395,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         "info",
       );
       await ModulesMachineService.jogAxis({
-        velocities: { [axis]: velocity },
+        velocities: { [axis]: jogVelocity },
         distance: 0,
       });
 
-      // 3. Start the keep-alive loop. Cadence is 250 ms by default
-      //    — the historical value preserved by this migration.
+      // 3. Start the keep-alive loop. The cadence is a persisted
+      // module setting, with the historical 250 ms value as fallback.
       jogIntervals[axis] = setInterval(async () => {
         try {
           await ModulesMachineService.jogKeepalive({ axes: [axis] });
@@ -329,7 +411,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             err,
           );
         }
-      }, 250);
+      }, intervalMs);
     } catch (err) {
       consoleStore.addMessage(
         `Failed to start continuous jog: ${err.message}`,
@@ -447,6 +529,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     status,
     errors,
     jogIntervals,
+    defaultJogVelocity,
+    keepaliveIntervalMs,
+    isUpdating,
     // Derived values (formally getters).
     droX,
     droY,
@@ -457,6 +542,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // WebSocket transport.
     connect,
     disconnect,
+    refreshSettings,
     // Hardware actions.
     toggleEstop,
     togglePower,

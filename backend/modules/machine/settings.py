@@ -16,18 +16,15 @@ Field semantics:
   on a restart (which is acceptable for v1). Changing this on the fly
   is unsafe — operators should set it and reboot.
 * ``default_jog_velocity`` — Initial velocity for a fresh continuous
-  jog before the slider is touched. Picked up by the frontend JogControls
-  panel via ``useMachineStore().defaultJogVelocity`` (the legacy store
-  reads it once on boot).
+  jog before the slider is touched. The machine module's frontend
+  store reads this setting at startup and before a first jog.
 * ``keepalive_interval_ms`` — Frontend-side keep-alive cadence hint.
-  The legacy store's ``jogContinuous`` action set a 250 ms interval
-  hard-coded; this settings key lets operators slow that down for low-power
-  deployments or speed it up in lab environments.
-* ``estop_disables_power`` — When ``True`` (the default), engaging
-  E-STOP also drops the ``STATE_ON`` flag on the hardware so the
-  operator must explicitly power the machine back on after clearing
-  E-STOP. When ``False``, the legacy behaviour is preserved and the
-  state is left as-is.
+  The machine module store uses this value instead of a hard-coded
+  250 ms interval, while retaining that value as the safe fallback.
+* ``estop_disables_power`` — Persisted policy flag exposed with the
+  module settings schema. The hardware's native E-STOP transition
+  remains authoritative; a future settings UI can use this flag when
+  composing higher-level power workflows.
 
 These defaults match the historical hard-coded values that used to live
 in ``routers/jog.py`` (500 ms timeout, 250 ms keepalive, velocity 500)
@@ -52,9 +49,9 @@ class MachineSettings(BaseModel):
             in milliseconds. The hard floor is 50 ms; the soft ceiling
             of 2000 ms prevents the watchdog from timing out a slow
             keep-alive.
-        estop_disables_power: Whether engaging E-STOP also disables
-            power. Defaults to ``True`` to match the audit's safety
-            recommendation.
+        estop_disables_power: Persisted policy flag for higher-level
+            E-STOP/power workflows. The native hardware transition is
+            authoritative in this version.
     """
 
     jog_watchdog_timeout_ms: int = Field(
@@ -86,9 +83,9 @@ class MachineSettings(BaseModel):
     estop_disables_power: bool = Field(
         default=True,
         description=(
-            "When True, engaging E-STOP also drops the power state. "
-            "The operator must explicitly power the machine back on "
-            "after clearing E-STOP."
+            "Persisted policy flag for higher-level E-STOP and power "
+            "workflows; native hardware state transitions remain "
+            "authoritative."
         ),
     )
 

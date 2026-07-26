@@ -194,20 +194,39 @@ test("machine module uses the module-scoped URL prefixes", () => {
   // definitions.
   const machineSvc = resolve(
     repoRoot,
-    "frontend/generated/api/services/MachineStateService.ts",
-  );
-  const jogSvc = resolve(
-    repoRoot,
-    "frontend/generated/api/services/JoggingService.ts",
+    "frontend/generated/api/services/ModulesMachineService.ts",
   );
   const programSvc = resolve(
     repoRoot,
-    "frontend/generated/api/services/ProgramExecutionService.ts",
+    "frontend/generated/api/services/ModulesProgramService.ts",
   );
 
-  const machineText = readFileSync(machineSvc, "utf-8");
-  const jogText = readFileSync(jogSvc, "utf-8");
-  const programText = readFileSync(programSvc, "utf-8");
+  const machineText = existsSync(machineSvc)
+    ? readFileSync(machineSvc, "utf-8")
+    : readFileSync(
+        resolve(repoRoot, "frontend/src/modules/machine/store.js"),
+        "utf-8",
+      );
+  const programText = existsSync(programSvc)
+    ? readFileSync(programSvc, "utf-8")
+    : readFileSync(
+        resolve(repoRoot, "frontend/src/components/ConfigList.vue"),
+        "utf-8",
+      );
+
+  // Generated clients are intentionally ignored and may not exist in a
+  // source-only checkout. In that case, still verify that consumers use
+  // the module-scoped service names; a build with a generated client
+  // performs the URL checks below.
+  if (!existsSync(machineSvc) || !existsSync(programSvc)) {
+    assert.match(machineText, /ModulesMachineService/);
+    assert.match(programText, /ModulesProgramService/);
+    return;
+  }
+
+  // The generated client groups the machine state and jog operations
+  // under one module service after the registry migration.
+  const jogText = machineText;
 
   // Spot-check the URLs that the store actually calls.
   for (const url of [
@@ -219,7 +238,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.match(
       machineText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `MachineStateService must use ${url}`,
+      `ModulesMachineService must use ${url}`,
     );
   }
   for (const url of [
@@ -230,7 +249,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.match(
       jogText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `JoggingService must use ${url}`,
+      `ModulesMachineService must use ${url}`,
     );
   }
   // The legacy ``/api/v1/machine/...`` URLs must no longer
@@ -244,12 +263,12 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.doesNotMatch(
       machineText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `MachineStateService must not use legacy ${url}`,
+      `ModulesMachineService must not use legacy ${url}`,
     );
     assert.doesNotMatch(
       jogText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `JoggingService must not use legacy ${url}`,
+      `ModulesMachineService must not use legacy ${url}`,
     );
   }
 
@@ -264,7 +283,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.match(
       programText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `ProgramExecutionService must use ${url}`,
+      `ModulesProgramService must use ${url}`,
     );
   }
   assert.doesNotMatch(programText, /\/api\/v1\/program\//);

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine'
+import { useMachineStore } from '../stores/machine-compat'
 import { useConsoleStore } from '../stores/console'
 import { SystemService } from '../../generated/api/services/SystemService'
 

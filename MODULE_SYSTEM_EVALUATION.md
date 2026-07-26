@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     registry.boot(app)
     app.state.module_registry = registry
     yield
-    registry.unload()
+    registry.shutdown()
 ```
 
 Both the registry boot **and** the legacy static `include_router` calls
@@ -643,11 +643,11 @@ this evaluation. The audit's plan was followed with three
 deviations, all documented here:
 
 * **Generated client URL rewrite** — the audit recommended adding a
-  `ModuleMachineService` generated class. The codegen toolchain is
-  not part of this image, so the existing `MachineStateService` and
-  `JoggingService` files were patched in place to point at
-  `/api/v1/modules/machine/...`. A future regen would produce the
-  same URLs, so no churn is created.
+  `ModuleMachineService` generated class. The codegen toolchain emits
+  `ModulesMachineService` / `ModulesProgramService` for the current
+  `modules:<id>` tags, so the live frontend imports those generated
+  classes and uses `/api/v1/modules/{id}/...` URLs. A future regen will
+  reproduce the same module-scoped paths.
 * **`get_settings_model` on `ProgramModule`** — the audit's "no
   settings schema yet" line caused `ProgramModule` to omit the
   method entirely; the runtime `PluggableModule` protocol's
@@ -663,6 +663,21 @@ deviations, all documented here:
   but possible if a future refactor splits DRO and jog into
   separate modules).
 
+* **Nullable legacy consumers** — the direct public re-export remains
+  available when the module is mounted, but shell components use a
+  build-safe compatibility adapter. It delegates to the module store when
+  mounted and provides an inert fallback when the optional folder is absent;
+  this makes the physical-folder deletion build check meaningful.
+* **Lifecycle and safety hardening** — the FastAPI lifespan now calls the
+  registry's `shutdown()` API, the watchdog dispatches through the shared
+  `_stop_axis` seam, and the frontend cancels reconnect timers on module
+  unload. These changes prevent shutdown exceptions, stale sockets, and
+  unobservable safety stops.
+* **Persisted jog defaults** — `default_jog_velocity` and
+  `keepalive_interval_ms` are read from the machine settings surface before
+  new jogs start, while retaining the historical safe defaults when the
+  module is unavailable.
+
 Other notes:
 
 * The 500 ms keep-alive watchdog is implemented per § 4.2 of this
@@ -670,11 +685,10 @@ Other notes:
   both the regression ("no ping → axis halted within ~600 ms")
   and the happy-path ("every-100 ms ping → axis keeps moving for 2 s")
   scenarios.
-* The legacy `stores/machine.js` is now a 4-line shim that
-  re-exports `useMachineStore` from the new module-scoped store.
-  Unmigrated consumers (`DebugPanel.vue`, `ConsolePanel.vue`,
-  `GCodeViewer.vue`, `UpdateManager.vue`) keep compiling without
-  code change, as predicted by § 4.5 / § 5.3 of this audit.
+* The public `stores/machine.js` path remains a thin re-export for
+  third-party consumers while the module is mounted. The shell's internal
+  nullable `machine-compat.js` adapter, which delegates to the module store
+  when available and is inert when the module is absent.
 * `MODULES_ENABLED=camera,temperature` boots cleanly with no
   machine endpoints; `/api/v1/modules/machine/*` returns `404`.
   This is the nullable-module guarantee from § 5.6.
