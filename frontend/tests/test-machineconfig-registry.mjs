@@ -20,7 +20,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,11 +45,15 @@ const apiPath = resolve(
 );
 const viewPath = resolve(
   repoRoot,
-  "frontend/src/modules/machineconfig/components/MachineConfigView.vue",
+  "frontend/src/views/ConfigView.vue",
 );
 const componentsDir = resolve(
   repoRoot,
   "frontend/src/modules/machineconfig/components",
+);
+const machineConfigViewPath = resolve(
+  repoRoot,
+  "frontend/src/modules/machineconfig/components/MachineConfigView.vue",
 );
 
 function readText(path) {
@@ -61,7 +65,7 @@ test("machineconfig manifest has the documented shape", () => {
   assert.match(manifest, /id:\s*(['"`])machineconfig\1/);
   assert.match(manifest, /title:\s*(['"`])Machine Config\1/);
   assert.match(manifest, /sidebar:\s*\{/);
-  assert.match(manifest, /id:\s*(['"`])machineconfig\1/, "sidebar id matches manifest id");
+  assert.match(manifest, /id:\s*(['"`])config\1/, "sidebar id must reuse the legacy config slot");
   assert.match(manifest, /label:\s*(['"`])Machine Config\1/);
   assert.match(manifest, /order:\s*60/);
   assert.match(manifest, /settingsPanel:\s*true/);
@@ -140,31 +144,27 @@ test("machineconfig API wrapper targets the module URL", () => {
 test("machineconfig index.js wires the manifest + components", () => {
   const indexText = readText(indexPath);
   assert.match(indexText, /import manifest from "\.\/manifest\.js"/);
-  assert.match(indexText, /import MachineConfigView from "\.\/components\/MachineConfigView\.vue"/);
   assert.match(indexText, /onLoad\(/);
   assert.match(indexText, /onUnload\(/);
-  // The components map must surface MachineConfigView so the
-  // App.vue's lazy loader can pick it up.
-  assert.match(indexText, /components:\s*\{/);
-  assert.match(indexText, /MachineConfigView/);
+  assert.doesNotMatch(indexText, /MachineConfigView/);
 });
 
-test("machineconfig components folder ships the four panels + view", () => {
+test("machineconfig components folder ships the four panels", () => {
   for (const name of [
     "ProfilesExplorer.vue",
     "CompilerPanel.vue",
     "CompiledOutputViewer.vue",
     "DeploymentPanel.vue",
     "ActivePanel.vue",
-    "MachineConfigView.vue",
   ]) {
     const path = resolve(componentsDir, name);
     const text = readText(path);
     assert.ok(text.length > 0, `${name} must exist and be non-empty`);
   }
+  assert.equal(existsSync(machineConfigViewPath), false, "MachineConfigView.vue must be removed");
 });
 
-test("MachineConfigView composes every panel", () => {
+test("ConfigView composes every machineconfig panel", () => {
   const viewText = readText(viewPath);
   for (const component of [
     "ProfilesExplorer",
@@ -176,9 +176,11 @@ test("MachineConfigView composes every panel", () => {
     assert.match(
       viewText,
       new RegExp(`import\\s+${component}\\s+from`),
-      `MachineConfigView must import ${component}`,
+      `ConfigView must import ${component}`,
     );
   }
+  assert.match(viewText, /useMachineConfigStore/);
+  assert.match(viewText, /loadAll\(\)/);
 });
 
 test("App.vue routes module sidebar ids to the module view", () => {
@@ -200,19 +202,13 @@ test("App.vue routes module sidebar ids to the module view", () => {
   );
 });
 
-test("AppSidebar no longer ships the legacy config builtin", () => {
-  // The new machineconfig module's sidebar entry supersedes the
-  // legacy "Machine Config" button. The legacy ConfigView still
-  // exists for direct-URL access, but the rail should not show
-  // two near-identical buttons.
+test("AppSidebar keeps the legacy config slot for the module override", () => {
+  // The machineconfig module now reuses the legacy config nav slot,
+  // so the built-in fallback remains available when the module is not
+  // mounted.
   const sidebarText = readText(
     resolve(repoRoot, "frontend/src/components/AppSidebar.vue"),
   );
-  // The builtins list contains only Dashboard / G-Code Files /
-  // Settings. The machineconfig module contributes its own entry.
-  assert.doesNotMatch(
-    sidebarText,
-    /id:\s*['"]config['"]\s*,\s*label:\s*['"]Machine Config['"]/,
-    "AppSidebar must not duplicate the machineconfig sidebar entry",
-  );
+  assert.match(sidebarText, /id:\s*['"]config['"]/);
+  assert.doesNotMatch(sidebarText, /MachineConfigView/);
 });

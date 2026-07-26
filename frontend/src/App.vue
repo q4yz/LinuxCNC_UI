@@ -30,8 +30,9 @@ const editorReadOnly = ref(false)
 // Module-driven sidebar entries route to a module-owned view when
 // the entry's id matches a mounted module's manifest id. The glob
 // resolves to ``frontend/src/modules/<id>/components/<Name>.vue``
-// where ``Name`` is the default export from the module's
-// ``index.js`` ``components`` map (``MainView`` for issue #41).
+// where ``Name`` is the default export from the module's view shell.
+// The machineconfig module no longer ships its own shell because the
+// updated panels now live directly inside the legacy ``ConfigView``.
 //
 // ``eager: false`` keeps the glob lazy so a module excluded by the
 // ``MODULES_ENABLED`` whitelist never appears in the bundle (Gotcha
@@ -101,9 +102,10 @@ onMounted(() => {
 
     <!-- Main Content Area -->
     <main class="flex-1 overflow-y-auto p-4 lg:p-8">
-      <!-- Module-owned views win over the hard-coded branches so a
-           module with sidebar id "machineconfig" gets its own
-           MachineConfigView rather than the legacy ConfigView. -->
+       <!-- Module-owned views win over the hard-coded branches. The
+         machineconfig module now reuses the legacy ConfigView slot,
+         so its sidebar entry is mapped to ``config`` instead of a
+         standalone module shell. -->
       <component v-if="moduleView" :is="moduleView" />
       <DashboardView v-else-if="currentView === 'dashboard'" />
       <FilesView v-else-if="currentView === 'files'" />

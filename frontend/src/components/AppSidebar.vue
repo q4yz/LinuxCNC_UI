@@ -16,16 +16,15 @@ const emit = defineEmits(['navigate'])
 // ``order`` field, so a module with ``order: 5`` floats above the
 // built-ins (which all default to ``order: 100``).
 //
-// ``config`` was the legacy "Machine Config" entry that pointed at
-// the still-unmigrated :class:`ConfigView`. Issue #41 introduces the
-// ``machineconfig`` module whose sidebar entry supersedes it — the
-// module ships its own :class:`MachineConfigView` with the new
-// profiles / compiler / deploy / active workflow. Operators who
-// explicitly want the legacy ConfigView can still reach it at
-// ``/#config`` (the nav button just no longer appears in the rail).
+// ``config`` is the legacy entry for the Config view. The new
+// machineconfig module now reuses that slot so the rail still lands in
+// the updated ``ConfigView`` without introducing a second module-only
+// shell.
 const builtinItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>', order: 100 },
-  { id: 'files', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
+  { id: 'files', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },{ id: 'files', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
+  { id: 'config', label: 'Config Leg', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
+
   // Settings is a built-in shell view; it shows "Settings (no modules
   // mounted)" when the registry is empty, and one tab per module that
   // declares ``settingsPanel`` otherwise.
