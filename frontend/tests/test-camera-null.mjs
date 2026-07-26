@@ -50,8 +50,8 @@ test("DashboardView uses defineAsyncComponent for the camera panel", () => {
   );
   assert.match(
     source,
-    /import\(\s*['"]\.\.\/modules\/camera\/components\/CameraPanel\.vue['"]\s*\)/,
-    "DashboardView must lazily import the camera module's CameraPanel.vue",
+    /panelFor\(\s*['"]camera['"]\s*,\s*['"]CameraPanel['"]\s*\)/,
+    "DashboardView must lazily resolve the camera module's CameraPanel.vue",
   );
 });
 

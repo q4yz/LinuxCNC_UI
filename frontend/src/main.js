@@ -33,11 +33,14 @@ const pinia = createPinia()
 app.component('v-chart', ECharts)
 app.use(pinia)
 
-// Boot the registry. The promise resolves once every module's
-// ``onLoad`` hook has run. Mount the app immediately so the user
-// sees something even if a module's loader is slow.
-app.mount('#app')
-registry.boot().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('[registry] boot failed:', err)
-})
+// Boot the registry before mounting so the optional machine adapter can
+// register the real module store before legacy shell components instantiate.
+// A broken module is still isolated: the shell mounts from the fallback path.
+registry.boot()
+  .catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('[registry] boot failed:', err)
+  })
+  .finally(() => {
+    app.mount('#app')
+  })

@@ -52,6 +52,9 @@ logger = logging.getLogger("backend.modules.machine.jog")
 # force-stops any axis whose stamp is older than ``WATCHDOG_TIMEOUT_S``.
 _active_jogs: Dict[int, float] = {}
 _active_jogs_lock = threading.Lock()
+# Compatibility aliases for code that imported the old router-level names.
+active_jogs = _active_jogs
+active_jogs_lock = _active_jogs_lock
 
 
 def _stop_axis(axis: int) -> None:
@@ -261,6 +264,8 @@ __all__ = [
     "stop_jog",
     "_active_jogs",
     "_active_jogs_lock",
+    "active_jogs",
+    "active_jogs_lock",
     "clear_active_jogs",
     "snapshot_active_jogs",
 ]

@@ -25,6 +25,10 @@ import manifest from "./manifest.js";
 import DroPanel from "./components/DroPanel.vue";
 import JogControls from "./components/JogControls.vue";
 import { useMachineStore } from "./store.js";
+import {
+  registerMachineStore,
+  unregisterMachineStore,
+} from "../../stores/machine-compat.js";
 
 export default {
   manifest,
@@ -32,12 +36,17 @@ export default {
   // this hook is idempotent thanks to the ``connect()`` guard in
   // the store (``if (this.connectionStatus === 'connected' || ...``).
   onLoad(/* ctx */) {
+    // Register only once the registry has decided to mount this module.
+    // This keeps direct imports of the optional store from changing the
+    // shell's fallback behaviour.
+    registerMachineStore(useMachineStore);
     useMachineStore().connect();
   },
   onUnload() {
     // Disconnect the WebSocket and cancel any running keep-alive
     // intervals.  The store's ``disconnect()`` is also idempotent.
     useMachineStore().disconnect();
+    unregisterMachineStore(useMachineStore);
   },
   // Re-export the components so callers (notably ``DashboardView``)
   // can use ``defineAsyncComponent`` + ``import.meta.glob`` to keep

@@ -1,17 +1,9 @@
-// Legacy shim — re-exports the machine module's Pinia store under
-// the historical import path. New code should import from the
-// module directly:
+// Legacy public re-export shim. New machine code should import from
+// ``../modules/machine/store.js`` directly. Shell components use the
+// optional ``machine-compat.js`` adapter so deleting the module folder
+// still leaves a buildable, inert application.
 //
-//   import { useMachineStore } from '../modules/machine/store.js'
-//
-// This shim exists only until every consumer migrates. The original
-// monolithic implementation that owned the WebSocket subscription
-// and every machine action was extracted into
-// ``frontend/src/modules/machine/store.js`` as part of issue #38;
-// the components still importing from ``../stores/machine``
-// (``DebugPanel.vue``, ``ConsolePanel.vue``, ``GCodeViewer.vue``,
-// ``UpdateManager.vue``) keep working without code change because
-// Pinia stores are singletons keyed by id.
-
+// This file intentionally remains a direct re-export for third-party
+// consumers while the migration window is open.
 export { useMachineStore, useMachineRefs } from '../modules/machine/store.js';
 export { default } from '../modules/machine/store.js';

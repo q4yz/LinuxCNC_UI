@@ -10,7 +10,7 @@
 //
 //   * ``jogContinuous`` + ``jogStop`` round-trip populates and
 //     empties ``jogIntervals``.
-//   * The store calls ``JoggingService.jogKeepalive`` while a
+//   * The store calls ``ModulesMachineService.jogKeepalive`` while a
 //     continuous jog is active.
 //   * Disconnecting from the store clears every keep-alive
 //     interval.
@@ -63,6 +63,12 @@ test("store builds the ModulesMachineService.jogAxis payload for continuous jogs
   assert.match(text, /setInterval\s*\(/);
   assert.match(text, /ModulesMachineService\.jogKeepalive/);
   assert.match(text, /,\s*250\s*\)/);
+  // The cadence is read from the module settings and falls back to
+  // the historical 250 ms value.
+  assert.match(text, /setInterval\([\s\S]*intervalMs\)/);
+  assert.match(text, /DEFAULT_KEEPALIVE_INTERVAL_MS\s*=\s*250/);
+  assert.match(text, /interval\s*<=\s*2000/);
+
 });
 
 test("store clears jogIntervals on stop and disconnect", () => {
@@ -78,7 +84,7 @@ test("store clears jogIntervals on stop and disconnect", () => {
 
 test("store auto-reconnects on socket close with a 2 s back-off", () => {
   const text = readStore();
-  assert.match(text, /setTimeout\(\s*\(\s*\)\s*=>\s*connect\(\)\s*,\s*2000\s*\)/);
+  assert.match(text, /reconnectTimer\s*=\s*setTimeout\([\s\S]*connect\(\)[\s\S]*2000/);
 });
 
 test("store rejects ESTOP-driven power-on", () => {

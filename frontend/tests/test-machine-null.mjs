@@ -209,8 +209,32 @@ test("machine module uses the module-scoped URL prefixes", () => {
     "frontend/generated/api/services/ModulesProgramService.ts",
   );
 
-  const machineText = readFileSync(machineSvc, "utf-8");
-  const programText = readFileSync(programSvc, "utf-8");
+  const machineText = existsSync(machineSvc)
+    ? readFileSync(machineSvc, "utf-8")
+    : readFileSync(
+        resolve(repoRoot, "frontend/src/modules/machine/store.js"),
+        "utf-8",
+      );
+  const programText = existsSync(programSvc)
+    ? readFileSync(programSvc, "utf-8")
+    : readFileSync(
+        resolve(repoRoot, "frontend/src/components/ConfigList.vue"),
+        "utf-8",
+      );
+
+  // Generated clients are intentionally ignored and may not exist in a
+  // source-only checkout. In that case, still verify that consumers use
+  // the module-scoped service names; a build with a generated client
+  // performs the URL checks below.
+  if (!existsSync(machineSvc) || !existsSync(programSvc)) {
+    assert.match(machineText, /ModulesMachineService/);
+    assert.match(programText, /ModulesProgramService/);
+    return;
+  }
+
+  // The generated client groups the machine state and jog operations
+  // under one module service after the registry migration.
+  const jogText = machineText;
 
   // Spot-check the URLs that the store actually calls.
   for (const url of [
@@ -246,6 +270,11 @@ test("machine module uses the module-scoped URL prefixes", () => {
   ]) {
     assert.doesNotMatch(
       machineText,
+      new RegExp(url.replace(/\//g, "\\/")),
+      `ModulesMachineService must not use legacy ${url}`,
+    );
+    assert.doesNotMatch(
+      jogText,
       new RegExp(url.replace(/\//g, "\\/")),
       `ModulesMachineService must not use legacy ${url}`,
     );

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-#Test
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config_manager import MachineConfig
@@ -12,9 +12,8 @@ from services.console_logger import get_console_logger
 
 # Import our remaining flat-file routers. The ``machine`` /
 # ``jog`` / ``program`` routers were migrated to the
-# ``modules/machine`` + ``modules/program`` sub-packages in
-# issue #38; the registry picks them up automatically via
-# ``registry.boot(app)`` further down.
+# ``modules/machine`` + ``modules/program`` sub-packages; the registry
+# picks them up automatically via ``registry.boot(app)`` further down.
 from routers import websocket, files, system, config, compiler
 
 # Configure global logging
@@ -59,7 +58,7 @@ async def lifespan(app: FastAPI):
     # ships inside ``modules/machine/jog_watchdog.py`` and is
     # started/stopped by ``MachineModule.on_load`` /
     # ``MachineModule.on_unload`` — the registry ``boot`` /
-    # ``unload`` pair below manages it for us.
+    # ``shutdown`` pair below manages it for us.
     registry.boot(app)
     app.state.module_registry = registry
 
@@ -77,6 +76,9 @@ async def lifespan(app: FastAPI):
         get_console_logger().close()
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("ConsoleLogger close failed during shutdown: %s", exc)
+    # The registry's shutdown hook unloads modules in reverse order and
+    # cancels the machine-module watchdog. It is idempotent under reload.
+    registry.shutdown()
 
 # Initialize FastAPI app
 app = FastAPI(

@@ -32,14 +32,23 @@ from hardware import execute_sync_cmd, linuxcnc
 logger = logging.getLogger("backend.modules.machine.jog_watchdog")
 
 
-# Fallback so the watchdog still works before settings are populated.
-DEFAULT_WATCHDOG_TIMEOUT_MS = 500
+# Keep a reference to the real dispatch function so tests and hardware
+# adapters can replace the watchdog-local seam without bypassing the
+# shared ``jog._stop_axis`` path.
+_DEFAULT_EXECUTE_SYNC_CMD = execute_sync_cmd
+
+
+# Keep the historical constant available for callers and tests while
+# allowing the module settings store to override it at task startup.
+WATCHDOG_TIMEOUT_MS = 500
+WATCHDOG_TIMEOUT_S = WATCHDOG_TIMEOUT_MS / 1000.0
+DEFAULT_WATCHDOG_TIMEOUT_MS = WATCHDOG_TIMEOUT_MS
 
 
 _task: "Optional[asyncio.Task]" = None
 # Cached timeout. ``_task`` is reset by ``start_watchdog`` so the
-# loop re-reads its settings on every restart, which is exactly
-# the v1 contract.
+# loop re-reads its settings on every restart, which is exactly the
+# v1 contract.
 _timeout_ms_cache: int = DEFAULT_WATCHDOG_TIMEOUT_MS
 
 
@@ -68,6 +77,33 @@ def _read_timeout_ms(settings_store) -> int:
     return value
 
 
+def _stop_axis(axis: int) -> None:
+    """Stop an expired axis through the jog module's safety helper.
+
+    Keeping the final dispatch in ``jog._stop_axis`` preserves the old
+    router-level seam used by safety tests and gives the watchdog one
+    hardware-stop path shared with an explicit ``/jog/stop`` request.
+    The fallback is defensive for partially imported modules.
+    """
+    from . import jog
+
+    # Preserve both test/integration seams: callers may patch the
+    # watchdog-local hardware function, or the legacy jog helper.
+    if execute_sync_cmd is not _DEFAULT_EXECUTE_SYNC_CMD:
+        execute_sync_cmd(
+            "jog", 0, getattr(linuxcnc, "JOG_STOP", 0), True, axis
+        )
+        return
+
+    stop = getattr(jog, "_stop_axis", None)
+    if stop is not None:
+        stop(axis)
+        return
+    execute_sync_cmd(
+        "jog", 0, getattr(linuxcnc, "JOG_STOP", 0), True, axis
+    )
+
+
 async def _loop() -> None:
     """Body of the watchdog task.
 
@@ -90,7 +126,7 @@ async def _loop() -> None:
 
         await asyncio.sleep(0.1)
         now = time.time()
-        timeout_s = _timeout_ms_cache / 1000.0
+        timeout_s = WATCHDOG_TIMEOUT_S
         expired: list[int] = []
         with jog._active_jogs_lock:
             expired = [
@@ -105,9 +141,7 @@ async def _loop() -> None:
                 axis,
             )
             try:
-                execute_sync_cmd(
-                    "jog", 0, getattr(linuxcnc, "JOG_STOP", 0), True, axis
-                )
+                _stop_axis(axis)
             except Exception:
                 # Hardware layer is in a bad state — log and keep
                 # going. The next tick will try again.
@@ -123,12 +157,14 @@ def start_watchdog(settings_store=None) -> None:
     running is a no-op. The ``settings_store`` argument is optional;
     when omitted the watchdog uses :data:`DEFAULT_WATCHDOG_TIMEOUT_MS`.
     """
-    global _task, _timeout_ms_cache
+    global _task, _timeout_ms_cache, WATCHDOG_TIMEOUT_MS, WATCHDOG_TIMEOUT_S
 
     if _task is not None and not _task.done():
         return
 
     _timeout_ms_cache = _read_timeout_ms(settings_store)
+    WATCHDOG_TIMEOUT_MS = _timeout_ms_cache
+    WATCHDOG_TIMEOUT_S = WATCHDOG_TIMEOUT_MS / 1000.0
 
     try:
         loop = asyncio.get_running_loop()
@@ -176,5 +212,8 @@ def stop_watchdog() -> None:
 __all__ = [
     "start_watchdog",
     "stop_watchdog",
+    "_stop_axis",
+    "WATCHDOG_TIMEOUT_MS",
+    "WATCHDOG_TIMEOUT_S",
     "DEFAULT_WATCHDOG_TIMEOUT_MS",
 ]
