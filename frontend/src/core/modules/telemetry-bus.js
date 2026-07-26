@@ -8,9 +8,10 @@
 //   per-tick clone cost of ``Object.freeze`` + ``structuredClone``
 //   that the 100 Hz telemetry stream cannot afford.
 //
-// Phase 2c ships the shell only. The existing ``stores/machine.js``
-// owns the WebSocket transport during Phase 2b/2c; this bus is the
-// integration point that Phase 4 will fold the transport into.
+// Phase 2c ships the shell only. The machine module's
+// ``modules/machine/store.js`` owns the WebSocket transport during
+// Phase 2b/2c; this bus is the integration point that Phase 4 will
+// fold the transport into.
 
 /**
  * @typedef {(topic: string, payload: any) => void} TelemetryHandler
@@ -77,8 +78,9 @@ export class TelemetryBus {
   }
 }
 
-// Module-level singleton. ``stores/machine.js`` can publish to it
-// during Phase 2b/2c; Phase 4 will move the broadcast loop here.
+// Module-level singleton. ``modules/machine/store.js`` can publish
+// to it during Phase 2b/2c; Phase 4 will move the broadcast loop
+// here.
 export const telemetryBus = new TelemetryBus();
 
 export default telemetryBus;

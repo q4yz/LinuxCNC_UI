@@ -14,9 +14,10 @@
 //     ``components/JogControls.vue`` are gone.
 //   * The new ``modules/machine/components/DroPanel.vue`` and
 //     ``modules/machine/components/JogControls.vue`` are in place.
-//   * The legacy shim at ``stores/machine.js`` re-exports the new
-//     store so unmigrated consumers (ConsolePanel, DebugPanel,
-//     GCodeViewer, UpdateManager) keep working without code change.
+//   * Pre-migration consumer components (ConsolePanel, DebugPanel,
+//     GCodeViewer, UpdateManager) route through ``machine-compat``,
+//     the nullable adapter that lets the shell build even when the
+//     machine module folder has been removed.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -50,6 +51,10 @@ const newJogControls = resolve(
 const newStore = resolve(
   repoRoot,
   "frontend/src/modules/machine/store.js",
+);
+const legacyMachineApi = resolve(
+  repoRoot,
+  "frontend/src/services/machineApi.js",
 );
 const legacyStoreShim = resolve(
   repoRoot,
@@ -142,16 +147,23 @@ test("module store file exposes useMachineStore", () => {
   );
 });
 
-test("legacy stores/machine.js shim re-exports useMachineStore", () => {
-  assert.ok(existsSync(legacyStoreShim));
-  const text = readFileSync(legacyStoreShim, "utf-8");
-  // The shim must re-export useMachineStore from the new module
-  // location so the unmigrated consumers (DebugPanel, etc.) keep
-  // working.
-  assert.match(
-    text,
-    /export\s*\{\s*useMachineStore\s*[,\s]\s*useMachineRefs\s*\}\s*from\s*['"]\.\.\/modules\/machine\/store\.js['"]/,
-    "legacy shim must re-export the module-scoped store",
+test("legacy stores/machine.js shim is removed after migration window closes", () => {
+  // Issue #47 closes the migration window: the compatibility shim
+  // at ``stores/machine.js`` (which used to re-export the module
+  // store for third-party consumers) and the raw
+  // ``services/machineApi.js`` wrapper are both deleted. All machine
+  // consumers should now import from ``stores/machine-compat``
+  // (nullable shell adapter) or directly from
+  // ``modules/machine/store.js`` / ``ModulesMachineService``.
+  assert.equal(
+    existsSync(legacyStoreShim),
+    false,
+    `expected ${legacyStoreShim} to be removed after issue #47`,
+  );
+  assert.equal(
+    existsSync(legacyMachineApi),
+    false,
+    `expected ${legacyMachineApi} to be removed after issue #47`,
   );
 });
 

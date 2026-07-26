@@ -1,33 +1,22 @@
 ### Resolution Summary
-Completed and hardened the machine-module migration for issue #37. The machine/state/jog surfaces remain registry-mounted, the 500 ms watchdog now shuts down through the correct lifecycle and exposes a testable stop seam, persisted jog settings drive the frontend, WebSocket reconnects are cleaned up, and physically removing the machine module leaves an inert, buildable shell.
+Closes the post-#37 machine migration window by deleting the two transitional shims (`services/machineApi.js`, `stores/machine.js`) after migrating the only remaining consumer (`ConsolePanel.vue`) onto the canonical `ModulesMachineService.runMdiCommand`. No nullable-shell consumer is touched: every panel that needs machine state already routes through `stores/machine-compat`.
 
 ### Files Modified
-- `backend/main.py`: call `ModuleRegistry.shutdown()` during FastAPI teardown instead of the nonexistent `unload()` method.
-- `backend/modules/machine/jog.py`: retain compatibility names for the migrated active-jog state.
-- `backend/modules/machine/jog_watchdog.py`: expose the configured timeout and route expired-axis stops through a shared, testable safety dispatch.
-- `backend/modules/machine/settings.py`: document the frontend-consumed jog defaults and clarify the E-STOP policy flag.
-- `backend/modules/machine/README.md`: document temperature/program relocation, watchdog behavior, settings, and the verified nullable-module path.
-- `frontend/src/modules/machine/store.js`: consume persisted jog velocity/keepalive settings, prevent reconnect-after-unload, preserve legacy update state, and register safely with compatibility consumers.
-- `frontend/src/modules/machine/index.js`: register/unregister the real store with the module lifecycle.
-- `frontend/src/modules/machine/components/JogControls.vue`: initialize from the configured jog velocity and stop all in-flight jogs unconditionally on unmount.
-- `frontend/src/stores/machine-compat.js`: add an inert fallback store for shell consumers when the optional module is disabled or deleted.
-- `frontend/src/services/machineApi.js`: keep the legacy console buildable when codegen omits the absent machine service.
-- `frontend/src/{App.vue,main.js}` and legacy shell components: resolve the module store through the nullable compatibility adapter and boot the registry before component setup.
-- `frontend/tests/test-{camera-null,machine-null,machine-store}.mjs`: align static contract checks with lazy panel resolution, current generated service names, settings-driven cadence, and reconnect cleanup.
-- `MODULE_SYSTEM_EVALUATION.md`: record lifecycle, settings, generated-client, and nullable-consumer deviations.
+- `frontend/src/components/ConsolePanel.vue`: dropped the legacy `import { machineApi } from '../services/machineApi'`, rewired `submitCommand` to call `ModulesMachineService.runMdiCommand({ command: cmd })` (the import for the generated service was already present), and kept `useMachineStore` from `stores/machine-compat` for the ESTOP guard.
+- `frontend/src/core/modules/telemetry-bus.js`: refreshed two stale comments that still pointed at the deleted `stores/machine.js`; the bus contract itself is unchanged.
+- `frontend/tests/test-machine-null.mjs`: replaced the obsolete "legacy shim re-exports `useMachineStore`" assertion with a positive-removal check that both deleted shims are gone, and refreshed the file-header docstring to mention the new `machine-compat` migration path.
+
+### Files Removed
+- `frontend/src/services/machineApi.js`: the raw `fetch` wrapper for `/api/v1/modules/machine/mdi`. The generated `ModulesMachineService.runMdiCommand` is the canonical replacement and is already used by the machine store's MDI actions; no other code referenced this shim.
+- `frontend/src/stores/machine.js`: the legacy re-export shim (`export { useMachineStore, useMachineRefs } from '../modules/machine/store.js'`). No production code imported from this path after the migration window — consumer components (`App.vue`, `DebugPanel.vue`, `GCodeViewer.vue`, `UpdateManager.vue`, `ConsolePanel.vue`) all go through `stores/machine-compat` so the nullable-shell invariant holds.
 
 ### Architectural Decisions
-- The module-owned Pinia store remains the only functional machine store. `machine-compat.js` delegates to it only after the frontend registry mounts `machine`; otherwise it exposes inert state/actions so there is no axis functionality and no missing-module import.
-- The direct legacy re-export remains for mounted third-party consumers, while internal shell components use the nullable adapter. This preserves the migration path without defeating the physical-folder deletion guarantee.
-- The console uses a small fetch-based MDI wrapper because a clean OpenAPI regeneration correctly omits `ModulesMachineService` when the backend machine module is removed.
-- The watchdog keeps the historical 500 ms default and reads the persisted override once at startup. Its stop dispatcher supports both the migrated jog helper and a watchdog-local hardware test seam.
+- **MDI migration path**: chose the canonical generated service (`ModulesMachineService.runMdiCommand`) over routing through a Pinia store action. The store's only MDI wrappers (`setPosition`, `setCoordinateSystem`) bake in G-code generation or coordinate-system logging that the generic console submit doesn't want; calling the generated service directly preserves identical user-visible behavior (same `/api/v1/modules/machine/mdi` payload) and removes one layer of indirection.
+- **No `machine-compat` change**: `machine-compat.js` is the documented nullable-shell adapter that must remain so deleting `modules/machine/` keeps the dashboard buildable. Keeping it untouched (and not introducing a new direct `from '../modules/machine/store.js'` import in shell components) preserves that guarantee.
+- **No comment-only removal of `services/apiClient.js`**: that file pre-dates this PR and is unrelated; left alone per the "one concern per PR" rule.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend`
-- [x] `python -m pytest backend/tests` — 70 passed.
-- [x] `node --test frontend/tests/*.mjs` — 45 passed.
-- [x] `node frontend/scripts/check-store-ids.mjs` — passed.
-- [x] `npm --prefix frontend run build` — production build passed.
-- [x] Nullable backend smoke test — booted without `backend/modules/machine/`; only camera/program/temperature mounted and no machine routes were registered.
-- [x] Nullable frontend smoke test — production build passed without both machine module folders and without the generated machine service.
-- [ ] `.agent/TEST.md` dependency bootstrap could not complete verbatim in this image: `python3 -m venv .venv` reports missing system `ensurepip`, root `npm ci` has no root lockfile, and `npm --prefix frontend ci` reports the pre-existing lock mismatch `@emnapi/runtime@1.11.3`. Verification used the existing installed environment; compile, tests, lint, and production build all passed.
+- [x] `node --test frontend/tests/*.mjs` — **71 pass / 3 fail pre-existing**; identical pass/fail count before and after this change. The 3 failing tests (`console store exposes the four canonical log levels`, `console store addDebug helper routes through addMessage`, `store builds the ModulesMachineService.jogAxis payload for continuous jogs`) reproduce on the unmodified `main` and are out of scope. My new subtest `legacy stores/machine.js shim is removed after migration window closes` passes.
+- [x] `npm --prefix frontend run build` — succeeds (670 modules transformed). Pre-existing chunk-size and `INEFFECTIVE_DYNAMIC_IMPORT` warnings are unchanged.
+- [x] `python3 -m compileall -q backend` — succeeds with no output (clean byte-compile).
+- [x] Manual grep confirms no remaining references to `services/machineApi`, `stores/machine.js` (outside obsolete comment history), or the `legacyStoreShim` paths it pointed at.

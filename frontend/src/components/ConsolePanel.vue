@@ -4,7 +4,6 @@ import { useConsoleStore, LOG_LEVELS } from '../stores/console'
 import { ModulesMachineService } from '../../generated/api/services/ModulesMachineService'
 import { filterAutocompleteCommands } from '../config/gcodes'
 import { useMachineStore } from '../stores/machine-compat'
-import { machineApi } from '../services/machineApi'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()
@@ -80,7 +79,7 @@ const submitCommand = async () => {
     if (machineStore.isEstop) {
        consoleStore.addMessage("Machine is in ESTOP. Command rejected.", 'error')
     } else {
-       await machineApi.runMdiCommand({ command: cmd })
+       await ModulesMachineService.runMdiCommand({ command: cmd })
        consoleStore.addMessage(`Executed: ${cmd}`, 'success')
     }
   } catch (e) {
