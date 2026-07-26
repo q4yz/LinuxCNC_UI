@@ -192,21 +192,24 @@ test("machine module uses the module-scoped URL prefixes", () => {
   // at the module URLs (``/api/v1/modules/machine/...``). The
   // original flat URLs must no longer appear in the service
   // definitions.
+  //
+  // NOTE: After the issue #41 follow-up, the generated service
+  // classes were consolidated under the ``ModulesMachineService``
+  // / ``ModulesProgramService`` names (the legacy
+  // ``MachineStateService`` / ``JoggingService`` /
+  // ``ProgramExecutionService`` were renamed and unified). The
+  // test now reads the current file names so the assertions
+  // continue to track the real shape of the generated client.
   const machineSvc = resolve(
     repoRoot,
-    "frontend/generated/api/services/MachineStateService.ts",
-  );
-  const jogSvc = resolve(
-    repoRoot,
-    "frontend/generated/api/services/JoggingService.ts",
+    "frontend/generated/api/services/ModulesMachineService.ts",
   );
   const programSvc = resolve(
     repoRoot,
-    "frontend/generated/api/services/ProgramExecutionService.ts",
+    "frontend/generated/api/services/ModulesProgramService.ts",
   );
 
   const machineText = readFileSync(machineSvc, "utf-8");
-  const jogText = readFileSync(jogSvc, "utf-8");
   const programText = readFileSync(programSvc, "utf-8");
 
   // Spot-check the URLs that the store actually calls.
@@ -219,7 +222,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.match(
       machineText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `MachineStateService must use ${url}`,
+      `ModulesMachineService must use ${url}`,
     );
   }
   for (const url of [
@@ -228,9 +231,9 @@ test("machine module uses the module-scoped URL prefixes", () => {
     "/api/v1/modules/machine/jog/stop",
   ]) {
     assert.match(
-      jogText,
+      machineText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `JoggingService must use ${url}`,
+      `ModulesMachineService must use ${url}`,
     );
   }
   // The legacy ``/api/v1/machine/...`` URLs must no longer
@@ -244,12 +247,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.doesNotMatch(
       machineText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `MachineStateService must not use legacy ${url}`,
-    );
-    assert.doesNotMatch(
-      jogText,
-      new RegExp(url.replace(/\//g, "\\/")),
-      `JoggingService must not use legacy ${url}`,
+      `ModulesMachineService must not use legacy ${url}`,
     );
   }
 
@@ -264,7 +262,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
     assert.match(
       programText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `ProgramExecutionService must use ${url}`,
+      `ModulesProgramService must use ${url}`,
     );
   }
   assert.doesNotMatch(programText, /\/api\/v1\/program\//);

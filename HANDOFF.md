@@ -1,88 +1,71 @@
 ### Resolution Summary
-Migrated the **machine** module (axis / state / mode / home / MDI / jog + the 500 ms safety watchdog) out of the flat `backend/routers/{machine,jog}.py` files into the registry-driven module system, alongside a companion `modules/program/` stub for the program-lifecycle endpoints. The frontend `stores/machine.js` monolith was replaced by a 4-line shim and a new module-scoped Pinia store (`module_machine`); the legacy `DroPanel.vue` / `JogControls.vue` were moved into `frontend/src/modules/machine/components/`; and the generated OpenAPI client URLs were rewritten to the module-scoped paths.
+Adds the full Machine Configuration, Compilation, and Deployment system requested by issue #41: a new `machineconfig` backend module (object-oriented compiler framework, full CRUD for `machine_config/profiles`, read-only viewers for `ready_for_deploy`/`active`, deploy with `confirm_flash`) and a matching `machineconfig` frontend module whose four panels (`ProfilesExplorer` / `CompilerPanel` / `CompiledOutputViewer` / `DeploymentPanel` + `ActivePanel`) compose into a single `MachineConfigView` that supersedes the legacy `ConfigView`.
 
-### Files Modified
+### Files Added
+
 #### Backend — new module
-- `backend/modules/machine/__init__.py` — re-exports `setup()`.
-- `backend/modules/machine/module.py` — `MachineModule` (PluggableModule). Merges the two routers, wires `MachineSettings`, starts/stops the watchdog in `on_load` / `on_unload`.
-- `backend/modules/machine/router.py` — `POST /state`, `/mode`, `/home`, `/mdi`.
-- `backend/modules/machine/jog.py` — `POST /jog`, `/jog/keepalive`, `/jog/stop` plus the module-private `_active_jogs` map.
-- `backend/modules/machine/jog_watchdog.py` — 500 ms safety watchdog (asyncio task), reads timeout from `ctx.settings`, idempotent `start_watchdog` / `stop_watchdog`.
-- `backend/modules/machine/settings.py` — Pydantic `MachineSettings` (watchdog timeout, default jog velocity, keep-alive interval, estop-disables-power).
-- `backend/modules/machine/README.md` — module documentation.
-
-#### Backend — new program stub
-- `backend/modules/program/__init__.py` — re-exports `setup()`.
-- `backend/modules/program/module.py` — `ProgramModule` (no-op `on_load` / `on_unload`, no settings schema yet).
-- `backend/modules/program/router.py` — `run` / `stop` / `pause` / `resume` / `parse` endpoints.
-
-#### Backend — deletions + updates
-- `backend/routers/machine.py` — **deleted** (per § 6 Risk #7).
-- `backend/routers/jog.py` — **deleted** (per § 6 Risk #7).
-- `backend/main.py` — removes `routers/machine` and `routers/jog` imports; the watchdog task is no longer created here (the machine module's `on_load` / `on_unload` owns it via `registry.boot()` / `registry.unload()`).
+- `backend/modules/machineconfig/__init__.py` — re-exports `setup()`.
+- `backend/modules/machineconfig/module.py` — `MachineConfigModule` (PluggableModule). Owns the merged router, ensures the three directories on `on_load`, exposes a `MachineConfigSettings` defaults model.
+- `backend/modules/machineconfig/router.py` — REST API surface mounted by the registry under `/api/v1/modules/machineconfig`.
+- `backend/modules/machineconfig/settings.py` — Pydantic `MachineConfigSettings` (default compiler id, confirm-flash defaults).
+- `backend/modules/machineconfig/filesystem.py` — Helpers for `machine_config/{profiles,ready_for_deploy,active}/`: `safe_join`, `list_tree`, `clear_directory`, `copy_tree`, `mark_staged_readonly`, `parse_machine_name`. Direct file handling per the issue brief.
+- `backend/modules/machineconfig/compilers/__init__.py` — Triggers `autoload()` on import; re-exports the base class + `KlipperToLinuxCNCCompiler`.
+- `backend/modules/machineconfig/compilers/base.py` — `Compiler` ABC, `CompilerRegistry`, marker detection (`#Start` by default), `iter_compiler_classes` discovery + `autoload`.
+- `backend/modules/machineconfig/compilers/klipper_linuxcnc.py` — `KlipperToLinuxCNCCompiler`. Reads the source `[printer]` section, emits `machine.cfg` / `linuxcnc.ini` / `machine.hal` / `remora.json` under `ready_for_deploy/`.
 
 #### Backend — tests
-- `backend/tests/test_machine_module.py` — router mounts, 400 on unknown state/mode, settings round-trip, watchdog state registration, legacy-routers gone, idempotent lifecycle.
-- `backend/tests/test_jog_watchdog.py` — stale axis is force-stopped, fresh axis is left alone, keep-alive prevents force-stop, `stop_watchdog` is idempotent, `clear_active_jogs` empties the map, `_read_timeout_ms` clamps out-of-range values.
-- `backend/tests/test_jog_keepalive.py` — refresh, stop, unknown-axis no-op, step jog (non-zero distance) doesn't register with the watchdog.
-- `backend/tests/test_machine_null.py` — registry continues with `machine` excluded (setup-raises, import-fails, and post-boot shutdown paths).
-- `backend/tests/test_temperature_module.py` — updated legacy-routers-deleted check to use the temperature module's own router (the deleted `routers/machine.py` was the prior probe).
+- `backend/tests/test_machineconfig_module.py` — 22 tests covering boot + manifest, the registry listing, profiles CRUD, compile → stage → deploy round-trip, staged/active read-only, machine-name probe, marker detection.
 
 #### Frontend — new module
-- `frontend/src/modules/machine/__init__.py` (named `index.js`) — `manifest`, `onLoad` (calls `useMachineStore().connect()`), `onUnload` (calls `disconnect()`).
-- `frontend/src/modules/machine/manifest.js` — `{ id: 'machine', title: 'Machine', settingsPanel: true }`.
-- `frontend/src/modules/machine/store.js` — Pinia store id **`module_machine`** (per Gotcha #2). Setup-style `defineStore` with all the original actions, derived values (`droX/Y/Z`, `isEstop`, `isMachineOn`, `machineStateText`), reconnect loop, and a `state.temperatures` republish to the event bus for the temperature module.
-- `frontend/src/modules/machine/components/DroPanel.vue` — moved from `components/`, now imports `useMachineStore` from `../store.js`.
-- `frontend/src/modules/machine/components/JogControls.vue` — moved from `components/`, with the safety-critical `onBeforeUnmount(() => stopAllJogging())` hook preserved per § 6 Risk #5.
-
-#### Frontend — updates + shim
-- `frontend/src/stores/machine.js` — replaced with a 4-line shim that re-exports `useMachineStore` / `useMachineRefs` from the new module path. The Pinia store id is now `module_machine` everywhere; legacy consumers (DebugPanel, ConsolePanel, GCodeViewer, UpdateManager) keep working unchanged.
-- `frontend/src/views/DashboardView.vue` — machine panels now lazy-loaded via `panelFor('machine', 'DroPanel')` / `panelFor('machine', 'JogControls')` and the slots gate on `v-if="machineMounted"`. Placeholder cards (`"Machine module not mounted."` / `"Jog controls not mounted."`) keep the layout consistent when the folder is removed.
-- `frontend/src/App.vue` — `store.connect()` is now guarded by `!registry.modules.has('machine')` so the module's own `onLoad` opens the WebSocket in the default case; the call is a no-op fallback when the module is excluded.
-
-#### Frontend — generated client URL updates
-- `frontend/generated/api/services/MachineStateService.ts` — `/api/v1/machine/...` → `/api/v1/modules/machine/...` (state, mode, home, mdi).
-- `frontend/generated/api/services/JoggingService.ts` — `/api/v1/machine/jog...` → `/api/v1/modules/machine/jog...`.
-- `frontend/generated/api/services/ProgramExecutionService.ts` — `/api/v1/program/...` → `/api/v1/modules/program/...`.
+- `frontend/src/modules/machineconfig/index.js` — Default export with `manifest`, `onLoad` (initial `loadAll()`), `onUnload`, `components: { MachineConfigView }`.
+- `frontend/src/modules/machineconfig/manifest.js` — `{ id: 'machineconfig', sidebar: { id: 'machineconfig', label: 'Machine Config', order: 60 }, settingsPanel: true }`.
+- `frontend/src/modules/machineconfig/store.js` — Pinia store id **`module_machineconfig`** (per Gotcha #2). Setup-style `defineStore` with `loadCompilers`, `loadProfilesTree`, `loadStaged`, `loadActive`, `loadAll`, profile CRUD actions (`saveProfile`, `createFolder`, `createFile`, `renameProfile`, `deleteProfile`), `compile`, `deploy`, file-content readers.
+- `frontend/src/modules/machineconfig/services/api.js` — Thin `fetch` wrapper for every endpoint mounted under `/api/v1/modules/machineconfig`. Direct fetch is used (not the generated OpenAPI client) because the codegen requires a live backend and isn't part of `npm ci`.
+- `frontend/src/modules/machineconfig/components/MachineConfigView.vue` — Composes the four panels into a single dashboard.
+- `frontend/src/modules/machineconfig/components/ProfilesExplorer.vue` — Hierarchical file explorer with folder/file icons; inline "Compile" button next to files whose first 8 KB contain the active compiler's `#Start` marker.
+- `frontend/src/modules/machineconfig/components/CompilerPanel.vue` — Compiler dropdown + "Compile Selected" button.
+- `frontend/src/modules/machineconfig/components/CompiledOutputViewer.vue` — Lists the staged files with a `🔒 locked` badge and `read-only` styling; click-through opens the read-only `ConfigEditor` modal.
+- `frontend/src/modules/machineconfig/components/DeploymentPanel.vue` — "Confirm Flash" toggle + Deploy button. Acknowledges the flash requirement for Remora-style remote controllers.
+- `frontend/src/modules/machineconfig/components/ActivePanel.vue` — Shows the running machine name (extracted from the active INI's `[EMC]` section) plus a list of currently active files with view buttons.
 
 #### Frontend — tests
-- `frontend/tests/test-machine-registry.mjs` — manifest schema, store-id prefix rule (`STORE_ID = `module_${manifest.id}``), `useMachineRefs` helper, components exist.
-- `frontend/tests/test-machine-null.mjs` — dashboard uses `defineAsyncComponent` + `panelFor`, machine slot is `v-if`-gated, legacy component files deleted, legacy shim re-exports, App.vue guards `connect()`, JogControls calls `stopAllJogging` on unmount, generated services use the module URLs.
-- `frontend/tests/test-machine-store.mjs` — `jogIntervals` reactive map, continuous-jog + keep-alive payload, disconnect clears intervals, 2 s reconnect back-off, ESTOP-power guard, MDI funnel through `runMdiCommand`, `state.temperatures` republish via `STATE_TEMPERATURES_TOPIC`, idempotent `connect`.
+- `frontend/tests/test-machineconfig-registry.mjs` — 9 tests for the module's manifest shape, store id (`module_machineconfig`), exported store surface, API wrapper endpoints, the index.js wiring, the components folder, the `MachineConfigView` composition, the `App.vue` module-routing, and the AppSidebar no longer duplicating the legacy config builtin.
 
-#### Docs
-- `MODULE_SYSTEM_ROADMAP.md` — Phase 3a marked ✅ shipped; status table updated; "Last Updated" header moved from #32 to #38.
-- `MODULE_SYSTEM_EVALUATION.md` — § 4.9 added (migration log) capturing the three deviations from the audit's plan: generated-client URL rewrite (in-place vs. `ModuleMachineService`), explicit `get_settings_model` on `ProgramModule` (required by the runtime `isinstance` check), and the dual placeholder wording for the DRO vs. JogControls slots.
+### Files Modified
+
+- `frontend/src/App.vue` — Adds an `import.meta.glob('./modules/*/components/*.vue')` + `defineAsyncComponent` resolver keyed off `registry.modules.has(currentView)`. When the active view matches a mounted module's sidebar id, `<component :is="moduleView" />` renders the module-owned view; otherwise the hard-coded `<DashboardView>` / `<FilesView>` / `<ConfigView>` / `<SettingsView>` branches take over.
+- `frontend/src/components/AppSidebar.vue` — Removes the legacy `config` builtin so the rail doesn't show two near-identical "Machine Config" buttons. The new module's sidebar entry (id `machineconfig`, label "Machine Config", order 60) supersedes it. The legacy `ConfigView` is still importable for direct-URL access but no longer appears in the rail.
+- `frontend/tests/test-machine-null.mjs` — The "machine module uses the module-scoped URL prefixes" test now reads `ModulesMachineService.ts` / `ModulesProgramService.ts` (the names the store imports) instead of the legacy `MachineStateService.ts` / `JoggingService.ts` / `ProgramExecutionService.ts` files that no longer exist on disk after the consolidated `Modules*` rename.
+- `frontend/tests/test-machine-store.mjs` — The two failing regex assertions (`JoggingService.jogAxis`, `MachineStateService.runMdiCommand`) now match the consolidated `ModulesMachineService` symbols.
+- `frontend/generated/api/services/ModulesMachineService.ts`, `frontend/generated/api/services/ModulesProgramService.ts` — Recreated locally so `npm run build` succeeds (these files are gitignored under `frontend/generated/*` and never committed; they were lost after the post-#38 rename). See *Known caveats* below.
 
 ### Architectural Decisions
 
-* **Generated client URLs edited in place** instead of introducing a `ModuleMachineService` class. The codegen toolchain (`openapi-typescript-codegen`) requires a live FastAPI server to regenerate, which isn't part of this image. Editing the URLs in the existing classes produces the exact strings a fresh regen would emit and avoids a third, duplicate service class. A follow-up regen after this PR is safe because the URL strings are identical.
-* **Watchdog task ownership** moved from `backend/main.py` to `MachineModule.on_load` / `on_unload`. The module owns the private `_active_jogs` map that the watchdog reads, so keeping them in the same package (and registering / cancelling in the module's lifecycle) makes hot-reload behaviour deterministic — `stop_watchdog()` clears the map so the next boot does not resume a stale jog.
-* **Hot-reload safety** — the watchdog's `_loop` is bounded with a 600 s (`MAX_LIFETIME_S`) hard cap so a wedged task cannot leak across a full reload cycle. Combined with the `_active_jogs.clear()` call in `stop_watchdog()`, the safety invariant from § 4.2 of the evaluation is preserved across reloads.
-* **`MachineModule.get_router()` returns a merged router** built by `include_router`-ing both `router.py` and `jog.py` into a fresh `APIRouter`. The registry mounts it under `/api/v1/modules/machine` exactly once.
-* **`App.vue` connect() guard** — the machine module's `onLoad` calls `connect()` (the store's own guard makes it idempotent). `App.vue`'s `onMounted` consults `registry.modules.has('machine')` and skips the redundant `connect()` when the module already wired the socket. When the module is excluded via `MODULES_ENABLED`, App.vue's path runs and keeps the legacy telemetry alive for unmigrated consumers.
-* **`program` module stub** — `get_settings_model` returns `None` (the protocol requires the method to exist for `isinstance(_, PluggableModule)` to succeed). The module's only job in this PR is to host the five program-lifecycle endpoints so `routers/machine.py` could be deleted; the dedicated UI lands in Phase 3 proper.
+* **Pluggable compiler framework** — `Compiler` is an ABC with `id` / `title` / `source_marker` and a single `compile(source, output_dir) -> [Path]` hook. The `CompilerRegistry` is a plain in-process map keyed by `Compiler.id`. Discovery walks the `compilers/` package via `iter_compiler_classes()` and `autoload()` runs at package import time. Adding a new compiler is a one-file change: drop a new subclass in `backend/modules/machineconfig/compilers/`, no registry wiring needed.
+* **`#Start` marker as a class attribute** — `KlipperToLinuxCNCCompiler.source_marker = "#Start"` (overridable). The router probes files in `profiles/` with the active compiler's `has_source_marker(path)` helper so the frontend's inline compile button shows up next to exactly the right files.
+* **Single module-scoped router** — All twelve `machineconfig` endpoints live in one `APIRouter` (`backend/modules/machineconfig/router.py`). The module class wires it directly so the registry mounts under `/api/v1/modules/machineconfig`. Settings endpoints are added by the registry via the canonical four-route surface.
+* **Legacy flow left intact** — `backend/routers/config.py` and `backend/routers/compiler.py` (plus the existing `services/hal_compiler.py`) continue to back the unmigrated `ConfigView` panels. The new module lives alongside them at a new URL prefix. The legacy code is **not** deleted because issue #41 explicitly says "Preserve the existing dark UI style and extend it rather than replacing the whole app".
+* **`confirm_flash` policy** — `MachineConfigSettings.require_confirm_flash` defaults to `True`. The deploy endpoint returns `400` without `confirm_flash=true` so an operator can't accidentally skip the flash acknowledgement on a Remora-class controller. Operators can flip the setting off via the canonical `/settings` PUT.
+* **Read-only staging** — `auto_readonly_after_stage` defaults to `True` so the staged artifacts become write-protected after a successful compile. The endpoint uses `chmod` to remove write bits; failures are logged but non-fatal (POSIX supports the call, so the failure mode is rare and non-blocking).
+* **Frontend uses `fetch` instead of the generated client** — The new module's endpoints aren't in the OpenAPI generated client until someone runs `npm run generate-api` against a live backend, which is not part of `npm ci`. A thin `services/api.js` wrapper calls `fetch` directly; the cost is no type-safety on responses, the win is a working build with no manual regen step.
+* **AppSidebar's module-driven routing** — `App.vue` now consults `registry.modules.has(currentView)` before falling through to the hard-coded views, and resolves module views lazily via `import.meta.glob('./modules/*/components/*.vue')` + `defineAsyncComponent`. New modules that ship a `components/<Name>.vue` view get the same routing for free; the machine module (which doesn't contribute a top-level view) is unaffected.
+* **Sidebar dedup** — The legacy `config` builtin was removed so the rail shows one "Machine Config" entry rather than two. The legacy `ConfigView` component is still importable and reachable via direct URL for dev / power-user workflows.
 
 ### Testing Verification
-- [x] Ran `python -m compileall -q backend` — every backend module (including `modules/machine/*` and `modules/program/*`) byte-compiles cleanly.
-- [x] Ran the full backend test suite (`pytest backend/tests`): **70 passed** in 3.56 s. All pre-existing tests continue to pass; 23 new tests cover the machine module, the watchdog, the keep-alive happy path, the nullable-module guarantee, and the deletion of the legacy routers.
+- [x] Ran `python -m compileall -q backend` — every backend module (including `modules/machineconfig/*` and `compilers/*`) byte-compiles cleanly.
+- [x] Ran the full backend test suite (`pytest backend/tests`): **92 passed** in 4.67 s (70 pre-existing + 22 new). All machineconfig assertions (boot, manifest, registry listing, profiles CRUD round-trip, marker detection, compile → staged → deploy, machine-name probe, confirm_flash enforcement) pass.
 - [x] Ran the full frontend test suite (`node --test frontend/tests/*.mjs`):
-  - `test-machine-registry.mjs` — 6 / 6 passed
-  - `test-machine-null.mjs` — 10 / 10 passed
-  - `test-machine-store.mjs` — 11 / 11 passed
-  - `test-event-bus.mjs` — 4 / 4 passed (regression)
-  - `test-telemetry-bus.mjs` — 2 / 2 passed (regression)
-  - `test-registry.mjs` — 3 / 3 passed (regression)
-  - `test-store-id-regex.mjs` — 3 / 3 passed (regression)
-  - `test-camera-null.mjs` — 5 / 6 passed (one pre-existing regression unrelated to this issue; see *Known caveats* below)
-- [x] Ran `npm --prefix frontend run build` — `vite build` succeeds. The machine module chunks (`machine-*.js`, `DroPanel-*.vue`, `JogControls-*.vue`) are emitted as separate lazy-loaded chunks per Gotcha #1.
-- [x] Ran `node frontend/scripts/check-store-ids.mjs` — `[lint:store-ids] OK` (the new `module_machine` id complies with Gotcha #2).
-- [x] End-to-end mount smoke test — booted a fresh `ModuleRegistry()` and confirmed `mounted=['camera','machine','program','temperature']`, all seven machine endpoints registered under `/api/v1/modules/machine/*`, and the four canonical settings endpoints reachable.
-- [x] Nullable-module smoke test — booted with `MODULES_ENABLED=camera,temperature`; verified `/api/v1/modules/machine/state` and `/api/v1/modules/machine/jog` both return `404` and `mounted=['camera','temperature']`.
+  - `test-machineconfig-registry.mjs` — 9 / 9 passed (new).
+  - `test-machine-registry.mjs` — 6 / 6 passed (regression).
+  - `test-machine-null.mjs` — 10 / 10 passed (after updating the regenerated-service file path assertions to match the post-rename `Modules*` naming).
+  - `test-machine-store.mjs` — 11 / 11 passed (after updating the `JoggingService` / `MachineStateService` regexes to the consolidated `ModulesMachineService` symbol).
+  - `test-event-bus.mjs`, `test-registry.mjs`, `test-store-id-regex.mjs`, `test-telemetry-bus.mjs` — all pass (regression).
+  - `test-camera-null.mjs` — 5 / 6 passed; the one pre-existing failure ("DashboardView uses defineAsyncComponent for the camera panel") was already failing on `origin/main` per the #38 HANDOFF and is unrelated to #41. The test predates the canonical `panelFor` helper pattern.
+- [x] Ran `npm --prefix frontend run build` — `vite build` succeeds. New module chunks (`ProfilesExplorer-*.js`, `MachineConfigView-*.vue`) are emitted as separate lazy-loaded chunks per Gotcha #1.
+- [x] Ran `node frontend/scripts/check-store-ids.mjs` — `[lint:store-ids] OK` (the new `module_machineconfig` id complies with Gotcha #2).
 
 ### Known caveats
-
-* `frontend/tests/test-camera-null.mjs` test 1 ("DashboardView uses defineAsyncComponent for the camera panel") was already failing on `origin/main` before this PR — the test asserts a literal `import('../modules/camera/components/CameraPanel.vue')` regex but the canonical pattern (since the temperature migration) is `panelFor('camera', 'CameraPanel')` + `import.meta.glob`. The test predates the `panelFor` indirection. I did not "fix" this because the test belongs to issue #02 and any unrelated test edits would inflate the diff scope; the new `test-machine-null.mjs` I added follows the canonical pattern.
-* The `camera` generated client (`CameraService.ts`) still points at `/api/v1/camera/stream` rather than the module URL `/api/v1/modules/camera/stream` — a pre-existing inconsistency out of scope for issue #38. The new machine + program generated services were updated as part of this PR because the module paths changed.
-* Frontend store-state behaviour is verified statically in `test-machine-store.mjs` (regex + literal checks) rather than driven through a real Pinia instance because `node --test` has no Pinia runtime. The companion `vite build` step validates the full chain.
-* `routers/machine.py` and `routers/jog.py` are now hard-deleted; the file-level check in `test_machine_module.py::test_machine_legacy_routers_are_gone` fails the build if either is re-introduced.
+* The `frontend/generated/api/services/ModulesMachineService.ts` / `ModulesProgramService.ts` files I recreated live under the gitignored `frontend/generated/*` path. They never reach the repo — they exist only so `npm run build` resolves the imports that the post-#38 code now uses. Once `npm run generate-api` is run against a live backend the file will be regenerated verbatim from the OpenAPI spec.
+* The legacy `routers/config.py` / `routers/compiler.py` / `services/hal_compiler.py` are still mounted in `backend/main.py` because the unmigrated `ConfigView` still imports them through `ConfigurationService` / `CompilerService`. Deleting them would be a separate refactor; the issue #41 brief says "Prefer minimal, consistent changes over rewriting unrelated parts of the app", so I left them in place.
+* `safe_join` enforces the minimum-traversal guardrail (path resolves inside the allowed root, `..` segments raise `ValueError`). The issue explicitly puts advanced path-traversal hardening and file-execution security out of scope; the helper is the documented place to harden later if needed.
+* The compiler framework does not sandbox or exec-profiles: a malformed source raises a `ValueError` from `configparser`, but anything that runs subprocess or arbitrary code lives in the existing `HalCompiler` (which the new module does not depend on). The new `KlipperToLinuxCNCCompiler` only reads text and writes four deterministic text files.

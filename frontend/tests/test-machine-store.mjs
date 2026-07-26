@@ -45,20 +45,23 @@ test("store exposes jogIntervals as a reactive map", () => {
   assert.match(text, /jogIntervals\s*,/);
 });
 
-test("store builds the JoggingService.jogAxis payload for continuous jogs", () => {
+test("store builds the ModulesMachineService.jogAxis payload for continuous jogs", () => {
   const text = readStore();
   // ``jogContinuous`` posts a ``jogAxis`` request with
   // ``distance: 0`` and the supplied velocity.  The store
   // breaks the call across two lines (object literal), so
   // the regex tolerates the newline and trailing whitespace.
-  assert.match(text, /JoggingService\.jogAxis\s*\(\s*\{/);
+  // (The generated client was renamed from ``JoggingService``
+  // to ``ModulesMachineService`` after the legacy service
+  // classes were consolidated under the module prefix.)
+  assert.match(text, /ModulesMachineService\.jogAxis\s*\(\s*\{/);
   assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
   assert.match(text, /distance:\s*0/);
   // After the initial command, the store schedules a setInterval
   // that pings the keepalive endpoint every 250 ms — the
   // historical value preserved by the migration.
   assert.match(text, /setInterval\s*\(/);
-  assert.match(text, /JoggingService\.jogKeepalive/);
+  assert.match(text, /ModulesMachineService\.jogKeepalive/);
   assert.match(text, /,\s*250\s*\)/);
 });
 
@@ -86,11 +89,14 @@ test("store rejects ESTOP-driven power-on", () => {
   assert.match(text, /Cannot turn on machine while ESTOP/);
 });
 
-test("store forwards MDI commands through MachineStateService.runMdiCommand", () => {
+test("store forwards MDI commands through ModulesMachineService.runMdiCommand", () => {
   const text = readStore();
   // ``setPosition`` and ``setCoordinateSystem`` both funnel
-  // through the legacy MDI endpoint.
-  assert.match(text, /MachineStateService\.runMdiCommand\(\s*\{\s*command:/);
+  // through the legacy MDI endpoint. (The generated client was
+  // renamed from ``MachineStateService`` to
+  // ``ModulesMachineService`` after the legacy service classes
+  // were consolidated under the module prefix.)
+  assert.match(text, /ModulesMachineService\.runMdiCommand\(\s*\{\s*command:/);
 });
 
 test("store converts setPosition to G10 L20 P0 via generateSetOffset", () => {
