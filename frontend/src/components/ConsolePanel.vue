@@ -46,10 +46,11 @@ const filterLevel = computed({
 // chip row and the message row stay in sync.
 const levelChipStyles = {
   all: 'bg-gray-600 text-white',
+  debug: 'bg-gray-500 text-white',
   info: 'bg-blue-600/80 text-white',
   warning: 'bg-yellow-600/80 text-black',
   error: 'bg-red-600/80 text-white',
-  debug: 'bg-gray-500 text-white',
+
 }
 
 const levelChipInactive = 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'

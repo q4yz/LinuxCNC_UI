@@ -20,7 +20,7 @@ import { defineStore } from 'pinia'
 //   * ``error``   -> ``error``    (direct carry-over)
 //   * ``debug``   -> ``debug``    (new — used by diagnostic logging)
 
-export const LOG_LEVELS = ['all', 'info', 'warning', 'error', 'debug']
+export const LOG_LEVELS = ['all','debug', 'info', 'warning', 'error']
 
 const TYPE_TO_LEVEL = {
   info: 'info',
@@ -62,34 +62,59 @@ export const useConsoleStore = defineStore('console', {
      */
     filteredMessages: (state) => {
       if (state.filterLevel === 'all') return state.messages
-      return state.messages.filter(
-        (msg) => (msg.level || typeToLevel(msg.type)) === state.filterLevel,
-      )
+
+      // Get the severity index of the currently active filter
+      const filterIndex = LOG_LEVELS.indexOf(state.filterLevel)
+
+      return state.messages.filter((msg) => {
+        const level = msg.level || typeToLevel(msg.type)
+        const msgIndex = LOG_LEVELS.indexOf(level)
+
+        return msgIndex >= filterIndex
+      })
     },
   },
   actions: {
     addMessage(text, type = 'info') {
       const level = typeToLevel(type)
       this.messages.push({
-        id: Date.now() + Math.random().toString(36).substr(2, 9),
+        id: Date.now() + Math.random().toString(36).substring(2, 11),
         timestamp: new Date().toLocaleTimeString(),
-        text,
+        text: `[${level.toUpperCase()}${level !== type ? "-"+ type.toUpperCase(): ''  }] ${text}`,
         type,
         level,
       });
     },
-    /**
-     * Convenience helper for debug-level rows. Mirrors the historic
-     * ``addMessage`` shape so existing callers can drop in without
-     * a breaking change.
-     */
-    addDebug(text) {
+
+    error(text) {
+      this.addMessage(text, 'error')
+    },
+
+    info(text) {
+      this.addMessage(text, 'info')
+    },
+
+    debug(text) {
       this.addMessage(text, 'debug')
     },
+
+    warning(text) {
+      this.addMessage(text, 'warning')
+    },
+
+    command(text) {
+      this.addMessage(text, 'command')
+    },
+
+    success(text) {
+      this.addMessage(text, 'success')
+    },
+
     setFilterLevel(level) {
       if (!LOG_LEVELS.includes(level)) return
       this.filterLevel = level
     },
+
     clearMessages() {
       this.messages = [];
     },
