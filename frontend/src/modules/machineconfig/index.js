@@ -7,7 +7,9 @@
 //
 // ``onLoad`` triggers the initial state load (compilers, profiles tree,
 // staged / active listings). ``onUnload`` is a no-op because the store
-// does not own timers or sockets.
+// does not own timers or sockets. The UI now lives directly in the
+// legacy ``ConfigView`` so this module no longer exposes a standalone
+// component shell.
 //
 // The store id is namespaced under the ``module_`` prefix per
 // ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #2 (see
@@ -19,7 +21,6 @@
 
 import manifest from "./manifest.js";
 import { useMachineConfigStore } from "./store.js";
-import MachineConfigView from "./components/MachineConfigView.vue";
 
 export default {
   manifest,
@@ -34,13 +35,9 @@ export default {
   onUnload() {
     // No background work to release; the store has no timers or sockets.
   },
-  components: {
-    MachineConfigView,
-  },
 };
 
 export {
   manifest,
-  MachineConfigView,
   useMachineConfigStore,
 };
