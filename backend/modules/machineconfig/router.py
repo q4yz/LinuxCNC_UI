@@ -5,34 +5,52 @@ Endpoint groups (mounted by the registry under
 
 * **Profiles CRUD** — full hierarchical read/write of
   ``machine_config/profiles`` (list, read, write, create folder,
-  create file, delete, rename).
+  create file, delete, rename). Backed by
+  :class:`ConfigFileService`.
 * **Compilers** — ``GET /compilers`` returns the registered compilers
   plus a marker probe (``has_marker``) per file under ``profiles``.
 * **Compile** — ``POST /compile`` runs the selected compiler against
   a chosen profile and stages the artifacts into
-  ``machine_config/ready_for_deploy``.
+  ``machine_config/ready_for_deploy``. Backed by
+  :class:`StagedFileService.clear_and_stage`.
 * **Staged / Active read-only** — ``GET /staged`` and
   ``GET /active`` plus per-file content endpoints. Operators can
   inspect the staged and active payloads but cannot edit them
-  through this surface.
+  through this surface. Backed by :class:`StagedFileService` and
+  :class:`ActiveFileService`.
 * **Deploy** — ``POST /deploy`` promotes the staged payload into
-  ``machine_config/active``. Accepts ``confirm_flash`` to satisfy
-  remote-controller (e.g. Remora) workflows.
+  ``machine_config/active`` via
+  :meth:`StagedFileService.deploy_to_active`. Accepts
+  ``confirm_flash`` to satisfy remote-controller (e.g. Remora)
+  workflows.
 * **Machine name** — ``GET /machine-name`` reads the current machine
-  name out of the active INI so the Active dashboard can render the
-  "currently running machine" header.
+  name out of the active INI so the Active dashboard can render
+  the "currently running machine" header. Backed by
+  :meth:`ActiveFileService.machine_name`.
+
+The router is intentionally a thin HTTP wrapper: every filesystem
+operation is delegated to the corresponding service. The
+``_build_compiler_marker_probe`` helper stays here because
+mapping compilers to marker detection is a compiler-registry
+concern, not a filesystem concern.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import filesystem
+from services import (
+    ActiveFileService,
+    ConfigFileService,
+    StagedFileService,
+    get_active_service,
+    get_config_service,
+    get_staged_service,
+)
 from .compilers import registry as compiler_registry
 
 logger = logging.getLogger("backend.modules.machineconfig.router")
@@ -55,8 +73,8 @@ class StatusMessage(BaseModel):
 class DirectoryEntryModel(BaseModel):
     """Single node in a directory listing.
 
-    Mirrors :class:`backend.modules.machineconfig.filesystem.DirectoryEntry`
-    but in the Pydantic shape the frontend codegen can type-check.
+    Mirrors :class:`services.file_service.FileMetadata` but in the
+    Pydantic shape the frontend codegen can type-check.
     """
 
     name: str = Field(..., description="Basename of the entry")
@@ -69,6 +87,10 @@ class DirectoryEntryModel(BaseModel):
     )
     kind: str = Field(..., description="'file' or 'folder'")
     size_bytes: int = Field(default=0, description="File size in bytes (0 for folders)")
+    read_only: bool = Field(
+        default=False,
+        description="True when the POSIX write bits are cleared on this entry",
+    )
     has_marker: bool = Field(
         default=False,
         description=(
@@ -232,7 +254,13 @@ class MachineNameResponse(BaseModel):
 
 
 def _build_compiler_marker_probe():
-    """Return a callable ``(path) -> bool`` that uses the default compiler's marker."""
+    """Return a callable ``(path) -> bool`` that uses the default compiler's marker.
+
+    Stays in the router because mapping compilers to marker
+    detection is a compiler-registry concern, not a filesystem
+    one. The probe is passed to :class:`ConfigFileService` so the
+    ``has_marker`` flag is computed alongside the listing.
+    """
     try:
         default_compiler = compiler_registry.get(
             compiler_registry.ids()[0] if compiler_registry.ids() else ""
@@ -251,12 +279,12 @@ def _require_compiler(compiler_id: str):
     return compiler_registry.get(compiler_id)
 
 
-def _resolve_profile_path(profile_path: str) -> Path:
+def _resolve_profile_path(profile_path: str, service: ConfigFileService):
     """Validate ``profile_path`` and return an absolute path under profiles/."""
     if not profile_path:
         raise HTTPException(status_code=400, detail="profile_path is required.")
     try:
-        return filesystem.safe_join(filesystem.PROFILES_DIR, profile_path)
+        return service.safe_join(profile_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -287,9 +315,21 @@ def _require_settings_overrides() -> Dict[str, bool]:
 )
 def get_profiles_tree() -> DirectoryListing:
     """Return the entire ``profiles/`` tree as a flat list."""
-    filesystem.ensure_directories()
+    service: ConfigFileService = get_config_service()
     probe = _build_compiler_marker_probe()
-    entries = filesystem.list_tree(filesystem.PROFILES_DIR, has_marker=probe)
+    entries = service.list_files()
+    if probe is not None:
+        for entry in entries:
+            if entry.kind == "file":
+                try:
+                    target = service.safe_join(entry.path)
+                except ValueError:
+                    entry.has_marker = False
+                    continue
+                try:
+                    entry.has_marker = bool(probe(target))
+                except Exception:  # noqa: BLE001 - intentional broad catch
+                    entry.has_marker = False
     return DirectoryListing(
         root="profiles",
         entries=[DirectoryEntryModel(**e.to_dict()) for e in entries],
@@ -304,13 +344,14 @@ def get_profiles_tree() -> DirectoryListing:
 )
 def read_profile(path: str) -> ProfileContent:
     """Read a profile file by relative path."""
-    target = _resolve_profile_path(path)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail=f"Profile not found: {path}")
-    return ProfileContent(
-        path=path,
-        content=target.read_text(encoding="utf-8", errors="replace"),
-    )
+    service: ConfigFileService = get_config_service()
+    try:
+        content = service.read_file(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Profile not found: {path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProfileContent(path=path, content=content)
 
 
 @router.put(
@@ -321,11 +362,13 @@ def read_profile(path: str) -> ProfileContent:
 )
 def save_profile(path: str, payload: ProfileWriteRequest) -> StatusMessage:
     """Persist ``payload.content`` to ``profiles/<path>``."""
-    target = _resolve_profile_path(path)
-    if target.exists() and not target.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(payload.content, encoding="utf-8")
+    service: ConfigFileService = get_config_service()
+    try:
+        service.write_file(path, payload.content, overwrite=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StatusMessage(status="ok", message=f"Saved {path}")
 
 
@@ -336,10 +379,13 @@ def save_profile(path: str, payload: ProfileWriteRequest) -> StatusMessage:
     response_model=StatusMessage,
 )
 def create_folder(payload: CreateEntryRequest) -> StatusMessage:
-    target = _resolve_profile_path(payload.path)
-    if target.exists():
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}")
-    target.mkdir(parents=True, exist_ok=False)
+    service: ConfigFileService = get_config_service()
+    try:
+        service.create_directory(payload.path)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StatusMessage(status="ok", message=f"Created folder {payload.path}")
 
 
@@ -350,11 +396,13 @@ def create_folder(payload: CreateEntryRequest) -> StatusMessage:
     response_model=StatusMessage,
 )
 def create_file(payload: CreateEntryRequest) -> StatusMessage:
-    target = _resolve_profile_path(payload.path)
-    if target.exists():
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("", encoding="utf-8")
+    service: ConfigFileService = get_config_service()
+    try:
+        service.write_file(payload.path, "", overwrite=False)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StatusMessage(status="ok", message=f"Created file {payload.path}")
 
 
@@ -365,14 +413,15 @@ def create_file(payload: CreateEntryRequest) -> StatusMessage:
     response_model=StatusMessage,
 )
 def rename_profile(payload: RenameRequest) -> StatusMessage:
-    source = _resolve_profile_path(payload.source)
-    destination = _resolve_profile_path(payload.destination)
-    if not source.exists():
-        raise HTTPException(status_code=404, detail=f"Not found: {payload.source}")
-    if destination.exists():
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    source.rename(destination)
+    service: ConfigFileService = get_config_service()
+    try:
+        service.rename(payload.source, payload.destination)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Not found: {payload.source}") from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=f"Already exists: {payload.destination}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StatusMessage(
         status="ok", message=f"Renamed {payload.source} -> {payload.destination}"
     )
@@ -385,24 +434,22 @@ def rename_profile(payload: RenameRequest) -> StatusMessage:
     response_model=StatusMessage,
 )
 def delete_profile(path: str) -> StatusMessage:
-    target = _resolve_profile_path(path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail=f"Not found: {path}")
-    if target.is_dir():
-        # Issue #41 keeps the helper simple — empty folders only. A
-        # populated folder deletion would need a recursive helper,
-        # but the UI button never offers that, so the call site can
-        # only delete via two-step "delete children first" anyway.
-        try:
-            target.rmdir()
-        except OSError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Folder is not empty; remove contents first: {path}",
-            ) from exc
-        return StatusMessage(status="ok", message=f"Deleted folder {path}")
-    target.unlink()
-    return StatusMessage(status="ok", message=f"Deleted file {path}")
+    service: ConfigFileService = get_config_service()
+    try:
+        service.delete(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Not found: {path}") from exc
+    except IsADirectoryError as exc:
+        # ``FileService.delete`` raises ``IsADirectoryError`` when the
+        # folder still has children — keep the legacy "remove contents
+        # first" wording so the frontend toast stays informative.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Folder is not empty; remove contents first: {path}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Deleted {path}")
 
 
 # ---------------------------------------------------------------------- #
@@ -446,17 +493,16 @@ def list_compilers() -> CompilerListResponse:
 def compile_profile(payload: CompileRequest) -> CompileResponse:
     """Compile a profile and refresh the staged payload."""
     compiler = _require_compiler(payload.compiler_id)
-    source = _resolve_profile_path(payload.profile_path)
+    config_service: ConfigFileService = get_config_service()
+    staged_service: StagedFileService = get_staged_service()
+    source = _resolve_profile_path(payload.profile_path, config_service)
     if not source.exists() or not source.is_file():
         raise HTTPException(
             status_code=404, detail=f"Profile not found: {payload.profile_path}"
         )
 
-    filesystem.ensure_directories()
-    filesystem.clear_directory(filesystem.STAGED_DIR)
-
     try:
-        artifact_paths = compiler.compile(source, filesystem.STAGED_DIR)
+        artifact_paths = staged_service.clear_and_stage(compiler, source)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -467,12 +513,12 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
 
     settings = _require_settings_overrides()
     if settings.get("auto_readonly_after_stage", True):
-        filesystem.mark_staged_readonly(filesystem.STAGED_DIR)
+        staged_service.mark_read_only()
 
     staged_files = [
-        StagedFile(name=p.name, size_bytes=p.stat().st_size)
-        for p in filesystem.STAGED_DIR.iterdir()
-        if p.is_file()
+        StagedFile(name=entry.name, size_bytes=entry.size_bytes)
+        for entry in staged_service.list_files()
+        if entry.kind == "file"
     ]
     staged_files.sort(key=lambda s: s.name)
 
@@ -498,13 +544,11 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
 )
 def list_staged() -> List[StagedFile]:
     """Return the staged artifact list."""
-    filesystem.ensure_directories()
-    if not filesystem.STAGED_DIR.exists():
-        return []
+    service: StagedFileService = get_staged_service()
     files = [
-        StagedFile(name=p.name, size_bytes=p.stat().st_size)
-        for p in sorted(filesystem.STAGED_DIR.iterdir(), key=lambda p: p.name)
-        if p.is_file()
+        StagedFile(name=entry.name, size_bytes=entry.size_bytes)
+        for entry in service.list_files()
+        if entry.kind == "file"
     ]
     return files
 
@@ -517,14 +561,14 @@ def list_staged() -> List[StagedFile]:
 )
 def read_staged(name: str) -> StagedContent:
     """Return the content of a single staged file. Read-only."""
-    target = filesystem.safe_join(filesystem.STAGED_DIR, name)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail=f"Staged file not found: {name}")
-    return StagedContent(
-        name=name,
-        content=target.read_text(encoding="utf-8", errors="replace"),
-        read_only=True,
-    )
+    service: StagedFileService = get_staged_service()
+    try:
+        content = service.read_file(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Staged file not found: {name}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StagedContent(name=name, content=content, read_only=True)
 
 
 @router.get(
@@ -538,14 +582,12 @@ def read_staged(name: str) -> StagedContent:
 )
 def list_active() -> ActiveListing:
     """Return the active artifact list + machine name."""
-    filesystem.ensure_directories()
-    files: List[ActiveFile] = []
-    if filesystem.ACTIVE_DIR.exists():
-        for path in sorted(filesystem.ACTIVE_DIR.iterdir(), key=lambda p: p.name):
-            if path.is_file():
-                files.append(ActiveFile(name=path.name, size_bytes=path.stat().st_size))
-    machine_name = filesystem.parse_machine_name(filesystem.ACTIVE_DIR)
-    return ActiveListing(machine_name=machine_name, files=files)
+    service: ActiveFileService = get_active_service()
+    files = [
+        ActiveFile(name=entry.name, size_bytes=entry.size_bytes)
+        for entry in service.list_active_files()
+    ]
+    return ActiveListing(machine_name=service.machine_name(), files=files)
 
 
 @router.get(
@@ -556,13 +598,14 @@ def list_active() -> ActiveListing:
 )
 def read_active(name: str) -> ActiveContent:
     """Return the content of a single active file."""
-    target = filesystem.safe_join(filesystem.ACTIVE_DIR, name)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail=f"Active file not found: {name}")
-    return ActiveContent(
-        name=name,
-        content=target.read_text(encoding="utf-8", errors="replace"),
-    )
+    service: ActiveFileService = get_active_service()
+    try:
+        content = service.read_file(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Active file not found: {name}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ActiveContent(name=name, content=content)
 
 
 # ---------------------------------------------------------------------- #
@@ -595,16 +638,15 @@ def deploy_staged(payload: DeployRequest) -> DeployResponse:
             ),
         )
 
-    filesystem.ensure_directories()
-    if not filesystem.STAGED_DIR.exists() or not any(filesystem.STAGED_DIR.iterdir()):
-        raise HTTPException(
-            status_code=400,
-            detail="Staging area is empty. Compile a profile before deploying.",
-        )
+    staged_service: StagedFileService = get_staged_service()
+    active_service: ActiveFileService = get_active_service()
 
-    filesystem.clear_directory(filesystem.ACTIVE_DIR)
-    deployed = filesystem.copy_tree(filesystem.STAGED_DIR, filesystem.ACTIVE_DIR)
-    machine_name = filesystem.parse_machine_name(filesystem.ACTIVE_DIR)
+    try:
+        deployed = staged_service.deploy_to_active(active_service)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    machine_name = active_service.machine_name()
 
     return DeployResponse(
         status="ok",
@@ -626,10 +668,8 @@ def deploy_staged(payload: DeployRequest) -> DeployResponse:
 )
 def get_machine_name() -> MachineNameResponse:
     """Return the current machine name, or ``None``."""
-    filesystem.ensure_directories()
-    return MachineNameResponse(
-        machine_name=filesystem.parse_machine_name(filesystem.ACTIVE_DIR)
-    )
+    service: ActiveFileService = get_active_service()
+    return MachineNameResponse(machine_name=service.machine_name())
 
 
 __all__ = ["router"]

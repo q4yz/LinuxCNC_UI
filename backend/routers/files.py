@@ -1,49 +1,43 @@
+"""``/api/v1/ncfiles`` HTTP surface.
+
+Thin wrapper around :class:`ProgramFileService` for the file-CRUD
+endpoints (``list``, ``upload``, ``delete``). The
+``load_program`` flow keeps its original shape because wrapping
+the ``linuxcnc.execute_sync_cmd`` calls behind a
+:class:`ProgramLoader` service is explicitly out of scope for
+this pass — the body of the handler is marked with a ``TODO``
+that points to the follow-up.
+
+All filesystem calls are funneled through the service. The
+``os``/``shutil`` imports are gone; the helper that used to
+normalize ``\\`` and split on ``/`` now lives in
+:meth:`ProgramFileService.safe_join` so the path-safety contract
+stays single-sourced.
+"""
+
 import logging
-import shutil
-from datetime import datetime
-from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+
 from hardware import execute_sync_cmd, linuxcnc
+from services import ProgramFileService, get_program_service
 
 logger = logging.getLogger("backend.routers.files")
 
 router = APIRouter(prefix="/api/v1/ncfiles", tags=["NC Files"])
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-GCODE_DIR = PROJECT_ROOT / "nc_files"
-GCODE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _sanitize_filename(filename: str) -> str:
-	if not filename:
-		raise HTTPException(status_code=400, detail="Filename is required.")
-
-	normalized = filename.replace("\\", "/").split("/")[-1].strip()
-	if not normalized or normalized in {".", ".."}:
-		raise HTTPException(status_code=400, detail="Invalid filename.")
-
-	return normalized
-
-
-def _resolve_safe_path(filename: str) -> Path:
-	candidate = (GCODE_DIR / filename).resolve()
-	try:
-		candidate.relative_to(GCODE_DIR.resolve())
-	except ValueError as exc:
-		raise HTTPException(status_code=400, detail="Invalid file path.") from exc
-	return candidate
-
 
 class LoadProgramRequest(BaseModel):
     """Pydantic model for selecting a G-code file to load into the controller."""
+
     filename: str = Field(..., description="Name of the uploaded G-code file to load into the interpreter")
 
 
 class FileInfo(BaseModel):
     """Metadata describing a single G-code file on disk."""
+
     filename: str = Field(..., description="Filename (basename, no path)")
     size_bytes: int = Field(..., description="File size in bytes")
     modified: str = Field(..., description="ISO-8601 timestamp of the last modification")
@@ -51,6 +45,7 @@ class FileInfo(BaseModel):
 
 class UploadFileResponse(BaseModel):
     """Response returned after a successful file upload."""
+
     status: str = Field(..., description="Outcome summary (e.g., 'ok')")
     filename: str = Field(..., description="Sanitized filename that was stored on disk")
     message: str = Field(..., description="Human-readable upload confirmation")
@@ -58,6 +53,7 @@ class UploadFileResponse(BaseModel):
 
 class StatusMessageResponse(BaseModel):
     """Response containing a status string and an informational message."""
+
     status: str = Field(..., description="Outcome summary (e.g., 'success')")
     message: str = Field(..., description="Human-readable confirmation message")
 
@@ -70,21 +66,20 @@ class StatusMessageResponse(BaseModel):
     response_model=List[FileInfo],
 )
 def list_files() -> List[FileInfo]:
-	try:
-		files_list: List[FileInfo] = []
-		for filepath in sorted(GCODE_DIR.iterdir()):
-			if filepath.is_file():
-				files_list.append(
-					FileInfo(
-						filename=filepath.name,
-						size_bytes=filepath.stat().st_size,
-						modified=datetime.fromtimestamp(filepath.stat().st_mtime).isoformat(),
-					)
-				)
-		return files_list
-	except Exception as exc:
-		logger.error("Failed to list files: %s", exc)
-		raise HTTPException(status_code=500, detail="Failed to list files.")
+    """List G-code files via :class:`ProgramFileService`."""
+    try:
+        service: ProgramFileService = get_program_service()
+        return [
+            FileInfo(
+                filename=entry.name,
+                size_bytes=entry.size_bytes,
+                modified=entry.modified or "",
+            )
+            for entry in service.list_program_files()
+        ]
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to list files: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to list files.") from exc
 
 
 @router.post(
@@ -95,23 +90,36 @@ def list_files() -> List[FileInfo]:
     response_model=UploadFileResponse,
 )
 def upload_file(file: UploadFile = File(...)) -> UploadFileResponse:
-	safe_filename = _sanitize_filename(file.filename)
-	filepath = _resolve_safe_path(safe_filename)
+    """Persist an uploaded G-code file via :class:`ProgramFileService`."""
+    service: ProgramFileService = get_program_service()
+    try:
+        # Normalise the filename through the service so ``\`` segments
+        # and ``..`` traversal are rejected the same way as a direct
+        # ``safe_join`` call would reject them.
+        safe_filename = service.safe_join(file.filename or "").name
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid filename.") from exc
 
-	try:
-		with open(filepath, "wb") as destination:
-			shutil.copyfileobj(file.file, destination)
+    try:
+        payload = file.file.read()
+        service.save_upload(safe_filename, payload)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to upload file %s: %s", safe_filename, exc)
+        raise HTTPException(status_code=500, detail="Failed to upload file.") from exc
+    finally:
+        file.file.close()
 
-		return UploadFileResponse(
-			status="ok",
-			filename=safe_filename,
-			message=f"Uploaded {safe_filename} successfully.",
-		)
-	except Exception as exc:
-		logger.error("Failed to upload file %s: %s", safe_filename, exc)
-		raise HTTPException(status_code=500, detail="Failed to upload file.")
-	finally:
-		file.file.close()
+    return UploadFileResponse(
+        status="ok",
+        filename=safe_filename,
+        message=f"Uploaded {safe_filename} successfully.",
+    )
 
 
 @router.delete(
@@ -122,17 +130,20 @@ def upload_file(file: UploadFile = File(...)) -> UploadFileResponse:
     response_model=StatusMessageResponse,
 )
 def delete_file(filename: str) -> StatusMessageResponse:
-    """Deletes a G-code file from disk."""
-    filepath = GCODE_DIR / filename
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="File not found.")
-
+    """Delete a G-code file via :class:`ProgramFileService`."""
+    service: ProgramFileService = get_program_service()
     try:
-        filepath.unlink()
-        return StatusMessageResponse(status="success", message=f"Deleted {filename}")
-    except Exception as exc:
-        logger.error(f"Failed to delete file {filename}: {exc}")
-        raise HTTPException(status_code=500, detail="Failed to delete file.")
+        service.delete_file(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to delete file %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail="Failed to delete file.") from exc
+    return StatusMessageResponse(status="success", message=f"Deleted {filename}")
 
 
 @router.post(
@@ -143,9 +154,21 @@ def delete_file(filename: str) -> StatusMessageResponse:
     response_model=StatusMessageResponse,
 )
 def load_program(payload: LoadProgramRequest) -> StatusMessageResponse:
-    """Loads a G-code program onto the CNC controller."""
-    filepath = GCODE_DIR / payload.filename
-    if not filepath.exists():
+    """Loads a G-code program onto the CNC controller.
+
+    TODO(issue #49 follow-up): the ``linuxcnc.execute_sync_cmd``
+    flow stays in the router for now; the next pass should wrap
+    it in a thin :class:`ProgramLoader` service that owns the
+    ``reset_interpreter`` / ``mode`` / ``program_open`` sequence
+    so this endpoint is a one-liner like the rest.
+    """
+    service: ProgramFileService = get_program_service()
+    try:
+        filepath = service.resolve_program_path(payload.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file path.") from exc
+
+    if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
 
     execute_sync_cmd("reset_interpreter")

@@ -39,11 +39,16 @@ from core.module_registry import ModuleRegistry
 
 @pytest.fixture()
 def isolated_machine_config(monkeypatch, tmp_path):
-    """Re-point every machineconfig filesystem constant at ``tmp_path``.
+    """Re-point every machineconfig service at a fresh ``tmp_path`` tree.
 
     The test never touches the real ``machine_config/`` directory;
     we give each test a fresh profiles / staged / active subtree so
     the CRUD assertions are deterministic.
+
+    The new FileService layer keeps the canonical roots in
+    :mod:`services.domain_file_services`. The fixture rewrites those
+    module-level constants and resets the cached services so each
+    test gets fresh instances bound to the isolated tree.
     """
     mc = tmp_path / "machine_config"
     profiles = mc / "profiles"
@@ -52,12 +57,23 @@ def isolated_machine_config(monkeypatch, tmp_path):
     for d in (profiles, staged, active):
         d.mkdir(parents=True, exist_ok=True)
 
-    from modules.machineconfig import filesystem
+    from services import domain_file_services, reset_service_cache
 
-    monkeypatch.setattr(filesystem, "MACHINE_CONFIG_DIR", mc, raising=False)
-    monkeypatch.setattr(filesystem, "PROFILES_DIR", profiles, raising=False)
-    monkeypatch.setattr(filesystem, "STAGED_DIR", staged, raising=False)
-    monkeypatch.setattr(filesystem, "ACTIVE_DIR", active, raising=False)
+    monkeypatch.setattr(
+        domain_file_services, "_MACHINE_CONFIG_DIR", mc, raising=False
+    )
+    monkeypatch.setattr(
+        domain_file_services, "_PROFILES_DIR", profiles, raising=False
+    )
+    monkeypatch.setattr(
+        domain_file_services, "_STAGED_DIR", staged, raising=False
+    )
+    monkeypatch.setattr(
+        domain_file_services, "_ACTIVE_DIR", active, raising=False
+    )
+    # Drop the service-instance cache so the next ``get_*_service``
+    # call picks up the freshly-monkeypatched roots.
+    reset_service_cache()
 
     # Seed a starter profile that contains the ``#Start`` marker so
     # the inline compile action has something to point at.
@@ -66,12 +82,16 @@ def isolated_machine_config(monkeypatch, tmp_path):
         "[stepper_x]\n    step_pin: PC2\n    dir_pin: PB9\n    enable_pin: !PC3\n"
     )
 
-    return {
+    yield {
         "machine_config": mc,
         "profiles": profiles,
         "staged": staged,
         "active": active,
     }
+
+    # Make sure a follow-up test (in the same process) starts from a
+    # clean service cache instead of inheriting the isolated roots.
+    reset_service_cache()
 
 
 def _machineconfig_app(tmp_data_root, isolated_machine_config):

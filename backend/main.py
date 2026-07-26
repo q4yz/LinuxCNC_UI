@@ -14,7 +14,11 @@ from services.console_logger import get_console_logger
 # ``jog`` / ``program`` routers were migrated to the
 # ``modules/machine`` + ``modules/program`` sub-packages; the registry
 # picks them up automatically via ``registry.boot(app)`` further down.
-from routers import websocket, files, system, config, compiler
+#
+# Issue #49 retired the legacy ``compiler`` router: the
+# machineconfig module's ``/compile`` and ``/deploy`` endpoints
+# supersede it and the frontend no longer references it.
+from routers import websocket, files, system, config
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +110,6 @@ app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(config.router)
 app.include_router(websocket.router)
-app.include_router(compiler.router)
 
 @app.get("/")
 def read_root():
