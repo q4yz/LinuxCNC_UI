@@ -1,25 +1,35 @@
 ### Resolution Summary
-Adds a new `ActivePrintWidget.vue` dashboard panel, the supporting `isPrinting` / `isPaused` / `printProgress` getters and program-lifecycle actions on the Pinia machine store, and converts `FileManager.vue` into a full-page view with per-row Edit buttons that bubble to the shared full-screen `ConfigEditor`.
+Replaced the background `CameraWorker` thread with an on-demand `StreamManager` so USB cameras are only opened while a client is streaming and released the moment they disconnect. Added Linux-first USB camera detection (`/api/v1/modules/camera/usb`), combined device listing (`/api/v1/modules/camera/devices`), and a `?id=` parameter on `/stream` that accepts both `/dev/videoN` paths and HTTP/RTSP URLs.
 
 ### Files Modified
-- `frontend/src/modules/machine/store.js` — adds `total_lines` to the default `status`, derives `isPrinting` / `isPaused` / `printProgress` from `task_state` + `interp_state`, and exposes `startProgram`, `pauseProgram`, `resumeProgram`, `abortProgram` actions that delegate to the generated `ModulesProgramService` client.
-- `frontend/src/stores/machine-compat.js` — mirrors the new reactive defaults, derived getters, and action surface on the fallback store so the widget still renders when the optional machine module is not mounted.
-- `frontend/src/components/ActivePrintWidget.vue` — new component (added). Switches between a Standby view (five newest `.gcode` / `.ngc` files with per-row Print buttons) and an Active view (loaded filename, progress bar bound to `printProgress`, Pause/Resume and Stop/Cancel controls). All actions go through the Pinia store; the backend telemetry stream is expected to flip the widget's state on the next polling cycle.
-- `frontend/src/components/FileManager.vue` — wrapper now stretches `h-full w-full` with `flex-1 min-h-0` on the table body so it fills its parent; emits a new `edit` event with the filename when the new per-row Edit button is clicked; widens the Actions column to accommodate the extra button.
-- `frontend/src/views/FilesView.vue` — replaces the placeholder card with a full-page wrapper around `FileManager` and re-emits the `edit` event to the parent so `App.vue` can mount the shared `ConfigEditor`.
-- `frontend/src/App.vue` — wires `@edit="openEditor"` on `FilesView` so Edit requests from `FileManager` open the same full-screen editor used by the Config view.
-- `frontend/src/views/DashboardView.vue` — imports `ActivePrintWidget` and renders it at the top of the right column above the toolpath viewer.
+- `backend/modules/camera/detection.py` — *new* — Linux-first `detect_usb_cameras()` utility that scans `/dev/video*`, parses `v4l2-ctl --list-devices` for human-readable names, falls back to an OpenCV probe, and ships a synthetic-name path for Windows.
+- `backend/modules/camera/router.py` — refactored: removed the legacy `CameraWorker` (background thread); introduced `StreamManager` with reference counting so one camera at a time is enforced and `.release()` is called on disconnect / switch / shutdown; added `GET /usb` and `GET /devices`; `GET /stream?id=<camera_id>` now supports USB device paths and IP camera URLs.
+- `backend/modules/camera/settings.py` — renamed the legacy `device_index` field to `default_device_id` (string, accepts `/dev/videoN` paths or URLs); added `ip_camera_url` so the new `/devices` endpoint can surface an IP camera as an alternative picker entry.
+- `backend/modules/camera/module.py` — updated lifecycle hooks (`bind_settings_store` / `stop_manager`) and bumped the manifest version to `0.2.0`.
+- `backend/modules/camera/README.md` — documented the on-demand contract, the new endpoints, the detection utility behaviour per platform, and the IP-camera pass-through.
+- `backend/tests/test_camera_module.py` — adjusted for the renamed settings fields and the new `active_id` / `refcount` keys on `/status`; added `test_camera_usb_endpoint_is_mounted` and `test_camera_devices_endpoint_is_mounted`.
+- `backend/tests/test_camera_settings.py` — updated the `_reload_config` plumbing test to call `StreamManager.reload_config()` and `bind_settings_store()`.
+- `backend/tests/test_camera_detection.py` — *new* — 14 tests covering the v4l2-ctl parser, the OpenCV probe fallback, and the platform-aware `detect_usb_cameras()`.
+- `backend/tests/test_camera_stream_manager.py` — *new* — 12 tests pinning the Issue #56 contract: acquire/release lifecycle, switching cameras releases the previous one, the last client disconnecting frees the hardware, and the thread-safety smoke test.
 
 ### Architectural Decisions
-- The widget imports the store via the `machine-compat` adapter (`useMachineStore`) so it transparently uses the real module store when mounted and the inert fallback otherwise, matching the pattern already used by `DroPanel` / `JogControls`.
-- `isPrinting` and `isPaused` are defined as mutually exclusive: both require `task_state === 2` (LinuxCNC `RCS_EXEC`); they differ only on `interp_state === 3` (`INTERP_PAUSED`). This keeps the Pause/Resume button label swap non-flickery.
-- `printProgress` reads `status.total_lines` (defaults to 0) and collapses to 0 when missing, finite-checked, or non-positive — matching the issue's "if total_lines is 0 or missing, return 0" contract.
-- The widget calls `NcFilesService.listFiles` directly for the standby view (mirroring `FileManager`) rather than introducing a new files store; the same filter / sort / slice logic the issue describes is implemented locally as a small `computed`.
-- The Edit button emits an `edit` event instead of importing `ConfigEditor`; `FilesView` forwards it to `App.vue` which already owns the full-screen editor state via `openEditor()`. This keeps the "view owns layout, component owns display" boundary.
-- Pause/Resume and Stop dispatch through the store actions (`pauseProgram` / `resumeProgram` / `abortProgram`) which call `ModulesProgramService` — the existing generated client. Per the issue, no local toggling is performed; the backend telemetry stream is the source of truth.
+- **On-demand over background thread.** The previous `CameraWorker` opened `cv2.VideoCapture` at boot and held it continuously — wasted USB bandwidth on deployments that rarely viewed the camera and a violation of the issue's "do not keep camera resources open in the background" requirement. The new `StreamManager` opens on first `acquire()`, releases on disconnect or switch, and uses refcounting so concurrent clients for the same id share one capture.
+- **Streaming generator pattern.** `request.is_disconnected()` is polled between frames so a TCP drop frees the hardware within one framerate instead of waiting for the keepalive window. `cv2.read()` and `cv2.imencode()` are wrapped in `asyncio.to_thread()` so the asyncio loop stays responsive to jog keep-alives and the WebSocket telemetry loop.
+- **Detection falls back gracefully.** `v4l2-ctl` missing, `cv2` missing, glob explosion, unopenable devices — all return empty lists with a `logger.warning`. The `GET /usb` endpoint can never crash the boot path.
+- **IP-camera pass-through.** Added `ip_camera_url` to settings and surfaced it through `/devices` with `source == "ip"`. The same `StreamManager` handles `cv2.VideoCapture("http://...")` so the on-demand contract applies to IP feeds too.
+- **Backwards-compatible settings rename.** `device_index` (int) → `default_device_id` (str). Existing tests were updated; the migration is internal and the frontend never referenced `device_index` directly.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend` (via `.venv/bin/python`) — passed.
-- [x] `npm --prefix frontend run build` — passed; only pre-existing `INEFFECTIVE_DYNAMIC_IMPORT` warnings remain (unrelated to this change).
-- [x] Ran the existing `frontend/tests/*.mjs` suite — the four pre-existing failures (`test-machine-store.mjs` test 2, `test-console-features.mjs` tests 1 & 6, `test-machineconfig-registry.mjs` test 8) reproduce on the unmodified base branch and are not caused by this change. No new regressions.
-- [ ] Backend pytest suite was not invoked; the change is frontend-only and the existing backend already exposes `/api/v1/modules/program/{run,pause,resume,stop}` that the new actions target.
+- [x] `python -m compileall -q backend` — passed.
+- [x] `npm --prefix frontend run build` — passed (only the pre-existing ineffective-dynamic-import warnings for machineconfig panels).
+- [x] `pytest backend/tests/` — 172 passed, 6 pre-existing errors in `test_jog_watchdog.py` (unrelated `from backend.modules.machine import jog` failure that exists before my changes).
+- [x] `pytest backend/tests/test_camera_detection.py backend/tests/test_camera_stream_manager.py backend/tests/test_camera_module.py backend/tests/test_camera_settings.py backend/tests/test_camera_null.py` — 39 passed.
+
+### Acceptance-criteria checklist (Issue #56)
+- [x] Backend scans `/dev/video*` on Linux and exposes them via `GET /api/v1/modules/camera/usb` with human-readable names from `v4l2-ctl --list-devices`.
+- [x] Windows / other platforms degrade to an empty list or synthetic OpenCV-probed entries.
+- [x] `GET /stream` enforces one-camera-at-a-time at the hardware level: opening a new camera closes the previous one in the same call (`StreamManager._release_locked`).
+- [x] `.release()` is called the moment a client disconnects (the `finally` block in `_generate_frames` plus `request.is_disconnected()` polling).
+- [x] `GET /stream?id=<camera_id>` accepts both `/dev/videoN` paths and HTTP/RTSP URLs through the same `StreamManager` lifecycle.
+- [x] Streaming is non-blocking (`asyncio.to_thread` for `cv2.read()` + `cv2.imencode()`, `asyncio.sleep` cap matches the legacy 60 ms floor).
+- [x] Existing `CameraPanel.vue` continues to work — the legacy `/stream` URL stays reachable; the new `?id=` parameter is opt-in.

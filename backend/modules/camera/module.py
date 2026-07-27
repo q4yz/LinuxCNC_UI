@@ -9,15 +9,17 @@ This file is the entrypoint the registry imports via the package-level
 * the lifecycle hooks :meth:`on_load` and :meth:`on_unload`.
 
 The actual HTTP router lives in :mod:`backend.modules.camera.router`;
-settings schema in :mod:`backend.modules.camera.settings`. Keeping
-these three concerns split mirrors the layout every module should
-follow (see ``MODULE_SYSTEM_ROADMAP.md`` § 3).
+settings schema in :mod:`backend.modules.camera.settings`; USB camera
+detection in :mod:`backend.modules.camera.detection`. Keeping these
+concerns split mirrors the layout every module should follow (see
+``MODULE_SYSTEM_ROADMAP.md`` § 3).
 
-The module does **not** start the OpenCV capture in ``on_load``. The
-worker is started lazily by the ``/stream`` endpoint on first request
-so a deployment that never serves the camera (e.g. headless CI) does
-not waste an OpenCV handle. ``on_unload`` still stops the worker so a
-shutdown is clean.
+The module does **not** open the OpenCV capture in ``on_load``. The
+:class:`~router.StreamManager` opens captures on-demand inside the
+``/stream`` endpoint and releases them the moment the client
+disconnects or switches cameras (Issue #56 on-demand contract).
+``on_unload`` still calls ``stop_manager()`` so any active capture is
+released before shutdown.
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ from fastapi import APIRouter
 
 from core.protocols import ModuleContext, ModuleManifest, PluggableModule
 
-from .router import bind_worker_settings, router as camera_router, stop_worker
+from .router import bind_settings_store, router as camera_router, stop_manager
 from .settings import CameraSettings
 
 logger = logging.getLogger("backend.modules.camera")
@@ -37,8 +39,11 @@ logger = logging.getLogger("backend.modules.camera")
 _MANIFEST = ModuleManifest(
     id="camera",
     title="Camera",
-    version="0.1.0",
-    description="Live USB webcam MJPEG stream.",
+    version="0.2.0",
+    description=(
+        "Live USB webcam MJPEG stream with on-demand capture "
+        "management (Issue #56)."
+    ),
     sidebar=None,
     settings_panel=True,
 )
@@ -60,27 +65,27 @@ class CameraModule:
     # ------------------------------------------------------------------ #
 
     def on_load(self, ctx: ModuleContext) -> None:
-        """Wire the SettingsStore onto the worker.
+        """Wire the SettingsStore onto the StreamManager.
 
-        The worker is started lazily on first stream request, so this
-        hook stays non-blocking and does not touch the OpenCV install.
-        The settings store is attached so the worker can re-read its
-        configuration on every frame.
+        The capture is opened lazily on the first ``/stream`` request,
+        so this hook stays non-blocking and does not touch the OpenCV
+        install. The settings store is attached so the manager can
+        re-read its configuration on every frame.
         """
-        bind_worker_settings(ctx.settings)
+        bind_settings_store(ctx.settings)
         logger.info("Camera module loaded.")
 
     def on_unload(self) -> None:
-        """Stop the worker and release OpenCV handles.
+        """Release any active capture.
 
         Idempotent — safe to call multiple times under
-        ``uvicorn --reload``. The worker also tolerates being torn
-        down twice because ``stop()`` guards each of its members.
+        ``uvicorn --reload``. The manager also tolerates being torn
+        down twice because ``shutdown()`` guards each of its members.
         """
         try:
-            stop_worker()
+            stop_manager()
         except Exception as exc:  # noqa: BLE001
-            logger.error("CameraModule.on_unload: stop_worker raised %s", exc)
+            logger.error("CameraModule.on_unload: stop_manager raised %s", exc)
         logger.info("Camera module unloaded.")
 
     # ------------------------------------------------------------------ #
