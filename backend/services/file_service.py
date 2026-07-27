@@ -331,7 +331,7 @@ class FileService:
             logger.debug("chmod failed on %s: %s", target, exc)
             return False
 
-    def mark_tree_read_only(self, directory: Optional[Path] = None) -> int:
+    def mark_tree_read_only(self, directory: Optiona[Path] = None) -> int:
         """Recursively ``chmod`` every entry under ``directory``.
 
         Defaults to the service root. Returns the number of entries
@@ -358,10 +358,19 @@ class FileService:
     def clear_directory(self, directory: Optional[Path] = None) -> None:
         """Recursively empty ``directory`` while keeping the directory itself."""
         import shutil
+        import stat
 
         target = Path(directory) if directory is not None else self.root
+
+        # Windows-specific fix: rmtree fails on read-only files.
+        # This callback intercepts the error, flips the write bit, and retries.
+        def remove_readonly(func, path, _):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+
         if target.exists():
-            shutil.rmtree(target)
+            shutil.rmtree(target, onerror=remove_readonly)
+
         target.mkdir(parents=True, exist_ok=True)
 
     def copy_tree(self, source: Path, destination: Optional[Path] = None) -> List[str]:

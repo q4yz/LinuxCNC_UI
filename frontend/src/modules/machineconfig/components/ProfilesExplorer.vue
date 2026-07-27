@@ -89,7 +89,7 @@ async function onCreate() {
 // Tree walk                                                            //
 // ----------------------------------------------------------------- //
 
-const rootChildren = computed(() => childrenOf(""));
+const rootChildren = computed(() => childrenOf(null));
 
 function iconFor(kind) {
   return kind === "folder" ? "📁" : "📄";
