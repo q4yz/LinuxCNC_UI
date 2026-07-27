@@ -21,6 +21,7 @@ import registry from '../core/modules/registry'
 import GCodeViewer from '../components/GCodeViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
+import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 
 // ``import.meta.glob`` with ``eager: false`` records dynamic-import
 // functions keyed by file path; the dashboard keeps building with
@@ -89,6 +90,12 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
       <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->
       <!-- min-w-[600px] ensures the 3D viewer doesn't get crushed -->
       <div class="flex-[2] min-w-[600px] flex flex-col space-y-6">
+
+        <!-- ActivePrintWidget surfaces the current program (or the five
+             newest G-code files when idle) and the pause/stop controls,
+             so the operator does not have to leave the dashboard while
+             a print is running. -->
+        <ActivePrintWidget />
 
         <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[400px] shrink-0">
           <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">

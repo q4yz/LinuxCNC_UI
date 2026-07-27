@@ -116,7 +116,7 @@ async function handleEditorSave(newContent) {
          standalone module shell. -->
       <component v-if="moduleView" :is="moduleView" @edit="openEditor" />
       <DashboardView v-else-if="currentView === 'dashboard'" />
-      <FilesView v-else-if="currentView === 'files'" />
+      <FilesView v-else-if="currentView === 'files'" @edit="openEditor" />
 
       <!-- Catch the edit event from the ConfigView panels -->
       <ConfigView v-else-if="currentView === 'config'" @edit="openEditor" />

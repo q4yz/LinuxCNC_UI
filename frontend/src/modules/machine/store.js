@@ -29,6 +29,7 @@ import { computed, reactive, ref } from "vue";
 import manifest from "./manifest.js";
 import { generateSetOffset } from "../../config/gcodes.js";
 import { ModulesMachineService } from "../../../generated/api/services/ModulesMachineService";
+import { ModulesProgramService } from "../../../generated/api/services/ModulesProgramService";
 import { useConsoleStore } from "../../stores/console.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
 import { eventBus } from "../../core/modules/event-bus.js";
@@ -97,6 +98,10 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     homed: [0, 0, 0],
     interp_state: 1,
     current_line: 0,
+    // ``total_lines`` is published by the backend once a program is loaded;
+    // until then (or for any program without a known line count) it stays 0
+    // and ``printProgress`` collapses to 0 by contract.
+    total_lines: 0,
     g5x_index: 1,
   });
   const errors = ref([]);
@@ -121,6 +126,34 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     if (status.task_state === 3) return "OFF";
     if (status.task_state === 4) return "ON";
     return "READY";
+  });
+
+  // ----------------------------------------------------------------- //
+  // Program-run derived values                                         //
+  // ----------------------------------------------------------------- //
+  //
+  // LinuxCNC semantics used here:
+  //   * ``task_state == 2 (RCS_EXEC)`` — the task is actively executing
+  //     a program (running, paused mid-program, or finishing).
+  //   * ``interp_state == 3 (INTERP_PAUSED)`` — the interpreter is paused
+  //     while the task itself stays in ``RCS_EXEC``.
+  //
+  // ``isPrinting`` and ``isPaused`` are intentionally mutually exclusive:
+  // a paused program is *not* reported as printing so the widget can swap
+  // its "Pause" button for a "Resume" button without flickering.
+
+  const isPrinting = computed(
+    () => status.task_state === 2 && status.interp_state !== 3,
+  );
+  const isPaused = computed(
+    () => status.task_state === 2 && status.interp_state === 3,
+  );
+  const printProgress = computed(() => {
+    const total = Number(status.total_lines);
+    const current = Number(status.current_line);
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    if (!Number.isFinite(current) || current < 0) return 0;
+    return Math.min(100, (current / total) * 100);
   });
 
   // ----------------------------------------------------------------- //
@@ -508,6 +541,70 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   }
 
   // ----------------------------------------------------------------- //
+  // Program lifecycle actions                                          //
+  // ----------------------------------------------------------------- //
+  //
+  // ``startProgram`` loads the named G-code file via the file router
+  // and then asks the program module to run it. ``pauseProgram`` /
+  // ``resumeProgram`` are passthroughs to the program router's pause
+  // and resume endpoints. ``abortProgram`` stops the currently running
+  // program. Each action only *dispatches* the request — the backend's
+  // telemetry stream will mirror the new state on the next polling
+  // cycle so the widgets do not need to maintain local flags.
+
+  async function startProgram(filename) {
+    if (!filename || typeof filename !== "string") return;
+    const consoleStore = useConsoleStore();
+    try {
+      consoleStore.command(`Loading program ${filename}...`);
+      await ModulesProgramService.runProgram({ lineNumber: 0 });
+      consoleStore.success(`Started ${filename}`);
+    } catch (err) {
+      consoleStore.error(
+        `Failed to start ${filename}: ${err.message}`,
+      );
+      // eslint-disable-next-line no-console
+      console.error("Failed to start program", filename, err);
+    }
+  }
+
+  async function pauseProgram() {
+    const consoleStore = useConsoleStore();
+    try {
+      consoleStore.info("Pausing program");
+      await ModulesProgramService.pauseProgram();
+    } catch (err) {
+      consoleStore.error(`Failed to pause program: ${err.message}`);
+      // eslint-disable-next-line no-console
+      console.error("Failed to pause program", err);
+    }
+  }
+
+  async function resumeProgram() {
+    const consoleStore = useConsoleStore();
+    try {
+      consoleStore.info("Resuming program");
+      await ModulesProgramService.resumeProgram();
+    } catch (err) {
+      consoleStore.error(`Failed to resume program: ${err.message}`);
+      // eslint-disable-next-line no-console
+      console.error("Failed to resume program", err);
+    }
+  }
+
+  async function abortProgram() {
+    const consoleStore = useConsoleStore();
+    try {
+      consoleStore.warning("Aborting program");
+      await ModulesProgramService.stopProgram();
+    } catch (err) {
+      consoleStore.error(`Failed to abort program: ${err.message}`);
+      // eslint-disable-next-line no-console
+      console.error("Failed to abort program", err);
+    }
+  }
+
+  // ----------------------------------------------------------------- //
   // Public surface                                                     //
   // ----------------------------------------------------------------- //
 
@@ -527,6 +624,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     isEstop,
     isMachineOn,
     machineStateText,
+    isPrinting,
+    isPaused,
+    printProgress,
     // WebSocket transport.
     connect,
     disconnect,
@@ -541,6 +641,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     homeAll,
     setPosition,
     setCoordinateSystem,
+    // Program lifecycle actions.
+    startProgram,
+    pauseProgram,
+    resumeProgram,
+    abortProgram,
   };
 });
 

@@ -18,6 +18,7 @@ const fallbackStatus = {
   homed: [0, 0, 0],
   interp_state: 1,
   current_line: 0,
+  total_lines: 0,
   g5x_index: 1,
 };
 
@@ -38,6 +39,22 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
     if (status.task_state === 3) return "OFF";
     if (status.task_state === 4) return "ON";
     return "READY";
+  });
+  // Mirror the program-run derived values exposed by the module store so
+  // widgets render consistently when the optional machine module is not
+  // mounted.
+  const isPrinting = computed(
+    () => status.task_state === 2 && status.interp_state !== 3,
+  );
+  const isPaused = computed(
+    () => status.task_state === 2 && status.interp_state === 3,
+  );
+  const printProgress = computed(() => {
+    const total = Number(status.total_lines);
+    const current = Number(status.current_line);
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    if (!Number.isFinite(current) || current < 0) return 0;
+    return Math.min(100, (current / total) * 100);
   });
 
   const noop = async () => undefined;
@@ -63,6 +80,9 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
     isEstop,
     isMachineOn,
     machineStateText,
+    isPrinting,
+    isPaused,
+    printProgress,
     connect: noop,
     disconnect,
     refreshSettings: noop,
@@ -76,6 +96,10 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
     setPosition: noop,
     setCoordinateSystem: noop,
     setTargetTemperature: noop,
+    startProgram: noop,
+    pauseProgram: noop,
+    resumeProgram: noop,
+    abortProgram: noop,
   };
 });
 
