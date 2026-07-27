@@ -60,6 +60,74 @@ async function openModal(card) {
   viewModalOpen.value = true;
 }
 
+async function downloadFile(name) {
+  const content = stagedContents.value[name] ?? (await store.readStagedFileContent(name));
+  if (content === null) return;
+  saveBlob(new Blob([content], { type: "application/octet-stream" }), name);
+}
+
+async function downloadZip() {
+  const encoder = new TextEncoder();
+  const files = [];
+  for (const file of stagedFiles.value) {
+    const content = stagedContents.value[file.name] ?? (await store.readStagedFileContent(file.name));
+    if (content === null) return;
+    files.push({ name: file.name, data: encoder.encode(content) });
+  }
+  saveBlob(new Blob([createZip(files)], { type: "application/zip" }), "compiled-output.zip");
+}
+
+function createZip(files) {
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = new TextEncoder().encode(file.name);
+    const crc = crc32(file.data);
+    const local = zipHeader(0x04034b50, crc, file.data.length, name.length);
+    chunks.push(local, name, file.data);
+    central.push({ name, crc, size: file.data.length, offset });
+    offset += local.length + name.length + file.data.length;
+  }
+  const centralOffset = offset;
+  for (const file of central) {
+    const header = centralHeader(file);
+    chunks.push(header, file.name);
+    offset += header.length + file.name.length;
+  }
+  chunks.push(endHeader(files.length, offset - centralOffset, centralOffset));
+  return concatBytes(chunks);
+}
+function zipHeader(signature, crc, size, nameLength) {
+  const bytes = new Uint8Array(30); const view = new DataView(bytes.buffer);
+  view.setUint32(0, signature, true); view.setUint16(4, 20, true); view.setUint32(14, crc, true);
+  view.setUint32(18, size, true); view.setUint32(22, size, true); view.setUint16(26, nameLength, true); return bytes;
+}
+function centralHeader(file) {
+  const bytes = new Uint8Array(46); const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x02014b50, true); view.setUint16(4, 20, true); view.setUint16(6, 20, true);
+  view.setUint32(16, file.crc, true); view.setUint32(20, file.size, true); view.setUint32(24, file.size, true);
+  view.setUint16(28, file.name.length, true); view.setUint32(42, file.offset, true); return bytes;
+}
+function endHeader(count, size, offset) {
+  const bytes = new Uint8Array(22); const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x06054b50, true); view.setUint16(8, count, true); view.setUint16(10, count, true);
+  view.setUint32(12, size, true); view.setUint32(16, offset, true); return bytes;
+}
+function crc32(data) {
+  let crc = -1;
+  for (const byte of data) { crc ^= byte; for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); }
+  return (crc ^ -1) >>> 0;
+}
+function concatBytes(parts) {
+  const result = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0; for (const part of parts) { result.set(part, offset); offset += part.length; } return result;
+}
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+  anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
+}
+
 function closeModal() {
   viewModalOpen.value = false;
   viewModalContent.value = "";
@@ -77,9 +145,14 @@ function closeModal() {
           Read-only
         </span>
       </h2>
-      <span class="text-xs text-gray-400 font-mono">
-        {{ stagedFiles.length }} file(s) · {{ formatSize(stagedTotalSize) }}
-      </span>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-400 font-mono">
+          {{ stagedFiles.length }} file(s) · {{ formatSize(stagedTotalSize) }}
+        </span>
+        <button type="button" class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:bg-blue-900" :disabled="isBusy || !stagedFiles.length" @click="downloadZip">
+          Download ZIP
+        </button>
+      </div>
     </div>
 
     <div v-if="stagedFiles.length === 0" class="p-6 text-center text-gray-500 text-sm">
@@ -101,6 +174,14 @@ function closeModal() {
         </div>
         <div class="flex items-center gap-3 shrink-0">
           <span class="text-xs text-gray-500 font-mono">{{ formatSize(card.size) }}</span>
+          <button
+            type="button"
+            class="rounded bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 px-3 py-1.5 text-sm font-semibold text-white"
+            :disabled="isBusy"
+            @click="downloadFile(card.name)"
+          >
+            Download
+          </button>
           <button
             type="button"
             class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"

@@ -33,13 +33,14 @@ function apiBase() {
 }
 
 async function request(path, { method = "GET", body, headers } = {}) {
+  const hasFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`${apiBase()}${path}`, {
     method,
     headers: {
-      "Content-Type": "application/json",
+      ...(hasFormData ? {} : { "Content-Type": "application/json" }),
       ...(headers || {}),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? (hasFormData ? body : JSON.stringify(body)) : undefined,
   });
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
@@ -110,6 +111,15 @@ export function renameProfile(source, destination) {
   return request(`${MODULE_PREFIX}/profiles/rename`, {
     method: "PUT",
     body: { source, destination },
+  });
+}
+
+export function uploadProfile(path, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`${MODULE_PREFIX}/profiles/upload/${encodeURI(path)}`, {
+    method: "POST",
+    body: form,
   });
 }
 

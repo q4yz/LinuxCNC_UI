@@ -17,6 +17,19 @@ const canDeploy = computed(() => stagedFiles.value.length > 0);
 async function onDeploy() {
   await store.deploy();
 }
+
+async function downloadRemora() {
+  const content = await store.readStagedFileContent("remora.json");
+  if (content === null) return;
+  const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "remora.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === "remora.json"));
 </script>
 
 <template>
@@ -48,14 +61,24 @@ async function onDeploy() {
       </label>
 
       <div class="flex items-center justify-between gap-3 pt-2 border-t border-gray-700">
-        <button
-          type="button"
-          class="px-4 py-2 rounded font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed text-white"
-          :disabled="isBusy || !canDeploy"
-          @click="onDeploy"
-        >
-          {{ isBusy ? 'Deploying…' : 'Deploy' }}
-        </button>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            class="px-4 py-2 rounded font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed text-white"
+            :disabled="isBusy || !canDeploy"
+            @click="onDeploy"
+          >
+            {{ isBusy ? 'Deploying…' : 'Deploy' }}
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white"
+            :disabled="isBusy || !hasRemora"
+            @click="downloadRemora"
+          >
+            Download remora.json
+          </button>
+        </div>
         <p class="text-xs text-gray-400">
           After deploy, restart the LinuxCNC backend to activate the new configuration.
         </p>

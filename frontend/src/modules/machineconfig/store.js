@@ -197,6 +197,22 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
+  async function uploadProfiles(directory, files) {
+    isBusy.value = true;
+    try {
+      for (const file of files) {
+        const path = [directory, file.name].filter(Boolean).join("/");
+        await api.uploadProfile(path, file);
+      }
+      consoleStore.addMessage(`Uploaded ${files.length} profile file(s)`, "success");
+      await loadProfilesTree();
+    } catch (error) {
+      consoleStore.addMessage(`Upload failed: ${error.message}`, "error");
+    } finally {
+      isBusy.value = false;
+    }
+  }
+
   async function renameProfile(source, destination) {
     isBusy.value = true;
     try {
@@ -327,6 +343,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     saveProfile,
     createFolder,
     createFile,
+    uploadProfiles,
     renameProfile,
     deleteProfile,
     compile,

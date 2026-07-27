@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
+import ConfigEditor from '../components/ConfigEditor.vue';
 import DebugPanel from '../components/DebugPanel.vue';
 import UpdateManager from '../components/UpdateManager.vue';
 import { useMachineConfigStore } from '../modules/machineconfig/store.js';
@@ -10,6 +11,19 @@ import DeploymentPanel from '../modules/machineconfig/components/DeploymentPanel
 import ActivePanel from '../modules/machineconfig/components/ActivePanel.vue';
 
 const machineConfigStore = useMachineConfigStore();
+const editorPath = ref('');
+const editorContent = ref('');
+
+async function openEditor(path) {
+  const content = await machineConfigStore.readProfileContent(path);
+  if (content === null) return;
+  editorPath.value = path;
+  editorContent.value = content;
+}
+
+async function saveEditor() {
+  await machineConfigStore.saveProfile(editorPath.value, editorContent.value);
+}
 
 onMounted(() => {
   void machineConfigStore.loadAll();
@@ -17,7 +31,19 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
+  <div v-if="editorPath" class="fixed inset-0 z-50 flex flex-col bg-gray-900">
+    <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
+      <span class="font-mono text-blue-300">Editing {{ editorPath }}</span>
+      <div class="flex gap-2">
+        <button type="button" class="rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500" @click="editorPath = ''">Close</button>
+        <button type="button" class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500" @click="saveEditor">Save</button>
+      </div>
+    </div>
+    <div class="min-h-0 flex-1">
+      <ConfigEditor v-model="editorContent" :filename="editorPath" :read-only="true" />
+    </div>
+  </div>
+  <div v-else class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
     <section class="space-y-6 xl:col-span-4">
       <UpdateManager />
 
@@ -28,7 +54,7 @@ onMounted(() => {
       <CompilerPanel />
 
       <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ProfilesExplorer />
+        <ProfilesExplorer @edit="openEditor" />
 
         <div class="space-y-6">
           <CompiledOutputViewer />
