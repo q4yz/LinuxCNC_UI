@@ -36,10 +36,16 @@ function goBack() {
 function goToCrumb(index) {
   currentDirectory.value = breadcrumbs.value.slice(0, index + 1).join("/");
 }
-function editFile(entry) {
+async function editFile(entry) {
   if (entry.kind === "file") {
     store.selectProfile(entry.path);
-    emit("edit", entry.path);
+
+    // Fetch the content first
+    const content = await store.readProfileContent(entry.path);
+    if (content === null) return; // Failsafe if the read failed
+
+    // Emit: filename, readOnly (false), mode ('profile'), content
+    emit("edit", entry.path, false, "profile", content);
   }
 }
 function formatSize(bytes) {

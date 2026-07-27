@@ -218,6 +218,7 @@ function closeModal() {
             v-model="viewModalContent"
             :read-only="true"
             :filename="viewModalFilename || viewModalTitle"
+            mode="profile"
           />
         </div>
       </div>

@@ -17,6 +17,8 @@ const store = useMachineStore()
 const currentView = ref('dashboard')
 const editorFile = ref(null)
 const editorReadOnly = ref(false)
+const editorMode = ref('config')
+const editorContent = ref('')
 
 // Module-driven sidebar entries route to a module-owned view when
 // the entry's id matches a mounted module's manifest id. The glob
@@ -70,19 +72,38 @@ onMounted(() => {
   if (!registry.modules.has('machine')) {
     store.connect()
   }
-
-  // Parse URL parameters to check if editor should be opened
-  const params = new URLSearchParams(window.location.search)
-  if (params.has('editor')) {
-    editorFile.value = params.get('editor')
-  }
-  editorReadOnly.value = params.get('readonly') === '1' || params.get('readonly') === 'true'
 })
+
+// Exposed so child views can trigger the full-screen editor
+function openEditor(filename, readOnly = false, mode = 'config', content = '') {
+  editorFile.value = filename
+  editorReadOnly.value = readOnly
+  editorMode.value = mode
+  editorContent.value = content
+}
+
+async function handleEditorSave(newContent) {
+  if (editorMode.value === 'profile') {
+    const configStore = useMachineConfigStore()
+    // Trigger your store's save action (adjust the method name if yours is different)
+    await configStore.saveProfile(editorFile.value, newContent)
+  }
+}
+
 </script>
 
 <template>
-  <ConfigEditor v-if="editorFile" :filename="editorFile" :read-only="editorReadOnly" />
-  <div v-else class="flex h-screen overflow-hidden bg-gray-900 text-white font-sans">
+  <ConfigEditor
+    v-if="editorFile"
+    key="fullscreen-editor"
+    :filename="editorFile"
+    :read-only="editorReadOnly"
+    :mode="editorMode"
+    v-model="editorContent"
+    @close="editorFile = null"
+    @save="handleEditorSave"
+  />
+  <div v-else key="main-layout" class="flex h-screen overflow-hidden bg-gray-900 text-white font-sans">
 
     <!-- Sidebar Navigation -->
     <AppSidebar :currentView="currentView" @navigate="(view) => currentView = view" />
@@ -93,10 +114,13 @@ onMounted(() => {
          machineconfig module now reuses the legacy ConfigView slot,
          so its sidebar entry is mapped to ``config`` instead of a
          standalone module shell. -->
-      <component v-if="moduleView" :is="moduleView" />
+      <component v-if="moduleView" :is="moduleView" @edit="openEditor" />
       <DashboardView v-else-if="currentView === 'dashboard'" />
       <FilesView v-else-if="currentView === 'files'" />
-      <ConfigView v-else-if="currentView === 'config'" />
+
+      <!-- Catch the edit event from the ConfigView panels -->
+      <ConfigView v-else-if="currentView === 'config'" @edit="openEditor" />
+
       <SettingsView v-else-if="currentView === 'settings'" />
     </main>
 

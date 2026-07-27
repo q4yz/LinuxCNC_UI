@@ -153,7 +153,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       const response = await api.readProfile(path);
       return response.content || "";
     } catch (error) {
-      consoleStore.addMessage(`Failed to read ${path}: ${error.message}`, "error");
+      consoleStore.error(`Failed to read ${path}: ${error.message}`);
       return null;
     }
   }
@@ -162,10 +162,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     isBusy.value = true;
     try {
       await api.saveProfile(path, content);
-      consoleStore.addMessage(`Saved ${path}`, "success");
+      consoleStore.success(`Saved ${path}`);
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`Failed to save ${path}: ${error.message}`, "error");
+      consoleStore.error(`Failed to save ${path}: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -175,10 +175,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     isBusy.value = true;
     try {
       await api.createFolder(path);
-      consoleStore.addMessage(`Created folder ${path}`, "success");
+      consoleStore.success(`Created folder ${path}`);
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`Folder create failed: ${error.message}`, "error");
+      consoleStore.error(`Folder create failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -188,10 +188,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     isBusy.value = true;
     try {
       await api.createFile(path);
-      consoleStore.addMessage(`Created file ${path}`, "success");
+      consoleStore.success(`Created file ${path}`);
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`File create failed: ${error.message}`, "error");
+      consoleStore.error(`File create failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -204,10 +204,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         const path = [directory, file.name].filter(Boolean).join("/");
         await api.uploadProfile(path, file);
       }
-      consoleStore.addMessage(`Uploaded ${files.length} profile file(s)`, "success");
+      consoleStore.success(`Uploaded ${files.length} profile file(s)`);
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`Upload failed: ${error.message}`, "error");
+      consoleStore.error(`Upload failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -217,13 +217,13 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     isBusy.value = true;
     try {
       await api.renameProfile(source, destination);
-      consoleStore.addMessage(`Renamed ${source} -> ${destination}`, "success");
+      consoleStore.success(`Renamed ${source} -> ${destination}`);
       if (selectedProfilePath.value === source) {
         selectedProfilePath.value = destination;
       }
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`Rename failed: ${error.message}`, "error");
+      consoleStore.error(`Rename failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -233,13 +233,13 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     isBusy.value = true;
     try {
       await api.deleteProfile(path);
-      consoleStore.addMessage(`Deleted ${path}`, "success");
+      consoleStore.success(`Deleted ${path}`);
       if (selectedProfilePath.value === path) {
         selectedProfilePath.value = "";
       }
       await loadProfilesTree();
     } catch (error) {
-      consoleStore.addMessage(`Delete failed: ${error.message}`, "error");
+      consoleStore.error(`Delete failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -252,7 +252,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   async function compile(profilePath) {
     if (!profilePath) return;
     if (!selectedCompilerId.value) {
-      consoleStore.addMessage("Pick a compiler before staging.", "warning");
+      consoleStore.warning("Pick a compiler before staging.");
       return;
     }
     isBusy.value = true;
@@ -261,13 +261,12 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         profilePath,
         selectedCompilerId.value,
       );
-      consoleStore.addMessage(
-        `Staged ${response.artifacts.length} artifact(s) using ${response.compiler}.`,
-        "success",
+      consoleStore.success(
+        `Staged ${response.artifacts.length} artifact(s) using ${response.compiler}.`
       );
       await loadStaged();
     } catch (error) {
-      consoleStore.addMessage(`Compile failed: ${error.message}`, "error");
+      consoleStore.error(`Compile failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -275,17 +274,17 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   async function deploy() {
     if (stagedFiles.value.length === 0) {
-      consoleStore.addMessage("Nothing to deploy — stage a profile first.", "warning");
+      consoleStore.warning("Nothing to deploy — stage a profile first.");
       return;
     }
     isBusy.value = true;
     try {
       const response = await api.deployStaged({ confirmFlash: confirmFlash.value });
       lastDeploySummary.value = response;
-      consoleStore.addMessage(response.message || "Deploy complete.", "success");
+      consoleStore.success(response.message || "Deploy complete.");
       await loadActive();
     } catch (error) {
-      consoleStore.addMessage(`Deploy failed: ${error.message}`, "error");
+      consoleStore.error(`Deploy failed: ${error.message}`);
     } finally {
       isBusy.value = false;
     }
@@ -297,7 +296,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       stagedContents[name] = response.content || "";
       return response.content || "";
     } catch (error) {
-      consoleStore.addMessage(`Failed to read staged ${name}: ${error.message}`, "error");
+      consoleStore.error(`Failed to read staged ${name}: ${error.message}`);
       return null;
     }
   }
@@ -308,7 +307,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       activeContents[name] = response.content || "";
       return response.content || "";
     } catch (error) {
-      consoleStore.addMessage(`Failed to read active ${name}: ${error.message}`, "error");
+      consoleStore.error(`Failed to read active ${name}: ${error.message}`);
       return null;
     }
   }
