@@ -13,9 +13,8 @@
 //   2. The dashboard renders the camera slot behind a ``v-if`` that
 //      reads the registry — so a missing module produces an empty
 //      cell, not an error.
-//   3. The store-id lint passes (camera module ships no Pinia store,
-//      but if anyone adds one in the future the id must match the
-//      ``module_camera`` convention from Gotcha #2).
+//   3. The camera store follows the ``module_camera`` convention from
+//      Gotcha #2, which is checked by the build's store-id lint.
 //   4. The legacy ``frontend/src/components/CameraPanel.vue`` is gone
 //      — the module owns the canonical implementation now.
 
@@ -40,8 +39,12 @@ const newCameraPanel = resolve(
   repoRoot,
   "frontend/src/modules/camera/components/CameraPanel.vue",
 );
+const cameraViewer = resolve(
+  repoRoot,
+  "frontend/src/modules/camera/components/CameraViewer.vue",
+);
 
-test("DashboardView uses defineAsyncComponent for the camera panel", () => {
+test("DashboardView uses defineAsyncComponent for the camera viewer", () => {
   const source = readFileSync(dashboardPath, "utf-8");
   assert.match(
     source,
@@ -50,8 +53,8 @@ test("DashboardView uses defineAsyncComponent for the camera panel", () => {
   );
   assert.match(
     source,
-    /panelFor\(\s*['"]camera['"]\s*,\s*['"]CameraPanel['"]\s*\)/,
-    "DashboardView must lazily resolve the camera module's CameraPanel.vue",
+    /panelFor\(\s*['"]camera['"]\s*,\s*['"]CameraViewer['"]\s*\)/,
+    "DashboardView must lazily resolve the camera module's CameraViewer.vue",
   );
 });
 
@@ -96,16 +99,16 @@ test("New modules/camera/components/CameraPanel.vue is in place", () => {
   );
 });
 
-test("CameraPanel.vue points at the module-scoped stream URL", () => {
-  const source = readFileSync(newCameraPanel, "utf-8");
+test("CameraViewer.vue points at the module-scoped stream URL", () => {
+  const source = readFileSync(cameraViewer, "utf-8");
   assert.match(
     source,
     /\/api\/v1\/modules\/camera\/stream/,
-    "CameraPanel must point at /api/v1/modules/camera/stream (module URL)",
+    "CameraViewer must point at /api/v1/modules/camera/stream (module URL)",
   );
   assert.doesNotMatch(
     source,
     /\/api\/v1\/camera\/stream/,
-    "CameraPanel must not reference the legacy /api/v1/camera/stream URL",
+    "CameraViewer must not reference the legacy /api/v1/camera/stream URL",
   );
 });

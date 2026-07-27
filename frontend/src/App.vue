@@ -40,7 +40,9 @@ const moduleViewCache = shallowRef(new Map())
 
 function loadModuleView(moduleId) {
   const target = Object.keys(moduleViewImports).find(
-    (p) => p.includes(`/${moduleId}/components/`),
+    (p) =>
+      p.includes(`/${moduleId}/components/`) &&
+      !/Settings(?:Panel)?\.vue$/.test(p),
   )
   if (!target) return null
   const cached = moduleViewCache.value.get(moduleId)

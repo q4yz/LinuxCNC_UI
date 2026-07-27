@@ -49,7 +49,7 @@ function panelFor(folder, name) {
   })
 }
 
-const CameraPanel      = panelFor('camera',     'CameraPanel')
+const CameraViewer     = panelFor('camera',     'CameraViewer')
 const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
 // Machine panels are loaded the same way as camera / temperature.
 // When the folder has been deleted, the ``panelFor`` helper returns
@@ -111,7 +111,7 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
         </div>
 
         <div v-if="cameraMounted">
-          <CameraPanel />
+          <CameraViewer />
         </div>
 
       </div>
