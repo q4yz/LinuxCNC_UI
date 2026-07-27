@@ -297,14 +297,14 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     try {
       await ModulesMachineService.setMachineState({ state: targetState });
       if (targetState === "estop") {
-        consoleStore.addMessage("E-STOP Engaged", "error");
+        consoleStore.warning("E-STOP Engaged");
       } else {
-        consoleStore.addMessage("E-STOP Cleared", "success");
+        consoleStore.success("E-STOP Cleared");
       }
     } catch (err) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to toggle ESTOP: ${err.message}`,
-        "error",
+
       );
       // eslint-disable-next-line no-console
       console.error("Failed to toggle ESTOP", err);
@@ -317,9 +317,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const isOn = status.task_state === 4;
     const isEstop = status.estop === 1;
     if (isEstop && !isOn) {
-      consoleStore.addMessage(
+      consoleStore.warning(
         "Cannot turn on machine while ESTOP is active",
-        "warning",
       );
       return;
     }
@@ -327,14 +326,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     try {
       await ModulesMachineService.setMachineState({ state: targetState });
       if (targetState === "on") {
-        consoleStore.addMessage("Machine Power ON", "success");
+        consoleStore.success("Machine Power ON");
       } else {
-        consoleStore.addMessage("Machine Power OFF", "info");
+        consoleStore.success("Machine Power OFF");
       }
     } catch (err) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to toggle Power: ${err.message}`,
-        "error",
       );
       // eslint-disable-next-line no-console
       console.error("Failed to toggle Power", err);
@@ -349,18 +347,16 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       const velocity = Number.isFinite(defaultJogVelocity.value)
         ? defaultJogVelocity.value
         : DEFAULT_JOG_VELOCITY;
-      consoleStore.addMessage(
-        `Jogging ${axisName} axis ${distance}mm`,
-        "info",
+      consoleStore.info(
+        `Jogging ${axisName} axis ${distance}mm`
       );
       await ModulesMachineService.jogAxis({
         velocities: { [axis]: velocity },
         distance,
       });
     } catch (err) {
-      consoleStore.addMessage(
-        `Failed to jog ${axisName}: ${err.message}`,
-        "error",
+      consoleStore.error(
+        `Failed to jog ${axisName}: ${err.message}`
       );
       // eslint-disable-next-line no-console
       console.error("Failed to jog axis", axis, err);
@@ -390,9 +386,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
 
       // 2. Send the initial start command.
-      consoleStore.addMessage(
-        `Jogging ${axisName} axis continuously...`,
-        "info",
+      consoleStore.info(
+        `Jogging ${axisName} axis continuously...`
       );
       await ModulesMachineService.jogAxis({
         velocities: { [axis]: jogVelocity },
@@ -413,9 +408,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         }
       }, intervalMs);
     } catch (err) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to start continuous jog: ${err.message}`,
-        "error",
+
       );
       // eslint-disable-next-line no-console
       console.error("Failed to start continuous jog", err);
@@ -434,11 +429,10 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
       // 2. Send the explicit stop command.
       await ModulesMachineService.jogStop({ axes: [axis] });
-      consoleStore.addMessage(`${axisName} Jog stopped`, "info");
+      consoleStore.info(`${axisName} Jog stopped`);
     } catch (err) {
-      consoleStore.addMessage(
-        `Failed to stop jog: ${err.message}`,
-        "error",
+      consoleStore.error(
+        `Failed to stop jog: ${err.message}`
       );
       // eslint-disable-next-line no-console
       console.error("Failed to stop jog", err);
@@ -450,14 +444,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     try {
       consoleStore.addMessage(`Homing axis index ${axisIndex}...`, "info");
       await ModulesMachineService.homeAxis({ axis: axisIndex });
-      consoleStore.addMessage(
+      consoleStore.success(
         `Homed axis ${axisIndex} successfully`,
-        "success",
+
       );
     } catch (err) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to home axis ${axisIndex}: ${err.message}`,
-        "error",
       );
       // eslint-disable-next-line no-console
       console.error("Failed to home axis", axisIndex, err);
@@ -467,13 +460,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   async function homeAll() {
     const consoleStore = useConsoleStore();
     try {
-      consoleStore.addMessage("Homing all axes...", "info");
+      consoleStore.info("Homing all axes...");
       await ModulesMachineService.homeAxis({ axis: HOME_ALL });
-      consoleStore.addMessage("All axes homed successfully", "success");
+      consoleStore.success("All axes homed successfully");
     } catch (err) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to home all axes: ${err.message}`,
-        "error",
       );
       // eslint-disable-next-line no-console
       console.error("Failed to home all axes", err);
@@ -485,16 +477,14 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const axisName = AXIS_NAMES[axisIndex];
     if (!axisName) return;
     try {
-      consoleStore.addMessage(
-        `Setting work offset for ${axisName} to ${value}...`,
-        "command",
+      consoleStore.command(
+        `Setting work offset for ${axisName} to ${value}...`
       );
       const cmd = generateSetOffset(axisName, value);
       await ModulesMachineService.runMdiCommand({ command: cmd });
     } catch (err) {
-      consoleStore.addMessage(
-        `Failed to set position for ${axisName}: ${err.message}`,
-        "error",
+      consoleStore.error(
+        `Failed to set position for ${axisName}: ${err.message}`
       );
       // eslint-disable-next-line no-console
       console.error("Failed to set position for axis", axisIndex, err);
@@ -504,15 +494,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   async function setCoordinateSystem(gcodeString) {
     const consoleStore = useConsoleStore();
     try {
-      consoleStore.addMessage(
-        `Switching to Coordinate System: ${gcodeString}`,
-        "command",
+      consoleStore.command(
+        `Switching to Coordinate System: ${gcodeString}`
       );
       await ModulesMachineService.runMdiCommand({ command: gcodeString });
     } catch (err) {
-      consoleStore.addMessage(
-        `Failed to switch Coordinate System: ${err.message}`,
-        "error",
+      consoleStore.error(
+        `Failed to switch Coordinate System: ${err.message}`
       );
       // eslint-disable-next-line no-console
       console.error("Failed to switch coordinate system", err);

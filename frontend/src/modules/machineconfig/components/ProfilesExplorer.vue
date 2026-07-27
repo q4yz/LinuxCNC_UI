@@ -1,298 +1,190 @@
 <script setup>
-// ProfilesExplorer — hierarchical file explorer for
-// ``machine_config/profiles``. Renders a tree with folder / file icons
-// and an inline "Compile / Generate" action button next to files
-// whose first 8 KB contain the active compiler's ``source_marker``
-// (typically ``#Start``).
-//
-// The component is intentionally dumb: it reads ``profilesTree`` and
-// ``selectedProfilePath`` from the module store and dispatches
-// ``compile`` / ``selectProfile`` / CRUD actions on the same store.
-// The router-style panel layout (single column tree on the left,
-// detail pane on the right) lives in the parent view.
-
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../store.js";
 
+const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
 const { profilesTree, selectedProfilePath, isBusy } = storeToRefs(store);
 
-// ----------------------------------------------------------------- //
-// Local UI state                                                      //
-// ----------------------------------------------------------------- //
+const currentDirectory = ref("");
+const activeMenu = ref("");
+const createOpen = ref(false);
+const newEntryKind = ref("file");
+const newEntryName = ref("");
+const isDragging = ref(false);
+const entries = computed(() =>
+  profilesTree.value.entries
+    .filter((entry) => (entry.parent || "") === currentDirectory.value)
+    .sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "folder" ? -1 : 1),
+);
 
-const expanded = ref(new Set());
-const newEntryKind = ref("file"); // "file" | "folder"
-const newEntryPath = ref("");
+const breadcrumbs = computed(() => currentDirectory.value.split("/").filter(Boolean));
 
-// Always expand the root so newly-created entries are immediately visible.
-expanded.value.add("");
-
-// ----------------------------------------------------------------- //
-// Derived helpers                                                     //
-// ----------------------------------------------------------------- //
-
-function childrenOf(parent) {
-  return profilesTree.value.entries.filter((entry) => entry.parent === parent);
+function joinPath(directory, name) {
+  return [directory, name].filter(Boolean).join("/");
 }
-
-function pathSegments(path) {
-  return path ? path.split("/") : [];
+function navigate(entry) {
+  activeMenu.value = "";
+  if (entry.kind === "folder") currentDirectory.value = entry.path;
+  else store.selectProfile(entry.path);
 }
-
-function isExpanded(path) {
-  return expanded.value.has(path);
+function goBack() {
+  const parts = breadcrumbs.value.slice(0, -1);
+  currentDirectory.value = parts.join("/");
 }
-
-function toggleExpanded(path) {
-  if (expanded.value.has(path)) expanded.value.delete(path);
-  else expanded.value.add(path);
+function goToCrumb(index) {
+  currentDirectory.value = breadcrumbs.value.slice(0, index + 1).join("/");
 }
+async function editFile(entry) {
+  if (entry.kind === "file") {
+    store.selectProfile(entry.path);
 
-// ----------------------------------------------------------------- //
-// Actions                                                              //
-// ----------------------------------------------------------------- //
+    // Fetch the content first
+    const content = await store.readProfileContent(entry.path);
+    if (content === null) return; // Failsafe if the read failed
 
-function onSelectProfile(entry) {
-  if (entry.kind !== "file") {
-    toggleExpanded(entry.path);
-    return;
+    // Emit: filename, readOnly (false), mode ('profile'), content
+    emit("edit", entry.path, false, "profile", content);
   }
-  store.selectProfile(entry.path);
 }
-
-async function onCompile(entry, event) {
-  event.stopPropagation();
+function formatSize(bytes) {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+async function onCompile(entry) {
   store.selectProfile(entry.path);
   await store.compile(entry.path);
 }
-
-async function onDelete(entry) {
-  // eslint-disable-next-line no-alert
-  if (!window.confirm(`Delete ${entry.path}? This cannot be undone.`)) return;
-  await store.deleteProfile(entry.path);
-}
-
 async function onCreate() {
-  const path = newEntryPath.value.trim();
-  if (!path) return;
-  if (newEntryKind.value === "folder") {
-    await store.createFolder(path);
-  } else {
-    await store.createFile(path);
-  }
-  newEntryPath.value = "";
+  const name = newEntryName.value.trim();
+  if (!name) return;
+  const path = joinPath(currentDirectory.value, name);
+  if (newEntryKind.value === "folder") await store.createFolder(path);
+  else await store.createFile(path);
+  newEntryName.value = "";
+  createOpen.value = false;
 }
+async function renameEntry(entry) {
+  activeMenu.value = "";
+  const name = window.prompt("New name", entry.name)?.trim();
+  if (name && name !== entry.name) await store.renameProfile(entry.path, joinPath(entry.parent || "", name));
+}
+async function copyOrMove(entry) {
+  activeMenu.value = "";
+  const destination = window.prompt("Move to path", entry.path)?.trim();
+  if (destination && destination !== entry.path) await store.renameProfile(entry.path, destination);
+}
+async function deleteEntry(entry) {
+  activeMenu.value = "";
+  if (window.confirm(`Delete ${entry.path}? This cannot be undone.`)) await store.deleteProfile(entry.path);
+}
+async function dropFiles(event) {
+  isDragging.value = false;
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (files.length) await store.uploadProfiles(currentDirectory.value, files);
+}
+async function downloadProfile(entry) {
+  const content = await store.readProfileContent(entry.path);
+  if (content === null) return;
+  downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
+}
+function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
+  // Prevent the Axios [object Object] trap
+  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
 
-// ----------------------------------------------------------------- //
-// Tree walk                                                            //
-// ----------------------------------------------------------------- //
+  const blob = new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
 
+  anchor.href = url;
+  anchor.download = name;
+  anchor.style.display = "none";
 const rootChildren = computed(() => childrenOf(null));
 
-function iconFor(kind) {
-  return kind === "folder" ? "📁" : "📄";
-}
+  // Prevent the Firefox trap
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
 
-function depthOf(path) {
-  return pathSegments(path).length;
-}
-
-function isFileMarked(entry) {
-  return entry.kind === "file" && entry.has_marker;
+  // Prevent the Safari trap
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 150);
 }
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">📂</span> Profiles
-      </h2>
-      <span class="text-xs text-gray-400 font-mono">
-        {{ profilesTree.entries.length }} entries
-      </span>
+  <div
+    class="relative flex min-h-[360px] flex-col overflow-hidden rounded-lg border bg-gray-800 shadow-xl transition-colors"
+    :class="isDragging ? 'border-blue-400 bg-blue-950/30' : 'border-gray-700'"
+    @dragenter.prevent="isDragging = true"
+    @dragover.prevent="isDragging = true"
+    @dragleave.self="isDragging = false"
+    @drop.prevent="dropFiles"
+  >
+    <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Profiles</h2>
+      <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
     </div>
 
-    <div class="p-3 flex flex-wrap gap-2 items-end border-b border-gray-700">
-      <select
-        v-model="newEntryKind"
-        class="rounded bg-gray-900 border border-gray-600 text-gray-200 px-2 py-1 text-sm"
-      >
-        <option value="file">File</option>
-        <option value="folder">Folder</option>
-      </select>
-      <input
-        v-model="newEntryPath"
-        type="text"
-        placeholder="path/to/new/file.cfg"
-        class="flex-1 min-w-[160px] rounded bg-gray-900 border border-gray-600 text-gray-200 px-2 py-1 text-sm font-mono"
-        @keyup.enter="onCreate"
-      />
-      <button
-        type="button"
-        :disabled="isBusy || !newEntryPath.trim()"
-        class="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white text-sm font-semibold"
-        @click="onCreate"
-      >
-        Create
-      </button>
+    <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
+      <button type="button" class="rounded px-2 py-1 text-gray-200 hover:bg-gray-700 disabled:text-gray-600" :disabled="!currentDirectory" @click="goBack" title="Back">←</button>
+      <button type="button" class="font-mono text-blue-300 hover:text-blue-200" @click="currentDirectory = ''">profiles</button>
+      <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb}-${index}`">
+        <span class="text-gray-600">/</span>
+        <button type="button" class="truncate font-mono text-gray-300 hover:text-white" @click="goToCrumb(index)">{{ crumb }}</button>
+      </template>
+    </nav>
+
+    <div v-if="isDragging" class="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-gray-950/80 font-semibold text-blue-200">
+      Drop files into {{ currentDirectory || 'profiles' }}
     </div>
 
-    <div class="p-2 overflow-y-auto max-h-[480px]">
-      <ul v-if="rootChildren.length > 0" class="space-y-1">
-        <li
-          v-for="entry in rootChildren"
-          :key="entry.path || entry.name"
-          class="space-y-1"
+    <ul v-if="entries.length" class="flex-1 space-y-1 overflow-y-auto p-2 pb-20">
+      <li v-for="entry in entries" :key="entry.path" class="relative">
+        <div
+          class="flex cursor-pointer items-center gap-2 rounded border px-2 py-2 transition-colors"
+          :class="selectedProfilePath === entry.path ? 'border-blue-500 bg-blue-600/30' : 'border-transparent hover:bg-gray-700/40'"
+          @click="navigate(entry)"
+          @dblclick="editFile(entry)"
         >
-          <div
-            class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer transition-colors"
-            :class="[
-              selectedProfilePath === entry.path
-                ? 'bg-blue-600/30 border border-blue-500'
-                : 'border border-transparent hover:bg-gray-700/40',
-            ]"
-            :style="{ marginLeft: `${depthOf(entry.path) * 12}px` }"
-            @click="onSelectProfile(entry)"
-          >
-            <span class="text-base">{{ iconFor(entry.kind) }}</span>
-            <span class="font-mono text-sm text-gray-200 truncate" :title="entry.path">
-              {{ entry.name }}
-            </span>
-            <span
-              v-if="isFileMarked(entry)"
-              class="ml-1 px-1.5 py-0.5 rounded bg-purple-700/40 text-purple-200 text-[10px] font-semibold uppercase tracking-wider"
-              title="Contains the compiler source marker (e.g. #Start)"
-            >
-              #Start
-            </span>
-            <span class="ml-auto flex items-center gap-1">
-              <button
-                v-if="isFileMarked(entry)"
-                type="button"
-                class="px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 text-white text-xs font-semibold"
-                :disabled="isBusy"
-                @click="onCompile(entry, $event)"
-              >
-                ⚙ Compile
-              </button>
-              <button
-                type="button"
-                class="px-2 py-0.5 rounded bg-gray-600 hover:bg-red-500 text-white text-xs"
-                :disabled="isBusy"
-                @click.stop="onDelete(entry)"
-                title="Delete"
-              >
-                ✕
-              </button>
-            </span>
+          <span>{{ entry.kind === 'folder' ? '📁' : '📄' }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
+            <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes) }}</div>
           </div>
+          <span v-if="entry.kind === 'file' && entry.has_marker" class="rounded bg-purple-700/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-200">#Start</span>
+          <button v-if="entry.kind === 'file' && entry.has_marker" type="button" class="rounded bg-purple-600 px-2 py-1 text-xs font-semibold text-white hover:bg-purple-500 disabled:bg-purple-900" :disabled="isBusy" @click.stop="onCompile(entry)">Compile</button>
+          <button v-if="entry.kind === 'file'" type="button" class="rounded px-2 py-1 text-gray-300 hover:bg-gray-600" title="Download" @click.stop="downloadProfile(entry)">↓</button>
+          <button type="button" class="rounded px-2 py-1 text-lg leading-none text-gray-300 hover:bg-gray-600" title="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</button>
+        </div>
+        <div v-if="activeMenu === entry.path" class="absolute right-2 top-10 z-10 w-36 rounded border border-gray-600 bg-gray-900 py-1 text-sm shadow-xl">
+          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="renameEntry(entry)">Rename</button>
+          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="copyOrMove(entry)">Copy (Move)</button>
+          <button type="button" class="block w-full px-3 py-2 text-left text-red-300 hover:bg-red-900/40" @click="deleteEntry(entry)">Delete</button>
+        </div>
+      </li>
+    </ul>
+    <div v-else class="flex-1 p-8 text-center text-sm text-gray-500">This folder is empty. Drop files here or use + to create one.</div>
 
-          <ul
-            v-if="entry.kind === 'folder' && isExpanded(entry.path)"
-            class="space-y-1 border-l border-gray-700/70 pl-2"
-          >
-            <li v-for="child in childrenOf(entry.path)" :key="child.path">
-              <div
-                class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer transition-colors"
-                :class="[
-                  selectedProfilePath === child.path
-                    ? 'bg-blue-600/30 border border-blue-500'
-                    : 'border border-transparent hover:bg-gray-700/40',
-                ]"
-                :style="{ marginLeft: `${depthOf(child.path) * 8}px` }"
-                @click="onSelectProfile(child)"
-              >
-                <span class="text-base">{{ iconFor(child.kind) }}</span>
-                <span class="font-mono text-sm text-gray-200 truncate" :title="child.path">
-                  {{ child.name }}
-                </span>
-                <span
-                  v-if="isFileMarked(child)"
-                  class="ml-1 px-1.5 py-0.5 rounded bg-purple-700/40 text-purple-200 text-[10px] font-semibold uppercase tracking-wider"
-                >
-                  #Start
-                </span>
-                <span class="ml-auto flex items-center gap-1">
-                  <button
-                    v-if="isFileMarked(child)"
-                    type="button"
-                    class="px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 text-white text-xs font-semibold"
-                    :disabled="isBusy"
-                    @click="onCompile(child, $event)"
-                  >
-                    ⚙ Compile
-                  </button>
-                  <button
-                    type="button"
-                    class="px-2 py-0.5 rounded bg-gray-600 hover:bg-red-500 text-white text-xs"
-                    :disabled="isBusy"
-                    @click.stop="onDelete(child)"
-                    title="Delete"
-                  >
-                    ✕
-                  </button>
-                </span>
-              </div>
+    <button type="button" class="sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white shadow-lg hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
 
-              <ul
-                v-if="child.kind === 'folder' && isExpanded(child.path)"
-                class="space-y-1 border-l border-gray-700/70 pl-2"
-              >
-                <li v-for="grand in childrenOf(child.path)" :key="grand.path">
-                  <div
-                    class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer transition-colors"
-                    :class="[
-                      selectedProfilePath === grand.path
-                        ? 'bg-blue-600/30 border border-blue-500'
-                        : 'border border-transparent hover:bg-gray-700/40',
-                    ]"
-                    :style="{ marginLeft: `${depthOf(grand.path) * 4}px` }"
-                    @click="onSelectProfile(grand)"
-                  >
-                    <span class="text-base">{{ iconFor(grand.kind) }}</span>
-                    <span class="font-mono text-sm text-gray-200 truncate" :title="grand.path">
-                      {{ grand.name }}
-                    </span>
-                    <span
-                      v-if="isFileMarked(grand)"
-                      class="ml-1 px-1.5 py-0.5 rounded bg-purple-700/40 text-purple-200 text-[10px] font-semibold uppercase tracking-wider"
-                    >
-                      #Start
-                    </span>
-                    <span class="ml-auto flex items-center gap-1">
-                      <button
-                        v-if="isFileMarked(grand)"
-                        type="button"
-                        class="px-2 py-0.5 rounded bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 text-white text-xs font-semibold"
-                        :disabled="isBusy"
-                        @click="onCompile(grand, $event)"
-                      >
-                        ⚙ Compile
-                      </button>
-                      <button
-                        type="button"
-                        class="px-2 py-0.5 rounded bg-gray-600 hover:bg-red-500 text-white text-xs"
-                        :disabled="isBusy"
-                        @click.stop="onDelete(grand)"
-                        title="Delete"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  </div>
-                </li>
-              </ul>
-            </li>
-          </ul>
-        </li>
-      </ul>
-      <div v-else class="px-2 py-6 text-center text-gray-500 text-sm">
-        No profiles found in <code class="text-gray-400">machine_config/profiles</code>.
-        Create a new file or folder above to get started.
-      </div>
+    <div v-if="createOpen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4" @click.self="createOpen = false">
+      <form class="w-full max-w-sm space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl" @submit.prevent="onCreate">
+        <h3 class="font-semibold text-gray-100">Create in {{ currentDirectory || 'profiles' }}</h3>
+        <div class="flex gap-4 text-sm">
+          <label><input v-model="newEntryKind" type="radio" value="file" /> File</label>
+          <label><input v-model="newEntryKind" type="radio" value="folder" /> Folder</label>
+        </div>
+        <input v-model="newEntryName" autofocus type="text" placeholder="Name" class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-gray-200" />
+        <div class="flex justify-end gap-2">
+          <button type="button" class="rounded bg-gray-600 px-3 py-2 hover:bg-gray-500" @click="createOpen = false">Cancel</button>
+          <button type="submit" class="rounded bg-blue-600 px-3 py-2 font-semibold hover:bg-blue-500 disabled:bg-blue-900" :disabled="isBusy || !newEntryName.trim()">Create</button>
+        </div>
+      </form>
     </div>
   </div>
 </template>

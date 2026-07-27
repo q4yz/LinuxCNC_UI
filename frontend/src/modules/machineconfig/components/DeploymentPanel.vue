@@ -17,6 +17,38 @@ const canDeploy = computed(() => stagedFiles.value.length > 0);
 async function onDeploy() {
   await store.deploy();
 }
+
+async function downloadRemora() {
+  const content = await store.readStagedFileContent("remora.json");
+  if (content === null) return;
+
+  // Pass the data to the helper instead of managing the Blob here
+  downloadBlob(content, "remora.json", "application/json");
+}
+function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
+  // 1. Prevent the Axios [object Object] trap
+  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
+
+  const blob = new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = name;
+  anchor.style.display = "none";
+
+  // 2. Prevent the Firefox trap
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+
+  // 3. Prevent the Safari trap
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 150);
+}
+
+const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === "remora.json"));
 </script>
 
 <template>
@@ -48,14 +80,24 @@ async function onDeploy() {
       </label>
 
       <div class="flex items-center justify-between gap-3 pt-2 border-t border-gray-700">
-        <button
-          type="button"
-          class="px-4 py-2 rounded font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed text-white"
-          :disabled="isBusy || !canDeploy"
-          @click="onDeploy"
-        >
-          {{ isBusy ? 'Deploying…' : 'Deploy' }}
-        </button>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            class="px-4 py-2 rounded font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed text-white"
+            :disabled="isBusy || !canDeploy"
+            @click="onDeploy"
+          >
+            {{ isBusy ? 'Deploying…' : 'Deploy' }}
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white"
+            :disabled="isBusy || !hasRemora"
+            @click="downloadRemora"
+          >
+            Download remora.json
+          </button>
+        </div>
         <p class="text-xs text-gray-400">
           After deploy, restart the LinuxCNC backend to activate the new configuration.
         </p>

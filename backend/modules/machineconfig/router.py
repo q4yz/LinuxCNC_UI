@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from services import (
@@ -404,6 +404,21 @@ def create_file(payload: CreateEntryRequest) -> StatusMessage:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StatusMessage(status="ok", message=f"Created file {payload.path}")
+
+
+@router.post(
+    "/profiles/upload/{path:path}",
+    summary="Upload a profile file",
+    description="Upload a file into a directory under machine_config/profiles.",
+    response_model=StatusMessage,
+)
+async def upload_profile(path: str, file: UploadFile = File(...)) -> StatusMessage:
+    service: ConfigFileService = get_config_service()
+    try:
+        service.write_bytes(path, await file.read(), overwrite=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Uploaded {path}")
 
 
 @router.put(
