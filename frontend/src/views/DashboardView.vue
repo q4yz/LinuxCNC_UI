@@ -57,6 +57,10 @@ const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
 // so the dashboard layout stays consistent (Gotcha #1).
 const DroPanel         = panelFor('machine',    'DroPanel')
 const JogControls      = panelFor('machine',    'JogControls')
+// Issue #64 — the tools module ships a spindle / extruder panel
+// alongside the existing dashboard cards. Same nullable-module
+// contract as the other entries above.
+const ToolPanel        = panelFor('tools',      'ToolPanel')
 
 // Mounted? ``registry.modules`` is a reactive Map (see
 // ``registry.js``) so ``.has`` is tracked; the computed flips
@@ -64,6 +68,7 @@ const JogControls      = panelFor('machine',    'JogControls')
 const cameraMounted      = computed(() => registry.modules.has('camera'))
 const temperatureMounted = computed(() => registry.modules.has('temperature'))
 const machineMounted     = computed(() => registry.modules.has('machine'))
+const toolsMounted       = computed(() => registry.modules.has('tools'))
 </script>
 
 <template>
@@ -80,6 +85,8 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
         </div>
 
         <TemperaturePanel v-if="temperatureMounted" />
+
+        <ToolPanel v-if="toolsMounted" />
 
         <JogControls v-if="machineMounted" />
         <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
