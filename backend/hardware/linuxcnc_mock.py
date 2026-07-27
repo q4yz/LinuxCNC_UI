@@ -55,6 +55,7 @@ class SharedMachineState:
         self.homed = [0, 0, 0]
         self.interp_state = INTERP_IDLE
         self.current_line = 0
+        self.total_lines = 0
         self.g5x_index = 1  # 1 = G54 (default)
         
         # Temperature Simulation State (multi-sensor dictionary)
@@ -69,6 +70,10 @@ class SharedMachineState:
         self.actual_temp = self.temperatures.get('extruder', {}).get('actual', 25.0)
         
         self.lock = threading.Lock()
+
+        # Program execution simulation state
+        self.program_thread = None
+        self.program_stop_event = threading.Event()
         
         # Jog simulation state
         self.jogging_axis = None
@@ -89,6 +94,67 @@ def _jog_simulation_loop():
                 _machine_state.actual_position[_machine_state.jogging_axis] += delta
 
         time.sleep(0.1)
+
+
+def _program_simulation_loop():
+    """Background thread that advances ``current_line`` while a G-code program runs.
+
+    The loop is shared by ``AUTO_RUN`` and ``AUTO_RESUME``; the
+    ``program_stop_event`` short-circuits it on ``AUTO_PAUSE`` and
+    ``abort`` so callers can pause / resume without recreating the
+    thread.  When the program reaches its end the interpreter is
+    flipped back to ``INTERP_IDLE`` so the WebSocket telemetry loop
+    reflects the new state on the next 100 ms tick.
+    """
+    while not _machine_state.program_stop_event.is_set():
+        advance = False
+        with _machine_state.lock:
+            if (
+                _machine_state.interp_state == INTERP_READING
+                and _machine_state.current_line < _machine_state.total_lines
+            ):
+                _machine_state.current_line += 1
+                if _machine_state.current_line >= _machine_state.total_lines:
+                    _machine_state.interp_state = INTERP_IDLE
+                advance = True
+            elif (
+                _machine_state.interp_state == INTERP_READING
+                and _machine_state.current_line >= _machine_state.total_lines
+            ):
+                _machine_state.interp_state = INTERP_IDLE
+        if not advance:
+            # Either we paused, the program finished, or the lock was
+            # contended; wait briefly before re-evaluating.
+            time.sleep(0.1)
+            continue
+        time.sleep(0.1)
+
+
+def _start_program_simulation_if_needed() -> None:
+    """Spawn the program simulation thread if it is not already running."""
+    with _machine_state.lock:
+        thread = _machine_state.program_thread
+        if thread is not None and thread.is_alive():
+            return
+        _machine_state.program_stop_event.clear()
+        _machine_state.program_thread = threading.Thread(
+            target=_program_simulation_loop,
+            daemon=True,
+            name="linuxcnc_mock-program-simulation",
+        )
+        _machine_state.program_thread.start()
+    logger.info("Mock: program simulation thread started")
+
+
+def _stop_program_simulation() -> None:
+    """Signal the program simulation thread to exit and clear the handle."""
+    with _machine_state.lock:
+        thread = _machine_state.program_thread
+        _machine_state.program_stop_event.set()
+        _machine_state.program_thread = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=0.5)
+    logger.info("Mock: program simulation thread stopped")
 
 
 def _temp_simulation_loop():
@@ -131,6 +197,7 @@ class stat:
             self.homed = tuple(_machine_state.homed)
             self.interp_state = _machine_state.interp_state
             self.current_line = _machine_state.current_line
+            self.total_lines = _machine_state.total_lines
             self.g5x_index = _machine_state.g5x_index
             # Expose multi-sensor temperatures as a dict for callers
             # (shallow copy to avoid exposing internal lock-managed dict directly)
@@ -204,9 +271,15 @@ class command:
                 _machine_state.actual_position = list(_machine_state.position)
 
     def abort(self):
+        # Stop the simulation thread *before* mutating shared state
+        # so the worker exits while holding the lock-free tail of
+        # its loop and cannot race the ``current_line`` reset.
+        _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.state = 1
             _machine_state.interp_state = INTERP_IDLE
+            _machine_state.current_line = 0
+            _machine_state.total_lines = 0
             logger.info("Command: Abort / Stop")
 
     def home(self, axis):
@@ -238,31 +311,67 @@ class command:
         logger.info(f"Command: Jog Axis {axis} (Type: {jog_type}, Vel: {velocity}, Dist: {distance})")
 
     def auto(self, auto_cmd, line=0):
+        # Run, pause, and resume all need to start or signal the
+        # simulation thread outside the lock so we capture the
+        # current view of state up front and then apply the
+        # transition.  ``_stop_program_simulation`` acquires the
+        # same non-reentrant ``_machine_state.lock`` internally, so
+        # it must never be called from inside a ``with lock:`` block
+        # (otherwise the handler deadlocks against itself).
+        start_thread = False
+        stop_thread = False
         with _machine_state.lock:
             if auto_cmd == AUTO_RUN:
                 _machine_state.interp_state = INTERP_READING
-                _machine_state.current_line = line
-                logger.info(f"Command: Auto Run from line {line}")
+                _machine_state.state = 2  # 2 = Running
+                if line:
+                    _machine_state.current_line = line
+                if _machine_state.total_lines == 0:
+                    _machine_state.total_lines = 1000
+                start_thread = True
+                logger.info(
+                    f"Command: Auto Run from line {_machine_state.current_line} "
+                    f"(total={_machine_state.total_lines})"
+                )
             elif auto_cmd == AUTO_PAUSE:
                 _machine_state.interp_state = INTERP_PAUSED
+                _machine_state.state = 1
+                stop_thread = True
                 logger.info("Command: Auto Pause")
             elif auto_cmd == AUTO_RESUME:
                 _machine_state.interp_state = INTERP_READING
+                _machine_state.state = 2
+                start_thread = True
                 logger.info("Command: Auto Resume")
             elif auto_cmd == AUTO_STEP:
                 _machine_state.current_line += 1
                 logger.info("Command: Auto Step")
+        if stop_thread:
+            _stop_program_simulation()
+        if start_thread:
+            _start_program_simulation_if_needed()
 
     def program_open(self, filepath):
+        # ``program_open`` may be called when a run is already in
+        # progress; abort the simulation thread first so the new
+        # file's line count is the authoritative one.
+        _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.file = filepath
             _machine_state.current_line = 0
-            logger.info(f"Command: Program Open -> {filepath}")
+            _machine_state.total_lines = 1000
+            _machine_state.interp_state = INTERP_IDLE
+            logger.info(
+                f"Command: Program Open -> {filepath} "
+                f"(total_lines={_machine_state.total_lines})"
+            )
 
     def reset_interpreter(self):
+        _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.interp_state = INTERP_IDLE
             _machine_state.current_line = 0
+            _machine_state.total_lines = 0
             logger.info("Command: Reset Interpreter")
 
     def set_temperature(self, sensor_name, temp):

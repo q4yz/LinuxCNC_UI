@@ -6,6 +6,7 @@ This file is the entrypoint the registry imports via the package
 * the static :class:`ModuleManifest` describing the module,
 * the per-module :class:`MachineSettings` defaults passed to the
   registry's :class:`SettingsStore`,
+* machine state, movement, and G-code execution HTTP controls,
 * the lifecycle hooks :meth:`on_load` and :meth:`on_unload`,
 * the start/stop of the 500 ms jog safety watchdog.
 
@@ -46,7 +47,7 @@ _MANIFEST = ModuleManifest(
     id="machine",
     title="Machine",
     version="0.1.0",
-    description="DRO, jogging, state, MDI, home.",
+    description="DRO, jogging, state, MDI, home, and G-code execution.",
     # No sidebar entry — the machine dashboard lives at the root,
     # mounted by ``App.vue`` rather than as a top-level nav item.
     sidebar=None,

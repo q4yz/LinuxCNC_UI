@@ -11,10 +11,14 @@ boundaries.
 Endpoints
 ---------
 
-* ``POST /state`` — toggle machine E-Stop or Power state.
-* ``POST /mode``  — change task mode (``manual``, ``auto``, ``mdi``).
-* ``POST /home``  — home a single axis or all axes.
-* ``POST /mdi``   — execute a single MDI command.
+* ``POST /state``  — toggle machine E-Stop or Power state.
+* ``POST /mode``   — change task mode (``manual``, ``auto``, ``mdi``).
+* ``POST /home``   — home a single axis or all axes.
+* ``POST /mdi``    — execute a single MDI command.
+* ``POST /print``  — load and start a G-code program.
+* ``POST /pause``  — pause the active G-code program.
+* ``POST /resume`` — resume the paused G-code program.
+* ``POST /stop``   — abort the active G-code program.
 
 The router takes no ``prefix`` argument — the registry prefixes it
 when mounting under ``/api/v1/modules/machine``.
@@ -26,7 +30,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc
+from hardware import execute_sync_cmd, get_machine_stat, linuxcnc
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.modules.machine.router")
@@ -74,6 +78,16 @@ class MdiCommand(BaseModel):
     command: str = Field(..., description="G-code / MDI command string to execute")
 
 
+class PrintCommand(BaseModel):
+    """Pydantic model for loading and starting a G-code program."""
+
+    filename: str = Field(
+        ...,
+        min_length=1,
+        description="Path to the G-code program to load and execute",
+    )
+
+
 class StatusResponse(BaseModel):
     """Generic response model for endpoints that return a status string."""
 
@@ -91,6 +105,33 @@ class StatusResponse(BaseModel):
 
 
 router = APIRouter(tags=["modules:machine"])
+
+
+def _require_machine_ready() -> None:
+    """Reject program-control commands unless the machine is safely powered.
+
+    ``linuxcnc.stat`` objects are snapshots, so poll immediately before
+    checking E-Stop and power state.  The explicit E-Stop check also covers
+    mock/adapter implementations that expose ``estop`` independently from
+    ``task_state``.
+    """
+    machine_stat = get_machine_stat()
+    machine_stat.poll()
+
+    task_state = getattr(machine_stat, "task_state", None)
+    estop = getattr(machine_stat, "estop", 0)
+    estop_active = isinstance(estop, (bool, int)) and bool(estop)
+
+    if task_state == getattr(linuxcnc, "STATE_ESTOP", 1) or estop_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot control a program while the machine is in E-Stop.",
+        )
+    if task_state != getattr(linuxcnc, "STATE_ON", 4):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot control a program while the machine is powered off.",
+        )
 
 
 @router.post(
@@ -190,15 +231,90 @@ def run_mdi(cmd: MdiCommand) -> StatusResponse:
         raise
 
 
+@router.post(
+    "/print",
+    summary="Start G-Code Print",
+    description=(
+        "Switch to automatic mode, load the requested G-code file, and "
+        "start execution from its first line."
+    ),
+    operation_id="startPrint",
+    response_model=StatusResponse,
+)
+def start_print(cmd: PrintCommand) -> StatusResponse:
+    """Load ``cmd.filename`` and start it in LinuxCNC AUTO mode."""
+    _require_machine_ready()
+    if not cmd.filename.strip():
+        raise HTTPException(status_code=400, detail="Filename cannot be blank.")
+
+    execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_AUTO", 2))
+    execute_sync_cmd("program_open", 0, cmd.filename)
+    result = execute_sync_cmd(
+        "auto", 0, getattr(linuxcnc, "AUTO_RUN", 0), 0
+    )
+    return StatusResponse(status=result.get("status", "success"))
+
+
+@router.post(
+    "/pause",
+    summary="Pause G-Code Print",
+    description="Pause execution of the active G-code program.",
+    operation_id="pausePrint",
+    response_model=StatusResponse,
+)
+def pause_print() -> StatusResponse:
+    """Pause the active program after checking machine safety state."""
+    _require_machine_ready()
+    result = execute_sync_cmd(
+        "auto", 0, getattr(linuxcnc, "AUTO_PAUSE", 1)
+    )
+    return StatusResponse(status=result.get("status", "success"))
+
+
+@router.post(
+    "/resume",
+    summary="Resume G-Code Print",
+    description="Resume execution of a paused G-code program.",
+    operation_id="resumePrint",
+    response_model=StatusResponse,
+)
+def resume_print() -> StatusResponse:
+    """Resume the paused program after checking machine safety state."""
+    _require_machine_ready()
+    result = execute_sync_cmd(
+        "auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2)
+    )
+    return StatusResponse(status=result.get("status", "success"))
+
+
+@router.post(
+    "/stop",
+    summary="Stop G-Code Print",
+    description="Abort execution of the active G-code program.",
+    operation_id="stopPrint",
+    response_model=StatusResponse,
+)
+def stop_print() -> StatusResponse:
+    """Abort the active program after checking machine safety state."""
+    _require_machine_ready()
+    result = execute_sync_cmd("abort", 0)
+    return StatusResponse(status=result.get("status", "success"))
+
+
 __all__ = [
     "router",
     "set_state",
     "set_mode",
     "home_axis",
     "run_mdi",
+    "start_print",
+    "pause_print",
+    "resume_print",
+    "stop_print",
     "StateCommand",
     "ModeCommand",
     "HomeCommand",
     "MdiCommand",
+    "PrintCommand",
     "StatusResponse",
 ]
