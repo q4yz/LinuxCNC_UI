@@ -1,0 +1,269 @@
+// Static-structure tests for the Issue #60 State Facade store.
+//
+// Run with: node --test frontend/tests/test-machine-facade.mjs
+//
+// Pinia is not available in a bare ``node --test`` environment, so
+// this suite asserts the source matches the spec from the issue:
+//
+//   * ``TASK_STATE`` and ``INTERP_STATE`` constants carry the exact
+//     integer values the backend's ``hardware/linuxcnc_mock.py``
+//     uses.
+//   * The ``SystemState`` enum exposes the eight members the issue
+//     requires.
+//   * The ``systemState`` getter implements the priority chain:
+//     Offline > Updating > Estop > PowerOff > Paused/Running/Idle.
+//   * ``printProgress`` collapses to 0 for missing / zero total lines
+//     and clamps at 100.
+//   * ``isEstopActive`` is true whenever ``estop == 1`` or
+//     ``task_state == TASK_STATE.ESTOP``.
+//   * The store exposes an ``updateStatus`` action and a mocked
+//     ``recentFiles`` getter per the issue's "mock for now" note.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "../..");
+
+const facadePath = resolve(
+  repoRoot,
+  "frontend/src/stores/machineStore.js",
+);
+
+function readFacade() {
+  return readFileSync(facadePath, "utf-8");
+}
+
+test("facade file exists", () => {
+  // The whole rest of the suite is moot if the file is missing.
+  assert.ok(
+    readFileSync(facadePath, "utf-8").length > 0,
+    "expected frontend/src/stores/machineStore.js to exist",
+  );
+});
+
+test("facade exports TASK_STATE with the exact integer values from LinuxCNC", () => {
+  const text = readFacade();
+  assert.match(
+    text,
+    /export\s+const\s+TASK_STATE\s*=\s*Object\.freeze\(\s*\{[\s\S]*?ESTOP:\s*1/,
+  );
+  assert.match(text, /ESTOP_RESET:\s*2/);
+  assert.match(text, /OFF:\s*3/);
+  assert.match(text, /ON:\s*4/);
+});
+
+test("facade exports INTERP_STATE with the exact integer values from LinuxCNC", () => {
+  const text = readFacade();
+  assert.match(
+    text,
+    /export\s+const\s+INTERP_STATE\s*=\s*Object\.freeze\(\s*\{[\s\S]*?IDLE:\s*1/,
+  );
+  assert.match(text, /READING:\s*2/);
+  assert.match(text, /PAUSED:\s*3/);
+  assert.match(text, /WAITING:\s*4/);
+});
+
+test("facade exports SystemState enum with all eight members", () => {
+  const text = readFacade();
+  assert.match(
+    text,
+    /export\s+const\s+SystemState\s*=\s*Object\.freeze\(\s*\{/,
+  );
+  for (const member of [
+    "OFFLINE",
+    "UPDATING",
+    "ESTOP",
+    "POWER_OFF",
+    "IDLE",
+    "RUNNING",
+    "PAUSED",
+    "FAILURE",
+  ]) {
+    assert.match(
+      text,
+      new RegExp(`${member}:\\s*"`),
+      `SystemState.${member} must exist`,
+    );
+  }
+});
+
+test("facade defines systemState getter with the documented priority chain", () => {
+  const text = readFacade();
+  assert.match(text, /systemState\s*\(\s*state\s*\)\s*\{/);
+  // 1. Offline / Updating connection-level overrides.
+  assert.match(text, /connectionStatus\s*!==\s*["']connected["']/);
+  assert.match(text, /SystemState\.OFFLINE/);
+  assert.match(text, /SystemState\.UPDATING/);
+  // 2. Safety override.
+  assert.match(text, /SystemState\.ESTOP/);
+  // 3. Power-off chain.
+  assert.match(text, /SystemState\.POWER_OFF/);
+  // 4. Execution chain.
+  assert.match(text, /SystemState\.PAUSED/);
+  assert.match(text, /SystemState\.RUNNING/);
+  assert.match(text, /SystemState\.IDLE/);
+  // 5. Failure fallback.
+  assert.match(text, /SystemState\.FAILURE/);
+});
+
+test("facade exposes printProgress that collapses on zero/missing totals and clamps at 100", () => {
+  const text = readFacade();
+  assert.match(text, /printProgress\s*\(\s*state\s*\)\s*\{/);
+  // Collapse to 0 when total_lines is missing or 0.
+  assert.match(
+    text,
+    /total\s*<=\s*0/,
+    "printProgress must collapse to 0 when total_lines is 0",
+  );
+  // Clamp at 100 to avoid the bar overshooting the wrapper.
+  assert.match(
+    text,
+    /Math\.min\(\s*100/,
+    "printProgress must clamp at 100%",
+  );
+});
+
+test("facade exposes isEstopActive covering both raw safety signals", () => {
+  const text = readFacade();
+  assert.match(text, /isEstopActive\s*\(\s*state\s*\)\s*\{/);
+  assert.match(text, /estop\s*===\s*1/);
+  assert.match(text, /TASK_STATE\.ESTOP/);
+});
+
+test("facade ships a mocked recentFiles getter with the FileInfo shape", () => {
+  const text = readFacade();
+  assert.match(text, /recentFiles\s*\(\s*\)\s*\{/);
+  // Each entry exposes ``filename`` so the widget can render without
+  // changes when the real backend list lands.
+  assert.match(text, /filename:/);
+  assert.match(text, /modified:/);
+});
+
+test("facade defines updateStatus action that mutates the raw state", () => {
+  const text = readFacade();
+  assert.match(
+    text,
+    /updateStatus\s*\(\s*newPayload\s*\)\s*\{/,
+    "updateStatus must accept a payload object",
+  );
+  // The action must touch all three flags the transport cares about.
+  assert.match(text, /this\.connectionStatus\s*=/);
+  assert.match(text, /this\.isUpdating\s*=/);
+  assert.match(text, /this\.status\s*=/);
+});
+
+test("facade is registered as a Pinia store via defineStore", () => {
+  const text = readFacade();
+  assert.match(
+    text,
+    /export\s+const\s+useMachineStore\s*=\s*defineStore\(\s*["']machineStore["']/,
+  );
+  assert.match(text, /state:\s*\(\s*\)\s*=>\s*\(/);
+  assert.match(text, /getters:\s*\{/);
+  assert.match(text, /actions:\s*\{/);
+});
+
+test("machine module store forwards telemetry to the facade on every WS message", () => {
+  // The facade is useless in production unless the module store
+  // actually calls ``updateStatus`` when telemetry arrives.
+  const modulePath = resolve(
+    repoRoot,
+    "frontend/src/modules/machine/store.js",
+  );
+  const text = readFileSync(modulePath, "utf-8");
+  // Import the facade from the module store.
+  assert.match(
+    text,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\.\/\.\.\/stores\/machineStore\.js["']/,
+  );
+  // Forward on the full_state and delta branches.
+  assert.match(
+    text,
+    /useMachineFacadeStore\(\s*\)\.updateStatus\(/,
+  );
+  assert.match(text, /payload\.type\s*===\s*["']full_state["']/);
+  assert.match(text, /payload\.type\s*===\s*["']delta["']/);
+});
+
+test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
+  // The widget must consume the facade — not the legacy machine-compat
+  // adapter — so the State Facade actually drives the dashboard.
+  const widgetPath = resolve(
+    repoRoot,
+    "frontend/src/components/ActivePrintWidget.vue",
+  );
+  const text = readFileSync(widgetPath, "utf-8");
+  assert.match(
+    text,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/machineStore\.js["']/,
+  );
+  assert.match(text, /systemState/);
+  // No legacy machine-compat import — the widget is fully migrated.
+  assert.doesNotMatch(text, /machine-compat/);
+});
+
+test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
+  const widgetPath = resolve(
+    repoRoot,
+    "frontend/src/components/ActivePrintWidget.vue",
+  );
+  const text = readFileSync(widgetPath, "utf-8");
+  // Per the issue: "Just mock the click handlers ... console.log".
+  for (const handler of ["printFile", "pausePrint", "resumePrint", "stopPrint"]) {
+    assert.match(text, new RegExp(`function\\s+${handler}\\b`));
+    assert.match(
+      text,
+      new RegExp(`console\\.log\\([\\s\\S]*${handler.replace("Print", "").replace("File", "")}`),
+    );
+  }
+});
+
+test("FileManager emits the edit event with mode='profile'", () => {
+  const fmPath = resolve(
+    repoRoot,
+    "frontend/src/components/FileManager.vue",
+  );
+  const text = readFileSync(fmPath, "utf-8");
+  // The widget's edit handler must pass the four-argument shape that
+  // App.vue's ``openEditor`` expects.
+  assert.match(
+    text,
+    /emit\(\s*['"]edit['"]\s*,\s*filename\s*,\s*false\s*,\s*['"]profile['"]\s*,\s*['"]['"]\s*\)/,
+  );
+});
+
+test("FilesView forwards every edit-event argument to App.vue", () => {
+  const fvPath = resolve(
+    repoRoot,
+    "frontend/src/views/FilesView.vue",
+  );
+  const text = readFileSync(fvPath, "utf-8");
+  // ``handleEdit`` must use a rest parameter so mode/content survive.
+  assert.match(text, /function\s+handleEdit\s*\(\s*\.\.\.\s*args\s*\)/);
+  assert.match(text, /emit\(\s*['"]edit['"]\s*,\s*\.\.\.\s*args\s*\)/);
+});
+
+test("FileManager wraps its content in a full-page flex-1 h-full w-full container", () => {
+  // Issue #60 refactor: FileManager must be a full-page view, not a
+  // dashboard card. The outermost wrapper must declare h-full and
+  // w-full so it stretches edge-to-edge inside FilesView; the inner
+  // scrollable body adds flex-1 + min-h-0 so it grows to fill the
+  // remaining vertical space without overflowing the header.
+  const fmPath = resolve(
+    repoRoot,
+    "frontend/src/components/FileManager.vue",
+  );
+  const text = readFileSync(fmPath, "utf-8");
+  // Outermost wrapper — full width and height, flex column so the
+  // header stays put and the file list scrolls.
+  assert.match(
+    text,
+    /class\s*=\s*["'][^"']*w-full[^"']*h-full[^"']*flex[^"']*flex-col[^"']*["']/,
+  );
+  // Scrollable body uses flex-1 + min-h-0 to fill the leftover space.
+  assert.match(text, /flex-1[^"']*min-h-0/);
+});
