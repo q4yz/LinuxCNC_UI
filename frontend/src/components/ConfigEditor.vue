@@ -89,7 +89,7 @@ onMounted(() => {
         :model-value="fileContent"
         @update:model-value="handleEditorUpdate"
         :extensions="editorExtensions"
-        :disabled="!readOnly"
+        :disabled="readOnly"
         class="editor-codemirror"
       />
     </div>
