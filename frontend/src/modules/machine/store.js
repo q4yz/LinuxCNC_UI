@@ -33,6 +33,7 @@ import { ModulesProgramService } from "../../../generated/api/services/ModulesPr
 import { useConsoleStore } from "../../stores/console.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
 import { eventBus } from "../../core/modules/event-bus.js";
+import { useMachineStore as useMachineFacadeStore } from "../../stores/machineStore.js";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
 const AXIS_NAMES = ["X", "Y", "Z"];
@@ -219,10 +220,20 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
     if (typeof window === "undefined" || typeof WebSocket === "undefined") {
       connectionStatus.value = "disconnected";
+      useMachineFacadeStore().updateStatus({
+        connectionStatus: connectionStatus.value,
+        isUpdating: isUpdating.value,
+        status: { ...status },
+      });
       return;
     }
 
     connectionStatus.value = "connecting";
+    useMachineFacadeStore().updateStatus({
+      connectionStatus: connectionStatus.value,
+      isUpdating: isUpdating.value,
+      status: { ...status },
+    });
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/telemetry`;
@@ -233,6 +244,14 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       // eslint-disable-next-line no-console
       console.log("Connected to LinuxCNC Telemetry");
       connectionStatus.value = "connected";
+      // Mirror the connection transition so the State Facade flips
+      // out of ``Offline`` immediately (the next ``full_state`` will
+      // refresh the payload, but the connection flag is independent).
+      useMachineFacadeStore().updateStatus({
+        connectionStatus: connectionStatus.value,
+        isUpdating: isUpdating.value,
+        status: { ...status },
+      });
     };
 
     currentSocket.onmessage = (event) => {
@@ -248,11 +267,30 @@ export const useMachineStore = defineStore(STORE_ID, () => {
           }
           Object.assign(status, next);
 
+          // Mirror the raw telemetry into the State Facade store so
+          // widgets that bind to ``systemState`` / ``printProgress``
+          // / ``isEstopActive`` react without coupling to the
+          // WebSocket transport (Issue #60).
+          useMachineFacadeStore().updateStatus({
+            connectionStatus: connectionStatus.value,
+            isUpdating: isUpdating.value,
+            status: next,
+          });
+
           eventBus.publish(STATE_TEMPERATURES_TOPIC, {
             temperatures: status.temperatures || {},
           });
         } else if (payload.type === "delta") {
           applyDelta(status, payload.data);
+
+          // Forward the post-delta snapshot to the facade. We pass
+          // ``status`` (the reactive object) after the merge so the
+          // facade receives the merged view, not just the delta.
+          useMachineFacadeStore().updateStatus({
+            connectionStatus: connectionStatus.value,
+            isUpdating: isUpdating.value,
+            status: { ...status },
+          });
 
           eventBus.publish(STATE_TEMPERATURES_TOPIC, {
             temperatures: status.temperatures || {},
@@ -280,6 +318,14 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       );
       connectionStatus.value = "disconnected";
       socket = null;
+
+      // Push the new connection flag to the facade so its
+      // ``systemState`` getter immediately reports ``Offline``.
+      useMachineFacadeStore().updateStatus({
+        connectionStatus: connectionStatus.value,
+        isUpdating: isUpdating.value,
+        status: { ...status },
+      });
 
       if (shouldReconnect && reconnectTimer === null) {
         reconnectTimer = setTimeout(() => {
@@ -309,6 +355,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     socket = null;
     if (currentSocket) currentSocket.close();
     connectionStatus.value = "disconnected";
+    // Mirror the connection transition to the State Facade so its
+    // ``systemState`` getter immediately reports ``Offline``.
+    useMachineFacadeStore().updateStatus({
+      connectionStatus: connectionStatus.value,
+      isUpdating: isUpdating.value,
+      status: { ...status },
+    });
 
     // Clear any running keep-alive intervals to release timers in
     // case the module is being torn down under a hot-reload.

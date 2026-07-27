@@ -1,50 +1,74 @@
 <script setup>
-// ActivePrintWidget — a compact dashboard panel that mirrors the active
-// LinuxCNC program run. It deliberately keeps two visual states:
+// ActivePrintWidget — dashboard widget that surfaces the current machine
+// run state through the Issue #60 State Facade store.
 //
-//   1. Standby (not printing) — surfaces the five newest G-code files so
-//      the operator can pick one to run from the dashboard instead of
-//      having to drill into the dedicated Files view first.
-//   2. Active (printing / paused) — shows the loaded filename, a
-//      progress bar bound to ``printProgress``, and the Pause/Resume and
-//      Stop controls. The widget never mutates local state directly:
-//      every action delegates to the Pinia machine store, which in
-//      turn issues the appropriate HTTP call. The backend's telemetry
-//      stream then updates ``status.interp_state`` / ``task_state`` on
-//      the next polling cycle and the UI re-renders.
+// Two visual states are driven by ``store.systemState``:
+//
+//   * Standby — ``Idle`` / ``PowerOff`` / ``Estop`` (and the safety
+//     fallbacks ``Offline`` / ``Updating`` / ``Failure``). Shows the
+//     five most recent G-code files via the facade's ``recentFiles``
+//     getter (mocked for now per the issue) and a "Print" button next
+//     to each entry.
+//
+//   * Active — ``Running`` / ``Paused``. Shows the loaded filename, a
+//     progress bar bound to ``store.printProgress``, and Pause/Resume
+//     and Stop buttons.
+//
+// Click handlers are intentionally mocked with ``console.log`` per the
+// issue: "Do not manually change the state; the backend will update
+// the JSON automatically." The real Pinia actions still exist on the
+// machine module store and a follow-up can swap the mocks for the
+// actual ``startProgram`` / ``pauseProgram`` / ``resumeProgram`` /
+// ``abortProgram`` calls without touching the widget's structure.
 
-import { computed, onMounted, ref } from "vue";
+import { computed } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineStore } from "../stores/machine-compat";
-import { NcFilesService } from "../../generated/api/services/NcFilesService";
+import { useMachineStore, SystemState } from "../stores/machineStore.js";
 
+// Bind to the facade store. ``storeToRefs`` keeps ``systemState``,
+// ``printProgress`` and the raw ``status`` reactive when destructured
+// into the template.
 const store = useMachineStore();
-const { status, isPrinting, isPaused, printProgress } = storeToRefs(store);
+const { systemState, printProgress, status, recentFiles } = storeToRefs(store);
 
-// Local UI state — the file list is reloaded on mount and whenever the
-// operator returns from the Files page; the count is intentionally
-// bounded to 5 per the dashboard design.
-const recentFiles = ref([]);
-const isLoadingFiles = ref(false);
-const loadError = ref("");
+// ---------------------------------------------------------------------- //
+// Visual state selection                                                 //
+// ---------------------------------------------------------------------- //
+//
+// ``isActive`` is true only for the two "active" enum members —
+// ``Running`` and ``Paused``. Anything else (``Idle``,
+// ``PowerOff``, ``Estop``, ``Offline``, ``Updating``, ``Failure``)
+// renders the Standby view. This intentionally diverges from the
+// previous ``isPrinting`` / ``isPaused`` logic so the widget is
+// driven by the facade, not by raw task/interp flags.
 
-// Only G-code / NGC files are interesting from a printing standpoint.
-// ``NcFilesService.listFiles`` returns the full directory listing
-// (including any non-program artefacts), so the widget filters locally.
+const isActive = computed(
+  () =>
+    systemState.value === SystemState.RUNNING ||
+    systemState.value === SystemState.PAUSED,
+);
+const isPaused = computed(() => systemState.value === SystemState.PAUSED);
+const isRunning = computed(() => systemState.value === SystemState.RUNNING);
+
+// Pretty-print the progress as a one-decimal percentage so the bar
+// label does not dance between ``33.3333%`` and ``33.3334%`` on
+// every telemetry tick.
+const progressPercent = computed(() => printProgress.value.toFixed(1));
+
+// Filter + cap the recent-files list to the five newest G-code / NGC
+// entries. ``recentFiles`` is a mocked getter on the facade; the
+// shape matches ``FileInfo`` so the real ``NcFilesService.listFiles``
+// call can drop in later without changes here.
 const PRINTABLE_EXTENSIONS = [".gcode", ".ngc"];
-
-function isPrintableFile(entry) {
-  if (!entry || typeof entry.filename !== "string") return false;
-  const lowered = entry.filename.toLowerCase();
-  return PRINTABLE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
-}
 
 const printableFiles = computed(() => {
   if (!Array.isArray(recentFiles.value)) return [];
   return recentFiles.value
-    .filter(isPrintableFile)
-    // Newest first — ``modified`` is the ISO-8601 string the backend
-    // already ships; ``Date.parse`` handles ISO-8601 natively.
+    .filter((entry) => {
+      if (!entry || typeof entry.filename !== "string") return false;
+      const lowered = entry.filename.toLowerCase();
+      return PRINTABLE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
+    })
     .slice()
     .sort((a, b) => {
       const aTime = Date.parse(a.modified || "") || 0;
@@ -54,79 +78,66 @@ const printableFiles = computed(() => {
     .slice(0, 5);
 });
 
-async function loadRecentFiles() {
-  isLoadingFiles.value = true;
-  loadError.value = "";
-  try {
-    const list = await NcFilesService.listFiles();
-    recentFiles.value = Array.isArray(list) ? list : [];
-  } catch (err) {
-    loadError.value = err && err.message ? err.message : "Unknown error";
-    recentFiles.value = [];
-  } finally {
-    isLoadingFiles.value = false;
-  }
-}
+// ---------------------------------------------------------------------- //
+// Mocked click handlers                                                  //
+// ---------------------------------------------------------------------- //
+//
+// Per the issue spec. The backend's telemetry stream is the source of
+// truth — the widget never mutates local state directly. A follow-up
+// can replace these ``console.log`` calls with the real Pinia actions
+// (``store.startProgram(filename)``, etc.) once the backend's
+// file-load contract is finalised.
 
 function printFile(filename) {
   if (!filename) return;
-  // The store action handles loading + running; the backend's
-  // telemetry stream will flip ``isPrinting`` once LinuxCNC reports
-  // the task as executing.
-  void store.startProgram(filename);
+  // eslint-disable-next-line no-console
+  console.log("[ActivePrintWidget] Print action (mocked)", filename);
 }
 
-function togglePause() {
-  if (isPaused.value) {
-    void store.resumeProgram();
-  } else {
-    void store.pauseProgram();
-  }
+function pausePrint() {
+  // eslint-disable-next-line no-console
+  console.log("[ActivePrintWidget] Pause action (mocked)");
+}
+
+function resumePrint() {
+  // eslint-disable-next-line no-console
+  console.log("[ActivePrintWidget] Resume action (mocked)");
 }
 
 function stopPrint() {
-  void store.abortProgram();
+  // eslint-disable-next-line no-console
+  console.log("[ActivePrintWidget] Stop action (mocked)");
 }
-
-// Pretty-print the progress as an integer percentage to avoid the bar
-// "dancing" between values like 33.3333% and 33.3334%.
-const progressPercent = computed(() => printProgress.value.toFixed(1));
-
-onMounted(() => {
-  void loadRecentFiles();
-});
 </script>
 
 <template>
   <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl flex flex-col">
-    <!-- Standby view: no program is loaded or the interpreter is idle. -->
+    <!-- Standby view: the machine is not actively reading a program. -->
     <div
-      v-if="!isPrinting && !isPaused"
+      v-if="!isActive"
       class="p-4 flex flex-col space-y-4"
     >
       <div class="flex items-center justify-between">
         <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
           <span class="mr-2">💤</span> Standby
         </h2>
-        <button
-          type="button"
-          class="text-xs text-blue-400 hover:text-blue-300"
-          :disabled="isLoadingFiles"
-          @click="loadRecentFiles"
+        <span
+          class="text-xs font-mono px-2 py-0.5 rounded"
+          :class="systemState === SystemState.ESTOP
+            ? 'bg-red-700/40 text-red-200'
+            : systemState === SystemState.OFFLINE
+              ? 'bg-gray-700/40 text-gray-300'
+              : 'bg-blue-700/40 text-blue-200'"
         >
-          {{ isLoadingFiles ? "Refreshing..." : "Refresh" }}
-        </button>
+          {{ systemState }}
+        </span>
       </div>
 
       <p class="text-xs text-gray-500">
         No active print. Pick one of the recent files to start a job.
       </p>
 
-      <div v-if="loadError" class="text-xs text-red-400">
-        Failed to load files: {{ loadError }}
-      </div>
-
-      <ul v-else-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
+      <ul v-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
         <li
           v-for="file in printableFiles"
           :key="file.filename"
@@ -148,17 +159,15 @@ onMounted(() => {
         </li>
       </ul>
 
-      <div
-        v-else-if="!isLoadingFiles"
-        class="text-xs text-gray-500 italic"
-      >
+      <div v-else class="text-xs text-gray-500 italic">
         No printable G-code files found. Upload one from the Files view.
       </div>
     </div>
 
-    <!-- Active view: a program is loaded. The same panel renders for
-         both the running and paused states; only the button label and
-         progress-bar hue change so the layout does not jump. -->
+    <!-- Active view: the interpreter is reading a program (or paused
+         mid-program). The widget stays mounted across the
+         Running/Paused transition — only the header chip and the
+         action button label change so the layout does not jump. -->
     <div v-else class="p-4 flex flex-col space-y-4">
       <div class="flex items-center justify-between">
         <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
@@ -204,7 +213,7 @@ onMounted(() => {
           :class="isPaused
             ? 'bg-green-600 hover:bg-green-500 text-white'
             : 'bg-yellow-600 hover:bg-yellow-500 text-white'"
-          @click="togglePause"
+          @click="isPaused ? resumePrint() : pausePrint()"
         >
           {{ isPaused ? "Resume" : "Pause" }}
         </button>
@@ -216,6 +225,14 @@ onMounted(() => {
           Stop / Cancel
         </button>
       </div>
+
+      <!-- Defensive: the raw ``status.file`` can be empty during the
+           first telemetry tick. ``isRunning`` is also exported from
+           the script block so it is available even if a future
+           refactor drops ``isPaused``. -->
+      <span v-if="!isRunning && !isPaused" class="text-xs text-gray-500 italic">
+        Program loaded but not yet running.
+      </span>
     </div>
   </div>
 </template>

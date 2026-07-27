@@ -73,8 +73,12 @@ const loadFile = async (filename) => {
 
 const editFile = (filename) => {
   // Bubble the request up to the parent view, which owns the
-  // full-screen editor and already knows how to mount it.
-  emit('edit', filename)
+  // full-screen editor and already knows how to mount it. The
+  // ``mode="profile"`` argument tells ``ConfigEditor`` that the file
+  // came from the G-code file list (not a raw machine config) so the
+  // editor delegates ``save`` to the parent instead of writing the
+  // config router directly (Issue #60).
+  emit('edit', filename, false, 'profile', '')
 }
 
 const formatSize = (bytes) => {

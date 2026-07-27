@@ -1,27 +1,38 @@
 ### Resolution Summary
-Added the Camera module's Vue 3 frontend: a Pinia device/preference store, an MJPEG dashboard viewer with camera switching and orientation controls, and a settings panel for per-camera display preferences plus the backend `ip_camera_url` setting.
+Added a new State Facade Pinia store (`stores/machineStore.js`) that stores the raw LinuxCNC telemetry payload verbatim but exposes a clean string-based `systemState` getter, a clamped `printProgress` getter, and an explicit `isEstopActive` boolean. Rewrote `ActivePrintWidget.vue` to drive both visual states (Standby / Active) from `systemState` with mocked Print/Pause/Resume/Stop handlers per the issue. Refactored `FileManager.vue` into a full-page view whose Edit button emits `@edit` with `mode="profile"` so the parent layout opens it through the shared full-screen `ConfigEditor`.
 
 ### Files Modified
-- `frontend/src/modules/camera/cameraStore.js`: Added camera discovery, active-camera cycling, validated per-camera preferences, and guarded `localStorage` persistence.
-- `frontend/src/modules/camera/components/CameraViewer.vue`: Added the responsive MJPEG `<img>` viewer, explicit stream teardown behavior, camera-name overlay, flip/mirror transforms, and switch-camera FAB.
-- `frontend/src/modules/camera/components/CameraSettings.vue`: Added device preference controls and IP camera URL loading/saving through the canonical module settings client.
-- `frontend/src/modules/camera/components/CameraPanel.vue`: Converted the existing panel into a compatibility wrapper around `CameraViewer` for the module-owned sidebar view.
-- `frontend/src/modules/camera/index.js`: Registered the lazy camera settings panel and exported the new frontend components.
-- `frontend/src/App.vue`: Kept settings-only components out of module sidebar view resolution.
-- `frontend/src/views/DashboardView.vue`: Replaced the legacy camera panel slot with the new lazy `CameraViewer` while preserving the nullable-module guard.
-- `frontend/tests/test-camera-null.mjs`: Updated camera module integration assertions for `CameraViewer`.
+- `frontend/src/stores/machineStore.js` — *new* — the State Facade store. Exports `TASK_STATE` (ESTOP/ESTOP_RESET/OFF/ON), `INTERP_STATE` (IDLE/READING/PAUSED/WAITING), and the `SystemState` enum (Offline/Updating/Estop/PowerOff/Idle/Running/Paused/Failure). State holds `connectionStatus`, `isUpdating`, and `status` (raw payload); getters expose `systemState` (priority chain: Offline → Updating → Estop → PowerOff → Paused/Running/Idle → Failure), `printProgress` (0–100, clamped, returns 0 on missing/zero totals), `isEstopActive` (raw safety boolean), and a mocked `recentFiles` list matching the `FileInfo` shape. The `updateStatus(payload)` action is the single sanctioned entry point for telemetry and is called by the machine module store on every WebSocket frame.
+- `frontend/src/modules/machine/store.js` — added `import { useMachineStore as useMachineFacadeStore } from "../../stores/machineStore.js"`; the WebSocket transport now calls `useMachineFacadeStore().updateStatus({ connectionStatus, isUpdating, status })` in `connect()` / `disconnect()` / `onopen` / `onclose` / `full_state` / `delta`. The facade reflects the module's state without breaking the nullable-module guarantee in `stores/machine-compat.js`.
+- `frontend/src/components/ActivePrintWidget.vue` — rewritten to import `useMachineStore` and `SystemState` from the new facade. `systemState === RUNNING || PAUSED` selects the Active view; everything else (Idle / PowerOff / Estop / Offline / Updating / Failure) renders the Standby view. The Standby view uses the facade's mocked `recentFiles` getter (filtered/sorted to five newest `.gcode` / `.ngc` entries). The Active view shows `status.file`, a progress bar bound to `printProgress`, and Pause/Resume + Stop buttons. Click handlers (`printFile`, `pausePrint`, `resumePrint`, `stopPrint`) log to `console` per the issue's "mock the click handlers … the backend will update the JSON automatically" guidance.
+- `frontend/src/components/FileManager.vue` — confirmed the wrapper uses `w-full h-full flex flex-col` so it stretches edge-to-edge inside `FilesView`. The Edit button now emits `@edit` with the four-argument signature `(filename, readOnly=false, mode="profile", content="")` so `App.vue`'s `openEditor(filename, readOnly, mode, content)` passes `mode="profile"` straight into `<ConfigEditor>`.
+- `frontend/src/views/FilesView.vue` — `handleEdit(...args)` forwards every emit argument so the new `mode` tag survives the trip up to `App.vue`.
+- `frontend/tests/test-machine-facade.mjs` — *new* — 16 static-structure tests covering the constants, enum members, getter priority chain, `printProgress` collapse / clamp behaviour, `isEstopActive` boolean, mocked `recentFiles` shape, `updateStatus` action, the Pinia `defineStore` registration, the machine module's telemetry forwarding, the widget's facade binding + mocked handlers, the `FileManager` emit signature, the `FilesView` rest forwarding, and the `flex-1 h-full w-full` layout wrapper.
 
 ### Architectural Decisions
-- The viewer uses a keyed `<img v-if="activeCameraId">`; switching or clearing the active ID destroys the old image request so the backend can immediately release its one-camera hardware lock.
-- Only `cameraPreferences` is persisted in `localStorage`. Stored data is normalized on read, and unavailable, malformed, blocked, or full storage degrades safely to in-memory preferences.
-- Camera IDs are URL-encoded before being sent to `/stream`, which supports device paths and IP camera URLs containing their own query parameters.
-- The IP camera URL is saved with `writeKey("ip_camera_url", value)` so unrelated backend camera settings are not replaced. Devices are refreshed after a save so the configured IP camera appears immediately.
-- `CameraPanel.vue` remains as a thin compatibility shell, and the generic module-view resolver excludes settings-only components, so the camera sidebar consistently opens the live viewer.
+- **Standalone facade, not a derived view.** The issue's example explicitly shows `state: () => ({ connectionStatus, isUpdating, status })` plus an `updateStatus` action; keeping the facade as its own store (rather than a computed projection over `useMachineStore` from `machine-compat.js`) preserves that contract and lets advanced / diagnostic components still read the raw integers from `state.status` without us adding per-field getters.
+- **Module store bridges telemetry.** The machine module owns the WebSocket transport per Phase 2b, so it is the natural place to forward raw frames into the facade. The call is a one-liner (`useMachineFacadeStore().updateStatus(...)`) and only touches the existing message-handler code paths; no new pub/sub topic or event-bus integration was needed.
+- **No state duplication in the widget.** `ActivePrintWidget` only binds to the facade (`systemState`, `printProgress`, `status.file`, `recentFiles`) — the legacy `machine-compat` adapter is no longer imported by the widget, so the dashboard state is owned by exactly one Pinia store.
+- **Mocked click handlers.** The issue explicitly says "Just mock the click handlers … Do not manually change the state; the backend will update the JSON automatically." A follow-up can swap the `console.log` calls for the real `startProgram` / `pauseProgram` / `resumeProgram` / `abortProgram` actions without touching the widget's structure.
+- **Edit-event signature widened, not rewritten.** `FileManager` already had an `Edit` button emitting `@edit`; the change is purely additive (two new trailing arguments) so existing callers that read only the filename are unaffected, and `App.vue` already had a four-argument `openEditor` ready to receive `mode`.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend` passed.
-- [x] `npm --prefix frontend run build` passed; only pre-existing machineconfig dynamic-import and bundle-size warnings were reported.
-- [x] `node frontend/scripts/check-store-ids.mjs frontend/src/modules` passed.
-- [x] `node --test frontend/tests/test-camera-null.mjs frontend/tests/test-registry.mjs` passed: 9 tests.
-- [ ] `python3 -m venv .venv` could not recreate the existing environment because the runner lacks Debian's `ensurepip`/`python3-venv`; the existing functional `.venv` was used and all backend requirements were already satisfied.
-- [ ] Root `npm ci` is not applicable because the repository root has no `package-lock.json`. `npm --prefix frontend ci` also reports the pre-existing frontend lockfile is missing `@emnapi/runtime@1.11.3`; the checked-out dependencies were sufficient for the successful production build.
+- [x] `python -m compileall -q backend` — passed (no output).
+- [x] `npm --prefix frontend run build` — passed in ~4.5 s; only pre-existing warnings about chunk size and ineffective dynamic imports for the `machineconfig` panels.
+- [x] `node --test frontend/tests/test-machine-facade.mjs` — 16 passed, 0 failed.
+- [x] `node --test frontend/tests/*.mjs` — 88 passed, 4 failed. The four failures (`test-console-features.mjs` ×2, `test-machine-store.mjs` ×1, `test-machineconfig-registry.mjs` ×1) are pre-existing and exist on `main` without my changes (verified via `git stash` + re-run).
+- [x] `pytest backend/tests/` — 172 passed, 6 errors. The 6 errors are `ModuleNotFoundError: No module named 'backend'` in `test_jog_watchdog.py`; pre-existing on `main` (verified via `git stash` + re-run).
+- [x] `node frontend/scripts/check-store-ids.mjs` — `[lint:store-ids] OK (frontend/src/modules)`; the new `machineStore` id lives under `frontend/src/stores/` and is intentionally outside the `module_` prefix namespace.
+
+### Acceptance-criteria checklist (Issue #60)
+- [x] `frontend/src/stores/machineStore.js` defines `TASK_STATE` (ESTOP/ESTOP_RESET/OFF/ON) and `INTERP_STATE` (IDLE/READING/PAUSED/WAITING) as frozen constants.
+- [x] The `SystemState` enum exposes the eight members: `Offline`, `Updating`, `Estop`, `PowerOff`, `Idle`, `Running`, `Paused`, `Failure`.
+- [x] `systemState` getter implements the documented priority chain (Offline → Updating → Estop → PowerOff → Paused / Running / Idle → Failure).
+- [x] `printProgress` collapses to 0 on missing/zero `total_lines`, clamps at 100, and never returns negative values.
+- [x] `isEstopActive` is true whenever `estop == 1` or `task_state == TASK_STATE.ESTOP`.
+- [x] `updateStatus(payload)` is the single sanctioned entry point for telemetry and is called by the machine module store on every `full_state` / `delta` frame and every WebSocket lifecycle transition.
+- [x] `ActivePrintWidget.vue` binds to the facade (no longer to `machine-compat`) and renders two visual states driven by `systemState`: Standby (`Idle` / `PowerOff` / `Estop` / `Offline` / `Updating` / `Failure`) with a mocked `recentFiles` list and Print buttons, and Active (`Running` / `Paused`) with `status.file`, a `printProgress`-bound progress bar, and Pause/Resume + Stop buttons.
+- [x] Click handlers are mocked with `console.log` per the issue; no local state mutation.
+- [x] `FileManager.vue` is a full-page view (`w-full h-full flex flex-col` wrapper) and every row's Edit button emits `@edit` with `mode="profile"` so the parent `App.vue` opens it through the shared full-screen `ConfigEditor`.
+- [x] `FilesView.vue` forwards every `@edit` argument to `App.vue` via a rest-parameter handler.
+- [x] Frontend `vite build` succeeds without errors and `python -m compileall -q backend` succeeds.
