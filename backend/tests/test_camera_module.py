@@ -55,13 +55,38 @@ def test_camera_stream_endpoint_is_mounted(tmp_data_root, clean_env):
     client = TestClient(app)
 
     # Status endpoint is reachable without a real camera because the
-    # worker is wired but not started until the first /stream request.
+    # capture is opened lazily on the first /stream request. The new
+    # schema (Issue #56) adds ``active_id`` and ``refcount`` to the
+    # legacy ``{running, last_frame_at}`` keys; we assert the legacy
+    # keys are still present and the new ones reflect "idle".
     resp = client.get("/api/v1/modules/camera/status")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body.keys()) == {"running", "last_frame_at"}
     assert body["running"] is False
     assert body["last_frame_at"] is None
+    assert body["active_id"] is None
+    assert body["refcount"] == 0
+
+
+def test_camera_usb_endpoint_is_mounted(tmp_data_root, clean_env):
+    """``GET /usb`` returns the detection payload.
+
+    No cameras are attached in the CI sandbox so the ``devices`` list
+    is empty, but the endpoint shape (``devices`` + ``platform``)
+    must match the Pydantic schema.
+    """
+    app, _ = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/modules/camera/usb")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "devices" in body
+    assert "platform" in body
+    assert isinstance(body["devices"], list)
+    # Platform string is non-empty (linux / win32 / darwin / other).
+    assert isinstance(body["platform"], str)
+    assert body["platform"]
 
 
 def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
@@ -69,16 +94,20 @@ def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
     app, _ = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    # GET returns defaults merged in.
+    # GET returns defaults merged in. Issue #56 renamed
+    # ``device_index`` (int) to ``default_device_id`` (str) so the
+    # frontend can pass through arbitrary ``/dev/videoN`` paths and
+    # HTTP/RTSP URLs.
     resp = client.get("/api/v1/modules/camera/settings")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload == {
-        "device_index": 0,
         "width": 640,
         "height": 480,
         "jpeg_quality": 70,
         "target_fps": 15,
+        "default_device_id": "",
+        "ip_camera_url": "",
     }
 
     # PUT bulk returns the merged payload.
@@ -99,6 +128,25 @@ def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
         json=24,
     )
     assert resp.json()["target_fps"] == 24
+
+
+def test_camera_devices_endpoint_is_mounted(tmp_data_root, clean_env):
+    """``GET /devices`` combines USB detection with the IP-camera URL.
+
+    Without a configured IP camera the IP row is absent. The endpoint
+    shape must match the Pydantic schema regardless of contents.
+    """
+    app, _ = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/modules/camera/devices")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "devices" in body
+    assert isinstance(body["devices"], list)
+    for entry in body["devices"]:
+        assert set(entry.keys()) == {"id", "name", "source"}
+        assert entry["source"] in {"usb", "ip"}
 
 
 def test_camera_registry_logs_mounted_summary(tmp_data_root, clean_env, caplog):

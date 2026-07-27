@@ -45,11 +45,12 @@ def test_defaults_served_when_no_persisted_file(tmp_data_root: Path):
     resp = client.get("/api/v1/modules/camera/settings")
     assert resp.status_code == 200
     assert resp.json() == {
-        "device_index": 0,
         "width": 640,
         "height": 480,
         "jpeg_quality": 70,
         "target_fps": 15,
+        "default_device_id": "",
+        "ip_camera_url": "",
     }
 
     # The store does not auto-create the file on read.
@@ -87,11 +88,13 @@ def test_put_persists_atomically(tmp_data_root: Path):
 
 
 def test_worker_reloads_settings_each_frame(tmp_data_root: Path):
-    """The worker reads the merged payload before every frame.
+    """The StreamManager reads the merged payload before every frame.
 
-    We exercise the worker without a real OpenCV install by stubbing
-    ``cv2`` for the duration of the test. The point of this test is
-    the ``_reload_config`` plumbing, not the frame capture loop.
+    Issue #56 replaced the background ``CameraWorker`` thread with an
+    on-demand :class:`~modules.camera.router.StreamManager`. The
+    public surface this test pins down is ``reload_config()``: every
+    stream iteration re-reads the merged settings so a PUT takes
+    effect on the next frame without a restart.
     """
     from modules.camera import router as camera_router
     from modules.camera.settings import CameraSettings
@@ -102,22 +105,22 @@ def test_worker_reloads_settings_each_frame(tmp_data_root: Path):
         defaults=CameraSettings(),
     )
 
-    # Build a worker wired to the settings store directly — no FastAPI
-    # app needed because we are not exercising the HTTP surface.
-    camera_router.bind_worker_settings(settings)
-    worker = camera_router._worker
+    # Wire the singleton manager to a fresh settings store — no
+    # FastAPI app needed because we are not exercising HTTP.
+    camera_router.bind_settings_store(settings)
+    manager = camera_router._stream_manager
 
-    cfg = worker._reload_config()
+    cfg = manager.reload_config()
     assert cfg.jpeg_quality == 70  # defaults
     assert cfg.target_fps == 15
 
-    # Persist a new value via the store; the worker must see it.
+    # Persist a new value via the store; the manager must see it.
     settings.write_key("jpeg_quality", 95)
-    cfg = worker._reload_config()
+    cfg = manager.reload_config()
     assert cfg.jpeg_quality == 95
 
     # Invalid keys are silently dropped via Pydantic validation; the
-    # worker falls back to defaults rather than crashing the loop.
+    # manager falls back to defaults rather than crashing the loop.
     settings.write_all({"width": -1})  # violates ``ge=160``
-    cfg = worker._reload_config()
+    cfg = manager.reload_config()
     assert cfg.width == 640  # default still wins
