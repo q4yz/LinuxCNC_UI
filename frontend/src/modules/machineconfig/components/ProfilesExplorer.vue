@@ -13,12 +13,12 @@ const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
 const isDragging = ref(false);
-
 const entries = computed(() =>
-  profilesTree.entries
+  profilesTree.value.entries
     .filter((entry) => (entry.parent || "") === currentDirectory.value)
     .sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "folder" ? -1 : 1),
 );
+
 const breadcrumbs = computed(() => currentDirectory.value.split("/").filter(Boolean));
 
 function joinPath(directory, name) {
@@ -85,13 +85,27 @@ async function downloadProfile(entry) {
   if (content === null) return;
   downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
 }
-function downloadBlob(blob, name) {
+function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
+  // Prevent the Axios [object Object] trap
+  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
+
+  const blob = new Blob([data], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
+
   anchor.href = url;
   anchor.download = name;
+  anchor.style.display = "none";
+
+  // Prevent the Firefox trap
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(anchor);
+
+  // Prevent the Safari trap
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 150);
 }
 </script>
 

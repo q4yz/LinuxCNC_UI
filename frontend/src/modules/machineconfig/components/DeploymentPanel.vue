@@ -21,12 +21,31 @@ async function onDeploy() {
 async function downloadRemora() {
   const content = await store.readStagedFileContent("remora.json");
   if (content === null) return;
-  const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+
+  // Pass the data to the helper instead of managing the Blob here
+  downloadBlob(content, "remora.json", "application/json");
+}
+function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
+  // 1. Prevent the Axios [object Object] trap
+  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
+
+  const blob = new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
+
   anchor.href = url;
-  anchor.download = "remora.json";
+  anchor.download = name;
+  anchor.style.display = "none";
+
+  // 2. Prevent the Firefox trap
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(anchor);
+
+  // 3. Prevent the Safari trap
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 150);
 }
 
 const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === "remora.json"));
