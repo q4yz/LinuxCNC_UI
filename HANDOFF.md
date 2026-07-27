@@ -1,31 +1,25 @@
 ### Resolution Summary
-Issue #49 routed every backend filesystem call through a layered `FileService` architecture (base + four domain services) so the routers under `backend/routers/` and `backend/modules/machineconfig/router.py` are now thin HTTP wrappers that only handle Pydantic models and error translation.
+Added a strictly typed Klipper-style configuration pipeline that validates every supported LinuxCNC-facing section, rejects undefined keywords with section/key details, builds linked dataclass component objects, and feeds the validated graph into the existing Klipper-to-LinuxCNC compiler.
 
 ### Files Modified
-- `backend/services/file_service.py` (new): Base `FileService` with `list_files`, `read_file`, `write_file`, `write_bytes`, `create_directory`, `delete`, `rename`, `set_read_only`, `mark_tree_read_only`, `clear_directory`, `copy_tree`, and the minimal `safe_join` invariant. Includes a `FileMetadata` dataclass that mirrors the legacy `DirectoryEntry` shape and adds a `read_only` flag driven by the POSIX mode bits.
-- `backend/services/domain_file_services.py` (new): Four domain services — `ConfigFileService` (profiles, `.cfg`-only filter for the legacy surface), `ProgramFileService` (nc_files, `.gcode`/`.ngc` filter, binary upload helper), `StagedFileService` (read-only by default, `clear_and_stage` and `deploy_to_active` orchestration), `ActiveFileService` (read-only viewer with `machine_name()` probe). Exposes `get_*_service` factories with a per-process cache and a `reset_service_cache()` test helper.
-- `backend/services/__init__.py`: Re-exports the new services so callers can `from services import ConfigFileService`.
-- `backend/routers/config.py`: Rewritten as a thin wrapper around `ConfigFileService`. Dropped the legacy `compile_generate`/`compile_deploy` endpoints (and the unused `CompileGenerateResponse`, `CompileDeployResponse`, `GeneratedFiles` models) — superseded by the module router. Dropped `os`, `pathlib`, `MachineConfig`, and `HalCompiler` imports.
-- `backend/routers/files.py`: Rewritten to use `ProgramFileService` for `list_files`, `upload_file`, `delete_file`. The `load_program` endpoint keeps its `linuxcnc.execute_sync_cmd` flow behind a `TODO` (explicitly out of scope for #49; the follow-up will wrap it in a `ProgramLoader` service). Indentation normalised from tabs to 4-space.
-- `backend/modules/machineconfig/router.py`: All `filesystem.*` calls replaced with the four domain services. `ConfigFileService` for profiles CRUD + the marker probe, `StagedFileService` for the staged view + `clear_and_stage` + `mark_read_only` + `deploy_to_active`, `ActiveFileService` for the active view + `machine_name()`. The compiler marker probe (`_build_compiler_marker_probe`) stays in the router because mapping compilers to marker detection is a registry concern, not a filesystem concern.
-- `backend/modules/machineconfig/module.py`: Drops the `from . import filesystem` import; the three roots are now materialised by instantiating `get_config_service` / `get_staged_service` / `get_active_service` in `on_load`. Updated docstring to record that legacy `/api/v1/compiler/*` and `/api/v1/config/*` endpoints are gone.
-- `backend/modules/machineconfig/filesystem.py`: Deleted. The four roots and all helpers (`safe_join`, `list_tree`, `ensure_directories`, `clear_directory`, `copy_tree`, `mark_staged_readonly`, `parse_machine_name`) migrated into the new services.
-- `backend/routers/compiler.py`: Deleted. The legacy `HalCompiler`-driven `/compiler/profiles`, `/compiler/generate/{profile_name}`, `/compiler/deploy` endpoints are gone; the module router's `/compile` and `/deploy` supersede them.
-- `backend/main.py`: Drops the `compiler` import + `include_router` call.
-- `backend/tests/test_machineconfig_module.py`: `isolated_machine_config` fixture now monkeypatches `services.domain_file_services._MACHINE_CONFIG_DIR/_PROFILES_DIR/_STAGED_DIR/_ACTIVE_DIR` and calls `reset_service_cache()` so the new service factories see the isolated tree. Same public surface, same 22 tests still pass.
+- `backend/modules/machineconfig/schema.py` (new): Defines supported section patterns, exact allowed-key sets, ignored printer keys, and the explicit MCU bypass contract.
+- `backend/modules/machineconfig/models.py` (new): Defines dataclasses for printer, steppers, secondary endstops, extruder, heated bed, spindle, and the compiler-ready machine graph.
+- `backend/modules/machineconfig/parser.py` (new): Implements case-preserving INI parsing, strict keyword/section and typed-value validation, actionable error classes, ignored-setting remarks, and deferred endstop-to-stepper linking.
+- `backend/modules/machineconfig/compilers/klipper_linuxcnc.py`: Replaces best-effort printer parsing with the strict parser and validates the source before staging any artifact.
+- `backend/tests/test_machineconfig_parser.py` (new): Demonstrates invalid-key rejection and verifies linked endstop objects, MCU bypass behavior, typed values, and missing-stepper errors.
+- `HANDOFF.md`: Records the issue #51 implementation and verification results.
 
 ### Architectural Decisions
-- **Service cache.** A small `_SERVICE_CACHE` keyed by `f"{cls.__name__}:{resolved_root}"` lets the FastAPI dependency surface hand out a single service per root per process, while tests can call `reset_service_cache()` to pick up a freshly-monkeypatched root.
-- **Read-only enforcement.** `FileService.write_file` / `write_bytes` / `delete` consult the POSIX mode bits before touching the disk; `StagedFileService` and `ActiveFileService` flip `default_read_only = True` so the frontend badge stays correct even before the compile step runs. The `clear_and_stage` wrapper always re-applies `mark_tree_read_only` after a compile (even on partial failure) so a half-staged payload cannot become a deploy target.
-- **Error mapping.** Routers catch `FileNotFoundError → 404`, `FileExistsError → 409`, `IsADirectoryError → 400`, `PermissionError → 403`, `ValueError → 400` from the services. The legacy HTTP status codes for the existing endpoints are preserved byte-for-byte (verified by the existing 22 machineconfig tests).
-- **Staged deploy promotion.** The "staged → active" copy logic lives in `StagedFileService.deploy_to_active(active_service)`. The router stays one line, and the deploy semantics (clear active → copytree → chmod) are single-sourced.
-- **Backwards compatibility.** The endpoint contracts (paths, methods, request/response models) for `/api/v1/config/*`, `/api/v1/ncfiles/*`, and `/api/v1/modules/machineconfig/*` are unchanged. The legacy `/compile/generate` and `/compile/deploy` endpoints are explicitly removed per the issue brief ("superseded by router.py"); the frontend has already migrated to the module surface.
-- **Out of scope left in code as TODO.** `ProgramFileService.load_program` and the `_build_compiler_marker_probe` mapper are flagged but not wrapped — both are called out in the issue body.
+- The parser lives at the `machineconfig` module boundary, separate from schemas, dataclass models, and artifact compilation. This keeps validation reusable while allowing the existing compiler to consume the graph.
+- Keyword names are case-preserved so the declared Klipper PID keys (`pid_Kp`, `pid_Ki`, `pid_Kd`) remain exact and misspellings cannot be silently normalized.
+- MCU sections accept and bypass their transport-specific contents because the issue explicitly marks `[mcu]` and `[mcu <name>]` as ignored for LinuxCNC; all modelled sections enforce exact allowlists.
+- Secondary endstops are resolved after all sections are parsed, allowing them to appear before their target stepper while still producing bidirectional object links (`EndstopSwitch.stepper` and `Stepper.endstops`).
+- Listed component properties are optional unless graph integrity requires them; the `stepper` key on a secondary endstop is mandatory because the object cannot otherwise be linked. Present numeric and enumerated values are validated strictly.
 
 ### Testing Verification
-- [x] `python3 -m pytest backend/tests/` — 147/147 tests pass (22 machineconfig tests confirm the new service layer preserves endpoint contracts).
-- [x] `python3 -m compileall -q backend` — clean compile, no errors.
-- [x] `node --test frontend/tests/test-machineconfig-registry.mjs` — 9/9 frontend tests pass.
-- [x] `grep -rn "os\.path\|pathlib\|shutil\|os\.mkdir\|os\.makedirs\|os\.listdir" backend/routers/ backend/modules/machineconfig/router.py` — only docstring/comment matches remain (and the unrelated `system.py` version router, which is out of scope).
-- [x] Smoke-tested the live app: `/api/v1/config` 200, `/api/v1/modules/machineconfig/compilers` 200, `/api/v1/modules/machineconfig/profiles/tree` 200, `/api/v1/ncfiles` 200, `/api/v1/compiler/profiles` 404 (legacy router gone as planned).
-- [x] Traversal safety: `ConfigFileService.safe_join("../escape.cfg")` raises `ValueError`, which the router maps to HTTP 400.
+- [x] `python -m pytest backend/tests/` — 150 passed, including the new invalid-key and object-graph tests.
+- [x] `python -m compileall -q backend` — completed without errors.
+- [x] `npm --prefix frontend run build` — production build completed successfully (existing chunk-size/dynamic-import warnings only).
+- [x] `python -m pip install -r backend/requirements.txt` — all backend requirements satisfied in the provided `.venv`.
+- [ ] `python3 -m venv .venv` could not recreate the runner-provided environment because the host lacks `ensurepip`/`python3.12-venv`; the existing `.venv` remained usable for all Python checks.
+- [ ] The prescribed install-only commands could not complete: root `npm ci` has no root `package-lock.json`, and `npm --prefix frontend ci` reports the existing frontend lock file is missing `@emnapi/runtime@1.11.3`. The already-installed frontend dependencies successfully produced the production build.

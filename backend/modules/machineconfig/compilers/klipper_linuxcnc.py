@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 from typing import List
 
+from ..parser import parse_config
 from .base import Compiler
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.klipper_linuxcnc")
@@ -44,9 +45,8 @@ class KlipperToLinuxCNCCompiler(Compiler):
       operators looking for them by hand don't need to relearn anything.
     * The source marker default is :data:`DEFAULT_SOURCE_MARKER`
       (``#Start``), matching the issue brief.
-    * The compiler tolerates a missing or unreadable INI section in
-      the source — it falls back to safe defaults rather than raising,
-      so a single bad profile doesn't brick the deploy button.
+    * The compiler enforces the strict Klipper schema before writing
+      artifacts, so unsupported sections and keywords fail fast.
     """
 
     id = "klipper-to-linuxcnc"
@@ -71,29 +71,35 @@ class KlipperToLinuxCNCCompiler(Compiler):
         if not source_path.exists() or not source_path.is_file():
             raise FileNotFoundError(f"Source profile not found: {source_path}")
 
+        # 1. Parse and strictly validate the source before writing any
+        # artifacts. The graph is retained so artifact writers can consume
+        # linked components as the compiler grows.
+        machine_name = source_path.stem
+        machine = parse_config(source_path)
+        printer_section = {}
+        if machine.printer is not None:
+            printer_section = {
+                "kinematics": machine.printer.kinematics,
+                "max_velocity": str(
+                    machine.printer.max_velocity
+                    if machine.printer.max_velocity is not None
+                    else 300.0
+                ),
+                "max_accel": str(
+                    machine.printer.max_accel
+                    if machine.printer.max_accel is not None
+                    else 3000.0
+                ),
+            }
+
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Copy the source verbatim. Operators reading the staged
-        #    folder by hand expect ``machine.cfg`` to be the same file
-        #    they edited.
+        # 2. Copy the source verbatim. Operators reading the staged folder by
+        # hand expect ``machine.cfg`` to be the same file they edited.
         staged_source = output_dir / "machine.cfg"
         staged_source.write_bytes(source_path.read_bytes())
 
-        # 2. Pull what little we can out of the source. The legacy
-        #    HalCompiler used configparser; we keep that path so any
-        #    existing [printer] sections carry over to the INI.
-        machine_name = source_path.stem
-        try:
-            printer_section = self._read_printer_section(source_path)
-        except Exception as exc:  # noqa: BLE001 - parser failures are recoverable
-            logger.warning(
-                "Could not parse [printer] section from %s: %s; using defaults",
-                source_path,
-                exc,
-            )
-            printer_section = {}
-
-        # 3. Emit the four artifacts.
+        # 3. Emit the generated artifacts.
         self._write_ini(output_dir / "linuxcnc.ini", machine_name, printer_section)
         self._write_hal(output_dir / "machine.hal", machine_name)
         self._write_remora_json(output_dir / "remora.json", machine_name, printer_section)
@@ -106,26 +112,6 @@ class KlipperToLinuxCNCCompiler(Compiler):
     # ------------------------------------------------------------------ #
     # Artifact generators                                                #
     # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _read_printer_section(source_path: Path) -> dict[str, str]:
-        """Best-effort INI read of the ``[printer]`` section.
-
-        Returns an empty dict on any failure (missing section, parse
-        error, missing file) so callers can fall back to defaults
-        without a try/except of their own.
-        """
-        import configparser
-
-        parser = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
-        try:
-            parser.read(source_path, encoding="utf-8")
-        except (configparser.Error, OSError):
-            return {}
-
-        if not parser.has_section("printer"):
-            return {}
-        return {key: parser.get("printer", key) for key in parser.options("printer")}
 
     @staticmethod
     def _write_ini(path: Path, machine_name: str, printer_section: dict[str, str]) -> None:
