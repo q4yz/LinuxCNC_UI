@@ -1,27 +1,9 @@
-// Machine module Pinia store.
-//
-// Replaces the bulk of the legacy monolithic ``stores/machine.js``
-// that owned the WebSocket client, the delta-merge logic, and every
-// machine-related action in one place.  The module-scoped store
-// owns:
-//
-//   * ``connectionStatus`` / ``socket`` — the WebSocket
-//     subscription to ``/ws/telemetry`` plus the auto-reconnect
-//     loop.
-//   * ``status`` — the reactive full-state object the DRO / G-code
-//     viewer / debug panel read from.
-//   * ``errors`` — the rolling list of telemetry-reported errors.
-//   * ``jogIntervals`` — per-axis keep-alive interval handles.
-//
-// The store id MUST be ``module_machine`` per
-// ``frontend-module.md`` § 5 (the lint script
-// ``scripts/check-store-ids.mjs`` enforces this; CI fails the build
-// for any other id).
-//
-// The temperature fields are intentionally not stored here; they are
-// owned by the temperature module. The machine store republishes
-// telemetry on the event bus so that module can ingest updates without
-// taking ownership of the WebSocket transport.
+// Machine module Pinia store. Owns the WebSocket transport, the
+// reactive full-state object, the per-axis keep-alive handles, and
+// every hardware/program-lifecycle action. The temperature fields
+// are republished on the event bus so the temperature module can
+// ingest updates without owning the transport. See
+// ``.agent/STATE.md`` § 2 (store id rule), § 6 (state facade).
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
@@ -43,15 +25,13 @@ const HOME_ALL = -1;
 const DEFAULT_JOG_VELOCITY = 500;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
-// Bus topic published by the machine store so the temperature module
-// (or any other listener) can ingest sensor updates without the
-// machine store owning the data.
+// Bus topic the machine store publishes so the temperature module
+// can ingest sensor updates without owning the WebSocket transport.
 const STATE_TEMPERATURES_TOPIC = "state.temperatures";
 const machineSettings = createModuleSettings(manifest.id);
 
-// Pinia store id — see Gotcha #2. Built from the manifest id with
-// the required ``module_`` prefix so it never collides with the
-// legacy top-level stores (``machine``, ``console``).
+// ``module_`` prefix prevents collisions with legacy top-level
+// stores. See ``.agent/STATE.md`` § 2.
 const STORE_ID = `module_${manifest.id}`;
 
 
@@ -81,9 +61,7 @@ const applyDelta = (target, delta) => {
 
 
 export const useMachineStore = defineStore(STORE_ID, () => {
-  // ----------------------------------------------------------------- //
-  // Reactive state                                                     //
-  // ----------------------------------------------------------------- //
+  // --- Reactive state ---------------------------------------------- //
 
   const connectionStatus = ref("disconnected");
   // 'disconnected' | 'connecting' | 'connected'
@@ -99,9 +77,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     homed: [0, 0, 0],
     interp_state: 1,
     current_line: 0,
-    // ``total_lines`` is published by the backend once a program is loaded;
-    // until then (or for any program without a known line count) it stays 0
-    // and ``printProgress`` collapses to 0 by contract.
+    // Stays 0 until the backend publishes it; ``printProgress``
+    // collapses to 0 by contract when the total is unknown.
     total_lines: 0,
     g5x_index: 1,
   });
@@ -111,9 +88,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
   const isUpdating = ref(false);
 
-  // ----------------------------------------------------------------- //
-  // Derived values (formerly getters in the options-API store)         //
-  // ----------------------------------------------------------------- //
+  // --- Derived values ----------------------------------------------- //
 
   const droX = computed(() => (status.relative_position[0] || 0).toFixed(3));
   const droY = computed(() => (status.relative_position[1] || 0).toFixed(3));
@@ -129,19 +104,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     return "READY";
   });
 
-  // ----------------------------------------------------------------- //
-  // Program-run derived values                                         //
-  // ----------------------------------------------------------------- //
-  //
-  // LinuxCNC semantics used here:
-  //   * ``task_state == 2 (RCS_EXEC)`` — the task is actively executing
-  //     a program (running, paused mid-program, or finishing).
-  //   * ``interp_state == 3 (INTERP_PAUSED)`` — the interpreter is paused
-  //     while the task itself stays in ``RCS_EXEC``.
-  //
-  // ``isPrinting`` and ``isPaused`` are intentionally mutually exclusive:
-  // a paused program is *not* reported as printing so the widget can swap
-  // its "Pause" button for a "Resume" button without flickering.
+  // ``isPrinting`` and ``isPaused`` are mutually exclusive: a paused
+  // program is *not* reported as printing so the widget can swap its
+  // "Pause" button for "Resume" without flickering.
 
   const isPrinting = computed(
     () => status.task_state === 2 && status.interp_state !== 3,
@@ -157,18 +122,14 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     return Math.min(100, (current / total) * 100);
   });
 
-  // ----------------------------------------------------------------- //
-  // Non-reactive handles                                               //
-  // ----------------------------------------------------------------- //
+  // --- Non-reactive handles ----------------------------------------- //
 
   let socket = null;
   let reconnectTimer = null;
   let shouldReconnect = true;
   let settingsLoaded = false;
 
-  // ----------------------------------------------------------------- //
-  // Module settings                                                    //
-  // ----------------------------------------------------------------- //
+  // --- Module settings ------------------------------------------------- //
 
   async function refreshSettings() {
     try {
@@ -197,9 +158,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // WebSocket transport                                                //
-  // ----------------------------------------------------------------- //
+  // --- WebSocket transport ------------------------------------------ //
 
   function connect() {
     if (
@@ -244,9 +203,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       // eslint-disable-next-line no-console
       console.log("Connected to LinuxCNC Telemetry");
       connectionStatus.value = "connected";
-      // Mirror the connection transition so the State Facade flips
-      // out of ``Offline`` immediately (the next ``full_state`` will
-      // refresh the payload, but the connection flag is independent).
+      // Mirror to the State Facade so its ``systemState`` flips out
+      // of ``Offline`` immediately.
       useMachineFacadeStore().updateStatus({
         connectionStatus: connectionStatus.value,
         isUpdating: isUpdating.value,
@@ -267,10 +225,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
           }
           Object.assign(status, next);
 
-          // Mirror the raw telemetry into the State Facade store so
-          // widgets that bind to ``systemState`` / ``printProgress``
-          // / ``isEstopActive`` react without coupling to the
-          // WebSocket transport (Issue #60).
+          // Mirror raw telemetry to the State Facade. See
+          // ``.agent/STATE.md`` § 6.
           useMachineFacadeStore().updateStatus({
             connectionStatus: connectionStatus.value,
             isUpdating: isUpdating.value,
@@ -283,9 +239,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         } else if (payload.type === "delta") {
           applyDelta(status, payload.data);
 
-          // Forward the post-delta snapshot to the facade. We pass
-          // ``status`` (the reactive object) after the merge so the
-          // facade receives the merged view, not just the delta.
+          // Forward the post-delta snapshot to the facade.
           useMachineFacadeStore().updateStatus({
             connectionStatus: connectionStatus.value,
             isUpdating: isUpdating.value,
@@ -307,9 +261,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     };
 
     currentSocket.onclose = () => {
-      // Ignore a close event from a socket that was explicitly replaced
-      // or disconnected. This prevents stale sockets from changing the
-      // status of a newer connection.
+      // Ignore a close event from a socket that was explicitly
+      // replaced. Prevents stale sockets from changing the status of
+      // a newer connection.
       if (socket !== currentSocket) return;
 
       // eslint-disable-next-line no-console
@@ -319,8 +273,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       connectionStatus.value = "disconnected";
       socket = null;
 
-      // Push the new connection flag to the facade so its
-      // ``systemState`` getter immediately reports ``Offline``.
+      // Mirror to the State Facade so its ``systemState`` reports
+      // ``Offline`` immediately.
       useMachineFacadeStore().updateStatus({
         connectionStatus: connectionStatus.value,
         isUpdating: isUpdating.value,
@@ -350,13 +304,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
 
     const currentSocket = socket;
-    // Clear the reference before closing so its asynchronous onclose
-    // handler cannot schedule a reconnect during module teardown.
+    // Clear the reference before closing so the async onclose
+    // handler cannot schedule a reconnect during teardown.
     socket = null;
     if (currentSocket) currentSocket.close();
     connectionStatus.value = "disconnected";
-    // Mirror the connection transition to the State Facade so its
-    // ``systemState`` getter immediately reports ``Offline``.
+    // Mirror to the State Facade so its ``systemState`` reports
+    // ``Offline`` immediately.
     useMachineFacadeStore().updateStatus({
       connectionStatus: connectionStatus.value,
       isUpdating: isUpdating.value,
@@ -371,14 +325,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // Hardware actions                                                   //
-  // ----------------------------------------------------------------- //
+  // --- Hardware actions --------------------------------------------- //
 
   async function toggleEstop() {
     const consoleStore = useConsoleStore();
-    // E-STOP is currently triggered (== 1) means we need to reset
-    // it; otherwise we engage it.
+    // ``estop == 1`` means we need to reset; otherwise we engage.
     const targetState = status.estop === 1 ? "estop_reset" : "estop";
     try {
       await ModulesMachineService.setMachineState({ state: targetState });
@@ -399,7 +350,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
   async function togglePower() {
     const consoleStore = useConsoleStore();
-    // ``status.task_state`` of 4 == STATE_ON, 3 == STATE_OFF.
+    // ``task_state`` 4 == ON, 3 == OFF.
     const isOn = status.task_state === 4;
     const isEstop = status.estop === 1;
     if (isEstop && !isOn) {
@@ -453,8 +404,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     const axisName = AXIS_NAMES[axis];
     try {
-      // Load persisted defaults before the first jog if the module was
-      // mounted before its settings request completed.
+      // Load persisted defaults if the module was mounted before
+      // its settings request completed.
       if (!settingsLoaded) await refreshSettings();
 
       const requestedVelocity = Number(velocity);
@@ -465,13 +416,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         ? keepaliveIntervalMs.value
         : DEFAULT_KEEPALIVE_INTERVAL_MS;
 
-      // 1. Clear any existing interval to prevent ghost loops.
+      // Clear any existing interval to prevent ghost loops.
       if (jogIntervals[axis]) {
         clearInterval(jogIntervals[axis]);
         delete jogIntervals[axis];
       }
 
-      // 2. Send the initial start command.
       consoleStore.info(
         `Jogging ${axisName} axis continuously...`
       );
@@ -480,8 +430,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         distance: 0,
       });
 
-      // 3. Start the keep-alive loop. The cadence is a persisted
-      // module setting, with the historical 250 ms value as fallback.
+      // Keep-alive cadence comes from the persisted module setting
+      // (250 ms fallback). The backend watchdog trips at 500 ms.
       jogIntervals[axis] = setInterval(async () => {
         try {
           await ModulesMachineService.jogKeepalive({ axes: [axis] });
@@ -507,13 +457,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     const axisName = AXIS_NAMES[axis];
     try {
-      // 1. Clear the keep-alive loop.
       if (jogIntervals[axis]) {
         clearInterval(jogIntervals[axis]);
         delete jogIntervals[axis];
       }
 
-      // 2. Send the explicit stop command.
       await ModulesMachineService.jogStop({ axes: [axis] });
       consoleStore.info(`${axisName} Jog stopped`);
     } catch (err) {
@@ -528,7 +476,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   async function homeAxis(axisIndex) {
     const consoleStore = useConsoleStore();
     try {
-      consoleStore.addMessage(`Homing axis index ${axisIndex}...`, "info");
+      consoleStore.info(`Homing axis index ${axisIndex}...`);
       await ModulesMachineService.homeAxis({ axis: axisIndex });
       consoleStore.success(
         `Homed axis ${axisIndex} successfully`,
@@ -593,17 +541,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // Program lifecycle actions                                          //
-  // ----------------------------------------------------------------- //
-  //
-  // ``startProgram`` loads the named G-code file via the file router
-  // and then asks the program module to run it. ``pauseProgram`` /
-  // ``resumeProgram`` are passthroughs to the program router's pause
-  // and resume endpoints. ``abortProgram`` stops the currently running
-  // program. Each action only *dispatches* the request — the backend's
-  // telemetry stream will mirror the new state on the next polling
-  // cycle so the widgets do not need to maintain local flags.
+  // Each action only dispatches the request — the backend's
+  // telemetry stream mirrors the new state on the next tick so
+  // widgets do not need to maintain local flags.
 
   async function startProgram(filename) {
     if (!filename || typeof filename !== "string") return;
@@ -657,9 +597,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // Public surface                                                     //
-  // ----------------------------------------------------------------- //
+  // --- Public surface ------------------------------------------------ //
 
   return {
     // Reactive state.

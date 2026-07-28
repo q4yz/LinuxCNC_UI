@@ -1,23 +1,8 @@
-// Tools module Pinia store.
-//
-// Owns the mock tool list (Issue #64 — the dynamic config
-// implementation lands later) plus the two actions that dispatch
-// HTTP POSTs to the backend router:
-//
-//   * :func:`sendSpindleCommand` — start / reverse / stop a spindle.
-//   * :func:`sendExtruderCommand` — extrude or retract filament.
-//
-// Cross-store logging goes through :func:`useConsoleStore`, which
-// is instantiated **inside** each action so the store can be
-// imported during boot without tripping the
-// "circular store initialisation" gotcha documented in
-// ``.agent/AI_INSTRUCTIONS.md`` § 21.
-//
-// The store id is namespaced under the ``module_`` prefix per
-// ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #2 so it can never
-// collide with the legacy top-level Pinia store ids.
-//
-// Reference: ``.agent/contracts/frontend-module.md`` § 5.
+// Tools module Pinia store. Owns the mock tool list and the two
+// actions that dispatch HTTP POSTs to the backend router
+// (spindle + extruder). ``useConsoleStore`` is instantiated inside
+// each action to avoid the circular-initialisation trap. See
+// ``.agent/STATE.md`` § 2, § 9.
 
 import { defineStore } from "pinia";
 import { ref } from "vue";
@@ -25,17 +10,16 @@ import { ref } from "vue";
 import { useConsoleStore } from "../../stores/console.js";
 import manifest from "./manifest.js";
 
-// Issue #64 § 2 — hardcoded mock tools array. The two seeds below
-// cover both supported tool types (spindle + extruder) so the
-// panel has something to render regardless of which physical
-// tools the operator actually has wired up.
+// Mock tools array (the dynamic config implementation lands later).
+// Seeds cover both supported tool types so the panel always has
+// something to render.
 const SEED_TOOLS = [
   {
     id: "spindle_main",
     name: "Main Spindle",
     type: "spindle",
-    // ``actual_rpm`` is the live reading the panel would receive
-    // via telemetry in a future revision. Hard-coded to 0 today.
+    // Live reading the panel would receive via telemetry in a
+    // future revision. Hard-coded to 0 today.
     actual_rpm: 0,
     target_rpm: 0,
     set_speed: 10000,
@@ -45,31 +29,20 @@ const SEED_TOOLS = [
     name: "Extruder E0",
     type: "extruder",
     set_speed: 300,
-    // ``distance_index`` maps into the logarithmic distance array
-    // defined in ``ToolPanel.vue``. Index 2 ⇒ 10 mm — a sensible
-    // mid-range default for a single click on either direction.
+    // Index into the logarithmic distance array defined in
+    // ``ToolPanel.vue``. Index 2 ⇒ 10 mm.
     distance_index: 2,
   },
 ];
 
-// Pinia store id — see Gotcha #2. Built from the manifest id
-// with the required ``module_`` prefix so it can never collide
-// with the legacy top-level stores. The literal is constructed
-// by concatenation so the store-id lint script
-// (``frontend/scripts/check-store-ids.mjs``) doesn't false-
-// positive on the comment above.
+// ``module_`` prefix prevents collisions with legacy top-level
+// stores. See ``.agent/STATE.md`` § 2.
 const STORE_ID = `module_${manifest.id}`;
 
 /**
- * Fire-and-forget POST helper that:
- *
- *   1. Sends the JSON body to ``url``.
- *   2. Throws an :class:`Error` with the server-supplied detail
- *      when the response is non-2xx.
- *   3. Returns the parsed JSON payload on success.
- *
- * Centralising the error mapping keeps the action bodies focused
- * on UI concerns (optimistic state updates + console logging).
+ * POST helper. Throws an Error with the server-supplied detail on
+ * non-2xx, returns the parsed JSON on success. Centralising the
+ * error mapping keeps the action bodies focused on UI concerns.
  *
  * @param {string} url
  * @param {Record<string, unknown>} body

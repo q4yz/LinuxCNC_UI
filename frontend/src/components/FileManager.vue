@@ -3,10 +3,8 @@ import { ref, onMounted } from 'vue'
 import { NcFilesService } from '../../generated/api/services/NcFilesService'
 import { useConsoleStore } from '../stores/console'
 
-// FileManager is now a full-page dedicated view. The parent
-// (``FilesView``) is expected to mount it inside a container that
-// stretches edge-to-edge; the wrapper fills whatever space it is given
-// rather than the previous fixed-height card.
+// Full-page dedicated view — the parent (``FilesView``) stretches it
+// edge-to-edge.
 
 const files = ref([])
 const isUploading = ref(false)
@@ -17,6 +15,9 @@ const fileInput = ref(null)
 // full-screen ``ConfigEditor``. The component never imports the editor
 // directly — that keeps it reusable and avoids prop-drilling the
 // editor state through multiple layers.
+// Emit ``edit`` so the parent view can open the file in the
+// full-screen editor — keeps this component reusable and avoids
+// prop-drilling editor state.
 const emit = defineEmits(['edit'])
 
 const fetchFiles = async () => {
@@ -72,12 +73,10 @@ const loadFile = async (filename) => {
 }
 
 const editFile = (filename) => {
-  // Bubble the request up to the parent view, which owns the
-  // full-screen editor and already knows how to mount it. The
-  // ``mode="profile"`` argument tells ``ConfigEditor`` that the file
-  // came from the G-code file list (not a raw machine config) so the
-  // editor delegates ``save`` to the parent instead of writing the
-  // config router directly (Issue #60).
+  // ``mode="profile"`` tells ``ConfigEditor`` the file came from
+  // the G-code list (not a raw machine config) so the editor
+  // delegates ``save`` to the parent instead of writing the
+  // config router directly. See ``.agent/STATE.md`` § 6.
   emit('edit', filename, false, 'profile', '')
 }
 

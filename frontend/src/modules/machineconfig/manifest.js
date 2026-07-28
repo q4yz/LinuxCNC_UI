@@ -1,16 +1,8 @@
-// Frontend manifest for the machineconfig module (issue #41).
-//
-// Mirrors ``backend/modules/machineconfig/module.py`` so the frontend
-// registry surfaces the same metadata to the rest of the app. The
-// module contributes a sidebar entry that reuses the legacy config
-// slot so the sidebar still lands in ``ConfigView`` while showing the
-// new ``Machine Config`` label, plus a Settings tab so operators can
-// tune ``require_confirm_flash`` / ``auto_readonly_after_stage`` /
-// ``default_compiler_id`` from the existing settings surface.
-//
-// The store id is namespaced under the ``module_`` prefix per
-// ``.agent/contracts/frontend-module.md`` § 5 — the lint script
-// ``frontend/scripts/check-store-ids.mjs`` enforces this.
+// Machineconfig module manifest. Mirrors
+// ``backend/modules/machineconfig/module.py`` so the registry surfaces
+// the same metadata. The sidebar entry reuses the legacy ``config``
+// slot so it still routes to ``ConfigView``. See
+// ``.agent/STATE.md`` § 9 (active modules table).
 
 export default {
   id: "machineconfig",

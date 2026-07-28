@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useCameraStore } from "../cameraStore.js";
@@ -35,13 +35,40 @@ const cameraTransform = computed(() => {
   return "none";
 });
 
-const streamUrl = computed(() => {
-  if (!activeCameraId.value) return "";
-  return `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}`;
+// --- Hardware Race Condition Fix ---
+const streamUrl = ref("");
+let streamTimer = null;
+
+const startStream = () => {
+  if (streamTimer) clearTimeout(streamTimer);
+
+  if (!activeCameraId.value) {
+    streamUrl.value = "";
+    return;
+  }
+
+  // Add a 300ms delay so the backend can release the old lock
+  streamTimer = setTimeout(() => {
+    // Append Date.now() to bypass aggressive browser caching
+    streamUrl.value = `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}&t=${Date.now()}`;
+  }, 300);
+};
+
+// Re-run the delay anytime the active camera changes
+watch(activeCameraId, () => {
+  streamUrl.value = ""; // Instantly destroy the old <img> tag to drop the socket
+  startStream();
 });
 
 onMounted(() => {
   store.fetchDevices();
+  startStream();
+});
+
+// Clean up when leaving the page to free the USB hardware
+onBeforeUnmount(() => {
+  if (streamTimer) clearTimeout(streamTimer);
+  streamUrl.value = "";
 });
 </script>
 
@@ -50,15 +77,26 @@ onMounted(() => {
     class="relative flex min-h-[300px] w-full items-center justify-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-xl"
     aria-label="Camera viewer"
   >
+    <!-- 1. The active stream -->
     <img
-      v-if="activeCameraId"
-      :key="activeCameraId"
+      v-if="streamUrl"
+      :key="streamUrl"
       :src="streamUrl"
       :alt="`Live feed from ${cameraName}`"
       :style="{ transform: cameraTransform }"
       class="h-full min-h-[300px] w-full object-contain transition-transform duration-200"
     >
 
+    <!-- 2. The 300ms "breath" loading state -->
+    <div
+      v-else-if="activeCameraId"
+      class="flex min-h-[300px] w-full flex-col items-center justify-center text-center text-gray-400"
+    >
+      <div class="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+      <span class="text-sm font-semibold">Connecting to camera...</span>
+    </div>
+
+    <!-- 3. No camera selected / error state -->
     <div
       v-else
       class="flex min-h-[300px] flex-col items-center justify-center px-6 text-center"

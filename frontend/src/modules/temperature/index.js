@@ -1,33 +1,9 @@
-// Temperature module entrypoint.
-//
-// The frontend registry (`frontend/src/core/modules/registry.js`)
-// imports this file via ``import.meta.glob`` and consumes the
-// default export. The default export follows the
-// ``FrontendModule`` contract documented in
-// ``.agent/contracts/frontend-module.md``.
-//
-// The store is **lazily** initialised on first ``useTemperatureStore()``
-// call inside ``TemperaturePanel.vue``. We deliberately do not call
-// the store factory from ``onLoad`` because:
-//
-//   1. The registry boots modules as part of ``main.js`` and the
-//      timing of ``app.use(pinia)`` relative to module ``onLoad`` is
-//      fragile — Pinia 3.x's ``useStore`` reads ``pinia._s`` and
-//      throws ``Cannot read properties of undefined (reading 'has')``
-//      when ``activePinia`` has not yet been wired through Vite's
-//      pre-bundled Pinia instance. Letting the panel trigger the
-//      first call sidesteps that race entirely.
-//   2. If the user only ever opens the Settings tab (no temperature
-//      panel), there is no reason to start the polling loop.
-//
-// As of issue #35 the module also exports a ``settingsPanel``
-// component so the Settings tab gets a fully-themed UI (unit
-// dropdown + per-sensor colour swatches) instead of the legacy
-// placeholder.
-//
-// References:
-//   * MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1 — lazy imports.
-//   * MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #2 — store id naming.
+// Temperature module entrypoint. The store is lazily initialised on
+// first ``useTemperatureStore()`` call inside ``TemperaturePanel.vue``
+// (rather than from ``onLoad``) because the timing of
+// ``app.use(pinia)`` relative to module boot is fragile, and a user
+// who only opens the Settings tab never needs the polling loop. See
+// ``.agent/STATE.md`` § 1 (lazy discovery), § 2 (store id).
 
 import manifest from "./manifest.js";
 import TemperaturePanel from "./components/TemperaturePanel.vue";
@@ -35,22 +11,16 @@ import TemperatureSettingsPanel from "./components/TemperatureSettingsPanel.vue"
 
 export default {
   manifest,
-  // Sidebar entry is not contributed by this module — temperature
-  // lives inside the dashboard grid, not as a top-level nav item.
+  // Sidebar entry is not contributed — temperature lives inside the
+  // dashboard grid, not as a top-level nav item.
   onLoad(/* ctx */) {
-    // No-op. The store factory runs the first time the panel
-    // component calls ``useTemperatureStore()``. See the long-form
-    // comment above for the boot-timing rationale.
+    // No-op. Store factory runs on first ``useTemperatureStore()``
+    // call. See the long-form comment above.
   },
   onUnload() {
-    // Pinia tears the store down with the parent scope, so explicit
-    // cleanup is not required here. Kept as a no-op for the
-    // contract.
+    // Pinia tears the store down with the parent scope. Kept as a
+    // no-op for the contract.
   },
-  // Phase 5 polish per issue #35 — the Settings view mounts this
-  // component inside the temperature tab so operators can flip the
-  // unit and pick per-sensor colours without leaving the Settings
-  // page.
   settingsPanel: TemperatureSettingsPanel,
 };
 

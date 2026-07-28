@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 from datetime import datetime, timezone
 from typing import AsyncIterator, List, Optional
@@ -51,6 +52,7 @@ from pydantic import BaseModel, Field
 
 from .detection import USBDeviceInfo, detect_usb_cameras
 from .settings import CameraSettings
+import cv2 as _cv2
 
 logger = logging.getLogger("backend.modules.camera")
 
@@ -299,7 +301,16 @@ class StreamManager:
             # request honours the on-demand contract.
             self._release_locked()
 
-            cap = _cv2.VideoCapture(camera_id)
+            source = camera_id
+            backend_api = _cv2.CAP_ANY
+            # If it's a pure number string like "0", cast it to an int for Windows
+            if isinstance(source, str) and source.isdigit():
+                source = int(source)
+
+                if sys.platform == 'win32':
+                    backend_api = _cv2.CAP_DSHOW
+
+            cap = _cv2.VideoCapture(source, backend_api)
             if cap is None or not cap.isOpened():
                 if cap is not None:
                     try:
@@ -387,8 +398,10 @@ async def _generate_frames(
     try:
         cap = await asyncio.to_thread(_stream_manager.acquire, camera_id)
     except RuntimeError as exc:
-        # Surface as an HTTP error at the StreamingResponse boundary.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # DO NOT raise HTTPException here. The StreamingResponse has already started
+        # and sent the 200 OK headers. Exiting cleanly terminates the stream.
+        logger.error("Failed to start stream for camera_id=%s: %s", camera_id, exc)
+        return
 
     try:
         while True:
@@ -406,7 +419,18 @@ async def _generate_frames(
             # ``read()`` is blocking; run it in a worker thread so the
             # asyncio loop stays responsive to the jog keep-alive
             # endpoint and the WebSocket telemetry loop.
-            ok, frame = await asyncio.to_thread(cap.read)
+            # Wrap the read call to catch exploding Windows drivers
+            try:
+                ok, frame = cap.read()
+            except _cv2.error as e:
+                logger.warning(
+                    "Stream: C++ exception during cv2.read for camera_id=%s; stopping. (%s)",
+                    camera_id, e
+                )
+                break  # Break the loop to trigger the finally block
+            except Exception as e:
+                logger.warning("Stream: Unexpected error reading camera_id=%s: %s", camera_id, e)
+                break
             if not ok:
                 logger.warning(
                     "Stream: cv2.read failed for camera_id=%s; stopping.",

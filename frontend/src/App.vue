@@ -10,9 +10,9 @@ import SettingsView from './views/SettingsView.vue'
 import ConfigEditor from './components/ConfigEditor.vue'
 
 // ``useMachineStore`` is supplied by the optional compatibility adapter.
-// When the machine module is mounted, the module registers its real store
-// before the app mounts; when it is absent, the adapter is intentionally
-// inert so the shell can still render its placeholders.
+// When the machine module is mounted, the module registers its real
+// store before the app mounts; when it is absent, the adapter is
+// intentionally inert so the shell can still render its placeholders.
 const store = useMachineStore()
 const currentView = ref('dashboard')
 const editorFile = ref(null)
@@ -21,16 +21,10 @@ const editorMode = ref('config')
 const editorContent = ref('')
 
 // Module-driven sidebar entries route to a module-owned view when
-// the entry's id matches a mounted module's manifest id. The glob
-// resolves to ``frontend/src/modules/<id>/components/<Name>.vue``
-// where ``Name`` is the default export from the module's view shell.
-// The machineconfig module no longer ships its own shell because the
-// updated panels now live directly inside the legacy ``ConfigView``.
-//
-// ``eager: false`` keeps the glob lazy so a module excluded by the
-// ``MODULES_ENABLED`` whitelist never appears in the bundle (Gotcha
-// #1). ``shallowRef`` avoids deep reactivity churn when the async
-// loader returns a new function identity per render.
+// the entry's id matches a mounted module's manifest id. ``eager:
+// false`` keeps the glob lazy (see ``.agent/STATE.md`` § 1);
+// ``shallowRef`` avoids deep reactivity churn when the async loader
+// returns a new function identity per render.
 const moduleViewImports = import.meta.glob(
   './modules/*/components/*.vue',
   { eager: false },
@@ -57,11 +51,8 @@ function loadModuleView(moduleId) {
 }
 
 const moduleView = computed(() => {
-  // Resolve the active view lazily — once a module's id matches the
-  // current nav selection, look up its main view component. Returns
-  // ``null`` for built-in views (dashboard / files / config /
-  // settings) so the template falls through to the hard-coded
-  // branches.
+  // Returns ``null`` for built-in views so the template falls
+  // through to the hard-coded branches.
   if (registry.modules.has(currentView.value)) {
     return loadModuleView(currentView.value)
   }
@@ -112,10 +103,7 @@ async function handleEditorSave(newContent) {
 
     <!-- Main Content Area -->
     <main class="flex-1 overflow-y-auto p-4 lg:p-8">
-       <!-- Module-owned views win over the hard-coded branches. The
-         machineconfig module now reuses the legacy ConfigView slot,
-         so its sidebar entry is mapped to ``config`` instead of a
-         standalone module shell. -->
+      <!-- Module-owned views win over the hard-coded branches. -->
       <component v-if="moduleView" :is="moduleView" @edit="openEditor" />
       <DashboardView v-else-if="currentView === 'dashboard'" />
       <FilesView v-else-if="currentView === 'files'" @edit="openEditor" />

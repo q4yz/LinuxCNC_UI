@@ -2,12 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import './style.css'
 import App from './App.vue'
-// Side-effecting import: configures the generated OpenAPI client's BASE URL.
-import './services/apiClient.js'
-// Registry boot — must run before mount so App.vue can read registry
-// state synchronously inside ``onMounted``. Boot is wrapped in a
-// try/catch so a single broken module never prevents the app from
-// rendering.
+import './services/apiClient.js' // configures the generated OpenAPI client's BASE URL
 import { registry } from './core/modules/registry'
 
 // ECharts imports
@@ -33,9 +28,10 @@ const pinia = createPinia()
 app.component('v-chart', ECharts)
 app.use(pinia)
 
-// Boot the registry before mounting so the optional machine adapter can
-// register the real module store before legacy shell components instantiate.
-// A broken module is still isolated: the shell mounts from the fallback path.
+// Boot the registry before mounting so the optional machine adapter
+// can register the real module store before legacy shell components
+// instantiate. A broken module is still isolated: the shell mounts
+// from the fallback path.
 registry.boot()
   .catch((err) => {
     // eslint-disable-next-line no-console

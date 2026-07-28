@@ -1,33 +1,19 @@
 <script setup>
-// Tools panel — operator-facing controls for spindles and
-// extruders (Issue #64).
-//
-// The component iterates ``toolStore.tools`` and renders a
+// Tools panel. Iterates ``toolStore.tools`` and renders a
 // per-type card. The store holds a hard-coded mock tool list
-// (one spindle + one extruder) until the dynamic configuration
-// implementation lands; the panel is forward-compatible with
-// dynamic config because every tool ships its own ``type``.
-//
-// Reactivity: ``toolStore.tools`` is a Pinia-backed ``ref`` of
-// plain objects. Mutating fields in place (``tool.set_speed =``)
-// keeps the existing references stable so the input controls
-// below don't tear down on every keystroke. We destructure the
-// store via the action methods (not state) so the click handlers
-// below never need to know the backend URL.
+// until the dynamic config implementation lands; the panel is
+// forward-compatible because every tool ships its own ``type``.
 
 import { useToolStore } from "../toolStore.js";
 
 const toolStore = useToolStore();
 
-// Issue #64 § 3 — the extruder distance slider maps to a fixed
-// logarithmic array of millimetre values. Index 0 = 0.1 mm
-// (fine tuning), index 4 = 100 mm (long purge). Operators slide
-// between indices rather than parsing raw log-space math.
+// Logarithmic millimetre values for the extruder distance
+// slider. Index 0 = 0.1 mm, index 4 = 100 mm.
 const EXTRUDER_DISTANCE_OPTIONS = Object.freeze([0.1, 1, 10, 50, 100]);
 
 function distanceFor(tool) {
-  // Clamp the index so a stale value (e.g. from a future
-  // config-driven payload) cannot throw on access.
+  // Clamp the index so a stale value cannot throw on access.
   const idx = Math.min(
     Math.max(Number(tool.distance_index) || 0, 0),
     EXTRUDER_DISTANCE_OPTIONS.length - 1,
@@ -36,10 +22,8 @@ function distanceFor(tool) {
 }
 
 function handleSpindle(tool, action) {
-  // The Stop button intentionally passes ``0`` for speed so the
-  // backend never has to reason about "is the speed field
-  // meaningful for M5?". Forward / Reverse reuse the user's
-  // ``set_speed`` input verbatim.
+  // Stop passes ``0`` for speed so the backend never has to
+  // reason about whether the field is meaningful for M5.
   const speed = action === "stop" ? 0 : tool.set_speed;
   toolStore.sendSpindleCommand(tool.id, action, speed);
 }

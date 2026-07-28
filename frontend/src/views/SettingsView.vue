@@ -1,15 +1,15 @@
 <script setup>
 // Settings shell. Each mounted module whose manifest declares
 // ``settingsPanel: true`` gets a tab. When the module exports a
-// ``settingsPanel`` component (see issue #35 / Phase 5 polish) we
-// render it; otherwise we show the legacy placeholder describing
-// the persisted store and listing the four canonical endpoints.
+// ``settingsPanel`` component we render it; otherwise we show the
+// legacy placeholder. See ``.agent/STATE.md`` § 5 (settings
+// surface).
 import { computed, ref, shallowRef } from 'vue'
 import registry from '../core/modules/registry'
 
 // ``shallowRef`` keeps Vue from deep-tracking the component object
 // — important because async component loaders return new function
-// identities on every re-render otherwise.
+// identities on every re-render.
 const panels = computed(() => registry.settingsPanels())
 const activeTab = ref(panels.value[0]?.id ?? null)
 const panelComponents = shallowRef(new Map())
@@ -80,9 +80,9 @@ function apiBaseUrl(moduleId) {
           {{ panel.title }} settings
         </h2>
 
-        <!-- Module-supplied component (Phase 5 polish — issue #35).
-             Modules that export ``settingsPanel`` get a fully
-             themed UI; the rest keep the placeholder. -->
+        <!-- Module-supplied component. Modules that export
+             ``settingsPanel`` get a themed UI; the rest keep the
+             placeholder. -->
         <component
           v-if="panelFor(panel.id)"
           :is="panelFor(panel.id)"

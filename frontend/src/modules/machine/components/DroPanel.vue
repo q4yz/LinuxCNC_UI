@@ -5,7 +5,6 @@ import { useMachineStore } from '../store.js'
 import { WORK_COORDINATE_SYSTEMS } from '../../../config/gcodes.js'
 
 const store = useMachineStore()
-// Destructure reactive properties with storeToRefs to maintain reactivity
 const { droX, droY, droZ, isEstop, isMachineOn, machineStateText, status } = storeToRefs(store)
 
 // Set Position modal state

@@ -1,24 +1,8 @@
-// Temperature module Pinia store.
-//
-// Owns the per-module reactive state previously kept inside the
-// monolithic legacy machine store:
-//
-//   * ``sensors`` — the latest sensor dict, updated whenever the
-//     machine module publishes a ``state.temperatures`` event on the
-//     event bus (or when the dashboard renders and starts polling).
-//   * ``history`` — the rolling 30 s chart history (fixed window per
-//     issue #35). The ``snapshot()`` action pushes a point at
-//     ``pollMs`` cadence and prunes anything outside the window.
-//   * ``unit`` — display unit toggle (``"celsius"`` / ``"kelvin"``).
-//   * ``visibleSensors`` — per-sensor chart visibility toggles.
-//   * ``sensorColors`` — per-sensor colour map shared with the chart.
-//
-// The store id is namespaced under the ``module_`` prefix per
-// ``MODULE_SYSTEM_ROADMAP.md`` § 12 Gotcha #2 so it can never
-// collide with the legacy top-level Pinia store id that still
-// exists during the migration window.
-//
-// Reference: ``.agent/contracts/frontend-module.md`` § 5.
+// Temperature module Pinia store. Owns the sensor dict, the rolling
+// 30 s chart history, the unit toggle, the per-sensor visibility /
+// colour maps. Subscribes to ``state.temperatures`` on the event bus
+// and mirrors the machine module's telemetry. See ``.agent/STATE.md``
+// § 2 (store id), § 3 (event bus), § 9 (active modules table).
 
 import { defineStore, storeToRefs } from "pinia";
 import { onScopeDispose, ref } from "vue";
@@ -27,14 +11,14 @@ import manifest from "./manifest.js";
 import { eventBus } from "../../core/modules/event-bus.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
 
-// Issue #35 § 5.1 / § 5.2: the chart is locked to a fixed 30 s
-// window of 1 s ticks. The historical ``history_window_seconds`` /
-// ``history_poll_interval_ms`` knobs were removed because they were
-// never honoured by the chart anyway.
+// Chart is locked to a fixed 30 s window of 1 s ticks. The
+// ``history_window_seconds`` / ``history_poll_interval_ms`` knobs
+// were removed because they were never honoured by the chart.
 const WINDOW_SECONDS = 30;
 const DEFAULT_POLL_MS = 1_000;
-const FALLBACK_COLOR = "#A855F7"; // Purple — used when the backend
-// introduces a sensor the frontend has no colour for yet.
+// Purple — used when the backend introduces a sensor the frontend
+// has no colour for yet.
+const FALLBACK_COLOR = "#A855F7";
 const DEFAULT_SENSOR_COLORS = {
   extruder: "#EF4444",
   bed: "#3B82F6",
@@ -43,12 +27,8 @@ const DEFAULT_SENSOR_COLORS = {
 
 const TOPIC = "state.temperatures";
 
-// Pinia store id — see Gotcha #2. Built from the manifest's id with
-// the required prefix so it never collides with the legacy
-// top-level stores. The literal string is constructed by
-// concatenation so the store-id lint script
-// (``frontend/scripts/check-store-ids.mjs``) doesn't false-positive
-// on the comment above.
+// ``module_`` prefix prevents collisions with legacy top-level
+// stores. See ``.agent/STATE.md`` § 2.
 const STORE_ID = `module_${manifest.id}`;
 
 // Singleton settings client for the canonical four-endpoint
@@ -95,8 +75,7 @@ export const useTemperatureStore = defineStore(
     // --- reactive state ------------------------------------------- //
     const sensors = ref({});
     const history = ref([]);
-    // Locked to 30 s — see issue #35 § 2.2. The chart shape is no
-    // longer configurable.
+    // Locked to 30 s — chart shape is no longer configurable.
     const windowMs = ref(WINDOW_SECONDS * 1000);
     const pollMs = ref(DEFAULT_POLL_MS);
     // Display unit. Backed by ``settings.unit``; flips the
@@ -107,8 +86,8 @@ export const useTemperatureStore = defineStore(
     // sighting.
     const visibleSensors = ref({});
     // Per-sensor colour. Sourced from ``settings.sensor_colors``;
-    // any sensor the backend introduces falls back to the legacy
-    // purple ``#A855F7``.
+    // Sensors introduced after this palette falls back to the
+    // purple sentinel colour.
     const sensorColors = ref({ ...DEFAULT_SENSOR_COLORS });
 
     // --- non-reactive handles ------------------------------------- //
@@ -135,14 +114,14 @@ export const useTemperatureStore = defineStore(
 
     function applySettings(settings) {
       if (!settings || typeof settings !== "object") return;
-      // ``unit``: only overwrite when the backend has something to
+      // Only overwrite ``unit`` when the backend has something to
       // say about it; otherwise keep the in-memory state so the UI
       // doesn't flicker between renders.
       if (settings.unit === "celsius" || settings.unit === "kelvin") {
         unit.value = settings.unit;
       }
-      // ``sensor_colors``: deep-merge so a partial backend payload
-      // (e.g. only one entry) doesn't wipe the rest of the palette.
+      // Deep-merge ``sensor_colors`` so a partial payload doesn't
+      // wipe the rest of the palette.
       if (settings.sensor_colors && typeof settings.sensor_colors === "object") {
         const next = { ...DEFAULT_SENSOR_COLORS, ...sensorColors.value };
         for (const [name, hex] of Object.entries(settings.sensor_colors)) {
@@ -156,7 +135,7 @@ export const useTemperatureStore = defineStore(
 
     /**
      * Format a Celsius value for display in the active unit.
-     * Rounded to two decimals — see issue #35 § 5.1 / § 6.
+     * Rounded to two decimals.
      *
      * @param {number|null|undefined} celsius
      * @returns {number}
@@ -239,9 +218,8 @@ export const useTemperatureStore = defineStore(
       const label = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
         date.getSeconds(),
       )}.${cents.toString().padStart(2, "0")}`;
-      // Deep clone so a frozen payload stays deep-frozen in our
-      // rolling buffer; mutating one history point can't corrupt
-      // another point's ``sensors`` snapshot.
+      // Deep-clone the frozen payload so the rolling buffer keeps
+      // independent copies. See ``.agent/STATE.md`` § 3.
       history.value.push({
         timestamp: now,
         time: label,
@@ -255,13 +233,11 @@ export const useTemperatureStore = defineStore(
       if (running) return;
       running = true;
       // Fetch sensor state immediately so the chart isn't empty on
-      // first render, then poll at the configured cadence. The state
-      // endpoint is the source of truth — we don't rely on the
-      // (currently disabled) telemetry WebSocket for chart updates.
+      // first render, then poll at the configured cadence.
       refreshSensors();
       sensorsPollHandle = setInterval(refreshSensors, pollMs.value);
-      // Push a history point immediately so the chart has data, then
-      // roll forward at the same cadence.
+      // Push a history point immediately so the chart has data,
+      // then roll forward at the same cadence.
       snapshot();
       pollHandle = setInterval(snapshot, pollMs.value);
     }
@@ -279,20 +255,14 @@ export const useTemperatureStore = defineStore(
     }
 
     /**
-     * Called by the machine module via the event bus. Accepts either
-     * a ``state.temperatures`` payload (with a ``temperatures`` field)
+     * Called by the machine module via the event bus. Accepts the
+     * sensors endpoint shape, the legacy ``temperatures`` wrapper,
      * or a raw sensors dict.
      *
      * @param {*} payload
      */
     function ingest(payload) {
       if (!payload) return;
-      // Accept three shapes:
-      //   1. The temperature sensors endpoint returns
-      //      ``{ sensors: { extruder: {...}, ... } }``.
-      //   2. The legacy machine module publishes
-      //      ``{ temperatures: { ... } }`` on the event bus.
-      //   3. Some publishers hand us the raw sensors dict directly.
       let next = payload;
       if (payload.sensors && typeof payload.sensors === "object") {
         next = payload.sensors;
@@ -310,9 +280,8 @@ export const useTemperatureStore = defineStore(
 
     /**
      * Read the settings endpoint once and apply. Exposed so the
-     * dashboard can re-pull after a settings PUT without waiting for
-     * any periodic tick — settings are no longer polled, so the only
-     * way to pick up changes is to call this explicitly.
+     * dashboard can re-pull after a settings PUT — settings are no
+     * longer polled, so this is the only way to pick up changes.
      */
     async function refreshSettings() {
       try {
@@ -324,13 +293,11 @@ export const useTemperatureStore = defineStore(
     }
 
     /**
-     * Pull the live sensor state from the backend. The backend
-     * ``GET /api/v1/modules/temperature/sensors`` returns
-     * ``{ sensors: { extruder: { actual, target }, ... } }`` which is
-     * the canonical source of truth for the chart. The telemetry
-     * WebSocket would be the lower-latency alternative, but it
-     * currently 404s because ``websockets`` isn't installed; this
-     * poll keeps the UI alive until that bridge lands.
+     * Pull the live sensor state from the backend. The
+     * ``GET /api/v1/modules/temperature/sensors`` endpoint returns
+     * ``{ sensors: { extruder: { actual, target }, ... } }`` — the
+     * canonical source of truth for the chart. The lower-latency
+     * WebSocket bridge will replace this poll when available.
      */
     async function refreshSensors() {
       try {
@@ -343,26 +310,20 @@ export const useTemperatureStore = defineStore(
       }
     }
 
-    // Wire the bus subscriber once per module lifecycle. The bus
-    // delivers deep-frozen payloads; we deep-clone before storing
-    // (see Gotcha #3). This stays as a forward-compatible hook for
-    // the eventual telemetry WebSocket bridge.
+    // The bus delivers deep-frozen payloads; we deep-clone before
+    // storing. See ``.agent/STATE.md`` § 3.
     busUnsub = eventBus.subscribe(TOPIC, (_topic, payload) => {
       ingest(payload);
     });
 
-    // Read settings ONCE at boot. The user changes ``unit`` /
-    // ``sensor_colors`` from the Settings UI; that UI calls
-    // ``refreshSettings`` explicitly after a successful PUT. Periodic
-    // re-fetches were unnecessary overhead — the chart shape is
-    // determined by the backend config and is effectively static.
+    // Read settings once at boot. The user changes ``unit`` /
+    // ``sensor_colors`` from the Settings UI, which calls
+    // ``refreshSettings`` explicitly after a successful PUT.
     refreshSettings();
 
     // Auto-stop when the pinia scope goes away (component unmount,
-    // app teardown). The legacy machine store would leak
-    // ``temperaturePollingInterval`` if the user navigated away —
-    // this hook fixes that risk for the module store per issue #32
-    // § 6.4.
+    // app teardown) so the polling interval cannot leak across
+    // navigation. See ``.agent/STATE.md`` § 10.
     onScopeDispose(() => {
       stop();
       if (busUnsub) {
@@ -396,10 +357,8 @@ export const useTemperatureStore = defineStore(
 );
 
 /**
- * Helper that wraps :func:`storeToRefs` so callers can destructure
- * the reactive state without losing reactivity (per
- * ``AI_INSTRUCTIONS.md`` § 17). Re-exported here so module consumers
- * have a single import surface.
+ * Convenience wrapper around ``storeToRefs`` so callers can
+ * destructure the reactive state without losing reactivity.
  */
 export function useTemperatureRefs() {
   const store = useTemperatureStore();

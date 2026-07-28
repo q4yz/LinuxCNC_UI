@@ -1,5 +1,4 @@
 <script setup>
-// Temperature panel — migrated from the legacy components/ folder
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../store.js'
@@ -71,10 +70,9 @@ const turnOff = async (name) => {
 
 const turnOffAll = async () => {
   const promises = []
-  // Loop through all sensors and turn off the ones that have a target configured
   for (const [name, data] of Object.entries(sensors.value)) {
     if (data.target !== undefined) {
-      promises.push(turnOff(name)) // Reuses your existing single turnOff function
+      promises.push(turnOff(name))
     }
   }
   await Promise.all(promises)
@@ -99,8 +97,8 @@ const WINDOW_SECONDS = 30
  */
 const chartOptions = computed(() => {
   const now = currentTime.value
-  // DELAY BUFFER: We render the chart 1 second in the past.
-  // This gives us exactly 1 second to smoothly draw the line toward the newest data point.
+  // Render the chart 1 s in the past so the line has time to draw
+  // smoothly toward the newest data point.
   const renderTime = now - 1000
 
   const legendData = []
@@ -114,7 +112,6 @@ const chartOptions = computed(() => {
     const color = store.colorFor(sensorName)
     const round = (v) => roundTo(unit.value === 'kelvin' ? v + 273.15 : v, 2)
 
-    // 1. Extract raw samples
     const actualSamples = []
     const targetSamples = []
     for (const point of buffer) {
@@ -124,18 +121,18 @@ const chartOptions = computed(() => {
       if (Number.isFinite(raw.target)) targetSamples.push({ ts: point.timestamp, val: raw.target })
     }
 
-    // 2. Build the Actual curve dynamically
+    // Build the Actual curve: lock historical points in place, then
+    // smoothstep-interpolate between the last locked point and the
+    // first future point so the line keeps moving between samples.
     const actualData = []
     let lastActualPt = null
 
     for (let i = 0; i < actualSamples.length; i++) {
       const pt = actualSamples[i]
       if (pt.ts <= renderTime) {
-        // Historical point - lock it in place
         actualData.push([pt.ts, round(pt.val)])
         lastActualPt = pt
       } else {
-        // We hit a point in the future! Interpolate exactly where the line should be right now.
         if (lastActualPt) {
           const span = pt.ts - lastActualPt.ts
           const u = span > 0 ? (renderTime - lastActualPt.ts) / span : 0
@@ -143,11 +140,11 @@ const chartOptions = computed(() => {
           const interp = lastActualPt.val + (pt.val - lastActualPt.val) * smooth_u
           actualData.push([renderTime, round(interp)])
         }
-        break // Stop loop; we hit the right edge of the chart
+        break
       }
     }
 
-    // Fallback: If network is delayed, just hold the last known value flat.
+    // If the network is delayed, hold the last known value flat.
     if (actualData.length > 0 && actualData[actualData.length - 1][0] < renderTime) {
       actualData.push([renderTime, actualData[actualData.length - 1][1]])
     }
@@ -163,7 +160,8 @@ const chartOptions = computed(() => {
       smooth: true,
     })
 
-    // 3. Build the Target curve
+    // Target curve: step interpolation, only renders if the sensor
+    // exposes a target value.
     if (temps[sensorName].target !== undefined) {
       const targetData = []
       for (let i = 0; i < targetSamples.length; i++) {
@@ -179,7 +177,6 @@ const chartOptions = computed(() => {
         targetData.push([renderTime, targetData[targetData.length - 1][1]])
       }
 
-      //legendData.push(`${sensorName} target`)
       series.push({
         name: `${sensorName} target`,
         type: 'line',
@@ -229,7 +226,6 @@ const chartOptions = computed(() => {
         formatter: (value) => {
           const d = new Date(value)
           const pad = (n) => n.toString().padStart(2, '0')
-          // Removed milliseconds to prevent axis clutter
           return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
         }
       },

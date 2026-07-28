@@ -1,17 +1,7 @@
-// Frontend EventBus: cross-module pub/sub for the SPA.
-//
-// Mirrors the backend ``core.event_bus.EventBus`` API so a module's
-// frontend and backend share the same mental model. The key rule from
-// MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #3 is enforced here:
-//
-//   Every subscriber receives a frozen copy of the payload. A buggy
-//   subscriber mutating its copy cannot affect any other subscriber
-//   or the publisher.
-//
-// ``Object.freeze`` is recursive for plain objects/arrays because the
-// contract says "immutable" — not "top-level immutable". Pinia stores
-// that subscribe can store the frozen reference safely; if they need
-// to mutate, they must clone first.
+// Frontend EventBus: cross-module pub/sub. Every subscriber receives
+// a deep-frozen, deep-cloned copy of the payload so a buggy handler
+// cannot leak mutations to other subscribers. See ``.agent/STATE.md``
+// § 3.
 
 /**
  * Deeply freeze a plain object/array so accidental mutation in a

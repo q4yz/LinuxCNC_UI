@@ -1,23 +1,10 @@
 <script setup>
-// Temperature module settings panel — mounted via the Settings tab
-// when the registry reports ``manifest.settingsPanel = true``.
-//
-// Renders:
-//
-//   * A global unit dropdown (Celsius / Kelvin) that maps to
-//     ``store.setUnit(...)`` and persists via
-//     ``PUT /api/v1/modules/temperature/settings/unit``.
-//   * One row per sensor known to ``store.sensors``; each row has a
-//     read-only name and a native ``<input type="color">`` swatch
-//     that maps to ``store.setSensorColor(...)`` and persists via
-//     ``PUT .../sensor_colors``.
-//
-// The component is intentionally dumb — all persistence and
-// reactivity lives in the module store (see
-// ``../store.js``).
+// Temperature module settings panel. Renders a global unit
+// dropdown plus one colour-swatch row per sensor. All persistence
+// lives in the module store.
 //
 // Reference: ``.agent/contracts/frontend-module.md`` § 4
-// (ModuleContext.settings gives us a typed settings client).
+// (ModuleContext.settings gives a typed settings client).
 
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../store.js'
