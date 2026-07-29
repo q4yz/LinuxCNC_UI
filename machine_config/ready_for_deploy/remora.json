@@ -1,7 +1,0 @@
-{
-  "generated": true,
-  "source": "HalCompiler",
-  "note": "TODO: Populate with real pin/stepper payload from MachineConfig.",
-  "steppers": [],
-  "heaters": []
-}
