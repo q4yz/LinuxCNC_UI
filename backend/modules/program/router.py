@@ -42,7 +42,12 @@ class ParseResponse(BaseModel):
     message: str = Field(..., description="Human-readable status message")
 
 
-router = APIRouter(tags=["Program Control"])
+router = APIRouter(tags=["modules:program"])
+
+class LoadProgramRequest(BaseModel):
+    filename: str
+
+
 
 
 @router.post(
@@ -124,6 +129,25 @@ def trigger_parser() -> ParseResponse:
     return ParseResponse(status="success", message="Parsing complete")
 
 
+@router.post(
+    "/load",
+    summary="Load G-Code Program",
+    description="Loads a previously uploaded G-code file into the LinuxCNC interpreter.",
+    operation_id="loadProgram",
+    response_model=StatusResponse,
+)
+def load_program(payload: LoadProgramRequest) -> StatusResponse:
+    """Mock loading a G-code program."""
+    logger.info(f"Loading G-code program: {payload.filename}")
+
+    # Mock load delay
+    time.sleep(0.5)
+
+    return StatusResponse(
+        status="success"
+    )
+
+
 __all__ = [
     "router",
     "run_program",
@@ -131,6 +155,8 @@ __all__ = [
     "pause_program",
     "resume_program",
     "trigger_parser",
+    "load_program",
     "StatusResponse",
     "ParseResponse",
+    "LoadProgramRequest",
 ]

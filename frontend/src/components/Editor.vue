@@ -1,0 +1,97 @@
+<script setup>
+// "Dumb" CodeMirror wrapper. Receives ``modelValue`` and emits
+// updates; the parent (``EditorView``) owns all file I/O through
+// ``useEditorStore``. This component is a pure presentation layer —
+// it does not fetch, save, or even know what file it is editing.
+
+import { computed } from 'vue'
+import { Codemirror } from 'vue-codemirror'
+import { javascript } from '@codemirror/lang-javascript'
+import { oneDark } from '@codemirror/theme-one-dark'
+
+const props = defineProps({
+  filename: { type: String, required: true },
+  modelValue: { type: String, default: '' },
+  readOnly: { type: Boolean, default: false },
+  /**
+   * Editor mode. Controls which CodeMirror language extension is
+   * loaded:
+   *   ``"profile"`` / ``"config"`` / ``"ini"`` / ``"cfg"`` —
+   *     Klipper/LinuxCNC INI-style configuration. Plain text only
+   *     today (no language pack); a future Klipper highlight module
+   *     drops in here.
+   *   ``"gcode"`` / ``"ngc"`` — G-code (plain text).
+   *   ``"js"`` / ``"javascript"`` — JavaScript syntax highlighting.
+   *   ``"json"`` — JSON syntax highlighting.
+   *   ``"text"`` — Plain text fallback.
+   */
+  mode: { type: String, default: 'config' }
+})
+
+const emit = defineEmits(['update:modelValue', 'close', 'save'])
+
+// Pick the CodeMirror extension for the active mode. Plain text
+// is the default; only ``js`` / ``javascript`` gets a language
+// pack today. Hook future language packs in here.
+const editorExtensions = computed(() => {
+  const m = (props.mode || 'config').toLowerCase()
+  if (m === 'js' || m === 'javascript') {
+    return [javascript(), oneDark]
+  }
+  return [oneDark]
+})
+
+// Forward CodeMirror's update event directly to the parent. No
+// local state, no debouncing — the parent controls cadence.
+function forwardUpdate(value) {
+  emit('update:modelValue', value)
+}
+</script>
+
+<template>
+  <div class="flex h-full min-h-0 w-full flex-col bg-gray-900 text-gray-200">
+    <!-- ``min-h-0`` is the key CSS property that lets the inner
+         scroller overflow inside a flex column without breaking
+         the page layout. Loading state lives in the parent. -->
+    <div class="editor-shell min-h-0 flex-1 overflow-hidden">
+      <Codemirror
+        :model-value="modelValue"
+        @update:model-value="forwardUpdate"
+        :extensions="editorExtensions"
+        :disabled="readOnly"
+        class="editor-codemirror"
+      />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* ``h-full`` propagates down through the flex column so the
+   CodeMirror scroller fills the available height. ``min-h-0``
+   defeats the default ``min-height: auto`` that flex items
+   inherit, which is what breaks scrolling inside a flex parent. */
+.editor-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-codemirror {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.cm-editor) {
+  height: 100%;
+  width: 100%;
+  outline: none;
+  background: rgb(17 24 39);
+  overflow: auto;
+}
+
+:deep(.cm-scroller) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+</style>

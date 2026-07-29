@@ -1,11 +1,11 @@
-"""``/api/v1/programs`` HTTP surface.
+﻿"""``/api/v1/programs`` HTTP surface.
 
 Thin wrapper around :class:`ProgramFileService` for the file-CRUD
 endpoints (``list``, ``upload``, ``delete``, ``content``). The
 ``load_program`` flow keeps its original shape because wrapping
 the ``linuxcnc.execute_sync_cmd`` calls behind a
 :class:`ProgramLoader` service is explicitly out of scope for
-this pass — the body of the handler is marked with a ``TODO``
+this pass â€” the body of the handler is marked with a ``TODO``
 that points to the follow-up.
 
 All filesystem calls are funneled through the service. The
@@ -17,12 +17,12 @@ stays single-sourced.
 Endpoint naming follows the same pattern as the machineconfig
 module:
 
-    GET    /api/v1/programs                   — list files
-    POST   /api/v1/programs/upload           — upload file
-    DELETE /api/v1/programs/{filename}       — delete file
-    GET    /api/v1/programs/content/{filename} — read file content
-    PUT    /api/v1/programs/content/{filename} — write file content
-    POST   /api/v1/programs/load_program     — load program into controller
+    GET    /api/v1/programs                   â€” list files
+    POST   /api/v1/programs/upload           â€” upload file
+    DELETE /api/v1/programs/{filename}       â€” delete file
+    GET    /api/v1/programs/content/{filename} â€” read file content
+    PUT    /api/v1/programs/content/{filename} â€” write file content
+    POST   /api/v1/programs/load_program     â€” load program into controller
 """
 
 import logging
@@ -31,18 +31,11 @@ from typing import List
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc
 from services import ProgramFileService, get_program_service
 
 logger = logging.getLogger("backend.routers.files")
 
 router = APIRouter(prefix="/api/v1/programs", tags=["Program Files"])
-
-
-class LoadProgramRequest(BaseModel):
-    """Pydantic model for selecting a G-code file to load into the controller."""
-
-    filename: str = Field(..., description="Name of the uploaded G-code file to load into the interpreter")
 
 
 class FileInfo(BaseModel):
@@ -171,9 +164,9 @@ def read_file(filename: str) -> str:
 
     Errors map to actionable HTTP statuses:
 
-    * ``ValueError`` (path-safety violation) → ``400``
-    * ``FileNotFoundError`` → ``404``
-    * any other unexpected error → ``500``
+    * ``ValueError`` (path-safety violation) â†’ ``400``
+    * ``FileNotFoundError`` â†’ ``404``
+    * any other unexpected error â†’ ``500``
     """
     service: ProgramFileService = get_program_service()
     try:
@@ -213,10 +206,10 @@ def write_file(filename: str, payload: GCodeContentPayload) -> StatusMessageResp
 
     Errors map to actionable HTTP statuses:
 
-    * ``ValueError`` (path-safety violation) → ``400``
-    * ``FileNotFoundError`` → ``404``
-    * ``PermissionError`` (read-only file) → ``403``
-    * any other unexpected error → ``500``
+    * ``ValueError`` (path-safety violation) â†’ ``400``
+    * ``FileNotFoundError`` â†’ ``404``
+    * ``PermissionError`` (read-only file) â†’ ``403``
+    * any other unexpected error â†’ ``500``
     """
     service: ProgramFileService = get_program_service()
     try:
@@ -231,35 +224,3 @@ def write_file(filename: str, payload: GCodeContentPayload) -> StatusMessageResp
         logger.error("Failed to write file %s: %s", filename, exc)
         raise HTTPException(status_code=500, detail="Failed to write file.") from exc
     return StatusMessageResponse(status="success", message=f"Saved {filename}")
-
-
-@router.post(
-    "/load_program",
-    summary="Load G-Code Program",
-    description="Loads a previously uploaded G-code file into the LinuxCNC interpreter.",
-    operation_id="loadProgram",
-    response_model=StatusMessageResponse,
-)
-def load_program(payload: LoadProgramRequest) -> StatusMessageResponse:
-    """Loads a G-code program onto the CNC controller.
-
-    TODO(issue #49 follow-up): the ``linuxcnc.execute_sync_cmd``
-    flow stays in the router for now; the next pass should wrap
-    it in a thin :class:`ProgramLoader` service that owns the
-    ``reset_interpreter`` / ``mode`` / ``program_open`` sequence
-    so this endpoint is a one-liner like the rest.
-    """
-    service: ProgramFileService = get_program_service()
-    try:
-        filepath = service.resolve_program_path(payload.filename)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid file path.") from exc
-
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="File not found.")
-
-    execute_sync_cmd("reset_interpreter")
-    execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_AUTO", 2))
-    execute_sync_cmd("program_open", 5, str(filepath))
-    execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_MANUAL", 1))
-    return StatusMessageResponse(status="success", message=f"Loaded {payload.filename}")
