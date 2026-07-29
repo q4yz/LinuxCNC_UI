@@ -42,7 +42,7 @@ class ParseResponse(BaseModel):
     message: str = Field(..., description="Human-readable status message")
 
 
-router = APIRouter(tags=["modules:program"])
+router = APIRouter(tags=["Program Control"])
 
 
 @router.post(

@@ -16,11 +16,11 @@ and Deployment flow requested by issue #41. It owns:
   mounted by the registry; this module ships the Pydantic defaults
   via :class:`~.settings.MachineConfigSettings`).
 
-Issue #49 replaced the legacy ``/api/v1/compiler/*`` and
-``/api/v1/config/*`` flat-file endpoints — they were superseded by
-this module and have been deleted from the codebase. The frontend
-``ConfigView`` and ``ProfilesExplorer`` panels now consume the
-unified ``/api/v1/modules/machineconfig/*`` surface.
+Issue #49 replaced the legacy ``/api/v1/compiler/*`` flat-file
+endpoints — they were superseded by this module and have been
+deleted from the codebase. The frontend ``EditorView`` and
+``ProfilesExplorer`` panels now consume the unified
+``/api/v1/modules/machineconfig/*`` surface.
 """
 
 from __future__ import annotations

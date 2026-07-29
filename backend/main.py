@@ -18,7 +18,7 @@ from services.console_logger import get_console_logger
 # Issue #49 retired the legacy ``compiler`` router: the
 # machineconfig module's ``/compile`` and ``/deploy`` endpoints
 # supersede it and the frontend no longer references it.
-from routers import websocket, files, system, config
+from routers import websocket, files, system
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -103,12 +103,9 @@ app.add_middleware(
 
 # Include modular routers. The ``machine`` / ``program`` routers are
 # mounted by the ``registry.boot(app)`` call inside ``lifespan`` (see
-# above), which routes them under ``/api/v1/modules/{id}``. Keeping
-# the include order flat means the legacy flat-file routers mount
-# first and the module-mounted routers layer on top with no conflict.
+# above), which routes them under ``/api/v1/modules/{id}``.
 app.include_router(files.router)
 app.include_router(system.router)
-app.include_router(config.router)
 app.include_router(websocket.router)
 
 @app.get("/")

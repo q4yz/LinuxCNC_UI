@@ -1,15 +1,17 @@
 ﻿<script setup>
 import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import registry from '../core/modules/registry'
 
-defineProps({
-  currentView: {
-    type: String,
-    required: true
-  }
-})
+const route = useRoute()
+const router = useRouter()
 
-const emit = defineEmits(['navigate'])
+// ``activeId`` is the route's name (Vue Router owns the active view).
+const activeId = computed(() => route.name || 'dashboard')
+
+function navigate(view) {
+  router.push({ name: view })
+}
 
 // Built-in entries are always present (they back the existing static
 // sidebar). Module-contributed entries are merged in sorted by their
@@ -21,12 +23,8 @@ const emit = defineEmits(['navigate'])
 // ``ConfigView`` without introducing a second module-only shell.
 const builtinItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>', order: 100 },
-  { id: 'files', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },{ id: 'files', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
+  { id: 'programs', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },{ id: 'programs', label: 'G-Code Files', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6 m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
   { id: 'config', label: 'Config Leg', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>', order: 100 },
-
-  // Settings is a built-in shell view; it shows "Settings (no modules
-  // mounted)" when the registry is empty, and one tab per module that
-  // declares ``settingsPanel`` otherwise.
   { id: 'settings', label: 'Settings', icon: '<svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>', order: 200 }
 ]
 
@@ -71,10 +69,10 @@ const isCollapsed = ref(false)
       <button
         v-for="item in navItems"
         :key="item.id"
-        @click="emit('navigate', item.id)"
+        @click="navigate(item.id)"
         class="w-full flex items-center px-4 py-3 transition-colors outline-none"
         :class="[
-          currentView === item.id
+          activeId === item.id
             ? 'bg-blue-600 text-white border-r-4 border-blue-400'
             : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-r-4 border-transparent',
           isCollapsed ? 'justify-center' : 'justify-start'

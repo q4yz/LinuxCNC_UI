@@ -284,14 +284,16 @@ def test_profiles_create_folder_file_read_write_rename_delete(
 
     # Write content to the new file.
     resp = client.put(
-        "/api/v1/modules/machineconfig/profiles/content/subdir/new.cfg",
+        "/api/v1/modules/machineconfig/profiles/content",
+        params={"path": "subdir/new.cfg"},
         json={"content": "#Start\n[printer]\nkinematics: cartesian\n"},
     )
     assert resp.status_code == 200
 
     # Read it back.
     resp = client.get(
-        "/api/v1/modules/machineconfig/profiles/content/subdir/new.cfg"
+        "/api/v1/modules/machineconfig/profiles/content",
+        params={"path": "subdir/new.cfg"},
     )
     assert resp.status_code == 200
     assert "kinematics: cartesian" in resp.json()["content"]
@@ -304,9 +306,15 @@ def test_profiles_create_folder_file_read_write_rename_delete(
     assert resp.status_code == 200
 
     # Delete the renamed file (folder is then empty and can be removed too).
-    resp = client.delete("/api/v1/modules/machineconfig/profiles/subdir/renamed.cfg")
+    resp = client.delete(
+        "/api/v1/modules/machineconfig/profiles/entry",
+        params={"path": "subdir/renamed.cfg"},
+    )
     assert resp.status_code == 200
-    resp = client.delete("/api/v1/modules/machineconfig/profiles/subdir")
+    resp = client.delete(
+        "/api/v1/modules/machineconfig/profiles/entry",
+        params={"path": "subdir"},
+    )
     assert resp.status_code == 200
 
 
@@ -324,7 +332,10 @@ def test_profiles_delete_non_empty_folder_returns_400(
         "/api/v1/modules/machineconfig/profiles/file",
         json={"path": "nonempty/child.cfg"},
     )
-    resp = client.delete("/api/v1/modules/machineconfig/profiles/nonempty")
+    resp = client.delete(
+        "/api/v1/modules/machineconfig/profiles/entry",
+        params={"path": "nonempty"},
+    )
     assert resp.status_code == 400
 
 

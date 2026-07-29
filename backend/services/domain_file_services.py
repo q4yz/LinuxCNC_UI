@@ -5,7 +5,7 @@ others:
 
 * :class:`ConfigFileService` — ``machine_config/profiles``. The
   operator can CRUD files and folders. The legacy
-  ``/api/v1/config/{filename}`` contract only saw the top-level
+  The legacy flat-file contract (pre-issue #49) only saw the top-level
   ``.cfg`` files, so the listing filter matches that.
 * :class:`ProgramFileService` — ``nc_files/``. Stores G-code files
   (``.gcode`` / ``.ngc``) and exposes a small binary-write entry
@@ -94,7 +94,7 @@ class ProgramFileService(FileService):
     default_read_only = False
 
     #: Extensions surfaced by :meth:`list_files`. Matches the
-    #: behaviour of the original ``/api/v1/ncfiles`` endpoint.
+    #: behaviour of the original ``/api/v1/programs`` endpoint.
     ALLOWED_EXTENSIONS = (".gcode", ".ngc")
 
     @classmethod

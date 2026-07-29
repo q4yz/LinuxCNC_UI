@@ -8,7 +8,7 @@
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../store.js";
-import ConfigEditor from "../../../components/ConfigEditor.vue";
+import Editor from "../../../components/Editor.vue";
 
 const store = useMachineConfigStore();
 const { activeListing, activeContents, activeTotalSize, isBusy } = storeToRefs(store);
@@ -151,11 +151,14 @@ function closeModal() {
             Close
           </button>
         </div>
-        <div class="flex-1 min-h-0">
-          <ConfigEditor
+        <!-- ``min-h-0`` defeats the flex default ``min-height: auto``
+             so the editor can scroll inside the fixed-height modal. -->
+        <div class="min-h-0 flex-1 overflow-hidden">
+          <Editor
             v-model="viewModalContent"
             :read-only="true"
             :filename="viewModalFilename || viewModalTitle"
+            mode="config"
           />
         </div>
       </div>

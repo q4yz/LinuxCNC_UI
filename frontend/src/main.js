@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import router from './router'
 import './style.css'
 import App from './App.vue'
 import './services/apiClient.js' // configures the generated OpenAPI client's BASE URL
@@ -27,6 +28,7 @@ const pinia = createPinia()
 
 app.component('v-chart', ECharts)
 app.use(pinia)
+app.use(router)
 
 // Boot the registry before mounting so the optional machine adapter
 // can register the real module store before legacy shell components

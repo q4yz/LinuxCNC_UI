@@ -38,7 +38,7 @@ const progressPercent = computed(() => printProgress.value.toFixed(1));
 
 // Cap the recent-files list to the five newest G-code / NGC
 // entries. ``recentFiles`` is a mocked getter on the facade; the
-// shape matches ``FileInfo`` so the real ``NcFilesService.listFiles``
+// shape matches ``FileInfo`` so the real ``ModulesProgramService.listFiles``
 // call can drop in later without changes here.
 const PRINTABLE_EXTENSIONS = [".gcode", ".ngc"];
 

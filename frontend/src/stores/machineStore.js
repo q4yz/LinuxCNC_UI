@@ -171,7 +171,7 @@ export const useMachineStore = defineStore("machineStore", {
 
     /**
      * Mocked recent-files list — the real implementation will read
-     * from ``NcFilesService.listFiles`` (or a future
+     * from the file manager (or a future
      * ``recentFiles`` endpoint) once it lands. Shape matches
      * ``FileInfo`` so ``ActivePrintWidget`` does not have to change.
      */

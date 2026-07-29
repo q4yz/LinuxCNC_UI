@@ -1,7 +1,7 @@
-"""``/api/v1/ncfiles`` HTTP surface.
+"""``/api/v1/programs`` HTTP surface.
 
 Thin wrapper around :class:`ProgramFileService` for the file-CRUD
-endpoints (``list``, ``upload``, ``delete``). The
+endpoints (``list``, ``upload``, ``delete``, ``content``). The
 ``load_program`` flow keeps its original shape because wrapping
 the ``linuxcnc.execute_sync_cmd`` calls behind a
 :class:`ProgramLoader` service is explicitly out of scope for
@@ -13,6 +13,16 @@ All filesystem calls are funneled through the service. The
 normalize ``\\`` and split on ``/`` now lives in
 :meth:`ProgramFileService.safe_join` so the path-safety contract
 stays single-sourced.
+
+Endpoint naming follows the same pattern as the machineconfig
+module:
+
+    GET    /api/v1/programs                   — list files
+    POST   /api/v1/programs/upload           — upload file
+    DELETE /api/v1/programs/{filename}       — delete file
+    GET    /api/v1/programs/content/{filename} — read file content
+    PUT    /api/v1/programs/content/{filename} — write file content
+    POST   /api/v1/programs/load_program     — load program into controller
 """
 
 import logging
@@ -26,7 +36,7 @@ from services import ProgramFileService, get_program_service
 
 logger = logging.getLogger("backend.routers.files")
 
-router = APIRouter(prefix="/api/v1/ncfiles", tags=["NC Files"])
+router = APIRouter(prefix="/api/v1/programs", tags=["Program Files"])
 
 
 class LoadProgramRequest(BaseModel):
@@ -144,6 +154,83 @@ def delete_file(filename: str) -> StatusMessageResponse:
         logger.error("Failed to delete file %s: %s", filename, exc)
         raise HTTPException(status_code=500, detail="Failed to delete file.") from exc
     return StatusMessageResponse(status="success", message=f"Deleted {filename}")
+
+
+@router.get(
+    "/content/{filename}",
+    summary="Read File Content",
+    description=(
+        "Returns the raw text content of a G-code file. Used by the "
+        "frontend to populate the editor when the user clicks Edit."
+    ),
+    operation_id="readFile",
+    response_model=str,
+)
+def read_file(filename: str) -> str:
+    """Read a G-code file's text content via :class:`ProgramFileService`.
+
+    Errors map to actionable HTTP statuses:
+
+    * ``ValueError`` (path-safety violation) → ``400``
+    * ``FileNotFoundError`` → ``404``
+    * any other unexpected error → ``500``
+    """
+    service: ProgramFileService = get_program_service()
+    try:
+        return service.read_file(filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file path.") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found.") from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to read file %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail="Failed to read file.") from exc
+
+
+class GCodeContentPayload(BaseModel):
+    """Body of ``PUT /api/v1/programs/content/{filename}``."""
+
+    content: str = Field(
+        ...,
+        description="Full UTF-8 text content of the G-code file.",
+    )
+
+
+@router.put(
+    "/content/{filename}",
+    summary="Write File Content",
+    description=(
+        "Overwrite the text content of a G-code file. Mirrors the "
+        "machineconfig ``PUT /profiles/content/{path}`` shape so the "
+        "frontend editor can use one code path for both kinds of "
+        "file."
+    ),
+    operation_id="writeFile",
+    response_model=StatusMessageResponse,
+)
+def write_file(filename: str, payload: GCodeContentPayload) -> StatusMessageResponse:
+    """Overwrite a G-code file's text content via :class:`ProgramFileService`.
+
+    Errors map to actionable HTTP statuses:
+
+    * ``ValueError`` (path-safety violation) → ``400``
+    * ``FileNotFoundError`` → ``404``
+    * ``PermissionError`` (read-only file) → ``403``
+    * any other unexpected error → ``500``
+    """
+    service: ProgramFileService = get_program_service()
+    try:
+        service.write_file(filename, payload.content, overwrite=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file path.") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to write file %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail="Failed to write file.") from exc
+    return StatusMessageResponse(status="success", message=f"Saved {filename}")
 
 
 @router.post(

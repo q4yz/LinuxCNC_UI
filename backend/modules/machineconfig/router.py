@@ -108,14 +108,14 @@ class DirectoryListing(BaseModel):
 
 
 class ProfileContent(BaseModel):
-    """Payload returned by ``GET /profiles/content/{path}``."""
+    """Payload returned by ``GET /profiles/content?path=<rel>``."""
 
     path: str = Field(..., description="Forward-slash path relative to profiles/")
     content: str = Field(..., description="Raw text content of the file")
 
 
 class ProfileWriteRequest(BaseModel):
-    """Body of ``PUT /profiles/content/{path}``."""
+    """Body of ``PUT /profiles/content?path=<rel>``."""
 
     content: str = Field(..., description="Raw text to overwrite the file with")
 
@@ -337,13 +337,25 @@ def get_profiles_tree() -> DirectoryListing:
 
 
 @router.get(
-    "/profiles/content/{path:path}",
+    "/profiles/content",
     summary="Read a profile file",
-    description="Return the raw text content of a file inside machine_config/profiles.",
+    description=(
+        "Return the raw text content of a file inside "
+        "machine_config/profiles. The relative path is supplied "
+        "as the ``path`` query parameter so URL-encoded slashes "
+        "do not get stripped by the dev-server proxy."
+    ),
     response_model=ProfileContent,
 )
 def read_profile(path: str) -> ProfileContent:
-    """Read a profile file by relative path."""
+    """Read a profile file by relative path.
+
+    ``path`` is a query parameter rather than a path segment —
+    URL-encoded slashes (``%2F``) inside a path segment were being
+    dropped by the Vite dev-server proxy. Query strings travel
+    intact, so nested paths like ``machine/axis.cfg`` survive
+    end-to-end.
+    """
     service: ConfigFileService = get_config_service()
     try:
         content = service.read_file(path)
@@ -355,13 +367,21 @@ def read_profile(path: str) -> ProfileContent:
 
 
 @router.put(
-    "/profiles/content/{path:path}",
+    "/profiles/content",
     summary="Save a profile file",
-    description="Overwrite the content of a profile file inside machine_config/profiles.",
+    description=(
+        "Overwrite the content of a profile file inside "
+        "machine_config/profiles. The relative path is supplied "
+        "as the ``path`` query parameter so URL-encoded slashes "
+        "do not get stripped by the dev-server proxy."
+    ),
     response_model=StatusMessage,
 )
 def save_profile(path: str, payload: ProfileWriteRequest) -> StatusMessage:
-    """Persist ``payload.content`` to ``profiles/<path>``."""
+    """Persist ``payload.content`` to ``profiles/<path>``.
+
+    Same query-parameter rationale as :func:`read_profile`.
+    """
     service: ConfigFileService = get_config_service()
     try:
         service.write_file(path, payload.content, overwrite=True)
@@ -407,9 +427,12 @@ def create_file(payload: CreateEntryRequest) -> StatusMessage:
 
 
 @router.post(
-    "/profiles/upload/{path:path}",
+    "/profiles/upload",
     summary="Upload a profile file",
-    description="Upload a file into a directory under machine_config/profiles.",
+    description=(
+        "Upload a file into a directory under machine_config/profiles. "
+        "The relative path is supplied as the ``path`` query parameter."
+    ),
     response_model=StatusMessage,
 )
 async def upload_profile(path: str, file: UploadFile = File(...)) -> StatusMessage:
@@ -443,9 +466,15 @@ def rename_profile(payload: RenameRequest) -> StatusMessage:
 
 
 @router.delete(
-    "/profiles/{path:path}",
+    "/profiles/entry",
     summary="Delete a profiles entry",
-    description="Delete a file or empty folder under machine_config/profiles.",
+    description=(
+        "Delete a file or empty folder under machine_config/profiles. "
+        "The relative path is supplied as the ``path`` query "
+        "parameter. The ``/entry`` suffix avoids a bare "
+        "``DELETE /profiles`` endpoint, which is semantically "
+        "confusing next to the listing endpoint."
+    ),
     response_model=StatusMessage,
 )
 def delete_profile(path: str) -> StatusMessage:
