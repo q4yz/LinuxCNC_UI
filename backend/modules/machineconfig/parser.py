@@ -12,9 +12,11 @@ from .models import (
     Extruder,
     HeaterBed,
     MachineConfigGraph,
+    MCU,
     Printer,
     Spindle,
     Stepper,
+    TMC2209,
 )
 from .schema import PRINTER_IGNORED_KEYS, SectionKind, schema_for_section
 
@@ -139,9 +141,14 @@ class MachineConfigParser:
             self._validate_keywords(section_name, section, section_schema.allowed_keys)
 
             if section_schema.kind is SectionKind.MCU:
+                # MCU sections are mostly ignored for LinuxCNC, but we
+                # extract ``hal_type`` so the HAL generator can switch
+                # between Remora and parallel templates.
+                graph.mcu = self._parse_mcu(section_name, section)
                 logger.info(
-                    "Bypassing [%s]: Klipper MCU settings are ignored for LinuxCNC",
+                    "Bypassing [%s]: Klipper MCU transport settings are ignored for LinuxCNC (hal_type=%s)",
                     section_name,
+                    graph.mcu.hal_type if graph.mcu else "remora",
                 )
                 continue
 
@@ -165,6 +172,12 @@ class MachineConfigParser:
                 graph.heater_bed = self._parse_heater_bed(section_name, section)
             elif section_schema.kind is SectionKind.SPINDLE:
                 graph.spindle = self._parse_spindle(section_name, section)
+            elif section_schema.kind is SectionKind.TMC2209:
+                graph.tmc2209s[object_name] = self._parse_tmc2209(
+                    object_name,
+                    section_name,
+                    section,
+                )
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -319,6 +332,34 @@ class MachineConfigParser:
             max_rpm=self._optional_float(section_name, section, "max_rpm"),
         )
 
+    def _parse_mcu(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> MCU:
+        return MCU(
+            hal_type=self._optional_string(section, "hal_type") or "remora",
+        )
+
+    def _parse_tmc2209(
+        self,
+        stepper: str,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> TMC2209:
+        return TMC2209(
+            stepper=stepper,
+            uart_pin=self._optional_string(section, "uart_pin"),
+            run_current=self._optional_float(section_name, section, "run_current"),
+            stealthchop_threshold=self._optional_int(
+                section_name, section, "stealthchop_threshold"
+            ),
+            microsteps=self._optional_int(section_name, section, "microsteps"),
+            interpolate=self._optional_bool(section, "interpolate"),
+            hold_current=self._optional_float(section_name, section, "hold_current"),
+            sense_resistor=self._optional_float(section_name, section, "sense_resistor"),
+        )
+
     @staticmethod
     def _optional_string(
         section: configparser.SectionProxy,
@@ -367,6 +408,20 @@ class MachineConfigParser:
             return int(value)
         except ValueError as exc:
             raise InvalidValueError(section_name, key, value, "an integer") from exc
+
+    @staticmethod
+    def _optional_bool(
+        section: configparser.SectionProxy,
+        key: str,
+    ) -> bool | None:
+        if key not in section:
+            return None
+        value = section[key].strip().lower()
+        if value in {"true", "yes", "on", "1"}:
+            return True
+        if value in {"false", "no", "off", "0"}:
+            return False
+        return None
 
 
 # Descriptive alias for clients that refer to the input dialect explicitly.

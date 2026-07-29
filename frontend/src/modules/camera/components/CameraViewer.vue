@@ -1,8 +1,16 @@
 <script setup>
-import { computed, onMounted } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useCameraStore } from "../cameraStore.js";
+
+// Simple logger for the camera module. Uses console.debug so it
+// doesn't spam the production console.
+const logger = {
+  debug: (...args) => {
+    if (import.meta.env.DEV) console.debug("[CameraViewer]", ...args);
+  },
+};
 
 const store = useCameraStore();
 const { devices, activeCameraId, cameraPreferences, isLoading, error } =
@@ -35,13 +43,65 @@ const cameraTransform = computed(() => {
   return "none";
 });
 
-const streamUrl = computed(() => {
-  if (!activeCameraId.value) return "";
-  return `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}`;
+// --- Hardware Race Condition Fix ---
+const streamUrl = ref("");
+let streamTimer = null;
+let retryCount = 0;
+const MAX_RETRY_DELAY_MS = 5000;
+
+const startStream = () => {
+  if (streamTimer) clearTimeout(streamTimer);
+
+  if (!activeCameraId.value) {
+    streamUrl.value = "";
+    return;
+  }
+
+  // Add a 300ms delay so the backend can release the old lock
+  streamTimer = setTimeout(() => {
+    // Append Date.now() to bypass aggressive browser caching
+    streamUrl.value = `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}&t=${Date.now()}`;
+  }, 300);
+};
+
+// Exponential backoff on stream failure. The backend enforces a
+// 5-second cooldown after a failed open/read; the frontend mirrors
+// that with a capped exponential backoff so we don't hammer the
+// server while the hardware is locked.
+const handleStreamError = () => {
+  retryCount += 1;
+  const delay = Math.min(1000 * Math.pow(2, retryCount), MAX_RETRY_DELAY_MS);
+  logger.debug(
+    `Camera stream failed (attempt ${retryCount}); retrying in ${delay}ms`
+  );
+  streamUrl.value = "";
+  if (streamTimer) clearTimeout(streamTimer);
+  streamTimer = setTimeout(() => {
+    startStream();
+  }, delay);
+};
+
+// Reset the backoff counter when the stream succeeds.
+const handleStreamLoad = () => {
+  retryCount = 0;
+};
+
+// Re-run the delay anytime the active camera changes
+watch(activeCameraId, () => {
+  retryCount = 0;
+  streamUrl.value = ""; // Instantly destroy the old <img> tag to drop the socket
+  startStream();
 });
 
 onMounted(() => {
   store.fetchDevices();
+  startStream();
+});
+
+// Clean up when leaving the page to free the USB hardware
+onBeforeUnmount(() => {
+  if (streamTimer) clearTimeout(streamTimer);
+  streamUrl.value = "";
 });
 </script>
 
@@ -50,15 +110,28 @@ onMounted(() => {
     class="relative flex min-h-[300px] w-full items-center justify-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-xl"
     aria-label="Camera viewer"
   >
+    <!-- 1. The active stream -->
     <img
-      v-if="activeCameraId"
-      :key="activeCameraId"
+      v-if="streamUrl"
+      :key="streamUrl"
       :src="streamUrl"
       :alt="`Live feed from ${cameraName}`"
       :style="{ transform: cameraTransform }"
       class="h-full min-h-[300px] w-full object-contain transition-transform duration-200"
+      @error="handleStreamError"
+      @load="handleStreamLoad"
     >
 
+    <!-- 2. The 300ms "breath" loading state -->
+    <div
+      v-else-if="activeCameraId"
+      class="flex min-h-[300px] w-full flex-col items-center justify-center text-center text-gray-400"
+    >
+      <div class="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+      <span class="text-sm font-semibold">Connecting to camera...</span>
+    </div>
+
+    <!-- 3. No camera selected / error state -->
     <div
       v-else
       class="flex min-h-[300px] flex-col items-center justify-center px-6 text-center"

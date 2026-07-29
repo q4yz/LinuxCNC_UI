@@ -1,19 +1,10 @@
 <script setup>
-// Dashboard composition. Module-owned panels (``camera``,
-// ``temperature``, ``machine``) are loaded via
+// Dashboard composition. Module-owned panels are loaded via
 // ``defineAsyncComponent`` resolved at runtime through
 // ``import.meta.glob`` so removing any single
-// ``frontend/src/modules/<id>/`` folder leaves the build intact
-// (MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1).
-//
-// The unmigrated panels (``GCodeViewer``/``ConsolePanel``/
-// ``DebugPanel``) keep static imports for now; they will convert
-// to async when those features migrate.
-//
-// Reactivity: ``registry.modules`` is a Vue-reactive Map (see
-// ``frontend/src/core/modules/registry.js``), so the ``computed``s
-// below re-evaluate the moment the registry flips a module into
-// its mounted set after boot completes.
+// ``frontend/src/modules/<id>/`` folder leaves the build intact.
+// Unmigrated panels keep static imports. See ``.agent/STATE.md``
+// § 1 (lazy discovery), § 7 (nullable-module guarantee).
 
 import { computed, defineAsyncComponent } from 'vue'
 import registry from '../core/modules/registry'
@@ -23,10 +14,9 @@ import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 
-// ``import.meta.glob`` with ``eager: false`` records dynamic-import
-// functions keyed by file path; the dashboard keeps building with
-// an empty ``modules/`` folder because Vite doesn't try to resolve
-// the paths at build time.
+// ``eager: false`` records dynamic-import functions keyed by file
+// path; an empty ``modules/`` folder is harmless because Vite
+// doesn't resolve the paths at build time.
 const modulePanelImports = import.meta.glob(
   '../modules/*/components/*.vue',
   { eager: false },
@@ -34,9 +24,9 @@ const modulePanelImports = import.meta.glob(
 
 /**
  * Resolve a module panel by id at component-creation time.
- * Returns ``null`` when the module folder has been deleted, which
- * the dashboard ``v-if`` gate ignores as "do not render" — this is
- * the nullable-module guarantee from Gotcha #1.
+ * Returns ``null`` when the module folder has been deleted so the
+ * dashboard ``v-if`` falls through to a placeholder — the
+ * nullable-module guarantee from ``.agent/STATE.md`` § 7.
  */
 function panelFor(folder, name) {
   return defineAsyncComponent(async () => {
@@ -51,19 +41,16 @@ function panelFor(folder, name) {
 
 const CameraViewer     = panelFor('camera',     'CameraViewer')
 const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
-// Machine panels are loaded the same way as camera / temperature.
-// When the folder has been deleted, the ``panelFor`` helper returns
-// ``null`` and the ``v-if`` falls through to the placeholder card
-// so the dashboard layout stays consistent (Gotcha #1).
 const DroPanel         = panelFor('machine',    'DroPanel')
 const JogControls      = panelFor('machine',    'JogControls')
+const ToolPanel        = panelFor('tools',      'ToolPanel')
 
-// Mounted? ``registry.modules`` is a reactive Map (see
-// ``registry.js``) so ``.has`` is tracked; the computed flips
-// once the registry boots and mounts the module.
+// ``registry.modules`` is a reactive Map so ``.has`` is tracked;
+// the computed flips once boot completes.
 const cameraMounted      = computed(() => registry.modules.has('camera'))
 const temperatureMounted = computed(() => registry.modules.has('temperature'))
 const machineMounted     = computed(() => registry.modules.has('machine'))
+const toolsMounted       = computed(() => registry.modules.has('tools'))
 </script>
 
 <template>
@@ -80,6 +67,8 @@ const machineMounted     = computed(() => registry.modules.has('machine'))
         </div>
 
         <TemperaturePanel v-if="temperatureMounted" />
+
+        <ToolPanel v-if="toolsMounted" />
 
         <JogControls v-if="machineMounted" />
         <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">

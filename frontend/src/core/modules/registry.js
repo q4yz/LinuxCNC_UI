@@ -1,53 +1,17 @@
-// Frontend module registry.
-//
-// Discovers, filters, and registers pluggable modules under
-// ``src/modules/*/index.js``. The registry is the single source of
-// truth that ``App.vue`` and the sidebar consume — when no modules
-// are mounted, the static navigation list stays in effect.
-//
-// Discovery rules (MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1):
-//
-//   * ``import.meta.glob`` MUST be lazy (``eager: false``). Eager
-//     imports pull every module's JS into the bundle even when the
-//     module is disabled by the ``MODULES_ENABLED`` whitelist, which
-//     is the original bug that motivated Phase 2b.
-//
-//   * The whitelist filter is a soft-name filter — unknown entries
-//     produce a dev-only console warning rather than aborting the
-//     build. Empty / unset ``MODULES_ENABLED`` mounts everything
-//     discovered (matches the backend registry).
-//
-// The registry boots **synchronously at import time** so the rest of
-// the app can read ``registry.modules`` immediately. Module
-// ``onLoad`` hooks still run synchronously inside the same import
-// because they are expected to be cheap wiring code; long-running
-// I/O must be scheduled by the module itself.
+// Frontend module registry. Discovers, filters, and mounts modules
+// under ``src/modules/*/index.js``. See ``.agent/STATE.md`` § 1, § 7
+// for the discovery and nullable-module rules.
 
 import { reactive } from "vue";
 import { eventBus } from "./event-bus";
 import { telemetryBus } from "./telemetry-bus";
 import { createModuleSettings } from "./settings";
 
-// Vite glob — ``eager: false`` is mandatory. The path is relative to
-// this file (``frontend/src/core/modules/``) and intentionally fixed
-// so contributors don't accidentally widen the discovery surface.
-// ``{ import: 'default' }`` returns each module's default export, so
-// authors write ``export default { manifest, onLoad, ... }``.
-//
-// The glob resolves to ``frontend/src/modules/<id>/index.js``. Note
-// the **two** ``..`` segments: registry.js lives at
-// ``frontend/src/core/modules/`` so a single ``..`` would land in
-// ``frontend/src/core/`` (wrong folder). DashboardView lives at
-// ``frontend/src/views/`` so it gets away with one ``..``; copying
-// that pattern here silently breaks discovery — this comment is
-// the tripwire.
-//
-// We deliberately keep the import path shape narrow: a module is
-// either a folder with an ``index.js`` or it doesn't exist.
-//
-// NOTE: Vite's glob does not match the empty case. When
-// ``frontend/src/modules/`` is empty (or deleted) this resolves to
-// ``{}`` and the registry boots cleanly with zero modules.
+// ``eager: false`` is mandatory — see ``.agent/STATE.md`` § 1.
+// Path uses two ``..`` segments: this file is in
+// ``frontend/src/core/modules/`` (one segment up would land in
+// ``frontend/src/core/``). Don't copy the one-segment path from
+// ``DashboardView.vue``.
 const moduleImports = import.meta.glob(
   "../../modules/*/index.js",
   { eager: false },
@@ -202,10 +166,9 @@ class FrontendRegistry {
       manifest: instance.manifest,
       context: ctx,
       sidebar: instance.sidebar ?? instance.manifest.sidebar ?? null,
-      // Module-supplied settings-tab component (Phase 5 polish per
-      // issue #35). Optional — modules without one still get a tab
-      // via ``settingsPanels()`` so the legacy placeholder keeps
-      // working.
+      // Module-supplied settings-tab component. Optional — modules
+      // without one still get a tab via ``settingsPanels()`` so the
+      // legacy placeholder keeps working.
       settingsPanel: instance.settingsPanel ?? null,
     });
   }

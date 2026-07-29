@@ -1,24 +1,11 @@
 import { defineStore } from 'pinia'
 
-// ---------------------------------------------------------------------- //
-// Log level vocabulary                                                    //
-// ---------------------------------------------------------------------- //
-//
-// The four canonical levels are surfaced both to the console UI
-// (filter chips) and to the backend persistent logger (file row
-// prefix). ``All`` is a UI-only sentinel that never appears on a
-// message itself.
-//
-// The mapping from the historic ``type`` vocabulary (info / success /
-// command / warning / error) to the new ``level`` vocabulary is:
-//
-//   * ``info``    -> ``info``     (default)
-//   * ``success`` -> ``info``     (positive variant of info)
-//   * ``command`` -> ``info``     (user-issued commands are info-
-//                                 level events for filtering)
-//   * ``warning`` -> ``warning``  (direct carry-over)
-//   * ``error``   -> ``error``    (direct carry-over)
-//   * ``debug``   -> ``debug``    (new — used by diagnostic logging)
+// Log level vocabulary. Surfaces to both the console UI (filter
+// chips) and the backend persistent logger (file row prefix). ``All``
+// is a UI-only sentinel that never appears on a message itself.
+// ``info`` absorbs the historic ``info`` / ``success`` / ``command``
+// variants; ``warning`` / ``error`` carry over directly; ``debug`` is
+// new for diagnostic logging.
 
 export const LOG_LEVELS = ['all','debug', 'info', 'warning', 'error']
 

@@ -1,15 +1,5 @@
-// Frontend module-system contracts.
-//
-// These types describe the surface every pluggable frontend module
-// must satisfy. They mirror the backend ``PluggableModule`` Protocol
-// but adapted for Vue 3 / Vite conventions. JSDoc typedefs give us
-// type hints without forcing a TypeScript build step — the project is
-// otherwise pure JavaScript.
-//
-// Authoritative docs:
-//   .agent/contracts/frontend-module.md
-//   .agent/contracts/settings-module.md
-//   MODULE_SYSTEM_ROADMAP.md § 12 Implementation Gotchas
+// JSDoc typedefs for the frontend module surface. See
+// ``.agent/contracts/frontend-module.md`` for the authoritative doc.
 
 /**
  * @typedef {Object} SidebarEntry

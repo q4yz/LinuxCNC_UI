@@ -40,8 +40,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, List, Optional
 from urllib.parse import urlparse
 
@@ -51,6 +52,7 @@ from pydantic import BaseModel, Field
 
 from .detection import USBDeviceInfo, detect_usb_cameras
 from .settings import CameraSettings
+import cv2 as _cv2
 
 logger = logging.getLogger("backend.modules.camera")
 
@@ -179,6 +181,12 @@ class StreamManager:
         self._last_frame_at: Optional[datetime] = None
         self._settings_store = None  # late-bound by bind_settings
         self._cv2_disabled = False
+        # Cooldown: after a failed open/read, reject new requests for
+        # this camera_id until the cooldown expires. Prevents the
+        # frontend from hammering a locked device and triggering
+        # OpenCV C++ exceptions on Windows.
+        self._cooldown_until: dict[str, datetime] = {}
+        self._cooldown_seconds = 5.0
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -213,6 +221,23 @@ class StreamManager:
         """Stamp ``_last_frame_at`` after a successful frame yield."""
         with self._lock:
             self._last_frame_at = datetime.now(timezone.utc)
+
+    def mark_failure(self, camera_id: str) -> None:
+        """Record a read failure so the next request hits the cooldown.
+
+        Called by the stream generator when ``cv2.read`` fails or
+        raises a C++ exception. The cooldown prevents the frontend
+        from immediately retrying and crashing OpenCV again.
+        """
+        with self._lock:
+            self._cooldown_until[camera_id] = datetime.now(
+                timezone.utc
+            ) + timedelta(seconds=self._cooldown_seconds)
+            logger.info(
+                "StreamManager: camera %s marked for cooldown (%.1fs)",
+                camera_id,
+                self._cooldown_seconds,
+            )
 
     # ------------------------------------------------------------------ #
     # Settings passthrough                                                #
@@ -261,9 +286,28 @@ class StreamManager:
         ``.read()`` directly. Raises :class:`RuntimeError` if the
         capture cannot be opened — callers should translate that into
         an actionable HTTP error.
+
+        Cooldown: if this camera_id recently failed to open or read,
+        reject the request until the cooldown expires. This prevents
+        the frontend from hammering a locked device and triggering
+        OpenCV C++ exceptions on Windows.
         """
         if not camera_id:
             raise RuntimeError("camera_id is required")
+
+        # Check cooldown before doing any work.
+        with self._lock:
+            cooldown_until = self._cooldown_until.get(camera_id)
+            if cooldown_until is not None:
+                now = datetime.now(timezone.utc)
+                if now < cooldown_until:
+                    remaining = (cooldown_until - now).total_seconds()
+                    raise RuntimeError(
+                        f"Camera {camera_id!r} is in cooldown "
+                        f"({remaining:.1f}s remaining)"
+                    )
+                # Cooldown expired — clear it.
+                del self._cooldown_until[camera_id]
 
         # Lazy-import cv2 and remember the reference so the rest of
         # ``acquire`` does not have to repeat the import. We catch the
@@ -299,13 +343,29 @@ class StreamManager:
             # request honours the on-demand contract.
             self._release_locked()
 
-            cap = _cv2.VideoCapture(camera_id)
+            source = camera_id
+            backend_api = _cv2.CAP_ANY
+            # If it's a pure number string like "0", cast it to an int for Windows
+            if isinstance(source, str) and source.isdigit():
+                source = int(source)
+
+                if sys.platform == 'win32':
+                    # CAP_MSMF is much less prone to hard C++ crashing
+                    # when the hardware is locked than CAP_DSHOW.
+                    backend_api = _cv2.CAP_MSMF
+
+            cap = _cv2.VideoCapture(source, backend_api)
             if cap is None or not cap.isOpened():
                 if cap is not None:
                     try:
                         cap.release()
                     except Exception:  # noqa: BLE001
                         pass
+                # Record the failure so the next request hits the
+                # cooldown instead of crashing OpenCV again.
+                self._cooldown_until[camera_id] = datetime.now(
+                    timezone.utc
+                ) + timedelta(seconds=self._cooldown_seconds)
                 raise RuntimeError(
                     f"Cannot open camera source: {camera_id!r}"
                 )
@@ -387,8 +447,10 @@ async def _generate_frames(
     try:
         cap = await asyncio.to_thread(_stream_manager.acquire, camera_id)
     except RuntimeError as exc:
-        # Surface as an HTTP error at the StreamingResponse boundary.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # DO NOT raise HTTPException here. The StreamingResponse has already started
+        # and sent the 200 OK headers. Exiting cleanly terminates the stream.
+        logger.error("Failed to start stream for camera_id=%s: %s", camera_id, exc)
+        return
 
     try:
         while True:
@@ -406,12 +468,26 @@ async def _generate_frames(
             # ``read()`` is blocking; run it in a worker thread so the
             # asyncio loop stays responsive to the jog keep-alive
             # endpoint and the WebSocket telemetry loop.
-            ok, frame = await asyncio.to_thread(cap.read)
+            # Wrap the read call to catch exploding Windows drivers
+            try:
+                ok, frame = cap.read()
+            except _cv2.error as e:
+                logger.warning(
+                    "Stream: C++ exception during cv2.read for camera_id=%s; stopping. (%s)",
+                    camera_id, e
+                )
+                _stream_manager.mark_failure(camera_id)
+                break  # Break the loop to trigger the finally block
+            except Exception as e:
+                logger.warning("Stream: Unexpected error reading camera_id=%s: %s", camera_id, e)
+                _stream_manager.mark_failure(camera_id)
+                break
             if not ok:
                 logger.warning(
                     "Stream: cv2.read failed for camera_id=%s; stopping.",
                     camera_id,
                 )
+                _stream_manager.mark_failure(camera_id)
                 break
 
             # ``imencode`` itself is fast (<10 ms for 640x480) but we

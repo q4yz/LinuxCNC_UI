@@ -17,6 +17,7 @@ class SectionKind(str, Enum):
     EXTRUDER = "extruder"
     HEATER_BED = "heater_bed"
     SPINDLE = "spindle"
+    TMC2209 = "tmc2209"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,17 @@ HEATER_BED_KEYS = frozenset(
     }
 )
 SPINDLE_KEYS = frozenset({"pwm_pin", "enable_pin", "max_rpm"})
+TMC2209_KEYS = frozenset(
+    {
+        "uart_pin",
+        "run_current",
+        "stealthchop_threshold",
+        "microsteps",
+        "interpolate",
+        "hold_current",
+        "sense_resistor",
+    }
+)
 
 SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.MCU: None,
@@ -98,6 +110,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.EXTRUDER: EXTRUDER_KEYS,
     SectionKind.HEATER_BED: HEATER_BED_KEYS,
     SectionKind.SPINDLE: SPINDLE_KEYS,
+    SectionKind.TMC2209: TMC2209_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -108,6 +121,7 @@ _STEPPER_SECTION = re.compile(r"^stepper_(?P<name>[A-Za-z0-9_]+)$")
 _ENDSTOP_SECTION = re.compile(
     r"^endstop_switch\s+(?P<name>[A-Za-z0-9_.-]+)$"
 )
+_TMC2209_SECTION = re.compile(r"^tmc2209\s+(?P<name>[A-Za-z0-9_.-]+)$")
 
 
 def schema_for_section(section: str) -> SectionSchema | None:
@@ -138,6 +152,14 @@ def schema_for_section(section: str) -> SectionSchema | None:
             SectionKind.ENDSTOP_SWITCH,
             ENDSTOP_SWITCH_KEYS,
             endstop_match.group("name"),
+        )
+
+    tmc2209_match = _TMC2209_SECTION.fullmatch(section)
+    if tmc2209_match:
+        return SectionSchema(
+            SectionKind.TMC2209,
+            TMC2209_KEYS,
+            tmc2209_match.group("name"),
         )
 
     exact_sections = {

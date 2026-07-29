@@ -1,46 +1,16 @@
-// State Facade Pinia store — Issue #60.
-//
-// The backend's telemetry stream ships raw LinuxCNC integers
-// (``task_state``, ``interp_state``, ``estop``, …) straight to the
-// browser. This module exposes those raw values verbatim **and**
-// surfaces a clean, string-based ``systemState`` getter so the rest of
-// the frontend never has to do integer math against the wire protocol.
-//
-// Architecture:
-//
-//   * ``state.status`` keeps the raw telemetry payload untouched so
-//     advanced / diagnostic components (e.g. an axis-mode panel that
-//     needs ``task_mode``) can still read it.
-//   * Components that only care about "is the machine running?"
-//     consume ``systemState`` and stay unaware of the integer
-//     constants — that is the whole point of the facade.
-//   * ``updateStatus`` is the single sanctioned entry point for
-//     telemetry — the machine module's WebSocket handler calls it on
-//     every ``full_state`` / ``delta`` update, keeping the facade in
-//     sync without breaking the nullable-module guarantee in
-//     ``stores/machine-compat.js`` (when the machine module is not
-//     mounted the facade simply renders its initial defaults).
-//
-// The ``TASK_STATE`` / ``INTERP_STATE`` integers and the
-// ``SystemState`` string enum are exported as named constants so
-// other files can use the same vocabulary without copy-pasting the
-// raw integers.
+// State Facade store. Exposes raw LinuxCNC integers
+// (``task_state``, ``interp_state``, ``estop``) plus a clean
+// string-based ``systemState`` getter so the frontend never does
+// integer math against the wire protocol. ``updateStatus`` is the
+// single sanctioned entry point for telemetry — called by the
+// machine module's WebSocket handler on every ``full_state`` /
+// ``delta`` update. See ``.agent/STATE.md`` § 6.
 
 import { defineStore } from "pinia";
 
-// ---------------------------------------------------------------------- //
-// Raw LinuxCNC integer constants                                         //
-// ---------------------------------------------------------------------- //
-//
-// Mirrors the values emitted by the backend's
-// ``hardware/linuxcnc_mock.py`` (and the real ``linuxcnc`` bindings):
-//
-//   * ``TASK_STATE``  — overall task machine state.
-//   * ``INTERP_STATE`` — interpreter (program-run) sub-state.
-//
-// These are frozen so a component cannot accidentally mutate the
-// shared constants and silently desynchronise from the backend.
-
+// Raw LinuxCNC integer constants. Mirrors
+// ``hardware/linuxcnc_mock.py``. Frozen so a component cannot
+// silently desynchronise from the backend.
 export const TASK_STATE = Object.freeze({
   ESTOP: 1,
   ESTOP_RESET: 2,
@@ -55,14 +25,8 @@ export const INTERP_STATE = Object.freeze({
   WAITING: 4,
 });
 
-// ---------------------------------------------------------------------- //
-// Clean frontend state enum                                             //
-// ---------------------------------------------------------------------- //
-//
-// The values the UI uses instead of raw integers. ``Object.freeze``
-// keeps the table immutable at runtime so accidental mutation cannot
-// leak across components.
-
+// Frontend state enum the UI uses instead of raw integers.
+// ``Object.freeze`` keeps the table immutable at runtime.
 export const SystemState = Object.freeze({
   OFFLINE: "Offline",
   UPDATING: "Updating",
@@ -74,10 +38,10 @@ export const SystemState = Object.freeze({
   FAILURE: "Failure",
 });
 
-// Default raw payload — used for the initial render before the first
-// telemetry frame arrives, and as the safe baseline whenever the
-// backend omits a field. ``ESTOP`` is the safest default: the UI must
-// never claim the machine is idle or running when we have no data.
+// Safe default payload for the initial render before the first
+// telemetry frame arrives. ``ESTOP`` is the safest default: the UI
+// must never claim the machine is idle or running when we have no
+// data.
 const DEFAULT_RAW_STATUS = Object.freeze({
   task_state: TASK_STATE.ESTOP,
   estop: 1,
@@ -88,11 +52,9 @@ const DEFAULT_RAW_STATUS = Object.freeze({
   total_lines: 0,
 });
 
-// Sanity-check the ``TASK_STATE`` / ``INTERP_STATE`` values at module
-// load. If a future refactor accidentally renames or reorders the
-// constants the facade would silently disagree with the backend —
-// this guard fails fast instead. The check runs once and is a no-op
-// in production but keeps dev-time edits honest.
+// Sanity-check the constants at module load. A future refactor that
+// renames or reorders them would silently disagree with the
+// backend — this guard fails fast instead.
 (function validateConstants() {
   const taskValues = Object.values(TASK_STATE);
   const expectedTask = [1, 2, 3, 4];
@@ -134,30 +96,18 @@ export const useMachineStore = defineStore("machineStore", {
     // (``status: "updating"``). The widget hides progress during an
     // update so the operator does not panic over a frozen bar.
     isUpdating: false,
-    // Raw telemetry payload. The component never has to look at this
-    // for state-based UI — that is what ``systemState`` is for — but
-    // advanced / diagnostic panels can still read the integers here
-    // without us having to add per-field getters.
+    // Raw telemetry payload. ``systemState`` is for state-based UI;
+    // advanced / diagnostic panels can read the integers here.
     status: { ...DEFAULT_RAW_STATUS },
   }),
 
   getters: {
     /**
-     * String-based machine state facade. Translates the raw
-     * ``task_state`` / ``interp_state`` / ``estop`` integers into one
-     * of the ``SystemState`` enum members. Components that only need
-     * "what is the machine doing right now?" should always go through
-     * this getter.
-     *
-     * Priority (highest wins):
-     *   1. ``Offline``        — telemetry is not flowing.
-     *   2. ``Updating``       — backend is mid-config-update.
-     *   3. ``Estop``          — safety override; always wins.
-     *   4. ``PowerOff``       — task in ``ESTOP_RESET`` or ``OFF``.
-     *   5. ``Paused``         — ``ON`` + interpreter ``PAUSED``.
-     *   6. ``Running``        — ``ON`` + interpreter ``READING`` / ``WAITING``.
-     *   7. ``Idle``           — ``ON`` but interpreter ``IDLE``.
-     *   8. ``Failure``        — anything we do not recognise.
+     * String-based machine state facade. Components that only need
+     * "what is the machine doing right now?" should always go
+     * through this getter. Priority (highest wins):
+     * Offline → Updating → Estop → PowerOff → Paused → Running
+     * → Idle → Failure.
      */
     systemState(state) {
       if (state.connectionStatus !== "connected") return SystemState.OFFLINE;
@@ -220,12 +170,10 @@ export const useMachineStore = defineStore("machineStore", {
     },
 
     /**
-     * Mocked recent-files list. Issue #60 explicitly says "mock for
-     * now"; the real implementation will read from
-     * ``NcFilesService.listFiles`` (or a future ``recentFiles``
-     * endpoint) once it lands. The shape matches ``FileInfo`` so the
-     * ActivePrintWidget does not have to change when the real data
-     * source replaces this getter.
+     * Mocked recent-files list — the real implementation will read
+     * from ``NcFilesService.listFiles`` (or a future
+     * ``recentFiles`` endpoint) once it lands. Shape matches
+     * ``FileInfo`` so ``ActivePrintWidget`` does not have to change.
      */
     recentFiles() {
       return [
@@ -257,8 +205,7 @@ export const useMachineStore = defineStore("machineStore", {
       }
       if (newPayload.status && typeof newPayload.status === "object") {
         // Replace rather than merge so a stale key does not linger
-        // between full-state updates. The defaults keep the facade
-        // safe when the backend omits a field.
+        // between full-state updates.
         this.status = { ...DEFAULT_RAW_STATUS, ...newPayload.status };
       }
     },

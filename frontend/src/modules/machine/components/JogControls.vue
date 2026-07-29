@@ -28,7 +28,8 @@ const KEY_BINDINGS = {
   PageDown: { axis: 2, direction: -1 }
 }
 
-// All keys that can cause a browser scroll
+// All keys that can cause a browser scroll (used to keep the page
+// from scrolling while jogging).
 const SCROLL_KEYS = [
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'PageUp', 'PageDown', 'Space', 'Home', 'End'
@@ -45,7 +46,7 @@ const isTypingInField = () => {
 }
 
 const blockScroll = (e) => {
-  // Allow touch dragging on the speed slider, but block everything else
+  // Allow touch dragging on the speed slider, block everything else.
   if (e.type === 'touchmove' && e.target.tagName === 'INPUT') return
   e.preventDefault()
 }
@@ -53,21 +54,12 @@ const blockScroll = (e) => {
 const activate = () => {
   if (!isActive.value) {
     isActive.value = true
-
-    // Use capture: true to intercept the scroll BEFORE the overflow-y-auto div sees it
-    // window.addEventListener('wheel', blockScroll, { passive: false, capture: true })
-    // window.addEventListener('touchmove', blockScroll, { passive: false, capture: true })
   }
 }
 
 const deactivate = () => {
   if (isActive.value) {
     isActive.value = false
-
-    // Remove the capturing listeners
-    // window.removeEventListener('wheel', blockScroll, { capture: true })
-    // window.removeEventListener('touchmove', blockScroll, { capture: true })
-
     void stopAllJogging()
   }
 }

@@ -203,7 +203,13 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
 
     artifacts = compiler.compile(src, out)
     names = sorted(p.name for p in artifacts)
-    assert names == ["linuxcnc.ini", "machine.cfg", "machine.hal", "remora.json"]
+    assert names == [
+        "config.txt",
+        "hardware.json",
+        "linuxcnc.ini",
+        "machine.cfg",
+        "machine.hal",
+    ]
 
     # Each artifact is non-empty and the machine.cfg is a verbatim copy.
     machine_cfg = (out / "machine.cfg").read_text()
@@ -212,7 +218,9 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
 
     ini = (out / "linuxcnc.ini").read_text()
     assert "[EMC]" in ini
-    assert "MACHINE = linuxcnc" in ini
+    # The Remora-flavoured template uses ``MACHINE = Remora-XY`` per
+    # the template spec; the legacy literal ``linuxcnc`` was retired.
+    assert "MACHINE = Remora-XY" in ini
 
 
 def test_klipper_compiler_has_source_marker(tmp_data_root, clean_env):
@@ -381,17 +389,18 @@ def test_compile_stages_artifacts_and_lists_them(
     assert body["compiler"] == "klipper-to-linuxcnc"
     assert body["profile"] == "starter.cfg"
     assert sorted(body["artifacts"]) == [
+        "config.txt",
+        "hardware.json",
         "linuxcnc.ini",
         "machine.cfg",
         "machine.hal",
-        "remora.json",
     ]
-    assert len(body["staged"]) == 4
+    assert len(body["staged"]) == 5
 
     # ``GET /staged`` mirrors the listing.
     resp = client.get("/api/v1/modules/machineconfig/staged")
     assert resp.status_code == 200
-    assert len(resp.json()) == 4
+    assert len(resp.json()) == 5
 
 
 def test_compile_marks_staged_readonly(
@@ -489,25 +498,28 @@ def test_deploy_promotes_staged_into_active(
     body = resp.json()
     assert body["status"] == "ok"
     assert sorted(body["deployed"]) == [
+        "config.txt",
+        "hardware.json",
         "linuxcnc.ini",
         "machine.cfg",
         "machine.hal",
-        "remora.json",
     ]
 
     # The active directory now holds the artifacts.
     active_files = sorted(p.name for p in isolated_machine_config["active"].iterdir())
     assert active_files == [
+        "config.txt",
+        "hardware.json",
         "linuxcnc.ini",
         "machine.cfg",
         "machine.hal",
-        "remora.json",
     ]
 
     # The machine-name probe reads MACHINE from the active INI.
     resp = client.get("/api/v1/modules/machineconfig/machine-name")
     assert resp.status_code == 200
-    assert resp.json()["machine_name"] == "linuxcnc"
+    # Remora-flavoured template sets ``MACHINE = Remora-XY``.
+    assert resp.json()["machine_name"] == "Remora-XY"
 
 
 def test_deploy_empty_staging_returns_400(
@@ -540,13 +552,14 @@ def test_active_endpoint_lists_running_files(
     resp = client.get("/api/v1/modules/machineconfig/active")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["machine_name"] == "linuxcnc"
+    assert body["machine_name"] == "Remora-XY"
     names = sorted(f["name"] for f in body["files"])
     assert names == [
+        "config.txt",
+        "hardware.json",
         "linuxcnc.ini",
         "machine.cfg",
         "machine.hal",
-        "remora.json",
     ]
 
 

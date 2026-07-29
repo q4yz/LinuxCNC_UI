@@ -1,18 +1,8 @@
-// Machineconfig module Pinia store.
-//
-// Owns the module's reactive state — the profiles tree, the available
-// compilers, the staged / active file listings, the currently selected
-// compiler, and the deployment-flow toggles (e.g. ``confirmFlash``).
-//
-// The store id follows the ``module_${manifest.id}`` pattern from
-// ``.agent/contracts/frontend-module.md`` § 5 so the
-// ``scripts/check-store-ids.mjs`` lint script keeps passing.
-//
-// We deliberately do NOT pinia-cache the result of every endpoint —
-// the backend is the source of truth for staged / active / profiles
-// listings, and Vue components that need a value call the store
-// action which re-reads. This keeps the store small and the operator
-// always sees the truth after a refetch.
+// Machineconfig module Pinia store. Owns the profiles tree, the
+// compilers, the staged / active listings, the selected compiler,
+// and the deployment toggles. The backend is the source of truth —
+// we re-fetch per action rather than caching, so operators always
+// see current values after a refetch. See ``.agent/STATE.md`` § 2.
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
@@ -26,9 +16,7 @@ const STORE_ID = `module_${manifest.id}`;
 export const useMachineConfigStore = defineStore(STORE_ID, () => {
   const consoleStore = useConsoleStore();
 
-  // ----------------------------------------------------------------- //
-  // Reactive state                                                     //
-  // ----------------------------------------------------------------- //
+  // --- Reactive state ---------------------------------------------- //
 
   const compilers = ref([]);
   const selectedCompilerId = ref("");
@@ -46,9 +34,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   const isBusy = ref(false);
   const lastDeploySummary = ref(null);
 
-  // ----------------------------------------------------------------- //
-  // Derived state                                                      //
-  // ----------------------------------------------------------------- //
+  // --- Derived state ----------------------------------------------- //
 
   const selectedCompiler = computed(() =>
     compilers.value.find((c) => c.id === selectedCompilerId.value) || null,
@@ -74,9 +60,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     ),
   );
 
-  // ----------------------------------------------------------------- //
-  // Loader actions                                                      //
-  // ----------------------------------------------------------------- //
+// --- Loader actions -------------------------------------------------- //
 
   async function loadCompilers() {
     try {
@@ -140,9 +124,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     ]);
   }
 
-  // ----------------------------------------------------------------- //
-  // Profile actions                                                     //
-  // ----------------------------------------------------------------- //
+  // --- Profile actions ------------------------------------------------ //
 
   function selectProfile(path) {
     selectedProfilePath.value = path || "";
@@ -245,9 +227,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // Compile / Deploy                                                    //
-  // ----------------------------------------------------------------- //
+  // --- Compile / Deploy ----------------------------------------------- //
 
   async function compile(profilePath) {
     if (!profilePath) return;
@@ -312,9 +292,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // ----------------------------------------------------------------- //
-  // Public surface                                                     //
-  // ----------------------------------------------------------------- //
+  // --- Public surface ------------------------------------------------- //
 
   return {
     compilers,

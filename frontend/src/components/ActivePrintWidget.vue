@@ -1,47 +1,28 @@
 <script setup>
-// ActivePrintWidget — dashboard widget that surfaces the current machine
-// run state through the Issue #60 State Facade store.
+// ActivePrintWidget — dashboard widget driven by the State Facade
+// (``stores/machineStore.js``). Two visual states:
 //
-// Two visual states are driven by ``store.systemState``:
+//   * Standby — Idle / PowerOff / Estop / Offline / Updating /
+//     Failure. Shows the five newest G-code files via the facade's
+//     ``recentFiles`` getter with a Print button each.
+//   * Active — Running / Paused. Shows the loaded filename, the
+//     progress bar, and Pause/Resume/Stop buttons.
 //
-//   * Standby — ``Idle`` / ``PowerOff`` / ``Estop`` (and the safety
-//     fallbacks ``Offline`` / ``Updating`` / ``Failure``). Shows the
-//     five most recent G-code files via the facade's ``recentFiles``
-//     getter (mocked for now per the issue) and a "Print" button next
-//     to each entry.
-//
-//   * Active — ``Running`` / ``Paused``. Shows the loaded filename, a
-//     progress bar bound to ``store.printProgress``, and Pause/Resume
-//     and Stop buttons.
-//
-// Click handlers are intentionally mocked with ``console.log`` per the
-// issue: "Do not manually change the state; the backend will update
-// the JSON automatically." The real Pinia actions still exist on the
-// machine module store and a follow-up can swap the mocks for the
-// actual ``startProgram`` / ``pauseProgram`` / ``resumeProgram`` /
-// ``abortProgram`` calls without touching the widget's structure.
+// Click handlers are mocked until a follow-up wires them to the
+// machine module's actions. See ``.agent/STATE.md`` § 6.
 
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineStore, SystemState } from "../stores/machineStore.js";
+import {useConsoleStore} from "../stores/console.js";
+import {ModulesProgramService} from "../../generated/api/index.ts";
 
-// Bind to the facade store. ``storeToRefs`` keeps ``systemState``,
-// ``printProgress`` and the raw ``status`` reactive when destructured
-// into the template.
 const store = useMachineStore();
+const consoleStore = useConsoleStore()
 const { systemState, printProgress, status, recentFiles } = storeToRefs(store);
 
-// ---------------------------------------------------------------------- //
-// Visual state selection                                                 //
-// ---------------------------------------------------------------------- //
-//
-// ``isActive`` is true only for the two "active" enum members —
-// ``Running`` and ``Paused``. Anything else (``Idle``,
-// ``PowerOff``, ``Estop``, ``Offline``, ``Updating``, ``Failure``)
-// renders the Standby view. This intentionally diverges from the
-// previous ``isPrinting`` / ``isPaused`` logic so the widget is
-// driven by the facade, not by raw task/interp flags.
-
+// True only for the two active enum members; everything else
+// renders the Standby view.
 const isActive = computed(
   () =>
     systemState.value === SystemState.RUNNING ||
@@ -55,7 +36,7 @@ const isRunning = computed(() => systemState.value === SystemState.RUNNING);
 // every telemetry tick.
 const progressPercent = computed(() => printProgress.value.toFixed(1));
 
-// Filter + cap the recent-files list to the five newest G-code / NGC
+// Cap the recent-files list to the five newest G-code / NGC
 // entries. ``recentFiles`` is a mocked getter on the facade; the
 // shape matches ``FileInfo`` so the real ``NcFilesService.listFiles``
 // call can drop in later without changes here.
@@ -78,35 +59,74 @@ const printableFiles = computed(() => {
     .slice(0, 5);
 });
 
-// ---------------------------------------------------------------------- //
-// Mocked click handlers                                                  //
-// ---------------------------------------------------------------------- //
-//
-// Per the issue spec. The backend's telemetry stream is the source of
-// truth — the widget never mutates local state directly. A follow-up
-// can replace these ``console.log`` calls with the real Pinia actions
-// (``store.startProgram(filename)``, etc.) once the backend's
-// file-load contract is finalised.
 
-function printFile(filename) {
+
+async function printFile(filename) {
   if (!filename) return;
-  // eslint-disable-next-line no-console
-  console.log("[ActivePrintWidget] Print action (mocked)", filename);
+
+  // Guard: We can only start a print if the machine is fully IDLE.
+  if (systemState.value !== SystemState.IDLE) {
+    consoleStore.error(`[ActivePrintWidget] Cannot start print. Machine is currently: ${systemState.value}`);
+    return;
+  }
+
+  consoleStore.debug(`[ActivePrintWidget] Requesting print start for: ${filename}`);
+  try {
+    // 1. The OpenAPI spec for `runProgram` implies the file must be loaded first.
+    // If your backend requires explicit loading, call your file/load service here:
+    // await ModulesFilesService.loadFile(filename);
+
+    // 2. Start the loaded program
+    await ModulesProgramService.runProgram();
+  } catch (err) {
+    // The generated client throws ApiError on failure, which includes useful data
+    consoleStore.error(`[ActivePrintWidget] Failed to start print: ${err.body?.detail || err.message}`);
+  }
 }
 
-function pausePrint() {
-  // eslint-disable-next-line no-console
-  console.log("[ActivePrintWidget] Pause action (mocked)");
+async function pausePrint() {
+  // Guard: Only allow pause if the machine is actively moving/running
+  if (systemState.value !== SystemState.RUNNING) {
+    consoleStore.error("[ActivePrintWidget] Ignored pause request: Machine is not running.");
+    return;
+  }
+
+  consoleStore.debug("[ActivePrintWidget] Requesting pause...");
+  try {
+    await ModulesProgramService.pauseProgram();
+  } catch (err) {
+    consoleStore.error(`[ActivePrintWidget] Failed to pause: ${err.body?.detail || err.message}`);
+  }
 }
 
-function resumePrint() {
-  // eslint-disable-next-line no-console
-  console.log("[ActivePrintWidget] Resume action (mocked)");
+async function resumePrint() {
+  // Guard: Only allow resume if the machine is actually paused
+  if (systemState.value !== SystemState.PAUSED) {
+    consoleStore.error("[ActivePrintWidget] Ignored resume request: Machine is not paused.");
+    return;
+  }
+
+  consoleStore.debug("[ActivePrintWidget] Requesting resume...");
+  try {
+    await ModulesProgramService.resumeProgram();
+  } catch (err) {
+    consoleStore.error(`[ActivePrintWidget] Failed to resume: ${err.body?.detail || err.message}`);
+  }
 }
 
-function stopPrint() {
-  // eslint-disable-next-line no-console
-  console.log("[ActivePrintWidget] Stop action (mocked)");
+async function stopPrint() {
+  // Guard: Stop is only valid if a program is active (running or paused)
+  if (systemState.value !== SystemState.RUNNING && systemState.value !== SystemState.PAUSED) {
+    consoleStore.error("[ActivePrintWidget] Ignored stop request: No active program to stop.");
+    return;
+  }
+
+  consoleStore.debug("[ActivePrintWidget] Requesting abort/stop...");
+  try {
+    await ModulesProgramService.stopProgram();
+  } catch (err) {
+    consoleStore.error(`[ActivePrintWidget] Failed to stop print: ${err.body?.detail || err.message}`);
+  }
 }
 </script>
 

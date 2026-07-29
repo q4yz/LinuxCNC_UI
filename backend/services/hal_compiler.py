@@ -100,7 +100,15 @@ class HalCompiler:
             hal_file.write("# Generated HAL for LinuxCNC\n")
 
     def _generate_remora_json(self, output_path: str):
-        """Generate Remora board payload JSON from self.config (stub for now)."""
+        """Generate ``hardware.json`` from ``self.config`` (stub for now).
+
+        The legacy ``remora.json`` filename has been retired in favour
+        of ``hardware.json`` (the backend's canonical hardware record).
+        This method keeps its old name so the existing call sites in
+        :meth:`generate_staged` keep working until the legacy
+        ``/api/v1/compiler/*`` endpoints are migrated to the new
+        ``machineconfig`` module.
+        """
         payload = {
             "generated": True,
             "source": "HalCompiler",

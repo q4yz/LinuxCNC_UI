@@ -1,19 +1,7 @@
-// Frontend settings client wrapper.
-//
-// A typed wrapper around the four canonical settings endpoints
-// exposed by the backend ``SettingsStore``:
-//
-//   GET    /api/v1/modules/{id}/settings
-//   GET    /api/v1/modules/{id}/settings/{key}
-//   PUT    /api/v1/modules/{id}/settings
-//   PUT    /api/v1/modules/{id}/settings/{key}
-//
-// We intentionally use ``fetch`` directly rather than the generated
-// OpenAPI client. The settings surface is small enough that a hand-
-// written client is more legible, and avoiding the codegen dependency
-// means modules keep working even if ``frontend/generated/api/`` has
-// not been regenerated yet (it's gitignored and CI regenerates it
-// after a backend change).
+// Frontend settings client wrapper around the four canonical
+// endpoints. Hand-rolled ``fetch`` (not the generated OpenAPI
+// client) so modules keep working when ``generated/api/`` is stale.
+// See ``.agent/STATE.md`` § 5.
 
 const API_PREFIX = "/api/v1/modules";
 
