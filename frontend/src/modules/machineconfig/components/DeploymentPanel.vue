@@ -19,11 +19,11 @@ async function onDeploy() {
 }
 
 async function downloadRemora() {
-  const content = await store.readStagedFileContent("remora.json");
+  const content = await store.readStagedFileContent("config.txt");
   if (content === null) return;
 
   // Pass the data to the helper instead of managing the Blob here
-  downloadBlob(content, "remora.json", "application/json");
+  downloadBlob(content, "config.txt", "application/json");
 }
 function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
   // 1. Prevent the Axios [object Object] trap
@@ -48,7 +48,7 @@ function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
   }, 150);
 }
 
-const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === "remora.json"));
+const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === "config.txt"));
 </script>
 
 <template>
@@ -64,7 +64,7 @@ const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === 
         <p class="font-semibold mb-1">⚠️ Flash requirement</p>
         <p class="text-yellow-100/80">
           When the active machine uses a remote controller (e.g. Remora) the
-          <code class="bg-yellow-900/60 px-1 rounded">remora.json</code> payload must
+          <code class="bg-yellow-900/60 px-1 rounded">config.txt</code> payload must
           be flashed <em>before</em> deploying. Tick the box below to acknowledge
           the flash and unlock the Deploy button.
         </p>

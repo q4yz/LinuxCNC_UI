@@ -147,7 +147,7 @@ class JogStatusResponse(BaseModel):
 # The router is module-level so the registry can mount it under
 # ``/api/v1/modules/machine``. The endpoints take no ``prefix``
 # because the registry supplies it.
-router = APIRouter(tags=["modules:machine"])
+router = APIRouter()
 
 
 @router.post(

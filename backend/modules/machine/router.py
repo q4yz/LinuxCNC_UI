@@ -104,7 +104,7 @@ class StatusResponse(BaseModel):
 # ---------------------------------------------------------------------- #
 
 
-router = APIRouter(tags=["modules:machine"])
+router = APIRouter()
 
 
 def _require_machine_ready() -> None:
