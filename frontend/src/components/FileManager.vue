@@ -78,6 +78,19 @@ const editFile = (filename) => {
   // delegates ``save`` to the parent instead of writing the
   // config router directly. See ``.agent/STATE.md`` § 6.
   emit('edit', filename, false, 'profile', '')
+
+  async function editFile(entry) {
+  if (entry.kind === "file") {
+    store.selectProfile(entry.path);
+
+    // Fetch the content first
+    const content = await store.readProfileContent(entry.path);
+    if (content === null) return; // Failsafe if the read failed
+
+    // Emit: filename, readOnly (false), mode ('profile'), content
+    emit("edit", entry.path, false, "profile", content);
+  }
+}
 }
 
 const formatSize = (bytes) => {

@@ -72,18 +72,31 @@ class _FakeCapture:
         self.opened = False
 
 
+class _RefusingCapture(_FakeCapture):
+    """A ``_FakeCapture`` that reports ``isOpened() is False``."""
+
+    def isOpened(self) -> bool:
+        return False
+
+    def __init__(self, source):
+        super().__init__(source)
+
+
 class _FakeCv2:
     """Minimal stub for the cv2 attributes StreamManager uses."""
 
     CAP_PROP_FRAME_WIDTH = 3
     CAP_PROP_FRAME_HEIGHT = 4
     IMWRITE_JPEG_QUALITY = 1
+    CAP_ANY = 0
+    CAP_MSMF = 1400
+    CAP_DSHOW = 700
 
     def __init__(self):
         self.VideoCapture = self._make_capture
         self.imencode = self._imencode
 
-    def _make_capture(self, source):
+    def _make_capture(self, source, backend_api=None):
         return _FakeCapture(source)
 
     def _imencode(self, _ext, _frame, params):
@@ -198,16 +211,7 @@ def test_acquire_unopenable_id_raises(fake_cv2):
     _FakeCapture.instances.clear()
     original = fake_cv2.VideoCapture
 
-    class _RefusingCapture(_FakeCapture):
-        def isOpened(self) -> bool:
-            return False
-
-        def __init__(self, source):
-            super().__init__(source)
-            # Mark the instance as unopenable.
-            self._refused = True
-
-    fake_cv2.VideoCapture = lambda source: _RefusingCapture(source)
+    fake_cv2.VideoCapture = lambda source, backend_api=None: _RefusingCapture(source)
     with pytest.raises(RuntimeError, match="Cannot open camera source"):
         manager.acquire("/dev/video99")
     fake_cv2.VideoCapture = original
@@ -287,9 +291,55 @@ def test_mark_frame_records_timestamp(fake_cv2):
     assert "T" in snap["last_frame_at"]
 
 
-# ---------------------------------------------------------------------- #
-# Thread-safety smoke test                                                 #
-# ---------------------------------------------------------------------- #
+def test_failed_open_records_cooldown(fake_cv2):
+    """A failed acquire should arm the cooldown for that camera_id."""
+    fake_cv2.VideoCapture = lambda source, backend_api=None: _RefusingCapture(source)
+    manager = StreamManager()
+    with pytest.raises(RuntimeError):
+        manager.acquire("0")
+    # Second request within cooldown must be rejected.
+    with pytest.raises(RuntimeError, match="cooldown"):
+        manager.acquire("0")
+
+
+def test_failed_open_records_cooldown(fake_cv2):
+    """A failed acquire should arm the cooldown for that camera_id."""
+    _FakeCapture.instances.clear()
+    original = fake_cv2.VideoCapture
+    fake_cv2.VideoCapture = lambda source, backend_api=None: _RefusingCapture(source)
+    manager = StreamManager()
+    with pytest.raises(RuntimeError):
+        manager.acquire("/dev/video0")
+    # Second request within cooldown must be rejected.
+    with pytest.raises(RuntimeError, match="cooldown"):
+        manager.acquire("/dev/video0")
+    fake_cv2.VideoCapture = original
+
+
+def test_mark_failure_arms_cooldown(fake_cv2):
+    """``mark_failure`` arms the cooldown for the given camera_id."""
+    manager = StreamManager()
+    manager.acquire("/dev/video0")
+    manager.release("/dev/video0")
+    manager.mark_failure("/dev/video0")
+    # Next request within cooldown must be rejected.
+    with pytest.raises(RuntimeError, match="cooldown"):
+        manager.acquire("/dev/video0")
+
+
+def test_cooldown_is_per_camera(fake_cv2):
+    """Cooldown on one camera must not block other cameras."""
+    _FakeCapture.instances.clear()
+    original = fake_cv2.VideoCapture
+    fake_cv2.VideoCapture = lambda source, backend_api=None: _RefusingCapture(source)
+    manager = StreamManager()
+    with pytest.raises(RuntimeError):
+        manager.acquire("/dev/video0")
+    # ``/dev/video1`` has no cooldown, so this should also raise
+    # ``RuntimeError`` — but for ``Cannot open``, not ``cooldown``.
+    with pytest.raises(RuntimeError, match="Cannot open"):
+        manager.acquire("/dev/video1")
+    fake_cv2.VideoCapture = original
 
 
 def test_concurrent_acquire_release_is_safe(fake_cv2):
