@@ -58,11 +58,12 @@ test("store builds the ModulesMachineService.jogAxis payload for continuous jogs
   assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
   assert.match(text, /distance:\s*0/);
   // After the initial command, the store schedules a setInterval
-  // that pings the keepalive endpoint every 250 ms — the
-  // historical value preserved by the migration.
+  // that pings the keepalive endpoint on the configured cadence —
+  // the historical default is 250 ms; the runtime value lives in
+  // ``keepaliveIntervalMs.value`` and is bound from the module
+  // settings (with a 250 ms fallback).
   assert.match(text, /setInterval\s*\(/);
   assert.match(text, /ModulesMachineService\.jogKeepalive/);
-  assert.match(text, /,\s*250\s*\)/);
   // The cadence is read from the module settings and falls back to
   // the historical 250 ms value.
   assert.match(text, /setInterval\([\s\S]*intervalMs\)/);

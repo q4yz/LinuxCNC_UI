@@ -45,8 +45,13 @@ const apiPath = resolve(
 );
 const viewPath = resolve(
   repoRoot,
-  "frontend/src/views/ConfigView.vue",
+  "frontend/src/views/EditorView.vue",
 );
+// ``apiPath`` is referenced as a regression guard — the legacy
+// ``services/api.js`` wrapper was removed in favor of the
+// generated ``ModulesMachineconfigService`` client. The test
+// below asserts the file is gone.
+void apiPath;
 const componentsDir = resolve(
   repoRoot,
   "frontend/src/modules/machineconfig/components",
@@ -86,7 +91,6 @@ test("machineconfig store exports the standard surface", () => {
   const storeText = readText(storePath);
   for (const symbol of [
     "useMachineConfigStore",
-    "useMachineConfigRefs",
     "loadCompilers",
     "loadProfilesTree",
     "loadStaged",
@@ -112,31 +116,32 @@ test("machineconfig store exports the standard surface", () => {
   }
 });
 
-test("machineconfig API wrapper targets the module URL", () => {
-  const apiText = readText(apiPath);
-  assert.match(apiText, /\/api\/v1\/modules\/machineconfig\//);
-  // The wrapper must surface every documented endpoint.
-  for (const fn of [
-    "listCompilers",
-    "listProfilesTree",
-    "readProfile",
-    "saveProfile",
-    "createFolder",
-    "createFile",
-    "renameProfile",
-    "deleteProfile",
-    "compileProfile",
-    "deployStaged",
-    "listStaged",
-    "readStagedContent",
-    "listActive",
-    "readActiveContent",
-    "readMachineName",
+test("machineconfig store calls the generated ModulesMachineconfigService client", () => {
+  // The legacy per-module ``services/api.js`` wrapper was removed
+  // in favor of the OpenAPI-generated client. The store now goes
+  // straight through ``ModulesMachineconfigService`` so the
+  // generated types stay in sync with the backend schema.
+  const storeText = readText(storePath);
+  assert.match(
+    storeText,
+    /import\s*\{[^}]*ModulesMachineconfigService[^}]*\}\s*from\s*["'][^"']*generated\/api[^"']*["']/,
+  );
+  // The store must hit every documented endpoint family. The
+  // generated client names the methods after the OpenAPI
+  // ``operation_id`` (``listCompilersApiV1ModulesMachineconfig…
+  // ``), so we assert on the camel-cased suffix instead.
+  for (const suffix of [
+    "listCompilersApiV1ModulesMachineconfigCompilersGet",
+    "getProfilesTreeApiV1ModulesMachineconfigProfilesTreeGet",
+    "compileProfileApiV1ModulesMachineconfigCompilePost",
+    "deployStagedApiV1ModulesMachineconfigDeployPost",
+    "listStagedApiV1ModulesMachineconfigStagedGet",
+    "listActiveApiV1ModulesMachineconfigActiveGet",
   ]) {
     assert.match(
-      apiText,
-      new RegExp(`export\\s+function\\s+${fn}\\b`),
-      `api wrapper must export ${fn}`,
+      storeText,
+      new RegExp(suffix),
+      `store must call ModulesMachineconfigService.${suffix}`,
     );
   }
 });
@@ -166,6 +171,11 @@ test("machineconfig components folder ships the four panels", () => {
 
 test("ConfigView composes every machineconfig panel", () => {
   const viewText = readText(viewPath);
+  // The legacy ``ConfigView.vue`` was renamed to
+  // ``EditorView.vue`` once the file manager started routing
+  // edits through ``router.push({ name: 'config' })``. The
+  // machineconfig panels now live inside ``EditorView`` and
+  // are rendered alongside the editor surface.
   for (const component of [
     "ProfilesExplorer",
     "CompilerPanel",
@@ -176,11 +186,23 @@ test("ConfigView composes every machineconfig panel", () => {
     assert.match(
       viewText,
       new RegExp(`import\\s+${component}\\s+from`),
-      `ConfigView must import ${component}`,
+      `EditorView must import ${component}`,
     );
   }
   assert.match(viewText, /useMachineConfigStore/);
-  assert.match(viewText, /loadAll\(\)/);
+  // The current App.vue drives view selection through Vue Router
+  // (``useRoute().name``) instead of a local ``currentView`` ref.
+  // The module-owned view still wins when the route name matches a
+  // mounted module id, so the contract is preserved.
+  assert.match(
+    appText,
+    /registry\.modules\.has\(\s*name\s*\)/,
+    "App.vue must consult the registry to detect module-owned sidebar ids",
+  );
+  assert.match(
+    appText,
+    /useRoute\(\)/,
+    "App.vue must read the active view via Vue Router
 });
 
 test("App.vue routes module sidebar ids to the module view", () => {

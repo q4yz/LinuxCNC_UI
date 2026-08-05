@@ -212,28 +212,41 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
     "frontend/src/components/ActivePrintWidget.vue",
   );
   const text = readFileSync(widgetPath, "utf-8");
-  // Per the issue: "Just mock the click handlers ... console.log".
+  // The widget defines one handler per action; every handler
+  // emits a debug log via the console store (not a raw
+  // ``console.log``) so the operator sees the request in the
+  // panel. The handlers also delegate to the generated program
+  // service (``runProgram`` / ``pauseProgram`` / ``resumeProgram``
+  // / ``stopProgram``).
   for (const handler of ["printFile", "pausePrint", "resumePrint", "stopPrint"]) {
     assert.match(text, new RegExp(`function\\s+${handler}\\b`));
-    assert.match(
-      text,
-      new RegExp(`console\\.log\\([\\s\\S]*${handler.replace("Print", "").replace("File", "")}`),
-    );
   }
+  for (const serviceCall of [
+    "runProgram",
+    "pauseProgram",
+    "resumeProgram",
+    "stopProgram",
+  ]) {
+    assert.match(text, new RegExp(`ModulesProgramService\\.${serviceCall}\\b`));
+  }
+  // ``consoleStore.debug`` drives the operator log trail.
+  assert.match(text, /consoleStore\.debug\(/);
 });
 
-test("FileManager emits the edit event with mode='profile'", () => {
+test("FileManager routes the edit action into the routed EditorView", () => {
   const fmPath = resolve(
     repoRoot,
     "frontend/src/components/FileManager.vue",
   );
   const text = readFileSync(fmPath, "utf-8");
-  // The widget's edit handler must pass the four-argument shape that
-  // App.vue's ``openEditor`` expects.
-  assert.match(
-    text,
-    /emit\(\s*['"]edit['"]\s*,\s*filename\s*,\s*false\s*,\s*['"]profile['"]\s*,\s*['"]['"]\s*\)/,
-  );
+  // The current architecture dropped the ``emit('edit', ...)``
+  // contract in favor of a Vue Router push. ``editFile`` writes
+  // the filename / mode / content to the shared ``editor``
+  // Pinia store and pushes the ``config`` route so the
+  // ``EditorView`` renders the editor inside the page chrome.
+  assert.match(text, /function\s+editFile\b/);
+  assert.match(text, /editorStore\.open\(/);
+  assert.match(text, /router\.push\(\s*\{\s*name:\s*['"]config['"]\s*\}\s*\)/);
 });
 
 test("FilesView forwards every edit-event argument to App.vue", () => {
@@ -245,9 +258,7 @@ test("FilesView forwards every edit-event argument to App.vue", () => {
   // ``handleEdit`` must use a rest parameter so mode/content survive.
   assert.match(text, /function\s+handleEdit\s*\(\s*\.\.\.\s*args\s*\)/);
   assert.match(text, /emit\(\s*['"]edit['"]\s*,\s*\.\.\.\s*args\s*\)/);
-});
-
-test("FileManager wraps its content in a full-page flex-1 h-full w-full container", () => {
+});w-full h-full flex flex-col container", () => {
   // Issue #60 refactor: FileManager must be a full-page view, not a
   // dashboard card. The outermost wrapper must declare h-full and
   // w-full so it stretches edge-to-edge inside FilesView; the inner
@@ -263,6 +274,10 @@ test("FileManager wraps its content in a full-page flex-1 h-full w-full containe
   assert.match(
     text,
     /class\s*=\s*["'][^"']*w-full[^"']*h-full[^"']*flex[^"']*flex-col[^"']*["']/,
+  );
+  // Scrollable body uses ``flex-1`` + ``min-h-0`` to fill the
+  // leftover space. The order of the two classes is not part of
+  // the contract, so we accept either Tailwind utility first[^"']*["']/,
   );
   // Scrollable body uses flex-1 + min-h-0 to fill the leftover space.
   assert.match(text, /flex-1[^"']*min-h-0/);

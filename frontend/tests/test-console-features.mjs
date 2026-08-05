@@ -45,12 +45,15 @@ function readText(path) {
 
 test("console store exposes the four canonical log levels", () => {
   const text = readText(consoleStorePath);
-  // The store exports ``LOG_LEVELS`` (all / info / warning / error /
-  // debug) so the chip row can iterate the same vocabulary the
-  // store validates against.
+  // The store exports ``LOG_LEVELS`` (all / debug / info / warning /
+  // error) so the chip row can iterate the same vocabulary the
+  // store validates against. Order is the current authoritative
+  // sequence; ``debug`` sits between ``all`` and ``info`` so the
+  // ``filteredMessages`` index comparison keeps the severity
+  // ordering correct.
   assert.match(
     text,
-    /export\s+const\s+LOG_LEVELS\s*=\s*\[\s*['"]all['"]\s*,\s*['"]info['"]\s*,\s*['"]warning['"]\s*,\s*['"]error['"]\s*,\s*['"]debug['"]\s*\]/,
+    /export\s+const\s+LOG_LEVELS\s*=\s*\[\s*['"]all['"]\s*,\s*['"]debug['"]\s*,\s*['"]info['"]\s*,\s*['"]warning['"]\s*,\s*['"]error['"]\s*\]/,
   );
 });
 
@@ -101,10 +104,14 @@ test("console store guards setFilterLevel against unknown values", () => {
 });
 
 
-test("console store addDebug helper routes through addMessage", () => {
+test("console store exposes a debug action that routes through _addMessage", () => {
   const text = readText(consoleStorePath);
-  assert.match(text, /addDebug\(text\)/);
-  assert.match(text, /this\.addMessage\(text,\s*['"]debug['"]\)/);
+  // The current store exposes a ``debug(text)`` action that
+  // delegates to the internal ``_addMessage(text, 'debug')``
+  // helper. The legacy ``addDebug`` shim was removed in favor
+  // of direct level-named actions.
+  assert.match(text, /debug\(text\)/);
+  assert.match(text, /_addMessage\(text,\s*['"]debug['"]\)/);
 });
 
 
