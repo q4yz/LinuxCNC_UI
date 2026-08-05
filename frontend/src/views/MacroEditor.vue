@@ -32,8 +32,8 @@ const {
   content,
   logs,
   running,
-  saving,
-  loading,
+  isSaving,
+  isLoading,
   dirty,
   error,
   lastResult,
@@ -85,7 +85,7 @@ function onClearLogs() {
     <MacroEditorToolbar
       :active-name="selectedName || ''"
       :dirty="dirty"
-      :saving="saving"
+      :saving="isSaving"
       :running="running"
       @save="onSave"
       @run="onRun"
@@ -97,7 +97,7 @@ function onClearLogs() {
       <MacroFileTree
         :macros="macros"
         :selected-name="selectedName || ''"
-        :is-loading="loading"
+        :is-loading="isLoading"
         @select="onSelect"
         @new="onNew"
       />
