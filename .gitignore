@@ -1,6 +1,9 @@
 *.pyc
 __pycache__/
 
+node_modules/
+.venv/
+
 # LinuxCNC artifacts
 cnc_ini/*.var
 cnc_ini/*.bak
