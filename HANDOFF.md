@@ -115,100 +115,68 @@ Editor: A standard IDE-like view. A file tree on the left, code editor on the ri
 
 ## Plan
 
-## Issue #70 — Macros System: Revised Implementation Plan
+## Plan: Unstick PR for Issue #70 — Macros System
 
-### Context
-A previous attempt left the test suite broken with `/bin/sh: 13: source: not found`. That is a shell-compatibility failure: something in the test path is invoking `/bin/sh` (POSIX) but the script uses `source` (bash builtin). The plan below resolves that root cause first, then implements the macros feature end-to-end against the issue's acceptance criteria.
+### Root cause of the stuck PR
+The captured test output `/bin/sh: 13: source: not found` indicates a test setup or fixture script is being executed under `/bin/sh` (dash on Debian/Ubuntu CI images) but uses the bash-only `source` builtin. The macro system itself does not need shell scripts; the failure is environmental and must be fixed before the suite can report. Additionally, after unblocking the shell, the implementation must conform to the existing plan and repo conventions. The plan below supersedes prior attempts.
 
-### Step 1 — Diagnose & fix the shell failure (blocker)
-1. Locate every shell script touched by tests: `find . -name '*.sh' -not -path './node_modules/*' -not -path './.git/*'` and any `subprocess.run` / `os.system` / `pytest` fixture that invokes a shell.
-2. For each offending file: either change the shebang to `#!/usr/bin/env bash` and ensure the test runner invokes it via `bash`, or replace `source X` with the POSIX `. X` form. Pick the smallest change that matches the project's existing convention — if other test scripts already use `bash`, follow that; if everything else is POSIX, use `.`.
-3. If the failure is inside `conftest.py` (e.g., a fixture that calls `subprocess.run(['sh', '-c', 'source ...'])`, or a helper script sourced via `subprocess`), rewrite the invocation to pass the script directly to `bash` or inline the export as a single `-c` argument with `&&`.
-4. Re-run the targeted failing test locally via the test harness to confirm the shell error is gone before moving on.
+### Step 1 — Diagnose and fix the shell-source failure (do this first)
+1. Locate the failing fixture/setup script (likely a `conftest.sh`, `setup.sh`, or a shell snippet invoked from a pytest fixture in `backend/tests/`).
+2. Add a proper shebang `#!/usr/bin/env bash` at the top of that file (or change the invocation to `bash <file>`).
+3. Replace any `source <file>` calls with the POSIX-compatible `. <file>` form to keep the script portable.
+4. Make the file executable (`chmod +x`) if it is invoked directly.
+5. Re-run only the previously-failing fixture path locally to confirm the `source: not found` error is gone before doing anything else.
 
-### Step 2 — Backend: parser, interface, executor
-1. Create `backend/macros/` package.
-2. `backend/macros/parser.py` — `split_blocks(source) -> list[Block]`. Implement a small state-machine tokenizer that tracks `{}` nesting and string-literal quote state (handles `'`, `"`, f-string `{}` inside Python blocks). Top-level `{ ... }` segments are Python; everything else is G-code text. Raise `MacroParseError(line, message)` on unclosed braces. Use `logging.getLogger(__name__)`, never `print`.
-3. `backend/macros/cnc_interface.py` — `CNCInterface` wrapping `backend/hardware/connection.py`'s command path (never import `linuxcnc` directly so the mock stays compatible). Methods: `emit(gcode)`, `log(message)` (captured into a per-run buffer), `get_pos()`.
-4. `backend/macros/executor.py` — `execute(source, *, on_log=None) -> MacroResult`. Walks blocks; G-code blocks go to `cnc.emit`; Python blocks run via `exec(code, globals_dict)` with `globals_dict = {"cnc": CNCInterface(...), "math": math, "__builtins__": __builtins__}`. Log a clear docstring that sandboxing is intentionally waived per the issue.
-5. Module-level `logger = logging.getLogger(__name__)` pattern in every new file.
+### Step 2 — Backend: parser + executor + interface (per existing plan, minimal diff)
+1. Create `backend/macros/__init__.py`.
+2. `backend/macros/parser.py`: implement `split_blocks(source) -> list[Block]` using a small tokenizer that tracks single/double quote state and brace depth so f-string braces like `{x_pos}` are not mis-parsed. Raise `MacroParseError(line_no, message)` on unbalanced braces. Output blocks are typed: `GCODE` or `PYTHON`.
+3. `backend/macros/cnc_interface.py`: implement `CNCInterface` that wraps the existing `backend/hardware/connection.py` access path (never import `linuxcnc` directly). Methods: `emit(gcode)`, `log(message)`, `get_pos()`. `emit` routes through the existing command entry point so the 500 ms jog watchdog and mock fallback remain intact.
+4. `backend/macros/executor.py`: implement `execute(source, params=None) -> MacroResult`. Walk blocks; for `GCODE` blocks call `cnc.emit(line)` line by line (strip empty/blank-only lines); for `PYTHON` blocks `exec(code, globals_dict)` where `globals_dict = {"cnc": CNCInterface(), "math": math, "__builtins__": __builtins__}`. Capture `cnc.log` calls into a `MacroResult.log_lines` list. Use module-level `logger = logging.getLogger(__name__)` — no `print`.
+5. Add unit tests in `backend/tests/macros/` covering: simple G-code passthrough, Python block with `cnc.emit`, f-string brace handling, unbalanced-brace error, comment-only file.
 
-### Step 3 — Backend: router + storage
-1. `backend/macros/storage.py` — `MACROS_DIR = backend/macros_store/`. Path-traversal-safe helpers: `safe_path(name)` using `os.path.commonpath` against `MACROS_DIR`, reject `..`, `/`, NUL, non-`.macro` extensions.
-2. `backend/routers/macros.py` — prefix `/api/macros`, `tags=["macros"]`, async where I/O-bound. Pydantic request/response models (inline is fine). Endpoints with `summary` + `description`:
-   - `GET /` → list `{name, size, description}` where `description` is the first `;` comment.
+### Step 3 — Backend: CRUD router
+1. `backend/routers/macros.py` with `APIRouter(prefix="/api/macros", tags=["macros"])`. Endpoints:
+   - `GET /` → list macros (name, size, mtime, parsed `; @description` header).
    - `GET /{name}` → raw source.
-   - `PUT /{name}` → save (validate non-empty + safe name).
-   - `DELETE /{name}` → remove.
-   - `POST /{name}/run` → execute, return `{emitted: [...], log: [...], ok: bool}`.
-3. Wire into `backend/main.py` via `app.include_router(macros.router)`.
-4. Add `backend/macros_store/` to `.gitignore`.
+   - `PUT /{name}` → save (Pydantic `MacroSource` body, validate non-empty, reject `..`, `/`, NUL).
+   - `DELETE /{name}` → delete (404 if missing).
+   - `POST /{name}/run` → execute, return emitted lines + captured log.
+2. Storage directory `backend/macros_store/*.macro`; resolve paths and assert `os.path.commonpath([store_dir, resolved]) == store_dir` to prevent traversal. Create dir at startup if absent.
+3. Every endpoint declares `summary` and `description` metadata.
+4. Register the router in `backend/main.py`.
 
 ### Step 4 — Frontend: Pinia store
-1. `frontend/src/stores/macros.js` — state `{ list, current, log, running }`, actions `fetchList`, `fetchOne`, `save`, `remove`, `run` using the Vite `/api` proxy. Use `storeToRefs` at consumer sites.
+1. `frontend/src/stores/macros.js` using Pinia setup style consistent with other stores. State: `items`, `current`, `log`. Actions: `fetchList`, `fetchOne`, `save`, `remove`, `run`. HTTP via the existing `/api` Vite proxy; on error, surface a user-readable message.
 
 ### Step 5 — Frontend: dashboard widget
-1. `frontend/src/components/MacroGrid.vue` — `<script setup>`, Composition API, 2-space indent, double quotes, semicolons. Tailwind v4 responsive grid (`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3`). Each button calls `store.run(name)` and toasts success/error. Skip the parameter-modal v2 path unless the human confirms it's in scope — leave a clean extension point keyed off an optional `; @param name default` header.
-2. Mount `<MacroGrid />` in the existing dashboard view next to current widgets.
+1. `frontend/src/components/MacroGrid.vue` — `<script setup>`, 2-space indent, double quotes, semicolons, Tailwind v4 responsive grid (e.g., `grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3`). Click → `runMacro(name)`; success/failure toast using the existing toast utility if present, otherwise a transient inline status.
+2. Mount `<MacroGrid />` in the existing dashboard view alongside other widgets.
 
 ### Step 6 — Frontend: editor view
-1. `frontend/src/views/MacroEditor.vue` — three-pane layout: left sidebar listing macros (binds to `store.list`), centre code editor, bottom log panel bound to `store.log`. Editor choice: inspect `frontend/package.json` for `monaco-editor` / `@codemirror/*`; reuse whichever is present. If neither is present and adding one is needed, prefer CodeMirror 6 (lighter, Vue-friendly) — flag for human confirmation before adding a new heavy dep.
-2. Buttons: Save (`store.save`), Run (`store.run` on current selection), Delete (confirm dialog → `store.remove`). Dispose editor instance + any timers in `onUnmounted`.
-3. Add route `/macros` in `frontend/src/router/index.js` with a sensible nav entry.
+1. `frontend/src/views/MacroEditor.vue` — three-pane layout: sidebar list (left), code editor (center), log/output panel (bottom). Use whichever code editor is already in `frontend/package.json` (Monaco or CodeMirror) — do not add a new heavy dependency unless required. If neither is present, default to a lightweight `<textarea>`-based editor for v1 and note the upgrade as follow-up.
+2. Actions: Save, Run, Delete (with `confirm()` guard). Bind bottom panel to `store.log`.
+3. Clean up editor instance, timers, and any workers on `onUnmounted`.
+4. Register route `/macros` in `frontend/src/router/index.js`.
 
-### Step 7 — Tests & verification
-1. Backend unit tests for `parser.split_blocks`: covers plain G-code, single Python block, nested f-string braces inside a Python block, unclosed brace error, comment handling.
-2. Backend integration test for `POST /api/macros/{name}/run` using the mock `CNCInterface` (no real `linuxcnc`).
-3. Storage path-traversal test (rejects `../etc/passwd`, absolute paths, NUL).
-4. Frontend: a smoke component test for `MacroGrid` rendering and a store action test mocking the API.
-5. Confirm `/bin/sh` shell failure from attempt 1–3 is gone before declaring done.
+### Step 7 — Verify (do not run tests yourself)
+1. Confirm the shell-source fix in Step 1 is the only environment change needed.
+2. Ensure new files match repo conventions: backend uses 4-space indent, PEP 8, type hints, Pydantic bodies, `logging.getLogger(__name__)`; frontend uses Composition API `<script setup>`, 2-space indent, double quotes, semicolons, Tailwind v4 utilities, Pinia `storeToRefs` when destructuring.
+3. Hand off to orchestrator for commit, test, push, PR. Do not run tests, push, or open the PR.
 
-### Files touched (expected)
-- New: `backend/macros/{__init__.py,parser.py,executor.py,cnc_interface.py,storage.py}`, `backend/routers/macros.py`, `backend/macros_store/.gitkeep`, `frontend/src/stores/macros.js`, `frontend/src/components/MacroGrid.vue`, `frontend/src/views/MacroEditor.vue`, plus targeted tests.
-- Modified: `backend/main.py`, `frontend/src/router/index.js`, the dashboard view file, `.gitignore`, and whichever shell script triggered the `source` failure.
+### Open items flagged for the human (do not silently decide)
+- Confirm macro storage location: `backend/macros_store/` (gitignored or volume-mounted? — matches the issue's "predefined subroutines" framing).
+- Confirm which code editor (Monaco vs CodeMirror) is already a frontend dependency; reuse it.
+- Confirm module-system placement per `.agent/contracts/` and `MODULE_SYSTEM_ROADMAP.md` — likely a new `macros` module.
+- Confirm whether the optional parameter modal (`; @param name default` header) is v1 scope or deferred.
+- Issue waives sandboxing; add a docstring note in `parser.py` and `executor.py` stating that Python blocks execute with full privileges.
 
-### Open questions for the human before coding
-- Which code editor dep (if any) is already in `frontend/package.json` — reuses that, otherwise confirm CodeMirror 6 is acceptable.
-- Confirm `backend/macros_store/` as the storage location and that it should be gitignored.
-- Confirm parameter-modal (`; @param` manifest) is deferred to v2.
-- Confirm module placement per `.agent/contracts/` (new module vs. existing one).
+### Files expected to change
+- New: `backend/macros/__init__.py`, `parser.py`, `cnc_interface.py`, `executor.py`; `backend/routers/macros.py`; `backend/tests/macros/test_parser.py`, `test_executor.py`; `frontend/src/stores/macros.js`; `frontend/src/components/MacroGrid.vue`; `frontend/src/views/MacroEditor.vue`.
+- Modified: `backend/main.py` (router include); `frontend/src/router/index.js` (new route); dashboard view (mount widget); the shell fixture that caused `source: not found`.
 
 ## Research notes
 
---- Research pass ---
-<think>
-The user wants me to act as a Research agent supporting the Architect. I need to search for libraries and best practices to solve this issue. The issue is about implementing a Macros feature for a LinuxCNC web UI, inspired by Mainsail's macro panel. The feature needs:
 
-1. **Backend**: Parser/executor for hybrid Python/G-code macros (PHP-style templating where `{ ... }` blocks are Python)
-2. **Frontend Dashboard**: Macro execution grid (like Mainsail)
-3. **Frontend Editor**: Dedicated macro editor view with file tree + code editor + console
-
-The PLAN UNDER CONSIDERATION has already been worked out. My job as the Research agent is to gather any additional context needed — specifically I should:
-- Verify library recommendations are widely used, production-ready, actively maintained
-- Not recommend obscure packages
-- Search for libraries and best practices
-
-Let me start by exploring the repository to understand the current state, then research libraries for:
-1. Code editor for the frontend (Monaco vs CodeMirror — the plan says check if either is already installed, otherwise fallback to textarea)
-2. Backend Python parser/executor patterns
-3. Best practices for the hybrid G-code/Python parsing
-
-Let me look at:
-- `frontend/package.json` to see what's already installed (check for Monaco, CodeMirror)
-- `backend/` structure
-- `.agent/TEST.md` and any conftest that might be the source of the shell error
-- `backend/hardware/connection.py` to understand the mock
-- `MODULE_SYSTEM_ROADMAP.md` and `.agent/contracts/`
-
-Let me dothis efficiently — focused lookups, not aimless browsing.
-</think>
-
-I'll research the context needed to support the Architect's plan for Issue #70. Let me gather information about the current state of the repo and verify library availability.]<]minimax[>[
-invoke
-invoke
-invoke
-invoke
-invoke
 
 ## Notes per attempt
 
@@ -221,5 +189,57 @@ invoke
 ## Last test output (last 100 lines)
 
 ```
-/app/workspaces/q4yz/LinuxCNC_UI/.agent_tmp_test.sh: line 13: .venv/bin/activate: No such file or directory
++ export CI=true
++ CI=true
++ '[' '!' -f .venv/bin/activate ']'
++ . .venv/bin/activate
+++ deactivate nondestructive
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ hash -r
+++ '[' -n '' ']'
+++ unset VIRTUAL_ENV
+++ unset VIRTUAL_ENV_PROMPT
+++ '[' '!' nondestructive = nondestructive ']'
+++ '[' linux-gnu = cygwin ']'
+++ '[' linux-gnu = msys ']'
+++ export VIRTUAL_ENV=/app/workspaces/q4yz/LinuxCNC_UI/.venv
+++ VIRTUAL_ENV=/app/workspaces/q4yz/LinuxCNC_UI/.venv
+++ _OLD_VIRTUAL_PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+++ PATH=/app/workspaces/q4yz/LinuxCNC_UI/.venv/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+++ export PATH
+++ '[' -n '' ']'
+++ '[' -z '' ']'
+++ _OLD_VIRTUAL_PS1=
+++ PS1='(.venv) '
+++ export PS1
+++ VIRTUAL_ENV_PROMPT='(.venv) '
+++ export VIRTUAL_ENV_PROMPT
+++ hash -r
++ '[' '!' -d frontend/node_modules ']'
++ npm --prefix frontend ci --no-audit --prefer-offline
+npm error code EUSAGE
+npm error
+npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+npm error
+npm error Missing: @emnapi/runtime@1.11.3 from lock file
+npm error
+npm error Clean install a project
+npm error
+npm error Usage:
+npm error npm ci
+npm error
+npm error Options:
+npm error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+npm error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+npm error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+npm error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+npm error [--no-bin-links] [--no-fund] [--dry-run]
+npm error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+npm error [-ws|--workspaces] [--include-workspace-root] [--install-links]
+npm error
+npm error aliases: clean-install, ic, install-clean, isntall-clean
+npm error
+npm error Run "npm help ci" for more info
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-08-05T15_53_23_501Z-debug-0.log
 ```
