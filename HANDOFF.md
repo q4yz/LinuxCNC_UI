@@ -2,68 +2,71 @@
 
 ## Plan
 
-## Macro Support — Implementation Plan (Slice 1: Backend Core)
+## Macro Support — Plan for This Iteration
 
-### Phase 0 — Research the three remaining context items
+### Phase 1 — Focused Research (3 reads)
+Read exactly these three files in a single forward pass to unblock the backend work:
 
-1. Read `frontend/src/router/index.js` (or equivalent) to capture the exact route registration convention (likely `createRouter({ history, routes })` with `path`/`name`/`component`/`meta`). Record route ordering, meta tags, and lazy-loading pattern so the `/macros` route and editor nav entry can be added in Phase 3 without surprises.
-2. Read `frontend/src/views/Dashboard.vue` plus one or two sibling widgets under `frontend/src/components/` to confirm the existing card/grid layout primitives. Capture the wrapper class, grid utilities, and section-slot pattern so the new `MacroGrid.vue` slots in as a peer widget rather than being stylistically detached.
-3. Read `backend/hardware/connection.py` and record the exact public API (`connection.send(...)`, `connection.recv(...)`, `connection.is_mock`, etc.) so the `CNCInterface` wrapper in `executor.py` routes `emit()`/`log()`/`get_pos()` through the same abstraction and the mock/real swap continues to work.
+1. **`frontend/src/router/index.js`** — confirm route registration pattern (lazy vs eager imports), `meta` shape (title, icon, etc.) and where to add the `/macros` route. *Note only; no frontend code this iteration.*
+2. **`frontend/src/views/Dashboard.vue`** (plus one sibling if the grid lives elsewhere) — confirm the Tailwind grid utilities, card wrapper, and widget-slot pattern the new `MacroGrid` widget will plug into. *Note only.*
+3. **`backend/hardware/connection.py`** — capture the exact public API of the `connection` singleton (e.g. `command()`, `state`, `position` getters, any async variants) so `CNCInterface` wraps it without duplicating behaviour and without importing `linuxcnc` directly. This is the *binding contract* for the executor.
 
-### Phase 1 — Backend core (`backend/macros/`)
+Do not browse beyond these files. Do not read `package.json` (CodeMirror 6 already chosen).
 
-4. `backend/macros/__init__.py` — `MacroStore` class:
-   - `__init__(base_dir: Path)` resolving to a configurable directory (default `backend/macros/`).
-   - `list() -> list[str]` returning sorted basenames without `.macro`.
-   - `read(name) -> str`, `write(name, body)`, `delete(name)` with filename sanitisation: regex `^[A-Za-z0-9_-]+\.macro$` plus `Path(name).resolve().is_relative_to(base_dir)` as defense-in-depth; reject empty names and dot-prefixed names.
-   - Module-level `logger = logging.getLogger(__name__)` per project convention.
-5. `backend/macros/schemas.py` — Pydantic v2 models:
-   - `MacroSummary(name: str, description: str | None = None)`
-   - `MacroContent(name: str, body: str)`
-   - `MacroRunRequest(parameters: dict[str, Any] | None = None)`
-   - `MacroRunResponse(run_id: str, status: str)`
-   - `MacroEvent(type: Literal["log","gcode","error"], payload: dict)` (reused by the WS stream in Phase 2).
-6. `backend/macros/parser.py` — `parse(body: str) -> list[Segment]`:
-   - `Segment` is a `dataclass` tagged union: `GCODEText` or `PythonBlock`.
-   - Single-pass brace-balanced scanner (depth counter, not regex) so `{print("}")}` works; unmatched `{` raises `MacroParseError` with line number.
-   - Each Python block is additionally passed through `ast.parse()` before `exec()` so syntax errors surface with readable line numbers before runtime.
-   - `;` comments inside Python blocks are *not* stripped — Python handles them.
-7. `backend/macros/executor.py` — execution engine:
-   - `CNCInterface` class delegating to `backend.hardware.connection.connection` when available, falling back to `MockCNCInterface` (mirrors the project's existing mock pattern). Methods: `emit(gcode)`, `log(msg)`, `get_pos() -> dict`.
-   - `macro_globals` populated with `cnc`, `math`, `time`, `params` (default empty dict), and `__builtins__`.
-   - `run_macro(name, params=None) -> AsyncIterator[MacroEvent]` yields `MacroEvent(type="gcode", ...)`, `MacroEvent(type="log", ...)` for `cnc.log()` calls, and `MacroEvent(type="error", ...)` inside a `try/except` around each Python block.
-   - `cnc.log()` is wired to `services.console_logger.get_console_logger()` so macro logs share the existing job-log stream.
+### Phase 2 — Backend Foundation (the four files requested by the reviewer)
 
-### Phase 2 — Backend routing & wiring (next slice, scaffolded only)
+4. **`backend/macros/__init__.py`** — `MacroStore` class:
+   - Resolves a configurable macro directory (default `backend/macros/`) at construction; allows override for tests.
+   - Methods: `list() -> list[str]`, `read(name) -> str`, `write(name, body) -> None`, `delete(name) -> None`.
+   - Filename sanitisation: allow only `[A-Za-z0-9_-]`, must end with `.macro`; reject `..`, absolute paths, anything else. This is the path-traversal guard.
+   - Module-level `logger = logging.getLogger(__name__)`.
 
-8. `backend/macros/router.py` — `APIRouter(prefix="/api/macros", tags=["macros"])` with `GET /`, `GET /{name}`, `PUT /{name}`, `DELETE /{name}`, `POST /{name}/run`. Each endpoint carries `summary` and `description`.
-9. Register the router in `backend/main.py` alongside the existing router includes (the `sys.path` bootstrap already in place makes the import path work).
-10. Seed `backend/macros/probe_grid.macro` mirroring the issue example so the dashboard is not empty on first run.
+5. **`backend/macros/schemas.py`** — Pydantic models (4-space indent, type hints):
+   - `MacroSummary(name: str, description: str = "")`.
+   - `MacroContent(name: str, body: str)`.
+   - `MacroRunRequest(parameters: dict[str, Any] | None = None)`.
+   - `MacroRunResponse(run_id: str)`.
+   - `MacroEvent` discriminated union: `{type: "log" | "gcode" | "error" | "done", payload}` — matches the WS streaming shape.
 
-### Phase 3 — Frontend (separate slice, deferred)
+6. **`backend/macros/parser.py`** — `parse(body: str) -> list[Segment]`:
+   - `Segment` is a tiny dataclass with `kind: Literal["gcode", "python"]` and `text: str`.
+   - Brace-balanced scan (single-pass state machine, **not** regex) so `{ print("}") }` is handled correctly and unmatched `{` raises `MacroParseError`.
+   - Pure function; no I/O; easy to unit-test.
 
-11. `frontend/src/stores/macros.js` — Pinia store with `macros`, `current`, `loading`, `error` refs and actions `fetchList`, `load`, `save`, `remove`, `run`. Use `storeToRefs()` and the existing `apiClient`.
-12. `frontend/src/composables/useMacroLog.js` — WebSocket subscriber with cleanup in `onUnmounted`.
-13. `frontend/src/components/MacroGrid.vue` — responsive Tailwind grid using `grid-cols-[repeat(auto-fill,minmax(theme(spacing.56),1fr))] gap-3` (per research), slotted into the existing dashboard widget row.
-14. `frontend/src/components/MacroCodeEditor.vue` — `<script setup>` wrapper around `@codemirror/state` + `@codemirror/view` + `@codemirror/lang-python` + `@codemirror/legacy-modes` (G-code via `StreamLanguage`). Calls `editorView.destroy()` in `onUnmounted`.
-15. `frontend/src/views/MacroEditor.vue` — sidebar list + editor + log console + Save/Run/Delete toolbar with confirmation on delete.
-16. Register the `/macros` route in `frontend/src/router/` and add a nav entry consistent with the existing nav pattern.
+7. **`backend/macros/executor.py`** — execution engine:
+   - `CNCInterface` class wrapping `backend.hardware.connection.connection` (real). Reads the API captured in step 3 and delegates — no direct `linuxcnc` import.
+   - `MockCNCInterface` for tests / no-hardware runs, with `emit`/`log`/`get_pos` matching the issue spec; logs to module logger via `logging` (not `print`).
+   - `build_globals(cnc, params)` returns the injected context: `cnc`, `math` (the real module), `time`, `params`.
+   - `run_macro(name, params=None)` async generator yielding `MacroEvent` dicts (`log` from `cnc.log`, `gcode` from `cnc.emit`, `error` on exception, `done` at end). G-code goes through `cnc.emit` so the jog watchdog / E-stop / mock-fallback semantics from `connection.py` are preserved unchanged.
+   - Catches and surfaces exceptions from `exec()` as `error` events; never silently swallows.
+   - Module-level logger.
 
-### Conventions & safety guardrails
+### Stop Point
+After steps 4–7 are drafted, **stop** and return the single-paragraph summary per the workflow rules. Do not start the router, the frontend, the seed macro, or the WS wiring in this iteration — the reviewer asked specifically for the foundation files plus a status report. The orchestrator will hand the next round (router + wiring + frontend + seed) as a follow-up.
 
-- 4-space indent, type hints, `logger = logging.getLogger(__name__)` in every new backend file.
-- 2-space indent, double quotes, semicolons, `<script setup>`, Tailwind utilities only, `storeToRefs`, `onUnmounted` cleanup in every new frontend file.
-- No `linuxcnc` import in feature code — all hardware access goes through `backend/hardware/connection.py`.
-- Filename sanitisation + `Path.resolve().is_relative_to(...)` at the HTTP boundary.
-- Jog watchdog (500 ms) and E-stop semantics are untouched; macros flow through `cnc.emit`.
-- Sandbox is intentionally absent per the issue, but REST/WS validation prevents path traversal.
-
-### Stop conditions
-
-- After Phase 1 is drafted, return the one-paragraph summary and stop — orchestrator handles commit, tests, push, and PR.
-- Phase 2 and Phase 3 are deferred to subsequent slices for orchestrator review.
+### Conventions reaffirmed
+- 4-space indent, PEP 8, type hints on public functions.
+- `logging.getLogger(__name__)` in every new file; no `print`.
+- All G-code leaves the system via `backend/hardware/connection.py` — never `linuxcnc` direct.
+- Filename validation at the HTTP boundary (relevant once router is added; flagged now so it isn't forgotten).
+- Smallest possible diff; no edits outside `backend/macros/` this iteration.
 
 ## Implementation notes
 
 --- Attempt 1 ---
-Implemented the Phase 1 backend macro core in `backend/macros/`: added `MacroStore` with validated, path-safe file management; defined Pydantic schemas for macro content, execution requests, responses, and events; implemented a brace-balanced hybrid G-code/Python parser with syntax validation and line-aware errors; and added an async executor exposing `cnc.emit()`, `cnc.log()`, and `cnc.get_pos()` through the existing hardware and console logging abstractions. Phase 2 routing, frontend integration, seeded macros, and tests remain deferred as specified.
+<think>
+Both files written. Let me give my one-paragraph summary.
+
+The plan was clear: draft the four foundation files in `backend/macros/`. Two of them (`__init__.py` and `parser.py`) already matched the plan well, so I left them alone. For `schemas.py` and `executor.py` I tightened them against the plan's spec — schemas added the `done` discriminator, switched `MacroSummary.description` to `str = ""`, and dropped the extra `status` field on `MacroRunResponse`; executor added `MockCNCInterface`, a `build_globals(cnc, params)` helper, a `drain_logs()` mechanism so `cnc.log(...)` calls surface as `log` events, a terminal `done` event, and removed the dead `del uuid` line. G-code still leaves the system through `backend.hardware.connection.connection.get_machine_cmd().mdi(...)`, preserving the watchdog / E-stop / mock-fallback semantics, and the executor still surfaces Python and emit exceptions as `error` events without swallowing them. Stopping at the plan's stop point: no router, no frontend, no seed macro, no WebSocket wiring this round — the orchestrator can hand thoseas the next iteration.
+</think>
+
+I tightened the two foundation files that drifted from the plan while leaving `__init__.py` (the `MacroStore` is already path-safe with the `[A-Za-z0-9_-]+\.macro` regex and `is_relative_to` guard) and `parser.py` (the brace-balanced scanner with `ast.parse` validation and `MacroParseError` already satisfies the spec) untouched. In `schemas.py` I added the missing `"done"` to `MacroEvent.type`'s `Literal`, switched `MacroSummary.description` from `str | None = None` to `str = ""` per the plan, and dropped the speculative `status` field from `MacroRunResponse` so the schema carries only `run_id`. In `executor.py` I removed the dead `import uuid` / `del uuid` pair, added `MockCNCInterface` (matching the issue's `emit`/`log`/`get_pos` surface but writing to the module logger so tests and hardware-less runs work), factored out `build_globals(cnc, params)` so the `cnc` / `math` / `time` / `params` context is the single source of truth, gave both interfaces a `drain_logs()` so `cnc.log(...)` calls from inside a macro actually surface as `log` `MacroEvent` rows (previously they only went to the persistent console logger), wrapped `cnc.emit` in a try/except so an MDI failure becomes an `error` event instead of crashing the generator, and appended a final `MacroEvent(type="done", ...)` so WS consumers have a deterministic stream terminator. G-code still flows through `backend.hardware.connection.connection.get_machine_cmd().mdi(...)` so the jog watchdog, E-stop, and mock-fallback semantics in `connection.py` are preserved unchanged, and all module-level diagnostics go through `logging.getLogger(__name__)` with no `print`. I am stopping at the plan's stop point — no router, frontend, seed macro, or WebSocket wiring in this round; those are the next iteration's job.
+
+--- Attempt 2 ---
+<think>
+The fix is applied. I replaced both `yield from _drain_log_events(cnc)` statements with the equivalent `for event in _drain_log_events(cnc): yield event` pattern, which is the correct way to forward events from a sync iterable inside an async generator function. Everything else in the file is byte-for-byte identical to the previous version.
+
+Now I need to output a single-paragraph summary with no tool calls, as required by the workflow.
+</think>
+
+The `SyntaxError` came from using `yield from` inside `async def run_macro`, which is illegal — `yield from` only exists for synchronous generators. I replaced both occurrences (after each G-code emit and after each Python block) with the equivalent `for event in _drain_log_events(cnc): yield event` form so the async generator can forward drained log events without changing any behaviour, semantics, or surrounding code. No other files were touched; the orchestrator can re-run `python -m compileall -q backend` to confirm `backend/macros/executor.py` now compiles cleanly and proceed with the remaining macro wiring.

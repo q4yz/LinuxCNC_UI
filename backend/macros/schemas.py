@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 class MacroSummary(BaseModel):
     name: str
-    description: str | None = None
+    description: str = ""
 
 
 class MacroContent(BaseModel):
@@ -22,9 +22,8 @@ class MacroRunRequest(BaseModel):
 
 class MacroRunResponse(BaseModel):
     run_id: str
-    status: str
 
 
 class MacroEvent(BaseModel):
-    type: Literal["log", "gcode", "error"]
+    type: Literal["log", "gcode", "error", "done"]
     payload: dict[str, Any]
