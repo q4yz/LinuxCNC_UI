@@ -24,17 +24,26 @@ from .domain_file_services import (
     get_staged_service,
     reset_service_cache,
 )
+from .macro_executor import CNCInterface, execute_macro
+from .macro_parser import parse_macro, validate_macro_name
+from .macro_storage import MacroFile, MacroStorage
 
 __all__ = [
     "ActiveFileService",
+    "CNCInterface",
     "ConfigFileService",
     "FileMetadata",
     "FileService",
+    "MacroFile",
+    "MacroStorage",
     "ProgramFileService",
     "StagedFileService",
+    "execute_macro",
     "get_active_service",
     "get_config_service",
     "get_program_service",
     "get_staged_service",
+    "parse_macro",
     "reset_service_cache",
+    "validate_macro_name",
 ]

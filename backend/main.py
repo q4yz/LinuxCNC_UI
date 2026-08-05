@@ -18,7 +18,10 @@ from services.console_logger import get_console_logger
 # Issue #49 retired the legacy ``compiler`` router: the
 # machineconfig module's ``/compile`` and ``/deploy`` endpoints
 # supersede it and the frontend no longer references it.
-from routers import websocket, files, system
+#
+# Issue #7 adds the ``macros`` router for the hybrid G-code + Python
+# macro subsystem exposed at ``/api/macros``.
+from routers import websocket, files, system, macros
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +69,12 @@ async def lifespan(app: FastAPI):
     registry.boot(app)
     app.state.module_registry = registry
 
+    # Touch the macros router so the example seeder runs at import
+    # time (it writes ``probe_grid.macro`` to the macros directory
+    # on first boot). The router has no side effects beyond the
+    # optional seed write.
+    _ = macros.router
+
     yield
 
     # Shutdown gracefully
@@ -86,8 +95,8 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="LinuxCNC Web API", 
-    description="Modern, modular REST API and WebSocket interface for LinuxCNC", 
+    title="LinuxCNC Web API",
+    description="Modern, modular REST API and WebSocket interface for LinuxCNC",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -106,6 +115,7 @@ app.add_middleware(
 # above), which routes them under ``/api/v1/modules/{id}``.
 app.include_router(files.router)
 app.include_router(system.router)
+app.include_router(macros.router)
 app.include_router(websocket.router)
 
 @app.get("/")

@@ -4,6 +4,7 @@ import DashboardView from '../views/DashboardView.vue'
 import FilesView from '../views/FilesView.vue'
 import EditorView from '../views/EditorView.vue'
 import SettingsView from '../views/SettingsView.vue'
+import MacroEditor from '../views/MacroEditor.vue'
 
 // Hash history keeps the router compatible with static hosting
 // (Vite preview / production builds served from any path).
@@ -49,6 +50,15 @@ const router = createRouter({
       name: 'config',
       component: EditorView,
       meta: { label: 'Editor' }
+    },
+    {
+      // Issue #7: dedicated macro editor view. Mirrors the
+      // ``/config`` route's "filename optional" pattern so the
+      // editor degrades gracefully when no macro is selected.
+      path: '/macros',
+      name: 'macros',
+      component: MacroEditor,
+      meta: { label: 'Macros' }
     },
     {
       path: '/settings',

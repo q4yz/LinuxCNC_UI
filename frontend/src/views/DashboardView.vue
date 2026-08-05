@@ -13,6 +13,7 @@ import GCodeViewer from '../components/GCodeViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
+import MacroGrid from '../components/MacroGrid.vue'
 
 // ``eager: false`` records dynamic-import functions keyed by file
 // path; an empty ``modules/`` folder is harmless because Vite
@@ -74,6 +75,11 @@ const toolsMounted       = computed(() => registry.modules.has('tools'))
         <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
           Jog controls not mounted.
         </div>
+
+        <!-- Issue #7: macro dashboard grid. Mounted at the bottom
+             of the left column so the macro buttons sit alongside
+             the existing machine widgets. -->
+        <MacroGrid />
       </div>
 
       <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->
