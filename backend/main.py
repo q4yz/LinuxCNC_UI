@@ -1,9 +1,25 @@
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Make ``backend/`` importable when uvicorn launches the app as
+# ``backend.main:app``. Without this, the sibling sub-packages
+# (``core``, ``hardware``, ``routers``, ``services``, ``modules``)
+# are not on ``sys.path`` and the top-level imports below fail
+# with ``ModuleNotFoundError: No module named 'core'``. The
+# ``backend/tests/conftest.py`` fixture applies the same trick
+# for the pytest run; we mirror it here so the production entry
+# point works the same way whether it is launched via
+# ``python -m uvicorn backend.main:app`` or directly.
+_BACKEND_DIR = Path(__file__).resolve().parent
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
 from core.config_manager import MachineConfig
 from core.module_registry import registry
 from hardware.connection import connection
@@ -86,8 +102,8 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="LinuxCNC Web API", 
-    description="Modern, modular REST API and WebSocket interface for LinuxCNC", 
+    title="LinuxCNC Web API",
+    description="Modern, modular REST API and WebSocket interface for LinuxCNC",
     version="1.0.0",
     lifespan=lifespan
 )
