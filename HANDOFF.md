@@ -2,62 +2,68 @@
 
 ## Plan
 
-## Macro Support — Implementation Plan
+## Macro Support — Implementation Plan (Slice 1: Backend Core)
 
-### Research still needed
-Confirm before coding:
-1. Whether `monaco-editor` or `codemirror` is already in `frontend/package.json` (research notes show the read started but result not included). Pick the one already present; if neither, default to CodeMirror 6 (lighter, MIT, matches the "smallest diff" rule).
-2. Existing router structure (`frontend/src/router/`) to know where to add the `/macros` route.
-3. Existing dashboard view layout (`frontend/src/views/Dashboard.vue` or similar) so the macro grid reuses existing card/grid utilities instead of inventing new ones.
-4. The exact API of `backend/hardware/connection.py` so the mock `cnc` object and the executor route G-code through the same abstraction used everywhere else (not direct `linuxcnc` import).
+### Phase 0 — Research the three remaining context items
 
-### Backend (`backend/`)
-1. **Storage layer** — add `backend/macros/__init__.py` and a `MacroStore` helper that reads/writes/deletes `*.macro` files under a configurable directory (default `backend/macros/`). Provide `list()`, `read(name)`, `write(name, body)`, `delete(name)` with filename sanitisation (alphanumerics, `_`, `-`, `.macro`).
-2. **Schemas** — `backend/macros/schemas.py` with Pydantic models: `MacroSummary(name, description)`, `MacroContent(name, body)`, `MacroRunRequest(parameters: dict | None)`, and standard error responses.
-3. **Parser** — `backend/macros/parser.py` exposing `parse(body: str) -> list[Segment]` where `Segment` is a tagged union `{kind: "gcode", text}` or `{kind: "python", code}`. Brace-balanced scan (not regex) so `{ print("}") }` works; treat unmatched `{` as a parse error.
-4. **Executor** — `backend/macros/executor.py`:
-   - `CNCInterface` class wrapping `backend/hardware/connection.py` (real) or `MockCNCInterface` (used in tests/when no hardware). Methods: `emit(gcode)`, `log(msg)`, `get_pos() -> dict`.
-   - `macro_globals` dict injected into every Python block: `cnc`, `math` (real `math` module), `time`, plus a per-run `params` dict for the V2 modal feature.
-   - `run_macro(name)` async generator that yields structured events `{type: "log"|"gcode"|"error", payload}` so the frontend console can stream them via WebSocket (reuse existing WS pattern).
-   - Python blocks run via `exec(code, macro_globals)`; G-code segments are fed to `cnc.emit()`.
-5. **Router** — `backend/macros/router.py` with prefix `/api/macros`, tags=`["macros"]`:
-   - `GET /` → list
-   - `GET /{name}` → content
-   - `PUT /{name}` → save
-   - `DELETE /{name}` → delete
-   - `POST /{name}/run` → execute (returns the run id; execution streams over existing `/ws/jobs` or a new `/ws/macros` channel — confirm WS pattern first).
-6. **Wiring** — register the router in the FastAPI app entry point alongside other routers. Add `module-level logger = logging.getLogger(__name__)` in every new file.
-7. **Seed data** — drop one demo `probe_grid.macro` mirroring the issue example so the dashboard isn't empty on first run.
+1. Read `frontend/src/router/index.js` (or equivalent) to capture the exact route registration convention (likely `createRouter({ history, routes })` with `path`/`name`/`component`/`meta`). Record route ordering, meta tags, and lazy-loading pattern so the `/macros` route and editor nav entry can be added in Phase 3 without surprises.
+2. Read `frontend/src/views/Dashboard.vue` plus one or two sibling widgets under `frontend/src/components/` to confirm the existing card/grid layout primitives. Capture the wrapper class, grid utilities, and section-slot pattern so the new `MacroGrid.vue` slots in as a peer widget rather than being stylistically detached.
+3. Read `backend/hardware/connection.py` and record the exact public API (`connection.send(...)`, `connection.recv(...)`, `connection.is_mock`, etc.) so the `CNCInterface` wrapper in `executor.py` routes `emit()`/`log()`/`get_pos()` through the same abstraction and the mock/real swap continues to work.
 
-### Frontend (`frontend/src/`)
-1. **Pinia store** — `frontend/src/stores/macros.js` (module-level) exposing: `macros` (ref list), `current` (ref of loaded macro body), `loading`/`error` refs, and actions `fetchList`, `load(name)`, `save(name, body)`, `remove(name)`, `run(name, params?)`. Use the existing `apiClient` service for HTTP and follow the established `storeToRefs()` pattern.
-2. **WebSocket hook** — small composable `useMacroLog(runId)` that subscribes to the macro execution channel, exposes a reactive `lines` array, and cleans up on `onUnmounted` (per the resource-cleanup rule).
-3. **Dashboard widget** — `frontend/src/components/MacroGrid.vue` (reusable, single-purpose): responsive Tailwind grid of buttons, one per macro, click triggers `run()` via the store. Slotted into the existing Dashboard view where other widgets live — do not redesign the dashboard.
-4. **Macro Editor view** — `frontend/src/views/MacroEditor.vue`:
-   - Left sidebar: macro list with `+ New` button (uses same Tailwind utilities as other sidebars).
-   - Center: code editor component (`<MacroCodeEditor>`) wrapping the chosen editor lib (Monaco or CodeMirror). Props: `modelValue`, emits `update:modelValue`.
-   - Bottom: log console pane bound to `useMacroLog`.
-   - Toolbar: Save / Run / Delete with confirmation on delete.
-5. **Router** — register `/macros` route pointing to `MacroEditor.vue`; add a nav entry consistent with the existing nav pattern.
-6. **Conventions check** — 2-space indent, double quotes, semicolons, `<script setup>`, Tailwind utilities only (no scoped CSS), Pinia via `storeToRefs`, resource cleanup in `onUnmounted`.
+### Phase 1 — Backend core (`backend/macros/`)
 
-### Safety & conventions reminders
-- Do **not** weaken jog watchdog or E-stop semantics; macros flow through `cnc.emit`, not a privileged path.
-- Sandbox is intentionally absent per the issue — but still validate macro *filenames* at the HTTP boundary so path traversal is impossible.
-- The mock `cnc` object must go through `backend/hardware/connection.py` so the LinuxCNC/mock swap continues to work.
+4. `backend/macros/__init__.py` — `MacroStore` class:
+   - `__init__(base_dir: Path)` resolving to a configurable directory (default `backend/macros/`).
+   - `list() -> list[str]` returning sorted basenames without `.macro`.
+   - `read(name) -> str`, `write(name, body)`, `delete(name)` with filename sanitisation: regex `^[A-Za-z0-9_-]+\.macro$` plus `Path(name).resolve().is_relative_to(base_dir)` as defense-in-depth; reject empty names and dot-prefixed names.
+   - Module-level `logger = logging.getLogger(__name__)` per project convention.
+5. `backend/macros/schemas.py` — Pydantic v2 models:
+   - `MacroSummary(name: str, description: str | None = None)`
+   - `MacroContent(name: str, body: str)`
+   - `MacroRunRequest(parameters: dict[str, Any] | None = None)`
+   - `MacroRunResponse(run_id: str, status: str)`
+   - `MacroEvent(type: Literal["log","gcode","error"], payload: dict)` (reused by the WS stream in Phase 2).
+6. `backend/macros/parser.py` — `parse(body: str) -> list[Segment]`:
+   - `Segment` is a `dataclass` tagged union: `GCODEText` or `PythonBlock`.
+   - Single-pass brace-balanced scanner (depth counter, not regex) so `{print("}")}` works; unmatched `{` raises `MacroParseError` with line number.
+   - Each Python block is additionally passed through `ast.parse()` before `exec()` so syntax errors surface with readable line numbers before runtime.
+   - `;` comments inside Python blocks are *not* stripped — Python handles them.
+7. `backend/macros/executor.py` — execution engine:
+   - `CNCInterface` class delegating to `backend.hardware.connection.connection` when available, falling back to `MockCNCInterface` (mirrors the project's existing mock pattern). Methods: `emit(gcode)`, `log(msg)`, `get_pos() -> dict`.
+   - `macro_globals` populated with `cnc`, `math`, `time`, `params` (default empty dict), and `__builtins__`.
+   - `run_macro(name, params=None) -> AsyncIterator[MacroEvent]` yields `MacroEvent(type="gcode", ...)`, `MacroEvent(type="log", ...)` for `cnc.log()` calls, and `MacroEvent(type="error", ...)` inside a `try/except` around each Python block.
+   - `cnc.log()` is wired to `services.console_logger.get_console_logger()` so macro logs share the existing job-log stream.
 
-### Suggested execution order
-1. Confirm the four research items above.
-2. Backend storage + parser + executor + mock `cnc` (testable in isolation).
-3. Backend router + wire-up + seed macro.
-4. Pinia store + HTTP/WS plumbing.
-5. Dashboard widget.
-6. Macro Editor view + code editor component + log pane.
-7. Manual smoke check (orchestrator runs tests via `.agent/TEST.md`).
+### Phase 2 — Backend routing & wiring (next slice, scaffolded only)
+
+8. `backend/macros/router.py` — `APIRouter(prefix="/api/macros", tags=["macros"])` with `GET /`, `GET /{name}`, `PUT /{name}`, `DELETE /{name}`, `POST /{name}/run`. Each endpoint carries `summary` and `description`.
+9. Register the router in `backend/main.py` alongside the existing router includes (the `sys.path` bootstrap already in place makes the import path work).
+10. Seed `backend/macros/probe_grid.macro` mirroring the issue example so the dashboard is not empty on first run.
+
+### Phase 3 — Frontend (separate slice, deferred)
+
+11. `frontend/src/stores/macros.js` — Pinia store with `macros`, `current`, `loading`, `error` refs and actions `fetchList`, `load`, `save`, `remove`, `run`. Use `storeToRefs()` and the existing `apiClient`.
+12. `frontend/src/composables/useMacroLog.js` — WebSocket subscriber with cleanup in `onUnmounted`.
+13. `frontend/src/components/MacroGrid.vue` — responsive Tailwind grid using `grid-cols-[repeat(auto-fill,minmax(theme(spacing.56),1fr))] gap-3` (per research), slotted into the existing dashboard widget row.
+14. `frontend/src/components/MacroCodeEditor.vue` — `<script setup>` wrapper around `@codemirror/state` + `@codemirror/view` + `@codemirror/lang-python` + `@codemirror/legacy-modes` (G-code via `StreamLanguage`). Calls `editorView.destroy()` in `onUnmounted`.
+15. `frontend/src/views/MacroEditor.vue` — sidebar list + editor + log console + Save/Run/Delete toolbar with confirmation on delete.
+16. Register the `/macros` route in `frontend/src/router/` and add a nav entry consistent with the existing nav pattern.
+
+### Conventions & safety guardrails
+
+- 4-space indent, type hints, `logger = logging.getLogger(__name__)` in every new backend file.
+- 2-space indent, double quotes, semicolons, `<script setup>`, Tailwind utilities only, `storeToRefs`, `onUnmounted` cleanup in every new frontend file.
+- No `linuxcnc` import in feature code — all hardware access goes through `backend/hardware/connection.py`.
+- Filename sanitisation + `Path.resolve().is_relative_to(...)` at the HTTP boundary.
+- Jog watchdog (500 ms) and E-stop semantics are untouched; macros flow through `cnc.emit`.
+- Sandbox is intentionally absent per the issue, but REST/WS validation prevents path traversal.
+
+### Stop conditions
+
+- After Phase 1 is drafted, return the one-paragraph summary and stop — orchestrator handles commit, tests, push, and PR.
+- Phase 2 and Phase 3 are deferred to subsequent slices for orchestrator review.
 
 ## Implementation notes
 
 --- Attempt 1 ---
-
---- Attempt 2 ---
-I added a `sys.path` bootstrap at the top of `backend/main.py` that injects the `backend/` directory (resolved via `Path(__file__).resolve().parent`) into `sys.path` before the module-level imports run. This mirrors the existing pattern in `backend/tests/conftest.py` (which does the same for pytest) so that the top-level imports `from core.config_manager import MachineConfig`, `from hardware.connection import connection`, `from services.console_logger import get_console_logger`, and `from routers import websocket, files, system` resolve when uvicorn launches the app as `backend.main:app`. The change is the minimum needed to clear the `ModuleNotFoundError: No module named 'core'` that blocked the orchestrator's `.agent/TEST.md` step that starts the backend to fetch `openapi.json`; the rest of the lifespan wiring, router includes, and `__main__` block are untouched, and the existing test run (240 passed) is unaffected because the conftest already adds the same path during pytest. No other files were modified, no tests were executed, and no commit was made.
+Implemented the Phase 1 backend macro core in `backend/macros/`: added `MacroStore` with validated, path-safe file management; defined Pydantic schemas for macro content, execution requests, responses, and events; implemented a brace-balanced hybrid G-code/Python parser with syntax validation and line-aware errors; and added an async executor exposing `cnc.emit()`, `cnc.log()`, and `cnc.get_pos()` through the existing hardware and console logging abstractions. Phase 2 routing, frontend integration, seeded macros, and tests remain deferred as specified.
