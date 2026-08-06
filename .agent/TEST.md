@@ -30,17 +30,18 @@ python -m pytest backend/tests -v
 
 # 4. API Client Generation
 # Start the FastAPI backend in the background and detach its output so openapi.json is reachable.
-# NOTE: Adjust 'backend.main:app' below if your FastAPI app instance is located elsewhere.
-
-# GUARANTEE cleanup: Install a bash EXIT trap so the background uvicorn process is
-# reaped on ANY exit path under `set -e` — whether the script completes successfully
-# OR aborts mid-way because of a failed step (curl readiness probe timeout,
-# generate-api failure, npm build failure, or node --test failure). Without this
-# trap, an aborted run would leave uvicorn holding port 8000 and the next run would
-# fail to start with a confusing "address already in use" error that can mislead an
-# AI agent into diagnosing a non-existent networking bug in the application code.
 python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
+
+# GUARANTEE cleanup: Install a bash EXIT trap so the background uvicorn process
+# is reaped on ANY exit path under `set -e` — whether the script completes
+# successfully OR aborts mid-way because of a failed step (curl readiness probe
+# timeout, generate-api failure, npm build failure, or node --test failure).
+# Without this trap, an aborted run would leave uvicorn holding port 8000 and
+# the next run would fail to start with a confusing "address already in use"
+# error that can mislead an AI agent into diagnosing a non-existent networking
+# bug in the application code. The trap is installed BEFORE the readiness probe
+# so every failure path under `set -e` reaches it.
 trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
