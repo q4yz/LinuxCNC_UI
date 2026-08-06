@@ -37,7 +37,9 @@ BACKEND_PID=$!
 # whether it exits successfully or crashes due to an error. This is critical because the
 # script runs with `set -e`, so any failing intermediate step (e.g. the curl readiness
 # probe or `npm run generate-api`) must still tear down the background uvicorn process.
-trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
+# Single quotes defer $BACKEND_PID evaluation until the trap fires, so the most recent PID
+# is always used even if the variable were ever reassigned later in the script.
+trap 'kill $BACKEND_PID 2>/dev/null || true' EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
