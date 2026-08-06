@@ -32,10 +32,10 @@ python -m pytest backend/tests -v
 # Start the FastAPI backend in the background and detach its output so openapi.json is reachable.
 python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
 # whether it exits successfully or crashes due to an error.
-trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
