@@ -29,9 +29,9 @@ python -m compileall -q backend
 python -m pytest backend/tests -v
 
 # 4. API Client Generation
-# Start the FastAPI backend in the background so openapi.json is reachable.
+# Start the FastAPI backend in the background and detach its output so openapi.json is reachable.
 # NOTE: Adjust 'backend.main:app' below if your FastAPI app instance is located elsewhere.
-python -m uvicorn backend.main:app --port 8000 &
+python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
 
 # GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
