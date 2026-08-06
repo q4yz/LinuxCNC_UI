@@ -34,14 +34,15 @@ python -m pytest backend/tests -v
 python -m uvicorn backend.main:app --port 8000 &
 BACKEND_PID=$!
 
+# GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
+# whether it exits successfully or crashes due to an error (e.g. `set -e` abort).
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
+
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
 
 # Generate the API client schema
 npm --prefix frontend run generate-api
-
-# Shut down the backend gracefully
-kill $BACKEND_PID
 
 # 5. Frontend Verification
 npm --prefix frontend run build
