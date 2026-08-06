@@ -29,17 +29,13 @@ python -m compileall -q backend
 python -m pytest backend/tests -v
 
 # 4. API Client Generation
-# Start the FastAPI backend in the background and detach its output so openapi.json is reachable.
+# Start the FastAPI backend in the background and detach output
 python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
 
 # GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
-# whether it exits successfully or crashes due to an error. This is critical because the
-# script runs with `set -e`, so any failing intermediate step (e.g. the curl readiness
-# probe or `npm run generate-api`) must still tear down the background uvicorn process.
-# Single quotes defer $BACKEND_PID evaluation until the trap fires, so the most recent PID
-# is always used even if the variable were ever reassigned later in the script.
-trap 'kill $BACKEND_PID 2>/dev/null || true' EXIT
+# whether it exits successfully or crashes due to an error.
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
