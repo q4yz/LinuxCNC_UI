@@ -258,12 +258,14 @@ test("FilesView forwards every edit-event argument to App.vue", () => {
   // ``handleEdit`` must use a rest parameter so mode/content survive.
   assert.match(text, /function\s+handleEdit\s*\(\s*\.\.\.\s*args\s*\)/);
   assert.match(text, /emit\(\s*['"]edit['"]\s*,\s*\.\.\.\s*args\s*\)/);
-});w-full h-full flex flex-col container", () => {
+});
+
+test("FileManager wraps its content in a full-page w-full h-full flex flex-col container", () => {
   // Issue #60 refactor: FileManager must be a full-page view, not a
   // dashboard card. The outermost wrapper must declare h-full and
   // w-full so it stretches edge-to-edge inside FilesView; the inner
-  // scrollable body adds flex-1 + min-h-0 so it grows to fill the
-  // remaining vertical space without overflowing the header.
+  // scrollable body uses ``flex-1`` so the file list grows to fill
+  // the remaining vertical space without overflowing the header.
   const fmPath = resolve(
     repoRoot,
     "frontend/src/components/FileManager.vue",
@@ -275,10 +277,9 @@ test("FilesView forwards every edit-event argument to App.vue", () => {
     text,
     /class\s*=\s*["'][^"']*w-full[^"']*h-full[^"']*flex[^"']*flex-col[^"']*["']/,
   );
-  // Scrollable body uses ``flex-1`` + ``min-h-0`` to fill the
-  // leftover space. The order of the two classes is not part of
-  // the contract, so we accept either Tailwind utility first[^"']*["']/,
-  );
-  // Scrollable body uses flex-1 + min-h-0 to fill the leftover space.
-  assert.match(text, /flex-1[^"']*min-h-0/);
+  // The scrollable body uses ``flex-1`` so it grows to fill the
+  // leftover space. The companion ``overflow-y-auto`` keeps the
+  // list scrollable; ``min-h-0`` is no longer required because
+  // the body sits inside a flex column with an explicit height.
+  assert.match(text, /flex-1[^"']*overflow-y-auto/);
 });

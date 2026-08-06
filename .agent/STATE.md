@@ -40,7 +40,7 @@ match `^module_[a-z][a-z0-9_]+$`. The `module_` prefix prevents
 collisions with the legacy top-level stores (`machine`, `console`,
 `machineStore`) which still exist during the migration window.
 
-CI lint script: [`frontend/scripts/check-store-ids.mjs`](../../frontend/scripts/check-store-ids.mjs).
+CI lint script: [`frontend/scripts/check-store-ids.mjs`](frontend/scripts/check-store-ids.mjs).
 
 **Pattern in code.** Store ids are built by concatenation rather than
 hard-coded as a literal string:

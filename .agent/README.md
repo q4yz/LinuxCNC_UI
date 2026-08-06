@@ -1,18 +1,27 @@
 # `.agent/` — Agent & Contributor Documentation
 
 This directory holds the contracts and rules that govern the
-pluggable-module system plus the original AI constraints that
-backed the rest of the project.
+pluggable-module system, the GraphLLM AI agent's operating
+manual, and the hub-and-spoke context model used by the agent.
 
 | Path | Audience | Purpose |
 |------|----------|---------|
-| [`AGENT.md`](AGENT.md) | All contributors | Repository-wide conventions, layer responsibilities, quality rules. |
-| [`AI_INSTRUCTIONS.md`](AI_INSTRUCTIONS.md) | AI agents | Stack constraints, modularity rules, telemetry & safety guidance. |
-| [`HANDOFF_TEMPLATE.md`](HANDOFF_TEMPLATE.md) | Issue resolvers | Required PR description format. |
-| [`TEST.md`](TEST.md) | CI / contributors | Build + test commands. |
-| [`contracts/backend-module.md`](contracts/backend-module.md) | Backend module authors | Canonical `PluggableModule` Protocol. |
-| [`contracts/frontend-module.md`](contracts/frontend-module.md) | Frontend module authors | Canonical `FrontendModule` interface. |
-| [`contracts/settings-module.md`](contracts/settings-module.md) | Module authors | Settings endpoints, storage layout, atomic-write contract. |
+| [`.agent/context/hub.md`](.agent/context/hub.md) | AI agents | **Primary entry point.** Repository map + spoke navigation. Start here. |
+| [`.agent/context/VISION.md`](.agent/context/VISION.md) | AI agents | Project goals, philosophy, what we are not building. |
+| [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) | AI agents | Technical structure, module registry graph, event bus, safety watchdogs. |
+| [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md) | AI agents | Past mistakes and tripwires (Pinia store ids, eager imports, venv cache, the jog watchdog). |
+| [`.agent/AGENT.md`](.agent/AGENT.md) | All AI agents | The GraphLLM agent operating manual (no commits, no tests, no PRs; one-paragraph summary; honest no-op). |
+| [`.agent/HANDOFF_TEMPLATE.md`](.agent/HANDOFF_TEMPLATE.md) | Issue resolvers | Required PR description format. |
+| [`.agent/TEST.md`](.agent/TEST.md) | CI / orchestrator | The bash script the orchestrator runs to verify every edit. Do not run it yourself. |
+| [`.agent/STATE.md`](.agent/STATE.md) | All contributors | Current as-built state of the module system. |
+| [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md) | Backend module authors | Canonical `PluggableModule` Protocol. |
+| [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) | Frontend module authors | Canonical `FrontendModule` interface. |
+| [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md) | Module authors | Settings endpoints, storage layout, atomic-write contract. |
 
-See also [`MODULE_SYSTEM_ROADMAP.md`](../MODULE_SYSTEM_ROADMAP.md) at the
-repo root for the broader Phase 2b/2c/2d plan.
+See also `MODULE_SYSTEM_ROADMAP.md` at the repo root for the
+broader Phase 2b/2c/2d plan (not present in the current working tree).
+
+> **Note:** The legacy `AI_INSTRUCTIONS.md` and `archived_notes.md`
+> files were deleted when the content migrated into the
+> `context/` spokes. The current AI agent's entry point is
+> [`.agent/context/hub.md`](.agent/context/hub.md).

@@ -80,3 +80,12 @@ When the AI writes code in this repo, it must follow these conventions.
 - Validate external input at the boundary and return actionable API errors.
 - Never weaken emergency-stop, jog-watchdog, file-path, or hardware-fallback safeguards.
 - Refer to `.agent/contracts/` for module-system contracts and to `MODULE_SYSTEM_ROADMAP.md` for the broader migration plan.
+
+### Context source of truth
+
+The AI agent's curated context is the **hub-and-spoke** document set
+under `.agent/context/`. Start every task at
+[`.agent/context/hub.md`](.agent/context/hub.md) and follow the spokes
+(`VISION.md`, `ARCHITECTURE.md`, `LESSONS_LEARNED.md`) to the
+documents you need. The legacy `AI_INSTRUCTIONS.md` and
+`archived_notes.md` files were deleted; do not reference them.

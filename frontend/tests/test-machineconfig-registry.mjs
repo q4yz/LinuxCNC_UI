@@ -169,7 +169,7 @@ test("machineconfig components folder ships the four panels", () => {
   assert.equal(existsSync(machineConfigViewPath), false, "MachineConfigView.vue must be removed");
 });
 
-test("ConfigView composes every machineconfig panel", () => {
+test("EditorView composes every machineconfig panel", () => {
   const viewText = readText(viewPath);
   // The legacy ``ConfigView.vue`` was renamed to
   // ``EditorView.vue`` once the file manager started routing
@@ -190,10 +190,18 @@ test("ConfigView composes every machineconfig panel", () => {
     );
   }
   assert.match(viewText, /useMachineConfigStore/);
+  // The view calls the store's loaders on mount so the
+  // compilers and listings are populated by the time the
+  // panels render.
+  assert.match(viewText, /loadAll\(\)/);
+});
+
+test("App.vue routes module sidebar ids to the module view", () => {
+  const appText = readText(resolve(repoRoot, "frontend/src/App.vue"));
   // The current App.vue drives view selection through Vue Router
-  // (``useRoute().name``) instead of a local ``currentView`` ref.
-  // The module-owned view still wins when the route name matches a
-  // mounted module id, so the contract is preserved.
+  // (``useRoute().name``) instead of a local ``currentView``
+  // ref. The module-owned view still wins when the route name
+  // matches a mounted module id, so the contract is preserved.
   assert.match(
     appText,
     /registry\.modules\.has\(\s*name\s*\)/,
@@ -202,15 +210,7 @@ test("ConfigView composes every machineconfig panel", () => {
   assert.match(
     appText,
     /useRoute\(\)/,
-    "App.vue must read the active view via Vue Router
-});
-
-test("App.vue routes module sidebar ids to the module view", () => {
-  const appText = readText(resolve(repoRoot, "frontend/src/App.vue"));
-  assert.match(
-    appText,
-    /registry\.modules\.has\(currentView\.value\)/,
-    "App.vue must consult the registry to detect module-owned sidebar ids",
+    "App.vue must read the active view via Vue Router",
   );
   assert.match(
     appText,

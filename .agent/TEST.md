@@ -45,5 +45,5 @@ kill $BACKEND_PID
 
 # 5. Frontend Verification
 npm --prefix frontend run build
-node --test "frontend/tests/**/*.js"
+node --test "frontend/tests/**/*.mjs" "frontend/tests/**/*.js"
 ```

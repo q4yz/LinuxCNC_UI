@@ -3,8 +3,8 @@
 The canonical contract every pluggable backend module must satisfy.
 Authoritative source for what the registry expects and what module
 authors must implement. Living document — the matching Python types
-live in [`backend/core/protocols.py`](../../backend/core/protocols.py)
-and [`backend/core/module_registry.py`](../../backend/core/module_registry.py).
+live in [`backend/core/protocols.py`](backend/core/protocols.py)
+and [`backend/core/module_registry.py`](backend/core/module_registry.py).
 
 ## 1. The `PluggableModule` Protocol
 
@@ -108,7 +108,7 @@ The registry always mounts the four canonical settings endpoints at:
 /api/v1/modules/<module_id>/settings
 ```
 
-See [`settings-module.md`](settings-module.md) for the full contract.
+See [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md) for the full contract.
 
 ## 8. EventBus Contract — Immutable Payloads (Gotcha #3)
 

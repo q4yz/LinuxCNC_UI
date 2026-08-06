@@ -3,8 +3,8 @@
 The canonical contract every pluggable frontend module must satisfy.
 Authoritative source for what the registry expects and what module
 authors must implement. Living document — the matching JS code lives
-in [`frontend/src/core/modules/protocols.js`](../../frontend/src/core/modules/protocols.js)
-and [`frontend/src/core/modules/registry.js`](../../frontend/src/core/modules/registry.js).
+in [`frontend/src/core/modules/protocols.js`](frontend/src/core/modules/protocols.js)
+and [`frontend/src/core/modules/registry.js`](frontend/src/core/modules/registry.js).
 
 ## 1. The `FrontendModule` Interface
 
@@ -57,7 +57,7 @@ Same shape as the backend equivalent:
 
 `settings` is a typed client bound to the four canonical settings
 endpoints exposed by the backend `SettingsStore`. The full client
-API lives in [`settings-module.md`](settings-module.md).
+API lives in [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md).
 
 ## 5. Store ID Naming Rule (Gotcha #2)
 
@@ -67,7 +67,7 @@ prevents collisions with the legacy top-level stores (`machine`,
 `console`) and gives a regex hook for the CI lint.
 
 The lint script lives at
-[`frontend/scripts/check-store-ids.mjs`](../../frontend/scripts/check-store-ids.mjs)
+[`frontend/scripts/check-store-ids.mjs`](frontend/scripts/check-store-ids.mjs)
 and runs in CI before the bundle is built:
 
 ```js
@@ -85,7 +85,7 @@ continuing to the next subscriber.
 
 Frozen copies exist for the same reason as the backend: modules are
 independent codebases we don't trust to be disciplined about payload
-mutation. See [`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #3`](../MODULE_SYSTEM_ROADMAP.md)
+mutation. See `MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #3` (not present in the working tree)
 for the design rationale.
 
 ## 7. TelemetryBus — By-Reference Escape Hatch
@@ -121,9 +121,11 @@ const moduleImports = import.meta.glob(
 ```
 
 The glob is **lazy** (see
-[`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1`](../MODULE_SYSTEM_ROADMAP.md))
+`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1` (not present in the working tree)
 so a module disabled by the `MODULES_ENABLED` whitelist never
-appears in the bundle, even at runtime.
+appears in the bundle, even at runtime. See
+`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1` (not present in the
+working tree).
 
 ## 9. Whitelist — `MODULES_ENABLED`
 

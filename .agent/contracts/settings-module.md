@@ -2,9 +2,9 @@
 
 Authoritative contract for the per-module persistent settings layer.
 The matching implementation lives in
-[`backend/core/settings_store.py`](../../backend/core/settings_store.py)
+[`backend/core/settings_store.py`](backend/core/settings_store.py)
 and is mounted by
-[`backend/core/module_registry.py`](../../backend/core/module_registry.py).
+[`backend/core/module_registry.py`](backend/core/module_registry.py).
 
 ## 1. Storage Layout
 
@@ -98,7 +98,7 @@ endpoint boundary (using Pydantic request models) and reject bad
 input before it reaches the store.
 
 The frontend settings client (see
-[`frontend-module.md`](frontend-module.md) § 4) treats the payload
+[`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) § 4) treats the payload
 as opaque JSON and does no validation.
 
 ## 7. Failure Modes

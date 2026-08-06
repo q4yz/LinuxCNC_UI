@@ -102,10 +102,16 @@ test("machine manifest matches the store id", async () => {
     "utf-8",
   );
   // ``manifest.id`` and the store id (``module_<manifest.id>``)
-  // must agree.  We check the manifest literal and the store-id
-  // literal separately so a typo in either is caught.
+  // must agree. The store builds the id from a template literal
+  // (``module_${manifest.id}``) so we check the template rather
+  // than the resolved value. Together with the manifest literal
+  // this guarantees a typo in either side is caught.
   assert.match(manifestText, /id:\s*(['"`])machine\1/);
-  assert.match(storeText, /module_machine/);
+  assert.match(
+    storeText,
+    /STORE_ID\s*=\s*`module_\$\{manifest\.id\}`/,
+  );
+  assert.match(storeText, /defineStore\(\s*STORE_ID/);
 });
 
 test("machine store wires the WebSocket transport", async () => {
