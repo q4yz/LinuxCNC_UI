@@ -33,28 +33,9 @@ python -m pytest backend/tests -v
 python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
 
-# GUARANTEE cleanup: Install a bash EXIT trap so the background uvicorn process
-# is reaped on ANY exit path under `set -e` — whether the script completes
-# successfully OR aborts mid-way because of a failed step (curl readiness probe
-# timeout, generate-api failure, npm build failure, or node --test failure).
-# Without this trap, an aborted run would leave uvicorn holding port 8000 and
-# the next run would fail to start with a confusing "address already in use"
-# error that can mislead an AI agent into diagnosing a non-existent networking
-# bug in the application code. The trap is the sole terminator of the
-# background uvicorn process — no explicit kill commands are needed later.
-#
-# Notes on the trap body:
-#   * Single quotes are used so `$BACKEND_PID` is expanded at trap-FIRE time,
-#     not trap-set time. This is a defensive pattern that does not rely on
-#     `BACKEND_PID` being set before the trap is installed.
-#   * `kill -- -"$BACKEND_PID"` targets the process group (negative PID),
-#     which reaps any worker/child processes uvicorn may have spawned in
-#     addition to the main process. A plain `kill "$BACKEND_PID"` would only
-#     signal the parent, leaving children holding port 8000 as ghosts.
-#   * The `wait` gives uvicorn a brief grace period to shut down before the
-#     shell tears down stdio; the trailing `|| true` ensures the trap itself
-#     never returns non-zero under `set -e`.
-trap 'kill -- -"$BACKEND_PID" 2>/dev/null || true; wait "$BACKEND_PID" 2>/dev/null || true' EXIT
+# GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
+# whether it exits successfully or crashes due to an error.
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
