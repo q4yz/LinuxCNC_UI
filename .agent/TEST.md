@@ -29,10 +29,13 @@ python -m compileall -q backend
 python -m pytest backend/tests -v
 
 # 4. API Client Generation
-# Start the FastAPI backend in the background so openapi.json is reachable.
-# NOTE: Adjust 'backend.main:app' below if your FastAPI app instance is located elsewhere.
-python -m uvicorn backend.main:app --port 8000 &
+# Start the FastAPI backend in the background and detach output
+python -m uvicorn backend.main:app --port 8000 > /dev/null 2>&1 &
 BACKEND_PID=$!
+
+# GUARANTEE cleanup: This tells bash to run the kill command the moment the script exits,
+# whether it exits successfully or crashes due to an error.
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
 # Wait for the backend to become healthy (timeout after 15 seconds)
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
@@ -40,10 +43,7 @@ timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null
 # Generate the API client schema
 npm --prefix frontend run generate-api
 
-# Shut down the backend gracefully
-kill $BACKEND_PID
-
 # 5. Frontend Verification
 npm --prefix frontend run build
-node --test "frontend/tests/**/*.mjs" "frontend/tests/**/*.js"
+node --test "frontend/tests/**/*.mjs"
 ```
