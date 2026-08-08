@@ -7,10 +7,19 @@ and instantiates each via a ``setup()`` factory. Each module is then:
 1.  Bootstrapped with a :class:`core.protocols.ModuleContext`
     (event bus + per-module :class:`core.settings_store.SettingsStore`).
 2.  Mounted onto the FastAPI app under
-    ``/api/v1/modules/{id}`` if it exposes an HTTP router.
+    ``/api/v1/modules/{id}/settings`` (the canonical four-endpoint
+    settings surface).
 3.  Mounted onto the FastAPI app under
-    ``/api/v1/modules/{id}/settings`` if it exposes a settings
-    router.
+    ``/api/v1/modules/{id}`` if it exposes an HTTP router.
+
+The settings router is mounted **first** so that any bare ``/{name}``
+catch-all route in a module's own router cannot accidentally shadow
+``/settings`` and ``/settings/{key}``. Starlette's routing is
+first-match-wins, so registration order is the only knob we have to
+guarantee the canonical settings surface always wins for paths under
+``/api/v1/modules/{id}/settings``. Modules without a ``/{name}``
+catch-all are unaffected — none of the existing modules define one,
+so this swap is a no-op for them.
 
 The registry lives in :mod:`core` (not :mod:`routers`) so that
 importing it does not pull in FastAPI at type-check time, while still
@@ -372,7 +381,27 @@ class ModuleRegistry:
             )
             return
 
-        # 3. Mount the public router, if any.
+        # 3. Mount the canonical settings router FIRST. Starlette's
+        #    routing is first-match-wins, so the settings routes
+        #    must be registered before the module's own router so
+        #    that any bare ``/{name}`` catch-all in the module
+        #    router cannot shadow ``/settings`` or
+        #    ``/settings/{key}``. The four endpoints (GET/PUT bulk
+        #    + GET/PUT key) are owned by the registry; modules just
+        #    declare schemas on their manifest.
+        settings_router = _build_default_settings_router(settings)
+        app.include_router(
+            settings_router,
+            prefix=f"/api/v1/modules/{module_id}/settings",
+            tags=[f"modules:{module_id}:settings"],
+        )
+
+        # 4. Mount the public router, if any. Registered after the
+        #    settings router so the canonical settings endpoints
+        #    take precedence on ``/api/v1/modules/{id}/settings``
+        #    and ``/api/v1/modules/{id}/settings/{key}``. Modules
+        #    without a catch-all (e.g. all current modules except
+        #    ``macros``) are unaffected by the order swap.
         router = instance.get_router()
         if router is not None:
             app.include_router(
@@ -380,16 +409,6 @@ class ModuleRegistry:
                 prefix=f"/api/v1/modules/{module_id}",
                 tags=[f"modules:{module_id}"],
             )
-
-        # 4. Mount the canonical settings router. The four endpoints
-        #    (GET/PUT bulk + GET/PUT key) are owned by the registry;
-        #    modules just declare schemas on their manifest.
-        settings_router = _build_default_settings_router(settings)
-        app.include_router(
-            settings_router,
-            prefix=f"/api/v1/modules/{module_id}/settings",
-            tags=[f"modules:{module_id}:settings"],
-        )
 
         self.modules[module_id] = instance
         self.manifests[module_id] = manifest

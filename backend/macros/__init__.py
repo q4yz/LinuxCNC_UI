@@ -1,25 +1,22 @@
-"""Macros package — file-handling layer for ``.macro`` files.
+"""Backward-compatibility shim for the legacy ``backend.macros`` package.
 
-Issue #87 scopes this package to file CRUD only; execution of macros
-(G-code + Python blend) lives elsewhere and is out of scope. The
-public surface is the :class:`MacroFileService` re-exported below so
-callers can simply write ``from backend.macros import MacroFileService``
-once a router mounts the service in a follow-up ticket.
+The macro CRUD implementation moved to
+:mod:`backend.modules.macros.service` as part of the Issue #90
+relocation. This shim re-exports the public API from the new
+location so any caller that still does
+``from backend.macros import MacroFileService`` keeps working
+during the migration window.
 
-The on-disk convention is:
-
-* One file per macro, named ``<name>.macro``.
-* Storage lives in a single directory (default
-  ``backend/macros/``, configurable for tests via the constructor).
-* The UI sees bare names (no suffix); the service re-attaches
-  ``.macro`` internally so disk and API never disagree.
-
-Security note (per the issue's security waiver): path traversal is
-not defended against in this iteration. The next ticket that wires
-this service to a router is expected to add input validation at the
-HTTP boundary.
+The legacy ``backend/macros/service.py`` implementation is no
+longer imported by this package. The legacy folder can be
+retired by the orchestrator once all callers migrate to
+:mod:`backend.modules.macros`.
 """
 
-from .service import MacroFileService, MacroNotFoundError
+from backend.modules.macros.service import (
+    MACRO_SUFFIX,
+    MacroFileService,
+    MacroNotFoundError,
+)
 
-__all__ = ["MacroFileService", "MacroNotFoundError"]
+__all__ = ["MACRO_SUFFIX", "MacroFileService", "MacroNotFoundError"]
