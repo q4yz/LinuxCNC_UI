@@ -13,10 +13,12 @@ Design notes:
   so a crash mid-write never leaves a half-written ``.macro`` file
   on disk. ``mkstemp`` is pinned to the same directory as the
   target so the rename stays atomic on POSIX and Windows alike.
-* **Name vs. suffix**. The UI lists macros without the ``.macro``
-  suffix; this service re-attaches the suffix internally so callers
-  never have to think about it. ``list_macros`` returns sorted
-  bare names for stable UI rendering.
+* **Strict ``.macro`` extension**. The UI lists macros without
+  the suffix; this service re-attaches the suffix internally so
+  callers never have to think about it. ``list_macros`` returns
+  sorted bare names for stable UI rendering. Inputs that carry a
+  different suffix (``foo.txt``, ``foo.py``) are rejected — the
+  on-disk extension must always be ``.macro`` exactly.
 * **Lazy directory creation**. The storage directory is created on
   the first write rather than at construction time, so the service
   can be instantiated before the directory exists without
@@ -74,7 +76,11 @@ class MacroFileService:
     """
 
     def __init__(self, storage_dir: Path | None = None) -> None:
-        self._storage_dir = Path(storage_dir) if storage_dir is not None else Path(__file__).resolve().parent
+        self._storage_dir = (
+            Path(storage_dir)
+            if storage_dir is not None
+            else Path(__file__).resolve().parent
+        )
 
     # ------------------------------------------------------------------ #
     # Properties                                                          #
@@ -124,7 +130,8 @@ class MacroFileService:
                 is re-attached internally.
 
         Raises:
-            ValueError: If ``name`` is empty or not a string.
+            ValueError: If ``name`` is empty, not a string, or
+                carries a non-``.macro`` suffix.
             MacroNotFoundError: If the resulting file does not exist.
         """
         path = self._resolve(name)
@@ -142,12 +149,13 @@ class MacroFileService:
         the file absent, never half-written).
 
         Args:
-            name: Bare macro name (no suffix). Must be non-empty.
+            name: Bare macro name (no suffix). Must be non-empty and
+                must not carry a non-``.macro`` suffix.
             content: Raw text payload. Encoded as UTF-8.
 
         Raises:
-            ValueError: If ``name`` is empty or contains characters
-                that would prevent a safe file name.
+            ValueError: If ``name`` is empty or carries a non-
+                ``.macro`` suffix.
             TypeError: If ``content`` is not a string.
         """
         if not isinstance(content, str):
@@ -190,7 +198,8 @@ class MacroFileService:
             name: Bare macro name (no suffix).
 
         Raises:
-            ValueError: If ``name`` is empty or not a string.
+            ValueError: If ``name`` is empty, not a string, or
+                carries a non-``.macro`` suffix.
             MacroNotFoundError: If the file does not exist (idempotent
                 callers can catch this and treat it as a no-op).
         """
@@ -211,6 +220,12 @@ class MacroFileService:
         Centralising the validation keeps the public methods
         consistent: every caller re-attaches the suffix and every
         invalid name raises the same ``ValueError`` shape.
+
+        The caller may pass either a bare name (``"foo"``) or one
+        already carrying the ``.macro`` suffix (``"foo.macro"``);
+        both normalise to the same on-disk path. Any other suffix
+        (``"foo.txt"``, ``"foo.py"``) is rejected so the on-disk
+        extension stays strictly ``.macro``.
         """
         if not isinstance(name, str):
             raise ValueError(
@@ -218,9 +233,19 @@ class MacroFileService:
             )
         if not name:
             raise ValueError("Macro name must be a non-empty string")
+        p = Path(name)
+        if p.suffix and p.suffix != MACRO_SUFFIX:
+            raise ValueError(
+                f"Macro name must not include a non-.macro suffix: {name!r}"
+            )
+        bare = p.stem
+        if not bare:
+            raise ValueError(
+                f"Macro name must have a non-empty stem: {name!r}"
+            )
         # The public API is "bare name"; we re-attach the suffix so
         # the disk and the API never disagree.
-        return self._storage_dir / f"{name}{MACRO_SUFFIX}"
+        return self._storage_dir / f"{bare}{MACRO_SUFFIX}"
 
 
 __all__ = ["MACRO_SUFFIX", "MacroFileService", "MacroNotFoundError"]

@@ -69,6 +69,15 @@ def test_on_disk_files_keep_macro_suffix(
     assert on_disk == ["alpha.macro", "beta.macro"]
 
 
+def test_write_macro_suffix_is_idempotent(
+    macro_service: MacroFileService,
+) -> None:
+    """Passing ``"foo.macro"`` normalises to ``"foo"`` (no double suffix)."""
+    macro_service.write_macro("foo.macro", "G0 X0\n")
+    assert macro_service.list_macros() == ["foo"]
+    assert macro_service.read_macro("foo") == "G0 X0\n"
+
+
 # ---------------------------------------------------------------------- #
 # Listing                                                                #
 # ---------------------------------------------------------------------- #
@@ -225,6 +234,25 @@ def test_write_rejects_non_string_content(macro_service: MacroFileService) -> No
 def test_resolve_rejects_non_string_name(macro_service: MacroFileService) -> None:
     with pytest.raises(ValueError):
         macro_service.read_macro(None)  # type: ignore[arg-type]
+
+
+def test_write_rejects_non_macro_suffix(macro_service: MacroFileService) -> None:
+    """Names carrying a non-``.macro`` suffix are rejected so the on-disk
+    extension stays strictly ``.macro``."""
+    with pytest.raises(ValueError):
+        macro_service.write_macro("foo.txt", "G0 X0\n")
+    with pytest.raises(ValueError):
+        macro_service.write_macro("foo.py", "G0 X0\n")
+
+
+def test_read_rejects_non_macro_suffix(macro_service: MacroFileService) -> None:
+    with pytest.raises(ValueError):
+        macro_service.read_macro("foo.txt")
+
+
+def test_delete_rejects_non_macro_suffix(macro_service: MacroFileService) -> None:
+    with pytest.raises(ValueError):
+        macro_service.delete_macro("foo.txt")
 
 
 def test_service_defaults_storage_dir_to_package_directory() -> None:
