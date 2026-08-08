@@ -1,25 +1,94 @@
 ### Resolution Summary
-Implements the Python backend module for custom `.macro` file CRUD storage (issue #92): a new `backend/modules/macros/` package with a `MacroStorage` filesystem layer, a thin HTTP router exposing list / read / write / delete under `/api/v1/modules/macros`, and a `MacrosModule` that follows the existing `PluggableModule` contract (mirrors the `tools` module). The `macros/` runtime directory is added to `.gitignore`; no frontend changes per the issue scope.
 
-### Files Modified / Added
-- `backend/modules/macros/__init__.py`: Package entry point, re-exports `setup()` for registry discovery.
-- `backend/modules/macros/storage.py`: `MacroStorage` class with `list / read / write / delete / exists` plus `InvalidMacroNameError` / `MacroNotFoundError`. Atomic writes use the same `tempfile` + `os.replace` pattern as `backend/core/settings_store.py`. Name validation enforces `^[A-Za-z0-9._-]{1,64}$` and defensively rejects `..` / `.` (path-traversal defense-in-depth per the issue's security waiver). `default_storage_root()` resolves `<repo>/macros/` via `Path(__file__).resolve().parents[3] / "macros"`.
-- `backend/modules/macros/router.py`: FastAPI router exposing the four documented endpoints. `GET /` returns `{"macros": [name, ...]}` sorted without extension; `GET /{name}` returns raw `text/plain`; `PUT /{name}` accepts raw text body and returns `{"name", "size"}`; `DELETE /{name}` returns `204` on success. Invalid names → `400`, missing macros → `404`.
-- `backend/modules/macros/module.py`: `MacrosModule` implementing `PluggableModule` — manifest `id="macros"`, `sidebar=None`, `settings_panel=False`. `on_load` / `on_unload` are no-ops. `setup()` returns a fresh instance per call.
-- `backend/tests/test_macros_module.py`: 51 tests covering storage unit tests (with `tmp_path`), name validation parametrize, atomic-write interrupt test mirroring `test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`, HTTP integration tests for all four endpoints, full CRUD lifecycle end-to-end, lifecycle / factory tests, and a `.gitignore` marker test. The `isolated_storage` fixture monkeypatches the router's module-level `_storage` singleton to a `tmp_path` tree so the real `<repo>/macros/` directory is never touched.
-- `backend/core/module_registry.py`: One-block reorder — the canonical settings router is now mounted **before** the module's public router. The macros module exposes a bare `/{name}` path, and Starlette matches routes in registration order, so mounting `/api/v1/modules/<id>/settings` first prevents the public `/{name}` route from shadowing it. All existing module tests still pass.
-- `.gitignore`: Added `macros/` so runtime-created files never reach git history.
+Issue #103: introduced a global Emergency Stop header that is
+rendered at the very top of the application shell and cannot be
+hidden by scrolling or any overlapping modal. The button delegates
+to the machine store's existing `toggleEstop` action so the
+backend E-Stop API endpoint is hit with no duplicated logic.
+
+### Files Modified
+
+- `frontend/src/components/EStopHeader.vue` *(new)*: Vue 3
+  `<script setup>` component. Sticky (`top-0`), high z-index
+  (`z-[100]`, above every `z-50` modal in the app), large red
+  octagonal-style STOP button. Reads `isEstop` via `storeToRefs`
+  and renders ACTIVE / Clear state chips. Uses the compatibility
+  adapter (`stores/machine-compat.js`) so the shell still renders
+  when the machine module is not mounted.
+- `frontend/src/App.vue`: restructured the layout root from a
+  single-row flex into a flex column. `EStopHeader` sits above a
+  `flex flex-1 overflow-hidden` row that holds the sidebar and
+  `<main>`. No new endpoints, no new Pinia stores, no
+  module-folder surgery.
+- `frontend/tests/test-estop-header.mjs` *(new)*: 12
+  static-structural assertions covering the component's API
+  contract (compat import, `storeToRefs`, `toggleEstop`
+  delegation, sticky / z-index, iconography, data-testid hooks)
+  plus the App.vue wiring (import, render order, column
+  layout). Total frontend suite: **110 / 110 pass** (was 98).
 
 ### Architectural Decisions
-- **Storage ↔ HTTP decoupling.** The HTTP router is a thin wrapper over `MacroStorage`. This matches the existing `tools` module pattern and lets future callers (CLI, automation, the upcoming frontend Editor) reuse the same primitives without touching FastAPI.
-- **Atomic writes via tempfile + os.replace** (matching `core.settings_store`) rather than `open(path, 'w').write(content)`. A crash mid-write either leaves the previous macro intact or the new one in place — never a half-written file. The interrupt test exercises this with a monkeypatched `os.replace`.
-- **Path-traversal defense-in-depth.** The regex alone rejects `/` and `\`; we additionally reject the literal names `..` and `.` so a future ticket can re-enable traversal protection without rewriting this layer.
-- **Bare `/{name}` route + settings-route ordering.** The macros module is the first module to expose a wildcard `/{name}` path under `/api/v1/modules/<id>/`. To prevent that wildcard from shadowing `/api/v1/modules/<id>/settings` (Starlette matches in declaration order), the registry now mounts settings first. This is the minimal change that makes both the macros `{name}` semantics and the canonical settings surface work simultaneously; every other existing module's tests still pass because none expose wildcard paths.
-- **Default storage root resolved at import-time** via `default_storage_root()`. Tests monkeypatch `modules.macros.router._storage` directly rather than the resolver, keeping the production code path unchanged.
+
+- **Layout wrapper, not `<Teleport>`.** `App.vue` already wraps
+  the whole app in `h-screen overflow-hidden`, so adding a sticky
+  header above the sidebar is the smallest change that satisfies
+  the "must not be hidden by scrolling or overlapping elements"
+  requirement. `<Teleport to="body">` would have worked but adds
+  complexity for no safety benefit given the existing layout.
+- **Reuse `toggleEstop`.** The machine store already exposes a
+  canonical action that posts
+  `POST /api/v1/modules/machine/state` with
+  `{state: "estop"}` or `{state: "estop_reset"}` and surfaces the
+  result through the console store. Reusing it keeps the button
+  trivially testable and prevents drift between the two
+  E-Stop entry points (DroPanel + header).
+- **`z-[100]`, not `z-50`.** Every existing modal in the app
+  uses `z-50` (editor overlay, update manager, panel dialogs).
+  Picking a higher value with Tailwind's arbitrary-value syntax
+  guarantees the E-Stop is reachable even when the operator has
+  an editor modal open mid-print — a non-obvious safety gap.
+- **Compat adapter for state.** Following
+  `.agent/STATE.md § 7` (nullable-module guarantee), the header
+  imports `useMachineStore` from `stores/machine-compat.js`. When
+  the machine module is excluded the adapter supplies a no-op
+  fallback so the header still renders without breaking the
+  shell.
+- **Iconography.** Standard E-Stop: 80-96 px red circular button
+  with a bold white "STOP" label, a 4 px red-800 ring, an
+  `aria-label`, and an ACTIVE / Clear state chip. No SVG custom
+  artwork — matches the conventions already in
+  `DroPanel.vue` (red / gray contrast) and keeps the bundle lean.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend` — passes for the entire backend.
-- [x] `python -m pytest backend/tests -v` — **317 passed** (51 new macros tests + 266 pre-existing). No regressions.
-- [x] Atomic-write property exercised by `test_atomic_write_leaves_no_partial_file_on_interrupt` — mirrors `test_settings_store.py` (monkeypatched `os.replace` raises once, asserts original file intact + no temp leftover + subsequent writes still work).
-- [x] Full CRUD lifecycle test (`test_full_crud_lifecycle`) drives create → read → list → update → list → read-back → add-second → delete → list-shrinks → 404-after-delete through HTTP.
-- [x] All acceptance-criteria items verified: registry discovery, sorted/extension-less list, raw text body, atomic write + size response, 400 on invalid names, 204 on delete, 404 on missing, isolated `setup()` instances, idempotent `on_unload`, `macros/` in `.gitignore`, no frontend changes.
+
+- [x] Ran local test suite / build checks
+- [x] `node --test frontend/tests/**/*.mjs` → **110 / 110 pass**
+  (12 new, 98 pre-existing)
+- [x] `npm run build` → succeeded in 3.51 s, EStopHeader chunk
+  baked into `index-*.js` (verified `estop-header`,
+  `estop-button`, `estop-state-*`, `Emergency Stop`,
+  `toggleEstop` all present in the bundle)
+- [x] `python -m compileall -q backend` → clean
+- [x] `python -m pytest backend/tests -v` → **317 / 317 pass**
+
+### Acceptance Criteria Checklist
+
+- [x] Create a global E-Stop header component.
+  `frontend/src/components/EStopHeader.vue` ships a `<header>`
+  element with a `<button>` and state chips, rendered
+  unconditionally from `App.vue`.
+- [x] Apply CSS `position: sticky; top: 0;` and a high z-index
+  via the layout wrapper so it cannot be hidden. Header uses
+  `sticky top-0 z-[100]`, sits above the sidebar (`z-10`) and
+  every modal in the app (`z-50`), and lives outside the
+  `<main class="overflow-y-auto">` scrollable region.
+- [x] The button correctly triggers the backend E-Stop API
+  endpoint. Click → `store.toggleEstop()` →
+  `ModulesMachineService.setMachineState({ state: "estop" })` →
+  `POST /api/v1/modules/machine/state`. The endpoint
+  (`backend/modules/machine/router.py::set_state`) was already in
+  place; this PR adds the missing UI surface.
+- [x] The button styling clearly indicates its critical
+  function. 80–96 px red circular button with a bold white
+  "STOP" label, a 4 px red-800 ring, ACTIVE / Clear state chips,
+  and `aria-label="Emergency Stop"` for assistive tech.
