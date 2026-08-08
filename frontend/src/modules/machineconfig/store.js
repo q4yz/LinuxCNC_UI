@@ -311,11 +311,17 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
     isBusy.value = true
     try {
+      // The generated client expects a single ``CompileRequest`` body
+      // object — not two positional arguments. Passing the path and
+      // compiler id as separate arguments makes ``requestBody`` a
+      // string, which FastAPI rejects with a 422 Pydantic validation
+      // error ("Input should be a valid dictionary or object to
+      // extract fields from") before the endpoint even runs.
       const response = await ModulesMachineconfigService
-        .compileProfileApiV1ModulesMachineconfigCompilePost(
-          profilePath,
-          selectedCompilerId.value,
-        )
+        .compileProfileApiV1ModulesMachineconfigCompilePost({
+          profile_path: profilePath,
+          compiler_id: selectedCompilerId.value,
+        })
       consoleStore.success(
         `Staged ${response.artifacts.length} artifact(s) using ${response.compiler}.`,
       )
