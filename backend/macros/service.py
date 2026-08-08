@@ -92,9 +92,10 @@ class MacroFileService:
     def list_macros(self) -> List[str]:
         """Return every macro name (without the ``.macro`` suffix), sorted.
 
-        Empty directories return ``[]``. Hidden files and non-``.macro``
-        files are ignored so a stray ``.DS_Store`` or ``README`` in the
-        directory never leaks into the UI.
+        Empty directories return ``[]``. Hidden files (anything whose
+        name starts with ``.``) and non-``.macro`` files are ignored
+        so a stray ``.DS_Store``, ``.hidden.macro``, or ``README`` in
+        the directory never leaks into the UI.
         """
         if not self._storage_dir.exists():
             return []
@@ -102,6 +103,10 @@ class MacroFileService:
         names: List[str] = []
         for entry in self._storage_dir.iterdir():
             if not entry.is_file():
+                continue
+            if entry.name.startswith("."):
+                # POSIX hidden files (``.macro`` editor backups,
+                # ``.DS_Store``, etc.) are not user macros.
                 continue
             if entry.suffix != MACRO_SUFFIX:
                 continue
