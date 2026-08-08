@@ -19,10 +19,10 @@ const fetchVersion = async () => {
     currentVersion.value = res.version || res.current_version || 'unknown'
     latestVersion.value = res.latest_version || res.version || 'unknown'
     if (res.update_available) {
-      consoleStore.addMessage('Update available', 'info')
+      consoleStore.info('Update available')
     }
   } catch (error) {
-    consoleStore.addMessage(`Failed to fetch version: ${error.message}`, 'error')
+    consoleStore.error(`Failed to fetch version: ${error.message}`)
     currentVersion.value = 'error'
   }
 }
@@ -34,7 +34,7 @@ const updateSystem = async () => {
 
   try {
     store.$patch({ isUpdating: true })
-    consoleStore.addMessage("System update initiated. Connection may be lost temporarily...", 'warning')
+    consoleStore.warning("System update initiated. Connection may be lost temporarily...")
     await SystemService.triggerSystemUpdate()
 
     // We expect the websocket to drop or page to reload eventually,
@@ -44,7 +44,7 @@ const updateSystem = async () => {
     }, 10000)
   } catch (error) {
     store.$patch({ isUpdating: false })
-    consoleStore.addMessage(`Update failed to start: ${error.message}`, 'error')
+    consoleStore.error(`Update failed to start: ${error.message}`)
   }
 }
 

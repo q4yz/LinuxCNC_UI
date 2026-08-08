@@ -74,7 +74,8 @@ test("console store exports a type-to-level mapping", () => {
 
 test("console store attaches a level field to every message", () => {
   const text = readText(consoleStorePath);
-  // ``addMessage`` must decorate the row with ``level`` so the
+  // ``_addMessage`` (the internal helper used by every public
+  // level action) must decorate the row with ``level`` so the
   // getter can filter without re-deriving the value every time.
   assert.match(text, /level\s*=\s*typeToLevel\(type\)/);
   assert.match(text, /level,/);
