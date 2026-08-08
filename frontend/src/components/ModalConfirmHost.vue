@@ -9,10 +9,12 @@ const { active } = storeToRefs(store);
 </script>
 
 <template>
-  <ModalConfirm
-    v-if="active"
-    v-bind="active"
-    @confirm="store.settle(true)"
-    @reject="store.settle(false)"
-  />
+  <Teleport to="body">
+    <ModalConfirm
+      v-if="active"
+      v-bind="active"
+      @confirm="store.settle(true)"
+      @reject="store.settle(false)"
+    />
+  </Teleport>
 </template>
