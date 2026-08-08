@@ -348,9 +348,15 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
     isBusy.value = true
     try {
+      // The openapi-generated client expects the snake_case field
+      // name ``confirm_flash`` (the openapi schema preserves the
+      // backend's Pydantic field name). Sending ``confirmFlash``
+      // instead dropped the value on the wire and the backend
+      // received ``confirm_flash: undefined``, which the deploy
+      // endpoint rejects with HTTP 400.
       const response = await ModulesMachineconfigService
         .deployStagedApiV1ModulesMachineconfigDeployPost({
-          confirmFlash: confirmFlash.value,
+          confirm_flash: confirmFlash.value,
         })
       lastDeploySummary.value = response
       consoleStore.success(response.message || "Deploy complete.")
