@@ -604,3 +604,65 @@ def test_machine_name_empty_active_returns_null(
     resp = client.get("/api/v1/modules/machineconfig/machine-name")
     assert resp.status_code == 200
     assert resp.json()["machine_name"] is None
+
+
+# ---------------------------------------------------------------------- #
+# Structured-error compile response (issue #99)                           #
+# ---------------------------------------------------------------------- #
+
+
+def test_compile_duplicate_stepper_pin_returns_structured_error(
+    tmp_data_root, clean_env, isolated_machine_config
+):
+    """``POST /compile`` on the issue's example config returns the
+    new structured error envelope.
+
+    The user's example config (see issue #99) declares ``[stepper_x]``,
+    ``[stepper_y]``, ``[stepper_z]`` that all share pins ``PG0``,
+    ``PG1``, and ``!PF15``. The parser rejects this with
+    :class:`DuplicateStepperPinError`; the FastAPI exception handler
+    converts that into the documented JSON shape::
+
+        {"error": {"section", "key", "line", "message", "kind"}}
+
+    This is the single contract the frontend toast channel depends on.
+    """
+    profiles = isolated_machine_config["profiles"]
+    (profiles / "duplicate_pins.cfg").write_text(
+        "#Start[mcu]\n"
+        "[mcu]\nserial: /dev/ttyACM0\n\n"
+        "[stepper_x]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
+        "[stepper_y]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
+        "[stepper_z]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
+        "[extruder]\nstep_pin: PA4\ndir_pin: PA5\n\n"
+        "[heater_bed]\nheater_pin: PB0\nsensor_pin: PB1\n",
+        encoding="utf-8",
+    )
+
+    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/modules/machineconfig/compile",
+        json={
+            "profile_path": "duplicate_pins.cfg",
+            "compiler_id": "klipper-to-linuxcnc",
+        },
+    )
+
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert "error" in body, "compile must surface the structured envelope"
+    error = body["error"]
+    # Every documented field is present. ``line`` may be ``None`` —
+    # configparser does not expose source-line offsets in this
+    # version, and the schema keeps the slot reserved.
+    for field_name in ("section", "key", "line", "message", "kind"):
+        assert field_name in error, f"missing field: {field_name}"
+    assert error["kind"] == "duplicate_stepper_pin"
+    assert error["key"] in {"step_pin", "dir_pin", "enable_pin", "endstop_pin"}
+    assert error["section"] in {"x", "y", "z"}
+    assert (
+        "PG0" in error["message"]
+        or "PG1" in error["message"]
+        or "!PF15" in error["message"]
+    )

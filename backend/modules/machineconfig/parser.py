@@ -24,43 +24,101 @@ logger = logging.getLogger("backend.modules.machineconfig.parser")
 
 
 class ConfigValidationError(ValueError):
-    """Base class for actionable machine-configuration errors."""
+    """Base class for actionable machine-configuration errors.
+
+    Each subclass carries a :attr:`kind` discriminator (used by the
+    HTTP layer to populate the structured error response) and a
+    :meth:`to_dict` serializer that the FastAPI exception handler
+    forwards verbatim to the frontend toast channel.
+    """
+
+    #: Stable error discriminator. Subclasses MUST override.
+    kind: str = "config_validation_error"
+
+    #: Optional source line. Default ``None`` — configparser does not
+    #: expose line numbers for value-level errors in this version, but
+    #: the slot is reserved so a future tokenizer upgrade can populate
+    #: it without changing the response shape.
+    line: int | None = None
+
+    #: Affected section name (where applicable). ``None`` when the
+    #: error is global (e.g. an unsupported top-level section).
+    section: str | None = None
+
+    #: Affected key within ``section`` (where applicable). ``None``
+    #: when the error spans the whole section.
+    key: str | None = None
+
+    def to_dict(self) -> dict:
+        """Return the structured representation the HTTP layer ships.
+
+        The shape is the contract surface for the frontend toast
+        channel (see issue #99). Adding a field here is safe; removing
+        or renaming a field is a breaking change.
+        """
+
+        return {
+            "section": self.section,
+            "key": self.key,
+            "line": self.line,
+            "message": str(self),
+            "kind": self.kind,
+        }
 
 
 class UndefinedKeywordError(ConfigValidationError):
     """Raised as soon as a section contains a key outside its schema."""
 
-    def __init__(self, section: str, key: str) -> None:
+    kind = "undefined_keyword"
+
+    def __init__(self, section: str, key: str, line: int | None = None) -> None:
         self.section = section
         self.key = key
+        self.line = line
         super().__init__(f"Undefined keyword '{key}' in section [{section}]")
 
 
 class UnsupportedSectionError(ConfigValidationError):
     """Raised when a profile declares a section the pipeline cannot model."""
 
-    def __init__(self, section: str) -> None:
+    kind = "unsupported_section"
+
+    def __init__(self, section: str, line: int | None = None) -> None:
         self.section = section
+        self.line = line
         super().__init__(f"Unsupported configuration section [{section}]")
 
 
 class MissingRequiredKeywordError(ConfigValidationError):
     """Raised when graph construction requires an absent or empty key."""
 
-    def __init__(self, section: str, key: str) -> None:
+    kind = "missing_required_keyword"
+
+    def __init__(self, section: str, key: str, line: int | None = None) -> None:
         self.section = section
         self.key = key
+        self.line = line
         super().__init__(f"Missing required keyword '{key}' in section [{section}]")
 
 
 class InvalidValueError(ConfigValidationError):
     """Raised when a listed keyword has a value of the wrong type or domain."""
 
-    def __init__(self, section: str, key: str, value: str, expected: str) -> None:
+    kind = "invalid_value"
+
+    def __init__(
+        self,
+        section: str,
+        key: str,
+        value: str,
+        expected: str,
+        line: int | None = None,
+    ) -> None:
         self.section = section
         self.key = key
         self.value = value
         self.expected = expected
+        self.line = line
         super().__init__(
             f"Invalid value '{value}' for '{key}' in section [{section}]; "
             f"expected {expected}"
@@ -70,11 +128,52 @@ class InvalidValueError(ConfigValidationError):
 class UnknownStepperError(ConfigValidationError):
     """Raised when an endstop switch cannot link to its requested stepper."""
 
-    def __init__(self, section: str, target: str) -> None:
+    kind = "unknown_stepper"
+
+    def __init__(self, section: str, target: str, line: int | None = None) -> None:
         self.section = section
+        self.key = target
         self.target = target
+        self.line = line
         super().__init__(
             f"Section [{section}] references unknown stepper '{target}'"
+        )
+
+
+class DuplicateStepperPinError(ConfigValidationError):
+    """Raised when two distinct stepper sections share a physical pin.
+
+    Two axes cannot drive the same physical pin — LinuxCNC's HAL
+    would silently override the second assignment and the operator
+    would see one motor hold position while the other runs away.
+    Catching it at compile time is the contract the issue imposes.
+    """
+
+    kind = "duplicate_stepper_pin"
+
+    def __init__(
+        self,
+        section: str,
+        pin_key: str,
+        pin: str,
+        axes: list[str],
+        line: int | None = None,
+    ) -> None:
+        # ``section`` is the section the duplicate was found in; the
+        # first axis that claimed the pin is reported in ``axes[0]``.
+        # ``pin_key`` is the schema key the conflict lives under
+        # (e.g. ``step_pin``, ``dir_pin``, ``enable_pin``,
+        # ``endstop_pin``).
+        self.section = section
+        self.key = pin_key
+        self.pin_key = pin_key
+        self.pin = pin
+        self.axes = list(axes)
+        self.line = line
+        axes_label = "axes" if len(axes) > 2 else "axes"
+        super().__init__(
+            f"Duplicate stepper pin '{pin}' on '{pin_key}' between "
+            f"{axes_label} {', '.join(repr(axis) for axis in axes)}"
         )
 
 
@@ -190,7 +289,65 @@ class MachineConfigParser:
             graph.endstop_switches[name] = switch
             stepper.endstops.append(switch)
 
+        # Cross-stepper pin duplication is enforced after the graph is
+        # fully built so every stepper's pins are known. See issue
+        # #99 for the rationale: LinuxCNC cannot model two axes on
+        # one physical pin and silently picking the second assignment
+        # is a safety hazard.
+        self._validate_stepper_pins(graph)
+
         return graph
+
+    @staticmethod
+    def _validate_stepper_pins(graph: MachineConfigGraph) -> None:
+        """Reject steppers that share any physical pin.
+
+        Walks ``graph.steppers`` and tracks the first section that
+        claimed each pin across the four pin slots
+        (:attr:`Stepper.step_pin`, :attr:`Stepper.dir_pin`,
+        :attr:`Stepper.enable_pin`, :attr:`Stepper.endstop_pin`).
+        A second stepper claiming the same pin raises
+        :class:`DuplicateStepperPinError` with the offending pin,
+        pin-key, and the two conflicting axes.
+
+        The check intentionally ignores ``None`` values (an unset pin
+        is fine) and the extruder's own pins (extruders live on a
+        different pin domain and do not participate in the stepper
+        collision matrix). Multiple motors on one axis (e.g.
+        ``[stepper_y]`` + ``[stepper_y1]``) must use distinct pins;
+        the parser is the right place to enforce that.
+        """
+
+        pin_slots: tuple[str, str] = (
+            ("step_pin", "step_pin"),
+            ("dir_pin", "dir_pin"),
+            ("enable_pin", "enable_pin"),
+            ("endstop_pin", "endstop_pin"),
+        )
+        # ``owners`` maps ``(pin_key, pin_value)`` -> (axis_label, section_name).
+        # ``axis_label`` is the Klipper axis identifier (``y`` from
+        # ``[stepper_y]``) — the operator-facing label that the error
+        # message surfaces. ``section_name`` is the dict key used by
+        # ``graph.steppers`` so multi-motor axes (e.g. ``[stepper_y]``
+        # + ``[stepper_y1]``) coexist under distinct keys.
+        owners: dict[tuple[str, str], tuple[str, str]] = {}
+
+        for section_name, stepper in graph.steppers.items():
+            for attr_name, pin_key in pin_slots:
+                pin_value = getattr(stepper, attr_name, None)
+                if not pin_value:
+                    continue
+                key = (pin_key, pin_value)
+                existing = owners.get(key)
+                if existing is not None:
+                    prior_axis, _ = existing
+                    raise DuplicateStepperPinError(
+                        section=section_name,
+                        pin_key=pin_key,
+                        pin=pin_value,
+                        axes=[prior_axis, stepper.axis],
+                    )
+                owners[key] = (stepper.axis, section_name)
 
     @staticmethod
     def _validate_keywords(
@@ -436,6 +593,7 @@ def parse_config(source_path: str | Path) -> MachineConfigGraph:
 
 __all__ = [
     "ConfigValidationError",
+    "DuplicateStepperPinError",
     "InvalidValueError",
     "KlipperConfigParser",
     "MachineConfigParser",
