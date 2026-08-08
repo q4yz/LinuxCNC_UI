@@ -31,7 +31,26 @@ def _app(tmp_data_root):
     return app, reg
 
 
-def test_settings_defaults_are_returned(tmp_data_root, clean_env):
+def test_settings_defaults_are_returned(tmp_data_root, clean_env, monkeypatch):
+    """The defaults surface shows an empty ``sensor_colors`` map when
+    no active ``hardware.json`` is present (issue #97).
+
+    The legacy triple ``extruder/bed/cpu`` no longer hard-codes the
+    defaults — colours are seeded from the active heater list.
+    Without a fixture, the mock reports zero heaters and the seeded
+    palette is therefore empty.
+    """
+    from services import hardware_loader
+
+    empty_dir = tmp_data_root / "no_active"
+    empty_dir.mkdir()
+    monkeypatch.setattr(
+        hardware_loader, "_DEFAULT_ACTIVE_DIR", empty_dir
+    )
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
+
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
     resp = client.get("/api/v1/modules/temperature/settings")
@@ -41,11 +60,49 @@ def test_settings_defaults_are_returned(tmp_data_root, clean_env):
         "sample_period_ms": 500,
         "ambient_celsius": 25.0,
         "unit": "celsius",
-        "sensor_colors": {
-            "extruder": "#EF4444",
-            "bed": "#3B82F6",
-            "cpu": "#10B981",
-        },
+        "sensor_colors": {},
+    }
+
+
+def test_settings_defaults_seed_from_active_heaters(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """The defaults surface seeds ``sensor_colors`` from the active
+    heater list with the documented 6-colour palette (issue #97).
+
+    A test fixture drops a ``hardware.json`` with three heaters; the
+    alphabetical sort maps them to the first three palette entries
+    (the 6-colour palette wraps modulo N).
+    """
+    from services import hardware_loader
+
+    active_dir = tmp_data_root / "machine_config" / "active"
+    active_dir.mkdir(parents=True, exist_ok=True)
+    (active_dir / "hardware.json").write_text(
+        '{"heaters": ['
+        '{"name": "chamber"}, '
+        '{"name": "extruder"}, '
+        '{"name": "heater_bed"}'
+        "]}",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        hardware_loader, "_DEFAULT_ACTIVE_DIR", active_dir
+    )
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
+
+    app, _ = _app(tmp_data_root)
+    client = TestClient(app)
+    resp = client.get("/api/v1/modules/temperature/settings")
+    assert resp.status_code == 200
+    body = resp.json()
+    # Alphabetical sort: chamber, extruder, heater_bed.
+    assert body["sensor_colors"] == {
+        "chamber": "#EF4444",
+        "extruder": "#3B82F6",
+        "heater_bed": "#10B981",
     }
 
 
@@ -62,11 +119,8 @@ def test_put_settings_persists_new_unit(tmp_data_root, clean_env):
     # Defaults are still merged underneath the persisted value.
     assert body["sample_period_ms"] == 500
     assert body["ambient_celsius"] == 25.0
-    assert body["sensor_colors"] == {
-        "extruder": "#EF4444",
-        "bed": "#3B82F6",
-        "cpu": "#10B981",
-    }
+    # Issue #97: defaults no longer hard-code the legacy triple.
+    assert body["sensor_colors"] == {}
 
 
 def test_settings_round_trip_across_clients(tmp_data_root, clean_env):
@@ -106,33 +160,33 @@ def test_settings_round_trip_sensor_colors(tmp_data_root, clean_env):
     client = TestClient(app)
     client.put(
         "/api/v1/modules/temperature/settings",
-        json={"sensor_colors": {"extruder": "#000000", "cpu": "#FFFFFF"}},
+        json={"sensor_colors": {"extruder": "#000000", "chamber": "#FFFFFF"}},
     )
     payload = client.get(
         "/api/v1/modules/temperature/settings",
     ).json()
     # The two keys the user explicitly set round-trip verbatim.
     assert payload["sensor_colors"]["extruder"] == "#000000"
-    assert payload["sensor_colors"]["cpu"] == "#FFFFFF"
-    # The untouched key is gone — the user-supplied map fully
-    # replaced the default palette at the top-level dict key. The
-    # frontend always re-sends the merged map from memory so the
-    # UI never drops a sensor by accident.
-    assert "bed" not in payload["sensor_colors"]
+    assert payload["sensor_colors"]["chamber"] == "#FFFFFF"
+    # Issue #97: no implicit defaults — the partial map fully
+    # replaces the seeded palette.
+    assert payload["sensor_colors"] == {
+        "extruder": "#000000",
+        "chamber": "#FFFFFF",
+    }
 
 
 def test_settings_round_trip_full_sensor_colors(tmp_data_root, clean_env):
     """When the caller sends the full map (as the frontend does),
-    every key round-trips and the default palette is preserved for
-    sensors not explicitly mentioned.
+    every key round-trips verbatim.
     """
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
     payload = {
         "extruder": "#000000",
-        "bed": "#222222",
-        "cpu": "#FFFFFF",
-        "chamber": "#123456",
+        "heater_bed": "#222222",
+        "chamber": "#FFFFFF",
+        "toolhead": "#123456",
     }
     client.put(
         "/api/v1/modules/temperature/settings",
@@ -221,23 +275,26 @@ def test_settings_atomic_write_leaves_no_partial_file(
 
 def test_temperature_settings_defaults_match_documented_values():
     """Default values for every field must match the module's
-    documented contract (issue #43 § 2):
-    ``sample_period_ms=500``, ``ambient_celsius=25.0``,
-    ``unit="celsius"``, plus the three default ``sensor_colors``.
+    documented contract (issue #43 § 2 + issue #97 § 1):
+
+    * ``sample_period_ms=500``
+    * ``ambient_celsius=25.0``
+    * ``unit="celsius"``
+    * ``sensor_colors`` defaults to an empty dict — the dynamic
+      sensor list flows through the module's ``get_settings_model``
+      factory rather than the model's own default factory.
+
+    Issue #97 retired the legacy hard-coded ``extruder/bed/cpu``
+    triple; the colour map is seeded from the active heater list
+    at module load.
     """
     model = TemperatureSettings()
     assert model.sample_period_ms == 500
     assert model.ambient_celsius == 25.0
     assert model.unit == "celsius"
-    # The default colour map must contain the three documented
-    # sensors.
-    assert set(model.sensor_colors.keys()) == {"extruder", "bed", "cpu"}
-    # And the values must be the expected hex strings.
-    assert model.sensor_colors == {
-        "extruder": "#EF4444",
-        "bed": "#3B82F6",
-        "cpu": "#10B981",
-    }
+    # Issue #97: defaults start empty; the module factory seeds
+    # the colour map from the active heater list.
+    assert model.sensor_colors == {}
 
 
 def test_temperature_settings_default_factory_isolates_instances():

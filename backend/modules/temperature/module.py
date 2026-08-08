@@ -3,9 +3,12 @@
 Implements the :class:`core.protocols.PluggableModule` contract for the
 temperature feature. The module is intentionally small:
 
-* ``on_load`` is a no-op — the simulation thread (when enabled) lives
-  in the mock hardware layer and runs process-wide; this module only
-  exposes the HTTP API.
+* ``on_load`` reads the active heater list from
+  ``machine_config/active/hardware.json`` so the seeded
+  ``sensor_colors`` map matches what the operator's machine.cfg
+  actually declared. The helper lives in
+  :mod:`backend.services.hardware_loader` so the mock and the
+  settings seed always agree.
 * ``on_unload`` is idempotent (no-op).
 * ``get_router`` returns the :data:`router` built by
   :mod:`backend.modules.temperature.router`.
@@ -19,7 +22,7 @@ so they can be tuned at runtime from the Settings UI.
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter
 
@@ -28,9 +31,10 @@ from core.protocols import (
     ModuleManifest,
     PluggableModule,
 )
+from services.hardware_loader import load_active_heaters
 
 from .router import router as _router
-from .settings import TemperatureSettings
+from .settings import TemperatureSettings, seed_colors
 
 logger = logging.getLogger("backend.modules.temperature")
 
@@ -42,8 +46,11 @@ class TemperatureModule:
     without instantiating the module. ``settings_panel=True`` causes
     the registry to render a Settings tab for this module. The
     :meth:`get_settings_model` hook returns a fresh
-    :class:`TemperatureSettings` instance which the registry merges
-    under the user's persisted settings on every read.
+    :class:`TemperatureSettings` instance — the
+    :func:`backend.services.hardware_loader.load_active_heaters`
+    helper seeds the ``sensor_colors`` map so a freshly deployed
+    machine starts with the canonical colour palette for every
+    heater the operator declared.
     """
 
     manifest = ModuleManifest(
@@ -54,16 +61,32 @@ class TemperatureModule:
         settings_panel=True,
     )
 
+    def __init__(self) -> None:
+        # The active heater list is captured at construction time
+        # (called via ``setup()`` during registry discovery). The
+        # registry invokes :meth:`get_settings_model` *before*
+        # :meth:`on_load`, so we must populate this list at
+        # ``__init__`` — not inside ``on_load`` — for the seeded
+        # ``sensor_colors`` to flow through to ``SettingsStore``.
+        # The list is cached on the instance for the lifetime of
+        # the module; ``on_load`` re-reads it to pick up any
+        # in-process re-deployment (rare in practice — most operators
+        # restart the backend between deploys).
+        self._heater_names: List[str] = load_active_heaters()
+
     def on_load(self, ctx: ModuleContext) -> None:
         """Boot the temperature module.
 
-        No background work is scheduled here — the mock's
-        ``_temp_simulation_loop`` runs process-wide and is started on
-        first ``set_temperature`` invocation. Future revisions may
-        publish telemetry to the :class:`EventBus` from here; that is
-        Phase 4 work.
+        Re-reads the active heater list and caches it on the
+        instance. The mock's ``_temp_simulation_loop`` runs
+        process-wide and is started on first ``set_temperature``
+        invocation — this method does **not** spawn background work.
         """
-        logger.debug("temperature module on_load (no background work)")
+        self._heater_names = load_active_heaters()
+        logger.debug(
+            "temperature module on_load (heaters=%s)",
+            self._heater_names,
+        )
 
     def on_unload(self) -> None:
         """Tear the module down.
@@ -71,6 +94,7 @@ class TemperatureModule:
         Idempotent: nothing to release because ``on_load`` does not
         allocate state.
         """
+        self._heater_names = []
         logger.debug("temperature module on_unload (no-op)")
 
     def get_router(self) -> APIRouter:
@@ -91,8 +115,14 @@ class TemperatureModule:
         seeds the per-module :class:`SettingsStore` so the four
         canonical settings endpoints expose typed values instead of
         arbitrary JSON.
+
+        Each call returns a **fresh** instance so the
+        :class:`SettingsStore` merge semantics pick up the
+        freshly-captured heater list — see issue #97 acceptance
+        criteria. The ``sensor_colors`` map is seeded from the
+        active heater list via :func:`seed_colors`.
         """
-        return TemperatureSettings()
+        return TemperatureSettings(sensor_colors=seed_colors(self._heater_names))
 
 
 def setup() -> PluggableModule:

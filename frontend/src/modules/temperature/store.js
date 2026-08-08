@@ -17,13 +17,17 @@ import { createModuleSettings } from "../../core/modules/settings.js";
 const WINDOW_SECONDS = 30;
 const DEFAULT_POLL_MS = 1_000;
 // Purple — used when the backend introduces a sensor the frontend
-// has no colour for yet.
+// has no colour for yet. Stays as the persistent fallback for
+// any sensor whose persisted colour was deleted or whose operator
+// never set one (see issue #97).
 const FALLBACK_COLOR = "#A855F7";
-const DEFAULT_SENSOR_COLORS = {
-  extruder: "#EF4444",
-  bed: "#3B82F6",
-  cpu: "#10B981",
-};
+// Issue #97: sensor list is now driven entirely by the backend's
+// ``hardware.json`` payload — no hard-coded ``extruder/bed/cpu``
+// fixtures. The backend's settings layer seeds the colour map
+// deterministically per active heater list. New colours the
+// backend adds after the operator's last PUT show up via the
+// ``sensor_colors`` merge below.
+const DEFAULT_SENSOR_COLORS = {};
 
 const TOPIC = "state.temperatures";
 

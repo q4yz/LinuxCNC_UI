@@ -178,3 +178,94 @@ def test_config_txt_skips_missing_sections() -> None:
     assert "Temperature" not in types
     assert "PWM" not in types
     assert "RCServo" not in types
+
+
+# --------------------------------------------------------------------- #
+# HalCompiler._generate_remora_json — hardware.json heater population    #
+# --------------------------------------------------------------------- #
+
+
+def _write_machine_cfg(tmp_path, body: str):
+    """Helper: drop a minimal ``machine.cfg`` and return its path."""
+    cfg = tmp_path / "machine.cfg"
+    cfg.write_text(body, encoding="utf-8")
+    return cfg
+
+
+def test_hal_compiler_populates_heaters_from_machine_cfg(tmp_path):
+    """``HalCompiler._generate_remora_json`` must produce a non-empty
+    ``heaters`` array sourced from the parsed ``MachineConfig``
+    (issue #97).
+
+    A fixture ``machine.cfg`` declares both an ``[extruder]`` and a
+    ``[heater_bed]`` section. The compiled ``hardware.json`` must
+    contain both, each with the documented shape
+    ``{name, control, max_temp, sensor_type}``. The extruder
+    section carries full stepper data so ``MachineConfig.get_heaters``
+    constructs an :class:`ExtruderConfig` rather than raising.
+    """
+    from core.config_manager import MachineConfig
+    from services.hal_compiler import HalCompiler
+
+    cfg_path = _write_machine_cfg(
+        tmp_path,
+        (
+            "[heater_bed]\n"
+            "max_temp: 120\n"
+            "control: watermark\n"
+            "sensor_type: NTC 100K\n"
+            "\n[extruder]\n"
+            "max_temp: 250\n"
+            "control: pid\n"
+            "sensor_type: PT1000\n"
+            "step_pin: PE2\n"
+            "dir_pin: PE3\n"
+            "enable_pin: PE4\n"
+            "microsteps: 16\n"
+            "rotation_distance: 33.0\n"
+        ),
+    )
+    config = MachineConfig(str(cfg_path))
+    compiler = HalCompiler(config)
+
+    out_path = tmp_path / "hardware.json"
+    compiler._generate_remora_json(str(out_path))
+
+    import json
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    by_name = {entry["name"]: entry for entry in payload["heaters"]}
+    # Both declared sections must flow through to hardware.json.
+    assert set(by_name.keys()) == {"heater_bed", "extruder"}
+    # Each entry must carry the documented shape.
+    bed = by_name["heater_bed"]
+    assert bed["control"] == "watermark"
+    assert bed["max_temp"] == 120.0
+    assert bed["sensor_type"] == "NTC 100K"
+    extruder = by_name["extruder"]
+    assert extruder["control"] == "pid"
+    assert extruder["max_temp"] == 250.0
+    assert extruder["sensor_type"] == "PT1000"
+
+
+def test_hal_compiler_heaters_empty_when_no_sections(tmp_path):
+    """A ``machine.cfg`` without ``[extruder]`` or ``[heater_bed]``
+    yields an empty ``heaters`` array (issue #97).
+    """
+    from core.config_manager import MachineConfig
+    from services.hal_compiler import HalCompiler
+
+    cfg_path = _write_machine_cfg(
+        tmp_path,
+        "[printer]\nkinematics: cartesian\nmax_velocity: 300\n",
+    )
+    config = MachineConfig(str(cfg_path))
+    compiler = HalCompiler(config)
+
+    out_path = tmp_path / "hardware.json"
+    compiler._generate_remora_json(str(out_path))
+
+    import json
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["heaters"] == []

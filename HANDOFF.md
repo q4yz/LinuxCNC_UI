@@ -1,22 +1,102 @@
 ### Resolution Summary
-Implements the pure-Python ``.macro`` text parser for issue #95 — a single-pass character scanner with a small state machine that splits a raw ``.macro`` payload (as returned by ``MacroStorage.read`` from issue #92) into an ordered list of alternating ``static`` and ``python`` blocks. Library-only: no HTTP endpoint, no execution logic. The future Interpreter module consumes the structured output.
+
+The temperature module's sensor list is now driven entirely by the
+active `hardware.json` payload instead of a hard-coded
+`extruder/bed/cpu` triple. The mock hardware layer, the temperature
+module's settings defaults, the `HalCompiler` heater array, and the
+frontend store all consume the same dynamic source of truth. Operators
+who want a CPU gauge add a `cpu` heater to `machine.cfg`; the legacy
+triple is dropped.
 
 ### Files Modified / Added
-- `backend/modules/macros/parser.py` (new): ``parse_macro(source)`` plus the ``Block`` TypedDict (``type: Literal["static", "python"]``, ``content: str``) and the ``MacroParseError(ValueError)`` exception. State machine tracks ``in_python``, ``string_quote`` (``None`` / ``"`` / ``'``), and ``escape_next``. The accumulated buffer is ``str.strip()``-ed before every emission so the Interpreter module sees clean interior content. No execution: the parser never calls ``eval``, ``exec``, ``compile``, or anything from the standard-library ``ast`` module on the python block content.
-- `backend/modules/macros/__init__.py`: Re-exports ``parse_macro``, ``Block``, and ``MacroParseError`` alongside ``setup`` so ``from backend.modules.macros import parse_macro`` works.
-- `backend/tests/test_macros_parser.py` (new): 32 unit tests organized into six classes — the ticket example, edge cases (empty / no-braces / just ``{}`` / text-around-braces), string-boundary cases (``}`` / ``{`` inside ``"..."`` and ``'...'``), escape-sequence cases (``\\"`` / ``\\'`` / ``\\\\``), malformed input (unclosed ``{`` raises ``MacroParseError`` with the offset of the opening brace; orphan ``}`` is literal content), strip semantics (multiline python + multiple python blocks), and structural assertions (``Block`` is a TypedDict, ``MacroParseError`` is a ``ValueError``, the parser source contains no execution calls, no third-party imports, and the docstring's doctest runs cleanly).
+
+**Backend**
+- `backend/services/hardware_loader.py` (new): shared helper that
+  parses `machine_config/active/hardware.json` and returns the
+  declared heater names. Falls back to `[]` when the file is
+  missing, malformed, or has no `heaters` array.
+- `backend/hardware/linuxcnc_mock.py`: removed the hard-coded
+  `temperatures = {extruder, bed, cpu}` triple. Now seeds the
+  sensor list from the active `hardware.json` via the shared
+  helper. Added a public `reseed_from_hardware_json()` so tests
+  (and future recompile hooks) can force a re-read without
+  re-importing the module. Backwards-compatible `target_temp` /
+  `actual_temp` fields mirror the first `extruder`-named sensor
+  when one exists, otherwise fall back to safe defaults.
+- `backend/services/hal_compiler.py`: `_generate_remora_json` no
+  longer emits `heaters: []`. It now parses `MachineConfig.get_heaters()`
+  and writes each entry as `{name, control, max_temp, sensor_type}`.
+  The legacy `HeaterConfig` / `ExtruderConfig` types are normalised
+  to the same shape.
+- `backend/modules/temperature/settings.py`: removed the hard-coded
+  `extruder/bed/cpu` palette. `TemperatureSettings.sensor_colors`
+  defaults to `{}`. Added `seed_colors(heater_names)` helper that
+  assigns each name a deterministic colour from a 6-entry palette
+  (red, blue, green, amber, violet, pink) in sorted-input order with
+  modulo wrap.
+- `backend/modules/temperature/module.py`: `__init__` now reads the
+  active heater list (called during `setup()` before
+  `_resolve_settings_model`); `on_load` re-reads it. The seeded
+  `sensor_colors` flow through to the per-module `SettingsStore`.
+
+**Frontend**
+- `frontend/src/modules/temperature/store.js`:
+  `DEFAULT_SENSOR_COLORS = {}`. The `colorFor` fallback
+  (`#A855F7`) remains so any sensor whose persisted colour was
+  deleted still renders.
+
+**Tests**
+- `backend/tests/test_temperature_module.py`: replaced the static
+  `extruder/bed/cpu` assertions with a fixture-driven test that
+  drops a fake `hardware.json` with two heaters and asserts the mock
+  seeds those two sensors. Added a separate empty-dict test for
+  the no-hardware-json path. The `set_target` flow now drives a
+  real `heater_bed` sensor so the seed list is non-empty.
+- `backend/tests/test_temperature_settings.py`: replaced the
+  three-sensor default assertion with an empty-dict assertion plus a
+  new "seeded from active heaters" test that drops a three-heater
+  `hardware.json` and asserts the seeded palette.
+- `backend/tests/test_json_generators.py`: added two new tests
+  that drive `HalCompiler._generate_remora_json` against a fixture
+  `machine.cfg` declaring `[heater_bed]` + `[extruder]` and assert
+  the emitted `hardware.json.heaters` array is non-empty and
+  contains the documented fields.
 
 ### Architectural Decisions
-- **Single-pass character scanner, not a recursive-descent parser.** The grammar is one-character lookahead for ``{`` / ``}`` plus string-state and escape-state tracking. A parser generator or recursive descent would be overkill; the algorithm fits in ~120 lines of Python with one ``for`` loop over the source.
-- **``string_quote`` is a flat ``None`` / ``"`` / ``'`` discriminator, not a parser stack.** Triple-quoted strings (``"""..."""`` / ``'''...'''``) are explicitly out of scope; if operators hit them, a follow-up can extend the state machine. Bracket nesting inside Python is also not modeled — the parser does not understand Python at all, it only tracks string state.
-- **``strip()`` happens at emit time, not during scanning.** The buffer accumulates raw characters (including the delimiters' adjacent whitespace); ``str.strip()`` runs on the joined buffer just before the block is appended. This keeps the scanner logic uniform between static and python modes.
-- **Static buffer is suppressed when empty.** Per the ticket: "``{}`` returns one empty python block, no static blocks." So the ``if static_content:`` guard on the static emit is required, but the python emit fires unconditionally on ``}`` — even when the buffer is empty — so the ``{}`` edge case works without a special branch.
-- **MacroParseError is a ``ValueError``.** Subclassing the standard exception (rather than introducing a new hierarchy) keeps callers that already handle ``ValueError`` working without a code change; the future Interpreter module can catch parse failures uniformly.
-- **No execution logic.** The acceptance criteria explicitly forbid calling ``eval`` / ``exec`` / ``compile`` / ``ast.parse`` on the python block content. The parser source contains none of those imports or calls; a structural test (``test_parser_source_contains_no_execution_calls``) scans ``parser.py`` for the tokens ``eval(``, ``exec(``, ``compile(``, and ``ast.parse`` to catch a future regression.
+
+- **Shared helper in `services/hardware_loader.py`.** Both the
+  mock layer and the temperature module needed the same parse. A
+  new module keeps the path-resolution / JSON-parse logic in one
+  place; either consumer can be swapped independently.
+- **`__init__` reads the heaters, not just `on_load`.** The
+  registry calls `_resolve_settings_model(instance)` before
+  `on_load`, so the seeded `sensor_colors` must be available at
+  construction time. `on_load` re-reads the list to pick up any
+  in-process re-deployment (rare in practice — most operators
+  restart the backend between deploys).
+- **`reseed_from_hardware_json()` helper on the mock.** Tests
+  that monkey-patch the active directory after the mock is loaded
+  need a deterministic way to force a re-read. The function is
+  idempotent and called once at module import for production.
+- **`set_temperature` still creates a sensor on the fly.** The
+  router-level `POST /sensors/{name}/target` path can target a
+  sensor that wasn't seeded by `hardware.json` (e.g. an operator
+  adds a chamber heater at runtime). The mock's existing
+  `set_temperature` command already creates the entry on demand;
+  behaviour is unchanged.
+- **Deterministic colour seeding is the documented trade-off.**
+  `bed=red`, `chamber=blue` after sorting. The operator can
+  override any colour via the Settings panel and the override
+  persists via `SettingsStore` merge semantics.
+- **`#A855F7` (purple) stays as the frontend's "unknown sensor"
+  fallback** so any sensor the backend introduces after the
+  operator's last PUT still renders.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend` — passes for the entire backend.
-- [x] `python -m pytest backend/tests -v` — **349 passed** (32 new parser tests + 317 pre-existing). No regressions.
-- [x] `python -m pytest backend/tests/test_macros_parser.py -v` — 32 / 32 passed; coverage spans the ticket's example, the four edge cases, four string-boundary cases, four escape-sequence cases, five malformed-input cases, four strip-semantics cases, six structural assertions, and one doctest smoke test.
-- [x] All acceptance-criteria items verified: ``parse_macro`` lives in ``backend/modules/macros/parser.py`` and is exported from ``backend/modules/macros/__init__.py``; returns ``list[Block]`` with ``type`` and ``content``; the ticket example produces exactly three blocks in order; ``}`` inside Python strings does not close the block; ``{`` inside a Python string is literal content; escape sequences do not toggle the string state; unclosed ``{`` at EOF raises ``MacroParseError`` with the offset of the opening brace; empty input returns ``[]``; no-braces input returns one static block; ``{}`` returns one empty python block; no new HTTP endpoint (router unchanged); no execution logic (structural source scan).
-- [x] Docstring's doctest runs cleanly under :mod:`doctest` (verified by ``test_docstring_doctest_example_runs_cleanly``).
+
+- [x] Ran local test suite / build checks
+- [x] 321 backend tests pass (`python -m pytest backend/tests -v`)
+- [x] 98 frontend tests pass (`node --test "frontend/tests/**/*.mjs"`)
+- [x] Frontend production build succeeds (`npm --prefix frontend run build`)
+- [x] API client regenerates against the running backend
+  (`npm --prefix frontend run generate-api`)
