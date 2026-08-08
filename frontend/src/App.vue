@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import registry from './core/modules/registry'
 import { useMachineStore } from './stores/machine-compat'
 import AppSidebar from './components/AppSidebar.vue'
+import ModalConfirmHost from './components/ModalConfirmHost.vue'
 
 // ``useMachineStore`` is supplied by the optional compatibility
 // adapter. When the machine module is mounted, the module registers
@@ -75,6 +76,7 @@ function navigate(view) {
 
 <template>
   <div class="flex h-screen overflow-hidden bg-gray-900 text-white font-sans">
+    <ModalConfirmHost />
 
     <!-- Sidebar Navigation: AppSidebar reads the active route
          and calls ``router.push`` itself, so we pass nothing here. -->

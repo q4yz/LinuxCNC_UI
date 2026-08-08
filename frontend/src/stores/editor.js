@@ -100,6 +100,7 @@ export const useEditorStore = defineStore('editor', {
     filename: '',
     mode: 'config',
     content: '',
+    pristineContent: '',
     readOnly: false,
     // Async I/O flags — components watch these to drive spinners.
     isLoading: false,
@@ -115,7 +116,8 @@ export const useEditorStore = defineStore('editor', {
     // True when ``loadFile`` was bypassed because the content was
     // already populated by the caller (e.g. ``FileManager`` passing
     // it in up-front).
-    hasContent: (state) => state.content.length > 0
+    hasContent: (state) => state.content.length > 0,
+    isDirty: (state) => state.content !== state.pristineContent
   },
 
   actions: {
@@ -128,6 +130,7 @@ export const useEditorStore = defineStore('editor', {
       this.readOnly = readOnly
       this.mode = mode
       this.content = content
+      this.pristineContent = content
       this.error = null
       this.isLoading = false
       this.isSaving = false
@@ -151,6 +154,7 @@ export const useEditorStore = defineStore('editor', {
         const effectiveMode = mode ?? this.mode
         const text = await dispatchRead(effectiveMode, path)
         this.content = text
+        this.pristineContent = text
         this.filename = path
         this.mode = effectiveMode
       } catch (error) {
@@ -182,6 +186,7 @@ export const useEditorStore = defineStore('editor', {
       try {
         await dispatchWrite(effectiveMode, path, content)
         this.content = content
+        this.pristineContent = content
         this.filename = path
         this.mode = effectiveMode
         return true
@@ -199,6 +204,7 @@ export const useEditorStore = defineStore('editor', {
     close() {
       this.filename = ''
       this.content = ''
+      this.pristineContent = ''
       this.error = null
       this.isLoading = false
       this.isSaving = false

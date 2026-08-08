@@ -6,6 +6,9 @@
 import { onMounted, ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { useConfirm, ModalButtonStyle } from '../core/confirm.js';
+import { useUnsavedChangesGuard } from '../router/guards/unsavedChangesGuard.js';
+
 import Editor from '../components/Editor.vue';
 import DebugPanel from '../components/DebugPanel.vue';
 import UpdateManager from '../components/UpdateManager.vue';
@@ -22,6 +25,8 @@ const machineConfigStore = useMachineConfigStore();
 const editorStore = useEditorStore();
 const route = useRoute();
 const router = useRouter();
+
+useUnsavedChangesGuard(() => editorStore.isDirty);
 
 // Local mirror of the editor content so the v-model works in
 // both directions (CodeMirror ↔ Pinia). The store still owns the canonical copy.
@@ -83,6 +88,21 @@ async function loadFromSource() {
 watch(
   () => route.params.filename,
   async () => {
+    if (editorStore.isDirty && editorStore.filename !== editorPath.value) {
+      const shouldLeave = await useConfirm({
+        title: "Ungespeicherte Änderungen",
+        question: "Möchten Sie diese Seite wirklich verlassen?",
+        description: "Alle nicht gespeicherten Eingaben gehen verloren und können nicht wiederhergestellt werden.",
+        confirmButtonText: "Seite verlassen",
+        confirmButtonStyle: ModalButtonStyle.DANGER,
+        rejectButtonText: "Hier bleiben",
+        showDismissCrossButton: false,
+      });
+      if (!shouldLeave) {
+        await router.replace({ name: route.name, params: { filename: editorStore.filename } });
+        return;
+      }
+    }
     await loadFromSource();
   }
 );
@@ -99,10 +119,16 @@ async function saveAndCloseEditor() {
   closeEditor();
 }
 
-function confirmClose() {
-  if (window.confirm("Are you sure you want to close? Any unsaved changes will be lost.")) {
-    closeEditor();
-  }
+async function confirmClose() {
+  const shouldClose = !editorStore.isDirty || await useConfirm({
+    title: "Ungespeicherte Änderungen",
+    question: "Are you sure you want to close? Any unsaved changes will be lost.",
+    confirmButtonText: "Close",
+    confirmButtonStyle: ModalButtonStyle.DANGER,
+    rejectButtonText: "Cancel",
+    showDismissCrossButton: false,
+  });
+  if (shouldClose) closeEditor();
 }
 
 // Close clears the store and routes the user back to the appropriate dashboard.
