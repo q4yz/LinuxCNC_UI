@@ -1,8 +1,8 @@
 """Klipper-side data model.
 
 Dataclasses produced by :mod:`backend.modules.machineconfig.parser`
-from a Klipper ``.cfg`` source. Every type here describes a piece of
-the *input* configuration; the LinuxCNC-side mirror lives in
+from a Klipper ``.cfg`` source. Every type here describes a piece of the
+*input* configuration; the LinuxCNC-side mirror lives in
 :mod:`.linuxcnc_models`.
 
 Keeping the two sides in separate files makes the one-to-many
@@ -10,6 +10,9 @@ relationship between an :class:`~.linuxcnc_models.Axis` and its
 list of :class:`~.linuxcnc_models.Joint` objects explicit — a
 single Klipper stepper (or several) flows through one joint; the
 axis is the LinuxCNC-level grouping that owns the list.
+
+Heater extraction onto ``hardware.json`` is its own concern; see
+:mod:`backend.modules.machineconfig.compilers.heater_extractor`.
 """
 
 from __future__ import annotations
@@ -70,16 +73,21 @@ class EndstopSwitch:
 
 
 @dataclass(slots=True)
-class Extruder:
-    """Extruder drive, heater, sensor, and PID settings."""
+class Heater:
+    """A temperature-controlled heater with sensor and (optional) PID config.
 
-    step_pin: str | None = None
-    dir_pin: str | None = None
-    enable_pin: str | None = None
-    microsteps: int | None = None
-    rotation_distance: float | None = None
-    nozzle_diameter: float | None = None
-    filament_diameter: float | None = None
+    Common base for extruders and beds. The ``name`` field is the
+    canonical hardware.json heater name produced by
+    :func:`backend.modules.machineconfig.compilers.heater_extractor.derive_heater_name`
+    and is set by the parser, not by the section author.
+
+    Required fields (``heater_pin``, ``sensor_pin``, ``control``)
+    are still typed as optional because the parser emits them after
+    validation, but missing values cause a parse error before the
+    heater is constructed.
+    """
+
+    name: str = ""
     heater_pin: str | None = None
     sensor_type: str | None = None
     sensor_pin: str | None = None
@@ -92,15 +100,23 @@ class Extruder:
 
 
 @dataclass(slots=True)
-class HeaterBed:
-    """Heated-bed output, sensor, and safety limits."""
+class Extruder(Heater):
+    """Extruder is-a :class:`Heater` plus a stepper + filament drive.
 
-    heater_pin: str | None = None
-    sensor_type: str | None = None
-    sensor_pin: str | None = None
-    control: str | None = None
-    min_temp: float | None = None
-    max_temp: float | None = None
+    Every extruder section in a Klipper config must provide the
+    heater fields (``heater_pin``, ``sensor_pin``, ``control``) as
+    well as the stepper fields. The parser enforces the heater
+    requirement; the stepper fields remain optional because Klipper
+    allows standalone extruder-like sections for some toolheads.
+    """
+
+    step_pin: str | None = None
+    dir_pin: str | None = None
+    enable_pin: str | None = None
+    microsteps: int | None = None
+    rotation_distance: float | None = None
+    nozzle_diameter: float | None = None
+    filament_diameter: float | None = None
 
 
 @dataclass(slots=True)
@@ -141,13 +157,20 @@ class MachineConfigGraph:
     section name so multi-motor axes (e.g. ``stepper_y`` and
     ``stepper_y1``) coexist without collision; the axis/joint mapping
     happens downstream in :class:`~.linuxcnc_models.AxisBuilder`.
+
+    Heaters live in a single dict keyed by the canonical hardware.json
+    heater name (see
+    :func:`backend.modules.machineconfig.compilers.heater_extractor.derive_heater_name`).
+    Extruders are stored as :class:`Extruder` instances in the same
+    dict and can be retrieved by name; the ``heater`` of an extruder
+    is the same object so the standard :class:`Heater` accessors work
+    unchanged.
     """
 
     printer: Printer | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
-    extruder: Extruder | None = None
-    heater_bed: HeaterBed | None = None
+    heaters: dict[str, Heater] = field(default_factory=dict)
     spindle: Spindle | None = None
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
     mcu: MCU | None = None
@@ -166,7 +189,7 @@ MachineConfig = MachineConfigGraph
 __all__ = [
     "EndstopSwitch",
     "Extruder",
-    "HeaterBed",
+    "Heater",
     "MachineConfig",
     "MachineConfigGraph",
     "MCU",

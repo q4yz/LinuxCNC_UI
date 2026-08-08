@@ -6,6 +6,11 @@ parsed Klipper graph at compile time and consumed by everything
 that needs to query the hardware (deployment tools, the console,
 future Remora firmware flasher) without parsing the raw config
 again.
+
+The ``heaters`` field is built by
+:mod:`backend.modules.machineconfig.compilers.heater_extractor`
+so the same canonical name and validation rules apply to any
+other consumer of the parsed graph.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from typing import Any
 
 from ..models import MachineConfigGraph
 from .axis_builder import AxisBuilder, stepgen_scale
+from .heater_extractor import HeaterExtractor
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.hardware_json_generator")
 
@@ -43,19 +49,6 @@ def _stepper_entry(stepper, joint_number: int) -> dict[str, Any]:
         "position_max": _fmt_float(stepper.position_max),
         "position_endstop": _fmt_float(stepper.position_endstop),
         "homing_speed": _fmt_float(getattr(stepper, "homing_speed", None)),
-    }
-
-
-def _heater_entry(name: str, heater) -> dict[str, Any]:
-    """Build a heater entry for hardware.json."""
-    return {
-        "name": name,
-        "heater_pin": heater.heater_pin,
-        "sensor_type": heater.sensor_type,
-        "sensor_pin": heater.sensor_pin,
-        "control": heater.control,
-        "min_temp": heater.min_temp,
-        "max_temp": heater.max_temp,
     }
 
 
@@ -103,11 +96,9 @@ def build_hardware_json(graph: MachineConfigGraph, machine_name: str) -> dict[st
                 steppers.append(_stepper_entry(stepper, joint_number))
             joint_number += 1
 
-    heaters = []
-    if graph.extruder:
-        heaters.append(_heater_entry("extruder", graph.extruder))
-    if graph.heater_bed:
-        heaters.append(_heater_entry("heater_bed", graph.heater_bed))
+    # Heaters come from the shared extractor so the same output shape
+    # and validation rules apply to every consumer of the graph.
+    heaters = HeaterExtractor.to_dicts(graph)
 
     endstops = [
         _endstop_entry(name, switch)

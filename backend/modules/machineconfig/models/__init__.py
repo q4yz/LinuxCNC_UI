@@ -16,12 +16,10 @@ consumes :class:`~.linuxcnc_models.Axis` and
 two is :class:`~.linuxcnc_models.AxisBuilder`.
 """
 
-from __future__ import annotations
-
 from .klipper_models import (
     EndstopSwitch,
     Extruder,
-    HeaterBed,
+    Heater,
     MachineConfig,
     MachineConfigGraph,
     MCU,
@@ -43,7 +41,7 @@ __all__ = [
     "Axis",
     "EndstopSwitch",
     "Extruder",
-    "HeaterBed",
+    "Heater",
     "IniConfig",
     "Joint",
     "JointType",

@@ -15,7 +15,7 @@ class SectionKind(str, Enum):
     STEPPER = "stepper"
     ENDSTOP_SWITCH = "endstop_switch"
     EXTRUDER = "extruder"
-    HEATER_BED = "heater_bed"
+    HEATER = "heater"
     SPINDLE = "spindle"
     TMC2209 = "tmc2209"
 
@@ -59,15 +59,11 @@ STEPPER_KEYS = frozenset(
     }
 )
 ENDSTOP_SWITCH_KEYS = frozenset({"stepper", "pin", "position", "type"})
-EXTRUDER_KEYS = frozenset(
+
+# Heater-shaped sections share the same key set. The extruder section
+# extends this with stepper + filament drive fields.
+HEATER_KEYS = frozenset(
     {
-        "step_pin",
-        "dir_pin",
-        "enable_pin",
-        "microsteps",
-        "rotation_distance",
-        "nozzle_diameter",
-        "filament_diameter",
         "heater_pin",
         "sensor_type",
         "sensor_pin",
@@ -79,14 +75,16 @@ EXTRUDER_KEYS = frozenset(
         "max_temp",
     }
 )
-HEATER_BED_KEYS = frozenset(
-    {
-        "heater_pin",
-        "sensor_type",
-        "sensor_pin",
-        "control",
-        "min_temp",
-        "max_temp",
+EXTRUDER_KEYS = frozenset(
+    HEATER_KEYS
+    | {
+        "step_pin",
+        "dir_pin",
+        "enable_pin",
+        "microsteps",
+        "rotation_distance",
+        "nozzle_diameter",
+        "filament_diameter",
     }
 )
 SPINDLE_KEYS = frozenset({"pwm_pin", "enable_pin", "max_rpm"})
@@ -108,7 +106,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.STEPPER: STEPPER_KEYS,
     SectionKind.ENDSTOP_SWITCH: ENDSTOP_SWITCH_KEYS,
     SectionKind.EXTRUDER: EXTRUDER_KEYS,
-    SectionKind.HEATER_BED: HEATER_BED_KEYS,
+    SectionKind.HEATER: HEATER_KEYS,
     SectionKind.SPINDLE: SPINDLE_KEYS,
     SectionKind.TMC2209: TMC2209_KEYS,
 }
@@ -122,6 +120,22 @@ _ENDSTOP_SECTION = re.compile(
     r"^endstop_switch\s+(?P<name>[A-Za-z0-9_.-]+)$"
 )
 _TMC2209_SECTION = re.compile(r"^tmc2209\s+(?P<name>[A-Za-z0-9_.-]+)$")
+# Extruder accepts three forms:
+#   [extruder]               -> bare (only one allowed)
+#   [extruder1], [extruder2] -> numbered (Klipper compatibility syntax)
+#   [extruder hotend]        -> named instance
+# The numbered form is normalised to the named form in derive_heater_name
+# so the runtime never needs to know which syntax the user typed.
+_EXTRUDER_SECTION = re.compile(
+    r"^extruder(?:(?P<num>\d+)|\s+(?P<name>[A-Za-z0-9_.-]+))?$"
+)
+# Heater generic accepts:
+#   [heater_bed]             -> exact match (covered below)
+#   [heater_generic]         -> bare
+#   [heater_generic chamber] -> named instance
+_HEATER_GENERIC_SECTION = re.compile(
+    r"^heater_generic(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
+)
 
 
 def schema_for_section(section: str) -> SectionSchema | None:
@@ -162,22 +176,40 @@ def schema_for_section(section: str) -> SectionSchema | None:
             tmc2209_match.group("name"),
         )
 
-    exact_sections = {
-        "extruder": SectionKind.EXTRUDER,
-        "heater_bed": SectionKind.HEATER_BED,
-        "spindle": SectionKind.SPINDLE,
-    }
-    kind = exact_sections.get(section)
-    if kind is None:
-        return None
-    return SectionSchema(kind, SECTION_SCHEMAS[kind], section)
+    extruder_match = _EXTRUDER_SECTION.fullmatch(section)
+    if extruder_match:
+        # The schema object_name is the bare section header, not the
+        # normalised heater name. The parser assigns the heater name
+        # via derive_heater_name; the schema needs the raw match so
+        # consumers can introspect the numbered/named form.
+        return SectionSchema(
+            SectionKind.EXTRUDER,
+            EXTRUDER_KEYS,
+            section,
+        )
+
+    if section == "heater_bed":
+        return SectionSchema(SectionKind.HEATER, HEATER_KEYS, "heater_bed")
+
+    heater_generic_match = _HEATER_GENERIC_SECTION.fullmatch(section)
+    if heater_generic_match:
+        return SectionSchema(
+            SectionKind.HEATER,
+            HEATER_KEYS,
+            section,
+        )
+
+    if section == "spindle":
+        return SectionSchema(SectionKind.SPINDLE, SPINDLE_KEYS, "spindle")
+
+    return None
 
 
 __all__ = [
     "ALLOWED_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "EXTRUDER_KEYS",
-    "HEATER_BED_KEYS",
+    "HEATER_KEYS",
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
     "SECTION_SCHEMAS",

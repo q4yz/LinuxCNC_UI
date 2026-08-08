@@ -604,3 +604,104 @@ def test_machine_name_empty_active_returns_null(
     resp = client.get("/api/v1/modules/machineconfig/machine-name")
     assert resp.status_code == 200
     assert resp.json()["machine_name"] is None
+
+
+# ---------------------------------------------------------------------- #
+# hardware.json heaters array (issue: dynamic heater hardware.json)        #
+# ---------------------------------------------------------------------- #
+
+
+def test_hardware_json_heaters_populated_from_user_example(
+    tmp_data_root, clean_env
+):
+    """The user's example ([extruder] + [heater_bed]) compiles into a
+    hardware.json with two heater entries — one per declared section.
+
+    This is the end-to-end assertion that ties the parser, the
+    hardware.json generator, and the HeaterExtractor together.
+    """
+    from modules.machineconfig.compilers.hardware_json_generator import (
+        build_hardware_json,
+    )
+    from modules.machineconfig.parser import MachineConfigParser
+
+    config = """
+[extruder]
+step_pin: PB1
+dir_pin: !PB0
+enable_pin: !PD6
+microsteps: 16
+rotation_distance: 33.683
+nozzle_diameter: 0.400
+filament_diameter: 1.750
+heater_pin: PD5
+sensor_type: EPCOS 100K B57560G104F
+sensor_pin: PA7
+control: pid
+pid_Kp: 21.527
+pid_Ki: 1.063
+pid_Kd: 108.982
+min_temp: 0
+max_temp: 250
+
+[heater_bed]
+heater_pin: PD4
+sensor_type: EPCOS 100K B57560G104F
+sensor_pin: PA6
+control: pid
+pid_Kp: 54.027
+pid_Ki: 0.770
+pid_Kd: 948.182
+min_temp: 0
+max_temp: 130
+"""
+    graph = MachineConfigParser().parse_string(config)
+    payload = build_hardware_json(graph, "test")
+
+    assert payload["heaters"] == [
+        {
+            "name": "extruder",
+            "heater_pin": "PD5",
+            "sensor_pin": "PA7",
+            "sensor_type": "EPCOS 100K B57560G104F",
+            "control": "pid",
+            "min_temp": 0.0,
+            "max_temp": 250.0,
+            "pid_Kp": 21.527,
+            "pid_Ki": 1.063,
+            "pid_Kd": 108.982,
+        },
+        {
+            "name": "heater_bed",
+            "heater_pin": "PD4",
+            "sensor_pin": "PA6",
+            "sensor_type": "EPCOS 100K B57560G104F",
+            "control": "pid",
+            "min_temp": 0.0,
+            "max_temp": 130.0,
+            "pid_Kp": 54.027,
+            "pid_Ki": 0.770,
+            "pid_Kd": 948.182,
+        },
+    ]
+
+
+def test_hardware_json_heaters_empty_when_no_heater_sections(
+    tmp_data_root, clean_env
+):
+    """A profile with no heater sections compiles to an empty heaters array."""
+    from modules.machineconfig.compilers.hardware_json_generator import (
+        build_hardware_json,
+    )
+    from modules.machineconfig.parser import MachineConfigParser
+
+    config = """
+[printer]
+kinematics: cartesian
+
+[stepper_x]
+step_pin: PF13
+"""
+    graph = MachineConfigParser().parse_string(config)
+    payload = build_hardware_json(graph, "no-heaters")
+    assert payload["heaters"] == []

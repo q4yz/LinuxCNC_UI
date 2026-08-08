@@ -16,6 +16,11 @@ from .base import (
     register_compiler,
     registry,
 )
+from .heater_extractor import (
+    HardwareHeater,
+    HeaterExtractor,
+    derive_heater_name,
+)
 from .klipper_linuxcnc import KlipperToLinuxCNCCompiler
 
 # Side-effect import: ensure the registry is populated the moment a
@@ -26,8 +31,11 @@ __all__ = [
     "Compiler",
     "CompilerRegistry",
     "DEFAULT_SOURCE_MARKER",
+    "HardwareHeater",
+    "HeaterExtractor",
     "KlipperToLinuxCNCCompiler",
     "autoload",
+    "derive_heater_name",
     "register_compiler",
     "registry",
 ]

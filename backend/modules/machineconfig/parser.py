@@ -10,7 +10,7 @@ from pathlib import Path
 from .models import (
     EndstopSwitch,
     Extruder,
-    HeaterBed,
+    Heater,
     MachineConfigGraph,
     MCU,
     Printer,
@@ -18,7 +18,13 @@ from .models import (
     Stepper,
     TMC2209,
 )
-from .schema import PRINTER_IGNORED_KEYS, SectionKind, schema_for_section
+from .schema import (
+    EXTRUDER_KEYS,
+    HEATER_KEYS,
+    PRINTER_IGNORED_KEYS,
+    SectionKind,
+    schema_for_section,
+)
 
 logger = logging.getLogger("backend.modules.machineconfig.parser")
 
@@ -47,10 +53,16 @@ class UnsupportedSectionError(ConfigValidationError):
 class MissingRequiredKeywordError(ConfigValidationError):
     """Raised when graph construction requires an absent or empty key."""
 
-    def __init__(self, section: str, key: str) -> None:
+    def __init__(self, section: str, key: str | list[str]) -> None:
         self.section = section
         self.key = key
-        super().__init__(f"Missing required keyword '{key}' in section [{section}]")
+        if isinstance(key, list):
+            joined = ", ".join(key)
+            super().__init__(
+                f"Missing required keyword(s) '{joined}' in section [{section}]"
+            )
+        else:
+            super().__init__(f"Missing required keyword '{key}' in section [{section}]")
 
 
 class InvalidValueError(ConfigValidationError):
@@ -76,6 +88,74 @@ class UnknownStepperError(ConfigValidationError):
         super().__init__(
             f"Section [{section}] references unknown stepper '{target}'"
         )
+
+
+class MultipleExtrudersError(ConfigValidationError):
+    """Raised when more than one bare ``[extruder]`` section is declared."""
+
+    def __init__(self, sections: list[str]) -> None:
+        self.sections = sections
+        joined = ", ".join(f"[{name}]" for name in sections)
+        super().__init__(
+            f"At most one bare [extruder] section is allowed; "
+            f"found multiple: {joined}. Use named extruders "
+            f"([extruder my_name]) or numbered extruders ([extruder1]) "
+            f"for additional tools."
+        )
+
+
+class DuplicateHeaterError(ConfigValidationError):
+    """Raised when two sections resolve to the same canonical heater name."""
+
+    def __init__(self, section_a: str, section_b: str, name: str) -> None:
+        self.section_a = section_a
+        self.section_b = section_b
+        self.name = name
+        super().__init__(
+            f"Sections [{section_a}] and [{section_b}] both compile to "
+            f"the same heater name '{name}'. The numbered and spaced "
+            f"extruder forms are equivalent — pick one."
+        )
+
+
+# Heater-shaped sections ALL must carry these three physical fields.
+# Stepper fields are optional for extruders (some toolheads declare
+# them on a separate ``[stepper_*]`` section); the heater fields are
+# what make the section a heater at all.
+_HEATER_REQUIRED_KEYS = ("heater_pin", "sensor_pin", "control")
+# When control is "pid", these three are also required.
+_PID_REQUIRED_KEYS = ("pid_Kp", "pid_Ki", "pid_Kd")
+
+
+def derive_heater_name(section_name: str) -> str:
+    """Return the canonical heater name for a Klipper section header.
+
+    Examples:
+        [extruder]               -> "extruder"
+        [extruder 1]             -> "extruder_1"
+        [extruder1]              -> "extruder_1"   (Klipper compatibility)
+        [extruder hotend]        -> "extruder_hotend"
+        [heater_bed]             -> "heater_bed"
+        [heater_generic]         -> "heater_generic"
+        [heater_generic chamber] -> "heater_generic_chamber"
+
+    The ``[extruder<N>]`` form is accepted only for Klipper parser
+    compatibility; downstream code sees only the normalised
+    ``extruder_<N>`` form produced by this helper.
+    """
+    # Normalise [extruder<N>] -> [extruder <N>] so the split below
+    # handles both forms identically. Only the extruder section kind
+    # has this dual syntax in Klipper; heater_* sections do not.
+    if section_name.startswith("extruder") and len(section_name) > len("extruder"):
+        rest = section_name[len("extruder"):]
+        if rest and rest[0].isdigit():
+            section_name = f"extruder {rest}"
+
+    parts = section_name.split(maxsplit=1)
+    if len(parts) == 1:
+        return section_name
+    kind, instance = parts
+    return f"{kind}_{instance.replace(' ', '_')}"
 
 
 class MachineConfigParser:
@@ -131,6 +211,10 @@ class MachineConfigParser:
     def _build_graph(self, parser: configparser.ConfigParser) -> MachineConfigGraph:
         graph = MachineConfigGraph()
         pending_endstops: list[tuple[str, str, configparser.SectionProxy]] = []
+        # Order in which heater-shaped sections appear in the source file.
+        # Used at the end for duplicate-name detection so the error
+        # message points at the second occurrence rather than the first.
+        heater_section_order: list[str] = []
 
         for section_name in parser.sections():
             section_schema = schema_for_section(section_name)
@@ -152,29 +236,35 @@ class MachineConfigParser:
                 )
                 continue
 
-            object_name = section_schema.object_name
-            if object_name is None:  # Defensive: all modelled schemas have a name.
-                raise UnsupportedSectionError(section_name)
-
             if section_schema.kind is SectionKind.PRINTER:
                 graph.printer = self._parse_printer(section_name, section)
             elif section_schema.kind is SectionKind.STEPPER:
-                graph.steppers[object_name] = self._parse_stepper(
-                    object_name,
+                graph.steppers[section_schema.object_name] = self._parse_stepper(
+                    section_schema.object_name,
                     section_name,
                     section,
                 )
             elif section_schema.kind is SectionKind.ENDSTOP_SWITCH:
-                pending_endstops.append((object_name, section_name, section))
+                pending_endstops.append(
+                    (section_schema.object_name, section_name, section)
+                )
             elif section_schema.kind is SectionKind.EXTRUDER:
-                graph.extruder = self._parse_extruder(section_name, section)
-            elif section_schema.kind is SectionKind.HEATER_BED:
-                graph.heater_bed = self._parse_heater_bed(section_name, section)
+                self._validate_heater_fields(section_name, section)
+                self._validate_pid_keys_if_pid(section_name, section)
+                heater = self._parse_extruder(section_name, section)
+                heater_section_order.append(section_name)
+                graph.heaters[heater.name] = heater
+            elif section_schema.kind is SectionKind.HEATER:
+                self._validate_heater_fields(section_name, section)
+                self._validate_pid_keys_if_pid(section_name, section)
+                heater = self._parse_heater(section_name, section)
+                heater_section_order.append(section_name)
+                graph.heaters[heater.name] = heater
             elif section_schema.kind is SectionKind.SPINDLE:
                 graph.spindle = self._parse_spindle(section_name, section)
             elif section_schema.kind is SectionKind.TMC2209:
-                graph.tmc2209s[object_name] = self._parse_tmc2209(
-                    object_name,
+                graph.tmc2209s[section_schema.object_name] = self._parse_tmc2209(
+                    section_schema.object_name,
                     section_name,
                     section,
                 )
@@ -190,6 +280,7 @@ class MachineConfigParser:
             graph.endstop_switches[name] = switch
             stepper.endstops.append(switch)
 
+        self._validate_heater_uniqueness(graph, heater_section_order)
         return graph
 
     @staticmethod
@@ -204,6 +295,63 @@ class MachineConfigParser:
         for key in section:
             if key not in allowed_keys:
                 raise UndefinedKeywordError(section_name, key)
+
+    @staticmethod
+    def _validate_heater_fields(
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> None:
+        """Every heater-shaped section must declare heater_pin, sensor_pin, control."""
+        missing = [
+            key for key in _HEATER_REQUIRED_KEYS if not _option_present(section, key)
+        ]
+        if missing:
+            raise MissingRequiredKeywordError(section_name, missing)
+
+    @staticmethod
+    def _validate_pid_keys_if_pid(
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> None:
+        """When ``control`` is ``pid``, the three pid_* keys are mandatory."""
+        control = _option_stripped(section, "control")
+        if control is None or control.lower() != "pid":
+            return
+        missing = [
+            key for key in _PID_REQUIRED_KEYS if not _option_present(section, key)
+        ]
+        if missing:
+            raise MissingRequiredKeywordError(section_name, missing)
+
+    @staticmethod
+    def _validate_heater_uniqueness(
+        graph: MachineConfigGraph,
+        heater_section_order: list[str],
+    ) -> None:
+        """Enforce two rules after all sections are parsed:
+
+        1. At most one bare ``[extruder]`` section may exist. Bare
+           extruders are the no-suffix form; numbered and named
+           extruders are always allowed.
+        2. No two sections may resolve to the same canonical heater
+           name (catches ``[extruder 1]`` + ``[extruder1]``).
+        """
+        # Rule 1: multiple bare extruders.
+        bare_extruders = [
+            name for name in heater_section_order
+            if name == "extruder"
+        ]
+        if len(bare_extruders) > 1:
+            raise MultipleExtrudersError(bare_extruders)
+
+        # Rule 2: duplicate canonical heater names. Walk in source
+        # order so the error points at the second occurrence.
+        seen: dict[str, str] = {}
+        for section_name in heater_section_order:
+            canonical = derive_heater_name(section_name)
+            if canonical in seen:
+                raise DuplicateHeaterError(seen[canonical], section_name, canonical)
+            seen[canonical] = section_name
 
     def _parse_printer(
         self,
@@ -283,6 +431,7 @@ class MachineConfigParser:
         section: configparser.SectionProxy,
     ) -> Extruder:
         return Extruder(
+            name=derive_heater_name(section_name),
             step_pin=self._optional_string(section, "step_pin"),
             dir_pin=self._optional_string(section, "dir_pin"),
             enable_pin=self._optional_string(section, "enable_pin"),
@@ -307,16 +456,22 @@ class MachineConfigParser:
             max_temp=self._optional_float(section_name, section, "max_temp"),
         )
 
-    def _parse_heater_bed(
+    def _parse_heater(
         self,
         section_name: str,
         section: configparser.SectionProxy,
-    ) -> HeaterBed:
-        return HeaterBed(
+    ) -> Heater:
+        """Parse a non-extruder heater section (``[heater_bed]``,
+        ``[heater_generic]``, ``[heater_generic chamber]``)."""
+        return Heater(
+            name=derive_heater_name(section_name),
             heater_pin=self._optional_string(section, "heater_pin"),
             sensor_type=self._optional_string(section, "sensor_type"),
             sensor_pin=self._optional_string(section, "sensor_pin"),
             control=self._optional_string(section, "control"),
+            pid_Kp=self._optional_float(section_name, section, "pid_Kp"),
+            pid_Ki=self._optional_float(section_name, section, "pid_Ki"),
+            pid_Kd=self._optional_float(section_name, section, "pid_Kd"),
             min_temp=self._optional_float(section_name, section, "min_temp"),
             max_temp=self._optional_float(section_name, section, "max_temp"),
         )
@@ -424,6 +579,20 @@ class MachineConfigParser:
         return None
 
 
+def _option_present(section: configparser.SectionProxy, key: str) -> bool:
+    """True when ``key`` is in ``section`` and has a non-empty value."""
+    if key not in section:
+        return False
+    return section[key].strip() != ""
+
+
+def _option_stripped(section: configparser.SectionProxy, key: str) -> str | None:
+    if key not in section:
+        return None
+    value = section[key].strip()
+    return value or None
+
+
 # Descriptive alias for clients that refer to the input dialect explicitly.
 KlipperConfigParser = MachineConfigParser
 
@@ -436,12 +605,15 @@ def parse_config(source_path: str | Path) -> MachineConfigGraph:
 
 __all__ = [
     "ConfigValidationError",
+    "DuplicateHeaterError",
     "InvalidValueError",
     "KlipperConfigParser",
     "MachineConfigParser",
     "MissingRequiredKeywordError",
+    "MultipleExtrudersError",
     "UndefinedKeywordError",
     "UnknownStepperError",
     "UnsupportedSectionError",
+    "derive_heater_name",
     "parse_config",
 ]

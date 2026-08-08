@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..models import MachineConfigGraph
+from ..models import Extruder, MachineConfigGraph
 from .axis_builder import AxisBuilder
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.config_txt_generator")
@@ -286,41 +286,39 @@ def build_config_txt(graph: MachineConfigGraph, machine_name: str) -> dict[str, 
             joint_number += 1
 
     # 3. Temperature + PWM modules for heaters
-    if graph.extruder:
+    # Walk the graph's heaters dict in canonical name order. Extruders
+    # are indexed as "Ext 0", "Ext 1", ... in the order they appear
+    # in the source file (so the first extruder is always Ext 0).
+    # Non-extruder heaters keep their canonical name as the Remora
+    # module comment.
+    sorted_heaters = sorted(graph.heaters.values(), key=lambda h: h.name)
+
+    extruder_index = 0
+    for heater in sorted_heaters:
+        if isinstance(heater, Extruder):
+            ext_label = f"Ext {extruder_index}"
+            comment = f"{ext_label} temperature sensor"
+            pwm_comment = f"{ext_label.replace(' ', '')} heater PWM"
+            extruder_index += 1
+        else:
+            label = heater.name.replace("_", " ").title()
+            comment = f"{label} temperature sensor"
+            pwm_comment = f"{label} heater PWM"
+
         temp = _temperature_module(
-            "Ext 0 temperature sensor",
+            comment,
             pv_index,
-            graph.extruder.sensor_pin,
-            graph.extruder.sensor_type,
+            heater.sensor_pin,
+            heater.sensor_type,
         )
         if temp:
             modules.append(temp)
             pv_index += 1
 
         pwm = _pwm_module(
-            "Ext0 heater PWM",
+            pwm_comment,
             sp_index,
-            graph.extruder.heater_pin,
-        )
-        if pwm:
-            modules.append(pwm)
-            sp_index += 1
-
-    if graph.heater_bed:
-        temp = _temperature_module(
-            "Heated Bed temperature sensor",
-            pv_index,
-            graph.heater_bed.sensor_pin,
-            graph.heater_bed.sensor_type,
-        )
-        if temp:
-            modules.append(temp)
-            pv_index += 1
-
-        pwm = _pwm_module(
-            "Bed heater PWM",
-            sp_index,
-            graph.heater_bed.heater_pin,
+            heater.heater_pin,
         )
         if pwm:
             modules.append(pwm)
