@@ -71,7 +71,6 @@ async def lifespan(app: FastAPI):
     # Shutdown gracefully
     logger.info("Shutting down LinuxCNC background tasks...")
     task_telemetry.cancel()
-    registry.unload()
     # Flush the persistent console history so any in-flight rows
     # survive the uvicorn shutdown. The logger is a process-wide
     # singleton so it is safe to close even when no module has
