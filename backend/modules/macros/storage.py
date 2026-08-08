@@ -241,7 +241,7 @@ class MacroStorage:
             dir=str(self._root),
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fp:
                 fp.write(content)
                 fp.flush()
                 os.fsync(fp.fileno())
