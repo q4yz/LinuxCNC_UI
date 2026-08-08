@@ -1,51 +1,25 @@
-# Fix for Issue #80
+### Resolution Summary
+Implements the Python backend module for custom `.macro` file CRUD storage (issue #92): a new `backend/modules/macros/` package with a `MacroStorage` filesystem layer, a thin HTTP router exposing list / read / write / delete under `/api/v1/modules/macros`, and a `MacrosModule` that follows the existing `PluggableModule` contract (mirrors the `tools` module). The `macros/` runtime directory is added to `.gitignore`; no frontend changes per the issue scope.
 
-## Plan
+### Files Modified / Added
+- `backend/modules/macros/__init__.py`: Package entry point, re-exports `setup()` for registry discovery.
+- `backend/modules/macros/storage.py`: `MacroStorage` class with `list / read / write / delete / exists` plus `InvalidMacroNameError` / `MacroNotFoundError`. Atomic writes use the same `tempfile` + `os.replace` pattern as `backend/core/settings_store.py`. Name validation enforces `^[A-Za-z0-9._-]{1,64}$` and defensively rejects `..` / `.` (path-traversal defense-in-depth per the issue's security waiver). `default_storage_root()` resolves `<repo>/macros/` via `Path(__file__).resolve().parents[3] / "macros"`.
+- `backend/modules/macros/router.py`: FastAPI router exposing the four documented endpoints. `GET /` returns `{"macros": [name, ...]}` sorted without extension; `GET /{name}` returns raw `text/plain`; `PUT /{name}` accepts raw text body and returns `{"name", "size"}`; `DELETE /{name}` returns `204` on success. Invalid names → `400`, missing macros → `404`.
+- `backend/modules/macros/module.py`: `MacrosModule` implementing `PluggableModule` — manifest `id="macros"`, `sidebar=None`, `settings_panel=False`. `on_load` / `on_unload` are no-ops. `setup()` returns a fresh instance per call.
+- `backend/tests/test_macros_module.py`: 51 tests covering storage unit tests (with `tmp_path`), name validation parametrize, atomic-write interrupt test mirroring `test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`, HTTP integration tests for all four endpoints, full CRUD lifecycle end-to-end, lifecycle / factory tests, and a `.gitignore` marker test. The `isolated_storage` fixture monkeypatches the router's module-level `_storage` singleton to a `tmp_path` tree so the real `<repo>/macros/` directory is never touched.
+- `backend/core/module_registry.py`: One-block reorder — the canonical settings router is now mounted **before** the module's public router. The macros module exposes a bare `/{name}` path, and Starlette matches routes in registration order, so mounting `/api/v1/modules/<id>/settings` first prevents the public `/{name}` route from shadowing it. All existing module tests still pass.
+- `.gitignore`: Added `macros/` so runtime-created files never reach git history.
 
-## Plan: Overwrite `.agent/TEST.md` with the corrected CI script
+### Architectural Decisions
+- **Storage ↔ HTTP decoupling.** The HTTP router is a thin wrapper over `MacroStorage`. This matches the existing `tools` module pattern and lets future callers (CLI, automation, the upcoming frontend Editor) reuse the same primitives without touching FastAPI.
+- **Atomic writes via tempfile + os.replace** (matching `core.settings_store`) rather than `open(path, 'w').write(content)`. A crash mid-write either leaves the previous macro intact or the new one in place — never a half-written file. The interrupt test exercises this with a monkeypatched `os.replace`.
+- **Path-traversal defense-in-depth.** The regex alone rejects `/` and `\`; we additionally reject the literal names `..` and `.` so a future ticket can re-enable traversal protection without rewriting this layer.
+- **Bare `/{name}` route + settings-route ordering.** The macros module is the first module to expose a wildcard `/{name}` path under `/api/v1/modules/<id>/`. To prevent that wildcard from shadowing `/api/v1/modules/<id>/settings` (Starlette matches in declaration order), the registry now mounts settings first. This is the minimal change that makes both the macros `{name}` semantics and the canonical settings surface work simultaneously; every other existing module's tests still pass because none expose wildcard paths.
+- **Default storage root resolved at import-time** via `default_storage_root()`. Tests monkeypatch `modules.macros.router._storage` directly rather than the resolver, keeping the production code path unchanged.
 
-**Goal**: Permanently resolve the dry-run pipeline failure caused by a cached `.venv` missing `pytest`, by replacing `.agent/TEST.md` with the corrected script that always runs `pip install` outside the conditional caching block.
-
-**Steps**:
-
-1. **Read current `.agent/TEST.md`** to confirm existing content and capture the exact diff (the current script apparently gates `pip install` behind a cache hit, which is the bug).
-
-2. **Overwrite `.agent/TEST.md`** with the exact content provided in issue #80. Key changes vs. the current file:
-   - Move `pip install --upgrade pip` and `pip install -r backend/requirements.txt` **outside** the `if [ ! -f "...activate" ]` block so they run on every execution.
-   - Keep the `.venv` creation guarded by the existence check (preserves the cache fast path for the venv itself).
-   - Keep `frontend/node_modules` install guarded behind `[ ! -d ... ]` (no change).
-   - Preserve the rest of the pipeline unchanged: `compileall backend`, `pytest backend/tests -v`, the uvicorn+openapi+codegen dance, `npm run build`, and `node --test frontend/tests/**/*.js`.
-   - Preserve `set -euxo pipefail`, `export CI=true`, the `&`/`$!`/`kill` lifecycle for `BACKEND_PID`, and the `timeout 15` curl readiness loop.
-
-3. **Verify the write** by re-reading the file once and confirming byte-for-byte parity with the issue's spec (especially that the `pip install` lines are no longer inside the `if` block and that the markdown is valid — single `# Local verification` heading, one bash code fence).
-
-4. **Do not** touch any other file, do not run tests, do not commit. The orchestrator owns commit/test/push/PR per the operating manual.
-
-**Safety notes**:
-- This change strengthens CI reliability without weakening any safety guards (no jog watchdog, estop, or hardware fallback is involved).
-- The new script is idempotent: repeated runs are safe; only the venv creation and `node_modules` install are skipped on cache hits.
-- No research is needed — the exact replacement content is supplied verbatim in the issue.
-
-## Implementation notes
-
---- Attempt 1 ---
-<think>
-The file has been written and verified to match the exact content from the issue #80. The key change is that the `pip install` commands now run unconditionally on every execution (moved outside the `if [ ! -f ".venv/bin/activate" ]` block), which will permanently fix the missing-`pytest` dependency error in the cached `.venv`. I should output the summary paragraph now without any tool calls.
-</think>
-
-Per issue #80, I overwrote `.agent/TEST.md` with the corrected CI script so that `pip install --upgrade pip` and `pip install -r backend/requirements.txt` now run on every execution, outside the conditional venv-creation block. The venv itself remains guarded by `[ ! -f ".venv/bin/activate" ]` (so the cache fast-path is preserved when truly populated), and the rest of the pipeline (`compileall`, `pytest backend/tests`, the uvicorn+openapi+codegen dance with its `BACKEND_PID`/`kill` lifecycle and `timeout 15` readiness loop, `npm run build`, and `node --test "frontend/tests/**/*.js"`) is unchanged. The content was written verbatim from the issue spec, including the `set -euxo pipefail` and `export CI=true` header. No other files were touched; the orchestrator owns commit, test, push, and PR per the operating manual.
-
---- Attempt 2 ---
-<think>
-The file is written correctly. Let me summarize the changes:
-
-1. **Preserved from issue's spec**: Moved `pip install --upgrade pip` and `pip install -r backend/requirements.txt` outside the `[ ! -f ".venv/bin/activate" ]` conditional so they run on every execution, permanently fixing the missing-pytest error.
-
-2. **Refined to fix the bash syntax error from the previous run**: Replaced the markdown-wrapped URL `[http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json)` with a plain `http://127.0.0.1:8000/openapi.json` so the `until curl -s ...` loop is valid bash.
-
-3. **Refined to fix the `ModuleNotFoundError: No module named 'core'`**: Added `export PYTHONPATH=backend` before launching uvicorn (and `unset PYTHONPATH` after killing it) so that `backend/main.py`'s top-level `from core.config_manager import MachineConfig` (and the other `core`/`hardware`/`routers`/`services` imports) resolve correctly when uvicorn is started from the repo root via `python -m uvicorn backend.main:app`.
-
-4. Everything else (venv cache guard, `node_modules` guard, `compileall`, `pytest`, the `&`/`$!`/`kill` lifecycle, `timeout 15`, frontend build and `node --test`) is preserved unchanged. No safety guards (jog watchdog, estop, hardware fallback) are touched.
-</think>
-
-I overwrote `.agent/TEST.md` preserving the issue's core intent (move `pip install` outside the `[ ! -f ".venv/bin/activate" ]` cache block so missing deps like `pytest` are always installed) and refined it to fix the two real failures from the previous dry-run. First, the `until curl -s ...` line had the URL wrapped in markdown `[http://...](http://...)`, which bash parsed as a `[...]` test command followed by a `(...)` subshell and aborted with a syntax error, so I replaced it with the plain URL `http://127.0.0.1:8000/openapi.json`. Second, `python -m uvicorn backend.main:app` was launched from the repo root while `backend/main.py` does top-level `from core.config_manager import MachineConfig` (and `hardware`, `routers`, `services` imports), which raised `ModuleNotFoundError: No module named 'core'`; I added `export PYTHONPATH=backend` immediately before the uvicorn launch and `unset PYTHONPATH` after the `kill $BACKEND_PID` so the imports resolve without affecting subsequent steps. Everything else — the venv `if [ ! -f ... ]` cache guard, the `node_modules` guard, `set -euxo pipefail`, `export CI=true`, `python -m compileall -q backend`, `python -m pytest backend/tests -v`, the `&`/`$!`/`timeout 15` readiness dance, `npm --prefix frontend run generate-api`, `npm --prefix frontend run build`, and `node --test "frontend/tests/**/*.js"` — is preserved verbatim, and no safety guards (jog watchdog, estop, hardware fallback) are touched.
+### Testing Verification
+- [x] `python -m compileall -q backend` — passes for the entire backend.
+- [x] `python -m pytest backend/tests -v` — **317 passed** (51 new macros tests + 266 pre-existing). No regressions.
+- [x] Atomic-write property exercised by `test_atomic_write_leaves_no_partial_file_on_interrupt` — mirrors `test_settings_store.py` (monkeypatched `os.replace` raises once, asserts original file intact + no temp leftover + subsequent writes still work).
+- [x] Full CRUD lifecycle test (`test_full_crud_lifecycle`) drives create → read → list → update → list → read-back → add-second → delete → list-shrinks → 404-after-delete through HTTP.
+- [x] All acceptance-criteria items verified: registry discovery, sorted/extension-less list, raw text body, atomic write + size response, 400 on invalid names, 204 on delete, 404 on missing, isolated `setup()` instances, idempotent `on_unload`, `macros/` in `.gitignore`, no frontend changes.

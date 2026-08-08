@@ -31,6 +31,13 @@ frontend/.env.*
 frontend/generated/*
 !frontend/generated/README.md
 
+# Macros directory — runtime-created by the macros module (issue #92).
+# Operators add/edit/delete ``.macro`` files here at runtime; the
+# files must never be committed to git history. Anchored to the
+# repo root so it does not collide with the
+# ``backend/modules/macros/`` package directory.
+/macros/
+
 # Old legacy ignores (safe to keep)
 templates/gb_*
 static/examples/*
