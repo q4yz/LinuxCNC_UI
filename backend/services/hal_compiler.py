@@ -100,7 +100,7 @@ class HalCompiler:
             hal_file.write("# Generated HAL for LinuxCNC\n")
 
     def _generate_remora_json(self, output_path: str):
-        """Generate ``hardware.json`` from ``self.config`` (stub for now).
+        """Generate ``hardware.json`` from ``self.config``.
 
         The legacy ``remora.json`` filename has been retired in favour
         of ``hardware.json`` (the backend's canonical hardware record).
@@ -108,13 +108,51 @@ class HalCompiler:
         :meth:`generate_staged` keep working until the legacy
         ``/api/v1/compiler/*`` endpoints are migrated to the new
         ``machineconfig`` module.
+
+        The ``heaters`` array is sourced from
+        :meth:`MachineConfig.get_heaters` so the deployed payload
+        reflects what the operator's ``machine.cfg`` actually
+        declared. Each entry is normalised to the shape consumed by
+        the temperature module's mock sensor list:
+
+        ``{"name", "control", "max_temp", "sensor_type"}``
+
+        ``control`` and ``sensor_type`` fall back to ``None`` when
+        the corresponding ``machine.cfg`` option is absent; the
+        field stays in the payload so consumers can rely on a stable
+        shape. The mock's sensor list is driven by the ``name`` field
+        only — ``actual``/``target`` start at ``25.0``/``0.0`` and
+        are not part of ``hardware.json``.
         """
+        heaters_payload = []
+        try:
+            raw_heaters = self.config.get_heaters()
+        except Exception as exc:  # noqa: BLE001 - defensive: never fail compile on heater parse
+            logger.warning(
+                "HalCompiler: get_heaters() raised %s; emitting empty heaters array",
+                exc,
+            )
+            raw_heaters = {}
+
+        for section_name, heater in raw_heaters.items():
+            # ``ExtruderConfig`` wraps a :class:`HeaterConfig`; the
+            # other path is a bare :class:`HeaterConfig`. Both expose
+            # ``max_temp`` / ``control`` / ``sensor_type``.
+            inner = getattr(heater, "heater", heater)
+            entry = {
+                "name": section_name,
+                "control": getattr(inner, "control", None),
+                "max_temp": getattr(inner, "max_temp", None),
+                "sensor_type": getattr(inner, "sensor_type", None),
+            }
+            heaters_payload.append(entry)
+
         payload = {
             "generated": True,
             "source": "HalCompiler",
-            "note": "TODO: Populate with real pin/stepper payload from MachineConfig.",
+            "note": "Populated steppers/heaters from MachineConfig.",
             "steppers": [],
-            "heaters": [],
+            "heaters": heaters_payload,
         }
         with open(output_path, "w", encoding="utf-8") as remora_file:
             json.dump(payload, remora_file, indent=2)

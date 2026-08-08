@@ -1,25 +1,102 @@
 ### Resolution Summary
-Implements the Python backend module for custom `.macro` file CRUD storage (issue #92): a new `backend/modules/macros/` package with a `MacroStorage` filesystem layer, a thin HTTP router exposing list / read / write / delete under `/api/v1/modules/macros`, and a `MacrosModule` that follows the existing `PluggableModule` contract (mirrors the `tools` module). The `macros/` runtime directory is added to `.gitignore`; no frontend changes per the issue scope.
+
+The temperature module's sensor list is now driven entirely by the
+active `hardware.json` payload instead of a hard-coded
+`extruder/bed/cpu` triple. The mock hardware layer, the temperature
+module's settings defaults, the `HalCompiler` heater array, and the
+frontend store all consume the same dynamic source of truth. Operators
+who want a CPU gauge add a `cpu` heater to `machine.cfg`; the legacy
+triple is dropped.
 
 ### Files Modified / Added
-- `backend/modules/macros/__init__.py`: Package entry point, re-exports `setup()` for registry discovery.
-- `backend/modules/macros/storage.py`: `MacroStorage` class with `list / read / write / delete / exists` plus `InvalidMacroNameError` / `MacroNotFoundError`. Atomic writes use the same `tempfile` + `os.replace` pattern as `backend/core/settings_store.py`. Name validation enforces `^[A-Za-z0-9._-]{1,64}$` and defensively rejects `..` / `.` (path-traversal defense-in-depth per the issue's security waiver). `default_storage_root()` resolves `<repo>/macros/` via `Path(__file__).resolve().parents[3] / "macros"`.
-- `backend/modules/macros/router.py`: FastAPI router exposing the four documented endpoints. `GET /` returns `{"macros": [name, ...]}` sorted without extension; `GET /{name}` returns raw `text/plain`; `PUT /{name}` accepts raw text body and returns `{"name", "size"}`; `DELETE /{name}` returns `204` on success. Invalid names → `400`, missing macros → `404`.
-- `backend/modules/macros/module.py`: `MacrosModule` implementing `PluggableModule` — manifest `id="macros"`, `sidebar=None`, `settings_panel=False`. `on_load` / `on_unload` are no-ops. `setup()` returns a fresh instance per call.
-- `backend/tests/test_macros_module.py`: 51 tests covering storage unit tests (with `tmp_path`), name validation parametrize, atomic-write interrupt test mirroring `test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`, HTTP integration tests for all four endpoints, full CRUD lifecycle end-to-end, lifecycle / factory tests, and a `.gitignore` marker test. The `isolated_storage` fixture monkeypatches the router's module-level `_storage` singleton to a `tmp_path` tree so the real `<repo>/macros/` directory is never touched.
-- `backend/core/module_registry.py`: One-block reorder — the canonical settings router is now mounted **before** the module's public router. The macros module exposes a bare `/{name}` path, and Starlette matches routes in registration order, so mounting `/api/v1/modules/<id>/settings` first prevents the public `/{name}` route from shadowing it. All existing module tests still pass.
-- `.gitignore`: Added `macros/` so runtime-created files never reach git history.
+
+**Backend**
+- `backend/services/hardware_loader.py` (new): shared helper that
+  parses `machine_config/active/hardware.json` and returns the
+  declared heater names. Falls back to `[]` when the file is
+  missing, malformed, or has no `heaters` array.
+- `backend/hardware/linuxcnc_mock.py`: removed the hard-coded
+  `temperatures = {extruder, bed, cpu}` triple. Now seeds the
+  sensor list from the active `hardware.json` via the shared
+  helper. Added a public `reseed_from_hardware_json()` so tests
+  (and future recompile hooks) can force a re-read without
+  re-importing the module. Backwards-compatible `target_temp` /
+  `actual_temp` fields mirror the first `extruder`-named sensor
+  when one exists, otherwise fall back to safe defaults.
+- `backend/services/hal_compiler.py`: `_generate_remora_json` no
+  longer emits `heaters: []`. It now parses `MachineConfig.get_heaters()`
+  and writes each entry as `{name, control, max_temp, sensor_type}`.
+  The legacy `HeaterConfig` / `ExtruderConfig` types are normalised
+  to the same shape.
+- `backend/modules/temperature/settings.py`: removed the hard-coded
+  `extruder/bed/cpu` palette. `TemperatureSettings.sensor_colors`
+  defaults to `{}`. Added `seed_colors(heater_names)` helper that
+  assigns each name a deterministic colour from a 6-entry palette
+  (red, blue, green, amber, violet, pink) in sorted-input order with
+  modulo wrap.
+- `backend/modules/temperature/module.py`: `__init__` now reads the
+  active heater list (called during `setup()` before
+  `_resolve_settings_model`); `on_load` re-reads it. The seeded
+  `sensor_colors` flow through to the per-module `SettingsStore`.
+
+**Frontend**
+- `frontend/src/modules/temperature/store.js`:
+  `DEFAULT_SENSOR_COLORS = {}`. The `colorFor` fallback
+  (`#A855F7`) remains so any sensor whose persisted colour was
+  deleted still renders.
+
+**Tests**
+- `backend/tests/test_temperature_module.py`: replaced the static
+  `extruder/bed/cpu` assertions with a fixture-driven test that
+  drops a fake `hardware.json` with two heaters and asserts the mock
+  seeds those two sensors. Added a separate empty-dict test for
+  the no-hardware-json path. The `set_target` flow now drives a
+  real `heater_bed` sensor so the seed list is non-empty.
+- `backend/tests/test_temperature_settings.py`: replaced the
+  three-sensor default assertion with an empty-dict assertion plus a
+  new "seeded from active heaters" test that drops a three-heater
+  `hardware.json` and asserts the seeded palette.
+- `backend/tests/test_json_generators.py`: added two new tests
+  that drive `HalCompiler._generate_remora_json` against a fixture
+  `machine.cfg` declaring `[heater_bed]` + `[extruder]` and assert
+  the emitted `hardware.json.heaters` array is non-empty and
+  contains the documented fields.
 
 ### Architectural Decisions
-- **Storage ↔ HTTP decoupling.** The HTTP router is a thin wrapper over `MacroStorage`. This matches the existing `tools` module pattern and lets future callers (CLI, automation, the upcoming frontend Editor) reuse the same primitives without touching FastAPI.
-- **Atomic writes via tempfile + os.replace** (matching `core.settings_store`) rather than `open(path, 'w').write(content)`. A crash mid-write either leaves the previous macro intact or the new one in place — never a half-written file. The interrupt test exercises this with a monkeypatched `os.replace`.
-- **Path-traversal defense-in-depth.** The regex alone rejects `/` and `\`; we additionally reject the literal names `..` and `.` so a future ticket can re-enable traversal protection without rewriting this layer.
-- **Bare `/{name}` route + settings-route ordering.** The macros module is the first module to expose a wildcard `/{name}` path under `/api/v1/modules/<id>/`. To prevent that wildcard from shadowing `/api/v1/modules/<id>/settings` (Starlette matches in declaration order), the registry now mounts settings first. This is the minimal change that makes both the macros `{name}` semantics and the canonical settings surface work simultaneously; every other existing module's tests still pass because none expose wildcard paths.
-- **Default storage root resolved at import-time** via `default_storage_root()`. Tests monkeypatch `modules.macros.router._storage` directly rather than the resolver, keeping the production code path unchanged.
+
+- **Shared helper in `services/hardware_loader.py`.** Both the
+  mock layer and the temperature module needed the same parse. A
+  new module keeps the path-resolution / JSON-parse logic in one
+  place; either consumer can be swapped independently.
+- **`__init__` reads the heaters, not just `on_load`.** The
+  registry calls `_resolve_settings_model(instance)` before
+  `on_load`, so the seeded `sensor_colors` must be available at
+  construction time. `on_load` re-reads the list to pick up any
+  in-process re-deployment (rare in practice — most operators
+  restart the backend between deploys).
+- **`reseed_from_hardware_json()` helper on the mock.** Tests
+  that monkey-patch the active directory after the mock is loaded
+  need a deterministic way to force a re-read. The function is
+  idempotent and called once at module import for production.
+- **`set_temperature` still creates a sensor on the fly.** The
+  router-level `POST /sensors/{name}/target` path can target a
+  sensor that wasn't seeded by `hardware.json` (e.g. an operator
+  adds a chamber heater at runtime). The mock's existing
+  `set_temperature` command already creates the entry on demand;
+  behaviour is unchanged.
+- **Deterministic colour seeding is the documented trade-off.**
+  `bed=red`, `chamber=blue` after sorting. The operator can
+  override any colour via the Settings panel and the override
+  persists via `SettingsStore` merge semantics.
+- **`#A855F7` (purple) stays as the frontend's "unknown sensor"
+  fallback** so any sensor the backend introduces after the
+  operator's last PUT still renders.
 
 ### Testing Verification
-- [x] `python -m compileall -q backend` — passes for the entire backend.
-- [x] `python -m pytest backend/tests -v` — **317 passed** (51 new macros tests + 266 pre-existing). No regressions.
-- [x] Atomic-write property exercised by `test_atomic_write_leaves_no_partial_file_on_interrupt` — mirrors `test_settings_store.py` (monkeypatched `os.replace` raises once, asserts original file intact + no temp leftover + subsequent writes still work).
-- [x] Full CRUD lifecycle test (`test_full_crud_lifecycle`) drives create → read → list → update → list → read-back → add-second → delete → list-shrinks → 404-after-delete through HTTP.
-- [x] All acceptance-criteria items verified: registry discovery, sorted/extension-less list, raw text body, atomic write + size response, 400 on invalid names, 204 on delete, 404 on missing, isolated `setup()` instances, idempotent `on_unload`, `macros/` in `.gitignore`, no frontend changes.
+
+- [x] Ran local test suite / build checks
+- [x] 321 backend tests pass (`python -m pytest backend/tests -v`)
+- [x] 98 frontend tests pass (`node --test "frontend/tests/**/*.mjs"`)
+- [x] Frontend production build succeeds (`npm --prefix frontend run build`)
+- [x] API client regenerates against the running backend
+  (`npm --prefix frontend run generate-api`)

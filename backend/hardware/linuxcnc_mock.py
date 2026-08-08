@@ -5,6 +5,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("linuxcnc_mock")
 
+from services.hardware_loader import load_active_heaters
+
 # --- LinuxCNC Constants ---
 STATE_ESTOP = 1
 STATE_ESTOP_RESET = 2
@@ -43,6 +45,34 @@ OPERATOR_TEXT = 3
 OPERATOR_DISPLAY = 4
 
 # --- Shared State ---
+def _seed_temperatures_from_hardware():
+    """Reset ``_machine_state.temperatures`` from the active ``hardware.json``.
+
+    Called once at module import. Tests that monkey-patch the
+    active directory after import can invoke this function to force
+    a re-read without re-importing the module. Each seeded entry
+    starts at ambient (25 °C) with target=0; the simulation loop
+    ramps ``actual`` toward ``target`` on every tick.
+    """
+    with _machine_state.lock:
+        _machine_state.temperatures = {}
+        for name in load_active_heaters():
+            _machine_state.temperatures[name] = {'actual': 25.0, 'target': 0.0}
+        legacy_extruder = next(
+            (
+                v for k, v in _machine_state.temperatures.items()
+                if k == 'extruder' or k.startswith('extruder')
+            ),
+            None,
+        )
+        if legacy_extruder is not None:
+            _machine_state.target_temp = legacy_extruder.get('target', 0.0)
+            _machine_state.actual_temp = legacy_extruder.get('actual', 25.0)
+        else:
+            _machine_state.target_temp = 0.0
+            _machine_state.actual_temp = 25.0
+
+
 class SharedMachineState:
     def __init__(self):
         self.task_state = STATE_ESTOP
@@ -57,17 +87,22 @@ class SharedMachineState:
         self.current_line = 0
         self.total_lines = 0
         self.g5x_index = 1  # 1 = G54 (default)
-        
-        # Temperature Simulation State (multi-sensor dictionary)
-        # Example sensors: extruder, bed, cpu
-        self.temperatures = {
-            'extruder': {'actual': 25.0, 'target': 0.0},
-            'bed': {'actual': 25.0, 'target': 0.0},
-            'cpu': {'actual': 40.0}  # CPU has no controllable target
-        }
-        # Backwards-compatible single-sensor fields (kept for older callers)
-        self.target_temp = self.temperatures.get('extruder', {}).get('target', 0.0)
-        self.actual_temp = self.temperatures.get('extruder', {}).get('actual', 25.0)
+
+        # Temperature Simulation State (multi-sensor dictionary).
+        # The set of sensors is driven entirely by ``hardware.json`` in
+        # ``machine_config/active/`` — no hard-coded ``extruder/bed/cpu``
+        # fixtures. When the file is missing (typical in CI) the mock
+        # boots with an empty dict and the temperature panel renders
+        # the "No sensors reported yet" empty state. Each seeded entry
+        # starts at ambient with target=0; the simulation loop ramps the
+        # ``actual`` value toward ``target`` on every tick.
+        self.temperatures: dict = {}
+        # Backwards-compatible single-sensor fields (kept for older
+        # callers). They mirror the first ``extruder``-named sensor
+        # when one exists, otherwise fall back to safe defaults so a
+        # machine with no extruder does not crash legacy callers.
+        self.target_temp = 0.0
+        self.actual_temp = 25.0
         
         self.lock = threading.Lock()
 
@@ -82,6 +117,26 @@ class SharedMachineState:
         self.jog_stop_event = threading.Event()
 
 _machine_state = SharedMachineState()
+
+
+# Seed the mock's sensor list from the active ``hardware.json`` at
+# import time. When the file is missing (typical in CI) the mock
+# starts with an empty dict. Tests that monkey-patch the active
+# directory can call ``reseed_from_hardware_json()`` (or the
+# private ``_seed_temperatures_from_hardware``) to force a re-read
+# without re-importing the module.
+def reseed_from_hardware_json():
+    """Re-read ``hardware.json`` and refresh the mock's sensor list.
+
+    Public hook so tests (and any future operator-facing "recompile"
+    endpoint) can refresh the mock state without re-importing the
+    module. Idempotent: calling it twice with no intervening deploy
+    yields the same sensor list.
+    """
+    _seed_temperatures_from_hardware()
+
+
+_seed_temperatures_from_hardware()
 
 def _jog_simulation_loop():
     """Background thread to actually move coordinates during a continuous jog in the mock"""
