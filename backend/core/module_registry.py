@@ -372,7 +372,21 @@ class ModuleRegistry:
             )
             return
 
-        # 3. Mount the public router, if any.
+        # 3. Mount the canonical settings router FIRST. The settings
+        #    endpoints are owned by the registry (modules do **not**
+        #    expose settings routes via ``get_router()``); mounting
+        #    them before the public router ensures that a module
+        #    exposing a bare ``/{name}`` path (e.g. the macros
+        #    module) cannot shadow ``/api/v1/modules/<id>/settings``.
+        #    Starlette matches routes in registration order.
+        settings_router = _build_default_settings_router(settings)
+        app.include_router(
+            settings_router,
+            prefix=f"/api/v1/modules/{module_id}/settings",
+            tags=[f"modules:{module_id}:settings"],
+        )
+
+        # 4. Mount the public router, if any.
         router = instance.get_router()
         if router is not None:
             app.include_router(
@@ -380,16 +394,6 @@ class ModuleRegistry:
                 prefix=f"/api/v1/modules/{module_id}",
                 tags=[f"modules:{module_id}"],
             )
-
-        # 4. Mount the canonical settings router. The four endpoints
-        #    (GET/PUT bulk + GET/PUT key) are owned by the registry;
-        #    modules just declare schemas on their manifest.
-        settings_router = _build_default_settings_router(settings)
-        app.include_router(
-            settings_router,
-            prefix=f"/api/v1/modules/{module_id}/settings",
-            tags=[f"modules:{module_id}:settings"],
-        )
 
         self.modules[module_id] = instance
         self.manifests[module_id] = manifest
