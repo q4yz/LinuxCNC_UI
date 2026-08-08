@@ -183,9 +183,7 @@ share the same contract:
 | Module contracts | `.agent/contracts/{backend,frontend,settings}-module.md` |
 | Settings persistence | `backend/core/settings_store.py` (atomic write per module) |
 | Test scripts | `frontend/tests/*.mjs`, `backend/tests/test_*.py` |
-| Loop-agent operating manual | `.agent/AGENT.md` |
-| General architect operating manual | `.agent/ARCHITECT.md` |
-| GraphLLM single-pass operating manual | `.agent/graph_agent.md` |
+| Repository agent guide | `.agent/AGENT.md` |
 | Test run script | `.agent/TEST.md` (the orchestrator runs this) |
 | Module design backlog | `MODULE_SYSTEM_ROADMAP.md` at the repo root |
 | Current as-built state | `.agent/STATE.md` |
@@ -196,12 +194,9 @@ The orchestrator is not part of the application code — it lives
 outside the repo and reads the `.agent/` contracts. Inside the repo,
 its footprint is:
 
-- `.agent/AGENT.md` — loop-agent operating manual; iterative
-  agents read this before editing code.
-- `.agent/ARCHITECT.md` — general architect operating manual;
-  design-only agents with commit authority read this.
-- `.agent/graph_agent.md` — GraphLLM single-pass operating manual;
-  the tightly constrained agent the GraphLLM orchestrator drives.
+- `.agent/AGENT.md` — repository agent guide; stack layout,
+  conventions, and quality/scope rules any agent reads before
+  editing code.
 - `.agent/TEST.md` — the bash script the orchestrator runs after
   every edit to verify the change.
 - `.agent/contracts/` — Python + JS interface contracts the AI

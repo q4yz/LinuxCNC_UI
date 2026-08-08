@@ -24,9 +24,7 @@ LinuxCNC_UI/
 │   │   ├── VISION.md          # Project goals + philosophy
 │   │   ├── ARCHITECTURE.md    # Technical structure + module registry graph
 │   │   └── LESSONS_LEARNED.md # Past mistakes and pitfall tripwires
-│   ├── AGENT.md               # Loop-agent operating manual (general iterative)
-│   ├── ARCHITECT.md           # General architect (design-only autonomy)
-│   ├── graph_agent.md         # GraphLLM single-pass operating manual
+│   ├── AGENT.md               # Repository agent guide (stack, conventions, quality/scope)
 │   ├── TEST.md                # Bash script the orchestrator runs to verify edits
 │   ├── STATE.md               # Current as-built state of the module system
 │   ├── README.md              # Index of the .agent/ folder
@@ -101,9 +99,7 @@ needs before editing any code.
 | [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md) | When you are creating or modifying a backend module. |
 | [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) | When you are creating or modifying a frontend module. |
 | [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md) | When you are touching the four canonical settings endpoints. |
-| [`.agent/AGENT.md`](.agent/AGENT.md) | When you are a general loop-agent and need the iterative operating manual (plan → act → observe → refine, no commits, free-form output). |
-| [`.agent/ARCHITECT.md`](.agent/ARCHITECT.md) | When you are a general architect with design-only commit authority over `.agent/`, root `*.md`, and `contracts/`. |
-| [`.agent/graph_agent.md`](.agent/graph_agent.md) | When you are the GraphLLM single-pass agent and need the tightly constrained manual (no commits, no tests, no PRs, one-paragraph summary, honest no-op). |
+| [`.agent/AGENT.md`](.agent/AGENT.md) | When you need the repository agent guide — stack layout, backend + frontend conventions, quality/scope rules. |
 | [`.agent/TEST.md`](.agent/TEST.md) | When you need to know what the orchestrator will run to verify your edits. Do **not** run it yourself. |
 | [`.agent/HANDOFF_TEMPLATE.md`](.agent/HANDOFF_TEMPLATE.md) | When the orchestrator asks for a PR description. |
 | `MODULE_SYSTEM_ROADMAP.md` (root) | When you are picking up a ticket that says "Phase 4" or "Phase 5" or higher. Not present in the working tree. |
@@ -150,10 +146,8 @@ points you at them.
   [`.agent/context/VISION.md`](.agent/context/VISION.md).**
   Push back in the summary paragraph instead.
 - **Do not invent a fix.** If you are stuck after 2-3 attempts,
-  return the honest no-op (see the matching operating manual —
-  [`.agent/AGENT.md`](.agent/AGENT.md) for the loop-agent,
-  [`.agent/graph_agent.md`](.agent/graph_agent.md) for the
-  GraphLLM agent).
+  return the honest no-op (see
+  [`.agent/AGENT.md`](.agent/AGENT.md)).
 
 ---
 

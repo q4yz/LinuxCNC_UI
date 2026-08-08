@@ -269,13 +269,11 @@ already does this.
 **Root cause.** The agent's instruction file did not say "don't
 run tests; the orchestrator does."
 
-**Fix.** `.agent/graph_agent.md` Part 1 explicitly forbids
-committing, pushing, running tests, and opening PRs. The agent
-writes code and a one-paragraph summary; the orchestrator
-handles the rest. (The general loop-agent in `.agent/AGENT.md`
-and the architect in `.agent/ARCHITECT.md` inherit the same
-no-commits / no-tests / no-PRs rule by default; only the
-architect's design-only scope is an explicit exception.)
+**Fix.** `.agent/AGENT.md` is the repository agent guide; the
+no-commits / no-tests / no-PRs rules for the in-repo agent role
+are enforced by the orchestrator out-of-repo. The agent writes
+code and a summary; the orchestrator handles commit, push, test,
+and PR.
 
 ### 6.2 The "honest no-op"
 
@@ -284,9 +282,8 @@ hide a missing dependency instead of asking.
 
 **Root cause.** The agent prefers "useful" over "honest."
 
-**Fix.** The "giving up" rule in `.agent/graph_agent.md` (and the
-parallel "honest no-op" rule in `.agent/AGENT.md` § 8) codifies
-the no-op: state the attempts, state the blocker, state the next
+**Fix.** The "honest no-op" rule is enforced by the orchestrator
+out-of-repo: state the attempts, state the blocker, state the next
 human step. A credible fake fix is worse than a real "blocked."
 
 ### 6.3 The venv cache trap
@@ -311,11 +308,10 @@ writing any code tripped the orchestrator's circuit breaker.
 **Root cause.** The agent treated the orchestrator's budget as
 unbounded.
 
-**Fix.** `.agent/graph_agent.md` Part 1 codifies the anti-patterns
-for the single-pass agent: read minimum, write minimum, do not
-browse, do not hedge. The loop-agent in `.agent/AGENT.md` keeps
-the same anti-patterns but lifts the read/write budgets to a
-small stated cap and allows iterative refinement.
+**Fix.** `.agent/AGENT.md` sets the conventions and quality/scope
+rules; the read/write budget and circuit-breaker thresholds are
+enforced by the orchestrator out-of-repo. The anti-patterns
+remain: read minimum, write minimum, do not browse, do not hedge.
 
 ## 7. Hot debris (known limitations to track)
 
