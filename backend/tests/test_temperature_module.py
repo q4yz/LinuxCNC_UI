@@ -43,19 +43,23 @@ def test_temperature_module_boots_and_registers_router(
     """Boot logs ``mounted=['temperature']`` and the router is live.
 
     The module's :meth:`get_settings_model` hook seeds the
-    ``sensor_colors`` map from the active heater list (issue #97).
-    A test that points the helper at a ``tmp_path`` with two
-    declared heaters asserts the seeded palette flows through to
-    ``GET /api/v1/modules/temperature/settings``.
+    ``sensor_colors`` map from the active sensor list. A test that
+    points the helper at a ``tmp_path`` with two declared temperature
+    sensors (in the v2 ``hardware.json`` shape) asserts the seeded
+    palette flows through to ``GET /api/v1/modules/temperature/settings``.
     """
     from services import hardware_loader
 
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
+    # v2 hardware.json: temperature_sensors[] is the canonical list
+    # the temperature module seeds from. The heater_bed sensor id is
+    # ``bed`` (the ``heater_`` prefix is stripped per
+    # ``_temperature_sensor_id``).
     (active_dir / "hardware.json").write_text(
-        '{"heaters": ['
-        '{"name": "extruder"}, '
-        '{"name": "heater_bed"}'
+        '{"temperature_sensors": ['
+        '{"id": "extruder", "pin": "PA1"}, '
+        '{"id": "bed", "pin": "PA0"}'
         "]}",
         encoding="utf-8",
     )
@@ -89,12 +93,13 @@ def test_temperature_module_boots_and_registers_router(
     assert body["sample_period_ms"] == 500
     assert body["ambient_celsius"] == 25.0
     assert body["unit"] == "celsius"
-    # Issue #97: ``sensor_colors`` is seeded from the active heater
-    # list. Alphabetical order (``extruder``, ``heater_bed``) maps
-    # to the first two entries of the 6-colour palette.
+    # v2 model: ``sensor_colors`` is seeded from the active
+    # ``temperature_sensors[]`` list. Alphabetical order (``bed``,
+    # ``extruder``) maps to the first two entries of the 6-colour
+    # palette: ``bed`` -> red, ``extruder`` -> blue.
     assert body["sensor_colors"] == {
-        "extruder": "#EF4444",
-        "heater_bed": "#3B82F6",
+        "bed": "#EF4444",
+        "extruder": "#3B82F6",
     }
 
 
@@ -158,22 +163,26 @@ def test_get_sensors_returns_mock_dict_empty_when_no_hardware_json(
 def test_get_sensors_returns_dynamic_heater_list_from_hardware_json(
     tmp_data_root, clean_env, monkeypatch
 ):
-    """``GET /api/v1/modules/temperature/sensors`` exposes the heater
-    list from ``machine_config/active/hardware.json`` (issue #97).
+    """``GET /api/v1/modules/temperature/sensors`` exposes the sensor
+    list from ``machine_config/active/hardware.json`` (issue #97 +
+    v2 hardware.json model).
 
-    The test fixture drops a fake ``hardware.json`` with two heaters
-    in a ``tmp_path`` tree and asserts the mock seeds those two
-    sensors (no more, no less). Each entry must carry an
-    ``actual`` reading.
+    The test fixture drops a fake v2 ``hardware.json`` with two
+    temperature sensors in a ``tmp_path`` tree and asserts the mock
+    seeds those two sensors (no more, no less). Each entry must
+    carry an ``actual`` reading.
     """
     from services import hardware_loader
 
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
+    # v2 hardware.json: ``temperature_sensors[]`` is the canonical
+    # list the mock seeds from. The heater_bed sensor id is ``bed``
+    # (``heater_`` prefix stripped per ``_temperature_sensor_id``).
     (active_dir / "hardware.json").write_text(
-        '{"heaters": ['
-        '{"name": "extruder"}, '
-        '{"name": "heater_bed"}'
+        '{"temperature_sensors": ['
+        '{"id": "extruder", "pin": "PA1"}, '
+        '{"id": "bed", "pin": "PA0"}'
         "]}",
         encoding="utf-8",
     )
@@ -198,9 +207,9 @@ def test_get_sensors_returns_dynamic_heater_list_from_hardware_json(
     resp = client.get("/api/v1/modules/temperature/sensors")
     assert resp.status_code == 200
     sensors = resp.json()["sensors"]
-    # The mock must report exactly the heaters declared in
+    # The mock must report exactly the sensors declared in
     # ``hardware.json`` — no legacy ``cpu`` sensor.
-    assert set(sensors.keys()) == {"extruder", "heater_bed"}
+    assert set(sensors.keys()) == {"extruder", "bed"}
     # Each seeded entry has the documented starting state.
     for name, entry in sensors.items():
         assert "actual" in entry

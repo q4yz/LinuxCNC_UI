@@ -11,9 +11,26 @@ one place. The mock and the temperature module both call
 :func:`load_active_heaters` so a future move to a different active
 root only touches this module.
 
-Failure modes (missing file, corrupt JSON, missing ``heaters`` key)
-return an empty list — the rest of the system then renders the
-"No sensors reported yet" empty state instead of crashing on boot.
+v2 model note
+-------------
+The v1 hardware.json shape declared a top-level ``heaters`` array of
+records where each record carried its own ``name``, ``heater_pin``,
+``sensor_pin``, etc. — "the heater carries the sensor". The v2 shape
+splits that into a top-level ``heaters`` list (heater records) and
+a top-level ``temperature_sensors`` list (sensor records). The two
+are linked by the heater's ``sensor`` field which references a
+``temperature_sensors[].id``.
+
+The temperature module's sensor list is driven by the sensors, not
+the heaters — each sensor in ``temperature_sensors[]`` is one
+runtime entry in the mock's ``temperatures`` dict and one row in the
+frontend's dynamic form. The function name is historical; the
+return value is a list of sensor ids.
+
+Failure modes (missing file, corrupt JSON, missing
+``temperature_sensors`` key) return an empty list — the rest of the
+system then renders the "No sensors reported yet" empty state
+instead of crashing on boot.
 """
 
 from __future__ import annotations
@@ -46,17 +63,23 @@ def load_active_heaters(
     active_dir: Path | None = None,
     hardware_filename: str = "hardware.json",
 ) -> List[str]:
-    """Return the list of heater names declared by the active payload.
+    """Return the list of sensor ids declared by the active payload.
 
     Reads ``<active_dir>/<hardware_filename>``, parses the JSON, and
-    returns every entry's ``name`` field from the top-level
-    ``heaters`` array. Returns an empty list when:
+    returns every entry's ``id`` field from the top-level
+    ``temperature_sensors`` array. The function name is historical —
+    before the v2 hardware.json model, sensors and heaters were the
+    same record. The v2 shape splits them; the caller wants the
+    sensor list (one entry per runtime temperature channel), not
+    the heater list (one entry per controllable thermal output).
+
+    Returns an empty list when:
 
     * The file does not exist (typical in CI / dev before the first
       ``deploy`` has run).
     * The JSON is malformed (logged at WARNING).
-    * The ``heaters`` key is missing or not an array.
-    * The array exists but every entry lacks a ``name`` field.
+    * The ``temperature_sensors`` key is missing or not an array.
+    * The array exists but every entry lacks an ``id`` field.
 
     Order is preserved as written in ``hardware.json`` — callers that
     want a deterministic order should sort the result themselves.
@@ -81,14 +104,14 @@ def load_active_heaters(
     if not isinstance(payload, dict):
         return []
 
-    raw_heaters = payload.get("heaters")
-    if not isinstance(raw_heaters, list):
+    raw_sensors = payload.get("temperature_sensors")
+    if not isinstance(raw_sensors, list):
         return []
 
     names: List[str] = []
-    for entry in raw_heaters:
+    for entry in raw_sensors:
         if isinstance(entry, dict):
-            name = entry.get("name")
+            name = entry.get("id")
             if isinstance(name, str) and name:
                 names.append(name)
     return names
