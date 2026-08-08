@@ -97,14 +97,18 @@ def test_hardware_json_basic() -> None:
     )
     payload = build_hardware_json(graph, "test_machine")
 
+    assert payload["version"] == "2.0"
     assert payload["machine"] == "test_machine"
     assert payload["kinematics"] == "cartesian"
     assert payload["hal_type"] == "remora"
     assert len(payload["steppers"]) == 3
-    assert payload["steppers"][0]["axis"] == "x"
-    assert payload["steppers"][0]["scale"] == 80.0
-    assert payload["steppers"][2]["axis"] == "z"
-    assert payload["steppers"][2]["scale"] == 400.0
+    # The v2 shape keys steppers by id (derived from the section name),
+    # not by axis letter. The axis letter is recoverable from the
+    # axes list, not stored on the stepper itself.
+    assert payload["steppers"][0]["id"] == "stepper_x"
+    assert payload["steppers"][0]["rotation_distance"] == 40.0
+    assert payload["steppers"][2]["id"] == "stepper_z"
+    assert payload["steppers"][2]["rotation_distance"] == 8.0
 
 
 def test_hardware_json_includes_pins() -> None:

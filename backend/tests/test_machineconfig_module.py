@@ -607,18 +607,19 @@ def test_machine_name_empty_active_returns_null(
 
 
 # ---------------------------------------------------------------------- #
-# hardware.json heaters array (issue: dynamic heater hardware.json)        #
+# hardware.json v2 payload (issue: dynamic heater hardware.json)          #
 # ---------------------------------------------------------------------- #
 
 
-def test_hardware_json_heaters_populated_from_user_example(
+def test_hardware_json_v2_emits_user_example(
     tmp_data_root, clean_env
 ):
-    """The user's example ([extruder] + [heater_bed]) compiles into a
-    hardware.json with two heater entries — one per declared section.
+    """The user's example ([extruder] + [heater_bed]) compiles into the
+    hardware.json v2 shape with two heaters, two temperature sensors,
+    two axes, and three endstop records per Klipper switch.
 
-    This is the end-to-end assertion that ties the parser, the
-    hardware.json generator, and the HeaterExtractor together.
+    The end-to-end assertion ties the parser, the v2 generator,
+    and the strict Pydantic model together.
     """
     from modules.machineconfig.compilers.hardware_json_generator import (
         build_hardware_json,
@@ -626,70 +627,123 @@ def test_hardware_json_heaters_populated_from_user_example(
     from modules.machineconfig.parser import MachineConfigParser
 
     config = """
-[extruder]
-step_pin: PB1
-dir_pin: !PB0
-enable_pin: !PD6
+[stepper_x]
+step_pin: PF13
+dir_pin: PF12
+enable_pin: !PF14
 microsteps: 16
-rotation_distance: 33.683
-nozzle_diameter: 0.400
-filament_diameter: 1.750
-heater_pin: PD5
+rotation_distance: 40.0
+position_endstop: 0.0
+position_max: 300.0
+
+[stepper_y]
+step_pin: PG0
+dir_pin: PG1
+enable_pin: !PF15
+microsteps: 16
+rotation_distance: 40.0
+position_endstop: 0.0
+position_max: 300.0
+
+[stepper_z]
+step_pin: PG2
+dir_pin: PG3
+enable_pin: !PF16
+microsteps: 16
+rotation_distance: 40.0
+position_endstop: 0.0
+position_max: 300.0
+
+[endstop_switch x_min]
+stepper: x
+pin: ^PC0
+
+[endstop_switch y_min]
+stepper: y
+pin: ^PC1
+
+[endstop_switch z_min]
+stepper: z
+pin: ^PC2
+
+[extruder]
+step_pin: PC9
+dir_pin: PC8
+enable_pin: !PD1
+microsteps: 16
+rotation_distance: 33.500
+heater_pin: PE3
 sensor_type: EPCOS 100K B57560G104F
-sensor_pin: PA7
+sensor_pin: PA1
 control: pid
-pid_Kp: 21.527
-pid_Ki: 1.063
-pid_Kd: 108.982
+pid_Kp: 22.2
+pid_Ki: 1.08
+pid_Kd: 114
 min_temp: 0
 max_temp: 250
 
 [heater_bed]
-heater_pin: PD4
-sensor_type: EPCOS 100K B57560G104F
-sensor_pin: PA6
-control: pid
-pid_Kp: 54.027
-pid_Ki: 0.770
-pid_Kd: 948.182
+heater_pin: PB7
+sensor_type: Generic 3950
+sensor_pin: PA0
+control: watermark
 min_temp: 0
 max_temp: 130
 """
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "test")
 
-    assert payload["heaters"] == [
-        {
-            "name": "extruder",
-            "heater_pin": "PD5",
-            "sensor_pin": "PA7",
-            "sensor_type": "EPCOS 100K B57560G104F",
-            "control": "pid",
-            "min_temp": 0.0,
-            "max_temp": 250.0,
-            "pid_Kp": 21.527,
-            "pid_Ki": 1.063,
-            "pid_Kd": 108.982,
-        },
-        {
-            "name": "heater_bed",
-            "heater_pin": "PD4",
-            "sensor_pin": "PA6",
-            "sensor_type": "EPCOS 100K B57560G104F",
-            "control": "pid",
-            "min_temp": 0.0,
-            "max_temp": 130.0,
-            "pid_Kp": 54.027,
-            "pid_Ki": 0.770,
-            "pid_Kd": 948.182,
-        },
+    # Top-level shape.
+    assert payload["version"] == "2.0"
+    assert payload["machine"] == "test"
+    assert payload["hal_type"] == "remora"
+
+    # Three axes, one per unique stepper letter.
+    assert [a["id"] for a in payload["axes"]] == ["x", "y", "z"]
+
+    # Three steppers, ids derived from the section name.
+    stepper_ids = [s["id"] for s in payload["steppers"]]
+    assert stepper_ids == ["stepper_x", "stepper_y", "stepper_z"]
+
+    # Three drivers, one per stepper.
+    assert [d["id"] for d in payload["drivers"]] == [
+        "driver_stepper_x",
+        "driver_stepper_y",
+        "driver_stepper_z",
     ]
 
+    # Nine endstop records — three per switch.
+    endstop_records = payload["endstops"]
+    assert len(endstop_records) == 9
+    by_switch: dict[str, list[dict]] = {}
+    for record in endstop_records:
+        by_switch.setdefault(record["endstop_id"], []).append(record)
+    assert set(by_switch.keys()) == {"x_min", "y_min", "z_min"}
+    for switch_id, records in by_switch.items():
+        roles = sorted(r["type"] for r in records)
+        assert roles == ["endstop", "homing", "ignore"]
+        # All three records share the same pin and the same stepper.
+        pins = {r["pin"] for r in records}
+        assert len(pins) == 1
+        steppers = {r["stepper"] for r in records}
+        assert len(steppers) == 1
 
-def test_hardware_json_heaters_empty_when_no_heater_sections(
+    # Two heaters, two temperature sensors.
+    assert [h["id"] for h in payload["heaters"]] == ["heater_extruder", "heater_bed"]
+    assert [s["id"] for s in payload["temperature_sensors"]] == ["extruder", "bed"]
+    # Heater.sensor references resolve into temperature_sensors[].id.
+    heater_sensor_refs = {h["id"]: h["sensor"] for h in payload["heaters"]}
+    assert heater_sensor_refs == {
+        "heater_extruder": "extruder",
+        "heater_bed": "bed",
+    }
+
+
+def test_hardware_json_v2_empty_arrays_when_no_heaters(
     tmp_data_root, clean_env
 ):
-    """A profile with no heater sections compiles to an empty heaters array."""
+    """A profile with no heater sections compiles to empty
+    ``heaters`` / ``temperature_sensors`` / ``fans`` lists."""
     from modules.machineconfig.compilers.hardware_json_generator import (
         build_hardware_json,
     )
@@ -705,6 +759,9 @@ step_pin: PF13
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "no-heaters")
     assert payload["heaters"] == []
+    assert payload["temperature_sensors"] == []
+    assert payload["fans"] == []
+    assert payload["endstops"] == []
 
 
 # ---------------------------------------------------------------------- #
@@ -735,8 +792,8 @@ def test_compile_duplicate_stepper_pin_returns_structured_error(
         "[stepper_x]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
         "[stepper_y]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
         "[stepper_z]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
-        "[extruder]\nstep_pin: PA4\ndir_pin: PA5\n\n"
-        "[heater_bed]\nheater_pin: PB0\nsensor_pin: PB1\n",
+        "[extruder]\nstep_pin: PA4\ndir_pin: PA5\nheater_pin: PE3\nsensor_pin: PA1\ncontrol: pid\npid_Kp: 1.0\npid_Ki: 1.0\npid_Kd: 1.0\nmin_temp: 0\nmax_temp: 250\n\n"
+        "[heater_bed]\nheater_pin: PB0\nsensor_pin: PB1\ncontrol: watermark\nmin_temp: 0\nmax_temp: 130\n",
         encoding="utf-8",
     )
 

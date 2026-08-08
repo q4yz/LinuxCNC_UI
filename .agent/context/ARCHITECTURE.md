@@ -188,7 +188,72 @@ share the same contract:
 | Module design backlog | `MODULE_SYSTEM_ROADMAP.md` at the repo root |
 | Current as-built state | `.agent/STATE.md` |
 
-## 7. What the GraphLLM orchestrator actually does
+## 7. `hardware.json` v2 — the canonical machine record
+
+`hardware.json` is the compiler's output that describes every pin
+the backend knows about. Pointed at by the deployment tools,
+the temperature module (which seeds its sensors from
+`temperature_sensors`), and the jog watchdog (which reads
+`endstops`). Versioned at the root: `"version": "2.0"`. Old
+shape is rejected on load (no backcompat).
+
+The model is flat with explicit `id` fields and string
+references. Cross-references are validated by a single
+`HardwareJson` Pydantic model in
+`backend/modules/machineconfig/models/hardware_json_models.py`
+that walks the graph once and fails fast with the full error list
+when any link is unresolved.
+
+```
+Top-level keys
+--------------
+version       Literal["2.0"]            — breaking-change fence
+machine       str                        — profile name
+source        str                        — compiler id
+kinematics    str
+hal_type      str
+axes          [Axis]                     — kinematic axes
+steppers      [Stepper]                  — physical stepper drives
+drivers       [Driver]                   — TMC2209 / etc.
+endstops      [Endstop]                  — three per switch
+heaters       [Heater]
+temperature_sensors  [TemperatureSensor]   — type-discriminated list
+                                         (future pressure_sensors,
+                                          flow_sensors are separate
+                                          top-level lists)
+fans          [Fan]
+```
+
+The endstop list deliberately contains **three records per
+Klipper `[endstop_switch NAME]`** — one per role:
+
+| Role | Meaning |
+|------|---------|
+| `endstop` | The actual endstop — what's compiled into the kinematic constraints |
+| `homing` | The homing switch — used to find the home position |
+| `ignore` | Same physical pin, but flagged for macros only |
+
+All three share the same `endstop_id` (the Klipper switch name)
+and the same `pin`. The cross-reference validator enforces that
+every `endstop_id` has at least one `type: "endstop"` record; a
+switch with only `homing` or `ignore` records has no real endstop
+binding and the model rejects it.
+
+The `heater.sensor` reference resolves into
+`temperature_sensors[].id` — not into any future
+`pressure_sensors` or `flow_sensors` list. The list name is the
+type discriminator; cross-type references are rejected by
+construction. This is the property that lets future sensor types
+land without breaking the existing wiring.
+
+The frontend does not parse the v2 shape directly. It reads
+`hardware.json` via `GET /active/content/hardware.json` (raw
+text) and displays it in `CompiledOutputViewer`. The v2 model
+replaces the v1 "anonymous dicts in arrays" layout; the
+`hardware.json` schema is enforced at compile time, not at HTTP
+boundary.
+
+## 8. What the GraphLLM orchestrator actually does
 
 The orchestrator is not part of the application code — it lives
 outside the repo and reads the `.agent/` contracts. Inside the repo,
