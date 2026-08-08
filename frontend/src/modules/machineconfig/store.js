@@ -71,13 +71,32 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // ``Error`` instances bubble through unchanged. The store wants
   // the same operator-readable message it used to get from the
   // legacy wrapper.
+  //
+  // Issue #99 enriched the compile endpoint's error response so
+  // validation failures now arrive as
+  // ``{ error: { section, key, line, message, kind } }``. The helper
+  // reads that shape first, then falls back to the FastAPI standard
+  // ``{ detail: <string> }`` (or its array form for Pydantic
+  // validation errors), then to ``error.message``.
 
   function describeError(error) {
     if (!error) return "Unknown error"
     if (error.body && typeof error.body === "object") {
+      // New structured error (issue #99): ``error.body.error.message``.
+      const structured = error.body.error
+      if (
+        structured &&
+        typeof structured === "object" &&
+        typeof structured.message === "string"
+      ) {
+        return structured.message
+      }
       const detail = error.body.detail
       if (Array.isArray(detail)) {
         return detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+      }
+      if (typeof detail === "object" && detail && typeof detail.message === "string") {
+        return detail.message
       }
       if (typeof detail === "string") return detail
     }
@@ -302,7 +321,15 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       )
       await loadStaged()
     } catch (error) {
-      consoleStore.error(`Compile failed: ${describeError(error)}`)
+      // Issue #99: the structured-error response from the compile
+      // endpoint must surface as a toast so the operator sees the
+      // reason without hunting in the console panel. The console
+      // row is still written for the historical scrollback; the
+      // popup is the new affordance.
+      consoleStore.error(
+        `Compile failed: ${describeError(error)}`,
+        { popup: true, title: "Compile failed" },
+      )
     } finally {
       isBusy.value = false
     }

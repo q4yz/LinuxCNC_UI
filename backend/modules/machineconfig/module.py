@@ -47,7 +47,7 @@ from services import (
 )
 
 from .compilers import autoload as autoload_compilers
-from .router import router as _router
+from .router import register_exception_handlers, router as _router
 from .settings import MachineConfigSettings
 
 logger = logging.getLogger("backend.modules.machineconfig")
@@ -93,6 +93,16 @@ class MachineConfigModule:
         FastAPI lifespan is single-threaded at boot; later endpoints
         are read-mostly and a missing directory is reported as a 404.
         """
+        # Register the structured-error exception handler as soon as
+        # the FastAPI app is available. The handler is module-owned
+        # because the error class (``ConfigValidationError``) is
+        # module-owned; a global registration in ``main.py`` would
+        # couple the parser to the application shell. ``ctx.app`` is
+        # ``None`` under the test-only ``isolated_machine_config``
+        # fixture path — see ``tests/conftest.py`` for the contract.
+        if ctx.app is not None:
+            register_exception_handlers(ctx.app)
+
         try:
             # The service constructors each ``mkdir(exist_ok=True)`` the
             # root they manage, so the three canonical directories are

@@ -18,6 +18,17 @@ const TYPE_TO_LEVEL = {
   debug: 'debug',
 }
 
+// Maps console level tokens to the toast types the popup layer
+// understands. ``warning`` -> ``warn`` because the toast store
+// keeps the British spelling. ``debug`` is intentionally absent —
+// debug-level popups would be operator noise.
+const LEVEL_TO_TOAST_TYPE = {
+  info: 'info',
+  success: 'success',
+  warning: 'warn',
+  error: 'error',
+}
+
 /**
  * Translate one of the historic ``type`` tokens into the new
  * ``level`` token. Exposed so callers that hand-construct messages
@@ -83,28 +94,71 @@ export const useConsoleStore = defineStore('console', {
 
     },
 
-    error(text) {
+    /**
+     * Internal helper that optionally publishes to the toast
+     * channel. Resolved inside the action (rather than at module
+     * scope) to avoid the cross-store import cycle documented in
+     * ``.agent/LESSONS_LEARNED.md`` § 2.4 — circular store
+     * imports are a known regression vector. The lazy
+     * ``require``-equivalent keeps ``useToastStore`` out of the
+     * module-init path so a test harness that mocks Pinia does
+     * not crash on import.
+     *
+     * @param {string} level - One of ``info`` / ``warning`` / ``error`` / ``debug``.
+     * @param {string} text  - The console text; also becomes the toast body.
+     * @param {{popup?: boolean, title?: string, durationMs?: number}} [opts]
+     */
+    _emitToast(level, text, opts) {
+      if (!opts || !opts.popup) return
+      // Dynamic import keeps the dependency one-way and avoids the
+      // module-scope Pinia ordering trap.
+      import('../core/toast.js')
+        .then(({ useToastStore }) => {
+          const toastStore = useToastStore()
+          if (!toastStore) return
+          const toastType = LEVEL_TO_TOAST_TYPE[level]
+          if (!toastType) return
+          if (typeof toastStore[toastType] !== 'function') return
+          toastStore[toastType](text, {
+            title: opts.title,
+            durationMs: opts.durationMs,
+          })
+        })
+        .catch(() => {
+          // Toast layer is optional; never let a missing store
+          // crash the console pipeline.
+        })
+    },
+
+    error(text, opts) {
       this._addMessage(text, 'error')
+      this._emitToast('error', text, opts)
     },
 
-    info(text) {
+    info(text, opts) {
       this._addMessage(text, 'info')
+      this._emitToast('info', text, opts)
     },
 
-    debug(text) {
+    debug(text, opts) {
       this._addMessage(text, 'debug')
+      this._emitToast('debug', text, opts)
     },
 
-    warning(text) {
+    warning(text, opts) {
       this._addMessage(text, 'warning')
+      this._emitToast('warning', text, opts)
     },
 
     command(text) {
+      // MDI echoes never raise a popup — the operator already
+      // typed the command and does not need a confirmation.
       this._addMessage(text, 'command')
     },
 
-    success(text) {
+    success(text, opts) {
       this._addMessage(text, 'success')
+      this._emitToast('success', text, opts)
     },
 
     setFilterLevel(level) {

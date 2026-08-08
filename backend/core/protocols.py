@@ -26,7 +26,7 @@ forcing module authors to inherit from a base class.
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel, Field
 
 from .event_bus import EventBus
@@ -86,6 +86,12 @@ class ModuleContext:
     module_id: str
     event_bus: EventBus
     settings: "SettingsStore"
+    # The FastAPI application the module's router will be mounted onto.
+    # Modules that need to register FastAPI-level concerns (exception
+    # handlers, middleware) read this attribute from inside ``on_load``
+    # rather than reaching for a global. ``None`` when the registry
+    # is driving a non-FastAPI lifecycle (e.g. tests).
+    app: Optional["FastAPI"] = None
     # Optional extra slots modules can populate to share data with the
     # frontend registry. Kept open so we don't churn the protocol every
     # time the contract grows.

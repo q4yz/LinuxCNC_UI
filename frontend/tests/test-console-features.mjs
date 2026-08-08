@@ -106,11 +106,14 @@ test("console store guards setFilterLevel against unknown values", () => {
 
 test("console store exposes a debug action that routes through _addMessage", () => {
   const text = readText(consoleStorePath);
-  // The current store exposes a ``debug(text)`` action that
-  // delegates to the internal ``_addMessage(text, 'debug')``
+  // The current store exposes a ``debug(text, opts?)`` action
+  // that delegates to the internal ``_addMessage(text, 'debug')``
   // helper. The legacy ``addDebug`` shim was removed in favor
-  // of direct level-named actions.
-  assert.match(text, /debug\(text\)/);
+  // of direct level-named actions. Issue #99 added the optional
+  // ``opts`` parameter for the popup channel; the regex accepts
+  // either the legacy or the enriched signature so this test is
+  // not coupled to the parameter list shape.
+  assert.match(text, /debug\s*\(\s*text/);
   assert.match(text, /_addMessage\(text,\s*['"]debug['"]\)/);
 });
 
@@ -296,5 +299,130 @@ test("ConsolePanel imports the autocomplete helper locally", () => {
   assert.match(
     text,
     /import\s*\{[^}]*filterAutocompleteCommands[^}]*\}\s*from\s*['"]\.\.\/config\/gcodes['"]/,
+  );
+});
+
+
+// ---------------------------------------------------------------------- //
+// Toast store (issue #99)                                                //
+// ---------------------------------------------------------------------- //
+//
+// The toast store is a Pinia composable backed by ``core/toast.js``.
+// Tests cannot drive Pinia from bare ``node --test`` (see
+// ``.agent/LESSONS_LEARNED.md`` § 5.2), so the three checks below
+// are static-structural: they read the source file and assert on
+// the contract surface (method names, duration defaults, colour
+// palette).
+//
+// The companion ``vite build`` step in CI validates the dynamic
+// regressions (Pinia boot, reactive state).
+
+const toastStorePath = resolve(repoRoot, "frontend/src/core/toast.js");
+const toastContainerPath = resolve(
+  repoRoot,
+  "frontend/src/components/ToastContainer.vue",
+);
+
+
+test("toast store exposes success/error/warn/info methods", () => {
+  const text = readText(toastStorePath);
+  // Each method must be defined as an action on the Pinia store so
+  // the same call site (e.g. ``useToast().error(msg)``) works
+  // everywhere. The four canonical types match the console store's
+  // level vocabulary.
+  for (const method of ["success", "error", "warn", "info"]) {
+    assert.match(
+      text,
+      new RegExp(`\\b${method}\\s*\\(\\s*body\\b`),
+      `expected '${method}(body, ...)' on the toast store`,
+    );
+  }
+  // ``useToast`` is the documented composable entry point and
+  // delegates to ``useToastStore``. The wrapper hides Pinia's
+  // import noise from call sites.
+  assert.match(text, /export\s+const\s+useToast\s*=/);
+  assert.match(text, /useToastStore\s*\(\s*\)/);
+});
+
+
+test("toast store auto-dismisses success/info and persists error/warn", () => {
+  const text = readText(toastStorePath);
+  // The default dwell time for transient (success / info) toasts is
+  // five seconds. Error and warn toasts persist until the operator
+  // closes them so a transient fault is never lost.
+  assert.match(text, /DEFAULT_TRANSIENT_DURATION_MS\s*=\s*5000/);
+  // ``success`` and ``info`` default to the transient dwell time.
+  assert.match(text, /success\s*\(/);
+  assert.match(text, /info\s*\(/);
+  // ``error`` and ``warn`` keep ``durationMs`` unset (which the
+  // container renders as "persist until dismissed").
+  assert.match(text, /warn\s*\(/);
+  assert.match(text, /error\s*\(/);
+  // ``dismiss`` and ``clear`` are the lifecycle hooks the container
+  // calls to remove toasts.
+  assert.match(text, /dismiss\s*\(\s*id\s*\)/);
+  assert.match(text, /clear\s*\(\s*\)/);
+});
+
+
+test("toast methods accept (msg, opts) and honour a custom duration", () => {
+  const text = readText(toastStorePath);
+  // ``opts.durationMs`` must flow through to the entry so callers
+  // can override the default. The guard rejects non-finite / zero
+  // values so a typo never produces a flash-and-gone toast.
+  assert.match(text, /durationMs/);
+  assert.match(text, /Number\.isFinite/);
+  // The store also carries a colour-palette table the container
+  // reads so the two files stay in sync without re-deriving.
+  assert.match(text, /TOAST_TYPE_STYLES\s*=/);
+  for (const type of ["success", "info", "warn", "error"]) {
+    assert.match(
+      text,
+      new RegExp(`${type}\\s*:\\s*\\{`),
+      `expected TOAST_TYPE_STYLES.${type} palette`,
+    );
+  }
+  // The container references the same constants so a palette
+  // rename surfaces as a build break.
+  const containerText = readText(toastContainerPath);
+  assert.match(containerText, /TOAST_TYPE_STYLES/);
+  assert.match(containerText, /styleFor\(/);
+});
+
+
+// ---------------------------------------------------------------------- //
+// Console store popup option (issue #99)                                 //
+// ---------------------------------------------------------------------- //
+
+
+test("console store forwards opts.popup to the toast layer", () => {
+  const text = readText(consoleStorePath);
+  // Every level action delegates to ``_emitToast(level, text, opts)``
+  // which inspects ``opts.popup`` and dispatches to the matching
+  // toast type. The dynamic-import wrapper keeps the toast layer
+  // optional so a missing import never crashes the console pipeline.
+  assert.match(text, /_emitToast\s*\(/);
+  assert.match(text, /opts\.popup/);
+  assert.match(text, /import\(['"]\.\.\/core\/toast\.js['"]\)/);
+  // Each action must pass ``opts`` through to ``_emitToast``.
+  for (const method of ["error", "info", "warning", "success", "debug"]) {
+    assert.match(
+      text,
+      new RegExp(`${method}\\s*\\(\\s*text\\s*,\\s*opts\\s*\\)`),
+      `expected ${method}(text, opts) signature`,
+    );
+  }
+});
+
+
+test("console store default popup option is false (backward compatible)", () => {
+  const text = readText(consoleStorePath);
+  // The helper short-circuits when ``opts.popup`` is falsy so
+  // existing call sites that omit the option are unaffected. The
+  // early-return path is the single line that makes the contract
+  // safe under the migration window.
+  assert.match(
+    text,
+    /if\s*\(\s*!\s*opts\s*\|\|\s*!\s*opts\.popup\s*\)\s*return/,
   );
 });

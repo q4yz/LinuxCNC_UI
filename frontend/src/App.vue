@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import registry from './core/modules/registry'
 import { useMachineStore } from './stores/machine-compat'
 import AppSidebar from './components/AppSidebar.vue'
+import ToastContainer from './components/ToastContainer.vue'
 
 // ``useMachineStore`` is supplied by the optional compatibility
 // adapter. When the machine module is mounted, the module registers
@@ -87,6 +88,13 @@ function navigate(view) {
       <component v-if="moduleView" :is="moduleView" />
       <router-view v-else />
     </main>
+
+    <!-- Toast layer (issue #99). Fixed-position popup notifications
+         raised by ``useToast()`` and surfaced by ``consoleStore``
+         when callers opt in via ``{ popup: true }``. Mounted at
+         the app root so every module's popups share a single
+         container. -->
+    <ToastContainer />
 
   </div>
 </template>

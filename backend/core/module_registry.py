@@ -358,6 +358,7 @@ class ModuleRegistry:
             module_id=module_id,
             event_bus=bus,
             settings=settings,
+            app=app,
         )
 
         # 2. Run the module's on_load hook.

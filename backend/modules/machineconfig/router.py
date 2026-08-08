@@ -40,7 +40,8 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile, File
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services import (
@@ -52,10 +53,81 @@ from services import (
     get_staged_service,
 )
 from .compilers import registry as compiler_registry
+from .parser import ConfigValidationError
 
 logger = logging.getLogger("backend.modules.machineconfig.router")
 
 router = APIRouter(tags=["modules:machineconfig"])
+
+
+# ---------------------------------------------------------------------- #
+# Structured-error exception handler                                      #
+# ---------------------------------------------------------------------- #
+#
+# Compile-time validation errors (e.g. ``DuplicateStepperPinError``) are
+# raised deep inside the compiler pipeline. Catching them at the
+# ``compile_profile`` endpoint boundary would only catch *this*
+# endpoint; the issue (and the operator-facing toast channel) expects
+# the structured shape to be available everywhere a parser error can
+# surface. A FastAPI exception handler covers the whole router at once.
+#
+# Response body shape (issue #99, acceptance criteria):
+#
+#     {
+#         "error": {
+#             "section": "<section name>",
+#             "key":     "<keyword within section>",
+#             "line":    <int | null>,
+#             "message": "<human-readable message>",
+#             "kind":    "<stable discriminator>"
+#         }
+#     }
+#
+# The ``message`` field is the same string the legacy ``detail`` field
+# used to carry, so callers that previously read the error string can
+# locate it via ``body.error.message``. The HTTP status is ``400`` for
+# every :class:`ConfigValidationError` — the operator supplied invalid
+# input; retrying without changes will keep failing.
+
+
+def register_exception_handlers(app: FastAPI) -> None:
+    """Attach the structured-error handler to ``app``.
+
+    Called from the module's :meth:`on_load` hook because
+    :class:`APIRouter` does not expose ``add_exception_handler`` in
+    this FastAPI version. The handler is registered against the
+    :class:`ConfigValidationError` class so every subclass
+    (``UndefinedKeywordError``, ``MissingRequiredKeywordError``,
+    ``InvalidValueError``, ``UnknownStepperError``, and the new
+    ``DuplicateStepperPinError``) is caught by the same code path.
+
+    Idempotent: re-registering the same handler class on the same
+    FastAPI app replaces the previous handler, so the call is safe
+    under the ``--reload`` lifecycle.
+    """
+
+    app.add_exception_handler(
+        ConfigValidationError, _config_validation_exception_handler
+    )
+
+
+async def _config_validation_exception_handler(
+    request: Request, exc: ConfigValidationError
+) -> JSONResponse:
+    """Render :class:`ConfigValidationError` as a structured 4xx body.
+
+    The handler is intentionally minimal — it never logs at WARN/ERROR
+    because validation errors are operator-actionable, not server-side
+    failures. ``logger.debug`` keeps a breadcrumb for the curious.
+    """
+
+    logger.debug(
+        "ConfigValidationError on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc.to_dict(),
+    )
+    return JSONResponse(status_code=400, content={"error": exc.to_dict()})
 
 
 # ---------------------------------------------------------------------- #
@@ -549,6 +621,16 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
         artifact_paths = staged_service.clear_and_stage(compiler, source)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfigValidationError:
+        # Parser-level validation errors are routed through the
+        # global exception handler registered in ``on_load``
+        # (``register_exception_handlers``). The structured envelope
+        # shape is the contract the frontend toast channel depends
+        # on (issue #99). ``ConfigValidationError`` is a subclass of
+        # ``ValueError`` so it MUST be caught before the
+        # ``ValueError`` branch below — reordering the clauses would
+        # silently swallow the structured response.
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - last-resort guard
