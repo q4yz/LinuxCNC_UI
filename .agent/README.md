@@ -1,8 +1,8 @@
 # `.agent/` — Agent & Contributor Documentation
 
 This directory holds the contracts and rules that govern the
-pluggable-module system, the GraphLLM AI agent's operating
-manual, and the hub-and-spoke context model used by the agent.
+pluggable-module system, the three AI agent operating manuals,
+and the hub-and-spoke context model used by the agents.
 
 | Path | Audience | Purpose |
 |------|----------|---------|
@@ -10,7 +10,9 @@ manual, and the hub-and-spoke context model used by the agent.
 | [`.agent/context/VISION.md`](.agent/context/VISION.md) | AI agents | Project goals, philosophy, what we are not building. |
 | [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) | AI agents | Technical structure, module registry graph, event bus, safety watchdogs. |
 | [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md) | AI agents | Past mistakes and tripwires (Pinia store ids, eager imports, venv cache, the jog watchdog). |
-| [`.agent/AGENT.md`](.agent/AGENT.md) | All AI agents | The GraphLLM agent operating manual (no commits, no tests, no PRs; one-paragraph summary; honest no-op). |
+| [`.agent/AGENT.md`](.agent/AGENT.md) | Loop agents | General loop-agent operating manual (iterative plan → act → observe → refine, free-form prose output, no commits). |
+| [`.agent/ARCHITECT.md`](.agent/ARCHITECT.md) | Architect agents | General architect operating manual (design-only autonomy, may commit and open PRs within `.agent/`, root `*.md`, and `contracts/`). |
+| [`.agent/graph_agent.md`](.agent/graph_agent.md) | GraphLLM orchestrator | The GraphLLM single-pass agent manual (no commits, no tests, no PRs; one-paragraph summary; honest no-op). |
 | [`.agent/HANDOFF_TEMPLATE.md`](.agent/HANDOFF_TEMPLATE.md) | Issue resolvers | Required PR description format. |
 | [`.agent/TEST.md`](.agent/TEST.md) | CI / orchestrator | The bash script the orchestrator runs to verify every edit. Do not run it yourself. |
 | [`.agent/STATE.md`](.agent/STATE.md) | All contributors | Current as-built state of the module system. |

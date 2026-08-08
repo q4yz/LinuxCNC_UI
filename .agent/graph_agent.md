@@ -1,4 +1,20 @@
-# Repository Agent Guide
+# graph_agent — GraphLLM Operating Manual
+
+> **Scope.** This document is the operating manual for the **graph
+> orchestrator agent** — the single-pass, tightly constrained agent
+> the GraphLLM orchestrator drives through this repo. It is one of
+> three agent documents under `.agent/`:
+>
+> - `graph_agent.md` (this file) — GraphLLM single-pass agent.
+> - [`.agent/AGENT.md`](.agent/AGENT.md) — general loop-agent
+>   (iterative, free-form).
+> - [`.agent/ARCHITECT.md`](.agent/ARCHITECT.md) — general
+>   architect (design-only autonomy, may commit).
+>
+> Unless your runtime is the GraphLLM orchestrator, start at
+> `AGENT.md` instead.
+
+---
 
 This guide has two parts. The first half is the **GraphLLM agent operating manual** — the rules any AI agent must follow when working on this repo. The second half is the **project conventions** that govern what the AI may write.
 
@@ -89,3 +105,7 @@ under `.agent/context/`. Start every task at
 (`VISION.md`, `ARCHITECTURE.md`, `LESSONS_LEARNED.md`) to the
 documents you need. The legacy `AI_INSTRUCTIONS.md` and
 `archived_notes.md` files were deleted; do not reference them.
+
+For non-graph-orchestrator runs (a general loop-agent or an
+architect agent) see [`.agent/AGENT.md`](.agent/AGENT.md) and
+[`.agent/ARCHITECT.md`](.agent/ARCHITECT.md) respectively.

@@ -129,6 +129,26 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
    `.env`. No known issues; mention it here so the next agent
    doesn't accidentally delete it during a `scripts/` cleanup.
 
+6. **GraphLLM orchestrator reading path.** The single-pass
+   operating manual was renamed from `.agent/AGENT.md` to
+   `.agent/graph_agent.md`. If the orchestrator's runtime
+   config hardcodes the old path, it must be updated to read
+   `.agent/graph_agent.md` instead. The new `.agent/AGENT.md`
+   is the loop-agent manual (general, iterative) and
+   `.agent/ARCHITECT.md` is the architect manual
+   (design-only autonomy). See `.agent/README.md` for the full
+   index.
+
+7. **`backend/tests/test_doc_links.py` `REQUIRED_DOCS`.** The
+   structural test pins only `.agent/AGENT.md` (now the
+   loop-agent). The new `.agent/graph_agent.md` and
+   `.agent/ARCHITECT.md` are not in `REQUIRED_DOCS`, so their
+   link integrity is unguarded by the test suite. A follow-up
+   should add both to the `REQUIRED_DOCS` tuple. This is a
+   test-script edit, which falls outside the architect's
+   design-only scope per `.agent/ARCHITECT.md` § 1 — hand to
+   the loop agent (`AGENT.md`).
+
 ---
 
 ## 3. Anti-patterns observed in past attempts
