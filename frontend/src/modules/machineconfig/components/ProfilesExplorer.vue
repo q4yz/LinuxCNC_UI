@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../store.js";
+import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
@@ -79,7 +80,14 @@ async function copyOrMove(entry) {
 }
 async function deleteEntry(entry) {
   activeMenu.value = "";
-  if (window.confirm(`Delete ${entry.path}? This cannot be undone.`)) await store.deleteProfile(entry.path);
+  const shouldDelete = await useConfirm({
+    title: "Profil löschen",
+    question: `Delete ${entry.path}? This cannot be undone.`,
+    confirmButtonText: "Löschen",
+    confirmButtonStyle: ModalButtonStyle.DANGER,
+    rejectButtonText: "Abbrechen",
+  });
+  if (shouldDelete) await store.deleteProfile(entry.path);
 }
 async function dropFiles(event) {
   isDragging.value = false;

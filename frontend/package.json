@@ -10,7 +10,7 @@
     "generate-api": "node scripts/generate-api.mjs",
     "clean": "node scripts/clean.mjs",
     "postinstall": "node scripts/generate-api.mjs --install",
-    "test": "vitest run"
+    "test": "node --test \"tests/**/*.mjs\""
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

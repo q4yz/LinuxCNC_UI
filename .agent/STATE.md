@@ -198,3 +198,14 @@ until the migration window closes:
 - `frontend/src/modules/camera/components/CameraPanel.vue` — a
   1:1 wrapper around `CameraViewer.vue`. Listed in the glob but
   not used by `App.vue` or `DashboardView.vue`. Delete or wire up.
+
+---
+
+## 11. Unsaved-Changes Guard
+
+The editor store tracks `pristineContent` as the last loaded or successfully
+saved snapshot and exposes `isDirty`. Editor route leaves, same-component file
+switches, and the editor Close action use the queue-based confirm service in
+`frontend/src/core/confirm.js`. `ModalConfirmHost.vue` is mounted once in
+`App.vue`; feature code calls the Promise-based `useConfirm()` API rather than
+native `window.confirm` dialogs.
