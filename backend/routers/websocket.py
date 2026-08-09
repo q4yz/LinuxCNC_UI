@@ -5,7 +5,12 @@ import logging
 from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from hardware import get_machine_stat, get_machine_error
+from hardware import (
+    ConnectionState,
+    get_connection_state,
+    get_machine_stat,
+    get_machine_error,
+)
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.websocket")
@@ -67,9 +72,43 @@ def get_current_state() -> dict:
     """
     Reads the current machine status from the LinuxCNC stat object
     and formats it as a JSON-serializable dictionary.
+
+    When the LinuxCNC binding is disconnected (the backend is
+    running but the CNC process is not yet reachable) the function
+    returns a sentinel payload — ``task_state`` set to ``1``
+    (ESTOP) and ``connection_state`` to whichever enum value the
+    hardware layer reported — so the dashboard never claims the
+    machine is idle while we have no real data. The frontend
+    reads the ``connection_state`` field and adjusts the UI
+    accordingly.
     """
     machine_stat = get_machine_stat()
-    
+    connection_state = get_connection_state()
+
+    # Disconnected sentinel: no real stat object is available, so
+    # return the ESTOP-safe defaults the state facade already biases
+    # toward. The helpers below mirror the Python-side defaults so
+    # the JSON payload stays consistent regardless of bind state.
+    if machine_stat is None or connection_state != ConnectionState.READY:
+        return {
+            "task_state": 1,  # STATE_ESTOP
+            "estop": 1,
+            "task_mode": 1,  # MODE_MANUAL
+            "position": [0.0] * 9,
+            "actual_position": [0.0] * 9,
+            "relative_position": [0.0] * 9,
+            "state": 1,
+            "file": "",
+            "homed": [0, 0, 0],
+            "interp_state": 0,
+            "current_line": 0,
+            "g5x_index": 1,
+            "target_temp": 0.0,
+            "actual_temp": 0.0,
+            "temperatures": {},
+            "connection_state": connection_state.value,
+        }
+
     # Safe fallback if attributes don't exist in mock yet
     interp_state = getattr(machine_stat, 'interp_state', 0)
     current_line = getattr(machine_stat, 'current_line', 0)
@@ -108,7 +147,8 @@ def get_current_state() -> dict:
         "g5x_index": g5x_index,
         "target_temp": target_temp,
         "actual_temp": actual_temp,
-        "temperatures": temperatures
+        "temperatures": temperatures,
+        "connection_state": connection_state.value,
     }
 
 
@@ -116,21 +156,50 @@ async def telemetry_loop():
     """
     Background loop that continuously polls the CNC machine at 10Hz
     and broadcasts the state and any new errors to all connected WebSockets.
+
+    The loop survives LinuxCNC coming and going: when the connection
+    state is ``LINUXCNC_DISCONNECTED`` (e.g. LinuxCNC is not running
+    at startup, or it has been stopped after the backend booted) the
+    bound ``stat``/``error_channel`` objects are ``None``. The loop
+    uses the sentinel payload from :func:`get_current_state` instead
+    and broadcasts a ``connection_state`` delta so the frontend can
+    show a "waiting for LinuxCNC" banner. The retry loop in
+    :func:`hardware.connection.connection_retry_loop` is responsible
+    for re-binding the holders; the telemetry loop only consumes
+    whatever current state the hardware layer provides.
     """
-    machine_stat = get_machine_stat()
-    machine_error = get_machine_error()
     # Capture the logger once at the top of the loop so the
     # ``get_console_logger`` lock is not taken on every iteration.
     console_logger = get_console_logger()
 
     while True:
         try:
-            # Poll status
-            machine_stat.poll()
+            machine_stat = get_machine_stat()
+            machine_error = get_machine_error()
+            # Poll the stat object only when the holder is present.
+            # The retry loop is responsible for creating one; we
+            # never re-create it here so the canonical binding is
+            # always the one the retry loop observes.
+            if machine_stat is not None:
+                try:
+                    machine_stat.poll()
+                except Exception as poll_exc:  # noqa: BLE001 - defensive
+                    logger.warning(
+                        "stat.poll() raised: %s; the retry loop will "
+                        "drop the binding",
+                        poll_exc,
+                    )
             current_state = get_current_state()
 
-            # Poll errors
-            error = machine_error.poll()
+            # Poll errors (only when the channel is bound).
+            if machine_error is not None:
+                try:
+                    error = machine_error.poll()
+                except Exception as poll_exc:  # noqa: BLE001 - defensive
+                    logger.warning("error_channel.poll() raised: %s", poll_exc)
+                    error = None
+            else:
+                error = None
             if error and manager.active_connections:
                 kind, text = error
                 error_payload = {
@@ -177,8 +246,18 @@ async def websocket_telemetry(websocket: WebSocket):
     """
     await manager.connect(websocket)
     try:
+        # Probe the stat object if we have one. When the connection
+        # is pending (LinuxCNC not running) the holder is ``None``
+        # and ``get_current_state`` returns the ESTOP-default
+        # sentinel with ``connection_state`` set to the current
+        # enum value. The retry loop will repopulate the holder
+        # once LinuxCNC is reachable.
         machine_stat = get_machine_stat()
-        machine_stat.poll()
+        if machine_stat is not None:
+            try:
+                machine_stat.poll()
+            except Exception as poll_exc:  # noqa: BLE001 - defensive
+                logger.warning("Initial stat.poll() raised: %s", poll_exc)
         current_state = get_current_state()
 
         await websocket.send_text(json.dumps({"type": "full_state", "data": current_state}))

@@ -1,10 +1,31 @@
-from .connection import get_machine_stat, get_machine_cmd, get_machine_error, execute_sync_cmd, linuxcnc, USE_MOCK
+from .connection import (
+    ConnectionState,
+    add_state_listener,
+    connection,
+    execute_sync_cmd,
+    get_connection_state,
+    get_machine_cmd,
+    get_machine_error,
+    get_machine_stat,
+    is_ready,
+    linuxcnc,
+    remove_state_listener,
+    try_reconnect,
+    USE_MOCK,
+)
 
 __all__ = [
-    "get_machine_stat",
+    "ConnectionState",
+    "add_state_listener",
+    "connection",
+    "execute_sync_cmd",
+    "get_connection_state",
     "get_machine_cmd",
     "get_machine_error",
-    "execute_sync_cmd",
+    "get_machine_stat",
+    "is_ready",
     "linuxcnc",
-    "USE_MOCK"
+    "remove_state_listener",
+    "try_reconnect",
+    "USE_MOCK",
 ]

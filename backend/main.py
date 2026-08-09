@@ -6,7 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config_manager import MachineConfig
 from core.module_registry import registry
-from hardware.connection import connection
+from hardware.connection import (
+    ConnectionState,
+    connection,
+    connection_retry_loop,
+    get_connection_state,
+)
 from services.console_logger import get_console_logger
 
 
@@ -33,7 +38,9 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting LinuxCNC background tasks...")
 
-    # Load machine configuration and inject into hardware layer
+    # Load machine configuration and inject into hardware layer.
+    # The machine config is local — it only affects parsed metadata,
+    # and a missing ``machine.cfg`` must not take the backend down.
     try:
         cfg = MachineConfig()  # uses machine_config/machine.cfg by default
         app.state.config = cfg
@@ -48,6 +55,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to load machine config: %s", e)
         raise
+
+    # Initial bind to LinuxCNC. ``hardware.connection`` has already
+    # attempted the bind at import time and exposed the result via
+    # ``get_connection_state()``. If the process was not running
+    # when the backend started, the state is
+    # ``LINUXCNC_DISCONNECTED`` — log it here so operators see the
+    # cause in the boot log, and let the retry loop reconnect.
+    initial_state = get_connection_state()
+    if initial_state == ConnectionState.READY:
+        logger.info("LinuxCNC binding is READY on startup")
+    else:
+        logger.warning(
+            "LinuxCNC binding is %s on startup; the retry loop will "
+            "keep trying to connect every 5 seconds",
+            initial_state.value,
+        )
+
+    # Start the connection retry loop. It runs forever (or until
+    # cancelled on shutdown) and flips the state from
+    # ``LINUXCNC_DISCONNECTED`` to ``READY`` the moment LinuxCNC
+    # becomes reachable — no backend restart required.
+    task_retry = asyncio.create_task(connection_retry_loop())
 
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(websocket.telemetry_loop())
@@ -71,6 +100,7 @@ async def lifespan(app: FastAPI):
     # Shutdown gracefully
     logger.info("Shutting down LinuxCNC background tasks...")
     task_telemetry.cancel()
+    task_retry.cancel()
     registry.unload()
     # Flush the persistent console history so any in-flight rows
     # survive the uvicorn shutdown. The logger is a process-wide
