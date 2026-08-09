@@ -79,10 +79,10 @@ def test_settings_defaults_seed_from_active_heaters(
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
     (active_dir / "hardware.json").write_text(
-        '{"heaters": ['
-        '{"name": "chamber"}, '
-        '{"name": "extruder"}, '
-        '{"name": "heater_bed"}'
+        '{"temperature_sensors": ['
+        '{"id": "chamber"}, '
+        '{"id": "extruder"}, '
+        '{"id": "heater_bed"}'
         "]}",
         encoding="utf-8",
     )
@@ -106,7 +106,18 @@ def test_settings_defaults_seed_from_active_heaters(
     }
 
 
-def test_put_settings_persists_new_unit(tmp_data_root, clean_env):
+def test_put_settings_persists_new_unit(tmp_data_root, clean_env, monkeypatch):
+    from services import hardware_loader
+
+    empty_dir = tmp_data_root / "no_active"
+    empty_dir.mkdir()
+    monkeypatch.setattr(
+        hardware_loader, "_DEFAULT_ACTIVE_DIR", empty_dir
+    )
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
+
     app, _ = _app(tmp_data_root)
     client = TestClient(app)
     resp = client.put(
