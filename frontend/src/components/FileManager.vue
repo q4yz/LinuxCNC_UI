@@ -193,7 +193,7 @@ onMounted(() => {
        instead of being a small dashboard card. -->
   <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden w-full h-full flex flex-col">
     <!-- Header & Upload -->
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center shrink-0">
+    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex  items-center shrink-0">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
         <span class="mr-2">📂</span> G-Code Files
       </h2>
@@ -208,7 +208,7 @@ onMounted(() => {
         />
         <button
           type="button"
-          class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-semibold flex items-center"
+          class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-semibold flex items-center ml-4"
           @click="triggerFileInput"
           :disabled="isUploading"
         >
