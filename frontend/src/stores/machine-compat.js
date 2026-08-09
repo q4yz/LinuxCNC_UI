@@ -49,6 +49,17 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
   const isPaused = computed(
     () => status.task_state === 2 && status.interp_state === 3,
   );
+  // Mirrors the SystemState.LOADED branch of the primary store
+  // facade: machine is ON, interpreter is idle, but a file is
+  // selected. Used by the dashboard widget to render the new
+  // "Loaded" branch with a dedicated Start button.
+  const isLoaded = computed(
+    () =>
+      status.task_state === 4 &&
+      status.interp_state === 1 &&
+      typeof status.file === "string" &&
+      status.file.length > 0,
+  );
   const printProgress = computed(() => {
     const total = Number(status.total_lines);
     const current = Number(status.current_line);
@@ -82,6 +93,7 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
     machineStateText,
     isPrinting,
     isPaused,
+    isLoaded,
     printProgress,
     connect: noop,
     disconnect,
@@ -97,6 +109,7 @@ const useFallbackMachineStore = defineStore("module_machine_fallback", () => {
     setCoordinateSystem: noop,
     setTargetTemperature: noop,
     startProgram: noop,
+    loadProgram: noop,
     pauseProgram: noop,
     resumeProgram: noop,
     abortProgram: noop,

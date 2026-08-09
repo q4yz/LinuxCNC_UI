@@ -33,6 +33,11 @@ export const SystemState = Object.freeze({
   ESTOP: "Estop",
   POWER_OFF: "PowerOff",
   IDLE: "Idle",
+  // A program is loaded into the interpreter (``stat.file`` set)
+  // but the interpreter is still ``INTERP_IDLE``. Mirrors LinuxCNC's
+  // implicit "loaded but not running" state — the operator has a
+  // chance to verify the file before pressing Start.
+  LOADED: "Loaded",
   RUNNING: "Running",
   PAUSED: "Paused",
   FAILURE: "Failure",
@@ -135,6 +140,13 @@ export const useMachineStore = defineStore("machineStore", {
           raw.interp_state === INTERP_STATE.WAITING
         ) {
           return SystemState.RUNNING;
+        }
+        // Loaded but not yet running: the interpreter is idle
+        // while a file is selected. This is the canonical LinuxCNC
+        // "loaded" state — the dashboard renders the new "Loaded"
+        // branch with a dedicated Start button.
+        if (raw.file && raw.interp_state === INTERP_STATE.IDLE) {
+          return SystemState.LOADED;
         }
         return SystemState.IDLE;
       }

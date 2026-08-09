@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from hardware import get_machine_stat, get_machine_error
+from hardware import get_machine_stat, get_machine_error, linuxcnc
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.websocket")
@@ -63,16 +63,60 @@ def get_dict_diff(new_dict: dict, old_dict: dict) -> dict:
     return diff
 
 
+def _offline_state_snapshot() -> dict:
+    """Return a safe "LinuxCNC not running" telemetry payload.
+
+    Used by :func:`get_current_state` when the NML status channel
+    has not yet connected — every key the frontend reads is
+    present so the WebSocket payload schema is stable. The values
+    map to ``SystemState.ESTOP`` on the frontend so the operator
+    sees the existing red "Estop" chip rather than a blank screen
+    or a stream of crashes.
+    """
+    return {
+        "task_state": getattr(linuxcnc, "STATE_ESTOP", 1),
+        "estop": 1,
+        "task_mode": getattr(linuxcnc, "MODE_MANUAL", 1),
+        "position": [0.0] * 9,
+        "actual_position": [0.0] * 9,
+        "relative_position": [0.0] * 9,
+        "state": 1,
+        "file": "",
+        "homed": [0, 0, 0],
+        "interp_state": getattr(linuxcnc, "INTERP_IDLE", 1),
+        "current_line": 0,
+        "total_lines": 0,
+        "g5x_index": 1,
+        "target_temp": 0.0,
+        "actual_temp": 0.0,
+        "temperatures": {},
+    }
+
+
 def get_current_state() -> dict:
     """
     Reads the current machine status from the LinuxCNC stat object
     and formats it as a JSON-serializable dictionary.
+
+    Returns a safe "offline" snapshot when the NML status channel
+    has not yet connected (LinuxCNC not running). The frontend's
+    ``machineStore.systemState`` getter maps the ``STATE_ESTOP``
+    payload to ``SystemState.ESTOP`` so operators get a clear
+    "machine offline" indicator without the backend crashing.
     """
     machine_stat = get_machine_stat()
-    
+    if machine_stat is None:
+        return _offline_state_snapshot()
+    # Refresh the cached snapshot so callers that invoke this
+    # function outside the telemetry loop (tests, the snapshot
+    # endpoint) see the latest program state. The loop also calls
+    # ``poll()`` on every tick so this is a no-op there.
+    machine_stat.poll()
+
     # Safe fallback if attributes don't exist in mock yet
     interp_state = getattr(machine_stat, 'interp_state', 0)
     current_line = getattr(machine_stat, 'current_line', 0)
+    total_lines = getattr(machine_stat, 'total_lines', 0)
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
     target_temp = getattr(machine_stat, 'target_temp', 0.0)
     actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
@@ -92,7 +136,7 @@ def get_current_state() -> dict:
         tool = tool_offset[i] if tool_offset and i < len(tool_offset) else 0.0
         rel_axis = actual_position[i] - g5x - g92 - tool
         relative_position.append(rel_axis)
-    
+
     return {
         "task_state": machine_stat.task_state,
         "estop": machine_stat.estop,
@@ -105,6 +149,7 @@ def get_current_state() -> dict:
         "homed": machine_stat.homed,
         "interp_state": interp_state,
         "current_line": current_line,
+        "total_lines": total_lines,
         "g5x_index": g5x_index,
         "target_temp": target_temp,
         "actual_temp": actual_temp,

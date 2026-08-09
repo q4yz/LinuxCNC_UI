@@ -1,0 +1,155 @@
+
+loadrt [KINS]KINEMATICS
+loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
+
+# load the Remora real-time component
+
+	# for STM32 chips
+	loadrt remora-spi SPI_clk_div=64
+
+	# for LPC17XX chips 
+	#loadrt remora_lpc
+
+
+
+# estop and SPI comms enable and feedback
+
+	net user-enable-out	<= iocontrol.0.user-enable-out		=> remora.SPI-enable
+	net user-request-enable <= iocontrol.0.user-request-enable	=> remora.SPI-reset
+	net remora-status 	<= remora.SPI-status 		=> iocontrol.0.emc-enable-in
+
+
+# add the remora and motion functions to threads
+
+	addf remora.read 		servo-thread
+	addf motion-command-handler	servo-thread
+	addf motion-controller 		servo-thread
+	addf remora.update-freq 	servo-thread
+	addf remora.write 		servo-thread
+
+
+# joint 0 setup
+
+	setp remora.joint.0.scale 	[JOINT_0]SCALE
+	setp remora.joint.0.maxaccel 	[JOINT_0]STEPGEN_MAXACCEL
+
+	net j0pos-cmd 		joint.0.motor-pos-cmd 	=> remora.joint.0.pos-cmd
+	net j0pos-fb 		remora.joint.0.pos-fb 	=> joint.0.motor-pos-fb
+	net j0enable 		joint.0.amp-enable-out 	=> remora.joint.0.enable
+
+
+# joint 1 setup
+
+	setp remora.joint.1.scale 	[JOINT_1]SCALE
+	setp remora.joint.1.maxaccel 	[JOINT_1]STEPGEN_MAXACCEL
+
+	net j1pos-cmd 		joint.1.motor-pos-cmd 	=> remora.joint.1.pos-cmd
+	net j1pos-fb 		remora.joint.1.pos-fb 	=> joint.1.motor-pos-fb
+	net j1enable 		joint.1.amp-enable-out 	=> remora.joint.1.enable
+
+# joint 2 setup
+
+	setp remora.joint.2.deadband 0.005
+	setp remora.joint.2.scale	[JOINT_2]SCALE
+	setp remora.joint.2.maxaccel	[JOINT_2]STEPGEN_MAXACCEL
+
+	net j2pos-cmd 		joint.2.motor-pos-cmd 	=> remora.joint.2.pos-cmd
+	net j2pos-fb 		remora.joint.2.pos-fb 	=> joint.2.motor-pos-fb
+	net j2enable 		joint.2.amp-enable-out 	=> remora.joint.2.enable
+
+
+# joint 3 setup
+
+	setp remora.joint.3.scale	[JOINT_3]SCALE
+	setp remora.joint.3.maxaccel	[JOINT_3]STEPGEN_MAXACCEL
+	setp remora.joint.3.pgain	[JOINT_3]PGAIN
+
+	net j3pos-cmd 		joint.3.motor-pos-cmd 	=> remora.joint.3.pos-cmd
+	net j3pos-fb 		remora.joint.3.pos-fb 	=> joint.3.motor-pos-fb
+	net j3enable 		joint.3.amp-enable-out 	=> remora.joint.3.enable
+
+# joint 4 setup
+#
+#	setp remora.joint.4.scale	[JOINT_4]SCALE
+#	setp remora.joint.4.maxaccel	[JOINT_4]STEPGEN_MAXACCEL
+#	setp remora.joint.4.pgain	[JOINT_4]PGAIN
+#
+#	net j4pos-cmd 		joint.4.motor-pos-cmd 	=> remora.joint.4.pos-cmd
+#	net j4pos-fb 		remora.joint.4.pos-fb 	=> joint.4.motor-pos-fb
+#	net j4enable 		joint.4.amp-enable-out 	=> remora.joint.4.enable
+
+
+
+
+
+# Include your custom HAL commands here
+# This file will not be overwritten when you run stepconf again
+
+# tool changing
+
+    net tool-prepare-loopback iocontrol.0.tool-prepare => iocontrol.0.tool-prepared
+    net tool-change-loopback iocontrol.0.tool-change => iocontrol.0.tool-changed
+
+# PID controllers for heaters
+
+    loadrt PIDcontroller names=PID-bed,PID-ext0
+    addf PID-bed.compute servo-thread
+    addf PID-ext0.compute servo-thread
+
+
+# end-stops
+
+    # FOR BIGTREETECH OCTOPUS
+    net X-stop     remora.input.00    => joint.0.home-sw-in joint.0.neg-lim-sw-in
+    net Y-stop     remora.input.01    => joint.1.home-sw-in joint.1.neg-lim-sw-in
+    net Z-stop     remora.input.02    => joint.2.home-sw-in joint.2.neg-lim-sw-in
+
+
+# remora command outputs (SP = Setpoints sent TO the MCU)
+
+    net bed-heater-SP      => remora.SP.0
+    net ext0-heater-SP     => remora.SP.1
+    net ext0-cooling-SP    => remora.SP.2
+
+
+# remora command feedbacks (PV = Process Variables read FROM the MCU)
+
+    net bed-PV        <= remora.PV.0
+    net ext0-PV       <= remora.PV.1
+
+
+## Bed PID configuration
+
+    net remora-status  => PID-bed.auto
+    net bed-SP         => PID-bed.SP
+    net bed-PV         => PID-bed.PV
+    net bed-heater-SP  => PID-bed.CV
+
+    setp PID-bed.pOnM      [BED]PID_PONM
+    setp PID-bed.direction [BED]PID_DIR
+    setp PID-bed.KP        [BED]PID_KP
+    setp PID-bed.KI        [BED]PID_KI
+    setp PID-bed.KD        [BED]PID_KD
+    setp PID-bed.SPmin     [BED]PID_SPMIN
+    setp PID-bed.SPmax     [BED]PID_SPMAX
+    setp PID-bed.CVmin     [BED]PID_CVMIN
+    setp PID-bed.CVmax     [BED]PID_CVMAX
+
+
+# Extruder 0 PID configuration
+
+    net remora-status  => PID-ext0.auto
+    net ext0-SP        => PID-ext0.SP
+    net ext0-PV        => PID-ext0.PV
+    net ext0-heater-SP => PID-ext0.CV
+
+    setp PID-ext0.pOnM      [EXT0]PID_PONM
+    setp PID-ext0.direction [EXT0]PID_DIR
+    setp PID-ext0.KP        [EXT0]PID_KP
+    setp PID-ext0.KI        [EXT0]PID_KI
+    setp PID-ext0.KD        [EXT0]PID_KD
+    setp PID-ext0.SPmin     [EXT0]PID_SPMIN
+    setp PID-ext0.SPmax     [EXT0]PID_SPMAX
+    setp PID-ext0.CVmin     [EXT0]PID_CVMIN
+    setp PID-ext0.CVmax     [EXT0]PID_CVMAX
+

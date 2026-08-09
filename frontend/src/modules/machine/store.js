@@ -549,15 +549,36 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     if (!filename || typeof filename !== "string") return;
     const consoleStore = useConsoleStore();
     try {
+      // Step 1 of the two-step lifecycle: load the program into
+      // the interpreter. The backend (program/router.py) validates
+      // the filename against the upload root, calls
+      // ``command.program_open``, and returns 200 on success. The
+      // widget's reactive state transitions to SystemState.LOADED
+      // on the next telemetry tick and the operator presses Start
+      // to invoke ``runProgram``.
       consoleStore.command(`Loading program ${filename}...`);
-      await ModulesProgramService.runProgram({ lineNumber: 0 });
-      consoleStore.success(`Started ${filename}`);
+      await ModulesProgramService.loadProgram({ filename });
+      consoleStore.success(`Loaded ${filename} — press Start to begin.`);
     } catch (err) {
       consoleStore.error(
-        `Failed to start ${filename}: ${err.message}`,
+        `Failed to load ${filename}: ${err.body?.detail || err.message}`,
       );
       // eslint-disable-next-line no-console
-      console.error("Failed to start program", filename, err);
+      console.error("Failed to load program", filename, err);
+    }
+  }
+
+  async function loadProgram(filename) {
+    if (!filename || typeof filename !== "string") return;
+    const consoleStore = useConsoleStore();
+    try {
+      await ModulesProgramService.loadProgram({ filename });
+    } catch (err) {
+      consoleStore.error(
+        `Failed to load ${filename}: ${err.body?.detail || err.message}`,
+      );
+      // eslint-disable-next-line no-console
+      console.error("Failed to load program", filename, err);
     }
   }
 
@@ -634,6 +655,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     setCoordinateSystem,
     // Program lifecycle actions.
     startProgram,
+    loadProgram,
     pauseProgram,
     resumeProgram,
     abortProgram,

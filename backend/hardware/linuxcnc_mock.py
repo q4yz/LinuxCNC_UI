@@ -119,6 +119,21 @@ class SharedMachineState:
 _machine_state = SharedMachineState()
 
 
+def is_program_loaded() -> bool:
+    """Return ``True`` iff a file has been opened via ``program_open``.
+
+    LinuxCNC's "loaded" state is implicit: ``stat.file`` is non-empty
+    while ``interp_state`` is ``INTERP_IDLE``. This helper is the
+    single source of truth for the ``/run`` endpoint's 409 guard and
+    for any future "is_loaded" WebSocket hint. The lock is held only
+    for the boolean read because ``_machine_state.file`` is itself a
+    plain string assignment (the ``program_open`` writer acquires the
+    same lock).
+    """
+    with _machine_state.lock:
+        return bool(_machine_state.file)
+
+
 # Seed the mock's sensor list from the active ``hardware.json`` at
 # import time. When the file is missing (typical in CI) the mock
 # starts with an empty dict. Tests that monkey-patch the active

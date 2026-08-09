@@ -79,6 +79,7 @@ test("facade exports SystemState enum with all eight members", () => {
     "ESTOP",
     "POWER_OFF",
     "IDLE",
+    "LOADED",
     "RUNNING",
     "PAUSED",
     "FAILURE",
@@ -105,6 +106,7 @@ test("facade defines systemState getter with the documented priority chain", () 
   // 4. Execution chain.
   assert.match(text, /SystemState\.PAUSED/);
   assert.match(text, /SystemState\.RUNNING/);
+  assert.match(text, /SystemState\.LOADED/, "LOADED member must be present");
   assert.match(text, /SystemState\.IDLE/);
   // 5. Failure fallback.
   assert.match(text, /SystemState\.FAILURE/);
@@ -217,11 +219,22 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   // ``console.log``) so the operator sees the request in the
   // panel. The handlers also delegate to the generated program
   // service (``runProgram`` / ``pauseProgram`` / ``resumeProgram``
-  // / ``stopProgram``).
-  for (const handler of ["printFile", "pausePrint", "resumePrint", "stopPrint"]) {
+  // / ``stopProgram``). The two-step lifecycle is reflected here:
+  // ``printFile`` calls ``loadProgram`` (the "load" step) and the
+  // ``Loaded`` branch adds a dedicated ``startLoadedProgram``
+  // handler that calls ``runProgram``.
+  for (const handler of [
+    "printFile",
+    "startLoadedProgram",
+    "unloadProgram",
+    "pausePrint",
+    "resumePrint",
+    "stopPrint",
+  ]) {
     assert.match(text, new RegExp(`function\\s+${handler}\\b`));
   }
   for (const serviceCall of [
+    "loadProgram",
     "runProgram",
     "pauseProgram",
     "resumeProgram",
@@ -229,6 +242,24 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   ]) {
     assert.match(text, new RegExp(`ModulesProgramService\\.${serviceCall}\\b`));
   }
+  // The widget must host a "Loaded" branch — three top-level
+  // ``v-if`` / ``v-else-if`` / ``v-else`` branches (Standby /
+  // Loaded / Active). The branches are at indent level 4 on top
+  // of the template root. ``v-else`` and ``v-else-if`` share a
+  // line with the host ``<div>``; ``v-if`` is on the line after
+  // its host. We do a simple substring check for the three
+  // directives — robust to CRLF + multiline attribute quirks.
+  assert.match(
+    text,
+    /v-if\s*=\s*["']!isActive["']/,
+    "Standby branch (v-if=\"!isActive\") must be present",
+  );
+  assert.match(
+    text,
+    /v-else-if\s*=\s*["']isLoaded["']/,
+    "Loaded branch (v-else-if=\"isLoaded\") must be present",
+  );
+  assert.match(text, /v-else/);
   // ``consoleStore.debug`` drives the operator log trail.
   assert.match(text, /consoleStore\.debug\(/);
 });

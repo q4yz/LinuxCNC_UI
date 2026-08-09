@@ -1,15 +1,21 @@
 <script setup>
 // ActivePrintWidget — dashboard widget driven by the State Facade
-// (``stores/machineStore.js``). Two visual states:
+// (``stores/machineStore.js``). Three visual states:
 //
 //   * Standby — Idle / PowerOff / Estop / Offline / Updating /
 //     Failure. Shows the five newest G-code files via the facade's
-//     ``recentFiles`` getter with a Print button each.
+//     ``recentFiles`` getter with a Print button each. Clicking
+//     Print calls ``loadProgram`` (the "load" step).
+//   * Loaded — A program is open in the interpreter (``stat.file``
+//     set, ``interp_state`` is ``INTERP_IDLE``) but the run has
+//     not started. Renders the loaded filename and a dedicated
+//     Start button that calls ``runProgram``.
 //   * Active — Running / Paused. Shows the loaded filename, the
 //     progress bar, and Pause/Resume/Stop buttons.
 //
-// Click handlers are mocked until a follow-up wires them to the
-// machine module's actions. See ``.agent/STATE.md`` § 6.
+// The widget mirrors LinuxCNC's two-step "load then start" lifecycle;
+// the state facade's ``SystemState.LOADED`` member is the trigger
+// for the middle branch.
 
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
@@ -28,6 +34,7 @@ const isActive = computed(
     systemState.value === SystemState.RUNNING ||
     systemState.value === SystemState.PAUSED,
 );
+const isLoaded = computed(() => systemState.value === SystemState.LOADED);
 const isPaused = computed(() => systemState.value === SystemState.PAUSED);
 const isRunning = computed(() => systemState.value === SystemState.RUNNING);
 
@@ -64,23 +71,56 @@ const printableFiles = computed(() => {
 async function printFile(filename) {
   if (!filename) return;
 
-  // Guard: We can only start a print if the machine is fully IDLE.
+  // Guard: We can only load a new program if the interpreter is
+  // idle. A running program must be stopped first; the LOADED
+  // branch has its own Unload button to clear the file pointer.
   if (systemState.value !== SystemState.IDLE) {
-    consoleStore.error(`[ActivePrintWidget] Cannot start print. Machine is currently: ${systemState.value}`);
+    consoleStore.error(`[ActivePrintWidget] Cannot load. Machine is currently: ${systemState.value}`);
     return;
   }
 
-  consoleStore.debug(`[ActivePrintWidget] Requesting print start for: ${filename}`);
+  consoleStore.debug(`[ActivePrintWidget] Loading program: ${filename}`);
   try {
-    // 1. The OpenAPI spec for `runProgram` implies the file must be loaded first.
-    // If your backend requires explicit loading, call your file/load service here:
-    // await ModulesFilesService.loadFile(filename);
-
-    // 2. Start the loaded program
-    await ModulesProgramService.runProgram();
+    // Step 1: load. The widget's reactive state transitions to
+    // SystemState.LOADED on the next telemetry tick and the new
+    // "Loaded" branch renders a dedicated Start button. The
+    // operator must press Start explicitly so the two-step
+    // lifecycle is visible (matches LinuxCNC's CLI semantics).
+    await ModulesProgramService.loadProgram({ filename });
+    consoleStore.success(`Loaded ${filename}. Press Start to begin.`);
   } catch (err) {
     // The generated client throws ApiError on failure, which includes useful data
-    consoleStore.error(`[ActivePrintWidget] Failed to start print: ${err.body?.detail || err.message}`);
+    consoleStore.error(`[ActivePrintWidget] Failed to load: ${err.body?.detail || err.message}`);
+  }
+}
+
+async function startLoadedProgram() {
+  // Guard: only start from the LOADED branch. Reaching this handler
+  // from any other state is a programming error in the parent
+  // component (the button is only rendered on LOADED).
+  if (systemState.value !== SystemState.LOADED) {
+    consoleStore.error(`[ActivePrintWidget] Ignored start: Machine is ${systemState.value}, not Loaded.`);
+    return;
+  }
+  consoleStore.debug("[ActivePrintWidget] Requesting start...");
+  try {
+    await ModulesProgramService.runProgram();
+  } catch (err) {
+    consoleStore.error(`[ActivePrintWidget] Failed to start: ${err.body?.detail || err.message}`);
+  }
+}
+
+async function unloadProgram() {
+  // There is no dedicated ``/unload`` endpoint today; the closest
+  // semantic is ``stopProgram`` which clears ``current_line`` and
+  // puts ``interp_state`` back to ``INTERP_IDLE``. The file
+  // pointer is reset by the next ``POST /load`` anyway, so the
+  // operator lands in the Standby view and can pick a new file.
+  consoleStore.debug("[ActivePrintWidget] Unloading program...");
+  try {
+    await ModulesProgramService.stopProgram();
+  } catch (err) {
+    consoleStore.error(`[ActivePrintWidget] Failed to unload: ${err.body?.detail || err.message}`);
   }
 }
 
@@ -181,6 +221,41 @@ async function stopPrint() {
 
       <div v-else class="text-xs text-gray-500 italic">
         No printable G-code files found. Upload one from the Files view.
+      </div>
+    </div>
+
+    <!-- Loaded view: a program is open in the interpreter
+         (``stat.file`` set, ``interp_state`` is ``INTERP_IDLE``)
+         but the run has not started. Renders the loaded filename
+         and a dedicated Start button that calls ``runProgram``.
+         The operator gets a chance to verify the file before
+         pressing Start — this mirrors LinuxCNC's two-step
+         "program_open then auto(AUTO_RUN)" lifecycle. -->
+    <div v-else-if="isLoaded" class="p-4 flex flex-col space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
+          <span class="mr-2">📄</span> Loaded
+        </h2>
+        <span class="text-xs font-mono px-2 py-0.5 rounded bg-blue-700/40 text-blue-200">
+          LOADED
+        </span>
+      </div>
+
+      <div class="text-sm text-gray-200 font-mono truncate" :title="status.file">
+        {{ status.file || "(unknown file)" }}
+      </div>
+
+      <div class="flex items-center gap-2 pt-2">
+        <button
+          type="button"
+          class="flex-1 px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded font-semibold text-sm transition-colors"
+          @click="startLoadedProgram"
+        >Start</button>
+        <button
+          type="button"
+          class="flex-1 px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded font-semibold text-sm transition-colors"
+          @click="unloadProgram"
+        >Unload</button>
       </div>
     </div>
 

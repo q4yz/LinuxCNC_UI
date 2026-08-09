@@ -118,13 +118,16 @@ async function deleteFile(filename) {
 //
 // Lifecycle calls live on the program module (``/api/v1/modules/program``)
 // — different endpoint family than the file CRUD above, hence the
-// separate service. ``loadProgram`` maps to ``runProgram``.
+// separate service. The button label is "Load" because it mirrors
+// LinuxCNC's ``program_open`` (the "load" step in the two-step
+// lifecycle); the operator still has to press Start in the
+// dashboard widget to begin execution.
 
 async function loadFile(filename) {
   try {
     consoleStore.command(`Loading file ${filename}...`)
-    await ModulesProgramService.runProgram(0)
-    consoleStore.success(`Loaded ${filename}`)
+    await ModulesProgramService.loadProgram({ filename })
+    consoleStore.success(`Loaded ${filename} — press Start to begin.`)
   } catch (error) {
     consoleStore.error(`Failed to load ${filename}: ${describeError(error)}`)
   }
