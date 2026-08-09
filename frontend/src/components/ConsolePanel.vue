@@ -68,7 +68,7 @@ const submitCommand = async () => {
   if (!cmd) return
 
   // Echo command to console
-  consoleStore.addMessage(cmd, 'command')
+  consoleStore.command(cmd)
 
   // Add to history
   commandHistory.value.push(cmd)
@@ -77,13 +77,13 @@ const submitCommand = async () => {
   try {
     // Cannot send commands while in ESTOP
     if (machineStore.isEstop) {
-       consoleStore.addMessage("Machine is in ESTOP. Command rejected.", 'error')
+       consoleStore.error("Machine is in ESTOP. Command rejected.")
     } else {
        await ModulesMachineService.runMdiCommand({ command: cmd })
-       consoleStore.addMessage(`Executed: ${cmd}`, 'success')
+       consoleStore.success(`Executed: ${cmd}`)
     }
   } catch (e) {
-    consoleStore.addMessage(`Error: ${e.message}`, 'error')
+    consoleStore.error(`Error: ${e.message}`)
   }
 
   commandInput.value = ''

@@ -85,16 +85,6 @@ export const useConsoleStore = defineStore('console', {
     },
 
     /**
-     * @deprecated Use the specific level methods (e.g., info(), error()) instead.
-     */
-    addMessage(text, type = 'info') {
-        console.warn('[ConsoleStore] addMessage() is deprecated. Please use the specific level actions like info(), debug(), or error() instead.')
-        this.warning('[ConsoleStore] addMessage() is deprecated. Please use the specific level actions like info(), debug(), or error() instead.')
-        this._addMessage(text, type)
-
-    },
-
-    /**
      * Internal helper that optionally publishes to the toast
      * channel. Resolved inside the action (rather than at module
      * scope) to avoid the cross-store import cycle documented in

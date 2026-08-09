@@ -114,9 +114,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         selectedCompilerId.value = compilers.value[0].id
       }
     } catch (error) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to list compilers: ${describeError(error)}`,
-        "error",
       )
     }
   }
@@ -130,9 +129,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         profilesTree.entries.push(entry)
       }
     } catch (error) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to load profiles: ${describeError(error)}`,
-        "error",
       )
     }
   }
@@ -147,9 +145,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         delete stagedContents[key]
       }
     } catch (error) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to load staged artifacts: ${describeError(error)}`,
-        "error",
       )
     }
   }
@@ -167,9 +164,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
         delete activeContents[key]
       }
     } catch (error) {
-      consoleStore.addMessage(
+      consoleStore.error(
         `Failed to load active artifacts: ${describeError(error)}`,
-        "error",
       )
     }
   }
