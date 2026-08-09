@@ -79,26 +79,16 @@ function navigate(view) {
 <template>
   <div class="flex flex-col h-screen overflow-hidden bg-gray-900 text-white font-sans">
 
-    <!-- Global Emergency Stop header. Sits above the sidebar so the
-         safety button stays visible no matter which view is active
-         or how far the operator has scrolled. See issue #103. -->
+    <!-- Global Emergency Stop header. -->
     <EStopHeader />
 
-    <!-- Sidebar + main content row. ``flex-1`` lets this row
-         absorb the leftover vertical space below the sticky
-         header; ``overflow-hidden`` keeps the sidebar and main
-         panes from bleeding into each other. -->
+    <!-- Sidebar + main content row. -->
     <div class="flex flex-1 overflow-hidden">
-  <div class="flex h-screen overflow-hidden bg-gray-900 text-white font-sans">
-    <ModalConfirmHost />
 
-      <!-- Sidebar Navigation: AppSidebar reads the active route
-           and calls ``router.push`` itself, so we pass nothing here. -->
+      <!-- Sidebar Navigation -->
       <AppSidebar />
 
-      <!-- Main Content Area: ``<router-view>`` renders the active
-           route's component. Module-owned views (registry modules)
-           override the slot when their id matches the route name. -->
+      <!-- Main Content Area -->
       <main class="flex-1 overflow-y-auto p-4 lg:p-8">
         <component v-if="moduleView" :is="moduleView" />
         <router-view v-else />
@@ -106,11 +96,8 @@ function navigate(view) {
 
     </div>
 
-    <!-- Toast layer (issue #99). Fixed-position popup notifications
-         raised by ``useToast()`` and surfaced by ``consoleStore``
-         when callers opt in via ``{ popup: true }``. Mounted at
-         the app root so every module's popups share a single
-         container. -->
+    <!-- Global Overlays -->
+    <ModalConfirmHost />
     <ToastContainer />
 
   </div>
