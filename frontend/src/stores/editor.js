@@ -31,6 +31,14 @@ import { ApiError } from '../../generated/api/core/ApiError'
 //   ``machine_config/...``  or  ``profiles/...``  →  machineconfig
 //   everything else                                  →  programs
 //
+// Bare paths whose extension maps to a known profile mode
+// (``.cfg`` / ``.ini`` / ``.conf`` / ``.toml``) also route to
+// machineconfig — the backend's :class:`ConfigFileService` resolves
+// unqualified paths against ``machine_config/profiles/``, so a URL
+// like ``/config/klipper.cfg`` expects the profile endpoint. Without
+// that fallback the universal editor would 404 on every operator-
+// typed bare filename.
+//
 // The ``profiles/`` prefix is an alias accepted by the machineconfig
 // router (``save_profile`` and ``read_profile`` resolve relative to
 // ``machine_config/profiles/``). Operators see ``profiles/foo.cfg`` in
@@ -42,9 +50,15 @@ import { ApiError } from '../../generated/api/core/ApiError'
 //
 // G-code macros, M-codes, MDI snippets, etc. all live under
 // ``nc_files/`` in the programs root. The path-based router extends
-// to a new endpoint without changing the existing one — when a
-// "macro library" feature lands, the macros are served by the
-// programs service and the existing logic handles them.
+// to a new endpoint without changing the existing one.
+//
+// The dedicated ``macros`` module owns its own router (CRUD over
+// ``.macro`` files under ``<repo>/macros/``); that surface is
+// reached through the dashboard panel and the Machine Config →
+// Macros section, not through the universal editor. Files that look
+// like ``.macro`` are NOT routed through ``writeByPath`` /
+// ``readByPath`` here — the macros module is the sole owner of those
+// files.
 
 const PROFILE_PATH_PREFIXES = ['machine_config/', 'profiles/']
 const PROFILE_MODES = new Set(['config', 'profile', 'ini', 'cfg', 'conf'])
@@ -52,9 +66,26 @@ const GCODE_MODES = new Set(['gcode', 'ngc', 'nc'])
 
 function isProfilePath(path) {
   if (!path) return false
-  return PROFILE_PATH_PREFIXES.some(
-    (prefix) => path === prefix.slice(0, -1) || path.startsWith(prefix),
-  )
+  // Explicit prefixes win first — that's the original contract and
+  // handles every path that comes from ``ProfilesExplorer``,
+  // ``ActivePanel`` etc. which always carry ``profiles/`` /
+  // ``machine_config/`` segments from the listing endpoints.
+  if (
+    PROFILE_PATH_PREFIXES.some(
+      (prefix) => path === prefix.slice(0, -1) || path.startsWith(prefix),
+    )
+  ) {
+    return true
+  }
+  // Bare-path fallback. The backend's :class:`ConfigFileService`
+  // resolves unqualified paths against ``machine_config/profiles/``
+  // so a URL like ``/config/klipper.cfg`` (no prefix segment) is
+  // expected to read from that root. Without this branch, the
+  // router falls through to ``routeByPath === 'program'`` and the
+  // programs endpoint 404s on a perfectly valid profile. The
+  // extension-based check keeps the dispatch conservative — a
+  // ``.gcode`` / ``.ngc`` file still routes to the programs side.
+  return PROFILE_MODES.has(modeForFilename(path))
 }
 
 // Comprehensive extension → mode map. The mode is purely a syntax

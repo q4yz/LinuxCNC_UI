@@ -17,6 +17,7 @@ import CompilerPanel from '../modules/machineconfig/components/CompilerPanel.vue
 import CompiledOutputViewer from '../modules/machineconfig/components/CompiledOutputViewer.vue';
 import DeploymentPanel from '../modules/machineconfig/components/DeploymentPanel.vue';
 import ActivePanel from '../modules/machineconfig/components/ActivePanel.vue';
+import MacroManagerPanel from '../modules/macros/components/MacroManagerPanel.vue';
 
 import { useMachineConfigStore } from '../modules/machineconfig/store.js';
 import { useEditorStore, resolveEditorMode } from '../stores/editor.js';
@@ -198,6 +199,14 @@ onMounted(async () => {
       </div>
 
       <ActivePanel />
+
+      <!-- Macros section. The macros module owns its own CRUD via
+           ``useMacrosStore()``; the panel mounts that store on first
+           use so an unrelated Machine-Config user pays no startup
+           cost. A future refactor may move this into its own sidebar
+           entry / route; for now it shares the right column with
+           the rest of the machineconfig surface. -->
+      <MacroManagerPanel />
     </section>
   </div>
 </template>
