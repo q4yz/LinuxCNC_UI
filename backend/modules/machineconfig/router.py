@@ -27,6 +27,12 @@ Endpoint groups (mounted by the registry under
   name out of the active INI so the Active dashboard can render
   the "currently running machine" header. Backed by
   :meth:`ActiveFileService.machine_name`.
+* **M-codes** — ``GET/PUT/DELETE /m-codes/...`` exposes the bare
+  ``M<num>`` files under ``machine_config/m_codes/`` so the
+  universal editor can edit them the same way it edits
+  ``.cfg`` / ``.ini`` profiles. Backed by
+  :class:`MCodeFileService` (same instance the macros module's
+  ``?kind=mcode`` path uses).
 
 The router is intentionally a thin HTTP wrapper: every filesystem
 operation is delegated to the corresponding service. The
@@ -40,16 +46,18 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Path, Query, Request, Response, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services import (
     ActiveFileService,
     ConfigFileService,
+    MCodeFileService,
     StagedFileService,
     get_active_service,
     get_config_service,
+    get_mcode_service,
     get_staged_service,
 )
 from .compilers import registry as compiler_registry
@@ -190,6 +198,49 @@ class ProfileWriteRequest(BaseModel):
     """Body of ``PUT /profiles/content?path=<rel>``."""
 
     content: str = Field(..., description="Raw text to overwrite the file with")
+
+
+class MCodeEntry(BaseModel):
+    """One row of ``GET /m-codes/list``.
+
+    Mirrors :class:`MacroListItem` so the frontend can re-use its
+    listing reducer. ``path`` is the bare ``M<num>`` token — the
+    filesystem path is implicit (the m-codes root resolved against
+    the project).
+    """
+
+    name: str = Field(..., description="Bare M-code token, e.g. M101")
+    kind: str = Field(default="mcode", description="Always 'mcode'.")
+    size_bytes: int = Field(..., description="On-disk byte size")
+
+
+class MCodeListResponse(BaseModel):
+    """Response body of ``GET /m-codes/list``."""
+
+    mcodes: List[MCodeEntry] = Field(
+        default_factory=list,
+        description="Sorted list of M-codes currently on disk.",
+    )
+
+
+class MCodeContentResponse(BaseModel):
+    """Response body of ``GET /m-codes/content?path=<name>``."""
+
+    path: str = Field(..., description="M-code token")
+    content: str = Field(..., description="Raw text content of the file")
+
+
+class MCodeWriteRequest(BaseModel):
+    """Body of ``PUT /m-codes/content?path=<name>``."""
+
+    content: str = Field(..., description="Raw text to overwrite the M-code with")
+
+
+class MCodeStatusMessage(BaseModel):
+    """Response body for ``PUT`` / ``DELETE`` on M-codes."""
+
+    status: str = Field(default="ok", description="Status indicator.")
+    message: str = Field(..., description="Human-readable confirmation.")
 
 
 class CreateEntryRequest(BaseModel):
@@ -798,4 +849,178 @@ def get_machine_name() -> MachineNameResponse:
     return MachineNameResponse(machine_name=service.machine_name())
 
 
-__all__ = ["router"]
+# ---------------------------------------------------------------------- #
+# M-code endpoints                                                         #
+# ---------------------------------------------------------------------- #
+#
+# The macros module fronts these files through ``?kind=mcode`` and
+# ``ModulesMacrosService``. The mirror surface under the machineconfig
+# router exists so the **universal editor** can read / write M-codes
+# the same way it reads / writes ``.cfg`` / ``.ini`` files — the
+# ``isProfilePath`` branch for ``^M\d+$`` names points at these
+# endpoints. Both routes delegate to the same
+# :class:`MCodeFileService`, so a single source-of-truth owns the
+# filesystem state.
+#
+# Name validation is the strict ``M100..M199`` range
+# (regex ``^M1\d{2}$``). Out-of-range names return ``400`` here and
+# ``400`` from the macros router; the regex and the
+# :class:`MCodeFileService.mcode_filter` listing filter must agree.
+
+
+_MCODE_NAME_PATTERN = MCodeFileService.MCODE_NAME
+
+
+def _validate_mcode_name(name: str) -> str:
+    """Return ``name`` if it matches the ``M100..M199`` regex.
+
+    Raises:
+        HTTPException: ``400`` for anything that doesn't match.
+    """
+    if not _MCODE_NAME_PATTERN.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid M-code name: {name!r} "
+                "(must match ^M1\\d{2}$ — i.e. M100..M199)"
+            ),
+        )
+    return name
+
+
+@router.get(
+    "/m-codes/list",
+    summary="List M-codes",
+    description=(
+        "Return every ``M<num>`` file under ``machine_config/m_codes/`` "
+        "(LinuxCNC's ``USER_M_PATH``). Sorted by name."
+    ),
+    response_model=MCodeListResponse,
+    operation_id="listMCodes",
+)
+def list_mcodes() -> MCodeListResponse:
+    """List M-codes via :class:`MCodeFileService`."""
+    service: MCodeFileService = get_mcode_service()
+    entries = [
+        MCodeEntry(name=entry.name, size_bytes=entry.size_bytes)
+        for entry in service.list_files()
+        if entry.kind == "file"
+    ]
+    entries.sort(key=lambda entry: entry.name)
+    return MCodeListResponse(mcodes=entries)
+
+
+@router.get(
+    "/m-codes/content",
+    summary="Read M-code content",
+    description=(
+        "Return the raw text content of the requested ``M<num>`` "
+        "file. The query parameter carries the bare name (no "
+        "path / no extension). Returns ``404`` for missing files "
+        "and ``400`` for out-of-range names."
+    ),
+    operation_id="readMCode",
+    response_model=MCodeContentResponse,
+    responses={
+        400: {"description": "Invalid M-code name."},
+        404: {"description": "No M-code with that name."},
+    },
+)
+def read_mcode(
+    path: str = Query(
+        ...,
+        description="Bare M-code name, e.g. ``M101``. Must match ``^M1\\d{2}$``.",
+    ),
+) -> MCodeContentResponse:
+    """Read a single M-code file by relative name."""
+    _validate_mcode_name(path)
+    service: MCodeFileService = get_mcode_service()
+    try:
+        target = service.safe_join(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not target.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"M-code not found: {path}",
+        )
+    return MCodeContentResponse(path=path, content=target.read_text(encoding="utf-8"))
+
+
+@router.put(
+    "/m-codes/content",
+    summary="Write M-code content",
+    description=(
+        "Persist ``payload.content`` atomically as the requested "
+        "``M<num>`` file. The body is the raw text content (UTF-8). "
+        "Returns ``400`` for an out-of-range name and ``422`` for "
+        "a zero-byte payload — the latter mirrors the macros "
+        "router's FastAPI behaviour and is normalised by the "
+        "frontend (``\\\\n`` sentinel)."
+    ),
+    operation_id="writeMCode",
+    response_model=MCodeStatusMessage,
+    responses={
+        400: {"description": "Invalid M-code name."},
+        422: {"description": "Zero-byte payload."},
+    },
+)
+def write_mcode(
+    payload: MCodeWriteRequest = Body(...),
+    path: str = Query(
+        ...,
+        description="Bare M-code name, e.g. ``M101``. Must match ``^M1\\d{2}$``.",
+    ),
+) -> MCodeStatusMessage:
+    """Write an M-code file atomically."""
+    _validate_mcode_name(path)
+    service: MCodeFileService = get_mcode_service()
+    try:
+        size = service.write_file(path, payload.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return MCodeStatusMessage(
+        status="ok",
+        message=f"Saved {path} ({size} bytes).",
+    )
+
+
+@router.delete(
+    "/m-codes/{name}",
+    summary="Delete M-code",
+    description=(
+        "Remove the named ``M<num>`` file from disk. Returns "
+        "``204`` on success, ``404`` for missing, and ``400`` for "
+        "out-of-range names."
+    ),
+    status_code=204,
+    operation_id="deleteMCode",
+    response_class=Response,
+    responses={
+        204: {"description": "M-code deleted."},
+        404: {"description": "No M-code with that name."},
+        400: {"description": "Invalid M-code name."},
+    },
+)
+def delete_mcode(
+    name: str = Path(
+        ...,
+        description="Bare M-code name, e.g. ``M101``. Must match ``^M1\\d{2}$``.",
+    ),
+) -> Response:
+    """Delete the named M-code from disk."""
+    _validate_mcode_name(name)
+    service: MCodeFileService = get_mcode_service()
+    try:
+        target = service.safe_join(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not target.exists():
+        raise HTTPException(
+            status_code=404, detail=f"M-code not found: {name}",
+        )
+    target.unlink()
+    return Response(status_code=204)
+
+
+__all__ = ["router"] 

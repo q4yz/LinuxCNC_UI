@@ -27,6 +27,7 @@ folded into the service constructors.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -49,6 +50,12 @@ _PROFILES_DIR = _MACHINE_CONFIG_DIR / "profiles"
 _STAGED_DIR = _MACHINE_CONFIG_DIR / "ready_for_deploy"
 _ACTIVE_DIR = _MACHINE_CONFIG_DIR / "active"
 _NC_FILES_DIR = _PROJECT_ROOT / "nc_files"
+#: LinuxCNC's ``[RS274NGC]USER_M_PATH``. Custom M-codes (M100..M199)
+#: drop in here as bare ``M<num>`` files; the interpreter expands
+#: ``M<num>`` MDI calls into the file's content. Lives next to
+#: ``machine_config/profiles/`` and is therefore reachable through
+#: the machineconfig router the same way profile content is.
+_M_CODES_DIR = _MACHINE_CONFIG_DIR / "m_codes"
 
 
 # ---------------------------------------------------------------------- #
@@ -75,6 +82,47 @@ class ConfigFileService(FileService):
 
     def __init__(self, root: Optional[Path] = None) -> None:
         super().__init__(root or _PROFILES_DIR)
+
+
+# ---------------------------------------------------------------------- #
+# MCodeFileService                                                         #
+# ---------------------------------------------------------------------- #
+
+
+class MCodeFileService(FileService):
+    """Manages LinuxCNC custom M-codes in ``machine_config/m_codes/``.
+
+    Custom M-codes are dispatched by the interpreter when an operator
+    issues the matching ``M<num>`` MDI command. The convention is a
+    bare file ``M100`` (no extension) at :data:`_M_CODES_DIR`; the
+    filesystem layout mirrors what the upstream LinuxCNC docs
+    describe (the ``[RS274NGC]USER_M_PATH`` INI variable).
+
+    The class limits accepted names to the canonical range
+    ``M100..M199`` (``MCODE_NAME`` regex below). Out-of-range names
+    land in the directory but never surface through the listing /
+    read endpoints, so an operator can drop anything in there
+    without polluting the UI. The strict range keeps the contract
+    simple and matches the documented LinuxCNC defaults; widening
+    it is a one-line regex change.
+    """
+
+    default_read_only = False
+
+    #: LinuxCNC's reserved custom-M-code range. M100..M199 maps to
+    #: ``M1\d{2}`` so the regex is intentionally tight.
+    MCODE_NAME = re.compile(r"^M1\d{2}$")
+
+    #: Public alias used by the macros router + frontend validator.
+    KIND = "mcode"
+
+    @classmethod
+    def mcode_filter(cls, name: str) -> bool:
+        return bool(cls.MCODE_NAME.match(name))
+
+    def __init__(self, root: Optional[Path] = None) -> None:
+        super().__init__(root or _M_CODES_DIR)
+        self.filename_filter = self.mcode_filter
 
 
 # ---------------------------------------------------------------------- #
@@ -288,6 +336,23 @@ def get_active_service(root: Optional[Path] = None) -> ActiveFileService:
     return service
 
 
+def get_mcode_service(root: Optional[Path] = None) -> MCodeFileService:
+    """Return the cached :class:`MCodeFileService` for the m-codes root.
+
+    Used both by the machineconfig ``/m-codes/...`` router (which the
+    universal editor talks to) and by the macros router's
+    ``?kind=mcode`` path (which the dashboard + Machine Config UI
+    uses). They share a single instance because the underlying
+    :class:`FileService` is stateless besides its ``root`` path.
+    """
+    key = _cache_key(MCodeFileService, root)
+    service = _SERVICE_CACHE.get(key)
+    if service is None:
+        service = MCodeFileService(root=root)
+        _SERVICE_CACHE[key] = service
+    return service
+
+
 def reset_service_cache() -> None:
     """Drop the cached service instances.
 
@@ -302,11 +367,13 @@ def reset_service_cache() -> None:
 __all__ = [
     "ActiveFileService",
     "ConfigFileService",
+    "MCodeFileService",
     "ProgramFileService",
     "StagedFileService",
     "get_active_service",
     "get_config_service",
+    "get_mcode_service",
     "get_program_service",
     "get_staged_service",
     "reset_service_cache",
-]
+] 

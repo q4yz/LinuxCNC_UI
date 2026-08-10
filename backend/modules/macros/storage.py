@@ -1,15 +1,27 @@
-"""Filesystem-backed storage for ``.macro`` files.
+"""Filesystem-backed storage for ``.macro`` + ``.ngc`` files.
 
 MacroStorage is the canonical persistence layer for custom macros
-(issue #92). It owns every read / write / list / delete operation
-against the macros directory; the HTTP router in
-:mod:`backend.modules.macros.router` is a thin wrapper that hands
-callers a JSON-friendly view of the same surface.
+(issue #92) and NGC subroutines (issue follow-up). It owns every
+read / write / list / delete operation against the macros directory;
+the HTTP router in :mod:`backend.modules.macros.router` is a thin
+wrapper that hands callers a JSON-friendly view of the same surface.
 
 Key properties:
 
-* **Strict ``.macro`` extension.** Every file in the storage root
-  that does not end with ``.macro`` is ignored — the directory is
+* **Two kinds share one root.** :data:`MacroKind.MACRO` writes
+  ``<name>.macro``; :data:`MacroKind.NGC` writes ``<name>.ngc``.
+  Both files live under ``<repo>/macros/``; one pass through
+  :meth:`list` filters by extension. The separation lets a ``.ngc``
+  toggle live in the dialog without changing disk semantics.
+
+* **M-codes live in ``machine_config/m_codes/``. They are not owned
+  by :class:`MacroStorage` — :class:`MCodeFileService` (in
+  :mod:`backend.services.domain_file_services`) handles that root
+  via the existing :class:`FileService` machinery. The two surfaces
+  share a router but not a storage class.
+
+* **Strict extension contract.** Files in the storage root that do
+  not end with ``.macro`` or ``.ngc`` are ignored — the directory is
   shared with the rest of the repo so we never want to confuse an
   operator's stray file with a managed macro.
 
@@ -38,18 +50,40 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------- #
-# Constants                                                               #
+# Kinds                                                                   #
 # ---------------------------------------------------------------------- #
 
 
-#: File extension every macro file must end with (case-sensitive).
-EXTENSION = ".macro"
+class MacroKind:
+    """Kinds the macros module persists under ``<repo>/macros/``.
+
+    M-codes (``mcode``) are kept here for router enum parity but
+    :class:`MacroStorage` does not handle them — they go through
+    :class:`backend.services.domain_file_services.MCodeFileService`.
+    """
+
+    MACRO = "macro"
+    NGC = "ngc"
+    MCODE = "mcode"
+
+
+# Map of kind → on-disk extension. ``MacroStorage`` consults this
+# table; ``MacroKind.MCODE`` deliberately resolves to an empty
+# string so any future accidental write through :class:`MacroStorage`
+# would land on a single file with no extension (an obvious smell).
+_EXTENSIONS: Dict[str, str] = {
+    MacroKind.MACRO: ".macro",
+    MacroKind.NGC: ".ngc",
+}
+
+# Re-export the legacy constant so existing imports keep working.
+EXTENSION = _EXTENSIONS[MacroKind.MACRO]
 
 #: Allowed character set for macro names. ``/`` and the path
 #: separator are deliberately excluded so the regex alone blocks the
@@ -77,9 +111,37 @@ class MacroNotFoundError(FileNotFoundError):
     """
 
 
+class InvalidMacroKindError(ValueError):
+    """Raised when a caller passes a ``kind`` outside the
+    :class:`MacroStorage` contract.
+    """
+
+
 # ---------------------------------------------------------------------- #
 # Helpers                                                                 #
 # ---------------------------------------------------------------------- #
+
+
+def _extension_for(kind: str) -> str:
+    """Return the disk extension for the requested macro kind.
+
+    Raises:
+        InvalidMacroKindError: If ``kind`` is not part of
+            :class:`MacroStorage`'s contract.
+    """
+    if kind == MacroKind.MCODE:
+        # Routing an mcode through MacroStorage is a programmer
+        # error — use :class:`MCodeFileService` instead.
+        raise InvalidMacroKindError(
+            f"MacroStorage does not handle kind={kind!r}; "
+            "use MCodeFileService for machine_config/m_codes/"
+        )
+    try:
+        return _EXTENSIONS[kind]
+    except KeyError as exc:
+        raise InvalidMacroKindError(
+            f"unsupported macro kind: {kind!r}"
+        ) from exc
 
 
 def default_storage_root() -> Path:
@@ -105,13 +167,17 @@ def default_storage_root() -> Path:
 
 
 class MacroStorage:
-    """Filesystem-backed CRUD over a directory of ``.macro`` files.
+    """Filesystem-backed CRUD over ``.macro`` + ``.ngc`` files.
 
     Args:
-        root_dir: Directory that holds the ``.macro`` files. Created
+        root_dir: Directory that holds the macro files. Created
             on first write if it does not exist; reads against a
             missing directory return empty results (never raise).
     """
+
+    #: Kinds handled by this storage. ``mcode`` is intentionally
+    #: absent — see :class:`MCodeFileService`.
+    KINDS = (MacroKind.MACRO, MacroKind.NGC)
 
     def __init__(self, root_dir: Path) -> None:
         if root_dir is None:
@@ -136,7 +202,7 @@ class MacroStorage:
         """Return ``name`` unchanged when it passes validation.
 
         Raises:
-            InvalidMacroNameError: If the name is not a string, does
+            InvalidMacroNameError: If ``name`` is not a string, does
                 not match :data:`_NAME_REGEX`, or is ``..`` / ``.``.
         """
         if not isinstance(name, str):
@@ -161,42 +227,54 @@ class MacroStorage:
     # CRUD                                                                #
     # ------------------------------------------------------------------ #
 
-    def list(self) -> List[str]:
-        """Return macro names (without ``.macro``) sorted alphabetically.
+    def list(self, kind: str = MacroKind.MACRO) -> List[str]:
+        """Return macro names (extension-stripped) sorted alphabetically.
+
+        Args:
+            kind: ``MacroKind.MACRO`` (default) or
+                :data:`MacroKind.NGC`. M-codes are not handled here.
 
         A missing or empty directory returns an empty list. Files
-        that do not end with ``.macro`` are ignored.
+        that do not end with the requested extension are ignored.
         """
         if not self._root.exists():
             return []
 
+        extension = _extension_for(kind)
         names: List[str] = []
         for entry in self._root.iterdir():
             if not entry.is_file():
                 continue
-            if not entry.name.endswith(EXTENSION):
+            if not entry.name.endswith(extension):
                 continue
-            names.append(entry.name[: -len(EXTENSION)])
+            names.append(entry.name[: -len(extension)])
         names.sort()
         return names
 
-    def read(self, name: str) -> str:
+    def read(self, name: str, kind: str = MacroKind.MACRO) -> str:
         """Return the raw text content of the macro.
+
+        Args:
+            name: Macro name without the ``.macro`` / ``.ngc`` suffix.
+            kind: ``MacroKind.MACRO`` (default) or
+                :data:`MacroKind.NGC`.
 
         Raises:
             InvalidMacroNameError: If ``name`` fails validation.
-            MacroNotFoundError: If no ``<name>.macro`` file exists.
+            InvalidMacroKindError: If ``kind`` is not supported.
+            MacroNotFoundError: If no matching file exists.
         """
         valid = self._validate(name)
-        path = self._root / f"{valid}{EXTENSION}"
+        extension = _extension_for(kind)
+        path = self._root / f"{valid}{extension}"
         if not path.exists():
             raise MacroNotFoundError(
-                f"macro not found: {valid}{EXTENSION}"
+                f"macro not found: {valid}{extension}"
             )
         return path.read_text(encoding="utf-8")
 
-    def exists(self, name: str) -> bool:
-        """Return ``True`` iff a macro named ``name`` exists.
+    def exists(self, name: str, kind: str = MacroKind.MACRO) -> bool:
+        """Return ``True`` iff a macro of the requested kind exists.
 
         Invalid names return ``False`` (rather than raising) so the
         router can use ``exists`` as a cheap pre-flight check before
@@ -204,17 +282,40 @@ class MacroStorage:
         """
         try:
             valid = self._validate(name)
-        except InvalidMacroNameError:
+            extension = _extension_for(kind)
+        except (InvalidMacroNameError, InvalidMacroKindError):
             return False
-        path = self._root / f"{valid}{EXTENSION}"
+        path = self._root / f"{valid}{extension}"
         return path.exists()
 
-    def write(self, name: str, content: str) -> int:
-        """Persist ``content`` to ``<name>.macro`` atomically.
+    def size(self, name: str, kind: str = MacroKind.MACRO) -> int:
+        """Return the on-disk byte size of the macro.
+
+        Returns 0 when the file is missing (parity with
+        ``list_files``'s ``size_bytes`` for un-statted entries). The
+        router falls back to this when ``Content-Length`` headers
+        are not available.
+        """
+        try:
+            valid = self._validate(name)
+            extension = _extension_for(kind)
+        except (InvalidMacroNameError, InvalidMacroKindError):
+            return 0
+        path = self._root / f"{valid}{extension}"
+        if not path.exists():
+            return 0
+        return path.stat().st_size
+
+    def write(
+        self, name: str, content: str, kind: str = MacroKind.MACRO
+    ) -> int:
+        """Persist ``content`` to ``<name><ext>`` atomically.
 
         Args:
             name: Validated macro name (without extension).
             content: Raw text payload. Decoded as UTF-8 on read.
+            kind: ``MacroKind.MACRO`` (default) or
+                :data:`MacroKind.NGC`.
 
         Returns:
             The byte size of the persisted payload (matches the
@@ -222,6 +323,7 @@ class MacroStorage:
 
         Raises:
             InvalidMacroNameError: If ``name`` fails validation.
+            InvalidMacroKindError: If ``kind`` is unsupported.
         """
         if not isinstance(content, str):
             raise TypeError(
@@ -229,15 +331,16 @@ class MacroStorage:
             )
 
         valid = self._validate(name)
+        extension = _extension_for(kind)
         self._root.mkdir(parents=True, exist_ok=True)
-        path = self._root / f"{valid}{EXTENSION}"
+        path = self._root / f"{valid}{extension}"
 
         # ``delete=False`` so we can rename onto the final path
         # cross-platform; ``dir=`` pins the temp file to the same
         # filesystem as the target so ``os.replace`` stays atomic.
         fd, tmp_path = tempfile.mkstemp(
             prefix=f".{valid}-",
-            suffix=f"{EXTENSION}.tmp",
+            suffix=f"{extension}.tmp",
             dir=str(self._root),
         )
         try:
@@ -257,26 +360,35 @@ class MacroStorage:
 
         return path.stat().st_size
 
-    def delete(self, name: str) -> None:
-        """Remove ``<name>.macro`` from disk.
+    def delete(self, name: str, kind: str = MacroKind.MACRO) -> None:
+        """Remove the macro file from disk.
+
+        Args:
+            name: Macro name without the ``.macro`` / ``.ngc`` suffix.
+            kind: ``MacroKind.MACRO`` (default) or
+                :data:`MacroKind.NGC`.
 
         Raises:
             InvalidMacroNameError: If ``name`` fails validation.
-            MacroNotFoundError: If no ``<name>.macro`` file exists.
+            InvalidMacroKindError: If ``kind`` is unsupported.
+            MacroNotFoundError: If no matching file exists.
         """
         valid = self._validate(name)
-        path = self._root / f"{valid}{EXTENSION}"
+        extension = _extension_for(kind)
+        path = self._root / f"{valid}{extension}"
         if not path.exists():
             raise MacroNotFoundError(
-                f"macro not found: {valid}{EXTENSION}"
+                f"macro not found: {valid}{extension}"
             )
         path.unlink()
 
 
 __all__ = [
     "MacroStorage",
+    "MacroKind",
     "EXTENSION",
     "InvalidMacroNameError",
+    "InvalidMacroKindError",
     "MacroNotFoundError",
     "default_storage_root",
 ]

@@ -48,19 +48,23 @@ logger = logging.getLogger("backend.modules.macros")
 _MANIFEST = ModuleManifest(
     id="macros",
     title="Macros",
-    version="0.1.0",
+    version="0.2.0",
     description=(
-        "CRUD over user-defined ``.macro`` files (raw text payloads "
-        "eventually executed as a mix of G-code + Python). The "
-        "frontend Activation list and Editor views land in a "
-        "follow-up ticket; this module only owns storage and the "
-        "HTTP surface."
+        "CRUD over three kinds of operator-authored machine files: "
+        "``.macro`` (custom G-code + python-block payloads), "
+        "``.ngc`` (LinuxCNC native subroutines, toggled by the user), "
+        "and bare ``M<num>`` files (LinuxCNC custom M-codes M100..M199 "
+        "dispatched by the interpreter via ``USER_M_PATH``). The "
+        "``.macro`` + ``.ngc`` halves share ``<repo>/macros/``; the "
+        "M-code half uses ``<repo>/machine_config/m_codes/`` so the "
+        "universal editor's profile mode picks them up the same way "
+        "it picks up ``.cfg`` / ``.ini`` config files."
     ),
-    # Frontend will declare its own nav entry when the Activation
-    # view lands — keep the manifest free of sidebar metadata for now.
+    # No sidebar entry; the dashboard panel + Machine Config
+    # section cover both UIs.
     sidebar=None,
-    # No settings panel today; the canonical settings endpoints are
-    # mounted by the registry and will return an empty payload.
+    # The settings endpoints are mounted by the registry and return
+    # an empty payload for this module (no typed settings schema).
     settings_panel=False,
 )
 

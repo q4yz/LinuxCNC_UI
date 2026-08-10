@@ -2,36 +2,60 @@
 
 Mounted by :class:`core.module_registry.ModuleRegistry` under
 ``/api/v1/modules/macros`` (no router-level ``prefix`` — the
-registry adds it). Four endpoints cover the CRUD surface documented
-in issue #92:
+registry adds it). The router fronts two storage back-ends:
 
-* ``GET    /``         — ``{"macros": [name, ...]}`` sorted, no
-                         extension. Empty list when the storage is
-                         empty.
-* ``GET    /{name}``   — raw text body (``text/plain``). Returns
-                         ``404`` if no macro named ``name`` exists.
-* ``PUT    /{name}``   — body is the raw text payload; written
-                         atomically; returns ``{"name", "size"}``.
-                         ``400`` on invalid names.
-* ``DELETE /{name}``   — ``204`` on success, ``404`` on missing.
+* :class:`backend.modules.macros.storage.MacroStorage` — handles
+  ``.macro`` and ``.ngc`` files in ``<repo>/macros/``.
+* :class:`backend.services.domain_file_services.MCodeFileService`
+  — handles bare ``M<num>`` files in ``<repo>/machine_config/m_codes/``.
 
-The router is a thin wrapper over :class:`MacroStorage`; every
-filesystem concern (atomic writes, name validation) lives in the
-storage layer so future callers (CLI, automation scripts) can use
-the same primitives.
+The router exposes a uniform ``?kind=`` query parameter so a
+single endpoint family covers all three storage surfaces. Every
+endpoint accepts ``kind`` ∈ ``{"macro", "ngc", "mcode"}`` and
+dispatches accordingly.
+
+Endpoints
+---------
+
+* ``GET    /``               — list macro entries of the requested
+                              ``kind``. Returns
+                              ``{"macros": [{"name", "kind",
+                              "size_bytes"}]}``.
+* ``GET    /{name}?kind=``   — raw text payload of the macro file.
+                              ``404`` for missing, ``400`` for an
+                              out-of-range name.
+* ``PUT    /{name}?kind=``   — create or overwrite the macro file.
+                              Atomic write (``tempfile`` +
+                              ``os.replace``); empty body → ``422``
+                              for ``macro`` / ``ngc`` (FastAPI's
+                              raw-body quirk the frontend mirrors
+                              with the ``"\n"`` sentinel).
+* ``DELETE /{name}?kind=``   — ``204`` on success, ``404`` on
+                              missing.
+
+M-code name validation lives at the router level (regex
+``^M1\d{2}$`` — M100..M199 inclusive); the
+:class:`MCodeFileService`'s listing filter enforces the same range
+when reading, so the regex and the listing stay in lockstep.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Dict, List
+import re
+from typing import List
 
-from fastapi import APIRouter, Body, HTTPException, Path, Response
+from fastapi import APIRouter, Body, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field
+
+from services import get_mcode_service
+from services.domain_file_services import FileMetadata
 
 from .storage import (
     EXTENSION,
+    InvalidMacroKindError,
     InvalidMacroNameError,
+    MacroKind,
     MacroNotFoundError,
     MacroStorage,
     default_storage_root,
@@ -39,33 +63,64 @@ from .storage import (
 
 logger = logging.getLogger("backend.modules.macros.router")
 
+#: Mirrors ``MCodeFileService.MCODE_NAME``. Kept here so the router's
+#: 400 messages are tight without pulling the service module.
+_MCODE_RE = re.compile(r"^M1\d{2}$")
+
 
 # ---------------------------------------------------------------------- #
 # Pydantic models                                                         #
 # ---------------------------------------------------------------------- #
 
 
-class MacroListResponse(BaseModel):
-    """Response body for ``GET /``."""
+VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
 
-    macros: List[str] = Field(
+
+class MacroListItem(BaseModel):
+    """One row of the unified macro listing.
+
+    Attributes:
+        name: File name without the ``.macro`` / ``.ngc`` suffix.
+            For ``mcode``, the bare ``M<num>`` token (already
+            extension-free).
+        kind: One of ``"macro"`` / ``"ngc"`` / ``"mcode"``.
+        size_bytes: On-disk byte size, used by the dashboard so the
+            editor modal knows whether to skip a re-fetch.
+    """
+
+    name: str = Field(..., description="File name without extension.")
+    kind: str = Field(..., description="One of macro / ngc / mcode.")
+    size_bytes: int = Field(..., description="On-disk byte size.")
+
+
+class MacroListResponse(BaseModel):
+    """Response body for ``GET /``.
+
+    The :class:`MacroListItem` rows are sorted alphabetically by name
+    so the dashboard renders deterministically without a client-side
+    sort.
+    """
+
+    macros: List[MacroListItem] = Field(
         default_factory=list,
         description=(
-            "Macro names (without ``.macro`` extension), sorted "
-            "alphabetically."
+            "Macro entries of the requested kind, sorted by name. "
+            "Each item carries the kind tag so the frontend can "
+            "render a single flat list across multiple kinds."
         ),
     )
 
 
 class MacroWriteResponse(BaseModel):
-    """Response body for ``PUT /{name}``."""
+    """Response body for ``PUT /{name}?kind=``."""
 
-    name: str = Field(..., description="Macro name (without extension).")
+    name: str = Field(..., description="File name (no extension).")
+    kind: str = Field(..., description="One of macro / ngc / mcode.")
     size: int = Field(..., description="Size of the persisted payload in bytes.")
 
 
 # ---------------------------------------------------------------------- #
-# Storage singleton                                                       #
+# Storage singletons                                                      #
 # ---------------------------------------------------------------------- #
 
 
@@ -75,10 +130,70 @@ class MacroWriteResponse(BaseModel):
 # module class simply returns the router, and the router picks up
 # this singleton when the first request lands.
 #
-# Tests can monkeypatch ``_storage`` with an isolated instance bound
-# to a ``tmp_path`` tree so the real ``<repo>/macros/`` directory is
-# never touched.
-_storage: MacroStorage = MacroStorage(default_storage_root())
+# Tests can monkeypatch ``_macro_storage`` with an isolated instance
+# bound to a ``tmp_path`` tree so the real ``<repo>/macros/`` directory
+# is never touched.
+_macro_storage: MacroStorage = MacroStorage(default_storage_root())
+
+
+# ---------------------------------------------------------------------- #
+# Helpers                                                                 #
+# ---------------------------------------------------------------------- #
+
+
+def _validate_kind(kind: str) -> str:
+    """Return ``kind`` if it is part of :data:`VALID_KINDS`.
+
+    Raises:
+        HTTPException: ``400`` when the kind is unknown.
+    """
+    if kind not in VALID_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown macro kind: {kind!r}; "
+            f"expected one of {VALID_KINDS}",
+        )
+    return kind
+
+
+def _validate_mcode_name(name: str) -> str:
+    """Return ``name`` if it falls in ``M100..M199`` inclusive.
+
+    Raises:
+        HTTPException: ``400`` for an out-of-range name.
+    """
+    if not _MCODE_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid M-code name: {name!r} "
+                "(must match ^M1\\d{2}$ — i.e. M100..M199)"
+            ),
+        )
+    return name
+
+
+def _storage_size(name: str, kind: str) -> int:
+    """Return the on-disk byte size for a macro entry."""
+    if kind == MacroKind.MCODE:
+        service = get_mcode_service()
+        entry = FileMetadata(
+            name=name, path=name, parent="", kind="file", size_bytes=0,
+            modified=None, read_only=False,
+        )
+        # The :class:`FileService.list_files` walker hits the
+        # :class:`MCodeFileService.mcode_filter`, so a too-large
+        # name returns nothing. ``MCODE_NAME`` already validated the
+        # value at the router boundary.
+        for existing in service.list_files():
+            if existing.name == name:
+                return existing.size_bytes
+        return 0
+    # macro / ngc — MacroStorage owns the disk root.
+    try:
+        return _macro_storage.size(name, kind=kind)
+    except (InvalidMacroNameError, InvalidMacroKindError):
+        return 0
 
 
 # ---------------------------------------------------------------------- #
@@ -96,24 +211,56 @@ router = APIRouter(tags=["modules:macros"])
     response_model=MacroListResponse,
     summary="List macros",
     description=(
-        "Return every macro file under the storage root, sorted "
-        "alphabetically. Names are returned without the ``.macro`` "
-        "extension so the UI can render them directly."
+        "Return every macro file of the requested ``kind``, sorted "
+        "alphabetically by name. The frontend uses a single flat "
+        "list to render both kinds, so each entry carries the "
+        "kind tag."
     ),
     operation_id="listMacros",
 )
-def list_macros() -> MacroListResponse:
-    """Return the list of persisted macro names."""
-    return MacroListResponse(macros=_storage.list())
+def list_macros(
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
+) -> MacroListResponse:
+    """Return the list of persisted macro entries of ``kind``."""
+    _validate_kind(kind)
+    if kind == MacroKind.MCODE:
+        service = get_mcode_service()
+        entries = service.list_files()
+        items = [
+            MacroListItem(
+                name=entry.name,
+                kind=MacroKind.MCODE,
+                size_bytes=entry.size_bytes,
+            )
+            for entry in entries
+            if entry.kind == "file"
+        ]
+    else:
+        names = _macro_storage.list(kind=kind)
+        items = [
+            MacroListItem(
+                name=name,
+                kind=kind,
+                size_bytes=_storage_size(name, kind),
+            )
+            for name in names
+        ]
+    items.sort(key=lambda item: item.name)
+    return MacroListResponse(macros=items)
 
 
 @router.get(
     "/{name}",
     summary="Read macro",
     description=(
-        "Return the raw text payload of ``<name>.macro``. The "
+        "Return the raw text payload of the requested macro. For "
+        "``mcode``, ``name`` is the bare ``M<num>`` token. The "
         "response body is the file contents verbatim (no JSON "
-        "wrapping). Returns ``404`` when no such macro exists."
+        "wrapping). Returns ``404`` when no such macro exists and "
+        "``400`` when the name / kind fails validation."
     ),
     operation_id="readMacro",
     response_class=Response,
@@ -123,18 +270,38 @@ def list_macros() -> MacroListResponse:
             "content": {"text/plain": {}},
         },
         404: {"description": "No macro with that name."},
+        400: {"description": "Invalid name or kind."},
     },
 )
 def read_macro(
-    name: str = Path(..., description="Macro name without the .macro extension."),
+    name: str = Path(..., description="Macro name without any extension."),
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
 ) -> Response:
     """Return the raw text content of a single macro."""
+    _validate_kind(kind)
+    if kind == MacroKind.MCODE:
+        _validate_mcode_name(name)
+        service = get_mcode_service()
+        try:
+            target = service.safe_join(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not target.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"M-code not found: {name}",
+            )
+        return Response(content=target.read_text(encoding="utf-8"), media_type="text/plain")
+
     try:
-        content = _storage.read(name)
+        content = _macro_storage.read(name, kind=kind)
     except InvalidMacroNameError as exc:
-        # Treat invalid names the same as missing files so the
-        # router does not leak storage-layer vocabulary to callers.
         raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidMacroKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except MacroNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return Response(content=content, media_type="text/plain")
@@ -145,28 +312,45 @@ def read_macro(
     response_model=MacroWriteResponse,
     summary="Create or overwrite a macro",
     description=(
-        "Persist the request body to ``<name>.macro``. Writes are "
-        "atomic (``tempfile`` + ``os.replace``) so a crash mid-write "
-        "never leaves a half-written file. Returns ``400`` when "
-        "``name`` fails validation, ``200`` on success with the "
-        "stored ``name`` and byte ``size``."
+        "Persist the request body to the requested kind's file. "
+        "Writes are atomic (``tempfile`` + ``os.replace``) so a "
+        "crash mid-write never leaves a half-written file. "
+        "Returns ``400`` when ``name`` / ``kind`` fails "
+        "validation, ``422`` for ``macro`` / ``ngc`` with an "
+        "empty body, and ``200`` on success with the stored "
+        "``name``, ``kind``, and byte ``size``."
     ),
     operation_id="writeMacro",
 )
 def write_macro(
-    name: str = Path(..., description="Macro name without the .macro extension."),
+    name: str = Path(..., description="Macro name without any extension."),
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
     content: str = Body(
         ...,
         media_type="text/plain",
         description="Raw macro payload (any text content).",
     ),
 ) -> MacroWriteResponse:
-    """Persist the supplied text payload under ``name``."""
+    """Persist the supplied text payload under ``name`` of ``kind``."""
+    _validate_kind(kind)
+    if kind == MacroKind.MCODE:
+        _validate_mcode_name(name)
+        service = get_mcode_service()
+        try:
+            size = service.write_file(name, content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return MacroWriteResponse(name=name, kind=MacroKind.MCODE, size=size)
     try:
-        size = _storage.write(name, content)
+        size = _macro_storage.write(name, content, kind=kind)
     except InvalidMacroNameError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return MacroWriteResponse(name=name, size=size)
+    except InvalidMacroKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return MacroWriteResponse(name=name, kind=kind, size=size)
 
 
 @router.delete(
@@ -174,23 +358,43 @@ def write_macro(
     status_code=204,
     summary="Delete a macro",
     description=(
-        "Remove ``<name>.macro`` from the storage root. Returns "
-        "``204`` on success and ``404`` when no such macro exists."
+        "Remove the named macro from disk. Returns ``204`` on "
+        "success and ``404`` when no such macro exists."
     ),
     operation_id="deleteMacro",
     responses={
         204: {"description": "Macro deleted."},
         404: {"description": "No macro with that name."},
+        400: {"description": "Invalid name or kind."},
     },
 )
 def delete_macro(
-    name: str = Path(..., description="Macro name without the .macro extension."),
+    name: str = Path(..., description="Macro name without any extension."),
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
 ) -> Response:
     """Delete the named macro from disk."""
+    _validate_kind(kind)
+    if kind == MacroKind.MCODE:
+        _validate_mcode_name(name)
+        service = get_mcode_service()
+        try:
+            target = service.safe_join(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not target.exists():
+            raise HTTPException(status_code=404, detail=f"M-code not found: {name}")
+        target.unlink()
+        return Response(status_code=204)
+
     try:
-        _storage.delete(name)
+        _macro_storage.delete(name, kind=kind)
     except InvalidMacroNameError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidMacroKindError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except MacroNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return Response(status_code=204)
@@ -198,7 +402,9 @@ def delete_macro(
 
 __all__ = [
     "router",
+    "MacroListItem",
     "MacroListResponse",
     "MacroWriteResponse",
+    "VALID_KINDS",
     "EXTENSION",
 ]
