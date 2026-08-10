@@ -317,6 +317,23 @@ class TestCrossReferences:
         with pytest.raises(ValueError, match="references unknown fan"):
             model_validate(payload)
 
+    def test_standalone_fan_record_is_accepted(self) -> None:
+        """A ``[fan]``-derived Fan record (``max_power`` optional) round-trips."""
+        payload = _minimal_payload()
+        payload["fans"].append(
+            {"id": "fan_part_cooling", "pin": "PA8", "max_power": 0.5}
+        )
+        model = model_validate(payload)
+        assert any(f.id == "fan_part_cooling" for f in model.fans)
+
+    def test_fan_records_must_have_unique_ids(self) -> None:
+        """Two Fan records sharing an id are rejected (graph-level validator)."""
+        payload = _minimal_payload()
+        payload["fans"].append({"id": "fan_dup", "pin": "PA8"})
+        payload["fans"].append({"id": "fan_dup", "pin": "PB0"})
+        with pytest.raises(ValueError, match="Duplicate id 'fan_dup'"):
+            model_validate(payload)
+
     def test_switch_must_have_endstop_role(self) -> None:
         """Every ``endstop_id`` (the Klipper switch name) must have at
         least one record with ``type: "endstop"``. A switch with only

@@ -220,11 +220,11 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   // panel. The handlers also delegate to the generated program
   // service (``runProgram`` / ``pauseProgram`` / ``resumeProgram``
   // / ``stopProgram``). The two-step lifecycle is reflected here:
-  // ``printFile`` calls ``loadProgram`` (the "load" step) and the
+  // ``loadFile`` calls ``loadProgram`` (the "load" step) and the
   // ``Loaded`` branch adds a dedicated ``startLoadedProgram``
   // handler that calls ``runProgram``.
   for (const handler of [
-    "printFile",
+    "loadFile",
     "startLoadedProgram",
     "unloadProgram",
     "pausePrint",
@@ -242,17 +242,18 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   ]) {
     assert.match(text, new RegExp(`ModulesProgramService\\.${serviceCall}\\b`));
   }
-  // The widget must host a "Loaded" branch — three top-level
-  // ``v-if`` / ``v-else-if`` / ``v-else`` branches (Standby /
-  // Loaded / Active). The branches are at indent level 4 on top
-  // of the template root. ``v-else`` and ``v-else-if`` share a
-  // line with the host ``<div>``; ``v-if`` is on the line after
-  // its host. We do a simple substring check for the three
+  // The widget must host three top-level lifecycle branches
+  // (Standby / Loaded / Active). The file list is now always
+  // visible — the branches only carry the lifecycle-specific
+  // hint text. ``!isActive`` appears in the Standby branch's
+  // ``v-if`` (sometimes combined with ``!isLoaded``); the Loaded
+  // branch uses ``v-else-if="isLoaded"``; the Active branch uses
+  // ``v-else``. We do simple substring checks for the three
   // directives — robust to CRLF + multiline attribute quirks.
   assert.match(
     text,
-    /v-if\s*=\s*["']!isActive["']/,
-    "Standby branch (v-if=\"!isActive\") must be present",
+    /v-if\s*=\s*["'][^"']*!isActive[^"']*["']/,
+    "Standby branch (v-if with !isActive) must be present",
   );
   assert.match(
     text,

@@ -24,6 +24,11 @@ from .domain_file_services import (
     get_staged_service,
     reset_service_cache,
 )
+from .remora_signal_map import (
+    get_pv_index,
+    get_sp_index,
+    invalidate_cache as reset_remora_signal_map_cache,
+)
 
 __all__ = [
     "ActiveFileService",
@@ -34,7 +39,10 @@ __all__ = [
     "StagedFileService",
     "get_active_service",
     "get_config_service",
+    "get_pv_index",
     "get_program_service",
+    "get_sp_index",
     "get_staged_service",
+    "reset_remora_signal_map_cache",
     "reset_service_cache",
 ]

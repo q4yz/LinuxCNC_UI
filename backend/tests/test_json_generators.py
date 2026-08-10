@@ -53,6 +53,20 @@ def _stepper(
     )
 
 
+def _full_klipper_payload() -> MachineConfigGraph:
+    """A minimal Klipper profile: X stepper + Y stepper + Z stepper.
+
+    Used by the ``config.txt`` Name-field tests below; the steppers
+    are positional so the assertions can target specific ``Name``
+    values without depending on the heater / fan graph.
+    """
+    graph = MachineConfigGraph(printer=Printer())
+    graph.steppers["x"] = _stepper(axis="x", position_max=200.0)
+    graph.steppers["y"] = _stepper(axis="y", position_max=200.0)
+    graph.steppers["z"] = _stepper(axis="z", position_max=200.0, rotation_distance=8.0)
+    return graph
+
+
 # --------------------------------------------------------------------- #
 # Pin conversion                                                         #
 # --------------------------------------------------------------------- #
@@ -273,3 +287,103 @@ def test_hal_compiler_heaters_empty_when_no_sections(tmp_path):
 
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["heaters"] == []
+
+
+# --------------------------------------------------------------------- #
+# Phase 3 — config.txt Name field + fan PWM modules                      #
+# --------------------------------------------------------------------- #
+
+
+def test_config_txt_emits_name_field_on_every_module() -> None:
+    """Every module in ``config.txt`` carries a ``Name`` field.
+
+    The Name is the symbolic handle the HAL/Python layer uses to
+    address the module; it is derived from the hardware.json id.
+    """
+    payload = _full_klipper_payload()
+    config_txt = build_config_txt(payload, "ender3")
+
+    names = [m["Name"] for m in config_txt["Modules"]]
+    # Reset Pin is always present.
+    assert "reset_pin" in names
+    # Each axis gets a stepgen module named after the Klipper section.
+    assert any(n == "stepper_x" for n in names)
+    assert any(n == "stepper_y" for n in names)
+    assert any(n == "stepper_z" for n in names)
+    # TMC2209 modules (none in this minimal graph — no uart_pin) are
+    # absent by design; the assertion is implicit.
+
+    # Heaters get temp_/pwm_ handles. The minimal payload has no
+    # heaters; the assertion below checks the symbol-shape exists.
+    # A fuller profile would add them via _graph.
+    assert all(isinstance(n, str) and n for n in names), names
+
+
+def test_config_txt_emits_fan_pwm_module_with_max_power() -> None:
+    """``[fan_generic part_cooling]`` becomes a PWM module with PWM Max.
+
+    ``max_power: 0.5`` becomes ``PWM Max: 128`` (0.5 * 255 rounded).
+    """
+    from modules.machineconfig.models import Fan, Printer, Stepper
+
+    graph = MachineConfigGraph(printer=Printer())
+    graph.fans["fan_generic_part_cooling"] = Fan(
+        name="fan_generic_part_cooling",
+        pin="PA8",
+        max_power=0.5,
+    )
+
+    config_txt = build_config_txt(graph, "fan-test")
+    pwm_modules = [m for m in config_txt["Modules"] if m["Type"] == "PWM"]
+    assert len(pwm_modules) == 1
+    fan_pwm = pwm_modules[0]
+    assert fan_pwm["Name"] == "pwm_fan_generic_part_cooling"
+    assert fan_pwm["PWM Max"] == 128
+    assert fan_pwm["SP[i]"] == 0
+    assert fan_pwm["PWM Pin"] == "PA_8"
+
+
+def test_config_txt_fan_follows_heater_pwm_indices() -> None:
+    """A standalone fan gets the next SP[i] after the heater PWMs."""
+    from modules.machineconfig.models import Extruder, Fan, Heater, Printer, Stepper
+
+    graph = MachineConfigGraph(printer=Printer())
+    # Heater BED (PV[0], SP[0])
+    graph.heaters["heater_bed"] = Heater(
+        name="heater_bed",
+        heater_pin="PA1",
+        sensor_pin="PA3",
+        sensor_type="NTC 100K",
+        control="watermark",
+    )
+    # Extruder (PV[1], SP[1])
+    graph.heaters["extruder"] = Extruder(
+        name="extruder",
+        heater_pin="PA2",
+        sensor_pin="PA4",
+        sensor_type="PT1000",
+        control="pid",
+        pid_Kp=22.2,
+        pid_Ki=1.08,
+        pid_Kd=114,
+    )
+    # Part-cooling fan (SP[2])
+    graph.fans["fan_part_cooling"] = Fan(
+        name="fan_part_cooling",
+        pin="PA8",
+        max_power=1.0,
+    )
+
+    config_txt = build_config_txt(graph, "ender3")
+    pwm_modules = [m for m in config_txt["Modules"] if m["Type"] == "PWM"]
+    sp_indices = [m["SP[i]"] for m in pwm_modules]
+    assert sp_indices == [0, 1, 2]
+    pwm_names = [m["Name"] for m in pwm_modules]
+    # Heaters are sorted alphabetically by canonical name (``extruder``
+    # < ``heater_bed``) so ``pwm_extruder`` lands on SP[0] and the
+    # part-cooling fan on SP[2] (after the heater PWMs).
+    assert pwm_names == [
+        "pwm_extruder",
+        "pwm_heater_bed",
+        "pwm_fan_part_cooling",
+    ]

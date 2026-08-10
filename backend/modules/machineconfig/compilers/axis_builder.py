@@ -139,8 +139,23 @@ class AxisBuilder:
 
     def build(self) -> list[Axis]:
         """Return the axes in canonical LinuxCNC order (X, Y, Z, ...)."""
+        from ..models import Extruder
+
         for stepper in self.graph.steppers.values():
             self._add_stepper(stepper)
+
+        # The extruder is its own axis (``A``) even though it lives
+        # under ``graph.heaters`` rather than ``graph.steppers``. We
+        # synthesise an axis per :class:`Extruder` so the config_txt
+        # generator can emit a Joint-N stepgen for the extruder.
+        for heater in self.graph.heaters.values():
+            if isinstance(heater, Extruder):
+                self._axes.setdefault("A", Axis(
+                    letter="A",
+                    joints=[],
+                ))
+                joint = self._make_extruder_joint(heater, len(self._axes["A"].joints))
+                self._axes["A"].joints.append(joint)
 
         ordered: list[Axis] = []
         for letter in AXIS_ORDER:
@@ -227,6 +242,30 @@ class AxisBuilder:
         axis.max_acceleration = joint.max_acceleration
         axis.min_limit = joint.min_limit
         axis.max_limit = joint.max_limit
+
+    def _make_extruder_joint(self, extruder, joint_number: int) -> Joint:
+        """Build a synthetic :class:`Joint` for an :class:`Extruder`.
+
+        The Extruder dataclass carries the stepper fields
+        (``step_pin`` / ``dir_pin`` / ``enable_pin`` /
+        ``microsteps`` / ``rotation_distance``); we re-use
+        :meth:`_make_joint` so the velocity / acceleration defaults
+        match the Cartesian joints.
+        """
+        # The extruder has no ``axis`` attribute on the dataclass;
+        # create a stub :class:`Stepper` so the existing helper can
+        # compute scale + velocity without a full rewrite.
+        from ..models import Stepper
+
+        stub = Stepper(
+            axis="A",
+            step_pin=extruder.step_pin,
+            dir_pin=extruder.dir_pin,
+            enable_pin=extruder.enable_pin,
+            microsteps=extruder.microsteps,
+            rotation_distance=extruder.rotation_distance,
+        )
+        return self._make_joint(stub, "A", joint_number=joint_number)
 
     # ----- Velocity helpers ---------------------------------------- #
 

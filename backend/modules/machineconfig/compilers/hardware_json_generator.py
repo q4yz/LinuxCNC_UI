@@ -221,6 +221,29 @@ def _fan_payload(heater_section: str, h) -> dict[str, Any]:
     }
 
 
+def _standalone_fan_payload(fan_section: str, fan) -> dict[str, Any]:
+    """Build a fan entry from a dedicated ``[fan]`` Klipper section.
+
+    The id is the canonical ``derive_fan_name(section_header)`` form
+    (``fan``, ``fan_generic``, ``fan_generic_part_cooling``, ...). The
+    runtime Python controllers address the fan by this id; the
+    ``_fan_id`` helper (heater-derived) is reserved for fans that
+    piggyback on a heater's ``heater_pin``.
+    """
+    payload: dict[str, Any] = {
+        "id": fan.name or fan_section,
+        "pin": fan.pin,
+    }
+    if fan.max_power is not None:
+        # ``max_power`` (0.0–1.0) is the PWM duty-cycle ceiling. The
+        # Remora board JSON uses an 8-bit ``pwm_max`` field; the
+        # ``config_txt`` generator reads ``max_power`` and scales it.
+        # Persisting it here lets the runtime reconstruct the same
+        # mapping without re-reading ``config.txt``.
+        payload["max_power"] = round(float(fan.max_power), 4)
+    return payload
+
+
 # ---------------------------------------------------------------------- #
 # Stepper payload                                                         #
 # ---------------------------------------------------------------------- #
@@ -396,6 +419,13 @@ def build_hardware_json(
             )
         if heater.heater_pin:
             fan_records.append(_fan_payload(heater_section, heater))
+
+    # Standalone fan sections (``[fan]``, ``[fan_generic foo]``) become
+    # their own ``fans`` records keyed by the canonical id. The id is
+    # what the runtime Python controllers address symbolically, so
+    # naming is the contract.
+    for fan_section, fan in graph.fans.items():
+        fan_records.append(_standalone_fan_payload(fan_section, fan))
 
     # HAL type from the MCU section if present.
     hal_type = "remora"

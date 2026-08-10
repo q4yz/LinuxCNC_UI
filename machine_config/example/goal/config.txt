@@ -2,6 +2,14 @@
   "Board": "BIGTREETECH OCTOPUS",
   "Modules": [
     {
+      "Name": "reset_pin",
+      "Thread": "Servo",
+      "Type": "Reset Pin",
+      "Comment": "Reset pin",
+      "Pin": "PC_15"
+    },
+    {
+      "Name": "stepper_x",
       "Thread": "Base",
       "Type": "Stepgen",
       "Comment": "X - Joint 0 step generator",
@@ -11,6 +19,7 @@
       "Enable Pin": "PG_5"
     },
     {
+      "Name": "driver_stepper_x",
       "Thread": "On load",
       "Type": "TMC2209",
       "Comment": "X - Joint 0 TMC driver",
@@ -22,6 +31,16 @@
       "Stall sensitivity": 0
     },
     {
+      "Name": "endstop_X_MIN",
+      "Thread": "Servo",
+      "Type": "Digital Pin",
+      "Comment": "X endstop (PG6)",
+      "Pin": "PG_6",
+      "Mode": "Input",
+      "Data Bit": 0
+    },
+    {
+      "Name": "stepper_y",
       "Thread": "Base",
       "Type": "Stepgen",
       "Comment": "Y - Joint 1 step generator",
@@ -31,6 +50,7 @@
       "Enable Pin": "PA_0"
     },
     {
+      "Name": "driver_stepper_y",
       "Thread": "On load",
       "Type": "TMC2209",
       "Comment": "Y - Joint 1 TMC driver",
@@ -42,6 +62,16 @@
       "Stall sensitivity": 0
     },
     {
+      "Name": "endstop_Y_MIN",
+      "Thread": "Servo",
+      "Type": "Digital Pin",
+      "Comment": "Y endstop (PG9)",
+      "Pin": "PG_9",
+      "Mode": "Input",
+      "Data Bit": 1
+    },
+    {
+      "Name": "stepper_z",
       "Thread": "Base",
       "Type": "Stepgen",
       "Comment": "Z - Joint 2 step generator",
@@ -51,6 +81,7 @@
       "Enable Pin": "PG_2"
     },
     {
+      "Name": "driver_stepper_z",
       "Thread": "On load",
       "Type": "TMC2209",
       "Comment": "Z - Joint 2 TMC driver",
@@ -62,6 +93,16 @@
       "Stall sensitivity": 0
     },
     {
+      "Name": "endstop_Z_MIN",
+      "Thread": "Servo",
+      "Type": "Digital Pin",
+      "Comment": "Z endstop (PG10)",
+      "Pin": "PG_10",
+      "Mode": "Input",
+      "Data Bit": 2
+    },
+    {
+      "Name": "extruder",
       "Thread": "Base",
       "Type": "Stepgen",
       "Comment": "Extruder - Joint 3 step generator",
@@ -71,42 +112,34 @@
       "Enable Pin": "PF_1"
     },
     {
+      "Name": "temp_extruder",
       "Thread": "Servo",
-      "Type": "Digital Pin",
-      "Comment": "X endstop (PG6)",
-      "Pin": "PG_6",
-      "Mode": "Input",
-      "Data Bit": 0
+      "Type": "Temperature",
+      "Comment": "Extruder temperature sensor",
+      "PV[i]": 0,
+      "Sensor": "Generic 3950",
+      "Thermistor": {
+        "Pin": "PF_4",
+        "beta": 3950,
+        "r0": 100000,
+        "t0": 25
+      }
     },
     {
-      "Thread": "Servo",
-      "Type": "Digital Pin",
-      "Comment": "Y endstop (PG9)",
-      "Pin": "PG_9",
-      "Mode": "Input",
-      "Data Bit": 1
-    },
-    {
-      "Thread": "Servo",
-      "Type": "Digital Pin",
-      "Comment": "Z endstop (PG10)",
-      "Pin": "PG_10",
-      "Mode": "Input",
-      "Data Bit": 2
-    },
-    {
+      "Name": "pwm_extruder",
       "Thread": "Servo",
       "Type": "PWM",
-      "Comment": "Bed heater PWM",
+      "Comment": "Extruder heater PWM",
       "SP[i]": 0,
-      "PWM Pin": "PA_1"
+      "PWM Pin": "PA_2"
     },
     {
+      "Name": "temp_bed",
       "Thread": "Servo",
       "Type": "Temperature",
       "Comment": "Heated Bed temperature sensor",
-      "PV[i]": 0,
-      "Sensor": "Thermistor",
+      "PV[i]": 1,
+      "Sensor": "Generic 3950",
       "Thermistor": {
         "Pin": "PF_3",
         "beta": 3950,
@@ -115,32 +148,21 @@
       }
     },
     {
+      "Name": "pwm_heater_bed",
       "Thread": "Servo",
       "Type": "PWM",
-      "Comment": "Extruder heater PWM",
+      "Comment": "Bed heater PWM",
       "SP[i]": 1,
-      "PWM Pin": "PA_2"
+      "PWM Pin": "PA_1"
     },
     {
-      "Thread": "Servo",
-      "Type": "Temperature",
-      "Comment": "Extruder temperature sensor",
-      "PV[i]": 1,
-      "Sensor": "Thermistor",
-      "Thermistor": {
-        "Pin": "PF_4",
-        "beta": 3990,
-        "r0": 100000,
-        "t0": 25
-      }
-    },
-    {
+      "Name": "pwm_fan_generic_part_cooling",
       "Thread": "Servo",
       "Type": "PWM",
-      "Comment": "Part cooling fan PWM",
+      "Comment": "fan generic part cooling PWM",
       "SP[i]": 2,
-      "PWM Max": 128,
-      "PWM Pin": "PA_8"
+      "PWM Pin": "PA_8",
+      "PWM Max": 128
     }
   ]
 }

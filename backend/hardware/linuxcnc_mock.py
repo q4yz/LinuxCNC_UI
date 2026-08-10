@@ -436,6 +436,31 @@ class command:
                 f"(total_lines={_machine_state.total_lines})"
             )
 
+    def program_unload(self):
+        """Explicitly clear the file pointer from the interpreter.
+
+        Without this, ``stopProgram`` only aborts the active move —
+        the file stays open in the firmware's memory and the
+        telemetry keeps reporting ``stat.file``. The operator's
+        "Unload" button needs a true reset, not just a stop.
+
+        The backend analogue on a real LinuxCNC driver is closing
+        the open task plan; on Klipper it maps to ``SDCARD_RESET_FILE``.
+        The mock clears ``_machine_state.file`` to ``""`` and resets
+        the line counters so ``is_program_loaded()`` returns
+        ``False`` on the next telemetry tick.
+        """
+        _stop_program_simulation()
+        with _machine_state.lock:
+            _machine_state.file = ""
+            _machine_state.current_line = 0
+            _machine_state.total_lines = 0
+            # ``interp_state`` stays at whatever it was (IDLE if
+            # the program was loaded-but-not-running); the
+            # state-machine facade computes ``systemState`` from
+            # both ``file`` and ``interp_state``.
+            logger.info("Command: Program Unload -> cleared file pointer")
+
     def reset_interpreter(self):
         _stop_program_simulation()
         with _machine_state.lock:

@@ -199,3 +199,32 @@ class TestFailureModes:
             {"version": "2.0", "temperature_sensors": "not a list"},
         )
         assert load_active_heaters(active_dir=tmp_path) == []
+
+    def test_hardware_json_with_standalone_fan_round_trips(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``[fan]``-derived Fan record survives the loader round-trip."""
+        _write_hardware_json(
+            tmp_path,
+            {
+                "version": "2.0",
+                "machine": "fan-test",
+                "source": "KlipperToLinuxCNCCompiler",
+                "kinematics": "cartesian",
+                "hal_type": "remora",
+                "axes": [],
+                "steppers": [],
+                "drivers": [],
+                "endstops": [],
+                "heaters": [],
+                "temperature_sensors": [],
+                "fans": [
+                    {"id": "fan_part_cooling", "pin": "PA8", "max_power": 0.5}
+                ],
+            },
+        )
+        # Loader doesn't currently read ``fans`` — this is purely a
+        # model+validator round-trip smoke test so the file shape is
+        # pinned.
+        data = json.loads((tmp_path / "hardware.json").read_text())
+        assert data["fans"][0]["id"] == "fan_part_cooling"

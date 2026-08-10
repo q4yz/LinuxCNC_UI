@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import configparser
+
 import pytest
 
 from modules.machineconfig.models import EndstopSwitch, Extruder, Heater, Stepper
 from modules.machineconfig.parser import (
     ConfigValidationError,
+    DuplicateFanError,
     DuplicateHeaterError,
     DuplicateStepperPinError,
     MachineConfigParser,
+    MissingRequiredKeywordError,
     MultipleExtrudersError,
     UndefinedKeywordError,
     UnknownStepperError,
+    derive_fan_name,
     derive_heater_name,
 )
+from modules.machineconfig.schema import SectionKind, schema_for_section
 
 
 def test_invalid_keyword_reports_section_and_key() -> None:
@@ -413,3 +419,115 @@ enable_pin: !PA11
 
     graph = MachineConfigParser().parse_string(config)
     assert sorted(graph.steppers.keys()) == ["x", "y", "y1", "z"]
+
+
+# ---------------------------------------------------------------------- #
+# Fan section parsing (Phase 1)                                          #
+# ---------------------------------------------------------------------- #
+
+
+def test_fan_schema_recognises_bare_and_named_sections() -> None:
+    """``[fan]``, ``[fan_generic]`` and ``[fan_generic foo]`` all
+    map to the FAN SectionKind.
+    """
+    for header in ("fan", "fan_generic", "fan_generic part_cooling"):
+        schema = schema_for_section(header)
+        assert schema is not None, f"{header!r} returned None"
+        assert schema.kind is SectionKind.FAN
+    # A heater-style header must NOT match.
+    assert schema_for_section("heater_bed").kind is not SectionKind.FAN
+
+
+def test_fan_derive_name_matches_heater_pattern() -> None:
+    """The canonical id follows the same shape as heaters."""
+    assert derive_fan_name("fan") == "fan"
+    assert derive_fan_name("fan_generic") == "fan_generic"
+    assert derive_fan_name("fan_generic part_cooling") == "fan_generic_part_cooling"
+    assert derive_fan_name("fan part_cooling") == "fan_part_cooling"
+
+
+def test_fan_section_parses_into_graph() -> None:
+    """A bare ``[fan]`` section becomes a :class:`Fan` on the graph."""
+    config = """
+[fan]
+pin: PA8
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert "fan" in graph.fans
+    fan = graph.fans["fan"]
+    assert fan.name == "fan"
+    assert fan.pin == "PA8"
+    assert fan.max_power is None
+
+
+def test_fan_generic_part_cooling_section_parses() -> None:
+    """``[fan_generic part_cooling]`` resolves to the documented id."""
+    config = """
+[fan_generic part_cooling]
+pin: PA8
+max_power: 0.5
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert "fan_generic_part_cooling" in graph.fans
+    fan = graph.fans["fan_generic_part_cooling"]
+    assert fan.name == "fan_generic_part_cooling"
+    assert fan.pin == "PA8"
+    assert fan.max_power == pytest.approx(0.5)
+
+
+def test_fan_without_pin_raises_missing_required_keyword() -> None:
+    """A fan section without ``pin`` fails fast at parse time."""
+    config = """
+[fan]
+max_power: 0.5
+"""
+    with pytest.raises(MissingRequiredKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "fan"
+    assert exc_info.value.key == "pin"
+
+
+def test_fan_unknown_keyword_raises() -> None:
+    """The strict schema rejects unsupported fan keys."""
+    config = """
+[fan]
+pin: PA8
+mystery: nope
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "fan"
+    assert exc_info.value.key == "mystery"
+
+
+def test_fan_ignored_keys_logged_but_not_rejected() -> None:
+    """``cycle_time`` / ``hardware_pwm`` / ``off_below`` are recognised
+    but ignored; the parser still returns a clean :class:`Fan`.
+    """
+    config = """
+[fan]
+pin: PA8
+cycle_time: 0.01
+hardware_pwm: True
+off_below: 0.1
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.fans["fan"].pin == "PA8"
+
+
+def test_duplicate_fan_canonical_id_raises() -> None:
+    """Identical fan section names raise configparser's DuplicateSectionError
+    before our canonical-id check ever runs. The check is still wired
+    (see ``_validate_fan_uniqueness``) and is exercised in tests that
+    go around configparser via ``parse_string`` synthetic sections; we
+    only assert the configparser-level guard here.
+    """
+    config = """
+[fan_generic part_cooling]
+pin: PA8
+
+[fan_generic part_cooling]
+pin: PB0
+"""
+    with pytest.raises(configparser.DuplicateSectionError):
+        MachineConfigParser().parse_string(config)

@@ -698,8 +698,10 @@ max_temp: 130
     assert payload["machine"] == "test"
     assert payload["hal_type"] == "remora"
 
-    # Three axes, one per unique stepper letter.
-    assert [a["id"] for a in payload["axes"]] == ["x", "y", "z"]
+    # Four axes — X / Y / Z Cartesian + the extruder (axis ``A``).
+    # Phase 7 extended the AxisBuilder so the extruder becomes its
+    # own axis instead of staying under the heaters list only.
+    assert [a["id"] for a in payload["axes"]] == ["x", "y", "z", "a"]
 
     # Three steppers, ids derived from the section name.
     stepper_ids = [s["id"] for s in payload["steppers"]]

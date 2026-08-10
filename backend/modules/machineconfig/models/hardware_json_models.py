@@ -150,12 +150,21 @@ class TemperatureSensor(BaseModel):
 
 
 class Fan(BaseModel):
-    """A single output fan."""
+    """A single output fan.
+
+    ``max_power`` (0.0–1.0) is the PWM duty-cycle ceiling. The
+    Remora board JSON uses an 8-bit ``pwm_max`` field; the runtime
+    scales ``max_power`` to 0–255 before pushing the value into the
+    firmware. Persisting the float here keeps the round-trip
+    deterministic (no need to re-read ``config.txt`` to recover the
+    duty-cycle cap).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
+    max_power: float | None = None
 
 
 # ---------------------------------------------------------------------- #

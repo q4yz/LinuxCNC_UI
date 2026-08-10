@@ -1,31 +1,41 @@
-"""Render LinuxCNC ``.hal`` files from :class:`Axis` / :class:`Joint` models.
+"""Render LinuxCNC ``.hal`` files from a parsed Klipper graph.
 
-The HAL file wires LinuxCNC's motion controller to the stepgen
-channels exposed by the hardware. Two output modes are supported:
+The HAL file wires LinuxCNC's motion controller to the firmware
+channels exposed by the Remora board. The output shape mirrors the
+``machine_config/example/goal/linuxcnc.hal`` reference:
 
-* ``remora`` — uses ``remora.stepgen.NN`` channels exposed by the
-  Remora firmware. Pin assignments (``step_pin``, ``dir_pin``,
-  ``enable_pin``) live in the Remora firmware config
-  (``boardConfig.h``), not in the HAL file — the HAL file only
-  wires the signals. The pins are included as comments for
-  documentation.
-* ``parallel`` — uses standard ``stepgen.N`` channels with
-  explicit timing parameters (``steplen``, ``stepspace``,
-  ``dirhold``, ``dirsetup``). This is the mode for parallel-port
-  or Mesa-card setups.
+* ``[KINS]`` / ``[EMCMOT]`` INI references for the kinematic +
+  motion-controller load lines (LinuxCNC substitutes the values).
+* SPI enable / reset / status signals.
+* Per-joint stepgen wiring via ``remora.joint.N`` channels.
+* Tool-change loopback.
+* ``loadrt PIDcontroller`` instances for each temperature-controlled
+  heater.
+* Endstop wiring via ``remora.input.NN`` (X / Y / Z only — the
+  extruder does not home).
+* Remora SP / PV wiring for every PWM (heater + fan) and every
+  temperature sensor.
+* One PID configuration block per heater, parameterised by the
+  matching ``[BED]`` / ``[EXT0]`` INI section.
 
-The mode is selected via the ``hal_type`` key in the Klipper
-``[mcu]`` section (default: ``remora``).
+The ``parallel`` HAL type keeps the legacy stepgen wiring via
+``stepgen.N`` channels for Mesa / parallel-port setups.
 
-The renderer is deliberately template-based: the static skeleton
-of a joint block lives as a multi-line string so operators can
-hand-edit a familiar LinuxCNC file and the diff against the
-generated output stays legible.
+PID aliasing
+------------
+Every heater section in the parsed graph produces one PID controller
+named ``PID-<alias>`` where ``<alias>`` comes from a deterministic
+mapping table (``heater_bed`` → ``PID-bed``, ``extruder`` →
+``PID-ext0``, ``heater_generic chamber`` → ``PID-chamber``, ...).
+The HAL stays legible while the INI carries the actual PID values.
 
-The dynamic section (one joint block per joint) is built by a
-**Builder pattern**: the template walks the pre-resolved
-:class:`list` of :class:`Axis` objects and emits one block per
-joint. No 1:1 axis-to-joint assumption is hardcoded.
+Symbolic signal naming
+----------------------
+Every PWM / Temperature module emits a Remora SP / PV wiring line
+that uses a symbolic signal name (e.g. ``pwm_heater_bed``,
+``temp_extruder``). The HAL also emits a top-of-file comment
+documenting the symbolic → positional Remora mapping so operators can
+hand-edit the file without losing the handle.
 """
 
 from __future__ import annotations
@@ -33,70 +43,172 @@ from __future__ import annotations
 import logging
 from typing import Mapping
 
-from ..models import Axis, IniConfig, Joint
+from ..models import Axis, IniConfig, Joint, MachineConfigGraph
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.hal_generator")
 
 
 # --------------------------------------------------------------------- #
-# Static templates                                                       #
+# Heater PID alias mapping                                                 #
 # --------------------------------------------------------------------- #
 
-REMORA_HAL_HEADER_TEMPLATE = """\
+
+def _heater_pid_alias(heater_id: str) -> str:
+    """Map a canonical heater id to a short PID controller name.
+
+    ``heater_bed`` -> ``PID-bed``, ``extruder`` -> ``PID-ext0``,
+    ``heater_generic_chamber`` -> ``PID-chamber``. Falls back to
+    ``PID-<id>`` for unknown ids so the HAL never breaks on a new
+    heater section.
+    """
+    if heater_id == "heater_bed":
+        return "PID-bed"
+    if heater_id == "extruder":
+        return "PID-ext0"
+    if heater_id.startswith("heater_generic_"):
+        return f"PID-{heater_id[len('heater_generic_'):]}"
+    if heater_id.startswith("heater_"):
+        return f"PID-{heater_id[len('heater_'):]}"
+    return f"PID-{heater_id}"
+
+
+def _heater_ini_section(heater_id: str) -> str:
+    """Map a canonical heater id to the INI section that carries its PID values.
+
+    ``heater_bed`` -> ``[BED]``, ``extruder`` -> ``[EXT0]``,
+    everything else -> ``[<HEATER_ID>]`` upper-cased. The INI
+    generator must emit matching sections.
+    """
+    if heater_id == "heater_bed":
+        return "BED"
+    if heater_id == "extruder":
+        return "EXT0"
+    return heater_id.upper()
+
+
+def _heater_pwm_signal(heater_id: str) -> str:
+    """Symbolic signal name for a heater's PWM output."""
+    return f"{heater_id}_SP"
+
+
+def _heater_pv_signal(heater_id: str) -> str:
+    """Symbolic signal name for a heater's temperature input."""
+    sensor_id = heater_id.removeprefix("heater_") if heater_id.startswith("heater_") else heater_id
+    return f"{sensor_id}_PV"
+
+
+def _fan_pwm_signal(fan_id: str) -> str:
+    """Symbolic signal name for a standalone fan's PWM output."""
+    return f"{fan_id}_SP"
+
+
+# --------------------------------------------------------------------- #
+# Remora HAL template                                                     #
+# --------------------------------------------------------------------- #
+
+
+REMORA_HAL_HEADER = """\
+
 # machine.hal
 # Generated by KlipperToLinuxCNCCompiler (hal_type=remora)
 # DO NOT EDIT — re-run the compiler to regenerate.
 
-loadrt remora-xyz chip_type=STM32F429
+# Symbolic-to-positional Remora map (for operator reference)
+# {symbolic_map}
 
-loadrt thread names=base-thread,servo-thread period1=1000000 period2=1000000
+loadrt [KINS]KINEMATICS
+loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
 
-addf remora.read                 servo-thread
-addf motion-command-handler      servo-thread
-addf motion-controller           servo-thread
-addf remora.update-freq          servo-thread
-addf remora.write                servo-thread
+# load the Remora real-time component
+
+\t# for STM32 chips
+\tloadrt remora-spi SPI_clk_div=64
+
+\t# for LPC17XX chips
+\t#loadrt remora_lpc
+
+
+
+# estop and SPI comms enable and feedback
+
+\tnet user-enable-out\t<= iocontrol.0.user-enable-out\t\t=> remora.SPI-enable
+\tnet user-request-enable <= iocontrol.0.user-request-enable\t=> remora.SPI-reset
+\tnet remora-status \t<= remora.SPI-status \t\t=> iocontrol.0.emc-enable-in
+
+
+# add the remora and motion functions to threads
+
+\taddf remora.read \t\tservo-thread
+\taddf motion-command-handler\tservo-thread
+\taddf motion-controller \t\tservo-thread
+\taddf remora.update-freq \tservo-thread
+\taddf remora.write \t\tservo-thread
+
 
 {joints_block}
 
-net machine-is-on => {enable_signals}
+# Include your custom HAL commands here
+# This file will not be overwritten when you run stepconf again
+
+# tool changing
+
+    net tool-prepare-loopback iocontrol.0.tool-prepare => iocontrol.0.tool-prepared
+    net tool-change-loopback iocontrol.0.tool-change => iocontrol.0.tool-changed
+
+{pid_load_block}
+
+# end-stops
+
+    # FOR BIGTREETECH OCTOPUS
+{endstop_block}
+
+
+# remora command outputs (SP = Setpoints sent TO the MCU)
+
+    {sp_block}
+
+
+# remora command feedbacks (PV = Process Variables read FROM the MCU)
+
+    {pv_block}
+
+
+{pid_config_block}
 """
+
 
 REMORA_JOINT_TEMPLATE = """\
-# --- {axis_letter} axis (Joint {joint_number}) ---
-# Pins: step={step_pin}, dir={dir_pin}, enable={enable_pin}
-net {axis_letter_lower}pos-cmd  joint.{joint_number}.motor-pos-cmd  => remora.stepgen.{joint_number_padded}.position-cmd
-net {axis_letter_lower}pos-fb   remora.stepgen.{joint_number_padded}.position-fb => joint.{joint_number}.motor-pos-fb
-net {axis_letter_lower}enable   joint.{joint_number}.amp-enable-out  => remora.stepgen.{joint_number_padded}.enable
-setp remora.stepgen.{joint_number_padded}.position-scale {scale}
+
+# joint {joint_number} setup
+
+\tsetp remora.joint.{joint_number}.scale \t[JOINT_{joint_number}]SCALE
+\tsetp remora.joint.{joint_number}.maxaccel \t[JOINT_{joint_number}]STEPGEN_MAXACCEL
+
+\tnet j{joint_number}pos-cmd \t\tjoint.{joint_number}.motor-pos-cmd \t=> remora.joint.{joint_number}.pos-cmd
+\tnet j{joint_number}pos-fb \t\tremora.joint.{joint_number}.pos-fb \t=> joint.{joint_number}.motor-pos-fb
+\tnet j{joint_number}enable \t\tjoint.{joint_number}.amp-enable-out \t=> remora.joint.{joint_number}.enable
 """
 
-PARALLEL_HAL_HEADER_TEMPLATE = """\
-# machine.hal
-# Generated by KlipperToLinuxCNCCompiler (hal_type=parallel)
-# DO NOT EDIT — re-run the compiler to regenerate.
 
-loadrt stepgen step_type=0,0,0
+PARALLEL_HAL_HEADER = """\
+
+loadrt [KINS]KINEMATICS
 
 loadrt thread names=base-thread,servo-thread period1=1000000 period2=1000000
 
-addf stepgen.make-pulses base-thread
 addf motion-command-handler servo-thread
 addf motion-controller servo-thread
-addf stepgen.capture-position servo-thread
-addf stepgen.update-freq servo-thread
 
 {joints_block}
 
 net machine-is-on => {enable_signals}
 """
 
+
 PARALLEL_JOINT_TEMPLATE = """\
-# --- {axis_letter} axis (Joint {joint_number}) ---
-# Pins: step={step_pin}, dir={dir_pin}, enable={enable_pin}
-net {axis_letter_lower}pos-cmd  joint.{joint_number}.motor-pos-cmd  => stepgen.{joint_number}.position-cmd
-net {axis_letter_lower}pos-fb   stepgen.{joint_number}.position-fb => joint.{joint_number}.motor-pos-fb
-net {axis_letter_lower}enable   joint.{joint_number}.amp-enable-out  => stepgen.{joint_number}.enable
+
+# joint {joint_number} setup ({axis_letter_lower} axis)
+
 setp stepgen.{joint_number}.position-scale {scale}
 setp stepgen.{joint_number}.steplen 1
 setp stepgen.{joint_number}.stepspace 0
@@ -107,17 +219,17 @@ setp stepgen.{joint_number}.maxaccel {maxaccel}
 
 
 # --------------------------------------------------------------------- #
-# Builder                                                                #
+# Builders                                                                #
 # --------------------------------------------------------------------- #
 
 
 class HalGenerator:
-    """Render an :class:`IniConfig` into a LinuxCNC HAL string.
+    """Render an :class:`IniConfig` + :class:`MachineConfigGraph`
+    into a LinuxCNC HAL string.
 
     The :meth:`render` method is the single public entry point; the
-    builders below it are split so the dynamic section can grow new
-    joint types (rotational, kinematic-switch) without touching the
-    static header.
+    builders below it are split so the dynamic sections (joints,
+    endstops, SP/PV, PID) can grow independently.
 
     Parameters
     ----------
@@ -133,70 +245,228 @@ class HalGenerator:
                 f"Unsupported hal_type '{hal_type}'; expected 'remora' or 'parallel'"
             )
         self.hal_type = hal_type
+        # The graph is optional for callers that only need the
+        # joint-block rendering (used by some tests). When supplied
+        # the new sections (PID, endstops, SP/PV) are emitted.
+        self._graph: MachineConfigGraph | None = None
 
-    def render(self, config: IniConfig) -> str:
-        """Render the full HAL from an :class:`IniConfig`."""
+    def render(
+        self,
+        config: IniConfig,
+        graph: MachineConfigGraph | None = None,
+    ) -> str:
+        """Render the full HAL from an :class:`IniConfig` and a graph."""
+        self._graph = graph
 
         joints_block = self._build_joints_block(config.axes)
         enable_signals = self._build_enable_signals(config.axes)
 
         if self.hal_type == "parallel":
-            header = PARALLEL_HAL_HEADER_TEMPLATE
-        else:
-            header = REMORA_HAL_HEADER_TEMPLATE
+            header = PARALLEL_HAL_HEADER_TEMPLATE = PARALLEL_HAL_HEADER
+            return header.format(
+                joints_block=joints_block,
+                enable_signals=enable_signals,
+            )
 
-        return header.format(
+        # Remora mode — full output with PID, endstops, SP/PV, etc.
+        symbolic_map = self._build_symbolic_map()
+        pid_load_block = self._build_pid_load_block()
+        endstop_block = self._build_endstop_block(config.axes)
+        sp_block = self._build_sp_block()
+        pv_block = self._build_pv_block()
+        pid_config_block = self._build_pid_config_block()
+
+        return REMORA_HAL_HEADER.format(
+            symbolic_map=symbolic_map,
             joints_block=joints_block,
-            enable_signals=enable_signals,
+            pid_load_block=pid_load_block,
+            endstop_block=endstop_block,
+            sp_block=sp_block,
+            pv_block=pv_block,
+            pid_config_block=pid_config_block,
         )
 
-    # ----- Builders ----------------------------------------------- #
+    # ----- Static block builders ----------------------------------- #
+
+    def _build_symbolic_map(self) -> str:
+        """Top-of-file comment block mapping symbolic ids to positional pins.
+
+        The Remora firmware itself speaks the positional language
+        (``SP.0``, ``PV.0``, ``input.00``); this comment keeps the
+        symbolic names next to their integer index so an operator
+        hand-editing the file can find the right pin by name.
+        """
+        if self._graph is None:
+            return "# (no graph supplied — symbolic map omitted)"
+
+        lines: list[str] = []
+        sp_index = 0
+        pv_index = 0
+
+        # Heater PWMs and their associated temperature sensors come
+        # first, in canonical name order, matching ``config.txt``.
+        for heater_id in sorted(self._graph.heaters.keys()):
+            pwm_signal = _heater_pwm_signal(heater_id)
+            pv_signal = _heater_pv_signal(heater_id)
+            lines.append(f"# {pwm_signal:<28} => remora.SP.{sp_index}")
+            lines.append(f"# {pv_signal:<28} <= remora.PV.{pv_index}")
+            sp_index += 1
+            pv_index += 1
+
+        # Standalone fans get their own SP only.
+        for fan in sorted(self._graph.fans.values(), key=lambda f: f.name):
+            pwm_signal = _fan_pwm_signal(fan.name)
+            lines.append(f"# {pwm_signal:<28} => remora.SP.{sp_index}")
+            sp_index += 1
+
+        return "\n".join(lines) if lines else "# (no symbolic map entries)"
+
+    def _build_pid_load_block(self) -> str:
+        """``loadrt PIDcontroller`` and per-controller ``addf`` lines."""
+        if self._graph is None:
+            return ""
+        pid_aliases = [
+            _heater_pid_alias(h) for h in sorted(self._graph.heaters.keys())
+        ]
+        if not pid_aliases:
+            return ""
+        names = ",".join(pid_aliases)
+        lines = ["# PID controllers for heaters", ""]
+        lines.append(f"    loadrt PIDcontroller names={names}")
+        for alias in pid_aliases:
+            lines.append(f"    addf {alias}.compute servo-thread")
+        return "\n".join(lines) + "\n"
+
+    def _build_endstop_block(self, axes: list[Axis]) -> str:
+        """Emit one ``net`` per non-extruder joint mapping a Remora input."""
+        lines: list[str] = []
+        for joint in self._iter_stepgen_joints(axes):
+            axis_lower = joint.axis_letter.lower()
+            input_index = joint.joint_number
+            label = f"{axis_lower}-stop"
+            lines.append(
+                f"    net {label:<8} remora.input.{input_index:02d}    => "
+                f"joint.{joint.joint_number}.home-sw-in joint.{joint.joint_number}.neg-lim-sw-in"
+            )
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n"
+
+    def _build_sp_block(self) -> str:
+        """``net`` lines wiring each PWM module to its Remora SP channel."""
+        if self._graph is None:
+            return ""
+        lines: list[str] = []
+        sp_index = 0
+        for heater_id in sorted(self._graph.heaters.keys()):
+            lines.append(
+                f"    net {_heater_pwm_signal(heater_id):<28} => remora.SP.{sp_index}"
+            )
+            sp_index += 1
+        for fan in sorted(self._graph.fans.values(), key=lambda f: f.name):
+            lines.append(
+                f"    net {_fan_pwm_signal(fan.name):<28} => remora.SP.{sp_index}"
+            )
+            sp_index += 1
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n"
+
+    def _build_pv_block(self) -> str:
+        """``net`` lines wiring each temperature sensor to a Remora PV channel."""
+        if self._graph is None:
+            return ""
+        lines: list[str] = []
+        pv_index = 0
+        for heater_id in sorted(self._graph.heaters.keys()):
+            lines.append(
+                f"    net {_heater_pv_signal(heater_id):<28} <= remora.PV.{pv_index}"
+            )
+            pv_index += 1
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n"
+
+    def _build_pid_config_block(self) -> str:
+        """Per-heater PID configuration block reading the INI helper."""
+        if self._graph is None:
+            return ""
+        blocks: list[str] = []
+        for heater_id in sorted(self._graph.heaters.keys()):
+            alias = _heater_pid_alias(heater_id)
+            section = _heater_ini_section(heater_id)
+            pwm_signal = _heater_pwm_signal(heater_id)
+            pv_signal = _heater_pv_signal(heater_id)
+            blocks.append(
+                _PID_CONFIG_BLOCK_TEMPLATE.format(
+                    alias_title=alias.lstrip("PID-").title(),
+                    alias=alias,
+                    section=section,
+                    pwm_signal=pwm_signal,
+                    pv_signal=pv_signal,
+                )
+            )
+        return "\n".join(blocks) + ("\n" if blocks else "")
+
+    # ----- Joint block builders (shared between hal types) ---------- #
+
+    def _iter_stepgen_joints(self, axes: list[Axis]) -> list[Joint]:
+        """Return the Cartesian stepgen joints (X / Y / Z) in order.
+
+        The extruder (axis letter ``A``) is excluded — its endstop
+        is not wired on a 3D-printer setup. The Remora firmware
+        expects one input pin per Cartesian joint starting at
+        ``input.00``; the joint number matches the Remora input
+        index directly.
+        """
+        ordered: list[Joint] = []
+        for axis in axes:
+            if axis.letter not in {"X", "Y", "Z"}:
+                continue
+            for joint in axis.joints:
+                ordered.append(joint)
+        return ordered
 
     def _build_joints_block(self, axes: list[Axis]) -> str:
-        """Render one joint block per joint across all axes.
-
-        The output keeps the canonical axis order so the resulting
-        HAL is stable across runs.
-        """
+        """Render one joint block per joint across all axes."""
         chunks: list[str] = []
         for axis in axes:
             for joint in axis.joints:
-                chunks.append(self._render_joint(joint))
+                if self.hal_type == "parallel":
+                    chunks.append(self._render_parallel_joint(joint))
+                else:
+                    chunks.append(self._render_remora_joint(joint))
         return "\n".join(chunks)
 
-    def _render_joint(self, joint: Joint) -> str:
-        """Render a single joint block."""
-        if self.hal_type == "parallel":
-            return PARALLEL_JOINT_TEMPLATE.format(
-                axis_letter=joint.axis_letter,
-                axis_letter_lower=joint.axis_letter.lower(),
-                joint_number=joint.joint_number,
-                step_pin=joint.step_pin or "N/A",
-                dir_pin=joint.dir_pin or "N/A",
-                enable_pin=joint.enable_pin or "N/A",
-                scale=self._fmt(joint.scale),
-                maxaccel=self._fmt(joint.stepgen_maxaccel),
-            )
+    def _render_remora_joint(self, joint: Joint) -> str:
+        """Render the Remora-style joint block (uses INI section refs)."""
         return REMORA_JOINT_TEMPLATE.format(
+            joint_number=joint.joint_number,
+        )
+
+    def _render_parallel_joint(self, joint: Joint) -> str:
+        """Render the legacy stepgen-style joint block."""
+        return PARALLEL_JOINT_TEMPLATE.format(
             axis_letter=joint.axis_letter,
             axis_letter_lower=joint.axis_letter.lower(),
             joint_number=joint.joint_number,
-            joint_number_padded=f"{joint.joint_number:02d}",
-            step_pin=joint.step_pin or "N/A",
-            dir_pin=joint.dir_pin or "N/A",
-            enable_pin=joint.enable_pin or "N/A",
             scale=self._fmt(joint.scale),
+            maxaccel=self._fmt(joint.stepgen_maxaccel),
         )
 
     def _build_enable_signals(self, axes: list[Axis]) -> str:
-        """Build the ``net machine-is-on => ...`` signal list."""
+        """Build the ``net machine-is-on => ...`` signal list (parallel mode)."""
         signals: list[str] = []
         for axis in axes:
             for joint in axis.joints:
                 if self.hal_type == "parallel":
                     signals.append(f"stepgen.{joint.joint_number}.enable")
                 else:
-                    signals.append(f"remora.stepgen.{joint.joint_number:02d}.enable")
+                    # Remora mode uses the joint channel as the enable
+                    # target. The ``net machine-is-on => ...`` line is
+                    # emitted only in parallel mode today; the remora
+                    # mode wires the SPI enable separately.
+                    continue
         return " ".join(signals)
 
     # ----- Helpers ------------------------------------------------ #
@@ -204,7 +474,6 @@ class HalGenerator:
     @staticmethod
     def _fmt(value: float | int) -> str:
         """Format a numeric value, dropping trailing ``.0`` on integers."""
-
         if isinstance(value, bool):
             return str(value)
         if isinstance(value, int):
@@ -216,12 +485,36 @@ class HalGenerator:
         return str(value)
 
 
+_PID_CONFIG_BLOCK_TEMPLATE = """\
+
+## {alias_title} PID configuration
+
+    net remora-status  => {alias}.auto
+    net {pwm_signal}  => {alias}.SP
+    net {pv_signal}  => {alias}.PV
+    net {pwm_signal}  => {alias}.CV
+
+    setp {alias}.pOnM      [{section}]PID_PONM
+    setp {alias}.direction [{section}]PID_DIR
+    setp {alias}.KP        [{section}]PID_KP
+    setp {alias}.KI        [{section}]PID_KI
+    setp {alias}.KD        [{section}]PID_KD
+    setp {alias}.SPmin     [{section}]PID_SPMIN
+    setp {alias}.SPmax     [{section}]PID_SPMAX
+    setp {alias}.CVmin     [{section}]PID_CVMIN
+    setp {alias}.CVmax     [{section}]PID_CVMAX
+"""
+
+
 # --------------------------------------------------------------------- #
 # High-level facade                                                       #
 # --------------------------------------------------------------------- #
 
 
-def build_hal_from_graph(graph, hal_type: str | None = None) -> str:
+def build_hal_from_graph(
+    graph: MachineConfigGraph,
+    hal_type: str | None = None,
+) -> str:
     """Convenience entry point: parse graph → HAL string.
 
     Parameters
@@ -232,14 +525,21 @@ def build_hal_from_graph(graph, hal_type: str | None = None) -> str:
         ``"remora"`` or ``"parallel"``. If ``None``, reads from
         ``graph.mcu.hal_type`` (default: ``"remora"``).
     """
-
     from .ini_generator import build_ini_from_graph
 
     if hal_type is None:
         hal_type = graph.mcu.hal_type if graph.mcu else "remora"
 
     ini_config = build_ini_from_graph(graph)
-    return HalGenerator(hal_type=hal_type).render(ini_config)
+    return HalGenerator(hal_type=hal_type).render(ini_config, graph)
 
 
-__all__ = ["HalGenerator", "build_hal_from_graph"]
+__all__ = [
+    "HalGenerator",
+    "build_hal_from_graph",
+    "_heater_pid_alias",
+    "_heater_ini_section",
+    "_heater_pwm_signal",
+    "_heater_pv_signal",
+    "_fan_pwm_signal",
+]

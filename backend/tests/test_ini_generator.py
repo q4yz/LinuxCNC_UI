@@ -306,3 +306,74 @@ def test_joint_section_name_format() -> None:
 
 def test_axis_section_name_format() -> None:
     assert Axis(letter="Y").section_name == "AXIS_Y"
+
+
+# --------------------------------------------------------------------- #
+# Phase 5 — PID sections in the INI                                      #
+# --------------------------------------------------------------------- #
+
+
+def test_renderer_emits_pid_sections_for_each_heater() -> None:
+    """One ``[BED]`` / ``[EXT0]`` section per heater with PID defaults."""
+    from modules.machineconfig.models import Extruder, Heater
+
+    graph = MachineConfigGraph(printer=Printer())
+    graph.steppers["x"] = Stepper(axis="x", step_pin="PF13")
+    graph.heaters["heater_bed"] = Heater(
+        name="heater_bed",
+        heater_pin="PA1",
+        sensor_pin="PA3",
+        control="watermark",
+        max_temp=130.0,
+    )
+    graph.heaters["extruder"] = Extruder(
+        name="extruder",
+        heater_pin="PA2",
+        sensor_pin="PA4",
+        control="pid",
+        pid_Kp=22.2,
+        pid_Ki=1.08,
+        pid_Kd=114,
+    )
+
+    ini = build_ini_from_graph(graph)
+    rendered = IniGenerator().render(ini)
+
+    assert "[BED]" in rendered
+    assert "PID_SPMAX\t= 80" in rendered  # clamped from max_temp=130 (no trailing .0)
+    assert "[EXT0]" in rendered
+    assert "PID_KP\t\t= 22.2" in rendered  # extruder PID flowed through
+    assert "PID_KI\t\t= 1.08" in rendered
+    assert "PID_KD\t\t= 114" in rendered
+
+
+def test_renderer_pid_sp_max_is_clamped_for_bed() -> None:
+    """``[BED]`` SPMAX is clamped at 80 even if max_temp is higher."""
+    from modules.machineconfig.models import Heater
+
+    graph = MachineConfigGraph(printer=Printer())
+    graph.steppers["x"] = Stepper(axis="x", step_pin="PF13")
+    graph.heaters["heater_bed"] = Heater(
+        name="heater_bed",
+        heater_pin="PA1",
+        sensor_pin="PA3",
+        control="watermark",
+        max_temp=130.0,
+    )
+
+    ini = build_ini_from_graph(graph)
+    rendered = IniGenerator().render(ini)
+
+    # SPMAX is clamped at 80 to match the goal. The renderer strips
+    # trailing ``.0`` so the literal form is ``80`` (integer).
+    assert "PID_SPMAX\t= 80" in rendered
+
+
+def test_renderer_uses_canonical_section_names() -> None:
+    """``heater_bed`` -> ``[BED]``, ``extruder`` -> ``[EXT0]``."""
+    from modules.machineconfig.compilers.ini_generator import _heater_ini_section
+    from modules.machineconfig.models import Heater
+
+    assert _heater_ini_section("heater_bed") == "BED"
+    assert _heater_ini_section("extruder") == "EXT0"
+    assert _heater_ini_section("heater_generic_chamber") == "HEATER_GENERIC_CHAMBER"

@@ -143,6 +143,32 @@ class TMC2209:
 
 
 @dataclass(slots=True)
+class Fan:
+    """A standalone PWM-controlled fan.
+
+    Klipper's ``[fan]`` and ``[fan_generic]`` sections map to this
+    dataclass. The ``name`` field is the canonical id derived from
+    the section header (``[fan]`` -> ``"fan"``,
+    ``[fan_generic part_cooling]`` -> ``"fan_generic_part_cooling"``)
+    via :func:`backend.modules.machineconfig.compilers.derive_fan_name`
+    and is set by the parser, not by the section author.
+
+    Required field ``pin`` is typed as optional because the parser
+    emits it after validation; missing values raise a parse error
+    before the fan is constructed.
+
+    Optional ``max_power`` (0.0–1.0) controls the ``PWM Max`` value
+    in the Remora board JSON. The runtime clamps it to 1.0 and
+    scales it to 8-bit (0–255) so a Klipper ``max_power: 0.5`` ends
+    up as ``PWM Max: 128``.
+    """
+
+    name: str = ""
+    pin: str | None = None
+    max_power: float | None = None
+
+
+@dataclass(slots=True)
 class MCU:
     """MCU configuration (transport settings + hal_type)."""
 
@@ -173,6 +199,7 @@ class MachineConfigGraph:
     heaters: dict[str, Heater] = field(default_factory=dict)
     spindle: Spindle | None = None
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
+    fans: dict[str, Fan] = field(default_factory=dict)
     mcu: MCU | None = None
 
     def find_stepper(self, target: str) -> "Stepper | None":
@@ -189,6 +216,7 @@ MachineConfig = MachineConfigGraph
 __all__ = [
     "EndstopSwitch",
     "Extruder",
+    "Fan",
     "Heater",
     "MachineConfig",
     "MachineConfigGraph",

@@ -18,6 +18,7 @@ class SectionKind(str, Enum):
     HEATER = "heater"
     SPINDLE = "spindle"
     TMC2209 = "tmc2209"
+    FAN = "fan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,8 @@ PRINTER_KEYS = frozenset(
         "kinematics",
         "max_velocity",
         "max_accel",
+        "max_z_velocity",
+        "max_z_accel",
         "minimum_cruise_ratio",
         "square_corner_velocity",
     }
@@ -55,7 +58,9 @@ STEPPER_KEYS = frozenset(
         "microsteps",
         "endstop_pin",
         "position_endstop",
+        "position_min",
         "position_max",
+        "homing_speed",
     }
 )
 ENDSTOP_SWITCH_KEYS = frozenset({"stepper", "pin", "position", "type"})
@@ -99,6 +104,13 @@ TMC2209_KEYS = frozenset(
         "sense_resistor",
     }
 )
+# Fan sections accept a single ``pin`` plus an optional ``max_power``
+# (0.0–1.0) which the runtime uses as the ``PWM Max`` value in the
+# Remora board JSON. ``cycle_time`` / ``hardware_pwm`` / ``off_below``
+# are recognised by Klipper but ignored by the compiler (the Remora
+# firmware uses a fixed PWM cycle).
+FAN_KEYS = frozenset({"pin", "max_power", "cycle_time", "hardware_pwm", "off_below"})
+FAN_IGNORED_KEYS = frozenset({"cycle_time", "hardware_pwm", "off_below"})
 
 SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.MCU: None,
@@ -109,6 +121,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.HEATER: HEATER_KEYS,
     SectionKind.SPINDLE: SPINDLE_KEYS,
     SectionKind.TMC2209: TMC2209_KEYS,
+    SectionKind.FAN: FAN_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -135,6 +148,13 @@ _EXTRUDER_SECTION = re.compile(
 #   [heater_generic chamber] -> named instance
 _HEATER_GENERIC_SECTION = re.compile(
     r"^heater_generic(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
+)
+# Fan sections mirror the extruder / heater_generic naming pattern:
+#   [fan]                    -> bare (canonical id = "fan")
+#   [fan_generic]            -> bare heater-style id
+#   [fan_generic part_cooling] -> named instance, id = "fan_generic_part_cooling"
+_FAN_SECTION = re.compile(
+    r"^fan(?:_generic)?(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
 )
 
 
@@ -202,6 +222,17 @@ def schema_for_section(section: str) -> SectionSchema | None:
     if section == "spindle":
         return SectionSchema(SectionKind.SPINDLE, SPINDLE_KEYS, "spindle")
 
+    fan_match = _FAN_SECTION.fullmatch(section)
+    if fan_match:
+        # The schema object_name is the bare section header so the
+        # parser can derive the canonical id (mirrors the extruder /
+        # heater_generic naming convention). Empty ``name`` -> "fan".
+        return SectionSchema(
+            SectionKind.FAN,
+            FAN_KEYS,
+            section,
+        )
+
     return None
 
 
@@ -209,6 +240,8 @@ __all__ = [
     "ALLOWED_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "EXTRUDER_KEYS",
+    "FAN_KEYS",
+    "FAN_IGNORED_KEYS",
     "HEATER_KEYS",
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",

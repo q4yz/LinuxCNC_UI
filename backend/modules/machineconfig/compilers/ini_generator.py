@@ -234,6 +234,14 @@ class IniGenerator:
         axes_block = self._build_axes_block(config.axes)
         rendered = rendered_header.replace("\x00AXES\x00", axes_block)
 
+        # One PID section per heater — the HAL renderer reads the
+        # matching ``[<SECTION>]`` keys to wire the ``PIDcontroller``
+        # parameters. Sections are emitted in canonical name order so
+        # the diff against the goal stays stable.
+        pid_block = self._build_pid_block(config.heaters)
+        if pid_block:
+            rendered = rendered + "\n" + pid_block
+
         logger.info(
             "IniGenerator emitted %d axes (%d joints total)",
             len(config.axes),
@@ -343,6 +351,94 @@ class IniGenerator:
         mv = getattr(printer, "max_velocity", None)
         return float(mv) if mv is not None else 250.0
 
+    # ----- PID section builder ------------------------------------ #
+
+    def _build_pid_block(self, heaters: dict) -> str:
+        """Emit one ``[BED]`` / ``[EXT0]`` / ``[<NAME>]`` section per heater.
+
+        The section name mirrors the HAL renderer's alias table so
+        ``[BED]`` keys flow into ``PID-bed.KP`` and ``[EXT0]`` keys
+        flow into ``PID-ext0.KP``. PID values default to a sane
+        baseline when the Klipper ``control`` is ``watermark``
+        (these keys are still read by the PIDcontroller component so
+        the watermarked bed has a placeholder set of values).
+        """
+        if not heaters:
+            return ""
+        chunks: list[str] = []
+        # Render in the canonical alias order so the diff is stable.
+        for heater_id in sorted(heaters.keys()):
+            heater = heaters[heater_id]
+            section_name = _heater_ini_section(heater_id)
+            is_pid = (getattr(heater, "control", "") or "").lower() == "pid"
+            chunks.append(self._render_pid_section(section_name, heater, is_pid))
+        return "\n\n".join(chunks) + "\n"
+
+    def _render_pid_section(
+        self,
+        section_name: str,
+        heater,
+        is_pid: bool,
+    ) -> str:
+        """Render a single ``[<NAME>]`` PID section.
+
+        ``heater_bed`` -> ``[BED]`` with PID_SPMAX clamped to the
+        heater's ``max_temp`` (or 80 default). ``extruder`` ->
+        ``[EXT0]`` with the Klipper ``pid_Kp``/``pid_Ki``/``pid_Kd``
+        flowed through verbatim. ``watermark`` heaters reuse the
+        same defaults so the HAL can wire the PIDcontroller
+        without missing keys.
+        """
+        # Bed: cap SPmax at the actual bed max_temp (default 80 °C for
+        # an Ender 3-style bed).
+        spmax = 80.0
+        if getattr(heater, "max_temp", None) is not None:
+            spmax = min(float(heater.max_temp), spmax) if section_name == "BED" else float(heater.max_temp)
+        else:
+            spmax = 250.0 if section_name != "BED" else 80.0
+
+        title = section_name.title() if section_name in {"BED", "EXT0"} else section_name
+        if title == "EXT0":
+            title = "Extruder 0"
+
+        kp = float(getattr(heater, "pid_Kp", 0.0) or 0.0) if is_pid else 0.0
+        ki = float(getattr(heater, "pid_Ki", 0.0) or 0.0) if is_pid else 0.0
+        kd = float(getattr(heater, "pid_Kd", 0.0) or 0.0) if is_pid else 0.0
+        if not is_pid:
+            # Watermark heaters use Klipper's defaults so the PID
+            # controller has values to read on first boot (a true
+            # bang-bang heater ignores Kp/Ki/Kd, but the INI keys
+            # must exist).
+            kp, ki, kd = 21.5, 1.0, 0.0
+
+        return (
+            f"# {title}\n"
+            f"[{section_name}]\n"
+            f"PID_PONM\t= 1\n"
+            f"PID_DIR\t\t= 0\n"
+            f"PID_KP\t\t= {self._fmt(kp)}\n"
+            f"PID_KI\t\t= {self._fmt(ki)}\n"
+            f"PID_KD\t\t= {self._fmt(kd)}\n"
+            f"PID_SPMIN\t= 0.0\n"
+            f"PID_SPMAX\t= {self._fmt(spmax)}\n"
+            f"PID_CVMIN\t= 0.0\n"
+            f"PID_CVMAX\t= 100.0\n"
+        )
+
+
+def _heater_ini_section(heater_id: str) -> str:
+    """Map a canonical heater id to the INI section that carries its PID values.
+
+    Duplicated from :mod:`hal_generator` so the INI / HAL renderers
+    stay independently usable (the INI renderer is imported by the
+    router; the HAL renderer only fires from the high-level facade).
+    """
+    if heater_id == "heater_bed":
+        return "BED"
+    if heater_id == "extruder":
+        return "EXT0"
+    return heater_id.upper()
+
 
 # --------------------------------------------------------------------- #
 # High-level facade                                                       #
@@ -359,6 +455,7 @@ def build_ini_from_graph(graph) -> IniConfig:
         joints_count=sum(len(a.joints) for a in axes),
         coordinates=" ".join(a.letter for a in axes if a.letter in ("X", "Y", "Z", "A", "B", "C")) or "X Y Z",
         kinematics_name="trivkins",
+        heaters=dict(getattr(graph, "heaters", {}) or {}),
     )
 
 

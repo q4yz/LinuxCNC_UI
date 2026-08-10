@@ -108,6 +108,40 @@ def stop_program() -> StatusResponse:
 
 
 @router.post(
+    "/unload",
+    summary="Unload Program",
+    description=(
+        "Explicitly clear the file pointer from the interpreter. "
+        "Unlike ``POST /stop``, which only aborts the active move, "
+        "this endpoint closes the loaded program so the operator "
+        "lands in a pure Idle state. The mock implements this as "
+        "``_machine_state.file = ""``; on a real LinuxCNC driver the "
+        "equivalent is closing the open task plan, and on Klipper it "
+        "maps to ``SDCARD_RESET_FILE``."
+    ),
+    operation_id="unloadProgram",
+    response_model=StatusResponse,
+)
+def unload_program() -> StatusResponse:
+    """Clear the file pointer from the interpreter.
+
+    The frontend's state-machine facade computes ``SystemState.LOADED``
+    from the file pointer being non-empty. Without this endpoint, the
+    only way to clear the loaded state is to load a different file
+    (which replaces the pointer) — the ``POST /stop`` endpoint only
+    aborts the active move and leaves the file open. This endpoint
+    gives the operator a true "Unload" button that lands them in
+    pure Idle without a follow-up load.
+    """
+    # ``execute_sync_cmd`` returns ``{"status": "success"}`` on
+    # success. The mock's ``program_unload`` clears
+    # ``_machine_state.file`` so the next telemetry tick reports
+    # ``stat.file == ""`` and ``is_program_loaded()`` returns False.
+    result = execute_sync_cmd("program_unload", 0)
+    return StatusResponse(status=result.get("status", "success"))
+
+
+@router.post(
     "/pause",
     summary="Pause Program",
     description="Pause the currently running program.",
@@ -202,6 +236,7 @@ __all__ = [
     "router",
     "run_program",
     "stop_program",
+    "unload_program",
     "pause_program",
     "resume_program",
     "trigger_parser",

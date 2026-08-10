@@ -8,6 +8,7 @@ registry to populate the frontend compiler selector.
 
 from __future__ import annotations
 
+from ..parser import derive_fan_name
 from .base import (
     DEFAULT_SOURCE_MARKER,
     Compiler,
@@ -35,6 +36,7 @@ __all__ = [
     "HeaterExtractor",
     "KlipperToLinuxCNCCompiler",
     "autoload",
+    "derive_fan_name",
     "derive_heater_name",
     "register_compiler",
     "registry",

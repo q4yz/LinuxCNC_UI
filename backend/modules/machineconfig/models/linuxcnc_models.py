@@ -133,7 +133,10 @@ class IniConfig:
     ``printer`` is the Klipper-side :class:`MachineConfigGraph` kept
     for renderer convenience; ``axes`` is the ordered list of
     LinuxCNC :class:`Axis` objects to emit, pre-resolved by
-    :class:`AxisBuilder`.
+    :class:`AxisBuilder`. ``heaters`` is the same dict the HAL
+    renderer walks for PID-controller allocation — the INI
+    renderer uses it to emit one ``[BED]`` / ``[EXT<N>]`` /
+    ``[<NAME>]`` PID section per heater.
     """
 
     printer: object | None = None  # Klipper ``MachineConfigGraph``
@@ -141,6 +144,7 @@ class IniConfig:
     joints_count: int = 0
     coordinates: str = "X Y Z"
     kinematics_name: str = "trivkins"
+    heaters: dict = field(default_factory=dict)
 
 
 __all__ = [

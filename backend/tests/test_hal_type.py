@@ -7,7 +7,6 @@ from modules.machineconfig.compilers.hal_generator import (
     build_hal_from_graph,
 )
 from modules.machineconfig.models import (
-    IniConfig,
     MachineConfigGraph,
     MCU,
     Printer,
@@ -59,9 +58,10 @@ def test_hal_type_defaults_to_remora() -> None:
     graph = _graph(steppers={"x": _stepper("x")})
     rendered = build_hal_from_graph(graph)
 
-    assert "remora.stepgen.00" in rendered
-    # "stepgen.0" appears inside "remora.stepgen.00" — check for the
-    # parallel-specific timing params instead.
+    # Remora mode emits remora.joint channels, not remora.stepgen.
+    assert "remora.joint.0" in rendered
+    assert "remora.joint.0.scale" in rendered
+    # Parallel-specific timing params are absent.
     assert "steplen" not in rendered
 
 
@@ -72,7 +72,7 @@ def test_hal_type_remora_explicit() -> None:
     )
     rendered = build_hal_from_graph(graph)
 
-    assert "remora.stepgen.00" in rendered
+    assert "remora.joint.0" in rendered
     assert "steplen" not in rendered
 
 
@@ -83,8 +83,10 @@ def test_hal_type_parallel() -> None:
     )
     rendered = build_hal_from_graph(graph)
 
+    # Parallel mode keeps the legacy stepgen wiring (the dashboard
+    # never needs a Remora-specific layout for Mesa/parallel setups).
     assert "stepgen.0" in rendered
-    assert "remora.stepgen" not in rendered
+    assert "remora.joint" not in rendered
     assert "steplen" in rendered
     assert "stepspace" in rendered
     assert "dirhold" in rendered
@@ -121,10 +123,14 @@ def test_hal_generator_remora_template() -> None:
     from modules.machineconfig.compilers.ini_generator import build_ini_from_graph
 
     ini = build_ini_from_graph(graph)
-    rendered = HalGenerator(hal_type="remora").render(ini)
+    rendered = HalGenerator(hal_type="remora").render(ini, graph)
 
-    assert "loadrt remora-xyz chip_type=STM32F429" in rendered
-    assert "remora.stepgen.00" in rendered
+    # Remora mode loads the SPI firmware + INI refs.
+    assert "loadrt remora-spi SPI_clk_div=64" in rendered
+    assert "remora.joint.0" in rendered
+    # The new sections are present in the remora output.
+    assert "net tool-prepare-loopback" in rendered
+    assert "net tool-change-loopback" in rendered
 
 
 def test_hal_generator_parallel_template() -> None:
@@ -132,8 +138,7 @@ def test_hal_generator_parallel_template() -> None:
     from modules.machineconfig.compilers.ini_generator import build_ini_from_graph
 
     ini = build_ini_from_graph(graph)
-    rendered = HalGenerator(hal_type="parallel").render(ini)
+    rendered = HalGenerator(hal_type="parallel").render(ini, graph)
 
-    assert "loadrt stepgen step_type=0,0,0" in rendered
     assert "stepgen.0" in rendered
-    assert "remora.stepgen" not in rendered
+    assert "remora.joint" not in rendered

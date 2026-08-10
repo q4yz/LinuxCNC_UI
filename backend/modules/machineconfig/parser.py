@@ -10,6 +10,7 @@ from pathlib import Path
 from .models import (
     EndstopSwitch,
     Extruder,
+    Fan,
     Heater,
     MachineConfigGraph,
     MCU,
@@ -20,6 +21,7 @@ from .models import (
 )
 from .schema import (
     EXTRUDER_KEYS,
+    FAN_IGNORED_KEYS,
     HEATER_KEYS,
     PRINTER_IGNORED_KEYS,
     SectionKind,
@@ -191,6 +193,21 @@ class DuplicateHeaterError(ConfigValidationError):
         )
 
 
+class DuplicateFanError(ConfigValidationError):
+    """Raised when two fan sections resolve to the same canonical id."""
+
+    kind = "duplicate_fan"
+
+    def __init__(self, section_a: str, section_b: str, name: str) -> None:
+        self.section_a = section_a
+        self.section_b = section_b
+        self.name = name
+        super().__init__(
+            f"Sections [{section_a}] and [{section_b}] both compile to "
+            f"the same fan name '{name}'."
+        )
+
+
 class DuplicateStepperPinError(ConfigValidationError):
     """Raised when two distinct stepper sections share a physical pin.
 
@@ -268,6 +285,24 @@ def derive_heater_name(section_name: str) -> str:
     return f"{kind}_{instance.replace(' ', '_')}"
 
 
+def derive_fan_name(section_name: str) -> str:
+    """Return the canonical fan id for a Klipper section header.
+
+    Examples:
+        [fan]                    -> "fan"
+        [fan_generic]            -> "fan_generic"
+        [fan_generic part_cooling] -> "fan_generic_part_cooling"
+
+    Mirrors :func:`derive_heater_name` so the fan and heater id
+    namespaces stay uniform (``[foo bar]`` -> ``"foo_bar"``).
+    """
+    parts = section_name.split(maxsplit=1)
+    if len(parts) == 1:
+        return section_name
+    kind, instance = parts
+    return f"{kind}_{instance.replace(' ', '_')}"
+
+
 class MachineConfigParser:
     """Parse a Klipper-style INI file into a strict dataclass graph.
 
@@ -325,6 +360,9 @@ class MachineConfigParser:
         # Used at the end for duplicate-name detection so the error
         # message points at the second occurrence rather than the first.
         heater_section_order: list[str] = []
+        # Order in which fan-shaped sections appear in the source file.
+        # Same rationale as ``heater_section_order``.
+        fan_section_order: list[str] = []
 
         for section_name in parser.sections():
             section_schema = schema_for_section(section_name)
@@ -378,6 +416,10 @@ class MachineConfigParser:
                     section_name,
                     section,
                 )
+            elif section_schema.kind is SectionKind.FAN:
+                fan = self._parse_fan(section_name, section)
+                graph.fans[fan.name] = fan
+                fan_section_order.append(section_name)
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -394,6 +436,7 @@ class MachineConfigParser:
         # every stepper's pins and every heater's name are known.
         # Both validations are cheap and produce structured errors.
         self._validate_heater_uniqueness(graph, heater_section_order)
+        self._validate_fan_uniqueness(graph, fan_section_order)
         self._validate_stepper_pins(graph)
 
         return graph
@@ -517,6 +560,26 @@ class MachineConfigParser:
             canonical = derive_heater_name(section_name)
             if canonical in seen:
                 raise DuplicateHeaterError(seen[canonical], section_name, canonical)
+            seen[canonical] = section_name
+
+    @staticmethod
+    def _validate_fan_uniqueness(
+        graph: MachineConfigGraph,
+        fan_section_order: list[str],
+    ) -> None:
+        """Reject two fan sections that resolve to the same canonical id.
+
+        Mirrors :meth:`_validate_heater_uniqueness` for the fan list.
+        Duplicate canonical ids would produce duplicate ``hardware.json``
+        records; the parser is the right place to enforce that.
+        """
+        seen: dict[str, str] = {}
+        for section_name in fan_section_order:
+            canonical = derive_fan_name(section_name)
+            if canonical in seen:
+                raise DuplicateFanError(
+                    seen[canonical], section_name, canonical
+                )
             seen[canonical] = section_name
 
     def _parse_printer(
@@ -662,6 +725,34 @@ class MachineConfigParser:
             hal_type=self._optional_string(section, "hal_type") or "remora",
         )
 
+    def _parse_fan(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> Fan:
+        """Build a :class:`Fan` from a ``[fan]`` / ``[fan_generic foo]`` section.
+
+        The canonical id is derived from the section header via
+        :func:`derive_fan_name`. ``pin`` is required — the Remora
+        board JSON needs a physical pin assignment for the PWM module.
+        ``max_power`` is optional; the runtime scales it to 8-bit for
+        the Remora ``PWM Max`` field when present.
+        """
+        for key in FAN_IGNORED_KEYS:
+            if key in section:
+                logger.info(
+                    "Ignoring [%s] %s: it has no Remora equivalent",
+                    section_name,
+                    key,
+                )
+        pin = self._required_string(section_name, section, "pin")
+        max_power = self._optional_float(section_name, section, "max_power")
+        return Fan(
+            name=derive_fan_name(section_name),
+            pin=pin,
+            max_power=max_power,
+        )
+
     def _parse_tmc2209(
         self,
         stepper: str,
@@ -771,6 +862,7 @@ def parse_config(source_path: str | Path) -> MachineConfigGraph:
 
 __all__ = [
     "ConfigValidationError",
+    "DuplicateFanError",
     "DuplicateHeaterError",
     "DuplicateStepperPinError",
     "InvalidValueError",
@@ -781,6 +873,7 @@ __all__ = [
     "UndefinedKeywordError",
     "UnknownStepperError",
     "UnsupportedSectionError",
+    "derive_fan_name",
     "derive_heater_name",
     "parse_config",
 ]

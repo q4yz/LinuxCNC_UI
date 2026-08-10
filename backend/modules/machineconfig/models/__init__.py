@@ -37,6 +37,7 @@ from .hardware_json_models import (
 from .klipper_models import (
     EndstopSwitch,
     Extruder,
+    Fan,
     Heater,
     MachineConfig,
     MachineConfigGraph,
@@ -59,6 +60,7 @@ __all__ = [
     "Axis",
     "EndstopSwitch",
     "Extruder",
+    "Fan",
     "HardwareAxis",
     "HardwareDriver",
     "HardwareEndstop",
