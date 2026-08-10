@@ -19,7 +19,7 @@ import DeploymentPanel from '../modules/machineconfig/components/DeploymentPanel
 import ActivePanel from '../modules/machineconfig/components/ActivePanel.vue';
 
 import { useMachineConfigStore } from '../modules/machineconfig/store.js';
-import { useEditorStore } from '../stores/editor.js';
+import { useEditorStore, resolveEditorMode } from '../stores/editor.js';
 
 const machineConfigStore = useMachineConfigStore();
 const editorStore = useEditorStore();
@@ -33,17 +33,13 @@ useUnsavedChangesGuard(() => editorStore.isDirty);
 const editorContent = ref('');
 
 // --- Mode + path derivation -------------------------------------- //
-
-const PROFILE_EXTS = ['.cfg', '.ini', '.conf'];
-const GCODE_EXTS = ['.gcode', '.ngc', '.nc'];
-
-function modeForFilename(filename) {
-  if (!filename) return editorStore.mode || 'config';
-  const lower = filename.toLowerCase();
-  if (GCODE_EXTS.some((ext) => lower.endsWith(ext))) return 'gcode';
-  if (PROFILE_EXTS.some((ext) => lower.endsWith(ext))) return 'config';
-  return 'text';
-}
+//
+// ``resolveEditorMode`` (from the store) is the single source of
+// truth for the extension → mode map. It covers gcode, profile, JS,
+// TS, JSON, Python, YAML, Markdown, Shell, HTML, CSS, XML, etc.
+// — see the store for the full table. The mode is purely for
+// syntax highlighting and UI hints; the store routes I/O by the
+// file's path, not by its extension.
 
 function hydratePath() {
   let param = route.params?.filename;
@@ -57,7 +53,9 @@ function hydratePath() {
 }
 
 const editorPath = computed(() => hydratePath());
-const editorMode = computed(() => modeForFilename(editorPath.value || editorStore.filename));
+const editorMode = computed(() =>
+  resolveEditorMode(editorPath.value || editorStore.filename)
+);
 
 // --- Loading logic ----------------------------------------------- //
 

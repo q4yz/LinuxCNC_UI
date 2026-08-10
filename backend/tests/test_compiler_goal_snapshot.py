@@ -144,3 +144,16 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
     assert any(f["id"] == "fan_generic_part_cooling" for f in payload["fans"])
     # The TMC2209 modules appear as drivers in hardware.json.
     assert any(d["id"] == "driver_stepper_x" for d in payload["drivers"])
+    # One endstop record per Klipper switch (was 3 before Phase A).
+    # Inline ``endstop_pin`` on the stepper sections produces one
+    # record per axis with ``type: "Home"`` (because
+    # ``position_endstop`` is set on every stepper).
+    endstops = payload["endstops"]
+    assert len(endstops) == 3
+    endstop_ids = {e["id"] for e in endstops}
+    assert endstop_ids == {"endstop_x_min", "endstop_y_min", "endstop_z_min"}
+    assert all(e["type"] == "Home" for e in endstops)
+    # Inline ``axis.endstops[*]`` views carry ``{id, type, pos}`` only.
+    for axis in payload["axes"]:
+        for view in axis["endstops"]:
+            assert set(view.keys()) == {"id", "type", "pos"}

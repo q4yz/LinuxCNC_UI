@@ -10,60 +10,123 @@ import { ApiError } from '../../generated/api/core/ApiError'
 // touches so ``EditorView`` (and any other consumer) never has to
 // branch on file kind.
 //
-// Modes:
+// Architecture
+// ------------
 //
-// * ``"config"`` / ``"profile"`` / ``"ini"`` / ``"cfg"``  — Klipper /
-//   LinuxCNC configuration files under ``machine_config/profiles/``.
-//   Served by ``ModulesMachineconfigService``'s
-//   ``readProfileApiV1ModulesMachineconfigProfilesContentGet`` /
-//   ``saveProfileApiV1ModulesMachineconfigProfilesContentPut``
-//   (``?path=<rel>`` query parameter — not a path segment).
+// The store used to route reads and writes by ``mode`` (which was
+// derived from the file extension). That was fragile: a ``.cfg``
+// file under ``nc_files/`` would go through the machineconfig
+// endpoint, a ``.gcode`` under ``machine_config/profiles/`` would
+// go through the programs endpoint — neither of which matches where
+// the file actually lives.
 //
-// * ``"gcode"``  — G-code files under ``nc_files/``. Served by
-//   ``ProgramFilesService``'s ``readFile`` / ``writeFile``
-//   (``/api/v1/programs/content/{filename}``).
+// The new model is **path-based**. ``routeByPath(path)`` inspects
+// the path prefix and picks the right backend. The ``mode`` field is
+// kept for **syntax highlighting** and **UI hints** — it no longer
+// affects I/O routing.
 //
-// * ``"js"`` / ``"javascript"`` / ``"json"`` / ``"text"`` — read-only
-//   convenience modes. ``loadFile`` works (via the config endpoint
-//   by default), ``saveFile`` rejects with an error.
+// Path → service
+// --------------
+//
+//   ``machine_config/...``  or  ``profiles/...``  →  machineconfig
+//   everything else                                  →  programs
+//
+// The ``profiles/`` prefix is an alias accepted by the machineconfig
+// router (``save_profile`` and ``read_profile`` resolve relative to
+// ``machine_config/profiles/``). Operators see ``profiles/foo.cfg`` in
+// the URL bar; the service transparently maps that to the on-disk
+// path.
+//
+// Future-proofing
+// ---------------
+//
+// G-code macros, M-codes, MDI snippets, etc. all live under
+// ``nc_files/`` in the programs root. The path-based router extends
+// to a new endpoint without changing the existing one — when a
+// "macro library" feature lands, the macros are served by the
+// programs service and the existing logic handles them.
 
-const PROFILE_MODES = new Set(['config', 'profile', 'ini', 'cfg'])
+const PROFILE_PATH_PREFIXES = ['machine_config/', 'profiles/']
+const PROFILE_MODES = new Set(['config', 'profile', 'ini', 'cfg', 'conf'])
 const GCODE_MODES = new Set(['gcode', 'ngc', 'nc'])
 
-// ---- Service wrappers ------------------------------------------- //
-//
-// Two thin wrappers around the generated clients that give us a
-// stable interface inside this store. They exist for two reasons:
-//
-// 1. The codegen emits long path-derived function names like
-//    ``readProfileApiV1ModulesMachineconfigProfilesContentGet``
-//    that are brittle (renaming the route regenerates the name).
-//    A wrapper here means the store has exactly one call site to
-//    update when the generator churns. Setting ``operation_id``
-//    on the FastAPI decorator would shorten these to ``readProfile``
-//    / ``saveProfile`` and make the wrappers stable across regens.
-//
-// 2. The config endpoint wraps its body in a JSON envelope
-//    (``ProfileContent`` model) while the G-code endpoint returns
-//    raw text. The wrappers normalise both shapes to a plain
-//    string so callers don't have to branch on mode.
+function isProfilePath(path) {
+  if (!path) return false
+  return PROFILE_PATH_PREFIXES.some(
+    (prefix) => path === prefix.slice(0, -1) || path.startsWith(prefix),
+  )
+}
 
-async function readConfigContent(path) {
+// Comprehensive extension → mode map. The mode is purely a syntax
+// highlighting hint; routing is path-based. New extensions are
+// added in one place — keep the list sorted for grep-ability.
+const EXTENSION_MODES = {
+  // Machineconfig (Klipper / LinuxCNC INI-style)
+  cfg: 'config',
+  ini: 'config',
+  conf: 'config',
+  toml: 'config',
+  // Programs (G-code)
+  gcode: 'gcode',
+  ngc: 'gcode',
+  nc: 'gcode',
+  // Code
+  py: 'python',
+  js: 'javascript',
+  mjs: 'javascript',
+  ts: 'typescript',
+  tsx: 'typescript',
+  jsx: 'javascript',
+  json: 'json',
+  // Web
+  html: 'html',
+  htm: 'html',
+  css: 'css',
+  scss: 'css',
+  sass: 'css',
+  xml: 'xml',
+  svg: 'xml',
+  // Docs / data
+  md: 'markdown',
+  yml: 'yaml',
+  yaml: 'yaml',
+  toml_data: 'yaml',
+  // Shell / config
+  sh: 'shell',
+  bash: 'shell',
+  zsh: 'shell',
+}
+
+const DEFAULT_MODE = 'text'
+
+export function modeForFilename(filename) {
+  if (!filename) return DEFAULT_MODE
+  const lower = filename.toLowerCase()
+  const dot = lower.lastIndexOf('.')
+  if (dot < 0) return DEFAULT_MODE
+  const ext = lower.slice(dot + 1)
+  return EXTENSION_MODES[ext] ?? DEFAULT_MODE
+}
+
+// ---- Service dispatch ------------------------------------------- //
+//
+// Single point where path → service call is decided. Adding a
+// new file kind means one new branch here, nothing else changes.
+
+async function readProfileContent(path) {
   const envelope = await ModulesMachineconfigService
     .readProfileApiV1ModulesMachineconfigProfilesContentGet(path)
   return envelope?.content ?? ''
 }
 
-async function writeConfigContent(path, content) {
-    console.log(path)
-    console.log(content)
+async function writeProfileContent(path, content) {
   await ModulesMachineconfigService
     .saveProfileApiV1ModulesMachineconfigProfilesContentPut(path, {
-      content
+      content,
     })
 }
 
-async function readGcodeContent(filename) {
+async function readProgramContent(filename) {
   // ``ProgramFilesService.readFile`` throws ``ApiError`` on 404 —
   // the editor treats that as "brand-new file" and mounts with
   // empty content. Anything else bubbles up.
@@ -75,8 +138,25 @@ async function readGcodeContent(filename) {
   }
 }
 
-async function writeGcodeContent(filename, content) {
+async function writeProgramContent(filename, content) {
   await ProgramFilesService.writeFile(filename, { content })
+}
+
+function routeByPath(path) {
+  if (isProfilePath(path)) return 'profile'
+  return 'program'
+}
+
+async function readByPath(path) {
+  return routeByPath(path) === 'profile'
+    ? readProfileContent(path)
+    : readProgramContent(path)
+}
+
+async function writeByPath(path, content) {
+  return routeByPath(path) === 'profile'
+    ? writeProfileContent(path, content)
+    : writeProgramContent(path, content)
 }
 
 // Human-readable error for both ``ApiError`` (from the generated
@@ -124,11 +204,14 @@ export const useEditorStore = defineStore('editor', {
     /**
      * Open the editor on a file. ``content`` is optional; pass
      * ``''`` to let ``loadFile`` fetch from the backend on demand.
+     * ``mode`` defaults to the value derived from the filename
+     * extension (see :func:`modeForFilename`) so the editor picks
+     * the right syntax highlighting automatically.
      */
-    open(filename, readOnly = false, mode = 'config', content = '') {
+    open(filename, readOnly = false, mode = null, content = '') {
       this.filename = filename
       this.readOnly = readOnly
-      this.mode = mode
+      this.mode = mode ?? modeForFilename(filename)
       this.content = content
       this.pristineContent = content
       this.error = null
@@ -137,22 +220,17 @@ export const useEditorStore = defineStore('editor', {
     },
 
     /**
-     * Fetch ``path`` from the appropriate backend endpoint for
-     * ``mode`` and write the result into ``state.content``. The
-     * caller is expected to have already populated ``filename`` /
+     * Fetch ``path`` from the backend (route chosen by path prefix,
+     * not by mode) and write the result into ``state.content``.
+     * The caller is expected to have already populated ``filename`` /
      * ``mode`` (typically via ``open()``).
-     *
-     * Mode → service mapping is the single source of truth for
-     * which endpoint to hit. No raw URLs, no ``/config/``
-     * fallbacks — every branch dispatches through one of the
-     * generated clients above.
      */
     async loadFile(path, mode) {
       this.isLoading = true
       this.error = null
       try {
-        const effectiveMode = mode ?? this.mode
-        const text = await dispatchRead(effectiveMode, path)
+        const effectiveMode = mode ?? this.mode ?? modeForFilename(path)
+        const text = await readByPath(path)
         this.content = text
         this.pristineContent = text
         this.filename = path
@@ -166,25 +244,21 @@ export const useEditorStore = defineStore('editor', {
     },
 
     /**
-     * Persist ``content`` to ``path`` via the appropriate backend
-     * endpoint for ``mode``. Returns ``true`` on success, ``false``
-     * (and sets ``state.error``) on failure.
+     * Persist ``content`` to ``path`` via the backend service picked
+     * by path prefix. Returns ``true`` on success, ``false`` (and
+     * sets ``state.error``) on failure.
      */
     async saveFile(path, content, mode) {
       if (this.readOnly) {
         this.error = 'Editor is read-only.'
         return false
       }
-      const effectiveMode = mode ?? this.mode
-      if (!PROFILE_MODES.has(effectiveMode) && !GCODE_MODES.has(effectiveMode)) {
-        this.error = `Saving is not supported in mode "${effectiveMode}".`
-        return false
-      }
+      const effectiveMode = mode ?? this.mode ?? modeForFilename(path)
 
       this.isSaving = true
       this.error = null
       try {
-        await dispatchWrite(effectiveMode, path, content)
+        await writeByPath(path, content)
         this.content = content
         this.pristineContent = content
         this.filename = path
@@ -212,36 +286,28 @@ export const useEditorStore = defineStore('editor', {
   }
 })
 
-// ---- Service dispatch ------------------------------------------- //
+// ---- Public re-exports ------------------------------------------- //
 //
-// Single point where mode → service call is decided. Adding a
-// new file kind means one new branch here, nothing else changes.
+// External consumers (EditorView's modeForFilename, tests) need
+// access to the mode map. Re-export from the store so the public
+// surface stays in one place.
 
-async function dispatchRead(mode, path) {
-  if (GCODE_MODES.has(mode)) {
-    return readGcodeContent(path)
-  }
-  if (PROFILE_MODES.has(mode)) {
-    return readConfigContent(path)
-  }
-  throw new Error(`No read handler configured for mode "${mode}"`)
-}
-
-async function dispatchWrite(mode, path, content) {
-  if (GCODE_MODES.has(mode)) {
-    return writeGcodeContent(path, content)
-  }
-  if (PROFILE_MODES.has(mode)) {
-    return writeConfigContent(path, content)
-  }
-  throw new Error(`No write handler configured for mode "${mode}"`)
+export {
+  EXTENSION_MODES,
+  DEFAULT_MODE,
+  isProfilePath,
+  modeForFilename as resolveEditorMode,
 }
 
 export const EDITOR_MODES = {
   CONFIG: 'config',
   PROFILE: 'profile',
   GCODE: 'gcode',
-  JS: 'js',
+  JS: 'javascript',
   JSON: 'json',
+  PYTHON: 'python',
+  MARKDOWN: 'markdown',
+  YAML: 'yaml',
+  SHELL: 'shell',
   TEXT: 'text'
 }

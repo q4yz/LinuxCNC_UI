@@ -714,21 +714,26 @@ max_temp: 130
         "driver_stepper_z",
     ]
 
-    # Nine endstop records — three per switch.
+    # Three endstop records — one per Klipper switch. Phase A
+    # collapsed the v1 3-records-per-switch model into one record
+    # whose ``type`` carries the runtime role (``"Home"`` /
+    # ``"Estop"`` / ``None``).
     endstop_records = payload["endstops"]
-    assert len(endstop_records) == 9
-    by_switch: dict[str, list[dict]] = {}
+    assert len(endstop_records) == 3
+    endstop_ids = {r["id"] for r in endstop_records}
+    assert endstop_ids == {"endstop_x_min", "endstop_y_min", "endstop_z_min"}
     for record in endstop_records:
-        by_switch.setdefault(record["endstop_id"], []).append(record)
-    assert set(by_switch.keys()) == {"x_min", "y_min", "z_min"}
-    for switch_id, records in by_switch.items():
-        roles = sorted(r["type"] for r in records)
-        assert roles == ["endstop", "homing", "ignore"]
-        # All three records share the same pin and the same stepper.
-        pins = {r["pin"] for r in records}
-        assert len(pins) == 1
-        steppers = {r["stepper"] for r in records}
-        assert len(steppers) == 1
+        # Each record carries the inline ``{id, type, pos}`` view
+        # fields PLUS the HAL-wiring fields (``pin``, ``stepper``).
+        assert set(record.keys()) >= {"id", "type", "pos", "pin", "stepper"}
+        # ``position_endstop`` is set on every stepper → ``"Home"``.
+        assert record["type"] == "Home"
+        assert record["pos"] == 0.0
+
+    # Inline ``axis.endstops[*]`` views carry only ``{id, type, pos}``.
+    for axis in payload["axes"]:
+        for view in axis["endstops"]:
+            assert set(view.keys()) == {"id", "type", "pos"}
 
     # Two heaters, two temperature sensors.
     assert [h["id"] for h in payload["heaters"]] == ["heater_extruder", "heater_bed"]

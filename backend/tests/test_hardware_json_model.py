@@ -126,21 +126,19 @@ class TestIdUniqueness:
         payload["endstops"].append(
             {
                 "id": "endstop_x_min",
-                "endstop_id": "x_min",
                 "stepper": "stepper_x",
                 "pin": "^PC0",
                 "pos": 0.0,
-                "type": "endstop",
+                "type": "Estop",
             }
         )
         payload["endstops"].append(
             {
                 "id": "endstop_x_min",
-                "endstop_id": "x_min",
                 "stepper": "stepper_x",
                 "pin": "^PC1",
                 "pos": 0.0,
-                "type": "endstop",
+                "type": "Estop",
             }
         )
         with pytest.raises(ValueError, match="Duplicate id 'endstop_x_min'"):
@@ -202,11 +200,10 @@ class TestIdPattern:
             payload["endstops"].append(
                 {
                     "id": "Endstop-X",
-                    "endstop_id": "x",
                     "stepper": "stepper_x",
                     "pin": "^PC0",
                     "pos": 0.0,
-                    "type": "endstop",
+                    "type": "Estop",
                 }
             )
         elif entity_key == "heaters":
@@ -235,9 +232,14 @@ class TestCrossReferences:
             model_validate(payload)
 
     def test_axis_endstop_reference_must_resolve(self) -> None:
+        """Inline ``axis.endstops[*].id`` must point at a top-level record."""
         payload = _minimal_payload()
-        payload["axes"][0]["endstops"].append("endstop_x_min")
-        with pytest.raises(ValueError, match="references unknown endstop 'endstop_x_min'"):
+        payload["axes"][0]["endstops"].append(
+            {"id": "endstop_x_min", "type": "Estop", "pos": 0.0}
+        )
+        with pytest.raises(
+            ValueError, match="inline endstop 'endstop_x_min'"
+        ):
             model_validate(payload)
 
     def test_stepper_driver_reference_must_resolve(self) -> None:
@@ -251,11 +253,10 @@ class TestCrossReferences:
         payload["endstops"].append(
             {
                 "id": "endstop_x_min",
-                "endstop_id": "x_min",
                 "stepper": "unknown_stepper",
                 "pin": "^PC0",
                 "pos": 0.0,
-                "type": "endstop",
+                "type": "Estop",
             }
         )
         with pytest.raises(ValueError, match="references unknown stepper 'unknown_stepper'"):
@@ -334,24 +335,21 @@ class TestCrossReferences:
         with pytest.raises(ValueError, match="Duplicate id 'fan_dup'"):
             model_validate(payload)
 
-    def test_switch_must_have_endstop_role(self) -> None:
-        """Every ``endstop_id`` (the Klipper switch name) must have at
-        least one record with ``type: "endstop"``. A switch with only
-        ``homing`` or ``ignore`` records has no real endstop binding.
-        """
+    def test_one_endstop_record_per_switch(self) -> None:
+        """Each Klipper ``[endstop_switch NAME]`` produces ONE record."""
         payload = _minimal_payload()
         payload["endstops"].append(
             {
-                "id": "homing_x_min",
-                "endstop_id": "x_min",
+                "id": "endstop_x_min",
                 "stepper": "stepper_x",
                 "pin": "^PC0",
                 "pos": 0.0,
-                "type": "homing",
+                "type": "Estop",
             }
         )
-        with pytest.raises(ValueError, match="has no endstop record"):
-            model_validate(payload)
+        model = model_validate(payload)
+        assert len(model.endstops) == 1
+        assert model.endstops[0].type == "Estop"
 
 
 # ---------------------------------------------------------------------- #
@@ -365,7 +363,6 @@ class TestEndstopType:
         payload["endstops"].append(
             {
                 "id": "endstop_x_min",
-                "endstop_id": "x_min",
                 "stepper": "stepper_x",
                 "pin": "^PC0",
                 "pos": 0.0,
@@ -375,39 +372,21 @@ class TestEndstopType:
         with pytest.raises(ValueError, match="type"):
             model_validate(payload)
 
-    def test_all_three_roles_accepted(self) -> None:
-        payload = _minimal_payload()
-        payload["endstops"].extend(
-            [
+    def test_all_valid_types_accepted(self) -> None:
+        """``None``, ``"Estop"``, and ``"Home"`` are all valid."""
+        for type_value in (None, "Estop", "Home"):
+            payload = _minimal_payload()
+            payload["endstops"].append(
                 {
                     "id": "endstop_x_min",
-                    "endstop_id": "x_min",
                     "stepper": "stepper_x",
                     "pin": "^PC0",
                     "pos": 0.0,
-                    "type": "endstop",
-                },
-                {
-                    "id": "homing_x_min",
-                    "endstop_id": "x_min",
-                    "stepper": "stepper_x",
-                    "pin": "^PC0",
-                    "pos": 0.0,
-                    "type": "homing",
-                },
-                {
-                    "id": "macros_x_min",
-                    "endstop_id": "x_min",
-                    "stepper": "stepper_x",
-                    "pin": "^PC0",
-                    "pos": 0.0,
-                    "type": "ignore",
-                },
-            ]
-        )
-        model = model_validate(payload)
-        assert len(model.endstops) == 3
-        assert sorted(e.type for e in model.endstops) == ["endstop", "homing", "ignore"]
+                    "type": type_value,
+                }
+            )
+            model = model_validate(payload)
+            assert model.endstops[0].type == type_value
 
 
 # ---------------------------------------------------------------------- #
@@ -423,8 +402,10 @@ class TestErrorAggregation:
         payload = _minimal_payload()
         # Two axes reference the same stepper_id (one valid, one bogus).
         payload["axes"].append({"id": "y", "steppers": ["stepper_x"], "endstops": []})
-        # A bogus endstop reference.
-        payload["axes"][0]["endstops"].append("endstop_x_min")
+        # A bogus inline endstop reference.
+        payload["axes"][0]["endstops"].append(
+            {"id": "endstop_x_min", "type": "Estop", "pos": 0.0}
+        )
         # Two duplicate steppers.
         payload["steppers"].append(dict(payload["steppers"][0]))
         with pytest.raises(ValueError) as exc_info:
@@ -432,6 +413,6 @@ class TestErrorAggregation:
         message = str(exc_info.value)
         # All three errors are surfaces in the same message.
         assert "Duplicate id 'stepper_x'" in message
-        assert "references unknown endstop 'endstop_x_min'" in message
+        assert "inline endstop 'endstop_x_min'" in message
         # The duplicate-axis error would be inside the same message.
         assert message.count(" - ") >= 2

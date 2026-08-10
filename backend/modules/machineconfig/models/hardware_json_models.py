@@ -28,9 +28,17 @@ resolves into ``temperature_sensors[].id``; a future
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+# Type alias for the endstop behaviour tag. ``None`` means the
+# endstop is exposed to user macros only — it is NOT a kinematic
+# constraint and does NOT participate in homing or e-stop logic.
+# ``"Estop"`` flags a switch that kills motion when triggered.
+# ``"Home"`` flags a switch used by LinuxCNC's homing sequence.
+EndstopType = Optional[Literal["Estop", "Home"]]
 
 
 # ---------------------------------------------------------------------- #
@@ -40,13 +48,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class Axis(BaseModel):
     """A kinematic axis. Owns a list of steppers (multi-motor axes)
-    and a list of endstop records (the kinematic constraints)."""
+    and a list of inline endstop views (the kinematic constraints).
+
+    The inline ``endstops`` entries carry only ``{id, type, pos}`` —
+    enough for the runtime to find the right record and route it
+    to the appropriate HAL signal. The full record (with ``pin``
+    and ``stepper``) lives at the top-level ``endstops`` array so
+    HAL wiring stays centralised; the inline entries reference
+    those records by ``id``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     steppers: list[str]
-    endstops: list[str] = Field(default_factory=list)
+    endstops: list["EndstopView"] = Field(default_factory=list)
 
 
 class Stepper(BaseModel):
@@ -92,25 +108,44 @@ class Driver(BaseModel):
     sense_resistor: float | None = None
 
 
-class Endstop(BaseModel):
-    """A logical endstop record.
+class EndstopView(BaseModel):
+    """Inline endstop entry embedded inside :class:`Axis.endstops`.
 
-    The same physical switch can appear in three records with
-    different ``type`` values: ``endstop`` (the actual endstop),
-    ``homing`` (the homing switch), ``ignore`` (used only by macros,
-    not by kinematic constraints). All three records share the
-    same ``endstop_id`` (the Klipper ``[endstop_switch NAME]``
-    section name) and the same ``pin``.
+    Carries only the fields the runtime needs to find the record
+    and decide how to wire it (``id``, ``type``, ``pos``). The full
+    record (with ``pin`` / ``stepper``) lives at the top-level
+    ``endstops`` array.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    endstop_id: str
+    type: EndstopType = None
+    pos: float
+
+
+class Endstop(BaseModel):
+    """Full endstop record at the top-level ``endstops`` array.
+
+    Each Klipper ``[endstop_switch NAME]`` produces ONE record per
+    switch. The ``type`` field tells the runtime how to use the
+    switch:
+
+    * ``"Estop"`` — the switch kills motion when triggered.
+    * ``"Home"`` — the switch is used by LinuxCNC's homing sequence.
+    * ``None`` — the switch is macros-only (no kinematic role).
+
+    ``pos`` is the position of the switch on the axis (in user
+    units), so the runtime can validate the homing sequence.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    type: EndstopType = None
+    pos: float
     stepper: str
     pin: str
-    pos: float
-    type: Literal["endstop", "homing", "ignore"]
 
 
 class Heater(BaseModel):
@@ -239,11 +274,15 @@ class HardwareJson(BaseModel):
                         f"Axis '{axis.id}' references unknown stepper "
                         f"'{stepper_id}'."
                     )
-            for endstop_id in axis.endstops:
-                if endstop_id not in endstops_idx:
+            # The inline ``axis.endstops[*]`` entries reference
+            # the top-level ``endstops[]`` records by id; validate
+            # the link so a renamed record surfaces here instead of
+            # at runtime.
+            for view in axis.endstops:
+                if view.id not in endstops_idx:
                     errors.append(
-                        f"Axis '{axis.id}' references unknown endstop "
-                        f"'{endstop_id}'."
+                        f"Axis '{axis.id}' inline endstop '{view.id}' "
+                        f"does not match any top-level endstop record."
                     )
 
         # Every stepper.driver must exist in drivers[].
@@ -258,8 +297,8 @@ class HardwareJson(BaseModel):
         for endstop in self.endstops:
             if endstop.stepper not in steppers_idx:
                 errors.append(
-                    f"Endstop '{endstop.id}' (switch '{endstop.endstop_id}') "
-                    f"references unknown stepper '{endstop.stepper}'."
+                    f"Endstop '{endstop.id}' references unknown stepper "
+                    f"'{endstop.stepper}'."
                 )
 
         # Every heater.sensor must exist in temperature_sensors[].
@@ -275,23 +314,6 @@ class HardwareJson(BaseModel):
                 errors.append(
                     f"Heater '{heater.id}' references unknown fan "
                     f"'{heater.fan}'."
-                )
-
-        # Every endstop_id must have at least one matching endstop
-        # record. The "type" field is the role discriminator; the
-        # endstop_id is the switch identity. A switch with no
-        # record at all is a dangling reference.
-        swiss_role_coverage: dict[str, set[Literal["endstop", "homing", "ignore"]]] = {}
-        for endstop in self.endstops:
-            swiss_role_coverage.setdefault(endstop.endstop_id, set()).add(
-                endstop.type
-            )
-        for switch_id in swiss_role_coverage:
-            roles = swiss_role_coverage[switch_id]
-            if "endstop" not in roles:
-                errors.append(
-                    f"Switch '{switch_id}' has no endstop record; "
-                    f"only roles {sorted(roles)} declared."
                 )
 
         if errors:
@@ -342,6 +364,8 @@ __all__ = [
     "Axis",
     "Driver",
     "Endstop",
+    "EndstopType",
+    "EndstopView",
     "Fan",
     "HardwareJson",
     "Heater",
