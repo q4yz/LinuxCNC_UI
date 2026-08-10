@@ -20,6 +20,15 @@
 // is stripped via the same ``String#strip()`` rule the backend uses,
 // so the operator does not see the newline adjacent to a
 // ``{``/``}`` delimiter in the block they actually receive.
+//
+// In addition to the parser, this module exposes a kind-aware
+// validator (``validateMacroKindName``) so the dashboard and
+// Machine Config panels can mirror the backend's
+// ``backend/modules/macros/storage.py`` name policies without
+// round-tripping. ``macro`` / ``ngc`` share the existing profile
+// regex; ``mcode`` is the canonical LinuxCNC custom-M-code range
+// M100..M199 (regex ``^M1\d{2}$``), matching
+// ``MCodeFileService.MCODE_NAME`` on the backend.
 
 export class MacroParseError extends Error {
   constructor(message) {
@@ -150,6 +159,40 @@ export function validateMacroName(name) {
     );
   }
   return name;
+}
+
+/**
+ * Regex for valid M-code names. Mirrors
+ * ``MCodeFileService.MCODE_NAME`` on the backend — M100..M199
+ * inclusive (so ``M1\d{2}`` covers the entire range; the regex
+ * matches exactly 4 characters: ``M`` followed by ``1`` and two
+ * digits).
+ */
+export const MCODE_NAME_REGEX = /^M1\d{2}$/;
+
+/**
+ * Kind-aware name validator. ``macro`` and ``ngc`` use the existing
+ * ``^[A-Za-z0-9._-]{1,64}$`` regex (same as
+ * ``MacroStorage._validate``); ``mcode`` uses the canonical LinuxCNC
+ * range M100..M199 (``^M1\d{2}$``). Out-of-range names throw so the
+ * UI surfaces the same error the backend would.
+ *
+ * @param {"macro"|"ngc"|"mcode"} kind
+ * @param {string} name
+ * @returns {string} The trimmed name (unchanged on success).
+ */
+export function validateMacroKindName(kind, name) {
+  if (kind === 'mcode') {
+    if (!MCODE_NAME_REGEX.test(name)) {
+      throw new Error(
+        `invalid M-code name: ${JSON.stringify(name)} ` +
+        '(must match ^M1\\d{2}$ — i.e. M100..M199)',
+      );
+    }
+    return name;
+  }
+  // macro / ngc share the legacy regex.
+  return validateMacroName(name);
 }
 
 export default parseMacro;

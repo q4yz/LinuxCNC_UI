@@ -34,7 +34,7 @@ Endpoints
                               missing.
 
 M-code name validation lives at the router level (regex
-``^M1\d{2}$`` — M100..M199 inclusive); the
+``^M1\\d{2}$`` — M100..M199 inclusive); the
 :class:`MCodeFileService`'s listing filter enforces the same range
 when reading, so the regex and the listing stay in lockstep.
 """
@@ -340,9 +340,14 @@ def write_macro(
         _validate_mcode_name(name)
         service = get_mcode_service()
         try:
-            size = service.write_file(name, content)
+            service.write_file(name, content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # :meth:`FileService.write_file` returns ``None`` for
+        # parity with the stdlib ``Path.write_text`` family; size
+        # is computed via :meth:`safe_join` + ``stat``.
+        target = service.safe_join(name)
+        size = target.stat().st_size if target.exists() else 0
         return MacroWriteResponse(name=name, kind=MacroKind.MCODE, size=size)
     try:
         size = _macro_storage.write(name, content, kind=kind)

@@ -18,6 +18,7 @@ import CompiledOutputViewer from '../modules/machineconfig/components/CompiledOu
 import DeploymentPanel from '../modules/machineconfig/components/DeploymentPanel.vue';
 import ActivePanel from '../modules/machineconfig/components/ActivePanel.vue';
 import MacroManagerPanel from '../modules/macros/components/MacroManagerPanel.vue';
+import McodeManagerPanel from '../modules/macros/components/McodeManagerPanel.vue';
 
 import { useMachineConfigStore } from '../modules/machineconfig/store.js';
 import { useEditorStore, resolveEditorMode } from '../stores/editor.js';
@@ -200,13 +201,23 @@ onMounted(async () => {
 
       <ActivePanel />
 
-      <!-- Macros section. The macros module owns its own CRUD via
-           ``useMacrosStore()``; the panel mounts that store on first
-           use so an unrelated Machine-Config user pays no startup
-           cost. A future refactor may move this into its own sidebar
-           entry / route; for now it shares the right column with
-           the rest of the machineconfig surface. -->
+      <!-- Macros & NGC section. The macros module owns its own
+           CRUD via ``useMacrosStore()``; the panel mounts that
+           store on first use so an unrelated Machine-Config user
+           pays no startup cost. A future refactor may move
+           this into its own sidebar entry / route; for now it
+           shares the right column with the rest of the
+           machineconfig surface. -->
       <MacroManagerPanel />
+
+      <!-- M-codes sub-panel. Lives in the same module (shared
+           Pinia store) but operates on the dedicated
+           ``machine_config/m_codes/`` root. The Edit button
+           deep-links into the universal editor with the bare
+           ``M<num>`` token so the same CodeMirror surface that
+           handles profiles and ``.macro`` files also handles
+           M-codes. -->
+      <McodeManagerPanel />
     </section>
   </div>
 </template>

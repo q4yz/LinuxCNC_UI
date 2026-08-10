@@ -78,16 +78,17 @@ def isolated_mcodes(monkeypatch, tmp_path: Path):
     isolated_root.mkdir(parents=True, exist_ok=True)
     service = MCodeFileService(isolated_root)
     # Patch on every name the macros router could have imported the
-    # factory under. ``from services import get_mcode_service`` lands
-    # on both ``services`` and the router's module namespace; we
-    # cover both so callers via either reference see the swap.
-    for module_path in (
-        "services",
-        "modules.macros.router",
-        "modules.machineconfig.router",
-    ):
+    # factory under. ``from services import get_mcode_service`` binds
+    # on the router's own module namespace; the machineconfig router
+    # uses the same import pattern. ``monkeypatch.setattr`` requires a
+    # real module object (not a string), so we import each one.
+    import services
+    import modules.macros.router as macros_router_mod
+    import modules.machineconfig.router as machineconfig_router_mod
+    _ = services.get_mcode_service  # force-import into the package attr
+    for module_obj in (services, macros_router_mod, machineconfig_router_mod):
         monkeypatch.setattr(
-            module_path,
+            module_obj,
             "get_mcode_service",
             lambda root=None, _service=service: _service,
         )
@@ -734,8 +735,12 @@ class TestMacrosNGCKind:
         # different extensions; cross-contamination would surface
         # as one kind listing the other kind's file.
         client = self._client(tmp_data_root, isolated_storage)
-        client.put("/api/v1/modules/macros/coolant", content="ngc body")
-        client.put("/api/v1/modules/macros/home_all", content="macro body")
+        client.put(
+            "/api/v1/modules/macros/coolant?kind=ngc", content="ngc body",
+        )
+        client.put(
+            "/api/v1/modules/macros/home_all?kind=macro", content="macro body",
+        )
 
         resp = client.get("/api/v1/modules/macros/?kind=ngc")
         ngc_names = [row["name"] for row in resp.json()["macros"]]
@@ -859,14 +864,29 @@ class TestMacrosMCodeKind:
         ``?kind=mcode`` path so a file created via one surface
         shows up on the other.
         """
-        from modules.machineconfig import router as mc_router
-        # Both routers must point at the same ``MCodeFileService``
-        # root; the macros router queries it through
-        # ``get_mcode_service()``, the machineconfig router uses the
-        # same factory.
-        from services.domain_file_services import get_mcode_service
-        m_service = get_mcode_service()
-        assert m_service.root == isolated_mcodes["root"]  # same on-disk root
+        # Create an M-code through the macros router, then verify it
+        # is visible through the machineconfig router (and vice
+        # versa). The cross-surface visibility is the actual contract
+        # we care about — the two routers must hand out the same
+        # ``MCodeFileService`` instance.
+        from modules.machineconfig.module import setup as mc_setup
+
+        reg = ModuleRegistry(data_root=tmp_data_root)
+        app = FastAPI()
+        reg.boot(app, bus=EventBus(), candidates=[mc_setup()])
+        mc_client = TestClient(app)
+
+        # Create via the macros router.
+        client = self._client(tmp_data_root, isolated_storage, isolated_mcodes)
+        client.put("/api/v1/modules/macros/M105?kind=mcode", content="G4 P1\n")
+
+        # Read via the machineconfig router — same file.
+        resp = mc_client.get(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M105"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "G4 P1\n"
 
 
 # ---------------------------------------------------------------------- #

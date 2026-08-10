@@ -29,7 +29,8 @@ import { ApiError } from '../../generated/api/core/ApiError'
 // --------------
 //
 //   ``machine_config/...``  or  ``profiles/...``  →  machineconfig
-//   everything else                                  →  programs
+//   bare ``M<num>`` (LinuxCNC M100..M199)     →  machineconfig /m-codes
+//   everything else                              →  programs
 //
 // Bare paths whose extension maps to a known profile mode
 // (``.cfg`` / ``.ini`` / ``.conf`` / ``.toml``) also route to
@@ -37,7 +38,10 @@ import { ApiError } from '../../generated/api/core/ApiError'
 // unqualified paths against ``machine_config/profiles/``, so a URL
 // like ``/config/klipper.cfg`` expects the profile endpoint. Without
 // that fallback the universal editor would 404 on every operator-
-// typed bare filename.
+// typed bare filename. The same fallback applies to bare M-code
+// names (``M101``), which live under ``machine_config/m_codes/`` per
+// LinuxCNC's ``[RS274NGC]USER_M_PATH`` convention — the editor
+// dispatches them to ``/api/v1/modules/machineconfig/m-codes/...``.
 //
 // The ``profiles/`` prefix is an alias accepted by the machineconfig
 // router (``save_profile`` and ``read_profile`` resolve relative to
@@ -59,17 +63,30 @@ import { ApiError } from '../../generated/api/core/ApiError'
 // like ``.macro`` are NOT routed through ``writeByPath`` /
 // ``readByPath`` here — the macros module is the sole owner of those
 // files.
+//
+// M-codes (``M<num>``) live under ``machine_config/m_codes/`` and
+// ARE owned by the universal editor's profile dispatch. The
+// machineconfig router exposes ``/api/v1/modules/machineconfig
+// /m-codes/{list,content,$name}`` for these.
 
 const PROFILE_PATH_PREFIXES = ['machine_config/', 'profiles/']
 const PROFILE_MODES = new Set(['config', 'profile', 'ini', 'cfg', 'conf'])
 const GCODE_MODES = new Set(['gcode', 'ngc', 'nc'])
+// LinuxCNC's canonical custom-M-code range lives under
+// ``machine_config/m_codes/``. The bare-name regex matches the
+// backend's ``MCodeFileService.MCODE_NAME``; the universal editor
+// dispatches ``M<num>`` paths to the machineconfig router the same
+// way it dispatches bare ``.cfg`` filenames.
+const MCODE_NAME_PATTERN = /^M1\d{2}$/
 
 function isProfilePath(path) {
   if (!path) return false
   // Explicit prefixes win first — that's the original contract and
   // handles every path that comes from ``ProfilesExplorer``,
   // ``ActivePanel`` etc. which always carry ``profiles/`` /
-  // ``machine_config/`` segments from the listing endpoints.
+  // ``machine_config/`` segments from the listing endpoints. An
+  // explicit ``machine_config/m_codes/`` prefix therefore routes
+  // to the machineconfig service's ``/m-codes/...`` endpoints.
   if (
     PROFILE_PATH_PREFIXES.some(
       (prefix) => path === prefix.slice(0, -1) || path.startsWith(prefix),
@@ -85,7 +102,18 @@ function isProfilePath(path) {
   // programs endpoint 404s on a perfectly valid profile. The
   // extension-based check keeps the dispatch conservative — a
   // ``.gcode`` / ``.ngc`` file still routes to the programs side.
-  return PROFILE_MODES.has(modeForFilename(path))
+  if (PROFILE_MODES.has(modeForFilename(path))) return true
+  // Bare M-code names (``M101``, ``M199``, …) route to the
+  // machineconfig service's ``/m-codes/...`` endpoints. This is
+  // the third additive branch — it accepts only the canonical
+  // LinuxCNC ``M100..M199`` range so an operator typo (``M99`` /
+  // ``M200`` / ``hello``) keeps falling through to the programs
+  // endpoint and surfaces as a normal 404.
+  return MCODE_NAME_PATTERN.test(path)
+}
+
+function isMCodePath(path) {
+  return typeof path === 'string' && MCODE_NAME_PATTERN.test(path)
 }
 
 // Comprehensive extension → mode map. The mode is purely a syntax
@@ -157,6 +185,21 @@ async function writeProfileContent(path, content) {
     })
 }
 
+async function readMCodeContent(name) {
+  // M-code bare names land here (``M101`` etc.). The
+  // machineconfig router's ``/m-codes/content?path=`` endpoint
+  // resolves against ``machine_config/m_codes/``; we forward the
+  // exact same envelope shape (``{path, content}``) so the
+  // editor's mount-with-content fast path keeps working.
+  const envelope = await ModulesMachineconfigService
+    .readMCode(name)
+  return envelope?.content ?? ''
+}
+
+async function writeMCodeContent(name, content) {
+  await ModulesMachineconfigService.writeMCode(name, { content })
+}
+
 async function readProgramContent(filename) {
   // ``ProgramFilesService.readFile`` throws ``ApiError`` on 404 —
   // the editor treats that as "brand-new file" and mounts with
@@ -174,20 +217,32 @@ async function writeProgramContent(filename, content) {
 }
 
 function routeByPath(path) {
+  if (isMCodePath(path)) return 'mcode'
   if (isProfilePath(path)) return 'profile'
   return 'program'
 }
 
 async function readByPath(path) {
-  return routeByPath(path) === 'profile'
-    ? readProfileContent(path)
-    : readProgramContent(path)
+  // M-codes (``M<num>``) bypass the profile/program dispatch. The
+  // path is the bare token (``M101``); the backend resolves it
+  // against ``machine_config/m_codes/``.
+  if (isMCodePath(path)) return readMCodeContent(path)
+  const kind = routeByPath(path)
+  if (kind === 'profile') return readProfileContent(path)
+  return readProgramContent(path)
 }
 
 async function writeByPath(path, content) {
-  return routeByPath(path) === 'profile'
-    ? writeProfileContent(path, content)
-    : writeProgramContent(path, content)
+  // FastAPI rejects a zero-byte ``text/plain`` body with ``422``.
+  // Normalise ``""`` → ``"\n"`` once at the dispatch boundary so
+  // every backend write (profile, M-code, program) lands a single
+  // newline instead of failing.
+  const safe = content.length === 0 ? '\n' : content
+  // Same dispatch shape as ``readByPath``.
+  if (isMCodePath(path)) return writeMCodeContent(path, safe)
+  const kind = routeByPath(path)
+  if (kind === 'profile') return writeProfileContent(path, safe)
+  return writeProgramContent(path, safe)
 }
 
 // Human-readable error for both ``ApiError`` (from the generated

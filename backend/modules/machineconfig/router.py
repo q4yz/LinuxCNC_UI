@@ -976,9 +976,15 @@ def write_mcode(
     _validate_mcode_name(path)
     service: MCodeFileService = get_mcode_service()
     try:
-        size = service.write_file(path, payload.content)
+        service.write_file(path, payload.content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # :meth:`FileService.write_file` returns ``None`` (stdlib
+    # ``Path.write_text`` parity); the byte size is read off the
+    # on-disk stat. ``target.exists()`` is checked so a vanished
+    # file surfaces as ``0 bytes`` rather than an exception.
+    target = service.safe_join(path)
+    size = target.stat().st_size if target.exists() else 0
     return MCodeStatusMessage(
         status="ok",
         message=f"Saved {path} ({size} bytes).",

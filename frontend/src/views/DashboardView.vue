@@ -45,6 +45,7 @@ const DroPanel         = panelFor('machine',    'DroPanel')
 const JogControls      = panelFor('machine',    'JogControls')
 const ToolPanel        = panelFor('tools',      'ToolPanel')
 const MacroPanel       = panelFor('macros',     'MacroPanel')
+const McodePanel       = panelFor('macros',     'McodePanel')
 
 // ``registry.modules`` is a reactive Map so ``.has`` is tracked;
 // the computed flips once boot completes.
@@ -73,6 +74,8 @@ const macrosMounted      = computed(() => registry.modules.has('macros'))
         <ToolPanel v-if="toolsMounted" />
 
         <MacroPanel v-if="macrosMounted" />
+
+        <McodePanel v-if="macrosMounted" />
 
         <JogControls v-if="machineMounted" />
         <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
