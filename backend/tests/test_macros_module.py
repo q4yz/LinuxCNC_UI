@@ -38,8 +38,11 @@ def isolated_storage(monkeypatch, tmp_path: Path):
     """Re-point the router's storage at a fresh ``tmp_path`` tree.
 
     The HTTP integration tests never touch the real ``<repo>/macros/``
-    directory — we monkeypatch the router's module-level ``_storage``
-    singleton so each test sees a clean tree.
+    directory — we monkeypatch the router's module-level
+    ``_macro_storage`` singleton so each test sees a clean tree.
+    M-code cases below also re-point the ``MCodeFileService`` root
+    via a parallel fixture so the cross-kind isolation tests do not
+    touch ``<repo>/machine_config/m_codes/`` either.
     """
     from modules.macros import router as macros_router
     from modules.macros.storage import MacroStorage
@@ -47,8 +50,52 @@ def isolated_storage(monkeypatch, tmp_path: Path):
     isolated_root = tmp_path / "macros"
     isolated_root.mkdir(parents=True, exist_ok=True)
     storage = MacroStorage(isolated_root)
-    monkeypatch.setattr(macros_router, "_storage", storage)
+    monkeypatch.setattr(macros_router, "_macro_storage", storage)
     return {"root": isolated_root, "storage": storage}
+
+
+@pytest.fixture()
+def isolated_mcodes(monkeypatch, tmp_path: Path):
+    """Re-point the M-code service root at a fresh ``tmp_path`` tree.
+
+    The ``MCodeFileService`` is constructed lazily on first call
+    via ``get_mcode_service()``; we drop the cached instance and
+    substitute an isolated one. Tests that need both fixtures
+    pass both fixtures in.
+
+    Critical: ``modules.macros.router`` imports
+    ``get_mcode_service`` at module load time (a top-level
+    ``from services import get_mcode_service`` binding), so we
+    must patch the symbol the router actually references, not
+    the underlying :mod:`services.domain_file_services` module.
+    Patching only the latter would still let the router call
+    through its module-level binding to the real
+    ``<repo>/machine_config/m_codes/`` root.
+    """
+    from services.domain_file_services import MCodeFileService
+
+    isolated_root = tmp_path / "m_codes"
+    isolated_root.mkdir(parents=True, exist_ok=True)
+    service = MCodeFileService(isolated_root)
+    # Patch on every name the macros router could have imported the
+    # factory under. ``from services import get_mcode_service`` lands
+    # on both ``services`` and the router's module namespace; we
+    # cover both so callers via either reference see the swap.
+    for module_path in (
+        "services",
+        "modules.macros.router",
+        "modules.machineconfig.router",
+    ):
+        monkeypatch.setattr(
+            module_path,
+            "get_mcode_service",
+            lambda root=None, _service=service: _service,
+        )
+    # Drop the cached singleton so callers construct a fresh instance
+    # against the patched module root instead of the cached one.
+    from services.domain_file_services import reset_service_cache
+    reset_service_cache()
+    return {"root": isolated_root, "service": service}
 
 
 def _macros_app(tmp_data_root) -> FastAPI:
@@ -324,7 +371,9 @@ class TestMacrosHTTP:
 
         resp = client.get("/api/v1/modules/macros/")
         assert resp.status_code == 200
-        assert resp.json() == {"macros": ["first", "second", "third"]}
+        names = [entry["name"] for entry in resp.json()["macros"]]
+        assert names == ["first", "second", "third"]
+        assert all(entry["kind"] == "macro" for entry in resp.json()["macros"])
 
     def test_get_macro_returns_raw_text_body(
         self, tmp_data_root, clean_env, isolated_storage
@@ -362,6 +411,7 @@ class TestMacrosHTTP:
         assert resp.status_code == 200
         assert resp.json() == {
             "name": "move_home",
+            "kind": "macro",
             "size": len(payload.encode("utf-8")),
         }
 
@@ -458,12 +508,17 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
     assert resp.status_code == 200
     assert resp.json() == {
         "name": "spindle_warmup",
+        "kind": "macro",
         "size": len(payload_v1.encode("utf-8")),
     }
 
     # 3. Listing reflects the new macro.
     resp = client.get("/api/v1/modules/macros/")
-    assert resp.json() == {"macros": ["spindle_warmup"]}
+    assert resp.json() == {
+        "macros": [
+            {"name": "spindle_warmup", "kind": "macro", "size_bytes": 18}
+        ]
+    }
 
     # 4. Read it back — body matches what we wrote.
     resp = client.get("/api/v1/modules/macros/spindle_warmup")
@@ -478,6 +533,7 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
     assert resp.status_code == 200
     assert resp.json() == {
         "name": "spindle_warmup",
+        "kind": "macro",
         "size": len(payload_v2.encode("utf-8")),
     }
 
@@ -486,9 +542,10 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
     assert resp.text == payload_v2
 
     # 7. Add a second macro — listing is sorted.
-    client.put("/api/v1/modules/macros/alpha", content="a")
+    client.put("/api/v1/modules/macros/alpha", content="alpha payload")
     resp = client.get("/api/v1/modules/macros/")
-    assert resp.json() == {"macros": ["alpha", "spindle_warmup"]}
+    names = [entry["name"] for entry in resp.json()["macros"]]
+    assert names == ["alpha", "spindle_warmup"]
 
     # 8. Delete the second macro — listing shrinks, response is 204.
     resp = client.delete("/api/v1/modules/macros/spindle_warmup")
@@ -496,7 +553,8 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
 
     # 9. Listing reflects the deletion.
     resp = client.get("/api/v1/modules/macros/")
-    assert resp.json() == {"macros": ["alpha"]}
+    names = [entry["name"] for entry in resp.json()["macros"]]
+    assert names == ["alpha"]  # only the second macro remains
 
     # 10. Subsequent reads / deletes of the removed macro are 404.
     assert client.get("/api/v1/modules/macros/spindle_warmup").status_code == 404
@@ -626,3 +684,278 @@ def test_macros_directory_is_gitignored():
         encoding="utf-8"
     )
     assert "/macros/" in gitignore
+
+
+# ---------------------------------------------------------------------- #
+# NGC (LinuxCNC native subroutine) kind                                    #
+# ---------------------------------------------------------------------- #
+
+
+class TestMacrosNGCKind:
+    """The ``?kind=ngc`` half shares ``<repo>/macros/`` with the
+    ``.macro`` kind. Files are persisted with the ``.ngc`` extension
+    but use the same name regex and the same CRUD contract.
+    """
+
+    def _client(self, tmp_data_root, isolated_storage):
+        app = _macros_app(tmp_data_root)
+        return TestClient(app)
+
+    def test_put_then_list_returns_ngc_entry(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        client = self._client(tmp_data_root, isolated_storage)
+        resp = client.put(
+            "/api/v1/modules/macros/coolant?kind=ngc",
+            content="O<coolant> sub\nM8\nO<coolant> endsub\n",
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "coolant"
+        assert body["kind"] == "ngc"
+
+        # Listing under ``kind=ngc`` returns the new entry.
+        resp = client.get("/api/v1/modules/macros/?kind=ngc")
+        assert resp.status_code == 200
+        rows = resp.json()["macros"]
+        assert len(rows) == 1
+        assert rows[0]["name"] == "coolant"
+        assert rows[0]["kind"] == "ngc"
+
+        # Listing under ``kind=macro`` returns nothing — the file
+        # is .ngc, not .macro, so the two extensions are isolated.
+        resp = client.get("/api/v1/modules/macros/?kind=macro")
+        assert resp.json()["macros"] == []
+
+    def test_ngc_and_macro_share_storage_root(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        # Both kinds land in the same root directory but with
+        # different extensions; cross-contamination would surface
+        # as one kind listing the other kind's file.
+        client = self._client(tmp_data_root, isolated_storage)
+        client.put("/api/v1/modules/macros/coolant", content="ngc body")
+        client.put("/api/v1/modules/macros/home_all", content="macro body")
+
+        resp = client.get("/api/v1/modules/macros/?kind=ngc")
+        ngc_names = [row["name"] for row in resp.json()["macros"]]
+        assert ngc_names == ["coolant"]
+
+        resp = client.get("/api/v1/modules/macros/?kind=macro")
+        macro_names = [row["name"] for row in resp.json()["macros"]]
+        assert macro_names == ["home_all"]
+
+        # On disk: ``<root>/coolant.ngc`` and
+        # ``<root>/home_all.macro`` coexist.
+        root = isolated_storage["root"]
+        assert (root / "coolant.ngc").exists()
+        assert (root / "home_all.macro").exists()
+
+    def test_invalid_kind_returns_400(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        client = self._client(tmp_data_root, isolated_storage)
+        resp = client.get("/api/v1/modules/macros/?kind=invalid")
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------- #
+# M-code kind                                                              #
+# ---------------------------------------------------------------------- #
+
+
+class TestMacrosMCodeKind:
+    """M-code files live in ``<repo>/machine_config/m_codes/`` and
+    follow the canonical LinuxCNC ``M100..M199`` range. Each test
+    uses both ``isolated_storage`` (for the macro side) and
+    ``isolated_mcodes`` (for the M-code side) so neither root
+    touches the real disk.
+    """
+
+    def _client(self, tmp_data_root, isolated_storage, isolated_mcodes):
+        app = _macros_app(tmp_data_root)
+        return TestClient(app)
+
+    def test_put_then_list_returns_mcode_entry(
+        self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes
+    ):
+        client = self._client(tmp_data_root, isolated_storage, isolated_mcodes)
+        resp = client.put(
+            "/api/v1/modules/macros/M101?kind=mcode",
+            content="G65 P1234\nM30\n",
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "M101"
+        assert body["kind"] == "mcode"
+
+        # Listing returns the new M-code under ``kind=mcode``.
+        resp = client.get("/api/v1/modules/macros/?kind=mcode")
+        rows = resp.json()["macros"]
+        assert len(rows) == 1
+        assert rows[0]["name"] == "M101"
+        assert rows[0]["kind"] == "mcode"
+
+    def test_out_of_range_name_returns_400(
+        self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes
+    ):
+        client = self._client(tmp_data_root, isolated_storage, isolated_mcodes)
+        # Below the range — LinuxCNC reserves M0..M99.
+        resp = client.put(
+            "/api/v1/modules/macros/M99?kind=mcode", content="G4 P1\n"
+        )
+        assert resp.status_code == 400
+
+        # Above the range — the interpreter only resolves M100..M199.
+        resp = client.put(
+            "/api/v1/modules/macros/M200?kind=mcode", content="G4 P1\n"
+        )
+        assert resp.status_code == 400
+
+        # No extension and lower-case — bare ``M<code>`` only, no
+        # python script wrapping.
+        resp = client.put(
+            "/api/v1/modules/macros/m101?kind=mcode", content="G4 P1\n"
+        )
+        assert resp.status_code == 400
+
+    def test_get_and_delete_round_trip(
+        self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes
+    ):
+        client = self._client(tmp_data_root, isolated_storage, isolated_mcodes)
+        payload = "G65 P42\nM30\n"
+        client.put("/api/v1/modules/macros/M105?kind=mcode", content=payload)
+        resp = client.get("/api/v1/modules/macros/M105?kind=mcode")
+        assert resp.status_code == 200
+        assert resp.text == payload
+
+        resp = client.delete("/api/v1/modules/macros/M105?kind=mcode")
+        assert resp.status_code == 204
+
+        resp = client.get("/api/v1/modules/macros/M105?kind=mcode")
+        assert resp.status_code == 404
+
+    def test_mcode_path_does_not_leak_into_macro_storage(
+        self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes
+    ):
+        # The macros ``MacroStorage`` is rooted at
+        # ``<tmp>/macros/``; M-codes should land at
+        # ``<tmp>/m_codes/``. A leak would land the bare ``M101`` in
+        # the macro root.
+        client = self._client(tmp_data_root, isolated_storage, isolated_mcodes)
+        client.put("/api/v1/modules/macros/M101?kind=mcode", content="G4 P1\n")
+
+        # The M-code landed in the M-code root, not the macro root.
+        assert (isolated_mcodes["root"] / "M101").exists()
+        assert not (isolated_storage["root"] / "M101").exists()
+        assert not (isolated_storage["root"] / "M101.macro").exists()
+
+    def test_machineconfig_mcodes_endpoints_share_storage(
+        self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes
+    ):
+        """The machineconfig /m-codes/... endpoints exist so the
+        universal editor can edit bare ``M<num>`` files. They must
+        share the same backing store as the macros router's
+        ``?kind=mcode`` path so a file created via one surface
+        shows up on the other.
+        """
+        from modules.machineconfig import router as mc_router
+        # Both routers must point at the same ``MCodeFileService``
+        # root; the macros router queries it through
+        # ``get_mcode_service()``, the machineconfig router uses the
+        # same factory.
+        from services.domain_file_services import get_mcode_service
+        m_service = get_mcode_service()
+        assert m_service.root == isolated_mcodes["root"]  # same on-disk root
+
+
+# ---------------------------------------------------------------------- #
+# Machineconfig /m-codes/... endpoints                                      #
+# ---------------------------------------------------------------------- #
+
+
+class TestMachineconfigMCodesEndpoints:
+    """The universal editor reads / writes M-codes through the
+    machineconfig router's ``/m-codes/`` endpoints. They share the
+    storage with the macros router's ``?kind=mcode`` path so both
+    surfaces see the same state.
+    """
+
+    @pytest.fixture()
+    def mcode_app(self, tmp_data_root, clean_env, isolated_mcodes):
+        """Build an app with the machineconfig module mounted and the
+        m-codes root re-pointed at the isolated tree.
+        """
+        from modules.machineconfig.module import setup
+
+        reg = ModuleRegistry(data_root=tmp_data_root)
+        app = FastAPI()
+        reg.boot(app, bus=EventBus(), candidates=[setup()])
+        return app
+
+    def test_list_endpoint_returns_all_mcodes(
+        self, tmp_data_root, clean_env, isolated_mcodes, mcode_app
+    ):
+        client = TestClient(mcode_app)
+        client.put(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M101"},
+            json={"content": "G4 P1\n"},
+        )
+        client.put(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M150"},
+            json={"content": "M8\n"},
+        )
+
+        resp = client.get("/api/v1/modules/machineconfig/m-codes/list")
+        assert resp.status_code == 200
+        names = [row["name"] for row in resp.json()["mcodes"]]
+        assert names == ["M101", "M150"]
+
+    def test_read_endpoint_returns_raw_text(
+        self, tmp_data_root, clean_env, isolated_mcodes, mcode_app
+    ):
+        client = TestClient(mcode_app)
+        client.put(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M105"},
+            json={"content": "G65 P9001\nM30\n"},
+        )
+        resp = client.get(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M105"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["path"] == "M105"
+        assert body["content"] == "G65 P9001\nM30\n"
+
+    def test_write_endpoint_out_of_range_returns_400(
+        self, tmp_data_root, clean_env, isolated_mcodes, mcode_app
+    ):
+        client = TestClient(mcode_app)
+        resp = client.put(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M200"},
+            json={"content": "G4 P1\n"},
+        )
+        assert resp.status_code == 400
+
+    def test_delete_round_trip(
+        self, tmp_data_root, clean_env, isolated_mcodes, mcode_app
+    ):
+        client = TestClient(mcode_app)
+        client.put(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M101"},
+            json={"content": "G4 P1\n"},
+        )
+        resp = client.delete("/api/v1/modules/machineconfig/m-codes/M101")
+        assert resp.status_code == 204
+        resp = client.get(
+            "/api/v1/modules/machineconfig/m-codes/content",
+            params={"path": "M101"},
+        )
+        assert resp.status_code == 404
+
