@@ -182,3 +182,93 @@ test("App.vue restructures the shell into a column so the header sits above the 
     /class\s*=\s*["'][^"']*flex[^"']*flex-1[^"']*overflow-hidden[^"']*["']/,
   );
 });
+
+// ---------------------------------------------------------------------- //
+// Machine-state readout under the STOP button                              //
+// ---------------------------------------------------------------------- //
+//
+// EStopHeader now reads the high-resolution state facade and logs
+// every transition to the console store. The two assertions below
+// pin both halves.
+
+test("EStopHeader imports the State Facade for the high-resolution machine state", () => {
+  const text = readText(headerPath);
+  // The facade lives at ``frontend/src/stores/machineStore.js``;
+  // the import must use that path so Pinia can wire the facade
+  // singleton that the machine module's WebSocket handler updates.
+  assert.match(
+    text,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machineStore\.js['"]/,
+    "EStopHeader must import useMachineStore from the State Facade",
+  );
+  // ``systemState`` is destructured via storeToRefs (Pinia reactivity
+  // would otherwise be lost — see LESSONS_LEARNED § 2.3).
+  assert.match(
+    text,
+    /\{[^}]*systemState[^}]*\}\s*=\s*storeToRefs/,
+    "systemState must be destructured via storeToRefs()",
+  );
+});
+
+test("EStopHeader renders a colour-coded machine-state readout under the button", () => {
+  const text = readText(headerPath);
+  // Stable hook for future e2e work.
+  assert.match(
+    text,
+    /data-testid\s*=\s*["']estop-machine-state["']/,
+  );
+  // Bind the badge to the facade's reactive ``systemState``.
+  assert.match(text, /\{\{\s*systemState\s*\}\}/);
+  // Colour classes spanning the major state buckets.
+  for (const cls of [
+    /text-red-400/,
+    /text-amber-300/,
+    /text-slate-400/,
+    /text-emerald-300/,
+    /text-indigo-300/,
+  ]) {
+    assert.match(text, cls, `must cover one of the state-colour buckets: ${cls}`);
+  }
+  // Screen-reader announce: ``role="status"`` + ``aria-live``.
+  assert.match(text, /role\s*=\s*["']status["']/);
+});
+
+test("EStopHeader logs every systemState transition to the console", () => {
+  const text = readText(headerPath);
+  // Watcher must be wired to the reactive ``systemState``.
+  assert.match(
+    text,
+    /watch\(\s*systemState\b/,
+    "EStopHeader must watch systemState",
+  );
+  // Cross-store import must be lazy (LESSONS_LEARNED § 2.4): inside
+  // the watcher, not at module scope.
+  assert.match(
+    text,
+    /import\(\s*['"]\.\.\/stores\/console\.js['"]\s*\)/,
+    "EStopHeader must lazy-import useConsoleStore inside the watcher",
+  );
+  // The watcher calls into the console store.
+  assert.match(
+    text,
+    /consoleStore\.(?:info|warning)\(/,
+    "EStopHeader must call consoleStore.info / consoleStore.warning",
+  );
+});
+
+test("EStopHeader escalates Estop + PowerOff to the warning severity tier", () => {
+  // The two safety-relevant transitions get warning rows so they
+  // surface above the info-tier chatter in the console filter.
+  const text = readText(headerPath);
+  // Pick up both branches — either the test or the source uses
+  // string literals that must match the facade enum.
+  assert.match(text, /['"]Estop['"]/);
+  assert.match(text, /['"]PowerOff['"]/);
+  // And the watcher must dispatch both states to ``warning``
+  // while everything else goes through ``info``.
+  assert.match(
+    text,
+    /consoleStore\.warning\(/,
+    "EStopHeader must escalate some transitions to warning rows",
+  );
+});

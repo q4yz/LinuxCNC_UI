@@ -19,12 +19,12 @@ if [ ! -f "venv/bin/activate" ]; then
     exit 1
 fi
 
-# 1. Start the FastAPI backend in the background
+# 1. Start the FastAPI backend in the background.
 source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
-cd "$PROJECT_DIR/frontend" || exit 1
+cd "$PROJECT_DIR/frontend" || { kill $BACKEND_PID 2>/dev/null; exit 1; }
 
 # Safety Check 3: Ensure node_modules exists for the frontend
 if [ ! -d "node_modules" ]; then
@@ -33,11 +33,21 @@ if [ ! -d "node_modules" ]; then
     exit 1
 fi
 
-# 2. Start the Vue frontend in the background
+# 2. Wait for the backend's OpenAPI schema to be reachable, then
+# regenerate ``frontend/generated/api/``. The frontend dev server
+# imports the OpenAPI client at boot — without a fresh copy the
+# imports are stale (or missing entirely on a fresh clone, since
+# ``frontend/generated/`` is gitignored) and Vite will crash.
+# 15 second timeout matches the headless-CI script in
+# ``.agent/TEST.md`` so the two stay in sync.
+timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
+npm run generate-api
+
+# 3. Start the Vue frontend in the background
 npm run dev -- --host &
 FRONTEND_PID=$!
 
-# 3. Open the browser to your dev server
+# 4. Open the browser to your dev server
 sleep 2
 xdg-open http://localhost:5173 &
 

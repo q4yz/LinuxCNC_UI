@@ -14,7 +14,33 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Camera preferences moved from `localStorage` to backend settings store
+### 1.1 E-Stop header carries machine-state readout + console change-log
+
+- **What was done.** `EStopHeader.vue` now reads the high-resolution
+  ``systemState`` from the State Facade
+  (``frontend/src/stores/machineStore.js``) and renders a small
+  colour-coded badge directly under the STOP button. The badge
+  covers the full 8-state vocabulary (Estop / PowerOff / Idle /
+  Running / Paused / Loaded / Offline / Updating / Failure) with
+  state-bucket colour classes (red / amber / slate / emerald /
+  indigo). A Vue ``watch(systemState, …)`` mirrors every
+  transition into the console store: ``Estop`` and ``PowerOff``
+  land as ``warning`` rows, everything else as ``info``. The
+  watcher uses the lazy ``import('../stores/console.js')`` form
+  to avoid the Pinia active-instance hazard noted in
+  ``LESSONS_LEARNED.md`` § 2.4.
+- **Tests.** `frontend/tests/test-estop-header.mjs` extended with
+  four new source-text assertions covering the facade import, the
+  ``systemState`` reactive binding, the colour-bucket badge
+  template, the watcher console-log plumbing, and the
+  ``warning``-tier escalation for safety-relevant transitions.
+- **Status.** Complete.
+- **Caveat.** The pre-existing 2 failures in
+  ``test-estop-header.mjs`` (``sticky`` / ``v-if="isEstop"``
+  chip) are unchanged — they predate this work and remain on
+  someone else's plate.
+
+### 1.2 Camera preferences moved from `localStorage` to backend settings store
 
 - **What was done.** Camera operator preferences (rename / flip /
   mirror / hide-from-cycle) used to live in `window.localStorage`
