@@ -10,16 +10,12 @@
 //   reactive so the ``<ToastContainer>`` re-renders automatically
 //   when new popups arrive.
 //
-// * **Auto-dismiss vs. persistent.** ``success`` and ``info`` are
-//   transient confirmations ("Staged 4 artifact(s)") and disappear
-//   after five seconds. ``error`` and ``warn`` persist until the
-//   operator explicitly dismisses them — a silent error toast is
-//   worse than no toast at all, and a five-second timer would let
-//   the operator miss the only chance to read a long error.
-//
-// * **Duration is configurable per call.** ``success(msg, {
-//   durationMs: 1000 })`` overrides the default for callers that
-//   know their popup is short-lived.
+// * **Lifetime is configurable per call.** The public parameter is
+//   ``opts.lifetime`` measured in **seconds**. ``undefined`` falls
+//   back to ``DEFAULT_LIFETIME_SECONDS`` (5 s); ``null`` opts the
+//   toast out of auto-dismiss entirely so it persists until the
+//   operator closes it. ``success(msg, { lifetime: 1 })`` overrides
+//   the default for callers that know their popup is short-lived.
 //
 // * **No Vue / DOM imports in this module.** ``ToastContainer.vue``
 //   owns the rendering; this file is purely state. Tests can drive
@@ -28,10 +24,12 @@
 
 import { defineStore } from "pinia";
 
-// Default dwell time for transient toast types. Picked to match the
-// issue's "5 s" requirement while leaving room for the eye to land
-// before the row starts fading.
-const DEFAULT_TRANSIENT_DURATION_MS = 5000;
+// Default dwell time for every toast type. Five seconds is long
+// enough for the eye to land on the row, short enough that the
+// operator is not stuck staring at a stale popup. Override per call
+// with ``{ lifetime: <seconds> }``; opt out of auto-dismiss with
+// ``{ lifetime: null }``.
+export const DEFAULT_LIFETIME_SECONDS = 5;
 
 // Stable level vocabulary. Mirrors ``stores/console.js``'s level
 // tokens so the toast can colour-code on the same field the
@@ -65,6 +63,31 @@ export const TOAST_TYPE_STYLES = {
   },
 };
 
+// Normalises the user-supplied ``lifetime`` (seconds) before it
+// reaches ``_add``. The three valid values are:
+//
+//   * ``undefined`` — caller did not specify; fall back to
+//     ``DEFAULT_LIFETIME_SECONDS`` (5 s).
+//   * ``null`` — caller explicitly opted out of auto-dismiss;
+//     the toast persists until the operator closes it.
+//   * finite number ``> 0`` — dwell time in seconds; any positive
+//     fraction is allowed (the container rounds to whole
+//     milliseconds).
+//
+// Anything else (negative, zero, ``NaN``, string, …) is rejected
+// with a ``console.warn`` and treated as ``null`` so a typo never
+// produces a flash-and-gone popup.
+function _resolveLifetime(lifetime) {
+  if (lifetime === undefined) return DEFAULT_LIFETIME_SECONDS;
+  if (lifetime === null) return null;
+  if (Number.isFinite(lifetime) && lifetime > 0) return lifetime;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[toast] invalid lifetime '${lifetime}'; expected a positive number of seconds, null (persist), or undefined (default ${DEFAULT_LIFETIME_SECONDS}s); treating as null (persist)`,
+  );
+  return null;
+}
+
 export const useToastStore = defineStore("toast", {
   state: () => ({
     /**
@@ -93,12 +116,20 @@ export const useToastStore = defineStore("toast", {
         type = "info";
       }
       const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      // ``opts.lifetime`` is in seconds. ``null`` (set by
+      // ``_resolveLifetime`` for an explicit "persist" request)
+      // or any non-finite / non-positive value produces no timer.
+      const lifetime = opts.lifetime;
+      const durationMs =
+        Number.isFinite(lifetime) && lifetime > 0
+          ? Math.round(lifetime * 1000)
+          : null;
       this.toasts.push({
         id,
         type,
         title: title || "",
         body: body || "",
-        durationMs: Number.isFinite(opts.durationMs) ? opts.durationMs : null,
+        durationMs,
         createdAt: Date.now(),
       });
       return id;
@@ -110,9 +141,7 @@ export const useToastStore = defineStore("toast", {
       const title = opts.title || "Success";
       return this._add("success", title, body, {
         ...opts,
-        durationMs: Number.isFinite(opts.durationMs)
-          ? opts.durationMs
-          : DEFAULT_TRANSIENT_DURATION_MS,
+        lifetime: _resolveLifetime(opts.lifetime),
       });
     },
 
@@ -120,24 +149,27 @@ export const useToastStore = defineStore("toast", {
       const title = opts.title || "Info";
       return this._add("info", title, body, {
         ...opts,
-        durationMs: Number.isFinite(opts.durationMs)
-          ? opts.durationMs
-          : DEFAULT_TRANSIENT_DURATION_MS,
+        lifetime: _resolveLifetime(opts.lifetime),
       });
     },
 
     warn(body, opts = {}) {
-      // Warnings persist — the operator must acknowledge them.
       const title = opts.title || "Warning";
-      return this._add("warn", title, body, opts);
+      return this._add("warn", title, body, {
+        ...opts,
+        lifetime: _resolveLifetime(opts.lifetime),
+      });
     },
 
     error(body, opts = {}) {
-      // Errors persist. ``title`` defaults to ``"Error"`` so a bare
+      // ``title`` defaults to ``"Error"`` so a bare
       // ``toast.error('Compile failed')`` reads as a fault, not as
       // a status update.
       const title = opts.title || "Error";
-      return this._add("error", title, body, opts);
+      return this._add("error", title, body, {
+        ...opts,
+        lifetime: _resolveLifetime(opts.lifetime),
+      });
     },
 
     /**

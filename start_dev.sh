@@ -47,10 +47,6 @@ npm run generate-api
 npm run dev -- --host &
 FRONTEND_PID=$!
 
-# 4. Open the browser to your dev server
-sleep 2
-xdg-open http://localhost:5173 &
-
 # Catch the shutdown signal from LinuxCNC when you close Axis
 trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null" SIGINT SIGTERM EXIT
 

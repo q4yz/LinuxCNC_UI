@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error, linuxcnc
+from hardware import linuxcnc_mock
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.websocket")
@@ -153,7 +154,12 @@ def get_current_state() -> dict:
         "g5x_index": g5x_index,
         "target_temp": target_temp,
         "actual_temp": actual_temp,
-        "temperatures": temperatures
+        "temperatures": temperatures,
+        # Bounded recent LinuxCNC error-channel history (max 100
+        # entries, oldest dropped first). ``telemetry_loop`` keeps
+        # this fresh on every poll so a reload / reconnect sees the
+        # operator's last session's errors in the console panel.
+        "errors": list(linuxcnc_mock._machine_state.errors),
     }
 
 
@@ -161,15 +167,46 @@ async def telemetry_loop():
     """
     Background loop that continuously polls the CNC machine at 10Hz
     and broadcasts the state and any new errors to all connected WebSockets.
+
+    The channel helpers are re-evaluated *inside* the loop body so a
+    late-connecting LinuxCNC daemon gets picked up on the next tick
+    instead of crashing forever with ``AttributeError: 'NoneType'
+    object has no attribute 'poll'``. ``get_current_state()`` is
+    None-safe — it returns :func:`_offline_state_snapshot` while the
+    channels are offline — so the frontend keeps receiving the safe
+    ESTOP-shaped payload until LinuxCNC is reachable.
     """
-    machine_stat = get_machine_stat()
-    machine_error = get_machine_error()
     # Capture the logger once at the top of the loop so the
     # ``get_console_logger`` lock is not taken on every iteration.
     console_logger = get_console_logger()
 
     while True:
+        global last_broadcast_state
         try:
+            # Fetch inside the loop so a late-connecting LinuxCNC
+            # is picked up on the next tick instead of crashing
+            # forever with ``AttributeError: 'NoneType' has no
+            # attribute 'poll'``.
+            machine_stat = get_machine_stat()
+            machine_error = get_machine_error()
+
+            # Skip the poll entirely when either channel is offline.
+            # ``get_current_state()`` is None-safe — it returns the
+            # offline snapshot — so we can still push the operator-
+            # facing "LinuxCNC not running" ESTOP state to any
+            # active WebSocket clients.
+            if machine_stat is None or machine_error is None:
+                if manager.active_connections:
+                    current_state = get_current_state()
+                    if current_state != last_broadcast_state:
+                        await manager.broadcast(
+                            json.dumps({"type": "delta", "data": current_state})
+                        )
+                        last_broadcast_state.clear()
+                        last_broadcast_state.update(deepcopy(current_state))
+                await asyncio.sleep(0.1)
+                continue
+
             # Poll status
             machine_stat.poll()
             current_state = get_current_state()
@@ -178,12 +215,23 @@ async def telemetry_loop():
             error = machine_error.poll()
             if error and manager.active_connections:
                 kind, text = error
+                timestamp = datetime.now().isoformat()
+                # Mirror into the bounded error history so the
+                # operator sees the backlog after a reconnect /
+                # page reload — ``full_state`` carries ``errors``
+                # populated by ``push_error``. ``hasattr`` guards
+                # the mock-only method so a real ``error_channel``
+                # implementation never breaks the broadcast path.
+                if hasattr(linuxcnc_mock._machine_state, "push_error"):
+                    linuxcnc_mock._machine_state.push_error(
+                        kind, text, timestamp
+                    )
                 error_payload = {
                     "type": "error",
                     "data": {
                         "kind": kind,
                         "text": text,
-                        "time": datetime.now().isoformat()
+                        "time": timestamp,
                     }
                 }
                 await manager.broadcast(json.dumps(error_payload))
@@ -195,7 +243,6 @@ async def telemetry_loop():
                     level=LogLevel.ERROR,
                 )
 
-            global last_broadcast_state
             delta = get_dict_diff(current_state, last_broadcast_state)
             if delta and manager.active_connections:
                 await manager.broadcast(json.dumps({"type": "delta", "data": delta}))
@@ -219,11 +266,22 @@ async def websocket_telemetry(websocket: WebSocket):
     """
     The main WebSocket endpoint for UI clients to connect to
     for real-time machine telemetry.
+
+    ``get_current_state()`` is None-safe (returns the offline
+    snapshot when ``get_machine_stat()`` is ``None``), so the
+    handler no longer calls ``machine_stat.poll()`` directly —
+    that path used to crash with ``AttributeError`` while LinuxCNC
+    was offline, and the disconnected-client cleanup only ran in
+    the ``WebSocketDisconnect`` branch, leaking entries in
+    ``manager.active_connections``. The new ``except Exception``
+    guarantees the connection is removed on every disconnect
+    path.
     """
     await manager.connect(websocket)
     try:
-        machine_stat = get_machine_stat()
-        machine_stat.poll()
+        # Never call ``machine_stat.poll()`` here — the helper
+        # handles the offline case internally so the ``full_state``
+        # payload matches the actual telemetry-loop shape.
         current_state = get_current_state()
 
         await websocket.send_text(json.dumps({"type": "full_state", "data": current_state}))
@@ -237,3 +295,10 @@ async def websocket_telemetry(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+    except Exception:
+        # Catch-all so the connection cleanup still runs even
+        # when ``get_current_state`` (or any other helper in
+        # scope) raises something unexpected. Without this the
+        # socket lingers in ``active_connections`` indefinitely.
+        manager.disconnect(websocket)
+        raise

@@ -346,19 +346,26 @@ test("toast store exposes success/error/warn/info methods", () => {
 });
 
 
-test("toast store auto-dismisses success/info and persists error/warn", () => {
+test("toast store defaults every type to a 5s lifetime", () => {
   const text = readText(toastStorePath);
-  // The default dwell time for transient (success / info) toasts is
-  // five seconds. Error and warn toasts persist until the operator
-  // closes them so a transient fault is never lost.
-  assert.match(text, /DEFAULT_TRANSIENT_DURATION_MS\s*=\s*5000/);
-  // ``success`` and ``info`` default to the transient dwell time.
-  assert.match(text, /success\s*\(/);
-  assert.match(text, /info\s*\(/);
-  // ``error`` and ``warn`` keep ``durationMs`` unset (which the
-  // container renders as "persist until dismissed").
-  assert.match(text, /warn\s*\(/);
-  assert.match(text, /error\s*\(/);
+  // The default dwell time is five seconds for all four action
+  // types (success / info / warn / error). Operators get a
+  // consistent dwell window regardless of severity; callers opt
+  // out with ``{ lifetime: null }`` (persist) or override with
+  // ``{ lifetime: <seconds> }``.
+  assert.match(text, /DEFAULT_LIFETIME_SECONDS\s*=\s*5/);
+  // Each action routes through ``_resolveLifetime`` so the default
+  // is applied uniformly. ``_resolveLifetime`` returns
+  // ``DEFAULT_LIFETIME_SECONDS`` for ``undefined``, ``null`` for
+  // an explicit persist request, and the input otherwise.
+  assert.match(text, /_resolveLifetime\s*\(/);
+  for (const method of ["success", "info", "warn", "error"]) {
+    assert.match(
+      text,
+      new RegExp(`\\b${method}\\s*\\(\\s*body\\b`),
+      `expected ${method}(body, opts?) on the toast store`,
+    );
+  }
   // ``dismiss`` and ``clear`` are the lifecycle hooks the container
   // calls to remove toasts.
   assert.match(text, /dismiss\s*\(\s*id\s*\)/);
@@ -366,13 +373,17 @@ test("toast store auto-dismisses success/info and persists error/warn", () => {
 });
 
 
-test("toast methods accept (msg, opts) and honour a custom duration", () => {
+test("toast methods accept (msg, opts) and honour a custom lifetime in seconds", () => {
   const text = readText(toastStorePath);
-  // ``opts.durationMs`` must flow through to the entry so callers
-  // can override the default. The guard rejects non-finite / zero
-  // values so a typo never produces a flash-and-gone toast.
-  assert.match(text, /durationMs/);
+  // ``opts.lifetime`` is in **seconds** and flows through to the
+  // internal ``durationMs`` (milliseconds) on the stored entry.
+  // ``_resolveLifetime`` accepts ``undefined`` (default), ``null``
+  // (persist), or a finite positive number; anything else is
+  // rejected with a ``console.warn`` and treated as persist.
+  assert.match(text, /opts\.lifetime/);
   assert.match(text, /Number\.isFinite/);
+  assert.match(text, /lifetime\s*===\s*null/);
+  assert.match(text, /lifetime\s*===\s*undefined/);
   // The store also carries a colour-palette table the container
   // reads so the two files stay in sync without re-deriving.
   assert.match(text, /TOAST_TYPE_STYLES\s*=/);
@@ -388,6 +399,16 @@ test("toast methods accept (msg, opts) and honour a custom duration", () => {
   const containerText = readText(toastContainerPath);
   assert.match(containerText, /TOAST_TYPE_STYLES/);
   assert.match(containerText, /styleFor\(/);
+});
+
+
+test("ToastContainer is anchored to the bottom-right corner", () => {
+  const text = readText(toastContainerPath);
+  // The container sits at ``fixed bottom-4 right-4`` so popups do
+  // not cover the top app bar / navigation header. ``top-4`` was
+  // the legacy anchor; the new contract forbids it.
+  assert.match(text, /fixed\s+bottom-4\s+right-4/);
+  assert.doesNotMatch(text, /fixed\s+top-4\s+right-4/);
 });
 
 

@@ -114,8 +114,25 @@ def _require_machine_ready() -> None:
     checking E-Stop and power state.  The explicit E-Stop check also covers
     mock/adapter implementations that expose ``estop`` independently from
     ``task_state``.
+
+    When LinuxCNC isn't running, ``get_machine_stat()`` returns ``None``
+    (see ``hardware.connection._LazyChannel``). Reaching for
+    ``machine_stat.poll()`` on a ``None`` channel would crash with
+    ``AttributeError`` and surface as ``500``. We translate the offline
+    case to ``503 Service Unavailable`` so the frontend renders the same
+    "LinuxCNC not running" message it already gets from
+    :func:`execute_sync_cmd`.
     """
     machine_stat = get_machine_stat()
+    if machine_stat is None:
+        # Channels not yet connected — LinuxCNC isn't running.
+        # Mirror the helper's own 503 contract so the operator
+        # sees a consistent message regardless of which endpoint
+        # surfaces the offline state.
+        raise HTTPException(
+            status_code=503,
+            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
+        )
     machine_stat.poll()
 
     task_state = getattr(machine_stat, "task_state", None)
@@ -231,86 +248,12 @@ def run_mdi(cmd: MdiCommand) -> StatusResponse:
         raise
 
 
-# @router.post(
-#     "/print",
-#     summary="Start G-Code Print",
-#     description=(
-#         "Switch to automatic mode, load the requested G-code file, and "
-#         "start execution from its first line."
-#     ),
-#     operation_id="startPrint",
-#     response_model=StatusResponse,
-# )
-# def start_print(cmd: PrintCommand) -> StatusResponse:
-#     """Load ``cmd.filename`` and start it in LinuxCNC AUTO mode."""
-#     _require_machine_ready()
-#     if not cmd.filename.strip():
-#         raise HTTPException(status_code=400, detail="Filename cannot be blank.")
-#
-#     execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_AUTO", 2))
-#     execute_sync_cmd("program_open", 0, cmd.filename)
-#     result = execute_sync_cmd(
-#         "auto", 0, getattr(linuxcnc, "AUTO_RUN", 0), 0
-#     )
-#     return StatusResponse(status=result.get("status", "success"))
-#
-#
-# @router.post(
-#     "/pause",
-#     summary="Pause G-Code Print",
-#     description="Pause execution of the active G-code program.",
-#     operation_id="pausePrint",
-#     response_model=StatusResponse,
-# )
-# def pause_print() -> StatusResponse:
-#     """Pause the active program after checking machine safety state."""
-#     _require_machine_ready()
-#     result = execute_sync_cmd(
-#         "auto", 0, getattr(linuxcnc, "AUTO_PAUSE", 1)
-#     )
-#     return StatusResponse(status=result.get("status", "success"))
-#
-#
-# @router.post(
-#     "/resume",
-#     summary="Resume G-Code Print",
-#     description="Resume execution of a paused G-code program.",
-#     operation_id="resumePrint",
-#     response_model=StatusResponse,
-# )
-# def resume_print() -> StatusResponse:
-#     """Resume the paused program after checking machine safety state."""
-#     _require_machine_ready()
-#     result = execute_sync_cmd(
-#         "auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2)
-#     )
-#     return StatusResponse(status=result.get("status", "success"))
-#
-#
-# @router.post(
-#     "/stop",
-#     summary="Stop G-Code Print",
-#     description="Abort execution of the active G-code program.",
-#     operation_id="stopPrint",
-#     response_model=StatusResponse,
-# )
-# def stop_print() -> StatusResponse:
-#     """Abort the active program after checking machine safety state."""
-#     _require_machine_ready()
-#     result = execute_sync_cmd("abort", 0)
-#     return StatusResponse(status=result.get("status", "success"))
-
-
 __all__ = [
     "router",
     "set_state",
     "set_mode",
     "home_axis",
     "run_mdi",
-    # "start_print",
-    # "pause_print",
-    # "resume_print",
-    # "stop_print",
     "StateCommand",
     "ModeCommand",
     "HomeCommand",

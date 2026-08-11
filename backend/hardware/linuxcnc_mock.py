@@ -88,6 +88,14 @@ class SharedMachineState:
         self.total_lines = 0
         self.g5x_index = 1  # 1 = G54 (default)
 
+        # Module-wide lock — declared early so any ``with self.lock``
+        # block during __init__ (and the post-init
+        # ``_seed_temperatures_from_hardware`` call) can use it
+        # without an ``AttributeError``. The earlier end-of-__init__
+        # position was unreachable once the error-history block was
+        # inserted.
+        self.lock = threading.Lock()
+
         # Temperature Simulation State (multi-sensor dictionary).
         # The set of sensors is driven entirely by ``hardware.json`` in
         # ``machine_config/active/`` — no hard-coded ``extruder/bed/cpu``
@@ -103,18 +111,39 @@ class SharedMachineState:
         # machine with no extruder does not crash legacy callers.
         self.target_temp = 0.0
         self.actual_temp = 25.0
-        
-        self.lock = threading.Lock()
 
         # Program execution simulation state
         self.program_thread = None
         self.program_stop_event = threading.Event()
-        
+
         # Jog simulation state
         self.jogging_axis = None
         self.jogging_velocity = 0.0
         self.jog_thread = None
         self.jog_stop_event = threading.Event()
+
+        # Recent LinuxCNC error-channel history. Each entry is
+        # ``{kind, text, time}`` and the bounded queue is mirrored
+        # into ``full_state`` so a reload / reconnect re-renders the
+        # backlog in the operator console. ``_max_errors`` caps the
+        # size — old entries drop first so a single session that
+        # produces thousands of identical errors cannot blow up the
+        # wire payload.
+        self.errors: list = []
+        self._max_errors = 100
+
+    def push_error(self, kind: int, text: str, time: str) -> None:
+        """Record a LinuxCNC error-channel event.
+
+        Stamps ``time`` if the caller did not provide one (the
+        broadcast site already formats the timestamp, so the
+        router passes ``time`` through directly).
+        """
+        entry = {"kind": kind, "text": text, "time": time}
+        with self.lock:
+            self.errors.append(entry)
+            if len(self.errors) > self._max_errors:
+                del self.errors[: len(self.errors) - self._max_errors]
 
 _machine_state = SharedMachineState()
 

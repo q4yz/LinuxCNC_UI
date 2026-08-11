@@ -96,14 +96,14 @@ const _renderEpoch = ref(Date.now());
 
 <template>
   <!--
-    Fixed-position container anchored to the top-right. ``z-50``
+    Fixed-position container anchored to the bottom-right. ``z-50``
     puts the layer above the rest of the app so a deep-down
     panel cannot accidentally cover a popup. ``pointer-events-none``
     on the outer wrapper lets clicks pass through the empty
     regions; each toast re-enables pointer events on itself.
   -->
   <div
-    class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
+    class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
     data-test="toast-container"
     :data-render-epoch="_renderEpoch"
   >

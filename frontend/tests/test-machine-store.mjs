@@ -149,3 +149,32 @@ test("store handles errors as a ref array", () => {
   const text = readStore();
   assert.match(text, /const\s+errors\s*=\s*ref\(\s*\[\s*\]\s*\)/);
 });
+
+test("store routes LinuxCNC WS errors through the console store with popup", () => {
+  // Regression guard for the silent-bug where the WebSocket
+  // ``error`` branch only logged to the browser devtools console
+  // (console.error) instead of routing through ``useConsoleStore()``,
+  // so the operator's ``ConsolePanel`` never saw the row and the
+  // toast never fired. ``popup: true`` is required because
+  // ``core/console.js`` short-circuits ``_emitToast`` when the
+  // flag is missing.
+  const text = readStore();
+  assert.match(
+    text,
+    /payload\.type === "error"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
+    "the WS error branch must call useConsoleStore().error() with popup:true",
+  );
+});
+
+test("store replays full_state errors through the console store", () => {
+  // The backend keeps a bounded error history on ``SharedMachineState``
+  // and ships it on ``full_state``. The frontend replays those
+  // entries through ``useConsoleStore().error()`` so the operator's
+  // ``ConsolePanel`` shows the backlog on reload / reconnect.
+  const text = readStore();
+  assert.match(
+    text,
+    /payload\.type === "full_state"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
+    "the full_state branch must replay historical errors via useConsoleStore",
+  );
+});

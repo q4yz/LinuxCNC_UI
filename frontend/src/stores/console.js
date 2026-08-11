@@ -96,7 +96,10 @@ export const useConsoleStore = defineStore('console', {
      *
      * @param {string} level - One of ``info`` / ``warning`` / ``error`` / ``debug``.
      * @param {string} text  - The console text; also becomes the toast body.
-     * @param {{popup?: boolean, title?: string, durationMs?: number}} [opts]
+     * @param {{popup?: boolean, title?: string, lifetime?: number|null}} [opts]
+     *   ``lifetime`` is in **seconds**. ``undefined`` falls back to
+     *   the toast store's default (5 s); ``null`` makes the toast
+     *   persist until the operator closes it.
      */
     _emitToast(level, text, opts) {
       if (!opts || !opts.popup) return
@@ -111,7 +114,7 @@ export const useConsoleStore = defineStore('console', {
           if (typeof toastStore[toastType] !== 'function') return
           toastStore[toastType](text, {
             title: opts.title,
-            durationMs: opts.durationMs,
+            lifetime: opts.lifetime,
           })
         })
         .catch(() => {

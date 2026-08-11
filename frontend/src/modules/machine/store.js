@@ -236,6 +236,23 @@ export const useMachineStore = defineStore(STORE_ID, () => {
           eventBus.publish(STATE_TEMPERATURES_TOPIC, {
             temperatures: status.temperatures || {},
           });
+
+          // Replay historical LinuxCNC errors through the global
+          // console store so the operator's ``ConsolePanel`` shows
+          // the backlog on reconnect / page reload. The live
+          // ``error`` channel below handles new events; we dedupe
+          // here so the same entry never renders twice.
+          if (Array.isArray(next.errors)) {
+            const liveTimes = new Set(errors.value.map((e) => e.time));
+            for (const entry of next.errors) {
+              if (liveTimes.has(entry.time)) continue;
+              errors.value.push(entry);
+              useConsoleStore().error(`LinuxCNC: ${entry.text}`, {
+                title: `LinuxCNC error (kind=${entry.kind})`,
+                popup: true,
+              });
+            }
+          }
         } else if (payload.type === "delta") {
           applyDelta(status, payload.data);
 
@@ -251,6 +268,16 @@ export const useMachineStore = defineStore(STORE_ID, () => {
           });
         } else if (payload.type === "error") {
           errors.value.push(payload.data);
+          // Route the event through the global console store so the
+          // operator's ``ConsolePanel`` renders the row and the toast
+          // fires. ``popup: true`` is required because
+          // ``core/console.js`` short-circuits ``_emitToast`` when the
+          // flag is missing — that was the silent-bug the previous
+          // round shipped.
+          useConsoleStore().error(`LinuxCNC: ${payload.data.text}`, {
+            title: `LinuxCNC error (kind=${payload.data.kind})`,
+            popup: true,
+          });
           // eslint-disable-next-line no-console
           console.error("Machine Error:", payload.data.text);
         }

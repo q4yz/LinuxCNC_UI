@@ -256,3 +256,30 @@ def test_machine_on_load_is_idempotent(tmp_data_root, clean_env):
     # The settings store must still answer a GET — the watchdog
     # lifecycle is decoupled from the settings store.
     assert settings.read_all() == {}
+
+
+def test_require_machine_ready_returns_503_when_channels_offline():
+    """``_require_machine_ready`` translates an offline NML
+    channel into ``HTTPException(503)`` instead of crashing with
+    ``AttributeError`` on ``None.poll()``.
+
+    Pinning the contract guards against a future re-enable of
+    the ``/print`` / ``/pause`` / ``/resume`` / ``/stop``
+    endpoints (currently commented out in ``router.py``) silently
+    shipping a 500 on offline boots.
+    """
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from modules.machine.router import _require_machine_ready
+
+    with patch(
+        "modules.machine.router.get_machine_stat",
+        return_value=None,
+    ):
+        with pytest.raises(HTTPException) as excinfo:
+            _require_machine_ready()
+
+    assert excinfo.value.status_code == 503
+    assert "linuxcnc" in excinfo.value.detail.lower()
