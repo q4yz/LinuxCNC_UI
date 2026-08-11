@@ -15,6 +15,7 @@ import { computed, reactive, ref } from "vue";
 import { ModulesMachineconfigService } from "../../../generated/api/index.ts";
 import manifest from "./manifest.js";
 import { useConsoleStore } from "../../stores/console.js";
+import { describeError as describeErrorShared } from "../../core/error-format.js";
 
 const STORE_ID = `module_${manifest.id}`;
 
@@ -72,36 +73,13 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // the same operator-readable message it used to get from the
   // legacy wrapper.
   //
-  // Issue #99 enriched the compile endpoint's error response so
-  // validation failures now arrive as
-  // ``{ error: { section, key, line, message, kind } }``. The helper
-  // reads that shape first, then falls back to the FastAPI standard
-  // ``{ detail: <string> }`` (or its array form for Pydantic
-  // validation errors), then to ``error.message``.
-
-  function describeError(error) {
-    if (!error) return "Unknown error"
-    if (error.body && typeof error.body === "object") {
-      // New structured error (issue #99): ``error.body.error.message``.
-      const structured = error.body.error
-      if (
-        structured &&
-        typeof structured === "object" &&
-        typeof structured.message === "string"
-      ) {
-        return structured.message
-      }
-      const detail = error.body.detail
-      if (Array.isArray(detail)) {
-        return detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
-      }
-      if (typeof detail === "object" && detail && typeof detail.message === "string") {
-        return detail.message
-      }
-      if (typeof detail === "string") return detail
-    }
-    return error.message || String(error)
-  }
+  // Shared with ``modules/macros/store.js`` and
+  // ``components/FileManager.vue`` via ``core/error-format.js`` so
+  // a future envelope shape change lives in one place. The wrapper
+  // here preserves the legacy "Unknown error" fallback for any
+  // falsy input so existing log messages don't regress to empty.
+  const describeError = (error) =>
+    describeErrorShared(error) || "Unknown error";
 
   // --- Loader actions --------------------------------------------- //
 

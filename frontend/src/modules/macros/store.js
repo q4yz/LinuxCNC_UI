@@ -42,6 +42,7 @@ import {
 import manifest from "./manifest.js";
 import { useConsoleStore } from "../../stores/console.js";
 import { useMachineStore } from "../../stores/machine-compat.js";
+import { describeError as describeErrorShared } from "../../core/error-format.js";
 import { parseMacro, validateMacroKindName } from "./parser.js";
 
 // Canonical kind constants. Must agree with the backend's
@@ -55,30 +56,17 @@ export const MACRO_KIND = Object.freeze({
 const STORE_ID = `module_${manifest.id}`;
 
 /**
- * Convert an arbitrary thrown value into a single operator-readable
- * sentence. Mirrors the shape used by the ``machineconfig`` store
- * so both surfaces surface errors the same way.
- *
- * @param {unknown} error
- * @returns {string}
+ * Wrapper around :func:`core/error-format.js` ``describeError`` that
+ * keeps the legacy "Unknown error" fallback for any falsy input so
+ * existing ``useConsoleStore().error(...)`` calls don't regress to
+ * empty strings. The shared helper handles the same envelope shapes
+ * (``error.body.error.message`` for compile-time validation,
+ * ``error.body.detail`` for plain FastAPI ``HTTPException``,
+ * ``error.message`` for everything else) so a future envelope shape
+ * change lives in one place.
  */
-function describeError(error) {
-  if (!error) return "Unknown error";
-  if (typeof error === "object" && "body" in error && error.body) {
-    const body = error.body;
-    if (typeof body === "string") return body;
-    if (typeof body === "object") {
-      if (typeof body.detail === "string") return body.detail;
-      if (Array.isArray(body.detail)) {
-        return body.detail
-          .map((entry) => entry?.msg || JSON.stringify(entry))
-          .join("; ");
-      }
-    }
-  }
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
+const describeError = (error) =>
+  describeErrorShared(error) || "Unknown error";
 
 /**
  * Split a static block into individual MDI commands. A block may

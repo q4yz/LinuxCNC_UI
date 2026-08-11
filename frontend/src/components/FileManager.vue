@@ -12,9 +12,9 @@ import {
   ModulesProgramService,
   ProgramFilesService,
 } from '../../generated/api/index.ts'
-import { ApiError } from '../../generated/api/core/ApiError'
 import { useConsoleStore } from '../stores/console'
 import { useEditorStore } from '../stores/editor'
+import { describeErrorOr } from '../core/error-format.js'
 
 const router = useRouter()
 const consoleStore = useConsoleStore()
@@ -28,22 +28,10 @@ const fileInput = ref(null)
 //
 // The generated client throws ``ApiError`` with ``body`` already
 // parsed (FastAPI returns ``{"detail": "..."}`` for HTTPException).
-// Fall back to ``statusText`` / ``message`` so every error path
-// surfaces something operator-readable instead of ``[object Object]``.
-
-function describeError(error) {
-  if (!error) return 'Unknown error'
-  if (error instanceof ApiError) {
-    return (
-      error.body?.detail ||
-      error.body?.message ||
-      error.statusText ||
-      error.message ||
-      `HTTP ${error.status}`
-    )
-  }
-  return error.message || String(error)
-}
+// The shared :func:`describeErrorOr` helper handles every envelope
+// shape (issue #99 structured error, FastAPI ``detail``, plain
+// ``Error.message``) so a future shape change lives in one place.
+const describeError = (error) => describeErrorOr(error, 'Unknown error');
 
 // ---- File management: list / upload / delete / read -------------- //
 //

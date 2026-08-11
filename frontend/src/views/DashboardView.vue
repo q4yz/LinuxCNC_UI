@@ -9,7 +9,7 @@
 import { computed, defineAsyncComponent } from 'vue'
 import registry from '../core/modules/registry'
 
-import GCodeViewer from '../components/GCodeViewer.vue'
+import NgcCoordinateSystemViewer from '../components/NgcCoordinateSystemViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
@@ -98,7 +98,7 @@ const macrosMounted      = computed(() => registry.modules.has('macros'))
             <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
           </div>
           <div class="flex-1 relative">
-            <GCodeViewer />
+            <NgcCoordinateSystemViewer />
           </div>
         </div>
 
