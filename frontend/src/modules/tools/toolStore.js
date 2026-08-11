@@ -1,39 +1,48 @@
-// Tools module Pinia store. Owns the mock tool list and the two
-// actions that dispatch HTTP POSTs to the backend router
-// (spindle + extruder). ``useConsoleStore`` is instantiated inside
-// each action to avoid the circular-initialisation trap. See
-// ``.agent/STATE.md`` § 2, § 9.
+// Tools module Pinia store. Owns the backend-driven tool list, the
+// single-tool selection state, and the three actions that dispatch
+// HTTP POSTs to the backend router (spindle + extruder + tool
+// target). ``useConsoleStore`` is instantiated inside each action
+// to avoid the circular-initialisation trap. See ``.agent/STATE.md``
+// § 2, § 9.
+//
+// The list is loaded from ``GET /api/v1/modules/tools/tools`` and
+// optionally pushed via the ``state.tools`` event-bus topic — the
+// poll is the source of truth, the subscription just provides
+// faster updates. Mirrors the temperature module's loader pattern.
+//
+// Tool object shape (from hardware.json ``tools[]``):
+//
+//   {
+//     id, name,
+//     type: "extruder" | "spindle_digital" | "spindle_analog"
+//         | "heated_bed" | "laser",
+//     // spindle shared
+//     min_rpm, max_rpm,
+//     // spindle analog only
+//     pwm_pin, enable_pin,
+//     // spindle digital only
+//     signal_*: ...,
+//     // extruder + heated_bed only (heat fields)
+//     sensor, heater_pin, fan, control, min_temp, max_temp,
+//   }
+//
+// Tools with a sensor / heater_pin (extruder + heated_bed) also
+// surface on the temperature chart via the temperature_sensors[] +
+// tools[] cross-reference in hardware.json. The ToolPanel renders
+// one card per tool, dispatched by ``type``.
 
-import { defineStore } from "pinia";
-import { ref } from "vue";
+import { defineStore, storeToRefs } from "pinia";
+import { computed, onScopeDispose, ref } from "vue";
 
+import { eventBus } from "../../core/modules/event-bus.js";
 import { useConsoleStore } from "../../stores/console.js";
 import manifest from "./manifest.js";
 
-// Mock tools array (the dynamic config implementation lands later).
-// Seeds cover both supported tool types so the panel always has
-// something to render.
-const SEED_TOOLS = [
-  {
-    id: "spindle_main",
-    name: "Main Spindle",
-    type: "spindle",
-    // Live reading the panel would receive via telemetry in a
-    // future revision. Hard-coded to 0 today.
-    actual_rpm: 0,
-    target_rpm: 0,
-    set_speed: 10000,
-  },
-  {
-    id: "extruder_1",
-    name: "Extruder E0",
-    type: "extruder",
-    set_speed: 300,
-    // Index into the logarithmic distance array defined in
-    // ``ToolPanel.vue``. Index 2 ⇒ 10 mm.
-    distance_index: 2,
-  },
-];
+const TOPIC = "state.tools";
+
+// 1 s cadence matches the temperature module; the chart shape is
+// not configurable on the tools panel so a constant is sufficient.
+const DEFAULT_POLL_MS = 1_000;
 
 // ``module_`` prefix prevents collisions with legacy top-level
 // stores. See ``.agent/STATE.md`` § 2.
@@ -69,13 +78,108 @@ async function postJson(url, body) {
 
 export const useToolStore = defineStore(STORE_ID, () => {
   // --- reactive state ------------------------------------------- //
-  // Mirror the SEED_TOOLS array with ``ref`` so future revisions
-  // can call ``tools.value = await fetchConfig()`` to swap in
-  // dynamic configuration without rewriting the panel.
   /** @type {import('vue').Ref<Array<Record<string, any>>>} */
-  const tools = ref(SEED_TOOLS.map((tool) => ({ ...tool })));
+  const tools = ref([]);
+  // Currently-selected tool id. ``null`` until the first ingest
+  // populates ``tools``; the panel picks the first tool as the
+  // default at that point. See ``ingest`` below.
+  const selectedToolId = ref(/** @type {string | null} */ (null));
+  const pollMs = ref(DEFAULT_POLL_MS);
+
+  // --- non-reactive handles ------------------------------------- //
+  let pollHandle = null;
+  let busUnsub = null;
+  // Tracks whether the store has been started by ``onMounted`` so
+  // hot-reloads / double-mounts don't accumulate intervals.
+  let running = false;
+
+  // --- computed ------------------------------------------------- //
+
+  // The tool the panel should render. ``null`` until at least one
+  // tool is available or while the operator's selection points at a
+  // tool the backend dropped.
+  const selectedTool = computed(() => {
+    if (!selectedToolId.value) return null;
+    return tools.value.find((t) => t.id === selectedToolId.value) || null;
+  });
 
   // --- actions -------------------------------------------------- //
+
+  /**
+   * Update the active tool. The chip row in ``ToolPanel.vue``
+   * calls this on click; passing an unknown id is a no-op for the
+   * ``selectedTool`` getter.
+   *
+   * @param {string} id
+   */
+  function setSelectedToolId(id) {
+    selectedToolId.value = id;
+  }
+
+  /**
+   * Pull the live tool state from the backend and ingest it. The
+   * ``GET /api/v1/modules/tools/tools`` endpoint returns
+   * ``{ tools: [...] }`` (canonical) — ``ingest`` also tolerates
+   * ``{ items: [...] }`` or a raw array so the loader doesn't have
+   * to be rewritten when the backend shape is finalised.
+   */
+  async function refreshTools() {
+    try {
+      const data = await fetch(
+        `/api/v1/modules/${manifest.id}/tools`,
+      ).then(async (r) => (r.ok ? r.json() : null));
+      if (data) ingest(data);
+    } catch (_) {
+      // Best-effort — keep the last known list visible.
+    }
+  }
+
+  /**
+   * Normalise the backend payload and merge it into ``tools``.
+   * Accepts a raw array, ``{ tools: [...] }``, or ``{ items: [...]
+   * }``; auto-selects the first tool when the list grows from
+   * empty so the panel has something to render on first arrival.
+   *
+   * @param {*} payload
+   */
+  function ingest(payload) {
+    if (!payload) return;
+    let next = null;
+    if (Array.isArray(payload)) {
+      next = payload;
+    } else if (payload.tools && Array.isArray(payload.tools)) {
+      next = payload.tools;
+    } else if (payload.items && Array.isArray(payload.items)) {
+      next = payload.items;
+    }
+    if (!next) return;
+    // Shallow-clone each row so the store never mutates the
+    // upstream payload in place. Telemetry payloads are
+    // deep-frozen by the event bus.
+    tools.value = next.map((tool) => ({ ...tool }));
+    // Auto-pick the first tool only when nothing is selected yet —
+    // never override an explicit operator choice.
+    if (!selectedToolId.value && tools.value.length > 0) {
+      selectedToolId.value = tools.value[0].id;
+    }
+  }
+
+  function start() {
+    if (running) return;
+    running = true;
+    // Fetch tool state immediately so the panel isn't empty on
+    // first render, then poll at the configured cadence.
+    refreshTools();
+    pollHandle = setInterval(refreshTools, pollMs.value);
+  }
+
+  function stop() {
+    running = false;
+    if (pollHandle !== null) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+  }
 
   /**
    * Send a spindle command and optimistically mirror the new
@@ -109,7 +213,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Send an extrude / retract command. The panel computes the
+   * Send an extrude / retract command. The card computes the
    * signed distance from its logarithmic slider so the store
    * stays free of UI magic numbers.
    *
@@ -136,12 +240,74 @@ export const useToolStore = defineStore(STORE_ID, () => {
     }
   }
 
+  /**
+   * Set the target temperature for a heating tool (extruder /
+   * heated_bed). Mirrors the temperature module's per-sensor
+   * ``POST /api/v1/modules/temperature/sensors/{name}/target``
+   * contract, but keyed on tool id rather than sensor name — the
+   * temperature module owns the sensor channel, the tools module
+   * owns the operator-facing target command.
+   *
+   * @param {string} toolId
+   * @param {number} target Degrees Celsius (0 turns the heater off).
+   */
+  async function sendToolTarget(toolId, target) {
+    try {
+      await postJson(
+        `/api/v1/modules/tools/tools/${encodeURIComponent(toolId)}/target`,
+        {
+          tool_id: toolId,
+          target,
+        },
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : String(err ?? "unknown error");
+      useConsoleStore().error(`Tool target failed: ${message}`);
+    }
+  }
+
+  // The bus delivers deep-frozen payloads; we shallow-clone before
+  // storing. See ``.agent/STATE.md`` § 3.
+  busUnsub = eventBus.subscribe(TOPIC, (_topic, payload) => {
+    ingest(payload);
+  });
+
+  // Auto-stop when the pinia scope goes away (component unmount,
+  // app teardown) so the polling interval cannot leak across
+  // navigation. See ``.agent/STATE.md`` § 10.
+  onScopeDispose(() => {
+    stop();
+    if (busUnsub) {
+      busUnsub();
+      busUnsub = null;
+    }
+  });
+
   // Public surface.
   return {
     tools,
+    selectedToolId,
+    selectedTool,
+    pollMs,
+    setSelectedToolId,
+    ingest,
+    start,
+    stop,
+    refreshTools,
     sendSpindleCommand,
     sendExtruderCommand,
+    sendToolTarget,
   };
 });
+
+/**
+ * Convenience wrapper around ``storeToRefs`` so callers can
+ * destructure the reactive state without losing reactivity.
+ */
+export function useToolRefs() {
+  const store = useToolStore();
+  return { store, ...storeToRefs(store) };
+}
 
 export default useToolStore;

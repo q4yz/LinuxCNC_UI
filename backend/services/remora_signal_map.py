@@ -121,46 +121,59 @@ def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
     """Build (sp_index_by_id, pv_index_by_id) from a parsed payload.
 
     The ordering mirrors the compiler's ``config_txt_generator``:
-    heater PWMs and their associated temperature sensors come
-    first (alphabetical by canonical heater id), then standalone
-    fan PWMs (alphabetical). This is the exact contract the HAL's
+    heating-tool PWMs and their associated temperature sensors come
+    first (alphabetical by canonical tool id), then standalone fan
+    PWMs (alphabetical). This is the exact contract the HAL's
     ``net pwm_heater_bed_sp => remora.SP.0`` lines rely on, so any
     change here must be matched by the compiler.
+
+    Only the heating tools (``type`` of ``extruder`` or
+    ``heated_bed``) participate in SP/PV indexing — spindle tools
+    are wired through their own HAL pins / signal aliases and don't
+    consume a Remora SP channel.
     """
     sp: dict[str, int] = {}
     pv: dict[str, int] = {}
     sp_idx = 0
     pv_idx = 0
 
-    heaters = payload.get("heaters") or []
-    if isinstance(heaters, list):
+    tools = payload.get("tools") or []
+    if isinstance(tools, list):
         # Canonical name order — match the compiler's sorted iteration.
-        sorted_heaters = sorted(
-            (h for h in heaters if isinstance(h, dict)),
-            key=lambda h: h.get("id", ""),
+        # Filter to the heating subset: tools with a ``heater_pin``
+        # and a heating ``type``. Spindle / laser entries lack both
+        # and don't claim an SP channel.
+        sorted_heating_tools = sorted(
+            (
+                t for t in tools
+                if isinstance(t, dict)
+                and t.get("type") in ("extruder", "heated_bed")
+                and t.get("heater_pin")
+            ),
+            key=lambda t: t.get("id", ""),
         )
         sensors_by_id: dict[str, dict] = {}
         for s in payload.get("temperature_sensors") or []:
             if isinstance(s, dict) and isinstance(s.get("id"), str):
                 sensors_by_id[s["id"]] = s
-        for heater in sorted_heaters:
-            heater_id = heater.get("id")
-            if not isinstance(heater_id, str) or not heater_id:
+        for tool in sorted_heating_tools:
+            tool_id = tool.get("id")
+            if not isinstance(tool_id, str) or not tool_id:
                 continue
-            sp[heater_id] = sp_idx
+            sp[tool_id] = sp_idx
             sp_idx += 1
-            # Match the sensor by the heater's ``sensor`` field if
+            # Match the sensor by the tool's ``sensor`` field if
             # available, else by the canonical strip-prefix form
             # (``heater_bed`` -> ``bed``).
-            sensor_id = heater.get("sensor")
+            sensor_id = tool.get("sensor")
             if isinstance(sensor_id, str) and sensor_id in sensors_by_id:
                 pv[sensor_id] = pv_idx
                 pv_idx += 1
             else:
                 canonical_sensor = (
-                    heater_id[len("heater_"):]
-                    if heater_id.startswith("heater_")
-                    else heater_id
+                    tool_id[len("heater_"):]
+                    if tool_id.startswith("heater_")
+                    else tool_id
                 )
                 if canonical_sensor in sensors_by_id:
                     pv[canonical_sensor] = pv_idx
@@ -179,9 +192,9 @@ def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
         # distinguishes them: ``fan_<heater>`` = piggy-back,
         # ``fan`` / ``fan_<named>`` = standalone.
         seen_piggy = {
-            h.get("id") + "_fan"
-            for h in sorted_heaters
-            if isinstance(h, dict)
+            t.get("id") + "_fan"
+            for t in sorted_heating_tools
+            if isinstance(t, dict)
         }
         for fan in sorted_fans:
             fan_id = fan.get("id")

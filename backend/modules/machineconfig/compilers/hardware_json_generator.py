@@ -1,7 +1,7 @@
 """Generate ``hardware.json`` — the backend's high-level hardware overview.
 
 ``hardware.json`` is the canonical record of every pin, stepper,
-driver, heater, sensor, endstop, and fan the backend knows about.
+driver, tool, sensor, endstop, and fan the backend knows about.
 It is derived from the parsed Klipper graph at compile time and
 consumed by everything that needs to query the hardware
 (deployment tools, the console, future Remora firmware flasher)
@@ -20,6 +20,15 @@ becomes ``id: "stepper_x"``; ``[heater_bed]`` becomes
 ``id: "heater_bed"``. The same convention applies to switches —
 ``[endstop_switch X_MIN]`` produces three records (one per role)
 with the same ``endstop_id`` (``"X_MIN"``) and distinct record ids.
+
+The ``tools`` list is the operator-facing view: every ``[extruder]``,
+``[heater_bed]``, ``[heater_generic]``, ``[spindle]``, and
+``[spindle_analog]`` becomes one Tool entry with the appropriate
+``type`` discriminator. Spindle tools expose their HAL hooks
+(signal aliases for the digital path, ``pwm_pin`` / ``enable_pin``
+for the analog path); extruder / heated_bed tools expose their
+heater fields plus references into the separate ``temperature_sensors``
+and ``fans`` lists.
 """
 
 from __future__ import annotations
@@ -199,25 +208,104 @@ def _endstop_inline_view(endstop_section: str, pos: float | None, endstop_type: 
 
 
 # ---------------------------------------------------------------------- #
-# Heater payload                                                          #
+# Tool payload                                                            #
 # ---------------------------------------------------------------------- #
 
 
-def _heater_payload(heater_section: str, h) -> dict[str, Any]:
-    """Build a heater entry's payload dict.
+def _friendly_tool_name(tool_id: str, tool_type: str) -> str:
+    """Return the operator-facing chip label for a tool entry.
 
-    The id is the canonical heater id from :func:`_heater_id`. The
-    ``sensor`` and ``fan`` references are string ids that the
-    cross-reference validator resolves into ``temperature_sensors``
-    and ``fans`` respectively.
+    The frontend ToolPanel renders this string verbatim in the
+    header chip row. The id remains the canonical machine handle;
+    the name is purely cosmetic and can be edited later via a
+    profile override without touching the graph.
     """
+    # Strip the ``heater_`` prefix that the canonical id carries so
+    # the operator sees ``bed`` rather than ``heater_bed`` on the
+    # chip. Spindle tools get a parenthetical so two spindles on
+    # one machine are visually distinguishable.
+    bare = tool_id
+    if bare.startswith("heater_"):
+        bare = bare[len("heater_"):]
+    if tool_type == "spindle_analog":
+        return f"{bare.replace('_', ' ').title()} (Analog)"
+    if tool_type == "spindle_digital":
+        return f"{bare.replace('_', ' ').title()} (Digital)"
+    return bare.replace("_", " ").title()
+
+
+def _tool_payload_from_heater(heater_section: str, h) -> dict[str, Any]:
+    """Build a Tool entry from a Klipper heater-shaped section.
+
+    ``[extruder]`` becomes ``type: "extruder"``; everything else
+    (``[heater_bed]``, ``[heater_generic]``, ...) becomes
+    ``type: "heated_bed"``. The id stays the canonical
+    ``_heater_id`` form so existing references (PID alias mapping,
+    HAL wiring) keep working unchanged.
+
+    The ``sensor`` and ``fan`` fields are string references the
+    cross-reference validator resolves into ``temperature_sensors``
+    and ``fans`` respectively — neither record is embedded in the
+    tool entry.
+    """
+    is_extruder = heater_section == "extruder" or heater_section.startswith("extruder")
+    tool_type = "extruder" if is_extruder else "heated_bed"
+    tool_id = _heater_id(heater_section)
     return {
-        "id": _heater_id(heater_section),
+        "id": tool_id,
+        "name": _friendly_tool_name(tool_id, tool_type),
+        "type": tool_type,
         "sensor": _temperature_sensor_id(heater_section),
         "heater_pin": h.heater_pin,
+        "fan": _fan_id(heater_section) if h.heater_pin else None,
         "control": h.control,
         "min_temp": h.min_temp,
         "max_temp": h.max_temp,
+    }
+
+
+def _tool_payload_from_spindle_analog(spindle) -> dict[str, Any]:
+    """Build a Tool entry for the ``[spindle_analog]`` section.
+
+    Analog spindle — no RPM feedback path. The ToolPanel renders
+    the analog card (Set Speed + Enable / Disable) and the HAL
+    generator wires ``pwm_pin`` + ``enable_pin`` onto a Remora PWM
+    module.
+    """
+    return {
+        "id": "spindle_analog",
+        "name": _friendly_tool_name("spindle_analog", "spindle_analog"),
+        "type": "spindle_analog",
+        "pwm_pin": spindle.pwm_pin,
+        "enable_pin": spindle.enable_pin,
+        "min_rpm": spindle.min_rpm,
+        "max_rpm": spindle.max_rpm,
+    }
+
+
+def _tool_payload_from_spindle_digital(spindle) -> dict[str, Any]:
+    """Build a Tool entry for the ``[spindle]`` section.
+
+    Digital spindle — carries the HAL signal aliases the vfdmod
+    driver expects. The ToolPanel renders the digital card
+    (Actual RPM + Target RPM + Forward / Reverse / Stop) and the
+    HAL generator emits the live net lines for populated signals,
+    with ``# TODO: manual hookup`` placeholders for empty ones.
+    """
+    return {
+        "id": "spindle_digital",
+        "name": _friendly_tool_name("spindle_digital", "spindle_digital"),
+        "type": "spindle_digital",
+        "min_rpm": spindle.min_rpm,
+        "max_rpm": spindle.max_rpm,
+        "signal_at_speed": spindle.at_speed1_signal,
+        "signal_forward": None,
+        "signal_reverse": None,
+        "signal_on": spindle.is_connected_signal,
+        "signal_pwm": spindle.target_frequency_signal,
+        "signal_istop": None,
+        "signal_estop": spindle.last_error_signal,
+        "signal_vfd_enable": None,
     }
 
 
@@ -492,18 +580,26 @@ def build_hardware_json(
             _axis_payload(letter, stepper_ids, inline_views_by_letter[letter])
         )
 
-    # Heater records — one per heater-shaped section.
-    heater_records: list[dict[str, Any]] = []
+    # Tool records — one per Klipper heater-shaped section plus one
+    # per spindle variant. The temperature_sensors[] and fans[]
+    # top-level lists keep getting seeded from heater-shaped
+    # sections so the chart and the runtime fan registry don't
+    # regress.
+    tool_records: list[dict[str, Any]] = []
     temperature_sensor_records: list[dict[str, Any]] = []
     fan_records: list[dict[str, Any]] = []
     for heater_section, heater in graph.heaters.items():
-        heater_records.append(_heater_payload(heater_section, heater))
+        tool_records.append(_tool_payload_from_heater(heater_section, heater))
         if heater.sensor_pin:
             temperature_sensor_records.append(
                 _temperature_sensor_payload(heater_section, heater)
             )
         if heater.heater_pin:
             fan_records.append(_fan_payload(heater_section, heater))
+    if graph.spindle_analog is not None:
+        tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
+    if graph.spindle_digital is not None:
+        tool_records.append(_tool_payload_from_spindle_digital(graph.spindle_digital))
 
     # Standalone fan sections (``[fan]``, ``[fan_generic foo]``) become
     # their own ``fans`` records keyed by the canonical id. The id is
@@ -530,7 +626,7 @@ def build_hardware_json(
         "steppers": stepper_records,
         "drivers": driver_records,
         "endstops": endstop_records,
-        "heaters": heater_records,
+        "tools": tool_records,
         "temperature_sensors": temperature_sensor_records,
         "fans": fan_records,
     }
@@ -540,12 +636,12 @@ def build_hardware_json(
 
     logger.info(
         "hardware.json v2: %d axes, %d steppers, %d drivers, %d endstops, "
-        "%d heaters, %d temperature_sensors, %d fans",
+        "%d tools, %d temperature_sensors, %d fans",
         len(axes_records),
         len(stepper_records),
         len(driver_records),
         len(endstop_records),
-        len(heater_records),
+        len(tool_records),
         len(temperature_sensor_records),
         len(fan_records),
     )

@@ -25,7 +25,7 @@
 // widget itself reads from the live endpoint so the operator sees
 // what's actually in the program root at load time.
 
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineStore, SystemState } from "../stores/machineStore.js";
 import {useConsoleStore} from "../stores/console.js";
@@ -68,6 +68,64 @@ async function fetchFiles() {
 
 onMounted(() => {
   fetchFiles()
+  // Kick off the 1 Hz progress poll immediately so the operator
+  // sees a populated bar on the first frame after a ``run``, not
+  // one second later. The interval is torn down in
+  // ``onBeforeUnmount`` so route changes do not leak handles.
+  pollProgress()
+  progressPollHandle = setInterval(pollProgress, PROGRESS_POLL_MS)
+})
+
+// --- Progress polling ----------------------------------------------------
+//
+// The dashboard widget reads ``current_line`` and ``total_lines`` from
+// a dedicated ``GET /api/v1/modules/program/progress`` endpoint
+// rather than the 10 Hz WebSocket telemetry stream. Real LinuxCNC's
+// ``stat`` exposes ``current_line`` / ``motion_line`` but never a
+// total; the backend caches the file's line count at ``program_open``
+// time so a 1 Hz poll is enough to drive the bar. The other
+// telemetry fields (state, position, temperatures, errors) still
+// flow through the WebSocket — only the line counters moved.
+const PROGRESS_POLL_MS = 1000
+// ``progress`` mirrors the latest ``/progress`` payload so the
+// template stays a pure ref binding. Initialised to zeros so the
+// bar renders the empty state before the first response lands.
+const progress = ref({
+  current_line: 0,
+  motion_line: 0,
+  total_lines: 0,
+  file: '',
+  interp_state: 1, // INTERP_IDLE
+})
+let progressPollHandle = null
+
+async function pollProgress() {
+  // Best-effort: a transient network blip must not throw away the
+  // previous snapshot. We only overwrite the ref on a successful
+  // response so the operator still sees the last known line number
+  // until the next tick resolves.
+  try {
+    const snapshot = await ModulesProgramService.getProgramProgress()
+    if (snapshot && typeof snapshot === 'object') {
+      progress.value = {
+        current_line: Number(snapshot.current_line) || 0,
+        motion_line: Number(snapshot.motion_line) || 0,
+        total_lines: Number(snapshot.total_lines) || 0,
+        file: typeof snapshot.file === 'string' ? snapshot.file : '',
+        interp_state: Number(snapshot.interp_state) || 1,
+      }
+    }
+  } catch (_err) {
+    // Silent — the next tick will retry. Logging every failure
+    // would flood the console during a LinuxCNC restart.
+  }
+}
+
+onBeforeUnmount(() => {
+  if (progressPollHandle !== null) {
+    clearInterval(progressPollHandle)
+    progressPollHandle = null
+  }
 })
 
 // --- Lifecycle state -----------------------------------------------------
@@ -122,8 +180,19 @@ const isLoading = ref(false);
 
 // Pretty-print the progress as a one-decimal percentage so the bar
 // label does not dance between ``33.3333%`` and ``33.3334%`` on
-// every telemetry tick.
-const progressPercent = computed(() => printProgress.value.toFixed(1));
+// every telemetry tick. The denominator comes from the dedicated
+// ``/progress`` endpoint (which knows ``total_lines`` from the
+// backend's load-time cache); the facade's ``printProgress`` getter
+// still uses the legacy WebSocket fields that no longer carry line
+// counters, so we compute the fraction locally.
+const progressFraction = computed(() => {
+  const total = Number(progress.value.total_lines);
+  const current = Number(progress.value.current_line);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  if (!Number.isFinite(current) || current < 0) return 0;
+  return Math.min(100, (current / total) * 100);
+});
+const progressPercent = computed(() => progressFraction.value.toFixed(1));
 
 // Cap the recent-files list to the five newest G-code / NGC
 // entries. ``files`` is the ``FileInfo`` shape returned by
@@ -416,12 +485,12 @@ async function stopPrint() {
           <div
             class="h-full transition-all duration-300"
             :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
-            :style="{ width: `${printProgress}%` }"
+            :style="{ width: `${progressFraction}%` }"
           ></div>
         </div>
         <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono">
-          <span>Line {{ status.current_line }}</span>
-          <span>of {{ status.total_lines || "?" }}</span>
+          <span>Line {{ progress.current_line }}</span>
+          <span>of {{ progress.total_lines || "?" }}</span>
         </div>
       </div>
 

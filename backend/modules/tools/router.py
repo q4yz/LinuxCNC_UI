@@ -1,22 +1,31 @@
 """HTTP router for the tools module.
 
 The router is mounted by the registry under
-``/api/v1/modules/tools``. It exposes two endpoints that drive the
-machine via MDI commands:
+``/api/v1/modules/tools``. It exposes four endpoints — two that
+drive the machine via MDI commands, two that surface the
+operator-facing tool list:
 
+* ``GET  /tools`` — list every tool the active ``hardware.json``
+  declares, overlaid with runtime state (actual / target temp for
+  heating tools, actual RPM for digital spindles). The frontend
+  ToolPanel polls this every second.
+* ``POST /tools/{id}/target`` — set the target temperature for a
+  heating tool (extruder / heated_bed). The router looks up the
+  tool's ``sensor`` reference and dispatches a ``set_temperature``
+  to the hardware layer.
 * ``POST /spindle`` — start / reverse / stop a spindle using the
   canonical ``M3 S{speed}`` / ``M4 S{speed}`` / ``M5`` codes.
 * ``POST /extruder`` — extrude or retract material on a 3D-printer
   extruder axis using relative (``G91``) ``G1 E{dist} F{speed}``
   moves, restoring absolute (``G90``) mode afterwards.
 
-Both endpoints share the same safety preamble: switch the task into
-``MODE_MDI`` first (blocking until the mode change is acknowledged)
-so the subsequent ``mdi`` call is accepted by the interpreter. The
-MDI dispatch itself is non-blocking (``wait_complete(timeout=0)``)
-because the operator's tool panel is fire-and-forget — multiple
-consecutive presses should queue cleanly rather than stall on a
-hard wait.
+The two MDI endpoints share the same safety preamble: switch the
+task into ``MODE_MDI`` first (blocking until the mode change is
+acknowledged) so the subsequent ``mdi`` call is accepted by the
+interpreter. The MDI dispatch itself is non-blocking
+(``wait_complete(timeout=0)``) because the operator's tool panel
+is fire-and-forget — multiple consecutive presses should queue
+cleanly rather than stall on a hard wait.
 
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
@@ -25,11 +34,13 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
+from typing import List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc
+from hardware import execute_sync_cmd, linuxcnc, linuxcnc_mock
+from services.tools_loader import load_active_tools
 
 logger = logging.getLogger("backend.modules.tools.router")
 
@@ -127,6 +138,71 @@ class ToolCommandResponse(BaseModel):
     tool_id: str = Field(
         ...,
         description="Echo of the tool id from the request body.",
+    )
+
+
+# ---------------------------------------------------------------------- #
+# Tool list / target                                                      #
+# ---------------------------------------------------------------------- #
+
+
+class ToolsResponse(BaseModel):
+    """Response body for ``GET /tools``.
+
+    Mirrors the canonical shape the frontend's ``toolStore.ingest``
+    accepts: ``{ tools: [...] }`` with each entry carrying the
+    hardware.json ``tools[]`` record plus any runtime-state fields
+    (``actual`` / ``target`` for heating tools, ``actual_rpm`` for
+    digital spindles).
+    """
+
+    tools: List[dict] = Field(
+        default_factory=list,
+        description="Operator-facing tool list, ordered as declared in hardware.json.",
+    )
+
+
+class SetToolTargetRequest(BaseModel):
+    """Request body for ``POST /tools/{id}/target``.
+
+    The ``tool_id`` field is accepted but ``{id}`` from the URL is
+    canonical (same contract as the temperature module's
+    ``POST /sensors/{name}/target``). The target range mirrors
+    the temperature module's clamp (0–400 °C) since every heating
+    tool ends up dispatching ``set_temperature`` under the hood.
+    """
+
+    tool_id: str = Field(
+        ...,
+        min_length=1,
+        description="Logical tool identifier (e.g., 'heater_extruder').",
+    )
+    target: float = Field(
+        ...,
+        ge=0.0,
+        le=400.0,
+        description="Target temperature in Celsius (0–400 °C).",
+    )
+
+
+class SetToolTargetResponse(BaseModel):
+    """Response body for ``POST /tools/{id}/target``."""
+
+    status: str = Field(
+        default="success",
+        description="Outcome reported by the hardware layer.",
+    )
+    tool_id: str = Field(
+        ...,
+        description="Echo of the tool id from the URL.",
+    )
+    target: float = Field(
+        ...,
+        description="Echo of the target value that was applied.",
+    )
+    sensor: str = Field(
+        ...,
+        description="Temperature sensor id the value was dispatched to.",
     )
 
 
@@ -243,11 +319,178 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
     return ToolCommandResponse(status="success", command=move, tool_id=cmd.tool_id)
 
 
+# ---------------------------------------------------------------------- #
+# Tool list endpoint                                                       #
+# ---------------------------------------------------------------------- #
+
+
+# Tools that surface runtime heat state (``actual`` / ``target``)
+# read from ``_machine_state.temperatures``. Spindle / laser
+# tools are absent from that dict.
+_HEATING_TOOL_TYPES = frozenset({"extruder", "heated_bed"})
+
+
+def _overlay_runtime_state(tool: dict) -> dict:
+    """Augment a hardware.json tool record with runtime telemetry.
+
+    Reads from the mock's ``_machine_state`` under the lock so the
+    read is consistent — a polling caller never sees a half-updated
+    dict. Returns a **shallow copy** of the input so the helper
+    cannot accidentally mutate the loader's source list.
+
+    * Heating tools (extruder + heated_bed with a non-null
+      ``sensor``): overlay ``actual`` / ``target`` from
+      ``_machine_state.temperatures[tool.sensor]``. Defaults to
+      ``0.0`` / ``0.0`` when the sensor hasn't been seeded yet
+      (e.g. test boot without a hardware.json that names it).
+    * ``spindle_digital``: overlay ``actual_rpm`` from
+      ``_machine_state.spindle_actual[tool.id]``. Defaults to
+      ``0`` when no telemetry has arrived yet.
+    * All other tools (spindle_analog, laser): pass through
+      unchanged.
+    """
+    out = dict(tool)
+    if tool.get("type") in _HEATING_TOOL_TYPES:
+        sensor_id = tool.get("sensor")
+        if isinstance(sensor_id, str) and sensor_id:
+            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
+                reading = linuxcnc_mock._machine_state.temperatures.get(
+                    sensor_id,
+                )
+            if reading:
+                out["actual"] = reading.get("actual", 0.0)
+                out["target"] = reading.get("target", 0.0)
+            else:
+                out["actual"] = 0.0
+                out["target"] = 0.0
+    elif tool.get("type") == "spindle_digital":
+        tool_id = tool.get("id")
+        if isinstance(tool_id, str) and tool_id:
+            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
+                reading = linuxcnc_mock._machine_state.spindle_actual.get(
+                    tool_id,
+                )
+            out["actual_rpm"] = reading.get("actual", 0) if reading else 0
+    return out
+
+
+@router.get(
+    "/tools",
+    response_model=ToolsResponse,
+    summary="List Operator-Facing Tools",
+    description=(
+        "Return the ``tools[]`` array from the active "
+        "``hardware.json``, augmented with the current runtime "
+        "state for each entry: ``actual`` / ``target`` temperature "
+        "for heating tools (extruder, heated_bed), ``actual_rpm`` "
+        "for digital spindles. The ToolPanel polls this endpoint "
+        "every second."
+    ),
+    operation_id="listTools",
+)
+def list_tools() -> ToolsResponse:
+    """List every tool the active ``hardware.json`` declares.
+
+    Returns an empty list when the file is missing — mirrors the
+    temperature module's empty-state behaviour so the ToolPanel
+    renders the "No tools configured yet" placeholder instead of
+    failing to mount.
+    """
+    raw = load_active_tools()
+    overlaid = [_overlay_runtime_state(tool) for tool in raw]
+    return ToolsResponse(tools=overlaid)
+
+
+# ---------------------------------------------------------------------- #
+# Tool target endpoint                                                     #
+# ---------------------------------------------------------------------- #
+
+
+@router.post(
+    "/tools/{tool_id}/target",
+    response_model=SetToolTargetResponse,
+    summary="Set Tool Target Temperature",
+    description=(
+        "Set the target temperature for a heating tool "
+        "(extruder / heated_bed). The router looks up the tool's "
+        "``sensor`` reference and dispatches ``set_temperature`` "
+        "to the hardware layer — the sensor channel itself is "
+        "owned by the temperature module."
+    ),
+    operation_id="setToolTarget",
+)
+def set_tool_target(
+    tool_id: str, req: SetToolTargetRequest
+) -> SetToolTargetResponse:
+    """Set the target temperature for ``tool_id``.
+
+    The URL's ``{tool_id}`` is canonical — a body ``tool_id``
+    mismatch is logged at DEBUG and ignored. Returns ``404`` when
+    the tool is not declared in the active ``hardware.json`` so a
+    frontend typo surfaces as a structured error instead of a
+    silent no-op. Returns ``400`` when the tool exists but is not
+    a heating tool (no ``sensor`` reference).
+    """
+    if not tool_id or not isinstance(tool_id, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Tool id must be a non-empty string",
+        )
+    if tool_id != req.tool_id:
+        logger.debug(
+            "tool_id in body (%r) differs from URL (%r); URL wins",
+            req.tool_id,
+            tool_id,
+        )
+
+    raw_tools = load_active_tools()
+    tool = next((t for t in raw_tools if t.get("id") == tool_id), None)
+    if tool is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown tool id: {tool_id!r}",
+        )
+    sensor_id = tool.get("sensor")
+    if not isinstance(sensor_id, str) or not sensor_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Tool {tool_id!r} has no temperature sensor "
+                "(spindle / laser tools cannot accept a target)"
+            ),
+        )
+
+    try:
+        execute_sync_cmd("set_temperature", 0, sensor_id, req.target)
+    except HTTPException:
+        # ``execute_sync_cmd`` already produces actionable HTTP
+        # errors; surface them verbatim.
+        raise
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.error(
+            "set_temperature(%s, %s) failed: %s",
+            sensor_id,
+            req.target,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return SetToolTargetResponse(
+        status="success",
+        tool_id=tool_id,
+        target=req.target,
+        sensor=sensor_id,
+    )
+
+
 __all__ = [
     "router",
     "SpindleCommand",
     "ExtruderCommand",
     "ToolCommandResponse",
+    "ToolsResponse",
+    "SetToolTargetRequest",
+    "SetToolTargetResponse",
     "M3_FORWARD",
     "M4_BACKWARD",
     "M5_STOP",

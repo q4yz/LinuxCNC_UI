@@ -54,6 +54,25 @@ let resizeObserver
 const machineLimits = ref(null)
 const toolpathMeta = ref({ filename: '', moves: 0 })
 
+// Operator-facing toggles.
+const props = defineProps({
+  // Whether the rendered toolpath should be offset by the
+  // interpreter's active work origin (``g5x_offset`` plus the
+  // optional ``g92_offset`` additive origin). Default ``true`` —
+  // most operators expect the toolpath to land where the cut
+  // actually happens, not at the literal G-code coordinates.
+  applyWorkingOffset: { type: Boolean, default: true },
+})
+
+// Formatting helper for the overlay — ``g5x_offset`` /
+// ``g92_offset`` are 9-element per-axis arrays on the live
+// stat. We surface the X/Y/Z trio the operator cares about.
+const formatOffset = (axis) => {
+  if (!Array.isArray(axis) || axis.length < 3) return '0,0,0'
+  const fmt = (n) => (Number.isFinite(n) ? n.toFixed(2) : '0')
+  return `${fmt(axis[0])},${fmt(axis[1])},${fmt(axis[2])}`
+}
+
 // Tracking helpers (non-reactive — the meshes themselves own Three state)
 let lastLoadedFilename = ''
 
@@ -156,13 +175,13 @@ const initThreeJS = () => {
   controls.dampingFactor = 0.05
 
   // --- Environment Helpers (Inside cncSpace) ---
-  // GridHelper (Size: 500mm, Divisions: 50 -> 10mm squares)
-  // GridHelper is flat on XZ by default in Three.js, but since we rotated cncSpace,
-  // we need to rotate the GridHelper so it lies on the CNC XY plane.
-  const gridHelper = new THREE.GridHelper(500, 50, 0x444444, 0x222222)
-  gridHelper.rotation.x = Math.PI / 2
-  cncSpace.add(gridHelper)
-
+  // The floor grid is built dynamically from the machine's active
+  // limits in ``setMachineLimits`` once the hardware.json fetch
+  // has resolved. A static 500 mm grid was misleading on
+  // machines with smaller work envelopes (a 200 mm bed showed
+  // 300 mm of empty grid outside the outline). The GridHelper
+  // instance lives only as long as the limits that produced it.
+  //
   // AxesHelper (Size: 100mm)
   // Red = X, Green = Y (Three's Y is our Z now), Blue = Z (Three's Z is our -Y now)
   const axesHelper = new THREE.AxesHelper(100)
@@ -247,6 +266,23 @@ const setupWatchers = () => {
       clearToolpath()
     }
   })
+
+  // Re-render the toolpath when the work origin shifts so the
+  // rendered cut line tracks where the operator's G54 / G92
+  // actually places it. The watcher is deep so a single array
+  // mutation (e.g. ``set g5x_offset[0] = -47``) triggers a rebuild.
+  watch(
+    () => [
+      store.status.g5x_offset && store.status.g5x_offset.slice(0, 3),
+      store.status.g92_offset && store.status.g92_offset.slice(0, 3),
+    ],
+    async () => {
+      if (lastLoadedFilename) {
+        await loadProgramToolpath(lastLoadedFilename)
+      }
+    },
+    { deep: true },
+  )
 
   // Watch the machineconfig store's machine name as a deploy hint.
   // The ``machine-name`` endpoint reads from the active INI which
@@ -376,9 +412,8 @@ const setMachineLimits = (limits) => {
 
   // Outline rectangle on the X/Y plane. The 0.1 z-offset lifts the
   // line a hair above the CNC XY plane so it does not Z-fight with
-  // the ``GridHelper`` (which sits at z=0) when the camera is
-  // nearly head-on. cncSpace is rotated by the parent group so
-  // local Z maps to CNC Z.
+  // the floor grid below. cncSpace is rotated by the parent group
+  // so local Z maps to CNC Z.
   const OUTLINE_Z = 0.1
   const outlineGeom = new THREE.BufferGeometry()
   outlineGeom.setAttribute(
@@ -393,15 +428,31 @@ const setMachineLimits = (limits) => {
       3,
     ),
   )
-  const outlineMat = new THREE.LineBasicMaterial({ color: 0x60a5fa }) // Tailwind blue-400
+  const outlineMat = new THREE.LineBasicMaterial({ color: 0xef4444 }) // Tailwind red-500
   const outline = new THREE.LineLoop(outlineGeom, outlineMat)
   limitsGroup.add(outline)
 
-  // The diagonal "X" through the centre was removed: it sat at z=0
-  // next to the GridHelper and flickered every time the camera
-  // moved. The outline alone is enough to read the work area as a
-  // square at low angles because the four corners stay distinct in
-  // screen space.
+  // Floor grid — sized to the active work envelope, not a fixed
+  // 500 mm square. Sits 0.05 z below the outline so the outline
+  // always reads cleanly on top. GridHelper draws in its local XZ
+  // plane by default; rotating it +π/2 around X aligns it with
+  // cncSpace's local XY plane, and ``cncSpace`` then maps that to
+  // the world XY floor (the orientation the operator expects for a
+  // top-down view).
+  const GRID_Z = 0.05
+  const xSize = Math.max(xMax - xMin, 1)
+  const ySize = Math.max(yMax - yMin, 1)
+  const xDivisions = Math.max(1, Math.ceil(xSize / 10))
+  const yDivisions = Math.max(1, Math.ceil(ySize / 10))
+  const grid = new THREE.GridHelper(
+    Math.max(xSize, 1),
+    Math.max(xDivisions, 1),
+    0x334155,
+    0x334155,
+  )
+  grid.rotation.x = Math.PI / 2
+  grid.position.set((xMin + xMax) / 2, (yMin + yMax) / 2, GRID_Z)
+  limitsGroup.add(grid)
 }
 
 // ---------------------------------------------------------------------- //
@@ -552,10 +603,34 @@ const parseGcodeToolpath = (text) => {
 const replaceToolpathMesh = (segments) => {
   clearToolpathMesh()
 
+  // Apply the active work origin to every vertex so the toolpath
+  // lands where the cut actually happens. ``g5x_offset`` carries
+  // the active G54..G59.3 origin; ``g92_offset`` is the additive
+  // origin (zero unless the operator has set G92). Sum them
+  // per-axis — the result is the effective work origin the
+  // interpreter applies at runtime. ``tool_offset`` is intentionally
+  // left out of this calculation: it shifts the Z DRO display but
+  // does not move the cut.
+  let dx = 0, dy = 0, dz = 0
+  if (props.applyWorkingOffset) {
+    const g5x = store.status.g5x_offset || []
+    const g92 = store.status.g92_offset || []
+    dx = (Number(g5x[0]) || 0) + (Number(g92[0]) || 0)
+    dy = (Number(g5x[1]) || 0) + (Number(g92[1]) || 0)
+    dz = (Number(g5x[2]) || 0) + (Number(g92[2]) || 0)
+  }
+
+  const offset = new Float32Array(segments.length)
+  for (let i = 0; i < segments.length; i++) {
+    const axis = i % 3
+    const delta = axis === 0 ? dx : axis === 1 ? dy : dz
+    offset[i] = segments[i] + delta
+  }
+
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute(
     'position',
-    new THREE.Float32BufferAttribute(segments, 3),
+    new THREE.Float32BufferAttribute(offset, 3),
   )
   const material = new THREE.LineBasicMaterial({ color: 0x60a5fa })
   toolpathLine = new THREE.LineSegments(geometry, material)
@@ -605,6 +680,11 @@ const animate = () => {
           </template>
           <template v-if="toolpathMeta.moves > 0">
             · N moves {{ toolpathMeta.moves }}
+          </template>
+          <template v-if="props.applyWorkingOffset && (store.status.g5x_offset || store.status.g92_offset)">
+            · offset
+            G5x ({{ formatOffset(store.status.g5x_offset) }})
+            + G92 ({{ formatOffset(store.status.g92_offset) }})
           </template>
         </div>
       </div>

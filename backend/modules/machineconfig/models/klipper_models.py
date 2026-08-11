@@ -120,12 +120,43 @@ class Extruder(Heater):
 
 
 @dataclass(slots=True)
-class Spindle:
-    """Spindle PWM/enable mapping and speed limit."""
+class SpindleAnalog:
+    """Analog (PWM + enable) spindle.
+
+    Carries the physical MCU pins that the config.txt generator
+    turns into a Remora PWM module, plus the RPM clamp range.
+    """
 
     pwm_pin: str | None = None
     enable_pin: str | None = None
     max_rpm: float | None = None
+    min_rpm: float | None = None
+
+
+@dataclass(slots=True)
+class SpindleDigital:
+    """Digital (RS-485 / Modbus / vfdmod) spindle — hooks only.
+
+    The compiler does not wire any RS-485 transport. The
+    ``*_signal`` fields carry the symbolic HAL signal names the
+    vfdmod component and the pyvcp panel exchange (defaults
+    match the names the user already uses in vfd.ini + pyvcp).
+    Any signal left ``None`` is rendered as a ``# TODO: manual
+    hookup`` placeholder in the generated HAL so an operator can
+    wire it by hand.
+    """
+
+    max_rpm: float | None = None
+    min_rpm: float | None = None
+
+    target_rpm_signal: str | None = None
+    target_frequency_signal: str | None = None
+    rpm_out_signal: str | None = None
+    at_speed1_signal: str | None = None
+    at_speed2_signal: str | None = None
+    is_connected_signal: str | None = None
+    error_count_signal: str | None = None
+    last_error_signal: str | None = None
 
 
 @dataclass(slots=True)
@@ -197,7 +228,8 @@ class MachineConfigGraph:
     steppers: dict[str, Stepper] = field(default_factory=dict)
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
     heaters: dict[str, Heater] = field(default_factory=dict)
-    spindle: Spindle | None = None
+    spindle_analog: SpindleAnalog | None = None
+    spindle_digital: SpindleDigital | None = None
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
     fans: dict[str, Fan] = field(default_factory=dict)
     mcu: MCU | None = None
@@ -222,7 +254,8 @@ __all__ = [
     "MachineConfigGraph",
     "MCU",
     "Printer",
-    "Spindle",
+    "SpindleAnalog",
+    "SpindleDigital",
     "Stepper",
     "TMC2209",
 ]

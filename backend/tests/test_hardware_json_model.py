@@ -10,10 +10,9 @@ from modules.machineconfig.models.hardware_json_models import (
     Endstop,
     Fan,
     HardwareJson,
-    Heater,
-    HardwareJson,
     Stepper,
     TemperatureSensor,
+    Tool,
     model_validate,
     to_dict,
 )
@@ -54,7 +53,7 @@ def _minimal_payload() -> dict:
             {"id": "driver_x", "type": "TMC2209"},
         ],
         "endstops": [],
-        "heaters": [],
+        "tools": [],
         "temperature_sensors": [],
         "fans": [],
     }
@@ -79,11 +78,11 @@ class TestRootValidation:
             model_validate(payload)
 
     def test_empty_lists_are_allowed(self) -> None:
-        """A machine with no heaters, sensors, fans, or endstops is valid."""
+        """A machine with no tools, sensors, fans, or endstops is valid."""
 
         payload = _minimal_payload()
         model = model_validate(payload)
-        assert model.heaters == []
+        assert model.tools == []
         assert model.temperature_sensors == []
         assert model.fans == []
         assert model.endstops == []
@@ -157,13 +156,14 @@ class TestIdUniqueness:
 
     def test_same_id_in_different_lists_is_allowed(self) -> None:
         """The id namespace is per-list. ``stepper_x`` and
-        ``heater_x`` may coexist because they're in different
+        ``tool_x`` may coexist because they're in different
         top-level lists — the list name is the type discriminator.
         """
         payload = _minimal_payload()
-        payload["heaters"].append(
+        payload["tools"].append(
             {
                 "id": "x",
+                "type": "extruder",
                 "heater_pin": "PE3",
                 "control": "pid",
                 "sensor": "x",
@@ -174,7 +174,7 @@ class TestIdUniqueness:
         )
         # Both share the id "x" but live in different lists.
         model = model_validate(payload)
-        assert model.heaters[0].id == "x"
+        assert model.tools[0].id == "x"
         assert model.temperature_sensors[0].id == "x"
 
 
@@ -186,7 +186,7 @@ class TestIdUniqueness:
 class TestIdPattern:
     @pytest.mark.parametrize(
         "entity_key",
-        ["axes", "steppers", "drivers", "endstops", "heaters", "temperature_sensors", "fans"],
+        ["axes", "steppers", "drivers", "endstops", "tools", "temperature_sensors", "fans"],
     )
     def test_id_must_be_lowercase_snake(self, entity_key: str) -> None:
         payload = _minimal_payload()
@@ -206,9 +206,14 @@ class TestIdPattern:
                     "type": "Estop",
                 }
             )
-        elif entity_key == "heaters":
-            payload["heaters"].append(
-                {"id": "Heater-X", "heater_pin": "PE3", "control": "pid"}
+        elif entity_key == "tools":
+            payload["tools"].append(
+                {
+                    "id": "Tool-X",
+                    "type": "extruder",
+                    "heater_pin": "PE3",
+                    "control": "pid",
+                }
             )
         elif entity_key == "temperature_sensors":
             payload["temperature_sensors"].append({"id": "Sensor-X", "pin": "PA1"})
@@ -262,13 +267,14 @@ class TestCrossReferences:
         with pytest.raises(ValueError, match="references unknown stepper 'unknown_stepper'"):
             model_validate(payload)
 
-    def test_heater_sensor_reference_must_resolve_to_temperature_sensor(self) -> None:
-        """A heater referencing a non-existent temperature sensor fails."""
+    def test_tool_sensor_reference_must_resolve_to_temperature_sensor(self) -> None:
+        """A tool referencing a non-existent temperature sensor fails."""
 
         payload = _minimal_payload()
-        payload["heaters"].append(
+        payload["tools"].append(
             {
                 "id": "heater_extruder",
+                "type": "extruder",
                 "heater_pin": "PE3",
                 "control": "pid",
                 "sensor": "missing_sensor",
@@ -277,21 +283,22 @@ class TestCrossReferences:
         with pytest.raises(ValueError, match="references unknown temperature sensor"):
             model_validate(payload)
 
-    def test_heater_sensor_reference_does_not_satisfy_via_pressure_sensors(self) -> None:
-        """The validator must look up ``heater.sensor`` only in
+    def test_tool_sensor_reference_does_not_satisfy_via_pressure_sensors(self) -> None:
+        """The validator must look up ``tool.sensor`` only in
         ``temperature_sensors``, not in any future ``pressure_sensors``
         list. This tests the discriminator property: id collision
         across lists is allowed, but a wrong-list reference is
         rejected.
         """
-        # The minimum payload adds a heater with no sensor. We
+        # The minimum payload adds a tool with no sensor. We
         # simulate a future pressure_sensors list by adding it
-        # manually; the validator must not satisfy the heater's
+        # manually; the validator must not satisfy the tool's
         # ``sensor`` reference from it.
         payload = _minimal_payload()
-        payload["heaters"].append(
+        payload["tools"].append(
             {
                 "id": "heater_extruder",
+                "type": "extruder",
                 "heater_pin": "PE3",
                 "control": "pid",
                 "sensor": "pressure_extruder",
@@ -301,15 +308,16 @@ class TestCrossReferences:
         # doesn't know it. The validator fails because the id
         # isn't in ``temperature_sensors``. (If a future
         # ``pressure_sensors`` list is added, the lookup table
-        # for ``heater.sensor`` is intentionally NOT extended.)
+        # for ``tool.sensor`` is intentionally NOT extended.)
         with pytest.raises(ValueError, match="references unknown temperature sensor"):
             model_validate(payload)
 
-    def test_heater_fan_reference_must_resolve(self) -> None:
+    def test_tool_fan_reference_must_resolve(self) -> None:
         payload = _minimal_payload()
-        payload["heaters"].append(
+        payload["tools"].append(
             {
                 "id": "heater_extruder",
+                "type": "extruder",
                 "heater_pin": "PE3",
                 "control": "pid",
                 "fan": "missing_fan",

@@ -315,3 +315,52 @@ test("FileManager wraps its content in a full-page w-full h-full flex flex-col c
   // the body sits inside a flex column with an explicit height.
   assert.match(text, /flex-1[^"']*overflow-y-auto/);
 });
+
+test("ActivePrintWidget polls /progress at 1 Hz and tears down on unmount", () => {
+  // The progress bar / current-line readout now reads from a
+  // dedicated 1 Hz REST endpoint instead of the 10 Hz WebSocket
+  // telemetry stream. The widget must:
+  //
+  //   * import ``onBeforeUnmount`` so the interval can be cleared
+  //     when the dashboard route changes,
+  //   * call ``ModulesProgramService.getProgramProgress`` once on
+  //     mount and then on a 1000 ms ``setInterval``,
+  //   * ``clearInterval`` the handle in ``onBeforeUnmount`` so the
+  //     browser doesn't accumulate stale handles across hot-reloads.
+  const widgetPath = resolve(
+    repoRoot,
+    "frontend/src/components/ActivePrintWidget.vue",
+  );
+  const text = readFileSync(widgetPath, "utf-8");
+  assert.match(text, /onBeforeUnmount/);
+  assert.match(text, /ModulesProgramService\.getProgramProgress\s*\(/);
+  assert.match(text, /setInterval\s*\([\s\S]*?PROGRESS_POLL_MS\s*\)/);
+  assert.match(text, /PROGRESS_POLL_MS\s*=\s*1000\b/);
+  assert.match(text, /clearInterval\s*\(\s*progressPollHandle\s*\)/);
+});
+
+test("ActivePrintWidget renders the polled progress (not the WebSocket fields)", () => {
+  // The template must bind to the local ``progress`` ref fed by the
+  // 1 Hz poll — the WebSocket no longer carries ``current_line`` /
+  // ``total_lines`` so binding the old fields would leave the bar
+  // stuck at 0 on a real machine.
+  const widgetPath = resolve(
+    repoRoot,
+    "frontend/src/components/ActivePrintWidget.vue",
+  );
+  const text = readFileSync(widgetPath, "utf-8");
+  assert.match(
+    text,
+    /\{\{\s*progress\.current_line\s*\}\}/,
+    "template must render the polled current_line",
+  );
+  assert.match(
+    text,
+    /\{\{\s*progress\.total_lines[^}]*\}\}/,
+    "template must render the polled total_lines (with '?' fallback)",
+  );
+  // The local ``progressFraction`` computed is what drives the bar
+  // width — it uses the polled ``current_line`` / ``total_lines``,
+  // not the facade's legacy ``printProgress`` getter.
+  assert.match(text, /progressFraction/);
+});

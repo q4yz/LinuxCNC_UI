@@ -43,8 +43,9 @@ _MANIFEST = ModuleManifest(
     title="Tools",
     version="0.1.0",
     description=(
-        "Spindle and extruder control via MDI commands "
-        "(M3 / M4 / M5 for spindles, G91+G1+G90 for extruders)."
+        "Operator-facing tool control: spindle (M3 / M4 / M5), "
+        "extruder (G91 + G1 + G90), and per-tool target temperature "
+        "via the canonical hardware.json ``tools[]`` list."
     ),
     # Tools live inside the dashboard grid, not as a top-level
     # nav item — matches the temperature module.

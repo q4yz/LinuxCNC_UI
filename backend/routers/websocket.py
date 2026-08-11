@@ -73,6 +73,12 @@ def _offline_state_snapshot() -> dict:
     map to ``SystemState.ESTOP`` on the frontend so the operator
     sees the existing red "Estop" chip rather than a blank screen
     or a stream of crashes.
+
+    The progress counters (``current_line`` / ``total_lines``) live
+    on the dedicated ``GET /api/v1/modules/program/progress``
+    endpoint so the dashboard can poll them at 1 Hz without the
+    10 Hz telemetry loop saturating NML. The broadcast no longer
+    carries them.
     """
     return {
         "task_state": getattr(linuxcnc, "STATE_ESTOP", 1),
@@ -85,8 +91,6 @@ def _offline_state_snapshot() -> dict:
         "file": "",
         "homed": [0, 0, 0],
         "interp_state": getattr(linuxcnc, "INTERP_IDLE", 1),
-        "current_line": 0,
-        "total_lines": 0,
         "g5x_index": 1,
         "target_temp": 0.0,
         "actual_temp": 0.0,
@@ -116,8 +120,6 @@ def get_current_state() -> dict:
 
     # Safe fallback if attributes don't exist in mock yet
     interp_state = getattr(machine_stat, 'interp_state', 0)
-    current_line = getattr(machine_stat, 'current_line', 0)
-    total_lines = getattr(machine_stat, 'total_lines', 0)
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
     target_temp = getattr(machine_stat, 'target_temp', 0.0)
     actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
@@ -149,8 +151,6 @@ def get_current_state() -> dict:
         "file": machine_stat.file,
         "homed": machine_stat.homed,
         "interp_state": interp_state,
-        "current_line": current_line,
-        "total_lines": total_lines,
         "g5x_index": g5x_index,
         "target_temp": target_temp,
         "actual_temp": actual_temp,

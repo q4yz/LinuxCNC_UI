@@ -15,7 +15,8 @@ from .models import (
     MachineConfigGraph,
     MCU,
     Printer,
-    Spindle,
+    SpindleAnalog,
+    SpindleDigital,
     Stepper,
     TMC2209,
 )
@@ -409,7 +410,13 @@ class MachineConfigParser:
                 heater_section_order.append(section_name)
                 graph.heaters[heater.name] = heater
             elif section_schema.kind is SectionKind.SPINDLE:
-                graph.spindle = self._parse_spindle(section_name, section)
+                graph.spindle_digital = self._parse_spindle_digital(
+                    section_name, section
+                )
+            elif section_schema.kind is SectionKind.SPINDLE_ANALOG:
+                graph.spindle_analog = self._parse_spindle_analog(
+                    section_name, section
+                )
             elif section_schema.kind is SectionKind.TMC2209:
                 graph.tmc2209s[section_schema.object_name] = self._parse_tmc2209(
                     section_schema.object_name,
@@ -705,15 +712,36 @@ class MachineConfigParser:
             max_temp=self._optional_float(section_name, section, "max_temp"),
         )
 
-    def _parse_spindle(
+    def _parse_spindle_analog(
         self,
         section_name: str,
         section: configparser.SectionProxy,
-    ) -> Spindle:
-        return Spindle(
+    ) -> SpindleAnalog:
+        return SpindleAnalog(
             pwm_pin=self._optional_string(section, "pwm_pin"),
             enable_pin=self._optional_string(section, "enable_pin"),
             max_rpm=self._optional_float(section_name, section, "max_rpm"),
+            min_rpm=self._optional_float(section_name, section, "min_rpm"),
+        )
+
+    def _parse_spindle_digital(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> SpindleDigital:
+        return SpindleDigital(
+            max_rpm=self._optional_float(section_name, section, "max_rpm"),
+            min_rpm=self._optional_float(section_name, section, "min_rpm"),
+            target_rpm_signal=self._optional_string(section, "target_rpm_signal"),
+            target_frequency_signal=self._optional_string(
+                section, "target_frequency_signal"
+            ),
+            rpm_out_signal=self._optional_string(section, "rpm_out_signal"),
+            at_speed1_signal=self._optional_string(section, "at_speed1_signal"),
+            at_speed2_signal=self._optional_string(section, "at_speed2_signal"),
+            is_connected_signal=self._optional_string(section, "is_connected_signal"),
+            error_count_signal=self._optional_string(section, "error_count_signal"),
+            last_error_signal=self._optional_string(section, "last_error_signal"),
         )
 
     def _parse_mcu(

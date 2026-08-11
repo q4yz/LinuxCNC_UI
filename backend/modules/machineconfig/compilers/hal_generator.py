@@ -174,7 +174,7 @@ loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EM
 
 
 {pid_config_block}
-"""
+{spindle_block}"""
 
 
 REMORA_JOINT_TEMPLATE = """\
@@ -275,15 +275,20 @@ class HalGenerator:
         sp_block = self._build_sp_block()
         pv_block = self._build_pv_block()
         pid_config_block = self._build_pid_config_block()
+        spindle_block = self._build_spindle_digital_block()
 
-        return REMORA_HAL_HEADER.format(
-            symbolic_map=symbolic_map,
-            joints_block=joints_block,
-            pid_load_block=pid_load_block,
-            endstop_block=endstop_block,
-            sp_block=sp_block,
-            pv_block=pv_block,
-            pid_config_block=pid_config_block,
+        return (
+            REMORA_HAL_HEADER.format(
+                symbolic_map=symbolic_map,
+                joints_block=joints_block,
+                pid_load_block=pid_load_block,
+                endstop_block=endstop_block,
+                sp_block=sp_block,
+                pv_block=pv_block,
+                pid_config_block=pid_config_block,
+                spindle_block="",
+            )
+            + spindle_block
         )
 
     # ----- Static block builders ----------------------------------- #
@@ -407,6 +412,87 @@ class HalGenerator:
                 )
             )
         return "\n".join(blocks) + ("\n" if blocks else "")
+
+    # ----- Spindle digital block (vfdmod <-> pyvcp hooks) ----------- #
+
+    def _build_spindle_digital_block(self) -> str:
+        """Emit the vfdmod <-> pyvcp wiring block for the digital spindle.
+
+        Renders one ``net`` line per populated ``*_signal`` field on
+        :class:`~.klipper_models.SpindleDigital`, and one
+        commented ``# net ...  # TODO: manual hookup`` line per
+        unpopulated field, so an operator editing the HAL by hand
+        can see where each signal is supposed to live. Always emits
+        the trailing ``loadusr -W vfdmod vfd.ini`` so vfdmod is
+        loaded even when the user has not filled any signal yet.
+        """
+        if self._graph is None or self._graph.spindle_digital is None:
+            return ""
+
+        digital = self._graph.spindle_digital
+
+        # (display_name, vfdmod_path, attr_name). ``display_name``
+        # is the default signal name the user expects to find in
+        # pyvcp (matches the vfdmod parameter keys). The ordering
+        # below matches the documentation order: status / speed
+        # feedback first, then communication, then the at-speed
+        # tie-up handled separately.
+        signals: list[tuple[str, str, str]] = [
+            ("TargetRpm", "vfdmod.parameters.TargetRpm", "target_rpm_signal"),
+            ("TargetFrequency", "vfdmod.parameters.TargetFrequency", "target_frequency_signal"),
+            ("rpm-out", "vfdmod.spindle.rpm-out", "rpm_out_signal"),
+            ("is-connected", "vfdmod.rs485.is-connected", "is_connected_signal"),
+            ("error-count", "vfdmod.rs485.error-count", "error_count_signal"),
+            ("last-error", "vfdmod.rs485.last-error", "last_error_signal"),
+        ]
+
+        lines: list[str] = []
+        lines.append("# Spindle digital (vfdmod <-> pyvcp) signal wiring")
+        lines.append(
+            "# Populated signals below are emitted as live 'net' lines;"
+            " unpopulated signals appear as commented placeholders."
+        )
+        lines.append("# Edit this block to wire the signals into your VFD.")
+        lines.append("")
+
+        for default_name, vfdmod_path, attr in signals:
+            value = getattr(digital, attr)
+            if value:
+                # 18-char column for the signal name so it lines up
+                # with the 16-char ``# net <name>`` column used by
+                # the placeholder lines below (the extra 2 chars
+                # account for the absent ``# `` prefix).
+                lines.append(
+                    f"net {value:<18} {vfdmod_path:<38} pyvcp.{value}"
+                )
+            else:
+                lines.append(
+                    f"# net {default_name:<16} {vfdmod_path:<38} pyvcp.{default_name}"
+                    f"   # TODO: manual hookup"
+                )
+
+        # at-speed1 + at-speed2 share a single 'net' line that ties
+        # vfdmod.spindle.at-speed to both pyvcp inputs. Emit the
+        # live line when either side is populated; when neither is,
+        # emit the whole line as a placeholder.
+        at1 = digital.at_speed1_signal
+        at2 = digital.at_speed2_signal
+        if at1 or at2:
+            left = at1 or "at-speed1"
+            right = at2 or "at-speed2"
+            lines.append(
+                f"net spindle-at-speed vfdmod.spindle.at-speed"
+                f" <= pyvcp.{left} <= pyvcp.{right}"
+            )
+        else:
+            lines.append(
+                "# net spindle-at-speed vfdmod.spindle.at-speed"
+                " <= pyvcp.at-speed1 <= pyvcp.at-speed2"
+                "   # TODO: manual hookup"
+            )
+
+        lines.append("loadusr -W vfdmod vfd.ini")
+        return "\n".join(lines) + "\n"
 
     # ----- Joint block builders (shared between hal types) ---------- #
 

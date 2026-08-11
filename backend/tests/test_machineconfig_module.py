@@ -735,12 +735,13 @@ max_temp: 130
         for view in axis["endstops"]:
             assert set(view.keys()) == {"id", "type", "pos"}
 
-    # Two heaters, two temperature sensors.
-    assert [h["id"] for h in payload["heaters"]] == ["heater_extruder", "heater_bed"]
+    # Two tools (extruder + heated_bed), two temperature sensors.
+    assert [t["id"] for t in payload["tools"]] == ["heater_extruder", "heater_bed"]
+    assert [t["type"] for t in payload["tools"]] == ["extruder", "heated_bed"]
     assert [s["id"] for s in payload["temperature_sensors"]] == ["extruder", "bed"]
-    # Heater.sensor references resolve into temperature_sensors[].id.
-    heater_sensor_refs = {h["id"]: h["sensor"] for h in payload["heaters"]}
-    assert heater_sensor_refs == {
+    # Tool.sensor references resolve into temperature_sensors[].id.
+    tool_sensor_refs = {t["id"]: t["sensor"] for t in payload["tools"]}
+    assert tool_sensor_refs == {
         "heater_extruder": "extruder",
         "heater_bed": "bed",
     }
@@ -750,7 +751,7 @@ def test_hardware_json_v2_empty_arrays_when_no_heaters(
     tmp_data_root, clean_env
 ):
     """A profile with no heater sections compiles to empty
-    ``heaters`` / ``temperature_sensors`` / ``fans`` lists."""
+    ``tools`` / ``temperature_sensors`` / ``fans`` lists."""
     from modules.machineconfig.compilers.hardware_json_generator import (
         build_hardware_json,
     )
@@ -765,7 +766,7 @@ step_pin: PF13
 """
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "no-heaters")
-    assert payload["heaters"] == []
+    assert payload["tools"] == []
     assert payload["temperature_sensors"] == []
     assert payload["fans"] == []
     assert payload["endstops"] == []

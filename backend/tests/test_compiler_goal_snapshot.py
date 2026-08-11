@@ -135,9 +135,9 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
     assert payload["version"] == "2.0"
     assert payload["source"] == "KlipperToLinuxCNCCompiler"
     # The 3-stepper Ender 3 should produce 4 axes (X, Y, Z, A) and
-    # 2 heaters (heater_bed + extruder).
+    # 2 tools (heater_bed + extruder).
     assert len(payload["axes"]) == 4
-    assert len(payload["heaters"]) == 2
+    assert len(payload["tools"]) == 2
     assert len(payload["temperature_sensors"]) == 2
     # The new fan support emits one ``fan_generic_part_cooling``
     # record for the part-cooling fan.

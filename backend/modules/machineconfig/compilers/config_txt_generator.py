@@ -503,12 +503,12 @@ def build_config_txt(graph: MachineConfigGraph, machine_name: str) -> dict[str, 
             sp_index += 1
 
     # 5. Spindle PWM (if configured)
-    if graph.spindle and graph.spindle.pwm_pin:
+    if graph.spindle_analog and graph.spindle_analog.pwm_pin:
         pwm = _pwm_module(
             "spindle_pwm",
             "Spindle PWM",
             sp_index,
-            graph.spindle.pwm_pin,
+            graph.spindle_analog.pwm_pin,
         )
         if pwm:
             modules.append(pwm)

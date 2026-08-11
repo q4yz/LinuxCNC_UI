@@ -7,6 +7,39 @@ logger = logging.getLogger("linuxcnc_mock")
 
 from services.hardware_loader import load_active_heaters
 
+
+# Module-level path resolution so tests can monkey-patch the
+# ``hardware.json`` location the seeders read from. Mirrors the
+# convention in :mod:`services.hardware_loader`.
+_PROJECT_ROOT = None
+
+
+def _get_project_root():
+    """Resolve the repo root lazily so ``monkeypatch.setattr`` can
+    replace it before the first seeder call.
+    """
+    global _PROJECT_ROOT
+    if _PROJECT_ROOT is None:
+        from pathlib import Path
+        _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    return _PROJECT_ROOT
+
+
+def _default_hardware_paths():
+    """Return the default ``hardware.json`` locations to probe.
+
+    Order matters: the active profile wins, falling back to the
+    ready-for-deploy copy if the active file is missing. Both
+    paths are resolved against :func:`_get_project_root` so a
+    monkeypatch on the module-level ``_PROJECT_ROOT`` flows
+    through.
+    """
+    root = _get_project_root()
+    return [
+        root / "machine_config" / "active" / "hardware.json",
+        root / "machine_config" / "ready_for_deploy" / "hardware.json",
+    ]
+
 # --- LinuxCNC Constants ---
 STATE_ESTOP = 1
 STATE_ESTOP_RESET = 2
@@ -45,6 +78,31 @@ OPERATOR_TEXT = 3
 OPERATOR_DISPLAY = 4
 
 # --- Shared State ---
+def _load_hardware_payload():
+    """Read the active ``hardware.json`` once and return its dict, or ``None``.
+
+    Helper that consolidates the path-resolution + JSON-parsing
+    path so both seeders (``_seed_temperatures_from_hardware`` and
+    ``_seed_spindle_actual_from_hardware``) consume the same
+    payload instead of double-parsing the file. Returns ``None``
+    when the file is missing, malformed, or not a JSON object —
+    the seeders treat ``None`` as "nothing to seed".
+    """
+    import json
+
+    for path in _default_hardware_paths():
+        if not path.exists():
+            continue
+        try:
+            with path.open(encoding="utf-8") as fp:
+                data = json.load(fp)
+        except (OSError, ValueError):
+            return None
+        if isinstance(data, dict):
+            return data
+    return None
+
+
 def _seed_temperatures_from_hardware():
     """Reset ``_machine_state.temperatures`` from the active ``hardware.json``.
 
@@ -71,6 +129,35 @@ def _seed_temperatures_from_hardware():
         else:
             _machine_state.target_temp = 0.0
             _machine_state.actual_temp = 25.0
+
+
+def _seed_spindle_actual_from_hardware():
+    """Reset ``_machine_state.spindle_actual`` from the active ``hardware.json``.
+
+    Only ``spindle_digital`` tools contribute — analog spindles
+    have no RPM feedback path so they're absent from the runtime
+    dict. Each seeded entry starts at ``0`` RPM; a future
+    telemetry source (HAL pin / RS-485 polling) is expected to
+    overwrite this on every tick. The temperature-module analogue
+    already runs a simulation loop; the spindle module does not
+    yet — operators currently see ``0`` until telemetry lands.
+    """
+    payload = _load_hardware_payload()
+    with _machine_state.lock:
+        _machine_state.spindle_actual = {}
+        if not isinstance(payload, dict):
+            return
+        raw_tools = payload.get("tools")
+        if not isinstance(raw_tools, list):
+            return
+        for tool in raw_tools:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") != "spindle_digital":
+                continue
+            tool_id = tool.get("id")
+            if isinstance(tool_id, str) and tool_id:
+                _machine_state.spindle_actual[tool_id] = {"actual": 0}
 
 
 class SharedMachineState:
@@ -105,6 +192,12 @@ class SharedMachineState:
         # starts at ambient with target=0; the simulation loop ramps the
         # ``actual`` value toward ``target`` on every tick.
         self.temperatures: dict = {}
+        # Spindle actual-RPM state (per ``spindle_digital`` tool id).
+        # Mirrors the temperature dict: seeded from ``hardware.json``
+        # ``tools[]`` filtered on ``type == "spindle_digital"``. Each
+        # entry starts at ``0`` RPM; no simulation loop runs today
+        # (a future HAL pin / RS-485 polling source is expected).
+        self.spindle_actual: dict = {}
         # Backwards-compatible single-sensor fields (kept for older
         # callers). They mirror the first ``extruder``-named sensor
         # when one exists, otherwise fall back to safe defaults so a
@@ -198,12 +291,16 @@ def reseed_from_hardware_json():
     Public hook so tests (and any future operator-facing "recompile"
     endpoint) can refresh the mock state without re-importing the
     module. Idempotent: calling it twice with no intervening deploy
-    yields the same sensor list.
+    yields the same sensor list. Reseeds both the temperature
+    sensor list AND the spindle actual-RPM dict so a re-deploy
+    that added a new spindle tool surfaces on the next poll.
     """
     _seed_temperatures_from_hardware()
+    _seed_spindle_actual_from_hardware()
 
 
 _seed_temperatures_from_hardware()
+_seed_spindle_actual_from_hardware()
 
 def _jog_simulation_loop():
     """Background thread to actually move coordinates during a continuous jog in the mock"""
@@ -324,6 +421,11 @@ class stat:
             # Expose multi-sensor temperatures as a dict for callers
             # (shallow copy to avoid exposing internal lock-managed dict directly)
             self.temperatures = {k: dict(v) for k, v in _machine_state.temperatures.items()}
+            # Same shallow-copy treatment for the spindle actual-RPM
+            # dict. Keyed by ``spindle_digital`` tool id.
+            self.spindle_actual = {
+                k: dict(v) for k, v in _machine_state.spindle_actual.items()
+            }
             # Backwards-compatible single-sensor fields
             self.target_temp = _machine_state.target_temp
             self.actual_temp = _machine_state.actual_temp

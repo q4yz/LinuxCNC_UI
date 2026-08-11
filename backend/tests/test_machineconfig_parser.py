@@ -89,7 +89,7 @@ pid_Kd: 948.0
 min_temp: 0
 max_temp: 130
 
-[spindle]
+[spindle_analog]
 pwm_pin: PA6
 max_rpm: 24000
 """
@@ -110,7 +110,137 @@ max_rpm: 24000
     assert isinstance(machine.heaters["extruder"], Extruder)
     assert isinstance(machine.heaters["heater_bed"], Heater)
     assert machine.heaters["extruder"].pid_Kp == 22.2
-    assert machine.spindle is not None
+    assert machine.spindle_analog is not None
+    assert machine.spindle_analog.pwm_pin == "PA6"
+    assert machine.spindle_analog.max_rpm == 24000.0
+    assert machine.spindle_digital is None
+
+
+# ---------------------------------------------------------------------- #
+# Spindle sections (analog + digital)                                     #
+# ---------------------------------------------------------------------- #
+
+
+def test_spindle_digital_section_parses_all_signal_aliases() -> None:
+    """A `[spindle]` block with the full set of signal aliases
+    round-trips into :class:`SpindleDigital` with each field
+    populated and ``spindle_analog`` left None."""
+    config = """
+[spindle]
+max_rpm: 24000
+min_rpm: 5000
+target_rpm_signal: TargetRpm
+target_frequency_signal: TargetFrequency
+rpm_out_signal: rpm-out
+at_speed1_signal: at-speed1
+at_speed2_signal: at-speed2
+is_connected_signal: is-connected
+error_count_signal: error-count
+last_error_signal: last-error
+"""
+    machine = MachineConfigParser().parse_string(config)
+    assert machine.spindle_digital is not None
+    assert machine.spindle_digital.max_rpm == 24000.0
+    assert machine.spindle_digital.min_rpm == 5000.0
+    assert machine.spindle_digital.target_rpm_signal == "TargetRpm"
+    assert machine.spindle_digital.target_frequency_signal == "TargetFrequency"
+    assert machine.spindle_digital.rpm_out_signal == "rpm-out"
+    assert machine.spindle_digital.at_speed1_signal == "at-speed1"
+    assert machine.spindle_digital.at_speed2_signal == "at-speed2"
+    assert machine.spindle_digital.is_connected_signal == "is-connected"
+    assert machine.spindle_digital.error_count_signal == "error-count"
+    assert machine.spindle_digital.last_error_signal == "last-error"
+    assert machine.spindle_analog is None
+
+
+def test_spindle_digital_section_with_no_keys_is_valid() -> None:
+    """An empty `[spindle]` block produces a default
+    :class:`SpindleDigital` (every field None). All signal fields
+    are optional — the digital section is hooks-only."""
+    config = """
+[spindle]
+"""
+    machine = MachineConfigParser().parse_string(config)
+    assert machine.spindle_digital is not None
+    assert machine.spindle_digital.target_rpm_signal is None
+    assert machine.spindle_digital.max_rpm is None
+    assert machine.spindle_analog is None
+
+
+def test_spindle_digital_rejects_physical_pin_keys() -> None:
+    """`[spindle]` is the digital hooks section — physical pins
+    belong in `[spindle_analog]` and must be rejected here."""
+    config = """
+[spindle]
+pwm_pin: PA6
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.key == "pwm_pin"
+
+
+def test_spindle_analog_rejects_signal_alias_keys() -> None:
+    """`[spindle_analog]` is the PWM section — signal aliases
+    belong in `[spindle]` and must be rejected here."""
+    config = """
+[spindle_analog]
+target_rpm_signal: TargetRpm
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.key == "target_rpm_signal"
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["[spindle]", "[SPINDLE]", "[Spindle]"],
+)
+def test_spindle_section_header_is_case_insensitive(header: str) -> None:
+    """Section header matching mirrors the vfdmod / Klipper
+    "group names are case insensitive" convention."""
+    config = f"""
+{header}
+max_rpm: 100
+"""
+    machine = MachineConfigParser().parse_string(config)
+    assert machine.spindle_digital is not None
+    assert machine.spindle_digital.max_rpm == 100.0
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["[spindle_analog]", "[SPINDLE_ANALOG]", "[Spindle_Analog]"],
+)
+def test_spindle_analog_header_is_case_insensitive(header: str) -> None:
+    config = f"""
+{header}
+pwm_pin: PA6
+"""
+    machine = MachineConfigParser().parse_string(config)
+    assert machine.spindle_analog is not None
+    assert machine.spindle_analog.pwm_pin == "PA6"
+
+
+def test_both_spindle_sections_can_coexist() -> None:
+    """A profile may declare both the analog and digital spindle
+    sections. The parser keeps them on separate graph fields."""
+    config = """
+[spindle_analog]
+pwm_pin: PA6
+enable_pin: PA7
+max_rpm: 24000
+min_rpm: 5000
+
+[spindle]
+max_rpm: 24000
+min_rpm: 5000
+target_rpm_signal: TargetRpm
+"""
+    machine = MachineConfigParser().parse_string(config)
+    assert machine.spindle_analog is not None
+    assert machine.spindle_analog.pwm_pin == "PA6"
+    assert machine.spindle_digital is not None
+    assert machine.spindle_digital.target_rpm_signal == "TargetRpm"
 
 
 def test_endstop_unknown_target_is_rejected() -> None:

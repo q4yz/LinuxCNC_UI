@@ -54,9 +54,10 @@ def test_get_sp_index_returns_heater_index(active_dir_with_payload) -> None:
         "steppers": [],
         "drivers": [],
         "endstops": [],
-        "heaters": [
+        "tools": [
             {
                 "id": "heater_bed",
+                "type": "heated_bed",
                 "sensor": "bed",
                 "heater_pin": "PA1",
                 "control": "watermark",
@@ -64,6 +65,7 @@ def test_get_sp_index_returns_heater_index(active_dir_with_payload) -> None:
             },
             {
                 "id": "extruder",
+                "type": "extruder",
                 "sensor": "extruder",
                 "heater_pin": "PA2",
                 "control": "pid",
@@ -95,15 +97,17 @@ def test_get_pv_index_returns_sensor_index(active_dir_with_payload) -> None:
         "steppers": [],
         "drivers": [],
         "endstops": [],
-        "heaters": [
+        "tools": [
             {
                 "id": "heater_bed",
+                "type": "heated_bed",
                 "sensor": "bed",
                 "heater_pin": "PA1",
                 "control": "watermark",
             },
             {
                 "id": "extruder",
+                "type": "extruder",
                 "sensor": "extruder",
                 "heater_pin": "PA2",
                 "control": "pid",
@@ -134,9 +138,10 @@ def test_get_sp_index_includes_standalone_fans(active_dir_with_payload) -> None:
         "steppers": [],
         "drivers": [],
         "endstops": [],
-        "heaters": [
+        "tools": [
             {
                 "id": "heater_bed",
+                "type": "heated_bed",
                 "sensor": "bed",
                 "heater_pin": "PA1",
                 "control": "watermark",
@@ -167,7 +172,7 @@ def test_unknown_entity_returns_none(active_dir_with_payload) -> None:
         "steppers": [],
         "drivers": [],
         "endstops": [],
-        "heaters": [],
+        "tools": [],
         "temperature_sensors": [],
         "fans": [],
     }
@@ -212,9 +217,10 @@ def test_invalidate_cache_refreshes_lookup(tmp_path: Path) -> None:
         "steppers": [],
         "drivers": [],
         "endstops": [],
-        "heaters": [
+        "tools": [
             {
                 "id": "heater_bed",
+                "type": "heated_bed",
                 "sensor": "bed",
                 "heater_pin": "PA1",
                 "control": "watermark",
@@ -233,15 +239,17 @@ def test_invalidate_cache_refreshes_lookup(tmp_path: Path) -> None:
     # New file lands: the heater is renamed ``heater_bed2`` and a new
     # ``heater_chamber`` appears. The cache must re-read.
     payload_v2 = dict(payload_v1)
-    payload_v2["heaters"] = [
+    payload_v2["tools"] = [
         {
             "id": "heater_bed2",
+            "type": "heated_bed",
             "sensor": "bed",
             "heater_pin": "PA1",
             "control": "watermark",
         },
         {
             "id": "heater_chamber",
+            "type": "heated_bed",
             "sensor": "chamber",
             "heater_pin": "PA0",
             "control": "watermark",
@@ -275,21 +283,24 @@ def test_heaters_sorted_alphabetically(active_dir_with_payload) -> None:
         "drivers": [],
         "endstops": [],
         # Source order is bed, extruder, chamber.
-        "heaters": [
+        "tools": [
             {
                 "id": "heater_bed",
+                "type": "heated_bed",
                 "sensor": "bed",
                 "heater_pin": "PA1",
                 "control": "watermark",
             },
             {
                 "id": "extruder",
+                "type": "extruder",
                 "sensor": "extruder",
                 "heater_pin": "PA2",
                 "control": "pid",
             },
             {
                 "id": "heater_generic_chamber",
+                "type": "heated_bed",
                 "sensor": "chamber",
                 "heater_pin": "PA0",
                 "control": "watermark",

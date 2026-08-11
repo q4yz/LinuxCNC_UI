@@ -3,7 +3,8 @@
 The ``hardware.json`` payload is the machine's hardware contract —
 emitted by the Klipper compiler, consumed by the runtime (the
 temperature module seeds its sensors from ``temperature_sensors``,
-the jog watchdog reads the endstop records, etc.).
+the jog watchdog reads the endstop records, the ToolPanel reads
+the ``tools`` list, etc.).
 
 Versioning
 ----------
@@ -16,14 +17,20 @@ pass and rejects any unresolved link.
 Naming convention
 -----------------
 Entity list names are the type discriminator. ``temperature_sensors``
-exists today; ``pressure_sensors`` and ``flow_sensors`` are
-forward-looking slots that the cross-reference validator will
-not see (each new kind is a separate top-level list with its own
-``id`` namespace). The id values themselves carry no type prefix
-— e.g. an id is ``sensor_extruder`` not ``temp_sensor_extruder``
-— because the parent list is the type discriminator. ``heater.sensor``
-resolves into ``temperature_sensors[].id``; a future
-``heater.pressure_sensor`` would resolve into ``pressure_sensors[].id``.
+and ``fans`` stay as separate top-level lists because they can exist
+without an associated tool (CPU temp sensors, standalone cooling
+fans). ``tools`` is the new operator-facing list — every entity the
+operator can command from the dashboard — and it absorbs what used
+to be the ``heaters`` list. ``extruder`` and ``heated_bed`` both
+land in ``tools`` with a ``type`` discriminator; spindle variants
+land there too. A future ``laser`` type is reserved on the schema
+literal but no current compiler emits it.
+
+Cross-references inside a tool entry resolve into the matching
+top-level list — ``tool.sensor`` into ``temperature_sensors[].id``,
+``tool.fan`` into ``fans[].id``. The parent list is the type
+discriminator; a spindle tool's ``pwm_pin`` does NOT resolve into
+``fans`` even when a fan happens to share the pin.
 """
 
 from __future__ import annotations
@@ -148,26 +155,6 @@ class Endstop(BaseModel):
     pin: str
 
 
-class Heater(BaseModel):
-    """A temperature-controlled heater.
-
-    References a temperature sensor by id. The reference resolves
-    into ``temperature_sensors[].id`` — not into any future
-    ``pressure_sensors`` or ``flow_sensors`` list the project may
-    add later. The type discriminator is the parent list name.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    sensor: str | None = None
-    fan: str | None = None
-    heater_pin: str
-    control: str
-    min_temp: float | None = None
-    max_temp: float | None = None
-
-
 class TemperatureSensor(BaseModel):
     """A single temperature sensor (thermistor, RTD, etc.).
 
@@ -175,6 +162,11 @@ class TemperatureSensor(BaseModel):
     name is the type discriminator — when pressure and flow sensors
     land later, they will live in their own lists and not share
     ids with this one.
+
+    The list is intentionally separate from ``tools`` because
+    temperature sensors can exist without an associated heater
+    (CPU temp gauges, board-mounted RTDs) and need to surface on
+    the chart regardless of whether anything heats them.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -193,6 +185,12 @@ class Fan(BaseModel):
     firmware. Persisting the float here keeps the round-trip
     deterministic (no need to re-read ``config.txt`` to recover the
     duty-cycle cap).
+
+    The list is intentionally separate from ``tools`` because a
+    standalone ``[fan]`` section (part cooling) does not need an
+    operator-facing card in the ToolPanel — it just needs an
+    addressable record so the temperature module can wire a fan
+    onto a heater.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -200,6 +198,91 @@ class Fan(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
     max_power: float | None = None
+
+
+# ---------------------------------------------------------------------- #
+# Tools                                                                   #
+# ---------------------------------------------------------------------- #
+
+
+# The tool type literal is the runtime discriminator. Each value
+# maps to a specific operator-facing card in the frontend's
+# ToolPanel:
+#
+# * ``extruder``        — heat + motion (heater + stepper + filament).
+# * ``spindle_digital`` — VFD driven by live net signals; RPM feedback.
+# * ``spindle_analog``  — VFD driven by 0–10 V PWM; no RPM feedback.
+# * ``heated_bed``      — heat only (heater + sensor).
+# * ``laser``           — reserved for a future laser driver; no
+#                          compiler emits it yet.
+ToolType = Literal[
+    "extruder", "spindle_digital", "spindle_analog", "heated_bed", "laser"
+]
+
+
+class Tool(BaseModel):
+    """An operator-facing tool — anything the dashboard can command.
+
+    Replaces the v2 ``heaters`` list. ``extruder`` and ``heated_bed``
+    entries fold in the fields the old ``Heater`` record carried
+    (``heater_pin``, ``control``, ``min_temp``, ``max_temp``) plus
+    string references into the separate ``temperature_sensors`` and
+    ``fans`` lists. ``spindle_digital`` and ``spindle_analog``
+    entries carry their own HAL-facing fields (signal aliases for
+    the digital path, ``pwm_pin`` / ``enable_pin`` for the analog
+    path) plus the shared ``min_rpm`` / ``max_rpm`` clamps.
+
+    The ``name`` field is the operator-facing label (chip text in
+    the ToolPanel header). ``id`` is the canonical machine handle
+    — same namespace policy as every other top-level list.
+
+    Cross-references resolve into the matching top-level list by
+    parent-list discriminator — ``sensor`` into
+    ``temperature_sensors[].id``, ``fan`` into ``fans[].id``. No
+    cross-reference exists for the spindle HAL pins (those are
+    literal ``host:pin`` strings, not ids).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    name: str | None = None
+    type: ToolType
+
+    # ---- Spindle shared (digital + analog) ------------------------ #
+    min_rpm: float | None = None
+    max_rpm: float | None = None
+
+    # ---- Spindle analog only --------------------------------------- #
+    pwm_pin: str | None = None
+    enable_pin: str | None = None
+
+    # ---- Spindle digital only -------------------------------------- #
+    # The HAL signal aliases the vfdmod driver expects. Populated
+    # fields are wired live in the compiled ``machine.hal``; empty
+    # fields fall back to ``# TODO`` placeholders so the operator
+    # sees exactly which hooks still need manual configuration.
+    signal_at_speed: str | None = None
+    signal_forward: str | None = None
+    signal_reverse: str | None = None
+    signal_on: str | None = None
+    signal_pwm: str | None = None
+    signal_istop: str | None = None
+    signal_estop: str | None = None
+    signal_vfd_enable: str | None = None
+
+    # ---- Heating (extruder + heated_bed) --------------------------- #
+    # ``sensor`` resolves into ``temperature_sensors[].id``;
+    # ``fan`` resolves into ``fans[].id``. Both are optional —
+    # a profile that declares a heater without a sensor / fan is
+    # still valid hardware.json; the ToolPanel just renders no
+    # feedback tiles for it.
+    sensor: str | None = None
+    heater_pin: str | None = None
+    fan: str | None = None
+    control: str | None = None
+    min_temp: float | None = None
+    max_temp: float | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -215,6 +298,12 @@ class HardwareJson(BaseModel):
     version. The cross-reference validator runs once after the
     model is constructed to enforce every ``*_id``-style reference
     resolves into the right list.
+
+    The ``heaters`` list was folded into ``tools`` in this revision
+    — every former heater is now a ``Tool`` entry with
+    ``type="extruder"`` or ``type="heated_bed"``. ``temperature_sensors``
+    and ``fans`` remain separate top-level lists so sensors / fans
+    that are not bound to a tool can still appear.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -229,7 +318,10 @@ class HardwareJson(BaseModel):
     steppers: list[Stepper] = Field(default_factory=list)
     drivers: list[Driver] = Field(default_factory=list)
     endstops: list[Endstop] = Field(default_factory=list)
-    heaters: list[Heater] = Field(default_factory=list)
+    # ``tools`` replaces the old ``heaters`` list. The cross-reference
+    # validator enforces ``tool.sensor`` and ``tool.fan`` resolve
+    # into ``temperature_sensors[].id`` / ``fans[].id`` respectively.
+    tools: list[Tool] = Field(default_factory=list)
     temperature_sensors: list[TemperatureSensor] = Field(default_factory=list)
     fans: list[Fan] = Field(default_factory=list)
 
@@ -250,7 +342,7 @@ class HardwareJson(BaseModel):
             "steppers",
             "drivers",
             "endstops",
-            "heaters",
+            "tools",
             "temperature_sensors",
             "fans",
         ):
@@ -264,7 +356,6 @@ class HardwareJson(BaseModel):
         }
         fans_idx = {f.id: i for i, f in enumerate(self.fans)}
         endstops_idx = {e.id: i for i, e in enumerate(self.endstops)}
-        heaters_idx = {h.id: i for i, h in enumerate(self.heaters)}
 
         # Every axis.steppers[i] must exist in steppers[].
         for axis in self.axes:
@@ -301,19 +392,20 @@ class HardwareJson(BaseModel):
                     f"'{endstop.stepper}'."
                 )
 
-        # Every heater.sensor must exist in temperature_sensors[].
+        # Every tool.sensor must exist in temperature_sensors[].
         # A pressure sensor is not a temperature sensor even if the
         # pin matches — the parent list is the type discriminator.
-        for heater in self.heaters:
-            if heater.sensor is not None and heater.sensor not in sensors_idx:
+        # Similarly, ``tool.fan`` must exist in fans[].
+        for tool in self.tools:
+            if tool.sensor is not None and tool.sensor not in sensors_idx:
                 errors.append(
-                    f"Heater '{heater.id}' references unknown temperature "
-                    f"sensor '{heater.sensor}'."
+                    f"Tool '{tool.id}' references unknown temperature "
+                    f"sensor '{tool.sensor}'."
                 )
-            if heater.fan is not None and heater.fan not in fans_idx:
+            if tool.fan is not None and tool.fan not in fans_idx:
                 errors.append(
-                    f"Heater '{heater.id}' references unknown fan "
-                    f"'{heater.fan}'."
+                    f"Tool '{tool.id}' references unknown fan "
+                    f"'{tool.fan}'."
                 )
 
         if errors:
@@ -368,9 +460,10 @@ __all__ = [
     "EndstopView",
     "Fan",
     "HardwareJson",
-    "Heater",
     "Stepper",
     "TemperatureSensor",
+    "Tool",
+    "ToolType",
     "model_validate",
     "to_dict",
 ]

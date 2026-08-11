@@ -17,6 +17,7 @@ class SectionKind(str, Enum):
     EXTRUDER = "extruder"
     HEATER = "heater"
     SPINDLE = "spindle"
+    SPINDLE_ANALOG = "spindle_analog"
     TMC2209 = "tmc2209"
     FAN = "fan"
 
@@ -92,7 +93,21 @@ EXTRUDER_KEYS = frozenset(
         "filament_diameter",
     }
 )
-SPINDLE_KEYS = frozenset({"pwm_pin", "enable_pin", "max_rpm"})
+SPINDLE_KEYS = frozenset(
+    {
+        "max_rpm",
+        "min_rpm",
+        "target_rpm_signal",
+        "target_frequency_signal",
+        "rpm_out_signal",
+        "at_speed1_signal",
+        "at_speed2_signal",
+        "is_connected_signal",
+        "error_count_signal",
+        "last_error_signal",
+    }
+)
+SPINDLE_ANALOG_KEYS = frozenset({"pwm_pin", "enable_pin", "max_rpm", "min_rpm"})
 TMC2209_KEYS = frozenset(
     {
         "uart_pin",
@@ -120,6 +135,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
     SectionKind.EXTRUDER: EXTRUDER_KEYS,
     SectionKind.HEATER: HEATER_KEYS,
     SectionKind.SPINDLE: SPINDLE_KEYS,
+    SectionKind.SPINDLE_ANALOG: SPINDLE_ANALOG_KEYS,
     SectionKind.TMC2209: TMC2209_KEYS,
     SectionKind.FAN: FAN_KEYS,
 }
@@ -219,8 +235,13 @@ def schema_for_section(section: str) -> SectionSchema | None:
             section,
         )
 
-    if section == "spindle":
+    if section.lower() == "spindle":
         return SectionSchema(SectionKind.SPINDLE, SPINDLE_KEYS, "spindle")
+
+    if section.lower() == "spindle_analog":
+        return SectionSchema(
+            SectionKind.SPINDLE_ANALOG, SPINDLE_ANALOG_KEYS, "spindle_analog"
+        )
 
     fan_match = _FAN_SECTION.fullmatch(section)
     if fan_match:
@@ -246,6 +267,7 @@ __all__ = [
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
     "SECTION_SCHEMAS",
+    "SPINDLE_ANALOG_KEYS",
     "SPINDLE_KEYS",
     "STEPPER_KEYS",
     "SectionKind",

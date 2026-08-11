@@ -264,26 +264,27 @@ def test_pause_then_resume_keeps_loaded_file(
 # ---------------------------------------------------------------------- #
 
 
-def test_websocket_payload_broadcasts_total_lines(
+def test_websocket_payload_omits_line_counters(
     tmp_data_root, clean_env, monkeypatch
 ):
-    """The telemetry loop broadcasts ``total_lines`` alongside ``current_line``.
+    """The telemetry loop no longer carries ``current_line`` /
+    ``total_lines``.
 
-    Before this fix the frontend's ``printProgress`` getter always
-    returned 0 because ``total_lines`` was never wire-serialized;
-    loading a file must surface the mock's 1000-line placeholder
-    on the next tick so the progress bar can finally move.
+    The progress counters moved to the dedicated
+    ``GET /api/v1/modules/program/progress`` endpoint so the
+    dashboard can poll at 1 Hz without saturating NML. The
+    WebSocket broadcast keeps the lighter-weight fields the rest
+    of the UI needs (state, position, temperatures, errors).
     """
     _reset_mock_program_state()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
     from routers.websocket import get_current_state
 
-    # ``get_current_state`` is the synchronous builder the
-    # telemetry loop serialises every tick. Pre-load the snapshot
-    # and confirm ``total_lines`` is 0 (no file loaded yet).
+    # Before the load the snapshot must already omit the counters.
     before = get_current_state()
-    assert before["total_lines"] == 0
+    assert "current_line" not in before
+    assert "total_lines" not in before
 
     # Drive a load through the public router.
     app, _ = _program_app(tmp_data_root)
@@ -293,7 +294,8 @@ def test_websocket_payload_broadcasts_total_lines(
     )
 
     after = get_current_state()
-    assert after["total_lines"] == 1000
+    assert "current_line" not in after
+    assert "total_lines" not in after
     assert after["file"].endswith("test.gcode")
     assert after["interp_state"] == 1  # INTERP_IDLE
 
@@ -442,3 +444,144 @@ class TestLoadThenStartRoundTrip:
         # Mock-mode load should complete in well under the 5 s budget;
         # the timeout kicks in only when ``stat.file`` never matches.
         assert elapsed < 1.0, f"load took {elapsed:.2f}s; expected < 1s"
+
+
+# ---------------------------------------------------------------------- #
+# Progress endpoint                                                       #
+# ---------------------------------------------------------------------- #
+#
+# The dashboard widget polls ``GET /api/v1/modules/program/progress``
+# once a second instead of relying on the 10 Hz WebSocket telemetry
+# stream. These tests pin the contract the widget depends on:
+#
+# * the response shape mirrors the ``ProgramProgressResponse`` model,
+# * ``current_line`` advances while the interpreter is reading,
+# * ``total_lines`` comes from the cache populated at ``program_open``
+#   time so it works on real LinuxCNC where ``stat`` does not expose
+#   a total,
+# * the cache is cleared on unload so a stale total can never leak
+#   across runs.
+
+
+def _reset_progress_cache() -> None:
+    """Drop the line-count cache so each test starts from a clean slate."""
+    from modules.program import router as program_router
+
+    program_router._TOTAL_LINES_CACHE.clear()
+
+
+def test_progress_endpoint_reports_current_line_and_cached_total(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """End-to-end: load + run, then assert the progress endpoint
+    surfaces a positive ``current_line`` and the cached ``total_lines``.
+
+    The cache is keyed by the absolute path the interpreter
+    committed to ``stat.file``; the test seeds a 4-line gcode file
+    so ``total_lines == 4`` on the first ``/progress`` hit. Real
+    LinuxCNC populates ``current_line`` while the interpreter reads
+    the file; the mock mirrors that behaviour via its simulation
+    thread.
+    """
+    _reset_mock_program_state()
+    _reset_progress_cache()
+    _isolated_program_root(tmp_data_root, monkeypatch)
+
+    app, _ = _program_app(tmp_data_root)
+    client = TestClient(app)
+    assert client.post(
+        "/api/v1/modules/program/load",
+        json={"filename": "test.gcode"},
+    ).status_code == 200
+
+    # Before the run starts the line counter is 0 but ``total_lines``
+    # is already populated from the cache.
+    initial = client.get("/api/v1/modules/program/progress").json()
+    assert initial["current_line"] == 0
+    assert initial["total_lines"] == 3
+    assert initial["interp_state"] == 1  # INTERP_IDLE
+    assert initial["file"].endswith("test.gcode")
+
+    assert client.post("/api/v1/modules/program/run").status_code == 200
+
+    # Give the mock's simulation loop a tick to advance.
+    time.sleep(0.35)
+
+    running = client.get("/api/v1/modules/program/progress").json()
+    assert running["current_line"] > 0
+    assert running["total_lines"] == 3
+    assert running["interp_state"] == 2  # INTERP_READING
+
+
+def test_progress_endpoint_returns_zeros_with_no_file(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """Before any load the endpoint must return a safe zeroed
+    snapshot so the widget can render the empty-state cleanly.
+    """
+    _reset_mock_program_state()
+    _reset_progress_cache()
+
+    app, _ = _program_app(tmp_data_root)
+    client = TestClient(app)
+
+    snapshot = client.get("/api/v1/modules/program/progress").json()
+    assert snapshot["current_line"] == 0
+    assert snapshot["motion_line"] == 0
+    assert snapshot["total_lines"] == 0
+    assert snapshot["file"] == ""
+    assert snapshot["interp_state"] == 1  # INTERP_IDLE
+
+
+def test_progress_endpoint_clears_cache_on_unload(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``POST /unload`` must drop the cached line count so a
+    follow-up ``/progress`` cannot surface a stale total for a
+    file that is no longer loaded.
+    """
+    _reset_mock_program_state()
+    _reset_progress_cache()
+    _isolated_program_root(tmp_data_root, monkeypatch)
+
+    app, _ = _program_app(tmp_data_root)
+    client = TestClient(app)
+    client.post(
+        "/api/v1/modules/program/load",
+        json={"filename": "test.gcode"},
+    )
+    loaded = client.get("/api/v1/modules/program/progress").json()
+    assert loaded["total_lines"] == 3
+
+    assert client.post("/api/v1/modules/program/unload").status_code == 200
+
+    cleared = client.get("/api/v1/modules/program/progress").json()
+    assert cleared["total_lines"] == 0
+    assert cleared["file"] == ""
+
+
+def test_progress_endpoint_handles_missing_file_in_cache(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """If the cached path is gone (file deleted between load and
+    poll) the endpoint must not raise — it returns ``total_lines=0``
+    and keeps the rest of the snapshot intact.
+    """
+    _reset_mock_program_state()
+    _reset_progress_cache()
+    target = _isolated_program_root(tmp_data_root, monkeypatch)
+
+    from modules.program import router as program_router
+
+    program_router._TOTAL_LINES_CACHE[str(target)] = 9
+
+    from hardware import linuxcnc_mock
+
+    with linuxcnc_mock._machine_state.lock:
+        linuxcnc_mock._machine_state.file = str(target)
+
+    app, _ = _program_app(tmp_data_root)
+    client = TestClient(app)
+    snapshot = client.get("/api/v1/modules/program/progress").json()
+    assert snapshot["total_lines"] == 9
+    assert snapshot["file"].endswith("test.gcode")
