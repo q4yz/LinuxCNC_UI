@@ -51,6 +51,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services import (
+    raise_bad_request,
+    raise_bad_request_from,
+    raise_conflict,
+    raise_conflict_from,
+    raise_not_found,
+    raise_not_found_from,
     ActiveFileService,
     ConfigFileService,
     MCodeFileService,
@@ -395,21 +401,18 @@ def _build_compiler_marker_probe():
 
 def _require_compiler(compiler_id: str):
     if compiler_id not in compiler_registry:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown compiler '{compiler_id}'. Known: {compiler_registry.ids()}",
-        )
+        raise_not_found(f"Unknown compiler '{compiler_id}'. Known: {compiler_registry.ids()}")
     return compiler_registry.get(compiler_id)
 
 
 def _resolve_profile_path(profile_path: str, service: ConfigFileService):
     """Validate ``profile_path`` and return an absolute path under profiles/."""
     if not profile_path:
-        raise HTTPException(status_code=400, detail="profile_path is required.")
+        raise_bad_request("profile_path is required.")
     try:
         return service.safe_join(profile_path)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
 
 
 def _require_settings_overrides() -> Dict[str, bool]:
@@ -483,9 +486,9 @@ def read_profile(path: str) -> ProfileContent:
     try:
         content = service.read_file(path)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Profile not found: {path}") from exc
+        raise_not_found_from(f"Profile not found: {path}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return ProfileContent(path=path, content=content)
 
 
@@ -511,7 +514,7 @@ def save_profile(path: str, payload: ProfileWriteRequest) -> StatusMessage:
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(status="ok", message=f"Saved {path}")
 
 
@@ -526,9 +529,9 @@ def create_folder(payload: CreateEntryRequest) -> StatusMessage:
     try:
         service.create_directory(payload.path)
     except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}") from exc
+        raise_conflict_from(f"Already exists: {payload.path}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(status="ok", message=f"Created folder {payload.path}")
 
 
@@ -543,9 +546,9 @@ def create_file(payload: CreateEntryRequest) -> StatusMessage:
     try:
         service.write_file(payload.path, "", overwrite=False)
     except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.path}") from exc
+        raise_conflict_from(f"Already exists: {payload.path}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(status="ok", message=f"Created file {payload.path}")
 
 
@@ -563,7 +566,7 @@ async def upload_profile(path: str, file: UploadFile = File(...)) -> StatusMessa
     try:
         service.write_bytes(path, await file.read(), overwrite=True)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(status="ok", message=f"Uploaded {path}")
 
 
@@ -578,11 +581,11 @@ def rename_profile(payload: RenameRequest) -> StatusMessage:
     try:
         service.rename(payload.source, payload.destination)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Not found: {payload.source}") from exc
+        raise_not_found_from(f"Not found: {payload.source}", exc)
     except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=f"Already exists: {payload.destination}") from exc
+        raise_conflict_from(f"Already exists: {payload.destination}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(
         status="ok", message=f"Renamed {payload.source} -> {payload.destination}"
     )
@@ -605,17 +608,14 @@ def delete_profile(path: str) -> StatusMessage:
     try:
         service.delete(path)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Not found: {path}") from exc
+        raise_not_found_from(f"Not found: {path}", exc)
     except IsADirectoryError as exc:
         # ``FileService.delete`` raises ``IsADirectoryError`` when the
         # folder still has children — keep the legacy "remove contents
         # first" wording so the frontend toast stays informative.
-        raise HTTPException(
-            status_code=400,
-            detail=f"Folder is not empty; remove contents first: {path}",
-        ) from exc
+        raise_bad_request_from(f"Folder is not empty; remove contents first: {path}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StatusMessage(status="ok", message=f"Deleted {path}")
 
 
@@ -664,14 +664,12 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
     staged_service: StagedFileService = get_staged_service()
     source = _resolve_profile_path(payload.profile_path, config_service)
     if not source.exists() or not source.is_file():
-        raise HTTPException(
-            status_code=404, detail=f"Profile not found: {payload.profile_path}"
-        )
+        raise_not_found(f"Profile not found: {payload.profile_path}")
 
     try:
         artifact_paths = staged_service.clear_and_stage(compiler, source)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise_not_found_from(str(exc), exc)
     except ConfigValidationError:
         # Parser-level validation errors are routed through the
         # global exception handler registered in ``on_load``
@@ -683,7 +681,7 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
         # silently swallow the structured response.
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     except Exception as exc:  # noqa: BLE001 - last-resort guard
         logger.error("Compile failed for %s: %s", payload.profile_path, exc)
         raise HTTPException(status_code=500, detail=f"Compile failed: {exc}") from exc
@@ -742,9 +740,9 @@ def read_staged(name: str) -> StagedContent:
     try:
         content = service.read_file(name)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Staged file not found: {name}") from exc
+        raise_not_found_from(f"Staged file not found: {name}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return StagedContent(name=name, content=content, read_only=True)
 
 
@@ -779,9 +777,9 @@ def read_active(name: str) -> ActiveContent:
     try:
         content = service.read_file(name)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Active file not found: {name}") from exc
+        raise_not_found_from(f"Active file not found: {name}", exc)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     return ActiveContent(name=name, content=content)
 
 
@@ -807,12 +805,9 @@ def deploy_staged(payload: DeployRequest) -> DeployResponse:
     settings = _require_settings_overrides()
     require_flash = bool(settings.get("require_confirm_flash", True))
     if require_flash and not payload.confirm_flash:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "confirm_flash must be true to deploy. Acknowledge that any "
-                "remote controllers (e.g. Remora) have been flashed first."
-            ),
+        raise_bad_request(
+            "confirm_flash must be true to deploy. Acknowledge that any "
+            "remote controllers (e.g. Remora) have been flashed first."
         )
 
     staged_service: StagedFileService = get_staged_service()
@@ -821,7 +816,7 @@ def deploy_staged(payload: DeployRequest) -> DeployResponse:
     try:
         deployed = staged_service.deploy_to_active(active_service)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
 
     machine_name = active_service.machine_name()
 
@@ -878,12 +873,9 @@ def _validate_mcode_name(name: str) -> str:
         HTTPException: ``400`` for anything that doesn't match.
     """
     if not _MCODE_NAME_PATTERN.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"invalid M-code name: {name!r} "
-                "(must match ^M1\\d{2}$ — i.e. M100..M199)"
-            ),
+        raise_bad_request(
+            f"invalid M-code name: {name!r} "
+            "(must match ^M1\\d{2}$ — i.e. M100..M199)"
         )
     return name
 
@@ -938,12 +930,9 @@ def read_mcode(
     try:
         target = service.safe_join(path)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     if not target.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"M-code not found: {path}",
-        )
+        raise_not_found(f"M-code not found: {path}")
     return MCodeContentResponse(path=path, content=target.read_text(encoding="utf-8"))
 
 
@@ -978,7 +967,7 @@ def write_mcode(
     try:
         service.write_file(path, payload.content)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     # :meth:`FileService.write_file` returns ``None`` (stdlib
     # ``Path.write_text`` parity); the byte size is read off the
     # on-disk stat. ``target.exists()`` is checked so a vanished
@@ -1020,11 +1009,9 @@ def delete_mcode(
     try:
         target = service.safe_join(name)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request_from(str(exc), exc)
     if not target.exists():
-        raise HTTPException(
-            status_code=404, detail=f"M-code not found: {name}",
-        )
+        raise_not_found(f"M-code not found: {name}")
     target.unlink()
     return Response(status_code=204)
 

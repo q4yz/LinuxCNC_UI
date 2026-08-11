@@ -45,10 +45,10 @@ import logging
 import re
 from typing import List
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Body, Path, Query, Response
 from pydantic import BaseModel, Field
 
-from services import get_mcode_service
+from services import get_mcode_service, raise_bad_request, raise_not_found
 from services.domain_file_services import FileMetadata
 
 from .storage import (
@@ -119,6 +119,34 @@ class MacroWriteResponse(BaseModel):
     size: int = Field(..., description="Size of the persisted payload in bytes.")
 
 
+class MacroContentPayload(BaseModel):
+    """Body of ``PUT /{name}/content?kind=`` (universal-editor envelope).
+
+    The :class:`backend.modules.macros.storage.MacroStorage` write path
+    is line-oriented; ``content`` is decoded UTF-8 and persisted as-is.
+    Empty payloads are normalised to a single newline so FastAPI's
+    ``text/plain`` body validation (which rejects ``""`` with ``422``)
+    is bypassed the same way the other universal-editor sources do it.
+    """
+
+    content: str = Field(..., description="Raw macro payload (UTF-8 text).")
+
+
+class MacroContentResponse(BaseModel):
+    """Response body of ``GET/PUT /{name}/content?kind=`` (universal-editor envelope).
+
+    Mirrors the shape the editor store expects from every other
+    source (``profiles`` / ``m_codes`` / ``programs``) so the
+    universal editor's ``source``-driven dispatch can plug macros in
+    without branching on response shape.
+    """
+
+    name: str = Field(..., description="File name (no extension).")
+    kind: str = Field(..., description="One of macro / ngc / mcode.")
+    content: str = Field(..., description="Raw text content of the file.")
+    size_bytes: int = Field(..., description="On-disk byte size.")
+
+
 # ---------------------------------------------------------------------- #
 # Storage singletons                                                      #
 # ---------------------------------------------------------------------- #
@@ -148,10 +176,8 @@ def _validate_kind(kind: str) -> str:
         HTTPException: ``400`` when the kind is unknown.
     """
     if kind not in VALID_KINDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown macro kind: {kind!r}; "
-            f"expected one of {VALID_KINDS}",
+        raise_bad_request(
+            f"unknown macro kind: {kind!r}; expected one of {VALID_KINDS}",
         )
     return kind
 
@@ -163,12 +189,9 @@ def _validate_mcode_name(name: str) -> str:
         HTTPException: ``400`` for an out-of-range name.
     """
     if not _MCODE_RE.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"invalid M-code name: {name!r} "
-                "(must match ^M1\\d{2}$ — i.e. M100..M199)"
-            ),
+        raise_bad_request(
+            f"invalid M-code name: {name!r} "
+            "(must match ^M1\\d{2}$ — i.e. M100..M199)"
         )
     return name
 
@@ -288,22 +311,22 @@ def read_macro(
         try:
             target = service.safe_join(name)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise_bad_request(str(exc))
         if not target.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"M-code not found: {name}",
-            )
+            raise_not_found(f"M-code not found: {name}")
         return Response(content=target.read_text(encoding="utf-8"), media_type="text/plain")
 
     try:
         content = _macro_storage.read(name, kind=kind)
     except InvalidMacroNameError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        # Storage raises ``InvalidMacroNameError`` for path-traversal
+        # attempts (``..`` etc.) so treat them as not-found at the HTTP
+        # boundary — they carry no useful payload for the operator.
+        raise_not_found(str(exc))
     except InvalidMacroKindError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_bad_request(str(exc))
     except MacroNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise_not_found(str(exc))
     return Response(content=content, media_type="text/plain")
 
 
@@ -342,7 +365,7 @@ def write_macro(
         try:
             service.write_file(name, content)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise_bad_request(str(exc))
         # :meth:`FileService.write_file` returns ``None`` for
         # parity with the stdlib ``Path.write_text`` family; size
         # is computed via :meth:`safe_join` + ``stat``.
@@ -352,9 +375,9 @@ def write_macro(
     try:
         size = _macro_storage.write(name, content, kind=kind)
     except InvalidMacroNameError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_bad_request(str(exc))
     except InvalidMacroKindError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_bad_request(str(exc))
     return MacroWriteResponse(name=name, kind=kind, size=size)
 
 
@@ -388,21 +411,160 @@ def delete_macro(
         try:
             target = service.safe_join(name)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise_bad_request(str(exc))
         if not target.exists():
-            raise HTTPException(status_code=404, detail=f"M-code not found: {name}")
+            raise_not_found(f"M-code not found: {name}")
         target.unlink()
         return Response(status_code=204)
 
     try:
         _macro_storage.delete(name, kind=kind)
     except InvalidMacroNameError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise_not_found(str(exc))
     except InvalidMacroKindError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise_bad_request(str(exc))
     except MacroNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise_not_found(str(exc))
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------- #
+# Universal-editor content endpoints                                       #
+# ---------------------------------------------------------------------- #
+#
+# The legacy ``/{name}?kind=`` endpoints above return raw ``text/plain``
+# bodies, which is incompatible with the universal editor's source-
+# driven dispatch (every other source — ``profiles``, ``m_codes``,
+# ``programs`` — returns a JSON envelope). These new endpoints expose
+# the same read/write surface in the editor's contract:
+#
+#     GET  /{name}/content?kind=macro  →  {"name", "kind", "content", "size_bytes"}
+#     PUT  /{name}/content?kind=macro  →  same envelope, post-write
+#
+# They are NOT a back-compat shim — the universal editor never reads
+# the legacy endpoints and the macros dashboard module does not need
+# them either. The two surfaces coexist; the editor only ever calls
+# the ``/content`` family.
+
+
+@router.get(
+    "/{name}/content",
+    summary="Read macro content (universal-editor envelope)",
+    description=(
+        "Return the requested macro as a JSON envelope of the shape "
+        "the universal editor's source-driven dispatch expects: "
+        "``{name, kind, content, size_bytes}``. Mirrors the contract "
+        "every other source (``profiles``, ``m_codes``, ``programs``) "
+        "already satisfies. Returns ``404`` when the file is missing, "
+        "``400`` for an invalid name or kind."
+    ),
+    operation_id="readMacroContent",
+    response_model=MacroContentResponse,
+    responses={
+        404: {"description": "No macro with that name."},
+        400: {"description": "Invalid name or kind."},
+    },
+)
+def read_macro_content(
+    name: str = Path(..., description="Macro name without any extension."),
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
+) -> MacroContentResponse:
+    """Read a macro and return the universal-editor envelope shape."""
+    _validate_kind(kind)
+    if kind == MacroKind.MCODE:
+        _validate_mcode_name(name)
+        service = get_mcode_service()
+        try:
+            target = service.safe_join(name)
+        except ValueError as exc:
+            raise_bad_request(str(exc))
+        if not target.exists():
+            raise_not_found(f"M-code not found: {name}")
+        text = target.read_text(encoding="utf-8")
+        return MacroContentResponse(
+            name=name,
+            kind=MacroKind.MCODE,
+            content=text,
+            size_bytes=target.stat().st_size,
+        )
+
+    try:
+        text = _macro_storage.read(name, kind=kind)
+    except InvalidMacroNameError as exc:
+        raise_not_found(str(exc))
+    except InvalidMacroKindError as exc:
+        raise_bad_request(str(exc))
+    except MacroNotFoundError as exc:
+        raise_not_found(str(exc))
+    return MacroContentResponse(
+        name=name,
+        kind=kind,
+        content=text,
+        size_bytes=_storage_size(name, kind),
+    )
+
+
+@router.put(
+    "/{name}/content",
+    summary="Write macro content (universal-editor envelope)",
+    description=(
+        "Persist the supplied payload and return the same envelope "
+        "shape as the read endpoint. Empty payloads are normalised to "
+        "``\"\\n\"`` so FastAPI's ``text/plain`` body validation does "
+        "not reject brand-new files with ``422``."
+    ),
+    operation_id="writeMacroContent",
+    response_model=MacroContentResponse,
+    responses={
+        400: {"description": "Invalid name or kind."},
+    },
+)
+def write_macro_content(
+    payload: MacroContentPayload,
+    name: str = Path(..., description="Macro name without any extension."),
+    kind: str = Query(
+        MacroKind.MACRO,
+        description="One of ``macro`` / ``ngc`` / ``mcode``.",
+    ),
+) -> MacroContentResponse:
+    """Write a macro via the universal-editor envelope shape."""
+    _validate_kind(kind)
+    # Empty payloads land as ``"\n"`` so brand-new files clear the
+    # ``text/plain`` body validator and the operator does not see a
+    # ``422`` for "Create new macro" → leave blank → save.
+    safe_content = "\n" if payload.content == "" else payload.content
+
+    if kind == MacroKind.MCODE:
+        _validate_mcode_name(name)
+        service = get_mcode_service()
+        try:
+            service.write_file(name, safe_content)
+        except ValueError as exc:
+            raise_bad_request(str(exc))
+        target = service.safe_join(name)
+        size = target.stat().st_size if target.exists() else 0
+        return MacroContentResponse(
+            name=name,
+            kind=MacroKind.MCODE,
+            content=safe_content,
+            size_bytes=size,
+        )
+
+    try:
+        size = _macro_storage.write(name, safe_content, kind=kind)
+    except InvalidMacroNameError as exc:
+        raise_bad_request(str(exc))
+    except InvalidMacroKindError as exc:
+        raise_bad_request(str(exc))
+    return MacroContentResponse(
+        name=name,
+        kind=kind,
+        content=safe_content,
+        size_bytes=size,
+    )
 
 
 __all__ = [
@@ -410,6 +572,8 @@ __all__ = [
     "MacroListItem",
     "MacroListResponse",
     "MacroWriteResponse",
+    "MacroContentPayload",
+    "MacroContentResponse",
     "VALID_KINDS",
     "EXTENSION",
 ]

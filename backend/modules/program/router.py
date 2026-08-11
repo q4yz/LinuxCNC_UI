@@ -41,7 +41,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from hardware import execute_sync_cmd, get_machine_stat, linuxcnc, linuxcnc_mock
-from services import get_program_service
+from services import (
+    get_program_service,
+    raise_bad_request,
+    raise_conflict,
+    raise_not_found,
+)
 
 logger = logging.getLogger("backend.modules.program.router")
 
@@ -94,10 +99,7 @@ def run_program(line_number: int = 0) -> StatusResponse:
     reading nothing.
     """
     if not linuxcnc_mock.is_program_loaded():
-        raise HTTPException(
-            status_code=409,
-            detail="No program loaded. Call POST /load first.",
-        )
+        raise_conflict("No program loaded. Call POST /load first.")
     execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_AUTO", 2))
     result = execute_sync_cmd(
         "auto", 0, getattr(linuxcnc, "AUTO_RUN", 0), line_number
@@ -255,6 +257,9 @@ def _await_load(target_path) -> None:
         if current and current == target_str:
             return
         if _time.monotonic() >= deadline:
+            # 504 Gateway Timeout — LinuxCNC is connected but the
+            # interpreter never reported ``stat.file``. Outside the
+            # three helpers' scope so we keep the inline form.
             raise HTTPException(
                 status_code=504,
                 detail=(
@@ -301,11 +306,10 @@ def load_program(payload: LoadProgramRequest) -> StatusResponse:
     try:
         target = service.safe_join(payload.filename)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise_bad_request(str(exc))
     if not target.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"G-code file '{payload.filename}' not found in upload root",
+        raise_not_found(
+            f"G-code file '{payload.filename}' not found in upload root"
         )
 
     execute_sync_cmd("program_open", LOAD_TIMEOUT_S, str(target))

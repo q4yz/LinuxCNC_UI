@@ -3,7 +3,7 @@
 // ``router.push`` for navigation and ``useRoute().name`` for
 // highlighting the current entry.
 
-import { computed, defineAsyncComponent, shallowRef } from 'vue'
+import { computed, defineAsyncComponent, markRaw, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import registry from './core/modules/registry'
@@ -54,10 +54,15 @@ function loadModuleView(moduleId) {
   const cached = moduleViewCache.value.get(moduleId)
   if (cached) return cached
   const loader = moduleViewImports[target]
-  const asyncComp = defineAsyncComponent(async () => {
+  // ``markRaw`` prevents Vue's deep reactivity from wrapping the
+  // AsyncComponentWrapper in a Proxy. The ``<component :is=...>``
+  // binding downstream expects a raw component definition; without
+  // ``markRaw`` Vue logs "Component that was made a reactive
+  // object" and burns CPU on every route change.
+  const asyncComp = markRaw(defineAsyncComponent(async () => {
     const mod = await loader()
     return mod.default ?? mod
-  })
+  }))
   moduleViewCache.value.set(moduleId, asyncComp)
   return asyncComp
 }

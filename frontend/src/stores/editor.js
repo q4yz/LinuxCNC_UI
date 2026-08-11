@@ -1,124 +1,90 @@
+// Universal editor store. Owns every file-I/O concern the editor
+// touches so ``EditorView`` (and any other consumer) never has to
+// branch on file kind.
+//
+// Architecture (issue #132 — ``source``-driven dispatch)
+// -----------------------------------------------------
+//
+// The store used to route reads and writes by **filename extension**
+// (``modeForFilename(path)`` falling back to a profile path-prefix
+// lookup). That was fragile: a ``.cfg.txt`` profile would route to
+// the programs endpoint and 404, and a ``.json`` profile would land
+// on the same broken branch because the route-by-extension
+// fallback only consulted a small whitelist of "profile" modes.
+//
+// The new model is **source-driven**. Every file the editor opens
+// carries an explicit ``source`` from this enum:
+//
+//     'profiles'   →  GET/PUT /api/v1/modules/machineconfig/profiles/content
+//     'active'     →  GET    /api/v1/modules/machineconfig/active/content/{name}
+//     'staged'     →  GET    /api/v1/modules/machineconfig/staged/content/{name}
+//     'm_codes'    →  GET/PUT /api/v1/modules/machineconfig/m-codes/content
+//     'programs'   →  GET/PUT /api/v1/programs/content/{filename}
+//     'macros'     →  GET/PUT /api/v1/modules/macros/{name}/content
+//
+// ``source`` is decided by the caller (typically ``openInEditor``)
+// based on **where the file lives**, never by its filename extension.
+// The extension is consulted **only** to derive the CodeMirror
+// ``syntaxMode`` — a visual overlay, never a routing input.
+//
+// ``readOnly`` is a boolean (kept for backward-compatible prop
+// semantics on ``<Editor :read-only=...>``). ``saveFile`` is a
+// no-op when ``readOnly`` is true.
+
 import { defineStore } from 'pinia'
 
 import {
   ProgramFilesService,
   ModulesMachineconfigService,
+  ModulesMacrosService,
 } from '../../generated/api/index.ts'
 import { ApiError } from '../../generated/api/core/ApiError'
 
-// Universal editor store. Owns every file-I/O concern the editor
-// touches so ``EditorView`` (and any other consumer) never has to
-// branch on file kind.
-//
-// Architecture
-// ------------
-//
-// The store used to route reads and writes by ``mode`` (which was
-// derived from the file extension). That was fragile: a ``.cfg``
-// file under ``nc_files/`` would go through the machineconfig
-// endpoint, a ``.gcode`` under ``machine_config/profiles/`` would
-// go through the programs endpoint — neither of which matches where
-// the file actually lives.
-//
-// The new model is **path-based**. ``routeByPath(path)`` inspects
-// the path prefix and picks the right backend. The ``mode`` field is
-// kept for **syntax highlighting** and **UI hints** — it no longer
-// affects I/O routing.
-//
-// Path → service
-// --------------
-//
-//   ``machine_config/...``  or  ``profiles/...``  →  machineconfig
-//   bare ``M<num>`` (LinuxCNC M100..M199)     →  machineconfig /m-codes
-//   everything else                              →  programs
-//
-// Bare paths whose extension maps to a known profile mode
-// (``.cfg`` / ``.ini`` / ``.conf`` / ``.toml``) also route to
-// machineconfig — the backend's :class:`ConfigFileService` resolves
-// unqualified paths against ``machine_config/profiles/``, so a URL
-// like ``/config/klipper.cfg`` expects the profile endpoint. Without
-// that fallback the universal editor would 404 on every operator-
-// typed bare filename. The same fallback applies to bare M-code
-// names (``M101``), which live under ``machine_config/m_codes/`` per
-// LinuxCNC's ``[RS274NGC]USER_M_PATH`` convention — the editor
-// dispatches them to ``/api/v1/modules/machineconfig/m-codes/...``.
-//
-// The ``profiles/`` prefix is an alias accepted by the machineconfig
-// router (``save_profile`` and ``read_profile`` resolve relative to
-// ``machine_config/profiles/``). Operators see ``profiles/foo.cfg`` in
-// the URL bar; the service transparently maps that to the on-disk
-// path.
-//
-// Future-proofing
-// ---------------
-//
-// G-code macros, M-codes, MDI snippets, etc. all live under
-// ``nc_files/`` in the programs root. The path-based router extends
-// to a new endpoint without changing the existing one.
-//
-// The dedicated ``macros`` module owns its own router (CRUD over
-// ``.macro`` files under ``<repo>/macros/``); that surface is
-// reached through the dashboard panel and the Machine Config →
-// Macros section, not through the universal editor. Files that look
-// like ``.macro`` are NOT routed through ``writeByPath`` /
-// ``readByPath`` here — the macros module is the sole owner of those
-// files.
-//
-// M-codes (``M<num>``) live under ``machine_config/m_codes/`` and
-// ARE owned by the universal editor's profile dispatch. The
-// machineconfig router exposes ``/api/v1/modules/machineconfig
-// /m-codes/{list,content,$name}`` for these.
+// ---------------------------------------------------------------------- //
+// Source enum                                                              //
+// ---------------------------------------------------------------------- //
 
-const PROFILE_PATH_PREFIXES = ['machine_config/', 'profiles/']
-const PROFILE_MODES = new Set(['config', 'profile', 'ini', 'cfg', 'conf'])
-const GCODE_MODES = new Set(['gcode', 'ngc', 'nc'])
-// LinuxCNC's canonical custom-M-code range lives under
-// ``machine_config/m_codes/``. The bare-name regex matches the
-// backend's ``MCodeFileService.MCODE_NAME``; the universal editor
-// dispatches ``M<num>`` paths to the machineconfig router the same
-// way it dispatches bare ``.cfg`` filenames.
-const MCODE_NAME_PATTERN = /^M1\d{2}$/
+export const EDITOR_SOURCES = Object.freeze({
+  PROFILES: 'profiles',
+  ACTIVE: 'active',
+  STAGED: 'staged',
+  M_CODES: 'm_codes',
+  PROGRAMS: 'programs',
+  MACROS: 'macros',
+})
 
-function isProfilePath(path) {
-  if (!path) return false
-  // Explicit prefixes win first — that's the original contract and
-  // handles every path that comes from ``ProfilesExplorer``,
-  // ``ActivePanel`` etc. which always carry ``profiles/`` /
-  // ``machine_config/`` segments from the listing endpoints. An
-  // explicit ``machine_config/m_codes/`` prefix therefore routes
-  // to the machineconfig service's ``/m-codes/...`` endpoints.
-  if (
-    PROFILE_PATH_PREFIXES.some(
-      (prefix) => path === prefix.slice(0, -1) || path.startsWith(prefix),
-    )
-  ) {
-    return true
-  }
-  // Bare-path fallback. The backend's :class:`ConfigFileService`
-  // resolves unqualified paths against ``machine_config/profiles/``
-  // so a URL like ``/config/klipper.cfg`` (no prefix segment) is
-  // expected to read from that root. Without this branch, the
-  // router falls through to ``routeByPath === 'program'`` and the
-  // programs endpoint 404s on a perfectly valid profile. The
-  // extension-based check keeps the dispatch conservative — a
-  // ``.gcode`` / ``.ngc`` file still routes to the programs side.
-  if (PROFILE_MODES.has(modeForFilename(path))) return true
-  // Bare M-code names (``M101``, ``M199``, …) route to the
-  // machineconfig service's ``/m-codes/...`` endpoints. This is
-  // the third additive branch — it accepts only the canonical
-  // LinuxCNC ``M100..M199`` range so an operator typo (``M99`` /
-  // ``M200`` / ``hello``) keeps falling through to the programs
-  // endpoint and surfaces as a normal 404.
-  return MCODE_NAME_PATTERN.test(path)
+// Friendly operator-facing labels. The UI must never leak the raw
+// enum (e.g. ``(m_codes)`` looks like an internal tag) so the
+// editor header reads the label from this map. New sources need a
+// single entry here; ``undefined`` falls back to the raw key so a
+// missing label is obvious in dev rather than silent.
+export const EDITOR_SOURCE_LABELS = Object.freeze({
+  [EDITOR_SOURCES.PROFILES]: 'Profiles',
+  [EDITOR_SOURCES.ACTIVE]:   'Active Config',
+  [EDITOR_SOURCES.STAGED]:   'Compiled Output',
+  [EDITOR_SOURCES.M_CODES]:  'M-codes',
+  [EDITOR_SOURCES.PROGRAMS]: 'G-code Programs',
+  [EDITOR_SOURCES.MACROS]:   'Macros',
+})
+
+export function sourceLabel(source) {
+  return EDITOR_SOURCE_LABELS[source] ?? source
 }
 
-function isMCodePath(path) {
-  return typeof path === 'string' && MCODE_NAME_PATTERN.test(path)
-}
+const READ_ONLY_SOURCES = new Set([EDITOR_SOURCES.ACTIVE, EDITOR_SOURCES.STAGED])
 
+// ---------------------------------------------------------------------- //
+// Syntax-highlighting overlay                                              //
+// ---------------------------------------------------------------------- //
+//
 // Comprehensive extension → mode map. The mode is purely a syntax
-// highlighting hint; routing is path-based. New extensions are
+// highlighting hint; routing is source-driven. New extensions are
 // added in one place — keep the list sorted for grep-ability.
+// ``modeForFilename`` uses **only the last dot** so a multi-dot name
+// like ``printer.cfg.txt`` still picks up its terminal extension's
+// mode for CodeMirror's visual overlay without ever leaking back
+// into the routing decision.
+
 const EXTENSION_MODES = {
   // Machineconfig (Klipper / LinuxCNC INI-style)
   cfg: 'config',
@@ -156,43 +122,51 @@ const EXTENSION_MODES = {
   zsh: 'shell',
 }
 
-const DEFAULT_MODE = 'text'
+const DEFAULT_SYNTAX_MODE = 'text'
 
 export function modeForFilename(filename) {
-  if (!filename) return DEFAULT_MODE
+  if (!filename) return DEFAULT_SYNTAX_MODE
   const lower = filename.toLowerCase()
   const dot = lower.lastIndexOf('.')
-  if (dot < 0) return DEFAULT_MODE
+  if (dot < 0) return DEFAULT_SYNTAX_MODE
   const ext = lower.slice(dot + 1)
-  return EXTENSION_MODES[ext] ?? DEFAULT_MODE
+  return EXTENSION_MODES[ext] ?? DEFAULT_SYNTAX_MODE
 }
 
-// ---- Service dispatch ------------------------------------------- //
+// ---------------------------------------------------------------------- //
+// Source-driven dispatch                                                   //
+// ---------------------------------------------------------------------- //
 //
-// Single point where path → service call is decided. Adding a
-// new file kind means one new branch here, nothing else changes.
+// Single point where ``source + name`` → backend call is decided. The
+// extension is never consulted here — that's the whole point of the
+// refactor. Adding a new source means one new branch + a new entry
+// in :data:`EDITOR_SOURCES`.
 
-async function readProfileContent(path) {
+async function readProfileContent(name) {
   const envelope = await ModulesMachineconfigService
-    .readProfileApiV1ModulesMachineconfigProfilesContentGet(path)
+    .readProfileApiV1ModulesMachineconfigProfilesContentGet(name)
   return envelope?.content ?? ''
 }
 
-async function writeProfileContent(path, content) {
+async function writeProfileContent(name, content) {
   await ModulesMachineconfigService
-    .saveProfileApiV1ModulesMachineconfigProfilesContentPut(path, {
-      content,
-    })
+    .saveProfileApiV1ModulesMachineconfigProfilesContentPut(name, { content })
+}
+
+async function readActiveContent(name) {
+  const envelope = await ModulesMachineconfigService
+    .readActiveApiV1ModulesMachineconfigActiveContentNameGet(name)
+  return envelope?.content ?? ''
+}
+
+async function readStagedContent(name) {
+  const envelope = await ModulesMachineconfigService
+    .readStagedApiV1ModulesMachineconfigStagedContentNameGet(name)
+  return envelope?.content ?? ''
 }
 
 async function readMCodeContent(name) {
-  // M-code bare names land here (``M101`` etc.). The
-  // machineconfig router's ``/m-codes/content?path=`` endpoint
-  // resolves against ``machine_config/m_codes/``; we forward the
-  // exact same envelope shape (``{path, content}``) so the
-  // editor's mount-with-content fast path keeps working.
-  const envelope = await ModulesMachineconfigService
-    .readMCode(name)
+  const envelope = await ModulesMachineconfigService.readMCode(name)
   return envelope?.content ?? ''
 }
 
@@ -200,53 +174,80 @@ async function writeMCodeContent(name, content) {
   await ModulesMachineconfigService.writeMCode(name, { content })
 }
 
-async function readProgramContent(filename) {
+async function readProgramContent(name) {
   // ``ProgramFilesService.readFile`` throws ``ApiError`` on 404 —
   // the editor treats that as "brand-new file" and mounts with
   // empty content. Anything else bubbles up.
   try {
-    return await ProgramFilesService.readFile(filename)
+    return await ProgramFilesService.readFile(name)
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return ''
     throw error
   }
 }
 
-async function writeProgramContent(filename, content) {
-  await ProgramFilesService.writeFile(filename, { content })
+async function writeProgramContent(name, content) {
+  await ProgramFilesService.writeFile(name, { content })
 }
 
-function routeByPath(path) {
-  if (isMCodePath(path)) return 'mcode'
-  if (isProfilePath(path)) return 'profile'
-  return 'program'
+async function readMacroContent(name) {
+  const { baseName, kind } = _macroSplitName(name)
+  const envelope = await ModulesMacrosService.readMacroContent(baseName, kind)
+  return envelope?.content ?? ''
 }
 
-async function readByPath(path) {
-  // M-codes (``M<num>``) bypass the profile/program dispatch. The
-  // path is the bare token (``M101``); the backend resolves it
-  // against ``machine_config/m_codes/``.
-  if (isMCodePath(path)) return readMCodeContent(path)
-  const kind = routeByPath(path)
-  if (kind === 'profile') return readProfileContent(path)
-  return readProgramContent(path)
+async function writeMacroContent(name, content) {
+  const { baseName, kind } = _macroSplitName(name)
+  await ModulesMacrosService.writeMacroContent(baseName, { content }, kind)
 }
 
-async function writeByPath(path, content) {
-  // FastAPI rejects a zero-byte ``text/plain`` body with ``422``.
-  // Normalise ``""`` → ``"\n"`` once at the dispatch boundary so
-  // every backend write (profile, M-code, program) lands a single
-  // newline instead of failing.
-  const safe = content.length === 0 ? '\n' : content
-  // Same dispatch shape as ``readByPath``.
-  if (isMCodePath(path)) return writeMCodeContent(path, safe)
-  const kind = routeByPath(path)
-  if (kind === 'profile') return writeProfileContent(path, safe)
-  return writeProgramContent(path, safe)
+// Macros have two on-disk extensions (``.macro`` and ``.ngc``).
+// The universal editor treats the **displayed filename** (e.g.
+// ``home_all.macro`` / ``home_all.ngc``) as the single ``name``
+// payload, so the macros dispatch peels the extension off before
+// hitting the backend. The ``.macro`` / ``.ngc`` extension is the
+// only signal the dispatch ever consults; bare names default to
+// ``macro`` so the legacy ``M<num>`` bare-name flow keeps working
+// when ``kind`` cannot be inferred.
+function _macroSplitName(name) {
+  const lower = (name || '').toLowerCase()
+  if (lower.endsWith('.ngc')) {
+    return { baseName: name.slice(0, -4), kind: 'ngc' }
+  }
+  if (lower.endsWith('.macro')) {
+    return { baseName: name.slice(0, -6), kind: 'macro' }
+  }
+  return { baseName: name, kind: 'macro' }
 }
 
-// Human-readable error for both ``ApiError`` (from the generated
-// clients) and plain ``Error`` (from anywhere else).
+async function dispatchRead(source, name) {
+  switch (source) {
+    case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
+    case EDITOR_SOURCES.ACTIVE:   return readActiveContent(name)
+    case EDITOR_SOURCES.STAGED:   return readStagedContent(name)
+    case EDITOR_SOURCES.M_CODES:  return readMCodeContent(name)
+    case EDITOR_SOURCES.PROGRAMS: return readProgramContent(name)
+    case EDITOR_SOURCES.MACROS:   return readMacroContent(name)
+    default:
+      throw new Error(`Unknown editor source: ${JSON.stringify(source)}`)
+  }
+}
+
+async function dispatchWrite(source, name, content) {
+  switch (source) {
+    case EDITOR_SOURCES.PROFILES: return writeProfileContent(name, content)
+    case EDITOR_SOURCES.M_CODES:  return writeMCodeContent(name, content)
+    case EDITOR_SOURCES.PROGRAMS: return writeProgramContent(name, content)
+    case EDITOR_SOURCES.MACROS:   return writeMacroContent(name, content)
+    default:
+      throw new Error(`Source ${JSON.stringify(source)} is read-only or unknown`)
+  }
+}
+
+// ---------------------------------------------------------------------- //
+// Error formatting                                                         //
+// ---------------------------------------------------------------------- //
+
 function describeError(error) {
   if (!error) return 'Unknown error'
   if (error instanceof ApiError) {
@@ -261,43 +262,63 @@ function describeError(error) {
   return error.message || String(error)
 }
 
+// ---------------------------------------------------------------------- //
+// Store                                                                   //
+// ---------------------------------------------------------------------- //
+
 export const useEditorStore = defineStore('editor', {
   state: () => ({
-    filename: '',
-    mode: 'config',
+    // Source-driven identity: the caller pins these via
+    // ``open({source, name, ...})``. The URL the operator sees in the
+    // browser bar is also derived from these, so the editor is
+    // always deep-linkable.
+    source: '',
+    name: '',
+    // ``readOnly`` is the property the ``<Editor>`` child consumes
+    // to gate the editor surface. ``syntaxMode`` is the CodeMirror
+    // language pack — purely visual.
+    readOnly: false,
+    syntaxMode: DEFAULT_SYNTAX_MODE,
     content: '',
     pristineContent: '',
-    readOnly: false,
     // Async I/O flags — components watch these to drive spinners.
     isLoading: false,
     isSaving: false,
     // Last error from ``loadFile`` / ``saveFile`` (or ``null``).
-    error: null
+    error: null,
   }),
 
   getters: {
-    isGcode: (state) => GCODE_MODES.has(state.mode),
-    isProfile: (state) => PROFILE_MODES.has(state.mode),
-    canSave: (state) => !state.readOnly && state.filename.length > 0,
-    // True when ``loadFile`` was bypassed because the content was
-    // already populated by the caller (e.g. ``FileManager`` passing
-    // it in up-front).
+    canSave: (state) => !state.readOnly && state.source.length > 0 && state.name.length > 0,
     hasContent: (state) => state.content.length > 0,
-    isDirty: (state) => state.content !== state.pristineContent
+    isDirty: (state) => state.content !== state.pristineContent,
   },
 
   actions: {
     /**
-     * Open the editor on a file. ``content`` is optional; pass
-     * ``''`` to let ``loadFile`` fetch from the backend on demand.
-     * ``mode`` defaults to the value derived from the filename
-     * extension (see :func:`modeForFilename`) so the editor picks
-     * the right syntax highlighting automatically.
+     * Open the editor on a file identified by ``source`` + ``name``.
+     *
+     * @param {object}   options
+     * @param {string}   options.source   One of :data:`EDITOR_SOURCES`.
+     * @param {string}   options.name     Filename (or path under ``profiles``).
+     * @param {boolean} [options.readOnly=false]
+     *   Read-only flag. Defaults to ``true`` for ``active`` /
+     *   ``staged`` because those roots are write-protected after
+     *   deploy / compile.
+     * @param {string}  [options.content='']
+     *   Caller-supplied content. Skip ``loadFile`` when present so
+     *   the editor mounts with text already in hand instead of
+     *   flashing a loading state.
      */
-    open(filename, readOnly = false, mode = null, content = '') {
-      this.filename = filename
-      this.readOnly = readOnly
-      this.mode = mode ?? modeForFilename(filename)
+    open({ source, name, readOnly, content = '' }) {
+      if (!Object.values(EDITOR_SOURCES).includes(source)) {
+        throw new Error(`Invalid editor source: ${JSON.stringify(source)}`)
+      }
+      this.source = source
+      this.name = name
+      // Read-only by default for the two compile-time roots.
+      this.readOnly = readOnly ?? READ_ONLY_SOURCES.has(source)
+      this.syntaxMode = modeForFilename(name)
       this.content = content
       this.pristineContent = content
       this.error = null
@@ -306,21 +327,21 @@ export const useEditorStore = defineStore('editor', {
     },
 
     /**
-     * Fetch ``path`` from the backend (route chosen by path prefix,
-     * not by mode) and write the result into ``state.content``.
-     * The caller is expected to have already populated ``filename`` /
-     * ``mode`` (typically via ``open()``).
+     * Fetch the active ``name`` from ``source``'s backend and write
+     * the result into ``state.content``. The caller is expected to
+     * have already populated ``source`` / ``name`` (via
+     * ``open()``).
      */
-    async loadFile(path, mode) {
+    async loadFile() {
+      if (!this.source || !this.name) {
+        throw new Error('loadFile requires source + name')
+      }
       this.isLoading = true
       this.error = null
       try {
-        const effectiveMode = mode ?? this.mode ?? modeForFilename(path)
-        const text = await readByPath(path)
+        const text = await dispatchRead(this.source, this.name)
         this.content = text
         this.pristineContent = text
-        this.filename = path
-        this.mode = effectiveMode
       } catch (error) {
         this.error = describeError(error)
         throw error
@@ -330,25 +351,33 @@ export const useEditorStore = defineStore('editor', {
     },
 
     /**
-     * Persist ``content`` to ``path`` via the backend service picked
-     * by path prefix. Returns ``true`` on success, ``false`` (and
-     * sets ``state.error``) on failure.
+     * Persist ``content`` to ``source``'s backend. Returns ``true``
+     * on success, ``false`` (and sets ``state.error``) on failure.
      */
-    async saveFile(path, content, mode) {
+    async saveFile(content) {
       if (this.readOnly) {
         this.error = 'Editor is read-only.'
         return false
       }
-      const effectiveMode = mode ?? this.mode ?? modeForFilename(path)
+      if (!this.source || !this.name) {
+        this.error = 'saveFile requires source + name'
+        return false
+      }
+      // FastAPI rejects a zero-byte ``text/plain`` body with
+      // ``422``. Normalise ``""`` → ``"\n"`` at the dispatch
+      // boundary so every backend write (profile, m-code, macro,
+      // program) lands a single newline instead of failing. The
+      // envelope-shape endpoints (``m_codes``, ``macros``) accept
+      // JSON with an empty string fine; the safety net still costs
+      // nothing.
+      const safe = content.length === 0 ? '\n' : content
 
       this.isSaving = true
       this.error = null
       try {
-        await writeByPath(path, content)
-        this.content = content
-        this.pristineContent = content
-        this.filename = path
-        this.mode = effectiveMode
+        await dispatchWrite(this.source, this.name, safe)
+        this.content = safe
+        this.pristineContent = safe
         return true
       } catch (error) {
         this.error = describeError(error)
@@ -362,38 +391,35 @@ export const useEditorStore = defineStore('editor', {
      * Clear the editor state. The next ``open()`` starts fresh.
      */
     close() {
-      this.filename = ''
+      this.source = ''
+      this.name = ''
+      this.readOnly = false
+      this.syntaxMode = DEFAULT_SYNTAX_MODE
       this.content = ''
       this.pristineContent = ''
       this.error = null
       this.isLoading = false
       this.isSaving = false
-    }
-  }
+    },
+  },
 })
 
 // ---- Public re-exports ------------------------------------------- //
 //
-// External consumers (EditorView's modeForFilename, tests) need
-// access to the mode map. Re-export from the store so the public
-// surface stays in one place.
+// External consumers (EditorView, tests, the openInEditor helper)
+// import the dispatch helpers + the syntax-mode resolver so the
+// public surface stays in one place.
 
+// ``EDITOR_SOURCES`` / ``EDITOR_SOURCE_LABELS`` / ``sourceLabel``
+// / ``EXTENSION_MODES`` / ``DEFAULT_SYNTAX_MODE`` are already
+// exported via ``export const`` / ``export function`` above.
+// ``dispatchRead`` / ``dispatchWrite`` are local — re-export them
+// under their public aliases (``readBySource`` / ``writeBySource``)
+// so external callers do not reach into the store internals.
 export {
   EXTENSION_MODES,
-  DEFAULT_MODE,
-  isProfilePath,
-  modeForFilename as resolveEditorMode,
-}
-
-export const EDITOR_MODES = {
-  CONFIG: 'config',
-  PROFILE: 'profile',
-  GCODE: 'gcode',
-  JS: 'javascript',
-  JSON: 'json',
-  PYTHON: 'python',
-  MARKDOWN: 'markdown',
-  YAML: 'yaml',
-  SHELL: 'shell',
-  TEXT: 'text'
+  DEFAULT_SYNTAX_MODE,
+  EDITOR_SOURCES as SOURCES,
+  dispatchRead as readBySource,
+  dispatchWrite as writeBySource,
 }

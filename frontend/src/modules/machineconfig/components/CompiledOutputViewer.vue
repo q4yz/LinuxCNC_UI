@@ -7,18 +7,13 @@
 // :class:`ConfigEditor` widget in read-only mode so the operator
 // gets the same CodeMirror styling they have everywhere else.
 
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../store.js";
-import Editor from "../../../components/Editor.vue";
+import { openInEditor } from "../../../helpers/openInEditor.js";
 
 const store = useMachineConfigStore();
 const { stagedFiles, stagedContents, stagedTotalSize, isBusy } = storeToRefs(store);
-
-const viewModalOpen = ref(false);
-const viewModalTitle = ref("");
-const viewModalContent = ref("");
-const viewModalFilename = ref("");
 
 const fileCards = computed(() =>
   stagedFiles.value.map((file) => ({
@@ -51,13 +46,16 @@ function formatSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-async function openModal(card) {
-  const content =
-    stagedContents.value[card.name] ?? (await store.readStagedFileContent(card.name));
-  viewModalTitle.value = card.modalTitle;
-  viewModalContent.value = content || "";
-  viewModalFilename.value = card.name;
-  viewModalOpen.value = true;
+// "View" used to mount ``Editor`` inline inside a modal. The
+// universal editor contract (issue #132) routes through
+// ``/editor?source=staged&name=...&readOnly=true`` instead so the
+// editor only lives in one place.
+function openInEditorView(card) {
+  return openInEditor({
+    source: 'staged',
+    name: card.name,
+    readOnly: true,
+  })
 }
 
 async function downloadFile(name) {
@@ -127,13 +125,6 @@ function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
   anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
 }
-
-function closeModal() {
-  viewModalOpen.value = false;
-  viewModalContent.value = "";
-  viewModalFilename.value = "";
-  viewModalTitle.value = "";
-}
 </script>
 
 <template>
@@ -186,44 +177,12 @@ function closeModal() {
             type="button"
             class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"
             :disabled="isBusy"
-            @click="openModal(card)"
+            @click="openInEditorView(card)"
           >
             View
           </button>
         </div>
       </li>
     </ul>
-
-    <div
-      v-if="viewModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-    >
-      <div class="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-2xl">
-        <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
-          <div>
-            <div class="text-xs uppercase tracking-wider text-yellow-300 font-semibold">
-              {{ viewModalTitle }}
-            </div>
-          </div>
-          <button
-            type="button"
-            class="rounded bg-gray-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-500"
-            @click="closeModal"
-          >
-            Close
-          </button>
-        </div>
-        <!-- ``min-h-0`` defeats the flex default ``min-height: auto``
-             so the editor can scroll inside the fixed-height modal. -->
-        <div class="min-h-0 flex-1 overflow-hidden">
-          <Editor
-            v-model="viewModalContent"
-            :read-only="true"
-            :filename="viewModalFilename || viewModalTitle"
-            mode="profile"
-          />
-        </div>
-      </div>
-    </div>
   </div>
 </template>

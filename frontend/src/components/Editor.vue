@@ -3,6 +3,14 @@
 // updates; the parent (``EditorView``) owns all file I/O through
 // ``useEditorStore``. This component is a pure presentation layer —
 // it does not fetch, save, or even know what file it is editing.
+//
+// Note on the API surface: the component only declares the
+// ``update:modelValue`` emit. Earlier iterations also declared
+// ``close`` and ``save`` emits but nothing fired them — the
+// parent (``EditorView``) handles those actions via its own
+// ``@click`` handlers on the header buttons. Keeping the API
+// minimal avoids the dead-code smell that future maintainers
+// would chase.
 
 import { computed } from 'vue'
 import { Codemirror } from 'vue-codemirror'
@@ -28,7 +36,7 @@ const props = defineProps({
   mode: { type: String, default: 'config' }
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'save'])
+const emit = defineEmits(['update:modelValue'])
 
 // Pick the CodeMirror extension for the active mode. Plain text
 // is the default; only ``js`` / ``javascript`` gets a language

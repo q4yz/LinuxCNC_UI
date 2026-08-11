@@ -5,9 +5,9 @@
 // + Edit / Delete; there's no "Run" button because the
 // interpreter dispatches M-codes itself on ``M<num>`` MDI calls.
 //
-// Editing opens the universal editor with the bare ``M<num>``
-// name; the universal editor's ``isProfilePath`` recognises the
-// ``^M1\d{2}$`` shape and routes the read/write to the
+// Editing pushes ``/editor?source=m_codes&name=<token>`` via the
+// shared :func:`openInEditor` helper; the universal editor's
+// source-driven dispatch routes the read/write to the
 // machineconfig router's ``/m-codes/...`` endpoints.
 //
 // The store is loaded lazily on mount; the listing starts empty
@@ -18,6 +18,7 @@ import { computed, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store.js";
+import { openInEditor } from "../../../helpers/openInEditor.js";
 
 const store = useMacrosStore();
 const { isBusy, mcodeFiles } = storeToRefs(store);
@@ -91,8 +92,8 @@ async function onDelete(name) {
         <div class="flex items-center gap-3 shrink-0">
           <a
             class="rounded bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-sm font-semibold text-white"
-            :href="`#/config/${encodeURIComponent(row.name)}`"
-            @click.prevent="$router.push({ name: 'config', params: { filename: row.name } })"
+            :href="`#/editor?source=m_codes&name=${encodeURIComponent(row.name)}`"
+            @click.prevent="openInEditor({ source: 'm_codes', name: row.name })"
           >
             Edit
           </a>

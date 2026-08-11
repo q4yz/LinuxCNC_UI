@@ -271,14 +271,14 @@ test("FileManager routes the edit action into the routed EditorView", () => {
     "frontend/src/components/FileManager.vue",
   );
   const text = readFileSync(fmPath, "utf-8");
-  // The current architecture dropped the ``emit('edit', ...)``
-  // contract in favor of a Vue Router push. ``editFile`` writes
-  // the filename / mode / content to the shared ``editor``
-  // Pinia store and pushes the ``config`` route so the
-  // ``EditorView`` renders the editor inside the page chrome.
+  // Issue #132: ``editFile`` delegates to ``openInEditor`` which
+  // pushes ``/editor?source=programs&name=<file>``. The store is
+  // no longer touched here — routing is source-driven and the
+  // universal editor owns the load/save lifecycle.
   assert.match(text, /function\s+editFile\b/);
-  assert.match(text, /editorStore\.open\(/);
-  assert.match(text, /router\.push\(\s*\{\s*name:\s*['"]config['"]\s*\}\s*\)/);
+  assert.match(text, /openInEditor\(/);
+  assert.match(text, /source:\s*['"]programs['"]/);
+  assert.match(text, /name:\s*filename/);
 });
 
 test("FilesView forwards every edit-event argument to App.vue", () => {

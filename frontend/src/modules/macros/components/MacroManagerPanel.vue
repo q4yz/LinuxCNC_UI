@@ -16,32 +16,23 @@
 // in a different on-disk root (``machine_config/m_codes/``) and
 // follow a stricter name regex (``^M1\d{2}$``).
 //
-// The text editor rides on the existing ``Editor.vue`` component
-// inside a full-height modal — no new editor dependency. Save is
-// gated by a manual "pristineContent" mirror so the modal can
-// prompt on Close when the body is dirty (mirrors the
-// ``EditorView`` unsaved-changes guard, scoped to the macro
-// modal).
+// The text editor itself lives in ``EditorView`` — this panel
+// never embeds ``Editor.vue``. The "+ New macro" flow creates the
+// file via the store (so collisions are caught up-front) then
+// pushes ``/editor?source=macros&name=<filename>`` so the operator
+// lands in the universal editor. The unsaved-changes guard lives
+// in ``EditorView`` itself (see ``router/guards/unsavedChangesGuard.js``).
 
 import { computed, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 
-import Editor from "../../../components/Editor.vue";
 import { useMacrosStore, MACRO_KIND } from "../store.js";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
 import { validateMacroKindName } from "../parser.js";
+import { openInEditor } from "../../../helpers/openInEditor.js";
 
 const store = useMacrosStore();
 const { macroFiles, ngcFiles, contents, isBusy } = storeToRefs(store);
-
-const editorOpen = ref(false);
-const editorKind = ref(MACRO_KIND.MACRO);
-const editorName = ref("");
-const editorFilename = ref("");
-const editorContent = ref("");
-const editorPristine = ref("");
-const editorSaving = ref(false);
-const editorLoading = ref(false);
 
 const createOpen = ref(false);
 const createKind = ref(MACRO_KIND.MACRO);
@@ -81,67 +72,17 @@ function formatSize(bytes) {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-async function openEditor(kind, name) {
-  editorKind.value = kind;
-  editorName.value = name;
-  editorFilename.value =
-    kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`;
-  editorSaving.value = false;
-  editorLoading.value = true;
-  editorContent.value = contents.value[`${kind}:${name}`] ?? "";
-  editorPristine.value = editorContent.value;
-  editorOpen.value = true;
-  try {
-    const payload = await store.ensureMacroContent(kind, name);
-    if (payload != null) {
-      editorContent.value = payload;
-      editorPristine.value = payload;
-    }
-  } finally {
-    editorLoading.value = false;
-  }
-}
-
-const editorIsDirty = computed(
-  () => editorContent.value !== editorPristine.value,
-);
-
-async function closeEditor(force = false) {
-  if (!force && editorIsDirty.value) {
-    const shouldClose = await useConfirm({
-      title: "Unsaved changes",
-      question: "Close the macro editor? Unsaved edits will be discarded.",
-      confirmButtonText: "Discard",
-      confirmButtonStyle: ModalButtonStyle.DANGER,
-      rejectButtonText: "Keep editing",
-    });
-    if (!shouldClose) return;
-  }
-  editorOpen.value = false;
-  editorName.value = "";
-  editorContent.value = "";
-  editorPristine.value = "";
-}
-
-async function saveEditor() {
-  if (!editorName.value) return;
-  editorSaving.value = true;
-  try {
-    // Same FastAPI 422 trap as ``commitCreate``: an empty body
-    // never reaches the backend. The store normalises
-    // ``""`` → ``"\n"`` so a user who fully clears the editor
-    // can still save.
-    const ok = await store.saveMacro(
-      editorKind.value,
-      editorName.value,
-      editorContent.value,
-    );
-    if (ok) {
-      editorPristine.value = store.contents[`${editorKind.value}:${editorName.value}`] ?? editorContent.value;
-    }
-  } finally {
-    editorSaving.value = false;
-  }
+// "Edit" used to mount ``Editor`` inline inside a full-height
+// modal. Issue #132 moves the editor to ``EditorView`` only; we
+// push ``/editor?source=macros&name=<displayedFilename>`` here and
+// let the universal editor handle the read/write surface.
+function openInEditorView(kind, name) {
+  const displayedName = kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`
+  return openInEditor({
+    source: 'macros',
+    name: displayedName,
+    readOnly: false,
+  })
 }
 
 async function deleteMacro(kind, name) {
@@ -193,7 +134,7 @@ async function commitCreate() {
   const ok = await store.saveMacro(createKind.value, name, "\n");
   if (ok) {
     createOpen.value = false;
-    await openEditor(createKind.value, name);
+    await openInEditorView(createKind.value, name);
   } else if (store.lastError) {
     createError.value = store.lastError;
   }
@@ -259,7 +200,7 @@ watch(() => store.lastError, (value) => {
             type="button"
             class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"
             :disabled="isBusy"
-            @click="openEditor(card.kind, card.name)"
+            @click="openInEditorView(card.kind, card.name)"
             :data-test="`macros-edit-${card.kind}-${card.name}`"
           >
             Edit
@@ -356,79 +297,8 @@ watch(() => store.lastError, (value) => {
       </form>
     </div>
 
-    <!-- Edit modal: full-height CodeMirror surface wrapped in
-         ``Editor.vue``. ``editorIsDirty`` powers the unsaved-
-         changes guard on close. -->
-    <div
-      v-if="editorOpen"
-      class="fixed inset-0 z-50 flex flex-col bg-gray-900"
-    >
-      <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3 shrink-0">
-        <div class="flex items-center gap-3">
-          <span class="font-mono text-blue-300">
-            Editing {{ editorFilename }}
-          </span>
-          <span
-            class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider"
-            :class="
-              editorKind === 'macro'
-                ? 'bg-blue-700/40 text-blue-200'
-                : 'bg-purple-700/40 text-purple-200'
-            "
-          >
-            {{ editorKind }}
-          </span>
-          <span
-            v-if="editorIsDirty"
-            class="px-1.5 py-0.5 rounded bg-yellow-700/40 text-yellow-200 text-[10px] uppercase tracking-wider"
-          >
-            unsaved
-          </span>
-          <span
-            v-else
-            class="px-1.5 py-0.5 rounded bg-green-700/30 text-green-200 text-[10px] uppercase tracking-wider"
-          >
-            saved
-          </span>
-        </div>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            class="rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500"
-            @click="closeEditor(false)"
-            data-test="macros-editor-close"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500 disabled:bg-green-900"
-            :disabled="editorSaving || !editorIsDirty || editorLoading"
-            @click="saveEditor"
-            data-test="macros-editor-save"
-          >
-            {{ editorSaving ? 'Saving…' : 'Save' }}
-          </button>
-          <button
-            type="button"
-            class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500 disabled:bg-blue-900"
-            :disabled="editorSaving || editorLoading"
-            @click="saveEditor().then(() => editorContent.value === editorPristine.value && (editorOpen = false))"
-            data-test="macros-editor-save-close"
-          >
-            Save &amp; Close
-          </button>
-        </div>
-      </div>
-      <div class="min-h-0 flex-1">
-        <Editor
-          :model-value="editorContent"
-          @update:model-value="(value) => (editorContent = value)"
-          :filename="editorFilename"
-          :read-only="editorLoading"
-          mode="config"
-        />
-      </div>
-    </div>
+    <!-- Edit modal removed: the universal editor contract (issue
+         #132) pushes the operator to ``/editor?source=macros&name=...``
+         instead of mounting ``Editor`` inline. -->
   </div>
 </template>

@@ -26,6 +26,14 @@ from .domain_file_services import (
     get_staged_service,
     reset_service_cache,
 )
+from .http_errors import (
+    raise_bad_request,
+    raise_bad_request_from,
+    raise_conflict,
+    raise_conflict_from,
+    raise_not_found,
+    raise_not_found_from,
+)
 from .remora_signal_map import (
     get_pv_index,
     get_sp_index,
@@ -47,6 +55,13 @@ __all__ = [
     "get_program_service",
     "get_sp_index",
     "get_staged_service",
+    "raise_bad_request",
+    "raise_bad_request_from",
+    "raise_conflict",
+    "raise_conflict_from",
+    "raise_not_found",
+    "raise_not_found_from",
     "reset_remora_signal_map_cache",
     "reset_service_cache",
-] 
+]
+

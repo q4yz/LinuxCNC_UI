@@ -76,16 +76,17 @@ test("registerModuleRoutes walks the mounted registry and addRoute's per sidebar
 test("registerModuleRoutes skips built-in route names", () => {
   // Built-in collision protection: if a module's manifest declared
   // ``sidebar.id === 'programs'`` for any reason, the built-in
-  // dashboard/programs/config/settings surface wins over the dynamic
+  // dashboard/programs/editor/settings surface wins over the dynamic
   // override. The built-in names must be read off the static
-  // route table.
+  // route table. Issue #132 renamed the editor route from
+  // ``config`` to ``editor``; the built-in list must reflect that.
   const text = read(routerPath);
   assert.match(
     text,
     /builtInNames\s*[=:]/,
     "must keep a Set of built-in route names to defend against collisions",
   );
-  for (const name of ["dashboard", "programs", "config", "settings"]) {
+  for (const name of ["dashboard", "programs", "editor", "settings"]) {
     assert.match(
       text,
       new RegExp(`['"\`]${name}['"\`]`),

@@ -1,21 +1,44 @@
 <script setup>
-// Universal editor shell. Editor-only: the surface that used to
-// render the machineconfig panel grid when no filename was set
-// moved to ``MachineConfigView.vue`` (mounted at ``/machineconfig``).
-// EditorView now renders the editor overlay only when a filename
-// is present in ``route.params``; otherwise it renders a small
-// empty-state prompt pointing operators at the new ``Machine
-// Config`` route so deep-links like ``/config/`` still get a sane
-// landing page instead of nothing.
+// Universal editor shell — the ONLY mount point for ``<Editor>``
+// anywhere in the app (issue #132).
+//
+// Contract
+// --------
+// The view consumes three query-string inputs:
+//
+//     /editor?source=profiles&name=klipper.cfg&readOnly=false
+//     /editor?source=active&name=hardware.json&readOnly=true
+//     /editor?source=staged&name=machine.cfg&readOnly=true
+//     /editor?source=m_codes&name=M101&readOnly=false
+//     /editor?source=programs&name=foo.gcode&readOnly=false
+//     /editor?source=macros&name=my_macro&readOnly=false
+//
+// ``source`` selects the dispatch branch in :func:`useEditorStore`
+// (the store is the only place that knows the backend surface).
+// ``name`` is the filename, or path-within-profiles. ``readOnly`` is
+// optional — ``active`` and ``staged`` default to read-only.
+//
+// The component never reads the filename extension to decide
+// routing; that was the bug behind the ``.txt`` profile miss. The
+// ``source`` query param drives everything; the extension only
+// decides CodeMirror's syntax overlay.
 
-import { onMounted, ref, computed, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { useConfirm, ModalButtonStyle } from '../core/confirm.js';
-import { useUnsavedChangesGuard } from '../router/guards/unsavedChangesGuard.js';
+import {
+  useUnsavedChangesGuard,
+  UNSAVED_PROMPT,
+} from '../router/guards/unsavedChangesGuard.js';
 
 import Editor from '../components/Editor.vue';
-import { useEditorStore, resolveEditorMode } from '../stores/editor.js';
+import {
+  useEditorStore,
+  EDITOR_SOURCES,
+  sourceLabel,
+} from '../stores/editor.js';
+import { openInEditor } from '../helpers/openInEditor.js';
 
 const editorStore = useEditorStore();
 const route = useRoute();
@@ -24,158 +47,237 @@ const router = useRouter();
 useUnsavedChangesGuard(() => editorStore.isDirty);
 
 // Local mirror of the editor content so the v-model works in
-// both directions (CodeMirror ↔ Pinia). The store still owns the canonical copy.
+// both directions (CodeMirror ↔ Pinia). The store still owns the
+// canonical copy.
 const editorContent = ref('');
 
-// --- Mode + path derivation -------------------------------------- //
+// --- Query → store identity -------------------------------------- //
 //
-// ``resolveEditorMode`` (from the store) is the single source of
-// truth for the extension → mode map. It covers gcode, profile, JS,
-// TS, JSON, Python, YAML, Markdown, Shell, HTML, CSS, XML, etc.
-// — see the store for the full table. The mode is purely for
-// syntax highlighting and UI hints; the store routes I/O by the
-// file's path, not by its extension.
+// Pull the (source, name, readOnly) tuple out of the URL query and
+// hand it to the store. The store rejects invalid sources with a
+// loud ``Error``; we convert that into a friendly empty-state
+// fallback so a typo in a bookmarked URL does not crash the shell.
 
-function hydratePath() {
-  let param = route.params?.filename;
-  // Handle catch-all routes (.*) where Vue Router might return an array
-  if (Array.isArray(param)) param = param.join('/');
+const SOURCES = Object.values(EDITOR_SOURCES)
 
-  if (typeof param === 'string' && param.length > 0) {
-    return decodeURIComponent(param);
+const currentSource = computed(() => {
+  const raw = route.query?.source
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && SOURCES.includes(value) ? value : ''
+})
+
+const currentName = computed(() => {
+  const raw = route.query?.name
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && value.length > 0 ? value : ''
+})
+
+const currentReadOnly = computed(() => {
+  const raw = route.query?.readOnly
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string') return false
+  return value === 'true' || value === '1'
+})
+
+// Whether the URL has the minimum required params. The empty-state
+// fallback below renders when this is false.
+const hasValidTarget = computed(() => currentSource.value !== '' && currentName.value !== '')
+
+// --- Loading ----------------------------------------------------- //
+
+async function loadFromRoute() {
+  if (!hasValidTarget.value) return
+
+  // Re-mounting the same file is a no-op (back-button, refresh).
+  if (
+    editorStore.source === currentSource.value &&
+    editorStore.name === currentName.value &&
+    editorStore.readOnly === currentReadOnly.value
+  ) {
+    return
   }
-  return editorStore.filename || '';
-}
 
-const editorPath = computed(() => hydratePath());
-const editorMode = computed(() =>
-  resolveEditorMode(editorPath.value || editorStore.filename)
-);
-
-// --- Loading logic ----------------------------------------------- //
-
-async function loadFromSource() {
-  const targetPath = editorPath.value;
-  if (!targetPath) return;
-
-  // Mirror the store's view of the active file into our local
-  // ref so the editor sees the latest content immediately.
-  if (editorStore.filename === targetPath && editorStore.hasContent) {
-    editorContent.value = editorStore.content;
-    return;
-  }
-
-  // The store is the single source of truth for I/O.
-  editorStore.open(targetPath, false, editorMode.value, '');
+  editorStore.open({
+    source: currentSource.value,
+    name: currentName.value,
+    readOnly: currentReadOnly.value,
+  })
   try {
-    await editorStore.loadFile(targetPath, editorMode.value);
-    editorContent.value = editorStore.content;
+    await editorStore.loadFile()
+    editorContent.value = editorStore.content
   } catch (error) {
-    console.error("Failed to load file content:", error);
-    editorContent.value = '';
+    console.error("Failed to load file content:", error)
+    editorContent.value = ''
   }
 }
 
-// The URL is the single source of truth. When the route parameter changes,
-// fetch the new file.
+// --- Route watcher ----------------------------------------------- //
+//
+// The URL is the single source of truth. Re-load on every change
+// after prompting about unsaved work the way the legacy shell did.
+
 watch(
-  () => route.params.filename,
-  async () => {
-    if (editorStore.isDirty && editorStore.filename !== editorPath.value) {
+  () => [currentSource.value, currentName.value, currentReadOnly.value],
+  async ([nextSource, nextName, nextReadOnly]) => {
+    if (editorStore.isDirty && editorStore.name !== nextName) {
+      // Same copy as the URL-leave guard uses — both prompts
+      // render through ``UNSAVED_PROMPT``.
       const shouldLeave = await useConfirm({
-        title: "Ungespeicherte Änderungen",
-        question: "Möchten Sie diese Seite wirklich verlassen?",
-        description: "Alle nicht gespeicherten Eingaben gehen verloren und können nicht wiederhergestellt werden.",
-        confirmButtonText: "Seite verlassen",
+        title: UNSAVED_PROMPT.title,
+        question: UNSAVED_PROMPT.question,
+        confirmButtonText: UNSAVED_PROMPT.confirmText,
         confirmButtonStyle: ModalButtonStyle.DANGER,
-        rejectButtonText: "Hier bleiben",
+        rejectButtonText: UNSAVED_PROMPT.rejectText,
+        rejectButtonStyle: ModalButtonStyle.SECONDARY,
         showDismissCrossButton: false,
       });
       if (!shouldLeave) {
-        await router.replace({ name: route.name, params: { filename: editorStore.filename } });
+        await router.replace({
+          name: 'editor',
+          query: {
+            source: editorStore.source,
+            name: editorStore.name,
+            readOnly: editorStore.readOnly ? 'true' : 'false',
+          },
+        });
         return;
       }
     }
-    await loadFromSource();
-  }
-);
+    // Trigger the loader; harmless when the params didn't actually
+    // change (``loadFromRoute`` short-circuits).
+    void nextSource; void nextReadOnly
+    await loadFromRoute()
+  },
+)
 
-// --- Save & Close Handlers --------------------------------------- //
+// --- Save / Close handlers -------------------------------------- //
+
+async function promptUnsavedClose() {
+  // Read-only sources cannot have dirty content, so we never
+  // prompt for them — ``Editor.vue`` disables editing when
+  // ``readOnly`` is true.
+  if (!editorStore.isDirty) return true
+  return useConfirm({
+    title: UNSAVED_PROMPT.title,
+    question: UNSAVED_PROMPT.question,
+    confirmButtonText: UNSAVED_PROMPT.confirmText,
+    confirmButtonStyle: ModalButtonStyle.DANGER,
+    rejectButtonText: UNSAVED_PROMPT.rejectText,
+    rejectButtonStyle: ModalButtonStyle.SECONDARY,
+    showDismissCrossButton: false,
+  })
+}
 
 async function saveEditor() {
-  if (!editorPath.value) return;
-  await editorStore.saveFile(editorPath.value, editorContent.value, editorMode.value);
+  if (!hasValidTarget.value) return
+  await editorStore.saveFile(editorContent.value)
 }
 
 async function saveAndCloseEditor() {
-  await saveEditor();
-  closeEditor();
+  await saveEditor()
+  closeEditor()
 }
 
 async function confirmClose() {
-  const shouldClose = !editorStore.isDirty || await useConfirm({
-    title: "Ungespeicherte Änderungen",
-    question: "Are you sure you want to close? Any unsaved changes will be lost.",
-    confirmButtonText: "Close",
-    confirmButtonStyle: ModalButtonStyle.DANGER,
-    rejectButtonText: "Cancel",
-    showDismissCrossButton: false,
-  });
-  if (shouldClose) closeEditor();
+  if (await promptUnsavedClose()) closeEditor()
 }
 
 // Close clears the store and routes the operator back to the
-// surface that owns the file kind. G-code files land on the
-// programs dashboard; everything else (profiles, .cfg / .ini /
-// .conf, .macro, M-code, …) lands on the machineconfig surface
-// at /machineconfig. The legacy ``name: 'config'`` route is now
-// editor-only so navigating to it without a filename would loop.
+// surface that owns the file kind. Programs land on the programs
+// dashboard; profiles and macros land on the machineconfig surface;
+// everything else (active/staged/m_codes) goes back to machineconfig
+// too since that view owns both the deployed artifact viewer and
+// the M-code manager.
 function closeEditor() {
-  editorStore.close();
-  const target = editorStore.isGcode ? 'programs' : 'machineconfig';
-  router.push({ name: target }).catch(err => console.error("Router error on close:", err));
+  editorContent.value = ''
+  editorStore.close()
+  const target = currentSource.value === EDITOR_SOURCES.PROGRAMS ? 'programs' : 'machineconfig'
+  router.push({ name: target }).catch(err => console.error("Router error on close:", err))
 }
 
-// Mirror local edits into the store so `saveFile` uses the latest content.
+// Mirror local edits into the store so ``saveFile`` uses the
+// latest content.
 function handleEditorUpdate(value) {
-  editorContent.value = value;
-  editorStore.content = value;
+  editorContent.value = value
+  editorStore.content = value
+}
+
+// --- Keyboard shortcut: Ctrl+S / Cmd+S triggers save ------------ //
+//
+// ``EditorView`` is a fixed-position overlay so the browser's
+// built-in save dialog never appears. We intercept the chord at
+// the document level while the overlay is mounted so it works
+// regardless of focus (CodeMirror, header button, anywhere inside
+// the overlay). ``isDirty`` and ``readOnly`` short-circuit so we
+// never persist noise.
+function onSaveShortcut(event) {
+  const isSaveChord = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's'
+  if (!isSaveChord) return
+  event.preventDefault()
+  if (editorStore.readOnly || !editorStore.isDirty) return
+  void saveEditor()
 }
 
 onMounted(async () => {
-  await loadFromSource();
-});
+  await loadFromRoute()
+  document.addEventListener('keydown', onSaveShortcut)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onSaveShortcut)
+  // Make sure the local mirror is cleared when the operator
+  // navigates away via a route other than ``closeEditor`` (back
+  // button, ``useUnsavedChangesGuard`` accept, etc.). The store
+  // already cleared itself; the ref must follow.
+  editorContent.value = ''
+})
 </script>
 
 <template>
-  <div v-if="editorPath" class="fixed inset-0 z-50 flex flex-col bg-gray-900">
+  <div v-if="hasValidTarget" class="fixed inset-0 z-50 flex flex-col bg-gray-900">
     <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
-      <span class="font-mono text-blue-300">Editing {{ editorPath }}</span>
+      <span class="font-mono text-blue-300">
+        Editing {{ currentName }} ({{ sourceLabel(currentSource) }})
+      </span>
       <div class="flex gap-2">
-        <button type="button" class="rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500" @click="confirmClose">Close</button>
-        <button type="button" class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500" @click="saveAndCloseEditor">Save &amp; Close</button>
-        <button type="button" class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500" @click="saveEditor">Save</button>
+
+        <!-- ``Save`` and ``Save & Close`` are read-write affordances.
+             When the store opens a read-only source (``active``,
+             ``staged``, or any source the caller pinned read-only),
+             both buttons are hidden so the operator does not see
+             a greyed-out control they cannot use. -->
+        <template v-if="!editorStore.readOnly">
+          <button type="button" class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500" @click="saveAndCloseEditor">Save &amp; Close</button>
+          <button
+            type="button"
+            class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500 disabled:bg-green-900"
+            :disabled="!editorStore.isDirty"
+            @click="saveEditor"
+          >
+            Save
+          </button>
+        </template>
+        <button type="button" class=" rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500 mr-30" @click="confirmClose">Close</button>
       </div>
     </div>
 
-    <!-- `min-h-0` + `flex-1` lets the editor scroll inside the
+    <!-- ``min-h-0`` + ``flex-1`` lets the editor scroll inside the
          fixed-position overlay without breaking the page layout. -->
     <div class="min-h-0 flex-1">
       <Editor
         :model-value="editorContent"
         @update:model-value="handleEditorUpdate"
-        :filename="editorPath"
+        :filename="currentName"
         :read-only="editorStore.readOnly"
-        :mode="editorMode"
+        :mode="editorStore.syntaxMode"
       />
     </div>
   </div>
 
-  <!-- No-filename fallback: the machineconfig surface moved to
-       /machineconfig. Render a small pointer so deep-links like
-       /config/ (no filename) land somewhere sensible instead of
-       an empty main slot. The full panel grid lives in
-       ``MachineConfigView``. -->
+  <!-- No-target fallback: the editor only mounts with a (source,
+       name) pair. Render a small pointer so deep-links like
+       ``/editor`` (no query) land somewhere sensible instead of an
+       empty main slot. -->
   <div v-else class="flex h-full items-center justify-center p-8 text-center text-gray-400">
     <div class="space-y-3">
       <p class="text-sm">

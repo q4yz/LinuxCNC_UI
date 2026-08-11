@@ -331,15 +331,14 @@ test("EditorView no longer imports macros manager panels", () => {
   );
 });
 
-test("universal-editor isProfilePath routes bare M-codes through machineconfig", () => {
+test("universal-editor store dispatches m_codes source via the machineconfig service", () => {
   const text = readText(editorStorePath);
-  // The new branch in ``isProfilePath`` accepts the
-  // ``^M1\d{2}$`` shape (regex literal ``/^M1\\d{2}$/``).
-  assert.match(text, /MCODE_NAME_PATTERN\s*=\s*\/\^M1\\d\{2\}\$\//);
-  assert.match(text, /MCODE_NAME_PATTERN\.test\(\s*path\s*\)/);
-  // ``readByPath`` / ``writeByPath`` dispatch to the
-  // machineconfig ``readMCode`` / ``writeMCode`` methods. The
-  // generated client methods are called with whitespace between
+  // Issue #132: routing is source-driven; ``m_codes`` is one of the
+  // six sources and dispatches via ``ModulesMachineconfigService``.
+  assert.match(text, /M_CODES:\s*['"]m_codes['"]/);
+  assert.match(text, /case\s+EDITOR_SOURCES\.M_CODES:[^]*?readMCodeContent/);
+  assert.match(text, /case\s+EDITOR_SOURCES\.M_CODES:[^]*?writeMCodeContent/);
+  // The generated client methods are called with whitespace between
   // the service and the method name (different in Prettier's
   // formatting), so the regex accepts any whitespace.
   assert.match(text, /ModulesMachineconfigService\s*\.readMCode\b/);
@@ -428,10 +427,10 @@ test("McodeManagerPanel uses the M-code name regex from the parser", () => {
   // constraint is discoverable without reading the source.
   assert.match(text, /MCODE_NAME_REGEX/);
   // Naming an M-code just creates the file. The Edit button
-  // deep-links to the universal editor instead of opening a
-  // local CodeMirror modal — one editor surface for every kind.
-  assert.match(text, /router\.push\(\{\s*name:\s*['"]config['"]/);
-  assert.match(text, /filename:\s*name\s*\}/);
+  // deep-links to the universal editor (issue #132 contract)
+  // via ``openInEditor({ source: 'm_codes', name })``.
+  assert.match(text, /openInEditor\(\s*\{\s*source:\s*['"]m_codes['"]/);
+  assert.match(text, /name/);
 });
 
 test("MacroManagerPanel normalises empty bodies to avoid the FastAPI 422", () => {

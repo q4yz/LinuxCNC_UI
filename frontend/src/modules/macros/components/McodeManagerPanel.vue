@@ -6,24 +6,23 @@
 // there is only one kind.
 //
 // Editing deep-links into the universal editor with the bare
-// ``M<num>`` name (``/config/M101``). The universal editor's
-// ``isProfilePath`` recognises the ``^M1\d{2}$`` shape and routes
-// reads / writes through the machineconfig router's
-// ``/m-codes/...`` endpoints, so the same CodeMirror surface that
-// edits profiles and ``.macro`` files also edits M-codes —
-// operators get one consistent editor experience across every kind.
+// ``M<num>`` name (``/editor?source=m_codes&name=M101``). The
+// universal editor's source-driven dispatch routes reads / writes
+// through the machineconfig router's ``/m-codes/...`` endpoints,
+// so the same CodeMirror surface that edits profiles and
+// ``.macro`` files also edits M-codes — operators get one
+// consistent editor experience across every kind.
 
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store.js";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
 import { validateMacroKindName, MCODE_NAME_REGEX } from "../parser.js";
+import { openInEditor } from "../../../helpers/openInEditor.js";
 
 const store = useMacrosStore();
 const { mcodeFiles, isBusy } = storeToRefs(store);
-const router = useRouter();
 
 const createOpen = ref(false);
 const createName = ref("");
@@ -40,18 +39,14 @@ const sorted = computed(() =>
 function formatSize(bytes) {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
+  return (bytes / 1024).toFixed(1) + " KB";
 }
 
 function openEditor(name) {
-  // Universal editor handles the M-code body. The ``config``
-  // route catches ``/config/:filename(.*)?`` (per
-  // ``router/index.js``); the editor's ``isProfilePath`` accepts
-  // ``M<num>`` and dispatches to ``ModulesMachineconfigService
-  // .writeMCode`` / ``readMCode``.
-  router.push({ name: "config", params: { filename: name } }).catch(
-    (err) => console.error("Router error on M-code edit:", err),
-  );
+  // The universal editor handles the M-code body via
+  // ``source='m_codes'`` — the store dispatches to
+  // ``ModulesMachineconfigService.readMCode`` / ``writeMCode``.
+  openInEditor({ source: "m_codes", name });
 }
 
 async function deleteMacro(name) {

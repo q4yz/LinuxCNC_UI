@@ -6,19 +6,17 @@
 // chrome (sidebar / header) stays visible while editing.
 
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 
 import {
   ModulesProgramService,
   ProgramFilesService,
 } from '../../generated/api/index.ts'
 import { useConsoleStore } from '../stores/console'
-import { useEditorStore } from '../stores/editor'
+import { openInEditor } from '../helpers/openInEditor.js'
 import { describeErrorOr } from '../core/error-format.js'
+import { ApiError } from '../../generated/api/core/ApiError'
 
-const router = useRouter()
 const consoleStore = useConsoleStore()
-const editorStore = useEditorStore()
 
 const files = ref([])
 const isUploading = ref(false)
@@ -121,51 +119,17 @@ async function loadFile(filename) {
   }
 }
 
-// ---- Editor mode helper ---------------------------------------- //
-//
-// Pick the right Editor mode based on the file extension. G-code
-// gets ``"gcode"``; INI/Klipper config files get ``"config"``.
-// ``Editor.vue`` uses these to select its syntax-highlight pack.
-
-function modeForFilename(filename) {
-  const lower = filename.toLowerCase()
-  if (lower.endsWith('.gcode') || lower.endsWith('.ngc') || lower.endsWith('.nc')) {
-    return 'gcode'
-  }
-  if (
-    lower.endsWith('.cfg') ||
-    lower.endsWith('.ini') ||
-    lower.endsWith('.conf')
-  ) {
-    return 'config'
-  }
-  return 'text'
-}
-
 // ---- Route to EditorView --------------------------------------- //
 //
 // We don't mount ``Editor`` here — that hid the rest of the app.
-// Instead, write the filename / mode / content to the shared
-// ``editor`` Pinia store and ``router.push`` to ``/config`` so
-// ``EditorView`` reads the state and renders the full layout
-// (header, sidebar, content) around the editor.
-//
-// The file content is fetched up-front when present so the
-// Editor mounts with text already in hand instead of flashing
-// a loading state on every open. If the read fails the user
-// still navigates — ``EditorView`` will fall back to its
-// ``onMounted`` behaviour.
+// Instead, push to ``/editor?source=programs&name=...`` so
+// ``EditorView`` reads the (source, name) pair from the URL and
+// renders the full layout (header, sidebar, content) around the
+// editor. The store knows how to dispatch the read by source, so
+// the filename extension is no longer used to decide routing.
 
 async function editFile(filename) {
-  const mode = modeForFilename(filename)
-  let content = ''
-  try {
-    content = await readFileContent(filename)
-  } catch (error) {
-    consoleStore.error(`Failed to read ${filename}: ${describeError(error)}`)
-  }
-  editorStore.open(filename, false, mode, content ?? '')
-  router.push({ name: 'config' })
+  await openInEditor({ source: 'programs', name: filename })
 }
 
 function formatSize(bytes) {

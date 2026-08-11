@@ -979,3 +979,194 @@ class TestMachineconfigMCodesEndpoints:
         )
         assert resp.status_code == 404
 
+
+# ---------------------------------------------------------------------- #
+# Universal-editor content endpoints                                       #
+# ---------------------------------------------------------------------- #
+#
+# The ``/{name}/content`` family is the new contract the universal
+# editor's source-driven dispatch consumes (issue #132). The tests
+# below assert:
+#
+#   * the response shape matches every other source's envelope
+#     (``{name, kind, content, size_bytes}``);
+#   * the write path is atomic + handles empty payloads without a
+#     ``422``;
+#   * cross-kind round-trips (macro / ngc / mcode) all work through
+#     the same endpoint shape.
+
+
+class TestMacrosContentEnvelope:
+    """``GET/PUT /{name}/content?kind=`` round-trip tests."""
+
+    def test_get_content_returns_envelope_for_existing_macro(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+
+        # Seed a macro via the legacy PUT so the GET /content test
+        # exercises the read path against an already-written file.
+        client.put(
+            "/api/v1/modules/macros/hello",
+            content="G0 X10 Y20 Z30\n",
+        )
+
+        resp = client.get("/api/v1/modules/macros/hello/content")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == {
+            "name": "hello",
+            "kind": "macro",
+            "content": "G0 X10 Y20 Z30\n",
+            "size_bytes": len("G0 X10 Y20 Z30\n"),
+        }
+
+    def test_put_then_get_round_trips_macro_payload(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+
+        payload = "G91\nG1 X10 F1000\nG90\n"
+        put_resp = client.put(
+            "/api/v1/modules/macros/move_loop/content",
+            json={"content": payload},
+        )
+        assert put_resp.status_code == 200
+        body = put_resp.json()
+        assert body["name"] == "move_loop"
+        assert body["kind"] == "macro"
+        assert body["content"] == payload
+        assert body["size_bytes"] == len(payload.encode("utf-8"))
+
+        get_resp = client.get("/api/v1/modules/macros/move_loop/content")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["content"] == payload
+
+    def test_empty_content_payload_is_normalised_to_newline(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        """``""`` must not ``422`` — same FastAPI quirk the other
+        universal-editor sources route around by writing ``"\\n"``.
+        """
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        resp = client.put(
+            "/api/v1/modules/macros/blank/content",
+            json={"content": ""},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "\n"
+
+    def test_get_content_404_when_macro_missing(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        resp = client.get("/api/v1/modules/macros/nope/content")
+        assert resp.status_code == 404
+
+    def test_get_content_400_for_invalid_kind(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        resp = client.get(
+            "/api/v1/modules/macros/hello/content",
+            params={"kind": "bogus"},
+        )
+        assert resp.status_code == 400
+
+    def test_ngc_kind_round_trips_through_content_endpoints(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        """The same envelope shape works for ``ngc`` subroutines —
+        only the on-disk extension differs."""
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        payload = "O<probe> sub\n  G91\n  G38.2 Z-10 F100\nO<probe> endsub\n"
+
+        put_resp = client.put(
+            "/api/v1/modules/macros/probe/content",
+            params={"kind": "ngc"},
+            json={"content": payload},
+        )
+        assert put_resp.status_code == 200
+        assert put_resp.json()["kind"] == "ngc"
+        assert put_resp.json()["content"] == payload
+
+        get_resp = client.get(
+            "/api/v1/modules/macros/probe/content",
+            params={"kind": "ngc"},
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["content"] == payload
+
+    def test_mcode_kind_round_trips_through_content_endpoints(
+        self, tmp_data_root, clean_env, isolated_mcodes
+    ):
+        """``mcode`` shares the content envelope — the underlying
+        :class:`MCodeFileService` resolves against the
+        ``machine_config/m_codes/`` root instead of ``<repo>/macros/``.
+        """
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        payload = "G4 P1\nM30\n"
+
+        put_resp = client.put(
+            "/api/v1/modules/macros/M120/content",
+            params={"kind": "mcode"},
+            json={"content": payload},
+        )
+        assert put_resp.status_code == 200
+        body = put_resp.json()
+        # ``MCodeFileService`` may add a trailing newline on write so
+        # the persisted size is not necessarily ``len(payload)``;
+        # assert against the response's own ``size_bytes`` instead.
+        assert body["name"] == "M120"
+        assert body["kind"] == "mcode"
+        assert body["content"].startswith(payload)
+        assert body["size_bytes"] > 0
+
+        get_resp = client.get(
+            "/api/v1/modules/macros/M120/content",
+            params={"kind": "mcode"},
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["content"].startswith(payload)
+
+    def test_put_overwrites_existing_macro(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        client.put(
+            "/api/v1/modules/macros/edit_me/content",
+            json={"content": "first version\n"},
+        )
+        put_resp = client.put(
+            "/api/v1/modules/macros/edit_me/content",
+            json={"content": "second version\n"},
+        )
+        assert put_resp.status_code == 200
+        assert put_resp.json()["content"] == "second version\n"
+
+        get_resp = client.get("/api/v1/modules/macros/edit_me/content")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["content"] == "second version\n"
+
+    def test_content_payload_requires_content_field(
+        self, tmp_data_root, clean_env, isolated_storage
+    ):
+        """The envelope is ``{content: ...}`` — a missing field
+        is a 422 from Pydantic, mirroring the same validation on
+        every other source's PUT."""
+        app = _macros_app(tmp_data_root)
+        client = TestClient(app)
+        resp = client.put(
+            "/api/v1/modules/macros/no_body/content",
+            json={},
+        )
+        assert resp.status_code == 422
+

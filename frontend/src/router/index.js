@@ -15,10 +15,7 @@ import SettingsView from '../views/SettingsView.vue'
 //   1. The route **name** doubles as the sidebar id the App shell
 //      uses (see ``AppSidebar.vue``). Every built-in sidebar entry
 //      (``dashboard``, ``programs``, ``settings``) is therefore
-//      also a Vue Router name. ``config`` is the one built-in that
-//      only exists in the router: it powers the editor deep-link
-//      (``/config/...``) but no longer has a built-in sidebar entry
-//      because the ``machineconfig`` module owns that slot now.
+//      also a Vue Router name.
 //
 //   2. Module-sidebar ids (``camera``, ``machineconfig``, ...) are
 //      registered at runtime by ``registerModuleRoutes`` after
@@ -26,6 +23,23 @@ import SettingsView from '../views/SettingsView.vue'
 //      module routes lazily keeps the registry's ``MODULES_ENABLED``
 //      whitelist authoritative: a module excluded by the env var
 //      never produces a route at all.
+//
+// Issue #132 — editor contract
+// ----------------------------
+// The editor is now a single route (``/editor``) whose inputs are
+// passed via the URL query string:
+//
+//     /editor?source=profiles&name=klipper.cfg
+//     /editor?source=active&name=hardware.json&readOnly=true
+//     /editor?source=staged&name=machine.cfg&readOnly=true
+//     /editor?source=m_codes&name=M101
+//     /editor?source=programs&name=foo.gcode
+//     /editor?source=macros&name=my_macro
+//
+// Legacy routes (``/programs/:filename`` and ``/config/:filename``)
+// were removed — they encoded the routing-by-extension bug. The
+// helpers in ``frontend/src/helpers/openInEditor.js`` build the new
+// URLs so every caller uses the same shape.
 const BUILTIN_ROUTES = [
   {
     path: '/',
@@ -44,27 +58,11 @@ const BUILTIN_ROUTES = [
     meta: { label: 'G-Code Files' },
   },
   {
-    // Deep-link into the editor for a specific G-code file.
-    // The ``(.*)`` regex makes the segment catch-all — a path
-    // like ``subfolder/file.gcode`` is captured as a single
-    // ``filename`` param instead of being matched against the
-    // next route segment.
-    path: '/programs/:filename(.*)',
-    name: 'programs-file',
-    component: EditorView,
-    meta: { label: 'Editor' },
-  },
-  {
-    // Single route covers both the machineconfig dashboard layout
-    // (when the registry registers ``/machineconfig``, see below)
-    // and the editor for an individual INI/CFG file. The route
-    // stays under ``config`` so existing deep-links (e.g.
-    // ``FileManager.vue``/``McodePanel.vue``/``McodeManagerPanel.vue``)
-    // keep working unchanged. The trailing ``?`` on the segment
-    // makes the parameter optional; ``EditorView`` branches on
-    // ``route.params.filename`` to render one or the other.
-    path: '/config/:filename(.*)?',
-    name: 'config',
+    // Universal editor route. ``source`` + ``name`` + optional
+    // ``readOnly`` come from the query string; ``EditorView``
+    // converts them into a ``useEditorStore`` open() call.
+    path: '/editor',
+    name: 'editor',
     component: EditorView,
     meta: { label: 'Editor' },
   },
@@ -93,11 +91,11 @@ const router = createRouter({
  * lands on the placeholder for one frame at most; in practice
  * App.vue replaces the slot before paint.
  *
- * Built-in route names (``dashboard``, ``programs``, ``programs-file``,
- * ``config``, ``settings``) win over module-supplied routes with
- * the same name. Modules whose manifest id collides with a
- * built-in are skipped — they get the built-in editor / settings
- * surface instead of trying to override it.
+ * Built-in route names (``dashboard``, ``programs``, ``editor``,
+ * ``settings``) win over module-supplied routes with the same
+ * name. Modules whose manifest id collides with a built-in are
+ * skipped — they get the built-in editor / settings surface
+ * instead of trying to override it.
  *
  * @param {import('../core/modules/registry').default} registry
  *   The frontend registry after ``registry.boot()`` has resolved.

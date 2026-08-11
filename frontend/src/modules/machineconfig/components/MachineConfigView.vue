@@ -5,14 +5,12 @@
 //
 // Routing: the registry adds a ``/machineconfig`` route at boot
 // (``router/index.js::registerModuleRoutes``) and ``App.vue`` mounts
-// this component as the module's ``mainView``. The legacy
-// ``/config/:filename?`` route still drives the per-file editor in
-// ``EditorView.vue`` — ProfilesExplorer's ``@edit`` event pushes to
-// ``name: 'config'`` and the editor overlay renders inside the App
-// shell, just like the old behaviour.
+// this component as the module's ``mainView``. ProfilesExplorer's
+// ``@edit`` event pushes ``/editor?source=profiles&name=<path>`` via
+// the shared :func:`openInEditor` helper — the universal editor
+// contract (issue #132) is the only entry point into ``EditorView``.
 
 import { onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 
 import UpdateManager from '../../../components/UpdateManager.vue'
 import DebugPanel from '../../../components/DebugPanel.vue'
@@ -24,16 +22,15 @@ import ActivePanel from './ActivePanel.vue'
 import MacroManagerPanel from '../../macros/components/MacroManagerPanel.vue'
 import McodeManagerPanel from '../../macros/components/McodeManagerPanel.vue'
 import { useMachineConfigStore } from '../store.js'
+import { openInEditor } from '../../../helpers/openInEditor.js'
 
 const machineConfigStore = useMachineConfigStore()
-const router = useRouter()
 
-// Used by ProfilesExplorer to request an edit. This strictly
-// changes the URL; the editor route's ``watch`` (EditorView.vue)
-// detects the URL change and loads the file.
+// Used by ProfilesExplorer to request an edit. Pushes the
+// ``/editor?source=profiles&name=<path>`` URL; EditorView's
+// ``watch`` detects the route change and loads the file.
 function openEditor(path) {
-  router.push({ name: 'config', params: { filename: path } })
-    .catch(err => console.error('Router error on open:', err))
+  openInEditor({ source: 'profiles', name: path })
 }
 
 onMounted(() => {
