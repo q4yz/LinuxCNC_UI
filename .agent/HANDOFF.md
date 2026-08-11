@@ -14,7 +14,40 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Collapsed `machineconfig` into the legacy `ConfigView.vue`
+### 1.1 Camera preferences moved from `localStorage` to backend settings store
+
+- **What was done.** Camera operator preferences (rename / flip /
+  mirror / hide-from-cycle) used to live in `window.localStorage`
+  under `linuxcnc.camera.preferences`, so the rename followed the
+  browser profile rather than the machine. The new implementation:
+  - adds a `preferences: Dict[str, CameraDevicePreference]` field
+    to the backend `CameraSettings` Pydantic model
+    (`backend/modules/camera/settings.py`);
+  - rewrites `frontend/src/modules/camera/cameraStore.js` to hydrate
+    `cameraPreferences` from `GET /api/v1/modules/camera/settings`,
+    optimistic-locally-update via `updatePreference`, and PUT a
+    single trailing-debounced (400 ms) write back to the settings
+    store;
+  - adds a "Hide from cycle" checkbox in `CameraSettings.vue` and a
+    watcher in `CameraViewer.vue` that auto-cycles past a hidden
+    active camera.
+- **Tests.** `backend/tests/test_camera_settings.py` extended with
+  the per-camera round-trip + partial-row + bad-shape coverage;
+  `frontend/tests/test-camera-store.mjs` (new) pins the structural
+  contract end-to-end; `frontend/tests/test-camera-null.mjs`
+  extended with one regression guard against a future
+  `localStorage` re-introduction.
+- **Status.** Complete.
+- **Migration.** Localstorage entries are silently discarded — the
+  next reload re-hydrates from the (empty) backend payload. No
+  operator action required.
+- **Caveat.** The PUT sends the whole `preferences` map on every
+  debounced flush. The settings store's atomic-write contract
+  (`backend/core/settings_store.py`) makes this safe even on the
+  Windows-on-PowerShell test stack, but a future optimisation could
+  introduce a single-key upsert for nested maps if the payload grows.
+
+### 1.2 Collapsed `machineconfig` into the legacy `ConfigView.vue`
 
 - **What was done.** Removed the standalone
   `frontend/src/modules/machineconfig/components/MachineConfigView.vue`

@@ -26,6 +26,7 @@ const activePreference = computed(() => {
       flip: false,
       mirror: false,
       customName: "",
+      hidden: false,
     }
   );
 });
@@ -93,15 +94,32 @@ watch(activeCameraId, () => {
   startStream();
 });
 
+// If the operator hides the active camera from the Settings panel
+// while the viewer is mounted, step forward to the next visible one.
+// ``cycleCamera`` already filters out hidden cameras, so the watcher
+// below lands on a non-hidden row automatically — or clears the
+// active id when every camera is hidden.
+watch(
+  () => [activeCameraId.value, cameraPreferences.value[activeCameraId.value]?.hidden],
+  ([id, hidden]) => {
+    if (id && hidden === true) {
+      store.cycleCamera();
+    }
+  },
+);
+
 onMounted(() => {
   store.fetchDevices();
   startStream();
 });
 
-// Clean up when leaving the page to free the USB hardware
-onBeforeUnmount(() => {
+// Clean up when leaving the page to free the USB hardware and
+// flush any pending debounced PUT so a 399 ms-old rename isn't lost
+// on navigation.
+onBeforeUnmount(async () => {
   if (streamTimer) clearTimeout(streamTimer);
   streamUrl.value = "";
+  await store.flushPendingPreferenceWrite();
 });
 </script>
 

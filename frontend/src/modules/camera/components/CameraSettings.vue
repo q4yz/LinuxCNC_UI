@@ -12,6 +12,7 @@ const {
   cameraPreferences,
   isLoading: devicesLoading,
   error: devicesError,
+  preferencesHydrated,
 } = storeToRefs(store);
 const settings = createModuleSettings(manifest.id);
 
@@ -24,9 +25,10 @@ const saveMessage = ref("");
 function preferenceFor(id) {
   return (
     cameraPreferences.value[id] ?? {
+      customName: "",
       flip: false,
       mirror: false,
-      customName: "",
+      hidden: false,
     }
   );
 }
@@ -136,7 +138,7 @@ onMounted(() => {
             Camera display preferences
           </h3>
           <p class="mt-1 text-xs text-gray-400">
-            Names and image orientation are stored only in this browser.
+            Names, image orientation, and the hide flag persist with the machine (not just this browser).
           </p>
         </div>
         <button
@@ -158,6 +160,14 @@ onMounted(() => {
         class="rounded border border-dashed border-gray-700 bg-gray-900/40 p-6 text-center text-sm text-gray-500"
       >
         No cameras were detected. Connect a USB camera or save an IP camera URL.
+      </div>
+
+      <div
+        v-else-if="!preferencesHydrated"
+        class="rounded border border-dashed border-gray-700 bg-gray-900/40 p-6 text-center text-sm text-gray-500"
+        aria-busy="true"
+      >
+        Loading preferences…
       </div>
 
       <ul v-else class="space-y-3">
@@ -210,6 +220,15 @@ onMounted(() => {
                   @change="updateBooleanPreference(device.id, 'mirror', $event)"
                 >
                 Mirror
+              </label>
+              <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-gray-200">
+                <input
+                  type="checkbox"
+                  :checked="preferenceFor(device.id).hidden"
+                  class="h-5 w-5 rounded border-gray-600 bg-gray-900 text-blue-500 focus:ring-blue-500"
+                  @change="updateBooleanPreference(device.id, 'hidden', $event)"
+                >
+                Hide from cycle
               </label>
             </div>
           </div>

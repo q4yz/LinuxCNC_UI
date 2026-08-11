@@ -11,6 +11,17 @@ The lifecycle mirrors LinuxCNC's canonical two-step flow:
    which sets ``stat.file`` while leaving ``interp_state`` at
    ``INTERP_IDLE``. The "loaded" state is implicit (file is set,
    interpreter is idle) — see :func:`hardware.linuxcnc_mock.is_program_loaded`.
+
+   On real LinuxCNC ``program_open`` is asynchronous: the call
+   returns immediately but the interpreter needs a few NML ticks
+   to actually populate ``stat.file``. We therefore pass a non-zero
+   ``cmd_timeout`` to :func:`hardware.connection.execute_sync_cmd`
+   (so ``wait_complete`` blocks until the command is processed) and
+   additionally poll ``stat.file`` until it matches the requested
+   path — the same pattern the upstream LinuxCNC Python example
+   documents. If the file does not appear within the budget we
+   raise ``504 Gateway Timeout`` so the operator knows the load
+   never landed.
 2. ``POST /run`` calls ``auto(AUTO_RUN, line)`` which flips
    ``interp_state`` to ``INTERP_READING``. The endpoint refuses
    with ``409 Conflict`` when no file has been loaded so the
@@ -29,7 +40,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc, linuxcnc_mock
+from hardware import execute_sync_cmd, get_machine_stat, linuxcnc, linuxcnc_mock
 from services import get_program_service
 
 logger = logging.getLogger("backend.modules.program.router")
@@ -114,10 +125,7 @@ def stop_program() -> StatusResponse:
         "Explicitly clear the file pointer from the interpreter. "
         "Unlike ``POST /stop``, which only aborts the active move, "
         "this endpoint closes the loaded program so the operator "
-        "lands in a pure Idle state. The mock implements this as "
-        "``_machine_state.file = ""``; on a real LinuxCNC driver the "
-        "equivalent is closing the open task plan, and on Klipper it "
-        "maps to ``SDCARD_RESET_FILE``."
+        "lands in a pure Idle state."
     ),
     operation_id="unloadProgram",
     response_model=StatusResponse,
@@ -132,13 +140,19 @@ def unload_program() -> StatusResponse:
     aborts the active move and leaves the file open. This endpoint
     gives the operator a true "Unload" button that lands them in
     pure Idle without a follow-up load.
+
+    On real LinuxCNC the ``command`` channel has no
+    ``program_unload`` method, so we fall back to the canonical
+    "clear the loaded file" verb: ``program_open("")``. The mock
+    accepts the empty string as a valid path and clears its
+    ``_machine_state.file`` field; on the real driver the
+    interpreter commits the empty file pointer within the same
+    ``wait_complete`` window as a normal ``program_open``.
     """
-    # ``execute_sync_cmd`` returns ``{"status": "success"}`` on
-    # success. The mock's ``program_unload`` clears
-    # ``_machine_state.file`` so the next telemetry tick reports
-    # ``stat.file == ""`` and ``is_program_loaded()`` returns False.
-    result = execute_sync_cmd("program_unload", 0)
-    return StatusResponse(status=result.get("status", "success"))
+    # Same wait budget as ``load_program`` so the next telemetry
+    # tick observes ``stat.file == ""`` before we return.
+    execute_sync_cmd("program_open", LOAD_TIMEOUT_S, "")
+    return StatusResponse(status="success")
 
 
 @router.post(
@@ -188,6 +202,69 @@ def trigger_parser() -> ParseResponse:
     return ParseResponse(status="success", message="Parsing complete")
 
 
+"""Time budget (in seconds) for ``POST /load`` to wait for the file
+to actually appear in LinuxCNC's ``stat.file`` after ``program_open``.
+The bound is loose — a slow interpreter (large file, slow disk)
+should still have time to commit — but tight enough that an
+unresponsive runtime surfaces as ``504 Gateway Timeout`` rather than
+a stale success.
+"""
+LOAD_TIMEOUT_S = 5.0
+
+
+def _stat_file_path() -> str:
+    """Read ``stat.file`` from whichever stat channel is reachable.
+
+    The helper prefers the live LinuxCNC channel (``get_machine_stat``)
+    so the predicate works for both real and mock drivers: the mock's
+    :class:`stat` class exposes the same ``file`` attribute that the
+    real ``linuxcnc.stat`` populates, so a single read covers both
+    surfaces. ``None`` means the channel is not yet connected; the
+    caller treats that as "not loaded yet" and keeps polling.
+
+    We call :meth:`stat.poll` first so the cached snapshot reflects
+    the latest ``_machine_state.file`` (the connection layer caches
+    the ``stat`` instance for the lifetime of the channel; without
+    an explicit poll the cached value lingers across ``program_open``
+    calls and the predicate reads stale data).
+    """
+    stat = get_machine_stat()
+    if stat is None:
+        return ""
+    poll = getattr(stat, "poll", None)
+    if callable(poll):
+        poll()
+    return str(getattr(stat, "file", "") or "")
+
+
+def _await_load(target_path) -> None:
+    """Poll ``stat.file`` until it matches ``target_path`` or the budget runs out.
+
+    On real LinuxCNC the ``program_open`` command returns via the
+    NML queue before the interpreter actually finishes loading the
+    file. Without this loop ``POST /run`` would race ahead and
+    raise ``409 Conflict`` even when the load succeeded. The mock
+    updates ``stat.file`` synchronously, so the loop also exits on
+    the first iteration in mock mode.
+    """
+    import time as _time
+    target_str = str(target_path)
+    deadline = _time.monotonic() + LOAD_TIMEOUT_S
+    while True:
+        current = _stat_file_path()
+        if current and current == target_str:
+            return
+        if _time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    f"LinuxCNC did not load '{target_str}' within "
+                    f"{LOAD_TIMEOUT_S:.1f}s after program_open"
+                ),
+            )
+        _time.sleep(0.05)
+
+
 @router.post(
     "/load",
     summary="Load G-Code Program",
@@ -210,10 +287,13 @@ def load_program(payload: LoadProgramRequest) -> StatusResponse:
     The filename is validated against the upload root using
     :meth:`ProgramFileService.safe_join` so a client cannot ask the
     mock to open an arbitrary path on disk. The forward to
-    ``program_open`` is fire-and-forget — the mock updates
-    ``_machine_state.file`` / ``current_line`` / ``total_lines``
-    and the WebSocket telemetry loop surfaces the new state on the
-    next tick.
+    ``program_open`` runs with a non-zero ``cmd_timeout`` so the
+    connection layer's ``wait_complete`` blocks until the NML queue
+    drains; on top of that we poll ``stat.file`` to confirm the
+    interpreter has actually populated the loaded file pointer. On
+    real LinuxCNC ``program_open`` returns before the load is
+    visible in ``stat``; without the poll the next ``POST /run``
+    would race ahead and return ``409``.
     """
     logger.info("Loading G-code program: %s", payload.filename)
 
@@ -228,7 +308,11 @@ def load_program(payload: LoadProgramRequest) -> StatusResponse:
             detail=f"G-code file '{payload.filename}' not found in upload root",
         )
 
-    execute_sync_cmd("program_open", 0, str(target))
+    execute_sync_cmd("program_open", LOAD_TIMEOUT_S, str(target))
+    # Wait for the interpreter to commit the load. The mock's stat
+    # is in sync with ``program_open`` so the loop returns
+    # immediately; real LinuxCNC needs a few NML ticks.
+    _await_load(target)
     return StatusResponse(status="success")
 
 

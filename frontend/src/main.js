@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import router from './router'
+import router, { registerModuleRoutes } from './router'
 import './style.css'
 import App from './App.vue'
 import './services/apiClient.js' // configures the generated OpenAPI client's BASE URL
@@ -33,8 +33,13 @@ app.use(router)
 // Boot the registry before mounting so the optional machine adapter
 // can register the real module store before legacy shell components
 // instantiate. A broken module is still isolated: the shell mounts
-// from the fallback path.
+// from the fallback path. Module-owned Vue Router routes are
+// registered *after* boot completes — ``registerModuleRoutes`` walks
+// ``registry.modules`` and adds one route per sidebar entry so a
+// sidebar click on e.g. Camera resolves the same way a built-in
+// click does. See ``router/index.js`` for the contract.
 registry.boot()
+  .then(() => registerModuleRoutes(registry))
   .catch((err) => {
     // eslint-disable-next-line no-console
     console.error('[registry] boot failed:', err)

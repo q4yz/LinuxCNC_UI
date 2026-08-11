@@ -47,6 +47,10 @@ const editorViewPath = resolve(
   repoRoot,
   "frontend/src/views/EditorView.vue",
 );
+const machineConfigViewPath = resolve(
+  repoRoot,
+  "frontend/src/modules/machineconfig/components/MachineConfigView.vue",
+);
 const editorStorePath = resolve(
   repoRoot,
   "frontend/src/stores/editor.js",
@@ -283,28 +287,47 @@ test("DashboardView mounts MacroPanel + McodePanel via the registry shim", () =>
   assert.match(dashboardText, /<McodePanel\s+v-if="macrosMounted"\s*\/>/);
 });
 
-test("EditorView renders MacroManagerPanel + McodeManagerPanel in the right column", () => {
-  const editorText = readText(editorViewPath);
+test("MachineConfigView renders MacroManagerPanel + McodeManagerPanel in the right column", () => {
+  // After the routing refactor the machineconfig surface moved out
+  // of ``EditorView.vue`` into its own top-level view. The macros
+  // manager panels live alongside ``ActivePanel`` inside the
+  // ``xl:col-span-8`` section, same column ratio as the old grid.
+  const viewText = readText(machineConfigViewPath);
   assert.match(
-    editorText,
-    /import\s+MacroManagerPanel\s+from\s+['"][^'"]*modules\/macros\/components\/MacroManagerPanel\.vue['"]/,
+    viewText,
+    /import\s+MacroManagerPanel\s+from\s+['"][^'"]*MacroManagerPanel\.vue['"]/,
+    "MachineConfigView must import MacroManagerPanel",
   );
   assert.match(
-    editorText,
-    /import\s+McodeManagerPanel\s+from\s+['"][^'"]*modules\/macros\/components\/McodeManagerPanel\.vue['"]/,
+    viewText,
+    /import\s+McodeManagerPanel\s+from\s+['"][^'"]*McodeManagerPanel\.vue['"]/,
+    "MachineConfigView must import McodeManagerPanel",
   );
-  // Manager panels sit in the right column alongside
-  // ``ActivePanel``; the rest of the machineconfig grid is
-  // preserved verbatim.
   assert.match(
-    editorText,
+    viewText,
     /xl:col-span-8[\s\S]*?<ActivePanel\s*\/>[\s\S]*?<MacroManagerPanel\s*\/>/,
-    "EditorView must render MacroManagerPanel inside the xl:col-span-8 section, below ActivePanel",
+    "MacroManagerPanel must sit inside the xl:col-span-8 section, below ActivePanel",
   );
   assert.match(
-    editorText,
+    viewText,
     /xl:col-span-8[\s\S]*?<McodeManagerPanel\s*\/>/,
-    "EditorView must render McodeManagerPanel inside the xl:col-span-8 section",
+    "McodeManagerPanel must sit inside the xl:col-span-8 section",
+  );
+});
+
+test("EditorView no longer imports macros manager panels", () => {
+  // After the routing split, EditorView is editor-only — the
+  // macros manager panels live in MachineConfigView.
+  const editorText = readText(editorViewPath);
+  assert.doesNotMatch(
+    editorText,
+    /import\s+MacroManagerPanel\s+from\s+['"][^'"]*MacroManagerPanel\.vue['"]/,
+    "EditorView must not import MacroManagerPanel any more",
+  );
+  assert.doesNotMatch(
+    editorText,
+    /import\s+McodeManagerPanel\s+from\s+['"][^'"]*McodeManagerPanel\.vue['"]/,
+    "EditorView must not import McodeManagerPanel any more",
   );
 });
 

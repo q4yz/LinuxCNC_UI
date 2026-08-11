@@ -18,6 +18,11 @@
  * @property {SidebarEntry} [sidebar] Optional sidebar entry.
  * @property {boolean} [settingsPanel=false] Whether this module contributes a Settings tab.
  * @property {boolean} [route=false] Whether this module exposes a top-level Vue route.
+ * @property {import('vue').Component} [mainView]
+ *   Top-level view rendered by ``App.vue`` when this module's route
+ *   is active. Without it, ``App.vue`` falls back to an alphabetical
+ *   glob discovery over the module's ``components/*.vue`` files
+ *   (deprecated; new modules should always export ``mainView``).
  */
 
 /**
@@ -38,6 +43,12 @@
  *   rendered inside the Settings view when ``manifest.settingsPanel`` is
  *   true. The component is mounted with no props — modules must
  *   consume the registry's settings client / Pinia store directly.
+ * @property {import('vue').Component} [mainView]
+ *   Top-level view mounted by ``App.vue`` when the route name
+ *   matches the module's ``manifest.id`` or ``manifest.sidebar.id``.
+ *   Replaces the old alphabetical glob-based discovery; new modules
+ *   should always export this so the sidebar click resolves
+ *   deterministically without depending on file naming.
  */
 
 /**
@@ -45,6 +56,19 @@
  * @property {FrontendModuleManifest} manifest The module's manifest.
  * @property {ModuleContext} context The runtime context handed to onLoad.
  * @property {SidebarEntry|null} sidebar Sidebar entry (or null).
+ * @property {import('vue').Component|null} mainView
+ *   The module's top-level view (mirrors ``instance.mainView``), or
+ *   ``null`` when the module did not export one and ``App.vue`` is
+ *   expected to fall back to the legacy glob discovery.
+ */
+
+/**
+ * @typedef {Object} RouterRegistrarOptions
+ * @property {string} [placeholderComponent] Component used as the
+ *   placeholder for dynamically-registered module routes. ``App.vue``
+ *   swaps in ``moduleView`` before the placeholder ever renders, so
+ *   this only matters in the rare case where ``App.vue`` is not on
+ *   screen. Defaults to the Dashboard view component.
  */
 
 export {};

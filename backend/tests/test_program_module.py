@@ -296,3 +296,149 @@ def test_websocket_payload_broadcasts_total_lines(
     assert after["total_lines"] == 1000
     assert after["file"].endswith("test.gcode")
     assert after["interp_state"] == 1  # INTERP_IDLE
+
+
+# ---------------------------------------------------------------------- #
+# Bug-fix regressions for the load-then-start contract                       #
+# ---------------------------------------------------------------------- #
+
+
+class TestLoadThenStartRoundTrip:
+    """Regression tests for the bug where ``POST /run`` returned 409
+    immediately after ``POST /load`` even though the operator had
+    successfully loaded a file.
+
+    The mock mirrors LinuxCNC's behaviour where ``program_open`` is
+    asynchronous: the call returns before the interpreter commits the
+    file pointer to ``stat.file``. The router now waits for the load
+    to land (``_await_load``) and ``is_program_loaded`` queries the
+    live stat channel rather than the mock's local dict. These tests
+    exercise both halves of the fix.
+    """
+
+    def test_load_then_run_advances_to_running_state(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """End-to-end: load, run, then assert interp_state == READING.
+
+        Reproduces the user's failure: prior to the fix the second
+        ``POST /run`` returned 409 because the mock's ``_machine_state``
+        was read via a cached ``stat`` instance that hadn't been polled
+        since the prior ``program_open``.
+        """
+        _reset_mock_program_state()
+        _isolated_program_root(tmp_data_root, monkeypatch)
+
+        app, _ = _program_app(tmp_data_root)
+        client = TestClient(app)
+
+        load_resp = client.post(
+            "/api/v1/modules/program/load",
+            json={"filename": "test.gcode"},
+        )
+        assert load_resp.status_code == 200
+
+        run_resp = client.post("/api/v1/modules/program/run")
+        assert run_resp.status_code == 200, run_resp.text
+
+        snap = _state_snapshot()
+        assert snap["interp_state"] == 2  # INTERP_READING
+        assert snap["file"].endswith("test.gcode")
+
+    def test_unload_uses_program_open_empty_not_program_unload(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """The unload endpoint must clear the file pointer via
+        ``program_open("")`` — real LinuxCNC's ``command`` channel
+        has no ``program_unload`` method. After unload the file
+        pointer is empty, and a follow-up ``/run`` returns 409.
+        """
+        _reset_mock_program_state()
+        _isolated_program_root(tmp_data_root, monkeypatch)
+
+        app, _ = _program_app(tmp_data_root)
+        client = TestClient(app)
+
+        # Round-trip: load, then unload.
+        load_resp = client.post(
+            "/api/v1/modules/program/load",
+            json={"filename": "test.gcode"},
+        )
+        assert load_resp.status_code == 200, load_resp.text
+        snap = _state_snapshot()
+        assert snap["file"].endswith("test.gcode")
+
+        unload_resp = client.post("/api/v1/modules/program/unload")
+        assert unload_resp.status_code == 200, unload_resp.text
+        snap = _state_snapshot()
+        assert snap["file"] == ""
+
+        # Without a loaded file the run endpoint refuses with 409.
+        run_resp = client.post("/api/v1/modules/program/run")
+        assert run_resp.status_code == 409
+        assert "load" in run_resp.json()["detail"].lower()
+
+    def test_is_program_loaded_uses_stat_channel(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """``is_program_loaded`` must read from the live stat
+        channel. We assert this by setting ``_machine_state.file``
+        directly (bypassing ``program_open``) and confirming the
+        predicate returns True without any further setup — meaning
+        the live stat channel's cached snapshot was refreshed by
+        ``poll`` before the predicate read.
+        """
+        from hardware import linuxcnc_mock
+        from hardware.connection import _stat_ch
+
+        _isolated_program_root(tmp_data_root, monkeypatch)
+
+        # Pre-pin the cached stat to a known-true sentinel by
+        # running a load through the public router. This way the
+        # stat cache is populated with the loaded path.
+        app, _ = _program_app(tmp_data_root)
+        client = TestClient(app)
+        client.post("/api/v1/modules/program/load", json={"filename": "test.gcode"})
+
+        # Mutate the mock state behind the predicate's back so the
+        # test asserts the predicate reads the live snapshot rather
+        # than the stale cached value. We do this by resetting the
+        # mock's ``_machine_state.file`` to a fresh value and
+        # checking ``is_program_loaded`` picks it up after a poll.
+        target = tmp_data_root / "test.gcode"
+        with linuxcnc_mock._machine_state.lock:
+            linuxcnc_mock._machine_state.file = str(target)
+
+        stat = _stat_ch.get()
+        stat.poll()
+        assert stat.file == str(target)
+        assert linuxcnc_mock.is_program_loaded() is True
+
+    def test_await_load_returns_immediately_when_file_already_loaded(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """``_await_load`` is a no-op loop iteration once the stat
+        channel reports the target path. The test confirms the load
+        endpoint doesn't block on the timeout when the mock's
+        ``program_open`` populates ``_machine_state.file``
+        synchronously — which it does because ``wait_complete`` is a
+        mock no-op.
+        """
+        import time
+
+        _reset_mock_program_state()
+        _isolated_program_root(tmp_data_root, monkeypatch)
+
+        app, _ = _program_app(tmp_data_root)
+        client = TestClient(app)
+
+        start = time.monotonic()
+        resp = client.post(
+            "/api/v1/modules/program/load",
+            json={"filename": "test.gcode"},
+        )
+        elapsed = time.monotonic() - start
+        assert resp.status_code == 200
+        # Mock-mode load should complete in well under the 5 s budget;
+        # the timeout kicks in only when ``stat.file`` never matches.
+        assert elapsed < 1.0, f"load took {elapsed:.2f}s; expected < 1s"

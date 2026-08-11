@@ -1,0 +1,26 @@
+(Basic XYZ Movement Test)
+(Run with caution - no boundary checks)
+
+(--- Setup ---)
+G21 (Set units to millimeters)
+G90 (Set absolute distance mode)
+G17 (Select XY plane)
+G54 (Select coordinate system 1)
+
+(--- Initial Positioning ---)
+G0 Z10.0       (Rapid move Z axis up to a safe height of 10mm)
+G0 X0.0 Y0.0   (Rapid move X and Y to origin)
+
+(--- Test Movements ---)
+F800           (Set feed rate to 800 mm/min for G1 moves)
+
+G1 X50.0       (Move X axis to 50mm)
+G1 Y50.0       (Move Y axis to 50mm)
+
+G1 Z0.0        (Move Z axis down to 0mm)
+G1 Z10.0       (Move Z axis back up to 10mm)
+
+G1 X0.0 Y0.0   (Move X and Y simultaneously back to 0,0)
+
+(--- Program End ---)
+M2             (End program)

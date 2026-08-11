@@ -170,10 +170,10 @@ Acceptance checklist:
 
 | Module id    | File                                | Sidebar | Settings tab | Notes |
 |--------------|-------------------------------------|---------|--------------|-------|
-| `camera`     | `frontend/src/modules/camera/`      | optional | yes | Viewers + settings panel. |
+| `camera`     | `frontend/src/modules/camera/`      | optional | yes | Viewers + settings panel. Per-camera operator preferences (rename / flip / mirror / hide-from-cycle) persist server-side via the per-module settings store at `backend/data/modules/camera/settings.json`; the store hydrates on boot and PUTs a debounced 400 ms write per change. |
 | `temperature`| `frontend/src/modules/temperature/` | no       | yes | 30 s chart, °C/K unit, per-sensor colours. |
 | `machine`    | `frontend/src/modules/machine/`     | no       | no  | DRO + jog controls, owns the WebSocket transport. |
-| `machineconfig` | `frontend/src/modules/machineconfig/` | yes (reuses `config`) | yes | Profiles editor, compilers, deploy. Also exposes the `/m-codes/...` endpoints the universal editor uses to edit bare ``M<num>`` files under `machine_config/m_codes/`. |
+| `machineconfig` | `frontend/src/modules/machineconfig/` | yes (`sidebar.id: 'machineconfig'`) | yes | Profiles editor, compilers, deploy. Owns its own `/machineconfig` route (registered at boot by `router/index.js::registerModuleRoutes`); the `MachineConfigView` carves the panel grid out of the legacy `EditorView.vue`. The legacy `/config/:filename?` editor route remains for deep-linking but is editor-only. Also exposes the `/m-codes/...` endpoints the universal editor uses to edit bare ``M<num>`` files under `machine_config/m_codes/`. |
 | `tools`      | `frontend/src/modules/tools/`       | no       | no  | Spindle / extruder MDI panel. |
 | `macros`     | `frontend/src/modules/macros/`      | no       | yes | Three kinds via ``?kind=``: ``.macro`` (Run via MDI), ``.ngc`` (LinuxCNC native, edit-only), ``mcode`` (LinuxCNC M100..M199 under `machine_config/m_codes/`, edit-only). The ``.ngc`` toggle lives in the Create dialog; ``mcode`` has its own dashboard / machine-config panels. |
 
@@ -196,9 +196,10 @@ until the migration window closes:
   backend's file-load contract; a follow-up can swap the
   `consoleStore.debug(...)` calls for the real
   `useMachineStore().startProgram(...)` / `pauseProgram(...)` / etc.
-- `frontend/src/modules/camera/components/CameraPanel.vue` — a
-  1:1 wrapper around `CameraViewer.vue`. Listed in the glob but
-  not used by `App.vue` or `DashboardView.vue`. Delete or wire up.
+- `frontend/src/modules/camera/components/CameraPanel.vue` —
+  removed. The module now exports `mainView: CameraViewer` so the
+  route and the dashboard mount the same component; the 1:1 wrapper
+  is no longer needed.
 
 ---
 

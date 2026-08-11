@@ -170,6 +170,12 @@ class FrontendRegistry {
       // without one still get a tab via ``settingsPanels()`` so the
       // legacy placeholder keeps working.
       settingsPanel: instance.settingsPanel ?? null,
+      // Module-supplied top-level view. ``App.vue`` prefers this over
+      // the legacy alphabetical glob discovery over ``components/*`` —
+      // new modules should always export ``mainView``. ``null`` falls
+      // through to the legacy path (kept so unconverted modules keep
+      // working during the migration window).
+      mainView: instance.mainView ?? null,
     });
   }
 

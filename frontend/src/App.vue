@@ -34,6 +34,17 @@ const moduleViewImports = import.meta.glob(
 const moduleViewCache = shallowRef(new Map())
 
 function loadModuleView(moduleId) {
+  // Prefer the explicit ``mainView`` on the registry record. Modules
+  // migrated to the new contract set this themselves; App.vue no
+  // longer depends on file-naming heuristics.
+  const record = registry.modules.get(moduleId)
+  if (record?.mainView) {
+    return record.mainView
+  }
+  // Legacy fallback: alphabetical first ``components/*.vue`` file
+  // excluding the Settings panel. Kept so unconverted modules still
+  // load during the migration window — see ``protocols.js`` for the
+  // recommended path.
   const target = Object.keys(moduleViewImports).find(
     (p) =>
       p.includes(`/${moduleId}/components/`) &&

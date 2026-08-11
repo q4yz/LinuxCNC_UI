@@ -108,6 +108,7 @@ def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
         "target_fps": 15,
         "default_device_id": "",
         "ip_camera_url": "",
+        "preferences": {},
     }
 
     # PUT bulk returns the merged payload.

@@ -101,11 +101,33 @@ to avoid Pinia initialization-order crashes.
 ### 2.2 Router
 
 Vue Router in **hash mode** (`createWebHashHistory`) keeps the
-build compatible with static hosting. The route table in
-`frontend/src/router/index.js` is the authoritative navigation
-graph; `App.vue` reads `useRoute().name` and renders the matching
-view (or a module-owned view if the route name matches a mounted
-module id).
+build compatible with static hosting. The static route table in
+`frontend/src/router/index.js` carries only the four built-ins
+(`dashboard`, `programs` + `programs-file`, `config`, `settings`).
+Module-owned routes are added at boot by
+`router/index.js::registerModuleRoutes(registry)`, which walks the
+mounted modules after `registry.boot()` resolves and registers
+one `/<sidebar.id>` route per entry with a sidebar. The
+`MainApp.vue` shell then mounts the module's exported `mainView`
+component via the registry's `record.mainView` slot — the
+placeholder route component never actually renders.
+
+The contract:
+
+* Sidebar **id** doubles as the route **name** (no separate
+  translation table; `AppSidebar.vue::navigate(id)` is
+  `router.push({ name: id })`).
+* Built-in route names win over a colliding module-supplied name
+  (the `builtInNames` set inside `registerModuleRoutes`).
+* Excluded modules (via `MODULES_ENABLED`) get no route at all —
+  the registry walks `import.meta.glob` lazily, so a whitelisted
+  subset of modules is the only one that contributes routes.
+
+The dashboard / programs / settings built-ins always render via
+`<router-view>`. Module routes render via App.vue's
+`moduleView` computed, which resolves the registry record's
+`mainView` (preferred) or falls back to the alphabetical
+`components/*.vue` glob discovery for unconverted modules.
 
 ### 2.3 State Facade
 

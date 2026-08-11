@@ -324,7 +324,7 @@ class MachineConfigParser:
             raise FileNotFoundError(f"Configuration file not found: {path}")
 
         parser = self._new_ini_parser()
-        with path.open("r", encoding="utf-8") as handle:
+        with path.open(encoding="utf-8") as handle:
             parser.read_file(handle, source=str(path))
         return self._build_graph(parser)
 

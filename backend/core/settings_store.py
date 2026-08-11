@@ -102,7 +102,7 @@ class SettingsStore:
 
             if self._path.exists():
                 try:
-                    with self._path.open("r", encoding="utf-8") as fp:
+                    with self._path.open(encoding="utf-8") as fp:
                         loaded = json.load(fp)
                 except (OSError, json.JSONDecodeError) as exc:
                     logger.error(

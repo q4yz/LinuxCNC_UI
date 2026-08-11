@@ -125,11 +125,34 @@ def is_program_loaded() -> bool:
     LinuxCNC's "loaded" state is implicit: ``stat.file`` is non-empty
     while ``interp_state`` is ``INTERP_IDLE``. This helper is the
     single source of truth for the ``/run`` endpoint's 409 guard and
-    for any future "is_loaded" WebSocket hint. The lock is held only
-    for the boolean read because ``_machine_state.file`` is itself a
-    plain string assignment (the ``program_open`` writer acquires the
-    same lock).
+    for any future "is_loaded" WebSocket hint.
+
+    On real LinuxCNC the loaded-file pointer lives in the stat
+    channel exposed by :func:`hardware.connection.get_machine_stat`,
+    not in this module's in-memory ``_machine_state`` — which is
+    only ever updated by the *mock*'s ``command.program_open``. We
+    therefore query the live channel first and fall back to the
+    mock's local state when the channel is not yet connected (CI
+    without LinuxCNC, or first call before the lazy connect has
+    resolved). The mock's :class:`stat` instance is cached by the
+    connection layer, so we call :meth:`stat.poll` before reading
+    the snapshot — ``poll`` re-reads ``_machine_state`` and keeps
+    the cached instance's ``file`` attribute in sync.
     """
+    try:
+        from .connection import get_machine_stat
+        stat = get_machine_stat()
+    except ImportError:
+        stat = None
+    if stat is not None:
+        # Refresh the cached snapshot so the predicate tracks the
+        # latest ``program_open`` call (mock and real drivers both
+        # expose ``poll``; real LinuxCNC's ``poll`` is a no-op for
+        # the read-only fields we care about).
+        poll = getattr(stat, "poll", None)
+        if callable(poll):
+            poll()
+        return bool(getattr(stat, "file", ""))
     with _machine_state.lock:
         return bool(_machine_state.file)
 

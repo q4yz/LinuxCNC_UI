@@ -15,8 +15,12 @@
 //      cell, not an error.
 //   3. The camera store follows the ``module_camera`` convention from
 //      Gotcha #2, which is checked by the build's store-id lint.
-//   4. The legacy ``frontend/src/components/CameraPanel.vue`` is gone
-//      — the module owns the canonical implementation now.
+//   4. The legacy ``frontend/src/components/CameraPanel.vue`` wrapper
+//      is gone — the module owns the canonical implementation via
+//      ``CameraViewer``, exposed through the module's ``mainView``.
+//   5. The module's ``index.js`` exports a ``mainView`` so
+//      ``App.vue`` and ``registerModuleRoutes`` resolve the camera
+//      route deterministically (no file-naming heuristics).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -38,6 +42,10 @@ const legacyCameraPanel = resolve(
 const newCameraPanel = resolve(
   repoRoot,
   "frontend/src/modules/camera/components/CameraPanel.vue",
+);
+const cameraIndex = resolve(
+  repoRoot,
+  "frontend/src/modules/camera/index.js",
 );
 const cameraViewer = resolve(
   repoRoot,
@@ -91,11 +99,38 @@ test("Legacy components/CameraPanel.vue is removed", () => {
   );
 });
 
-test("New modules/camera/components/CameraPanel.vue is in place", () => {
+test("modules/camera/components/CameraPanel.vue is removed in favor of mainView", () => {
+  // The wrapper ``CameraPanel.vue`` was a 1:1 pass-through to
+  // ``CameraViewer.vue``. With the module now exporting
+  // ``mainView: CameraViewer``, the wrapper is dead weight — the
+  // registry-driven route resolves to ``CameraViewer`` directly.
   assert.equal(
     existsSync(newCameraPanel),
-    true,
-    `expected ${newCameraPanel} to exist`,
+    false,
+    `expected ${newCameraPanel} to be removed (mainView replaces it)`,
+  );
+});
+
+test("camera/index.js exports mainView: CameraViewer", () => {
+  const text = readFileSync(cameraIndex, "utf-8");
+  // The registry contract: ``mainView`` on the module's default
+  // export is what ``App.vue`` and ``registerModuleRoutes`` mount
+  // for the route the sidebar resolves to. Without it the camera
+  // page falls back to the alphabetical glob discovery which used
+  // to pick the (now-deleted) CameraPanel.vue.
+  //
+  // The camera module loads ``CameraViewer`` lazily through
+  // ``defineAsyncComponent`` so removing the module folder stays
+  // a no-op for the registry bootstrap (see camera/index.js comment).
+  assert.match(
+    text,
+    /import\(["']\.\/components\/CameraViewer\.vue["']\)/,
+    "camera/index.js must dynamic-import the CameraViewer component",
+  );
+  assert.match(
+    text,
+    /mainView:\s*CameraViewer\b/,
+    "camera/index.js must export mainView: CameraViewer",
   );
 });
 
@@ -110,5 +145,38 @@ test("CameraViewer.vue points at the module-scoped stream URL", () => {
     source,
     /\/api\/v1\/camera\/stream/,
     "CameraViewer must not reference the legacy /api/v1/camera/stream URL",
+  );
+});
+
+test("CameraStore persists preferences via the module settings client", () => {
+  // Camera preferences (rename / flip / mirror / hide) live in the
+  // backend ``/api/v1/modules/camera/settings`` payload so the rename
+  // follows the machine, not the browser. Regression guard: a future
+  // commit that brings back ``window.localStorage`` would silently
+  // re-introduce the per-browser persistence problem.
+  const cameraStorePath = resolve(
+    repoRoot,
+    "frontend/src/modules/camera/cameraStore.js",
+  );
+  const text = readFileSync(cameraStorePath, "utf-8");
+  assert.match(
+    text,
+    /import\s*\{\s*createModuleSettings\s*\}\s*from/,
+    "cameraStore.js must import the canonical settings client factory",
+  );
+  assert.match(
+    text,
+    /createModuleSettings\(\s*manifest\.id\s*\)/,
+    "cameraStore.js must build the settings client from manifest.id",
+  );
+  assert.doesNotMatch(
+    text,
+    /window\.localStorage/,
+    "cameraStore.js must not read window.localStorage (migration to backend done)",
+  );
+  assert.match(
+    text,
+    /PREFERENCE_DEBOUNCE_MS/,
+    "cameraStore.js must debounce PUT writes (typed rename should not spam the server)",
   );
 });

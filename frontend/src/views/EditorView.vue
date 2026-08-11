@@ -1,7 +1,12 @@
 <script setup>
-// Universal editor shell. Reads / writes are delegated entirely
-// to `useEditorStore`; this view handles presentation, layout swapping,
-// and route-driven data loading.
+// Universal editor shell. Editor-only: the surface that used to
+// render the machineconfig panel grid when no filename was set
+// moved to ``MachineConfigView.vue`` (mounted at ``/machineconfig``).
+// EditorView now renders the editor overlay only when a filename
+// is present in ``route.params``; otherwise it renders a small
+// empty-state prompt pointing operators at the new ``Machine
+// Config`` route so deep-links like ``/config/`` still get a sane
+// landing page instead of nothing.
 
 import { onMounted, ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -10,20 +15,8 @@ import { useConfirm, ModalButtonStyle } from '../core/confirm.js';
 import { useUnsavedChangesGuard } from '../router/guards/unsavedChangesGuard.js';
 
 import Editor from '../components/Editor.vue';
-import DebugPanel from '../components/DebugPanel.vue';
-import UpdateManager from '../components/UpdateManager.vue';
-import ProfilesExplorer from '../modules/machineconfig/components/ProfilesExplorer.vue';
-import CompilerPanel from '../modules/machineconfig/components/CompilerPanel.vue';
-import CompiledOutputViewer from '../modules/machineconfig/components/CompiledOutputViewer.vue';
-import DeploymentPanel from '../modules/machineconfig/components/DeploymentPanel.vue';
-import ActivePanel from '../modules/machineconfig/components/ActivePanel.vue';
-import MacroManagerPanel from '../modules/macros/components/MacroManagerPanel.vue';
-import McodeManagerPanel from '../modules/macros/components/McodeManagerPanel.vue';
-
-import { useMachineConfigStore } from '../modules/machineconfig/store.js';
 import { useEditorStore, resolveEditorMode } from '../stores/editor.js';
 
-const machineConfigStore = useMachineConfigStore();
 const editorStore = useEditorStore();
 const route = useRoute();
 const router = useRouter();
@@ -131,10 +124,15 @@ async function confirmClose() {
   if (shouldClose) closeEditor();
 }
 
-// Close clears the store and routes the user back to the appropriate dashboard.
+// Close clears the store and routes the operator back to the
+// surface that owns the file kind. G-code files land on the
+// programs dashboard; everything else (profiles, .cfg / .ini /
+// .conf, .macro, M-code, …) lands on the machineconfig surface
+// at /machineconfig. The legacy ``name: 'config'`` route is now
+// editor-only so navigating to it without a filename would loop.
 function closeEditor() {
   editorStore.close();
-  const target = editorStore.isGcode ? 'programs' : 'config';
+  const target = editorStore.isGcode ? 'programs' : 'machineconfig';
   router.push({ name: target }).catch(err => console.error("Router error on close:", err));
 }
 
@@ -144,16 +142,8 @@ function handleEditorUpdate(value) {
   editorStore.content = value;
 }
 
-// Used by ProfilesExplorer to request an edit. This function STRICTLY changes
-// the URL. The `watch` block above detects the URL change and loads the file.
-function openEditor(path) {
-  router.push({ name: 'config', params: { filename: path } })
-        .catch(err => console.error("Router error on open:", err));
-}
-
 onMounted(async () => {
   await loadFromSource();
-  void machineConfigStore.loadAll();
 });
 </script>
 
@@ -181,43 +171,32 @@ onMounted(async () => {
     </div>
   </div>
 
-  <div v-else class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
-    <section class="space-y-6 xl:col-span-4">
-      <UpdateManager />
-      <DebugPanel />
-    </section>
-
-    <section class="space-y-6 xl:col-span-8">
-      <CompilerPanel />
-
-      <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ProfilesExplorer @edit="openEditor" />
-
-        <div class="space-y-6">
-          <CompiledOutputViewer />
-          <DeploymentPanel />
-        </div>
-      </div>
-
-      <ActivePanel />
-
-      <!-- Macros & NGC section. The macros module owns its own
-           CRUD via ``useMacrosStore()``; the panel mounts that
-           store on first use so an unrelated Machine-Config user
-           pays no startup cost. A future refactor may move
-           this into its own sidebar entry / route; for now it
-           shares the right column with the rest of the
-           machineconfig surface. -->
-      <MacroManagerPanel />
-
-      <!-- M-codes sub-panel. Lives in the same module (shared
-           Pinia store) but operates on the dedicated
-           ``machine_config/m_codes/`` root. The Edit button
-           deep-links into the universal editor with the bare
-           ``M<num>`` token so the same CodeMirror surface that
-           handles profiles and ``.macro`` files also handles
-           M-codes. -->
-      <McodeManagerPanel />
-    </section>
+  <!-- No-filename fallback: the machineconfig surface moved to
+       /machineconfig. Render a small pointer so deep-links like
+       /config/ (no filename) land somewhere sensible instead of
+       an empty main slot. The full panel grid lives in
+       ``MachineConfigView``. -->
+  <div v-else class="flex h-full items-center justify-center p-8 text-center text-gray-400">
+    <div class="space-y-3">
+      <p class="text-sm">
+        Pick a file from
+        <button
+          type="button"
+          class="text-blue-400 underline hover:text-blue-300"
+          @click="router.push({ name: 'programs' })"
+        >
+          G-Code Files
+        </button>
+        or open
+        <button
+          type="button"
+          class="text-blue-400 underline hover:text-blue-300"
+          @click="router.push({ name: 'machineconfig' })"
+        >
+          Machine Config
+        </button>
+        to start editing.
+      </p>
+    </div>
   </div>
 </template>

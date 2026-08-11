@@ -91,7 +91,7 @@ def load_active_heaters(
         return []
 
     try:
-        with path.open("r", encoding="utf-8") as fp:
+        with path.open(encoding="utf-8") as fp:
             payload = json.load(fp)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning(

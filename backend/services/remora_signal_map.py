@@ -94,7 +94,7 @@ def _load_payload(
             _cache_source = path_resolved
             return None
         try:
-            with path.open("r", encoding="utf-8") as fp:
+            with path.open(encoding="utf-8") as fp:
                 payload = json.load(fp)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning(

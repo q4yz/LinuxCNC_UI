@@ -7,15 +7,61 @@ releases without breaking existing deployments — the store merges the
 defaults underneath the persisted payload so a missing key is filled in
 from this schema's defaults on every read.
 
-Defaults here cover both the historical MJPEG knobs (resolution,
-JPEG quality, target FPS) and the on-demand streaming knobs introduced
-in Issue #56: ``default_device_id`` (the camera picked when the
-frontend does not pass ``?id=…``) and ``ip_camera_url`` (an optional
-HTTP/RTSP feed exposed through ``/devices``).
+Defaults here cover three groups of knobs:
+
+* **MJPEG knobs** (``width`` / ``height`` / ``jpeg_quality`` /
+  ``target_fps``) — the historical capture pipeline.
+* **Source selection** (``default_device_id`` / ``ip_camera_url``) —
+  introduced in Issue #56; the camera picked when the frontend does
+  not pass ``?id=…`` and the optional IP-camera passthrough exposed
+  through ``/devices``.
+* **Per-camera operator preferences** (``preferences``) — a map keyed
+  by device id (``/dev/videoN``, an OpenCV index, or the IP camera
+  URL) holding the operator's rename / orientation / "hide from
+  cycle" overrides. Persisted server-side so the rename follows the
+  machine rather than the browser profile; the frontend used to keep
+  this in ``window.localStorage`` and was migrated to the settings
+  store for parity with the temperature module's pattern.
 """
 from __future__ import annotations
 
+from typing import Dict
+
 from pydantic import BaseModel, Field
+
+
+class CameraDevicePreference(BaseModel):
+    """One row of operator overrides for a single camera.
+
+    Keyed by the device id the backend returns from ``GET /devices``
+    (``/dev/videoN``, an OpenCV index string, or the IP camera URL).
+    All four fields are optional; an empty preference row means the
+    operator has not touched that camera.
+    """
+
+    custom_name: str = Field(
+        default="",
+        description=(
+            "Operator-chosen display name. Empty falls back to the "
+            "hardware-reported name."
+        ),
+    )
+    flip: bool = Field(
+        default=False,
+        description="Vertical mirror of the live feed.",
+    )
+    mirror: bool = Field(
+        default=False,
+        description="Horizontal mirror of the live feed.",
+    )
+    hidden: bool = Field(
+        default=False,
+        description=(
+            "Skip this camera when cycling with the Switch Camera "
+            "button. The device still appears in the Settings panel "
+            "and can be picked manually."
+        ),
+    )
 
 
 class CameraSettings(BaseModel):
@@ -37,6 +83,10 @@ class CameraSettings(BaseModel):
         ip_camera_url: Optional pass-through camera source. When set,
             it is exposed as a synthetic row in ``GET /devices`` with
             ``source == "ip"`` so the Vue picker can include it.
+        preferences: Per-camera operator overrides keyed by device id.
+            The frontend owns the read/write of this map; the streaming
+            endpoints do not consume it. A device id that has no row
+            behaves as if every field had its default value.
     """
 
     width: int = Field(default=640, ge=160, le=3840, description="Capture width in pixels.")
@@ -58,6 +108,14 @@ class CameraSettings(BaseModel):
             "Empty means no IP camera entry."
         ),
     )
+    preferences: Dict[str, CameraDevicePreference] = Field(
+        default_factory=dict,
+        description=(
+            "Per-camera operator overrides keyed by device id. "
+            "Persisted server-side alongside the MJPEG knobs so the "
+            "rename follows the machine rather than the browser."
+        ),
+    )
 
 
-__all__ = ["CameraSettings"]
+__all__ = ["CameraSettings", "CameraDevicePreference"]

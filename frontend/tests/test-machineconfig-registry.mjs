@@ -70,7 +70,11 @@ test("machineconfig manifest has the documented shape", () => {
   assert.match(manifest, /id:\s*(['"`])machineconfig\1/);
   assert.match(manifest, /title:\s*(['"`])Machine Config\1/);
   assert.match(manifest, /sidebar:\s*\{/);
-  assert.match(manifest, /id:\s*(['"`])config\1/, "sidebar id must reuse the legacy config slot");
+  // Sidebar id matches the manifest id so it doubles as the route
+  // name. ``registerModuleRoutes`` reads this and builds the
+  // ``/machineconfig`` route at boot. The legacy ``id: 'config'``
+  // override that hijacked the built-in editor route is gone.
+  assert.match(manifest, /id:\s*(['"`])machineconfig\1[,\s\n]/, "sidebar id must match the manifest id");
   assert.match(manifest, /label:\s*(['"`])Machine Config\1/);
   assert.match(manifest, /order:\s*60/);
   assert.match(manifest, /settingsPanel:\s*true/);
@@ -146,15 +150,19 @@ test("machineconfig store calls the generated ModulesMachineconfigService client
   }
 });
 
-test("machineconfig index.js wires the manifest + components", () => {
+test("machineconfig index.js wires the manifest + mainView", () => {
   const indexText = readText(indexPath);
   assert.match(indexText, /import manifest from "\.\/manifest\.js"/);
   assert.match(indexText, /onLoad\(/);
   assert.match(indexText, /onUnload\(/);
-  assert.doesNotMatch(indexText, /MachineConfigView/);
+  // ``mainView`` is the explicit top-level component the App shell
+  // and ``registerModuleRoutes`` consult; it replaces the legacy
+  // alphabetical glob discovery.
+  assert.match(indexText, /MachineConfigView/);
+  assert.match(indexText, /mainView:\s*MachineConfigView/);
 });
 
-test("machineconfig components folder ships the four panels", () => {
+test("machineconfig components folder ships the panels and the new view", () => {
   for (const name of [
     "ProfilesExplorer.vue",
     "CompilerPanel.vue",
@@ -166,71 +174,104 @@ test("machineconfig components folder ships the four panels", () => {
     const text = readText(path);
     assert.ok(text.length > 0, `${name} must exist and be non-empty`);
   }
-  assert.equal(existsSync(machineConfigViewPath), false, "MachineConfigView.vue must be removed");
+  // MachineConfigView is the new top-level surface; the App shell
+  // and ``registerModuleRoutes`` route ``/machineconfig`` to it.
+  assert.equal(
+    existsSync(machineConfigViewPath),
+    true,
+    "MachineConfigView.vue must be in place",
+  );
 });
 
-test("EditorView composes every machineconfig panel", () => {
-  const viewText = readText(viewPath);
-  // The legacy ``ConfigView.vue`` was renamed to
-  // ``EditorView.vue`` once the file manager started routing
-  // edits through ``router.push({ name: 'config' })``. The
-  // machineconfig panels now live inside ``EditorView`` and
-  // are rendered alongside the editor surface.
+test("MachineConfigView composes every panel", () => {
+  const viewText = readText(machineConfigViewPath);
   for (const component of [
     "ProfilesExplorer",
     "CompilerPanel",
     "CompiledOutputViewer",
     "DeploymentPanel",
     "ActivePanel",
+    "UpdateManager",
+    "DebugPanel",
+    "MacroManagerPanel",
+    "McodeManagerPanel",
   ]) {
     assert.match(
       viewText,
       new RegExp(`import\\s+${component}\\s+from`),
-      `EditorView must import ${component}`,
+      `MachineConfigView must import ${component}`,
     );
   }
   assert.match(viewText, /useMachineConfigStore/);
-  // The view calls the store's loaders on mount so the
-  // compilers and listings are populated by the time the
-  // panels render.
+  // The view calls the store's loaders on mount so the compilers
+  // and listings are populated by the time the panels render.
   assert.match(viewText, /loadAll\(\)/);
 });
 
-test("App.vue routes module sidebar ids to the module view", () => {
+test("EditorView no longer imports machineconfig panels", () => {
+  const viewText = readText(viewPath);
+  // After the split, the editor view is editor-only. The machineconfig
+  // surface lives at /machineconfig (MachineConfigView), so none of
+  // its panels should leak into EditorView anymore.
+  for (const component of [
+    "ProfilesExplorer",
+    "CompilerPanel",
+    "CompiledOutputViewer",
+    "DeploymentPanel",
+    "ActivePanel",
+    "MacroManagerPanel",
+    "McodeManagerPanel",
+  ]) {
+    assert.doesNotMatch(
+      viewText,
+      new RegExp(`import\\s+${component}\\s+from`),
+      `EditorView must not import ${component} any more`,
+    );
+  }
+  assert.doesNotMatch(viewText, /useMachineConfigStore/);
+});
+
+test("EditorView closes non-gcode files by routing to machineconfig", () => {
+  const viewText = readText(viewPath);
+  // Closing the editor for a profile / cfg / mcode file must
+  // bounce back to /machineconfig now that the legacy ``config``
+  // route is editor-only.
+  assert.match(
+    viewText,
+    /machineconfig/,
+    "EditorView must reference machineconfig for the close-route target",
+  );
+  // gcode close still goes to programs.
+  assert.match(viewText, /['"]programs['"]/);
+});
+
+test("App.vue prefers the explicit module mainView", () => {
   const appText = readText(resolve(repoRoot, "frontend/src/App.vue"));
-  // The current App.vue drives view selection through Vue Router
-  // (``useRoute().name``) instead of a local ``currentView``
-  // ref. The module-owned view still wins when the route name
-  // matches a mounted module id, so the contract is preserved.
+  // The new path reads ``mainView`` from the registry record first,
+  // falling back to the alphabetical glob discovery for unconverted
+  // modules.
   assert.match(
     appText,
-    /registry\.modules\.has\(\s*name\s*\)/,
-    "App.vue must consult the registry to detect module-owned sidebar ids",
+    /record\?\.mainView/,
+    "App.vue must consult record.mainView before falling back to glob discovery",
   );
   assert.match(
     appText,
-    /useRoute\(\)/,
-    "App.vue must read the active view via Vue Router",
-  );
-  assert.match(
-    appText,
-    /\.\/modules\/\*\/(components|components\/\*\.vue)/,
-    "App.vue must lazily load module views via import.meta.glob",
+    /registry\.modules\.get\(\s*moduleId\s*\)/,
+    "App.vue must look up the module record by id",
   );
   assert.match(
     appText,
     /<component\s+v-if="moduleView"\s+:is="moduleView"\s*\/>/,
-    "App.vue must render the resolved module view via <component :is>",
+    "App.vue still renders the resolved module view via <component :is>",
   );
 });
 
-test("AppSidebar keeps the legacy config slot for the module override", () => {
-  // The machineconfig module now reuses the legacy config nav slot,
-  // so the built-in fallback remains available when the module is not
-  // mounted.
+test("AppSidebar no longer carries the legacy config built-in", () => {
+  // The legacy ``id: 'config'`` built-in entry has been deleted;
+  // machineconfig owns that sidebar slot under its own id.
   const sidebarText = readText(
     resolve(repoRoot, "frontend/src/components/AppSidebar.vue"),
   );
-  assert.match(sidebarText, /id:\s*['"]config['"]/);
-  assert.doesNotMatch(sidebarText, /MachineConfigView/);
+  assert.doesNotMatch(sidebarText, /id:\s*['"]config['"]/);
 });
