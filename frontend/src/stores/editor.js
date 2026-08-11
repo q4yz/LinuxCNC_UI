@@ -91,6 +91,8 @@ const EXTENSION_MODES = {
   ini: 'config',
   conf: 'config',
   toml: 'config',
+  // LinuxCNC HAL files
+  hal: 'hal',
   // Programs (G-code)
   gcode: 'gcode',
   ngc: 'gcode',
@@ -122,10 +124,21 @@ const EXTENSION_MODES = {
   zsh: 'shell',
 }
 
+// Filename-level overrides that take precedence over the
+// extension-based lookup. Used to map a fixed name (whose extension
+// would otherwise fall through to ``text``) to a real mode.
+const FILENAME_MODES = {
+  // The platform stores its snapshot as ``config.txt`` even though
+  // the payload is JSON. Force JSON highlighting so the operator
+  // sees the structure, not a wall of plain text.
+  'config.txt': 'json',
+}
+
 const DEFAULT_SYNTAX_MODE = 'text'
 
 export function modeForFilename(filename) {
   if (!filename) return DEFAULT_SYNTAX_MODE
+  if (FILENAME_MODES[filename]) return FILENAME_MODES[filename]
   const lower = filename.toLowerCase()
   const dot = lower.lastIndexOf('.')
   if (dot < 0) return DEFAULT_SYNTAX_MODE

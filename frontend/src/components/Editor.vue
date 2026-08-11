@@ -16,6 +16,9 @@ import { computed } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { ini } from '../utils/codemirror-lang-ini.js'
+import { hal } from '../utils/codemirror-lang-hal.js'
+import { gcode } from '../utils/codemirror-lang-gcode.js'
 
 const props = defineProps({
   filename: { type: String, required: true },
@@ -25,10 +28,11 @@ const props = defineProps({
    * Editor mode. Controls which CodeMirror language extension is
    * loaded:
    *   ``"profile"`` / ``"config"`` / ``"ini"`` / ``"cfg"`` —
-   *     Klipper/LinuxCNC INI-style configuration. Plain text only
-   *     today (no language pack); a future Klipper highlight module
-   *     drops in here.
-   *   ``"gcode"`` / ``"ngc"`` — G-code (plain text).
+   *     Klipper/LinuxCNC INI-style configuration. Highlighted via
+   *     the ``properties`` StreamLanguage.
+   *   ``"hal"`` — LinuxCNC HAL files. Highlighted with a C-like
+   *     grammar and HAL keywords.
+   *   ``"gcode"`` / ``"ngc"`` — G-code (RS-274 / LinuxCNC).
    *   ``"js"`` / ``"javascript"`` — JavaScript syntax highlighting.
    *   ``"json"`` — JSON syntax highlighting.
    *   ``"text"`` — Plain text fallback.
@@ -38,15 +42,28 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue'])
 
-// Pick the CodeMirror extension for the active mode. Plain text
-// is the default; only ``js`` / ``javascript`` gets a language
-// pack today. Hook future language packs in here.
+// Pick the CodeMirror extensions for the active mode. ``oneDark``
+// is always present so the surrounding dark theme is consistent
+// across file types. A language pack is added per mode so that
+// tokens actually get coloured — a theme alone cannot highlight
+// plain text.
 const editorExtensions = computed(() => {
   const m = (props.mode || 'config').toLowerCase()
-  if (m === 'js' || m === 'javascript') {
-    return [javascript(), oneDark]
+  switch (m) {
+    case 'js':
+    case 'javascript':
+      return [javascript(), oneDark]
+    case 'json':
+      return [javascript({ json: true }), oneDark]
+    case 'config':
+      return [ini(), oneDark]
+    case 'hal':
+      return [hal(), oneDark]
+    case 'gcode':
+      return [gcode(), oneDark]
+    default:
+      return [oneDark]
   }
-  return [oneDark]
 })
 
 // Forward CodeMirror's update event directly to the parent. No
