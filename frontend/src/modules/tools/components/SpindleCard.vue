@@ -200,6 +200,7 @@ function handleSpindle(action) {
   </div>
 </template>
 
+<style scoped>
 
 
 /* Base customizer for range thumb (horizontal) to match dashboard aesthetic */
