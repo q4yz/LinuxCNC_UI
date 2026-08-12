@@ -28,12 +28,20 @@ const projectRoot = path.resolve(__dirname, '..');
 // hook — typically a fresh checkout, no backend running. In that
 // mode a missing backend logs a warning instead of failing the
 // install; the user can run ``npm run generate-api`` once the
-// backend is reachable. Detection uses the standard npm env var
-// (set on every lifecycle hook) plus an explicit flag for direct
-// invocation: ``node scripts/generate-api.mjs --install``.
+// backend is reachable.
+//
+// Detection narrows ``npm_lifecycle_event`` to the literal
+// ``"postinstall"`` value. The previous check
+// (``Boolean(process.env.npm_lifecycle_event)``) was a no-op
+// distinction — every ``npm run X`` invocation sets that variable,
+// so ``npm run generate-api`` silently entered install mode and
+// ``process.exit(0)``'d on fetch failure. Restricting to
+// ``"postinstall"`` makes ``npm run generate-api`` exit non-zero
+// when the backend is unreachable, surfacing the error to the
+// bash script's curl poll instead of swallowing it.
 const installMode =
   process.argv.includes('--install') ||
-  Boolean(process.env.npm_lifecycle_event);
+  process.env.npm_lifecycle_event === 'postinstall';
 
 const openApiUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8000/openapi.json';
 const generatedDir = path.join(projectRoot, 'generated');
