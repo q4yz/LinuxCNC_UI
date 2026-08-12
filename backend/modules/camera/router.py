@@ -52,8 +52,25 @@ from pydantic import BaseModel, Field
 
 from .detection import USBDeviceInfo, detect_usb_cameras
 from .settings import CameraSettings
-import cv2 as _cv2
 
+# NOTE: do NOT add ``import cv2 as _cv2`` (or any other eager OpenCV
+# import) at module top level. OpenCV's native libraries are the single
+# fragility in this module's boot path; on hosts whose prebuilt wheel
+# ABI is incompatible with the local CPU / glibc baseline, mapping
+# the .so at import time emits SIGILL — a kernel signal ``try/except``
+# cannot catch — and silently kills the FastAPI lifespan before the
+# OpenAPI canary fires. Every cv2 use site in this file is already
+# function-local and ``try/except``-protected:
+#
+#   * :meth:`StreamManager.acquire` (line ~319) lazy-imports cv2 once
+#     and records the failure in ``_cv2_disabled``;
+#   * :func:`_imencode_jpeg` (line ~523) does the same per call;
+#   * :mod:`backend.modules.camera.detection` has its own lazy cv2
+#     imports at lines ~271 and ~309.
+#
+# Probe 6 of ``backend/scripts/diag_lifespan_steps.py`` re-runs this
+# module's ``setup()`` end-to-end; reintroducing an eager cv2 import
+# here will turn that probe into SIGILL exit code 132 instead of ``OK``.
 logger = logging.getLogger("backend.modules.camera")
 
 
