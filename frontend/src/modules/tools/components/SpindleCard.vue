@@ -200,13 +200,7 @@ function handleSpindle(action) {
   </div>
 </template>
 
-<style scoped>
-/* Cross-browser vertical range slider styling */
-.slider-vertical {
-  -webkit-appearance: slider-vertical; /* WebKit */
-  writing-mode: bt-lr; /* IE/Edge */
-  appearance: slider-vertical; /* Standard */
-}
+
 
 /* Base customizer for range thumb (horizontal) to match dashboard aesthetic */
 input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb {
