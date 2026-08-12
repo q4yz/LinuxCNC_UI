@@ -4,9 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from core.config_manager import MachineConfig
 from core.module_registry import registry
-from hardware.connection import connection
 from services.console_logger import get_console_logger
 
 
@@ -30,24 +28,14 @@ async def lifespan(app: FastAPI):
     FastAPI Lifespan Context Manager.
     Handles startup and shutdown events cleanly, such as firing up
     background threads for the WebSocket telemetry and safety watchdogs.
+
+    The historical boot-time load of ``core.config_manager.MachineConfig``
+    was retired: that module relied on a hard-coded
+    ``machine_config/machine.cfg`` file that lives only on Windows
+    dev boxes and breaks the Linux boot path. Profile parsing is now
+    per-request inside the ``machineconfig`` module router.
     """
     logger.info("Starting LinuxCNC background tasks...")
-
-    # Load machine configuration and inject into hardware layer
-    try:
-        cfg = MachineConfig()  # uses machine_config/machine.cfg by default
-        app.state.config = cfg
-        try:
-            connection.set_machine_config(cfg)
-        except Exception as e:
-            logger.warning("Failed to inject machine config into hardware connection: %s", e)
-        logger.info("Loaded machine.cfg from machine_config/")
-    except FileNotFoundError as e:
-        logger.warning("Machine config not found at startup: %s", e)
-        app.state.config = None
-    except Exception as e:
-        logger.error("Failed to load machine config: %s", e)
-        raise
 
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(websocket.telemetry_loop())
@@ -65,6 +53,21 @@ async def lifespan(app: FastAPI):
     # ``shutdown`` pair below manages it for us.
     registry.boot(app)
     app.state.module_registry = registry
+
+    # Probe OpenAPI schema generation now that every router is mounted.
+    # Previously this died silently on some platforms (the symptom being
+    # an empty /openapi.json with no error log); the probe turns a
+    # silent failure into a loud traceback so the next regression
+    # leaves a breadcrumb.
+    try:
+        schema = app.openapi()
+        logger.info(
+            "OpenAPI schema ready: %d paths, %d components",
+            len(schema.get("paths", {})),
+            len(schema.get("components", {}).get("schemas", {})),
+        )
+    except Exception:  # noqa: BLE001 - we WANT every error here
+        logger.exception("OpenAPI schema generation failed at startup")
 
     yield
 

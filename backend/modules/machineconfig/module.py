@@ -46,19 +46,21 @@ from services import (
     get_staged_service,
 )
 
-from .compilers import autoload as autoload_compilers
+from .compilers import registry as _compiler_registry  # noqa: F401 - import side effect
 from .router import register_exception_handlers, router as _router
 from .settings import MachineConfigSettings
 
 logger = logging.getLogger("backend.modules.machineconfig")
 
-
-# ``autoload`` is a no-op once the package has been imported; calling
-# it again here is harmless because the registry's ``register`` is
-# idempotent on id collisions. The explicit call documents the
-# intent: by the time ``on_load`` runs, every concrete Compiler
-# subclass in this package is registered.
-autoload_compilers()
+# The ``compilers`` package's ``__init__.py`` runs
+# :func:`compilers.autoload` at import-time, which discovers and
+# registers every concrete :class:`Compiler` subclass against the
+# :data:`compilers.registry` singleton. Importing the package from
+# the line above is therefore the **single** side-effect that
+# populates the registry — a second explicit ``autoload()`` call
+# here would only trigger a "Compiler id already registered"
+# warning from :meth:`CompilerRegistry.register`'s collision check.
+# Keep this comment as the breadcrumb for future readers.
 
 
 _MANIFEST = ModuleManifest(

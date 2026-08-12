@@ -498,6 +498,27 @@ def to_dict(model: HardwareJson) -> dict[str, Any]:
     return model.model_dump(mode="json", exclude_none=True)
 
 
+# Forward-reference resolution safety net.
+#
+# ``HardwareJson.mcus`` is declared with the string annotation
+# ``list["McuInfo"]`` (because ``from __future__ import annotations``
+# is in effect at the top of this module). Pydantic v2 normally
+# resolves forward refs lazily on first use — which works for
+# :meth:`model_validate` and :meth:`model_dump` — but FastAPI's
+# OpenAPI generator walks the model graph via
+# :func:`model_json_schema`, a slightly different code path that has
+# historically left unresolved forward refs as opaque ``Any`` entries
+# (or, with older Pydantic builds, raised a cryptic lookup error).
+#
+# Calling :meth:`model_rebuild` here after every referenced class
+# is defined forces the resolution now, against the module's
+# :data:`globals`, so the OpenAPI generator sees a fully-resolved
+# schema even when nothing else in the package has been imported
+# yet at the moment FastAPI's app constructor wires its routes.
+# The call is idempotent under Pydantic v2.
+HardwareJson.model_rebuild(force=True)
+
+
 __all__ = [
     "Axis",
     "Driver",

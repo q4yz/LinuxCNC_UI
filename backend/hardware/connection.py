@@ -265,25 +265,38 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
 # ---------------------------------------------------------------------------
 # Optional machine-config injection
 # ---------------------------------------------------------------------------
+#
+# ``set_machine_config`` used to hold a parsed ``MachineConfig``
+# instance shared across requests. The historical source —
+# ``core.config_manager.MachineConfig`` — has been retired because
+# it hard-coded ``machine_config/machine.cfg`` and broke Linux
+# boot when no such file existed. This shim keeps the public
+# symbol available for any third-party caller; downstream hardware
+# code reads its own configuration from the ``machineconfig``
+# module's ``hardware.json`` payload (live, per-request), so the
+# shim is a deliberate no-op that logs at DEBUG for visibility.
+#:deprecated: will be removed in a future release; per-request
+#   ``hardware.json`` is the new source of truth.
 
-# Optional injected MachineConfig instance (set during FastAPI startup)
+# Optional injected MachineConfig instance (kept as None for back-compat)
 machine_config = None
 
 
 def set_machine_config(cfg) -> None:
     """Inject a parsed MachineConfig instance into the hardware layer.
 
-    Call this from application startup so downstream hardware code may
-    read configuration metadata (axes, heaters, steppers) if needed.
+    .. deprecated::
+        The historical ``core.config_manager.MachineConfig`` source
+        has been retired. Hardware state is read per-request from
+        the ``machineconfig`` module's ``hardware.json`` payload
+        via :func:`services.hardware_loader.load_active_hardware`
+        and friends. This shim exists only so existing imports
+        keep resolving; the parameter is ignored and a DEBUG line
+        is emitted for visibility.
     """
-    global machine_config
-    machine_config = cfg
-    try:
-        logger.info(
-            f"Machine configuration injected (path={getattr(cfg, 'config_path', 'unknown')})"
-        )
-    except Exception:
-        logger.info("Machine configuration injected")
+    logger.debug(
+        "set_machine_config() is a no-op shim (deprecated); cfg=%r", cfg
+    )
 
 
 # ---------------------------------------------------------------------------
