@@ -29,11 +29,31 @@ Open a terminal, navigate to the `backend/` folder, install the Python requireme
 
 ```bash
 cd backend
-python -m venv venv
+python3 -m venv venv --system-site-packages
 # Windows: .\venv\Scripts\activate | Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
+
+> `--system-site-packages` is required on a LinuxCNC controller. The
+> LinuxCNC project ships its Python bindings (the ``linuxcnc`` package)
+> via apt, which installs them under ``/usr/lib/python3.X/dist-packages``
+> — system site-packages — rather than as a PyPI wheel. With the
+> default hermetic ``venv`` the harness's ``from hardware import
+> linuxcnc`` falls through to ``linuxcnc_mock`` on every machine that
+> doesn't also ``pip install`` a stand-in. The flag makes the venv
+> inherit those system paths so ``import linuxcnc`` resolves cleanly:
+>
+> ```bash
+> source venv/bin/activate
+> python -c "import linuxcnc; print(linuxcnc.__file__)"
+> # /usr/lib/python3.X/dist-packages/linuxcnc/__init__.py
+> ```
+>
+> On a dev workstation without LinuxCNC installed the flag is harmless —
+> the harness's import-time ``try/except`` already selects the mock.
+> On a controller it removes the silent fallback and lets the real
+> NML channel (status / command / error) reach the lifespan.
 
 The backend listens on `http://0.0.0.0:8000`. Swagger UI is at `http://localhost:8000/docs`.
 

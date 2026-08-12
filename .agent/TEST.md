@@ -11,7 +11,7 @@ export CI=true
 # 1. Backend Setup
 if [ ! -f ".venv/bin/activate" ]; then
     rm -rf .venv
-    python3 -m venv .venv
+    python3 -m venv .venv --system-site-packages
     . .venv/bin/activate
     python -m pip install -q --upgrade pip
     python -m pip install -q -r backend/requirements.txt
