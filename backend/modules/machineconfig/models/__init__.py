@@ -35,6 +35,7 @@ from .hardware_json_models import (
     to_dict as hardware_json_to_dict,
 )
 from .klipper_models import (
+    ConnectionType,
     EndstopSwitch,
     Extruder,
     Fan,
@@ -47,6 +48,7 @@ from .klipper_models import (
     SpindleDigital,
     Stepper,
     TMC2209,
+    connection_to_hal_type,
 )
 from .linuxcnc_models import (
     AXIS_ORDER,
@@ -59,6 +61,7 @@ from .linuxcnc_models import (
 __all__ = [
     "AXIS_ORDER",
     "Axis",
+    "ConnectionType",
     "EndstopSwitch",
     "Extruder",
     "Fan",
@@ -82,6 +85,7 @@ __all__ = [
     "Stepper",
     "TemperatureSensor",
     "TMC2209",
+    "connection_to_hal_type",
     "hardware_json_to_dict",
     "validate_hardware_json",
 ]

@@ -76,9 +76,12 @@ def isolated_machine_config(monkeypatch, tmp_path):
     reset_service_cache()
 
     # Seed a starter profile that contains the ``#Start`` marker so
-    # the inline compile action has something to point at.
+    # the inline compile action has something to point at. An empty
+    # ``[mcu]`` defaults to ``remora-spi + BIGTREETECH OCTOPUS`` so
+    # the compiler emits the full artifact set (including the Remora
+    # ``config.txt`` payload).
     (profiles / "starter.cfg").write_text(
-        "#Start\n[printer]\nkinematics: cartesian\nmax_velocity: 250.0\n"
+        "#Start\n[mcu]\n[printer]\nkinematics: cartesian\nmax_velocity: 250.0\n"
         "[stepper_x]\n    step_pin: PC2\n    dir_pin: PB9\n    enable_pin: !PC3\n"
     )
 
@@ -186,7 +189,14 @@ def test_klipper_compiler_is_registered(tmp_data_root, clean_env):
 
 
 def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
-    """The compiler produces the four canonical artifacts."""
+    """The compiler produces the four canonical artifacts.
+
+    The fifth artifact ``config.txt`` is conditional on a single
+    remora MCU being declared: the profile below omits the
+    ``[mcu]`` section, so the new contract skips the Remora board
+    payload entirely (no stale JSON reaches the deploy step). The
+    four always-on artifacts are the canonical smoke test.
+    """
     from modules.machineconfig.compilers import registry
 
     compiler = registry.get("klipper-to-linuxcnc")
@@ -204,12 +214,13 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
     artifacts = compiler.compile(src, out)
     names = sorted(p.name for p in artifacts)
     assert names == [
-        "config.txt",
         "hardware.json",
         "linuxcnc.ini",
         "machine.cfg",
         "machine.hal",
     ]
+    # No remora MCU was declared → config.txt must NOT be emitted.
+    assert not (out / "config.txt").exists()
 
     # Each artifact is non-empty and the machine.cfg is a verbatim copy.
     machine_cfg = (out / "machine.cfg").read_text()
@@ -796,7 +807,7 @@ def test_compile_duplicate_stepper_pin_returns_structured_error(
     profiles = isolated_machine_config["profiles"]
     (profiles / "duplicate_pins.cfg").write_text(
         "#Start[mcu]\n"
-        "[mcu]\nserial: /dev/ttyACM0\n\n"
+        "[mcu]\nconnection: remora-spi\ninterface: /dev/ttyACM0\n\n"
         "[stepper_x]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
         "[stepper_y]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"
         "[stepper_z]\nstep_pin: PG0\ndir_pin: PG1\nenable_pin: !PF15\n\n"

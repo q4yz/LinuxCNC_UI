@@ -123,6 +123,21 @@ test("servo-thread replays full_state errors through the console store", () => {
   );
 });
 
+test("servo-thread store exposes a send() action for inbound WS commands", () => {
+  // The /ws/telemetry channel is now bidirectional. The
+  // machine module's ``jogContinuous`` calls ``servo.send({type:
+  // "jog_keepalive", ...})`` every 250 ms instead of POSTing to
+  // ``/api/v1/modules/machine/jog/keepalive`` — the new action
+  // is the difference between 4 RTT/s/axis and zero.
+  const text = readServo();
+  // Action declaration.
+  assert.match(text, /function\s+send\s*\(/);
+  // No-op guard when the socket isn't open.
+  assert.match(text, /socket\.readyState\s*!==\s*WebSocket\.OPEN/);
+  // Public surface returns the action.
+  assert.match(text, /\bsend\s*,/);
+});
+
 test("machine module store does NOT instantiate its own WebSocket", () => {
   // The transport moved to ``stores/servoThread.js`` — a
   // regression that brings it back into the module store

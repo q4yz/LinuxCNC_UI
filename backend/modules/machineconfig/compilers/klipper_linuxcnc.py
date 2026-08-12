@@ -66,6 +66,11 @@ class KlipperToLinuxCNCCompiler(Compiler):
 
     #: Files emitted by :meth:`compile`. Kept as a class attribute so the
     #: router can pre-declare them in OpenAPI without an instance.
+    #: ``config.txt`` is optional — when no remora MCU is declared
+    #: the wrapper deletes any stale file rather than emit an empty
+    #: one. The list nonetheless still contains the name so the
+    #: router reports it as expected; the ``.exists()`` check below
+    #: hides it from the response when the file isn't on disk.
     ARTIFACT_NAMES: tuple[str, ...] = (
         "machine.cfg",
         "linuxcnc.ini",
@@ -78,7 +83,9 @@ class KlipperToLinuxCNCCompiler(Compiler):
         """Stage the Klipper source + generated artifacts under ``output_dir``.
 
         The router already wipes ``output_dir`` before calling us, so we
-        only need to write the five canonical artifacts.
+        only need to write the five canonical artifacts. ``config.txt``
+        is optional: when no remora MCU is declared the writer
+        removes any stale file rather than emit an empty payload.
         """
         if not source_path.exists() or not source_path.is_file():
             raise FileNotFoundError(f"Source profile not found: {source_path}")
@@ -120,7 +127,12 @@ class KlipperToLinuxCNCCompiler(Compiler):
         logger.info(
             "KlipperToLinuxCNCCompiler staged %s → %s", source_path, output_dir
         )
-        return [output_dir / name for name in self.ARTIFACT_NAMES]
+        artifacts: list[Path] = []
+        for name in self.ARTIFACT_NAMES:
+            target = output_dir / name
+            if target.exists():
+                artifacts.append(target)
+        return artifacts
 
     # ------------------------------------------------------------------ #
     # Artifact generators                                                #

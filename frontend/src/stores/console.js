@@ -144,8 +144,6 @@ export const useConsoleStore = defineStore('console', {
     },
 
     command(text) {
-      // MDI echoes never raise a popup — the operator already
-      // typed the command and does not need a confirmation.
       this._addMessage(text, 'command')
     },
 

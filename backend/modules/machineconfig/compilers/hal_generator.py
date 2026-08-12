@@ -257,13 +257,14 @@ class HalGenerator:
     ) -> str:
         """Render the full HAL from an :class:`IniConfig` and a graph."""
         self._graph = graph
+        self._multi_mcu_comment = self._build_multi_mcu_comment()
 
         joints_block = self._build_joints_block(config.axes)
         enable_signals = self._build_enable_signals(config.axes)
 
         if self.hal_type == "parallel":
             header = PARALLEL_HAL_HEADER_TEMPLATE = PARALLEL_HAL_HEADER
-            return header.format(
+            return self._multi_mcu_comment + header.format(
                 joints_block=joints_block,
                 enable_signals=enable_signals,
             )
@@ -278,7 +279,8 @@ class HalGenerator:
         spindle_block = self._build_spindle_digital_block()
 
         return (
-            REMORA_HAL_HEADER.format(
+            self._multi_mcu_comment
+            + REMORA_HAL_HEADER.format(
                 symbolic_map=symbolic_map,
                 joints_block=joints_block,
                 pid_load_block=pid_load_block,
@@ -292,6 +294,45 @@ class HalGenerator:
         )
 
     # ----- Static block builders ----------------------------------- #
+
+    def _build_multi_mcu_comment(self) -> str:
+        """Emit a one-line comment when the profile declares multiple MCUs.
+
+        The Remora HAL loads a single ``remora-spi`` (or equivalent)
+        transport regardless of how many MCU sections the profile
+        declared. The comment documents this gap so an operator
+        hand-editing the file can see what was elided.
+
+        Single-MCU profiles (the historical default) produce no
+        comment so the diff against pre-multi-MCU HAL output stays
+        clean.
+        """
+        if self._graph is None:
+            return ""
+        mcus = self._graph.mcus
+        if len(mcus) <= 1:
+            return ""
+        # Only mention non-remora transports — a profile with two
+        # remora boards already fails to emit ``config.txt`` and
+        # the deploy step surfaces a separate warning; mentioning
+        # it in the HAL adds no value.
+        non_remora = {
+            name: mcu
+            for name, mcu in mcus.items()
+            if mcu.connection not in {"remora-spi", "remora-eth"}
+        }
+        if not non_remora:
+            return ""
+        joined = ", ".join(
+            f"[{name}] {mcu.connection}({mcu.interface or '-'})"
+            for name, mcu in non_remora.items()
+        )
+        return (
+            f"# Multi-MCU note: profile declares non-remora transports "
+            f"({joined}).\n"
+            f"# Pins bound to those MCUs are NOT wired here; the Remora "
+            f"HALFILE only loads remora-spi/eth.\n"
+        )
 
     def _build_symbolic_map(self) -> str:
         """Top-of-file comment block mapping symbolic ids to positional pins.

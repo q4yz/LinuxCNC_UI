@@ -21,6 +21,29 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
+ConnectionType = Literal["rs485", "remora-spi", "remora-eth", "parallelport", "dummy"]
+
+
+def connection_to_hal_type(connection: ConnectionType) -> str:
+    """Map a ``ConnectionType`` to the legacy ``hal_type`` discriminator.
+
+    The HAL generator historically selected its template via a
+    ``hal_type`` of ``"remora"`` or ``"parallel"``. The multi-MCU
+    world uses the richer ``connection`` vocabulary; this helper
+    collapses it back to the original two-value discriminator so the
+    HAL generator keeps working without changes.
+
+    * ``remora-spi`` / ``remora-eth`` -> ``"remora"``
+    * ``parallelport`` / ``rs485`` / ``dummy`` -> ``"parallel"``
+      (the legacy generator only knew "parallel"; the new
+      transports land in the parallel-mode template until a
+      dedicated renderer is added).
+    """
+    if connection in {"remora-spi", "remora-eth"}:
+        return "remora"
+    return "parallel"
+
+
 @dataclass(slots=True)
 class Printer:
     """Cartesian machine-wide motion settings."""
@@ -201,9 +224,37 @@ class Fan:
 
 @dataclass(slots=True)
 class MCU:
-    """MCU configuration (transport settings + hal_type)."""
+    """One MCU configuration (transport settings + board identity).
 
-    hal_type: str = "remora"  # "remora" or "parallel"
+    A Klipper profile may declare any number of ``[mcu]`` /
+    ``[mcu NAME]`` sections; each one becomes an :class:`MCU`
+    record on :attr:`MachineConfigGraph.mcus`. The fields mirror
+    the source keywords:
+
+    * ``connection`` — the transport type, one of
+      ``"rs485" | "remora-spi" | "remora-eth" | "parallelport" | "dummy"``.
+      Defaults to ``"remora-spi"`` for back-compat with the
+      historical single-MCU flow.
+    * ``interface`` — a free-form transport selector (e.g. ``"com0"``
+      for RS-485). Optional.
+    * ``board`` — the operator-visible board name (e.g. ``"BIGTREETECH OCTOPUS"``).
+      Optional; the firmware-side :mod:`config_txt_generator`
+      uses this to populate ``Board`` in the Remora payload.
+
+    The ``hal_type`` property collapses :attr:`connection` to the
+    legacy two-value discriminator the original HAL generator
+    consumed (it remains the only transport ever loaded by the
+    generated HALFILE).
+    """
+
+    connection: ConnectionType = "remora-spi"
+    interface: str | None = None
+    board: str | None = None
+
+    @property
+    def hal_type(self) -> str:
+        """Legacy discriminator the HAL generator consumes."""
+        return connection_to_hal_type(self.connection)
 
 
 @dataclass(slots=True)
@@ -232,7 +283,23 @@ class MachineConfigGraph:
     spindle_digital: SpindleDigital | None = None
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
     fans: dict[str, Fan] = field(default_factory=dict)
-    mcu: MCU | None = None
+    # Multiple MCUs. The key is the section's object name
+    # (``"mcu"`` for the bare ``[mcu]`` form, ``"a"`` for ``[mcu a]``).
+    mcus: dict[str, MCU] = field(default_factory=dict)
+
+    @property
+    def mcu(self) -> MCU | None:
+        """Back-compat accessor returning the first declared MCU.
+
+        Historical callers (HAL generator, hardware.json emitter)
+        read ``graph.mcu`` to learn the active transport. The
+        multi-MCU world uses :attr:`mcus` for the full inventory;
+        this property keeps the legacy single-MCU API alive while
+        the rest of the codebase migrates.
+        """
+        for value in self.mcus.values():
+            return value
+        return None
 
     def find_stepper(self, target: str) -> "Stepper | None":
         """Find a stepper by axis (``y``) or section name (``stepper_y``)."""
@@ -246,6 +313,7 @@ MachineConfig = MachineConfigGraph
 
 
 __all__ = [
+    "ConnectionType",
     "EndstopSwitch",
     "Extruder",
     "Fan",
@@ -258,4 +326,5 @@ __all__ = [
     "SpindleDigital",
     "Stepper",
     "TMC2209",
+    "connection_to_hal_type",
 ]

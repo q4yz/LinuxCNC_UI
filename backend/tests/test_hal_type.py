@@ -22,12 +22,12 @@ from modules.machineconfig.models import (
 def _graph(
     printer: Printer | None = None,
     steppers: dict[str, Stepper] | None = None,
-    mcu: MCU | None = None,
+    mcus: dict[str, MCU] | None = None,
 ) -> MachineConfigGraph:
     return MachineConfigGraph(
         printer=printer,
         steppers=steppers or {},
-        mcu=mcu,
+        mcus=mcus or {},
     )
 
 
@@ -68,7 +68,7 @@ def test_hal_type_defaults_to_remora() -> None:
 def test_hal_type_remora_explicit() -> None:
     graph = _graph(
         steppers={"x": _stepper("x")},
-        mcu=MCU(hal_type="remora"),
+        mcus={"mcu": MCU(connection="remora-spi")},
     )
     rendered = build_hal_from_graph(graph)
 
@@ -79,7 +79,7 @@ def test_hal_type_remora_explicit() -> None:
 def test_hal_type_parallel() -> None:
     graph = _graph(
         steppers={"x": _stepper("x")},
-        mcu=MCU(hal_type="parallel"),
+        mcus={"mcu": MCU(connection="parallelport")},
     )
     rendered = build_hal_from_graph(graph)
 
@@ -97,7 +97,7 @@ def test_hal_type_parallel() -> None:
 def test_hal_type_parallel_enable_signals() -> None:
     graph = _graph(
         steppers={"x": _stepper("x"), "y": _stepper("y")},
-        mcu=MCU(hal_type="parallel"),
+        mcus={"mcu": MCU(connection="parallelport")},
     )
     rendered = build_hal_from_graph(graph)
 

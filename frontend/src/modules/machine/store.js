@@ -242,10 +242,23 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       consoleStore.info(
         `Jogging ${axisName} axis ${distance}mm`,
       );
-      await ModulesMachineService.jogAxis({
+      // Prefer the open WebSocket — no extra HTTP round-trip per
+      // jog start. The REST endpoint stays as a fallback in case
+      // the socket is mid-reconnect.
+      servo.send({
+        type: "jog_axis",
         velocities: { [axis]: velocity },
         distance,
       });
+      try {
+        await ModulesMachineService.jogAxis({
+          velocities: { [axis]: velocity },
+          distance,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to jog axis (REST fallback)", axis, err);
+      }
     } catch (err) {
       consoleStore.error(
         `Failed to jog ${axisName}: ${err.message}`,
@@ -280,24 +293,31 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       consoleStore.info(
         `Jogging ${axisName} axis continuously...`,
       );
-      await ModulesMachineService.jogAxis({
+      // Start the jog over WS so the backend's watchdog
+      // registers the axis on the very first frame. The REST
+      // fallback covers the WS-reconnect case.
+      servo.send({
+        type: "jog_axis",
         velocities: { [axis]: jogVelocity },
         distance: 0,
       });
+      try {
+        await ModulesMachineService.jogAxis({
+          velocities: { [axis]: jogVelocity },
+          distance: 0,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to start continuous jog (REST fallback)", err);
+      }
 
       // Keep-alive cadence comes from the persisted module
       // setting (250 ms fallback). The backend watchdog trips at
-      // 500 ms.
-      jogIntervals[axis] = setInterval(async () => {
-        try {
-          await ModulesMachineService.jogKeepalive({ axes: [axis] });
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error(
-            `Keepalive ping failed for axis ${axis}:`,
-            err,
-          );
-        }
+      // 500 ms. The ping goes over the open WebSocket — no HTTP
+      // round-trip per axis per 250 ms (a continuous jog on X+Y+Z
+      // previously generated 12 RTT/s).
+      jogIntervals[axis] = setInterval(() => {
+        servo.send({ type: "jog_keepalive", axes: [axis] });
       }, intervalMs);
     } catch (err) {
       consoleStore.error(
@@ -312,12 +332,23 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     const axisName = AXIS_NAMES[axis];
     try {
+      // Clear the keep-alive interval first so a slow WS message
+      // doesn't fire after the stop has been issued.
       if (jogIntervals[axis]) {
         clearInterval(jogIntervals[axis]);
         delete jogIntervals[axis];
       }
 
-      await ModulesMachineService.jogStop({ axes: [axis] });
+      // Prefer the WebSocket — the stop takes effect on the next
+      // 10 Hz broadcast tick. REST stays as a fallback in case
+      // the socket is mid-reconnect.
+      servo.send({ type: "jog_stop", axes: [axis] });
+      try {
+        await ModulesMachineService.jogStop({ axes: [axis] });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to stop jog (REST fallback)", err);
+      }
       consoleStore.info(`${axisName} Jog stopped`);
     } catch (err) {
       consoleStore.error(

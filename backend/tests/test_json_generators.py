@@ -15,6 +15,7 @@ from modules.machineconfig.compilers.hardware_json_generator import (
 )
 from modules.machineconfig.models import (
     MachineConfigGraph,
+    MCU,
     Printer,
     Stepper,
 )
@@ -25,13 +26,21 @@ from modules.machineconfig.models import (
 # --------------------------------------------------------------------- #
 
 
+#: Default remora MCU used by the legacy tests. Mirrors the
+#: production defaults (empty ``[mcu]`` -> remora-spi + OCTOPUS)
+#: so the assertions still reflect the byte-for-byte goal output.
+_DEFAULT_REMORA_MCU = MCU(connection="remora-spi", board="BIGTREETECH OCTOPUS")
+
+
 def _graph(
     printer: Printer | None = None,
     steppers: dict[str, Stepper] | None = None,
+    mcus: dict[str, MCU] | None = None,
 ) -> MachineConfigGraph:
     return MachineConfigGraph(
         printer=printer,
         steppers=steppers or {},
+        mcus=mcus if mcus is not None else {"mcu": _DEFAULT_REMORA_MCU},
     )
 
 
@@ -60,7 +69,9 @@ def _full_klipper_payload() -> MachineConfigGraph:
     are positional so the assertions can target specific ``Name``
     values without depending on the heater / fan graph.
     """
-    graph = MachineConfigGraph(printer=Printer())
+    graph = MachineConfigGraph(
+        printer=Printer(), mcus={"mcu": _DEFAULT_REMORA_MCU}
+    )
     graph.steppers["x"] = _stepper(axis="x", position_max=200.0)
     graph.steppers["y"] = _stepper(axis="y", position_max=200.0)
     graph.steppers["z"] = _stepper(axis="z", position_max=200.0, rotation_distance=8.0)
@@ -326,7 +337,9 @@ def test_config_txt_emits_fan_pwm_module_with_max_power() -> None:
     """
     from modules.machineconfig.models import Fan, Printer, Stepper
 
-    graph = MachineConfigGraph(printer=Printer())
+    graph = MachineConfigGraph(
+        printer=Printer(), mcus={"mcu": _DEFAULT_REMORA_MCU}
+    )
     graph.fans["fan_generic_part_cooling"] = Fan(
         name="fan_generic_part_cooling",
         pin="PA8",
@@ -347,7 +360,9 @@ def test_config_txt_fan_follows_heater_pwm_indices() -> None:
     """A standalone fan gets the next SP[i] after the heater PWMs."""
     from modules.machineconfig.models import Extruder, Fan, Heater, Printer, Stepper
 
-    graph = MachineConfigGraph(printer=Printer())
+    graph = MachineConfigGraph(
+        printer=Printer(), mcus={"mcu": _DEFAULT_REMORA_MCU}
+    )
     # Heater BED (PV[0], SP[0])
     graph.heaters["heater_bed"] = Heater(
         name="heater_bed",

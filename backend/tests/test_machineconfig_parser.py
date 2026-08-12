@@ -11,16 +11,25 @@ from modules.machineconfig.parser import (
     ConfigValidationError,
     DuplicateFanError,
     DuplicateHeaterError,
+    DuplicateMcuSectionError,
     DuplicateStepperPinError,
+    InvalidConnectionError,
     MachineConfigParser,
     MissingRequiredKeywordError,
     MultipleExtrudersError,
     UndefinedKeywordError,
+    UndefinedMcuError,
     UnknownStepperError,
     derive_fan_name,
     derive_heater_name,
+    split_pin,
 )
-from modules.machineconfig.schema import SectionKind, schema_for_section
+from modules.machineconfig.schema import (
+    ALLOWED_CONNECTION_TYPES,
+    MCU_KEYS,
+    SectionKind,
+    schema_for_section,
+)
 
 
 def test_invalid_keyword_reports_section_and_key() -> None:
@@ -43,8 +52,8 @@ unexpected_pin: X_BAD
 def test_builds_linked_object_graph_and_ignores_mcu() -> None:
     config = """
 [mcu controller]
-serial: /dev/ttyACM0
-restart_method: command
+connection: rs485
+interface: /dev/ttyACM0
 
 [printer]
 kinematics: cartesian
@@ -114,6 +123,13 @@ max_rpm: 24000
     assert machine.spindle_analog.pwm_pin == "PA6"
     assert machine.spindle_analog.max_rpm == 24000.0
     assert machine.spindle_digital is None
+    # Multi-MCU: the named section ``[mcu controller]`` lives on
+    # ``graph.mcus`` (new contract). Legacy callers can still reach
+    # it via the ``primary_mcu`` / ``mcu`` back-compat property.
+    assert "controller" in machine.mcus
+    assert machine.mcu is machine.mcus["controller"]
+    assert machine.mcu.connection == "rs485"
+    assert machine.mcu.interface == "/dev/ttyACM0"
 
 
 # ---------------------------------------------------------------------- #
@@ -661,3 +677,217 @@ pin: PB0
 """
     with pytest.raises(configparser.DuplicateSectionError):
         MachineConfigParser().parse_string(config)
+
+
+# ---------------------------------------------------------------------- #
+# Multi-MCU sections                                                      #
+# ---------------------------------------------------------------------- #
+
+
+def test_empty_mcu_defaults_to_remora_spi_and_octopus() -> None:
+    """An empty ``[mcu]`` section defaults to the legacy single-MCU contract."""
+
+    config = """
+[mcu]
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert "mcu" in graph.mcus
+    mcu = graph.mcus["mcu"]
+    assert mcu.connection == "remora-spi"
+    assert mcu.interface is None
+    assert mcu.board == "BIGTREETECH OCTOPUS"
+    # Legacy back-compat property returns the same record.
+    assert graph.mcu is mcu
+    # ``hal_type`` collapses to the two-value discriminator the HAL
+    # generator has always consumed.
+    assert mcu.hal_type == "remora"
+
+
+def test_named_mcu_section_keys_by_object_name() -> None:
+    """``[mcu a]`` parses into ``graph.mcus["a"]`` with the right transport."""
+
+    config = """
+[mcu a]
+connection: rs485
+interface: com0
+board: DELTA_FAKE
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert "a" in graph.mcus
+    mcu = graph.mcus["a"]
+    assert mcu.connection == "rs485"
+    assert mcu.interface == "com0"
+    assert mcu.board == "DELTA_FAKE"
+    assert mcu.hal_type == "parallel"
+
+
+def test_multiple_mcus_coexist_in_mcus_dict() -> None:
+    """Profiles may declare any number of ``[mcu]`` / ``[mcu NAME]``."""
+
+    config = """
+[mcu a]
+connection: rs485
+interface: com0
+
+[mcu b]
+connection: dummy
+
+[mcu c]
+connection: remora-spi
+board: BIGTREETECH OCTOPUS
+
+[mcu d]
+connection: remora-eth
+interface: 192.0.2.10
+board: SKR2
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert set(graph.mcus.keys()) == {"a", "b", "c", "d"}
+    assert graph.mcus["a"].connection == "rs485"
+    assert graph.mcus["b"].connection == "dummy"
+    assert graph.mcus["c"].connection == "remora-spi"
+    assert graph.mcus["d"].connection == "remora-eth"
+    assert graph.mcus["d"].interface == "192.0.2.10"
+
+
+def test_unknown_connection_raises_invalid_connection_error() -> None:
+    """``connection: foo`` (not in ALLOWED_CONNECTION_TYPES) raises."""
+
+    config = """
+[mcu]
+connection: dual_canbus
+"""
+    with pytest.raises(InvalidConnectionError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu"
+    assert exc_info.value.key == "connection"
+    assert exc_info.value.value == "dual_canbus"
+
+
+def test_legacy_hal_type_keyword_rejected() -> None:
+    """The pre-multi-MCU ``hal_type`` keyword is no longer valid."""
+
+    config = """
+[mcu]
+hal_type: remora
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu"
+    assert exc_info.value.key == "hal_type"
+
+
+def test_legacy_serial_keyword_rejected() -> None:
+    """Klipper's pre-multi-MCU ``serial`` / ``restart_method`` keys are gone."""
+
+    config = """
+[mcu]
+serial: /dev/ttyACM0
+restart_method: command
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu"
+    assert exc_info.value.key in {"serial", "restart_method"}
+
+
+def test_mcu_keywords_are_strict() -> None:
+    """``MCU_KEYS`` is the enum-equivalent schema for the new section."""
+
+    assert "connection" in MCU_KEYS
+    assert "interface" in MCU_KEYS
+    assert "board" in MCU_KEYS
+
+
+def test_orphan_mcu_pin_qualifier_raises_undefined_mcu_error() -> None:
+    """A ``mcu_missing:PF13`` pin reference must point at a declared section."""
+
+    config = """
+[mcu a]
+connection: rs485
+interface: com0
+
+[stepper_x]
+step_pin: missing_mcu:PF13
+dir_pin: PA1
+enable_pin: !PA2
+rotation_distance: 40
+microsteps: 16
+"""
+    with pytest.raises(UndefinedMcuError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    # The section key on the graph is the axis letter ("x"), not the
+    # Klipper section header ("stepper_x"); the error reports the
+    # graph-side handle for cross-reference stability.
+    assert exc_info.value.section == "x"
+    assert exc_info.value.key == "step_pin"
+    assert exc_info.value.mcu_name == "missing_mcu"
+    assert "a" in exc_info.value.declared
+
+
+def test_known_mcu_pin_qualifier_accepted() -> None:
+    """A ``mcu_a:PF13`` qualifier that names a declared MCU is accepted."""
+
+    config = """
+[mcu a]
+connection: rs485
+interface: com0
+
+[stepper_x]
+step_pin: a:PF13
+dir_pin: PA1
+enable_pin: !PA2
+rotation_distance: 40
+microsteps: 16
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.mcus["a"].connection == "rs485"
+    assert graph.steppers["x"].step_pin == "a:PF13"
+
+
+def test_bare_pin_kept_verbatim_when_no_other_mcu_declared() -> None:
+    """No qualifier + no second MCU = the pin is stored as-is for remora."""
+
+    config = """
+[mcu]
+[stepper_x]
+step_pin: PF11
+dir_pin: PG3
+enable_pin: !PG5
+rotation_distance: 40
+microsteps: 16
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["x"].step_pin == "PF11"
+
+
+def test_dummy_mcu_accepts_arbitrary_pin_strings() -> None:
+    """A ``[mcu dummy]`` connection is a placeholder; every pin form works."""
+
+    config = """
+[mcu dummy]
+connection: dummy
+
+[stepper_x]
+step_pin: dummy:any.old.value
+dir_pin: dummy:P0.0
+enable_pin: !PA0
+rotation_distance: 40
+microsteps: 16
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["x"].step_pin == "dummy:any.old.value"
+    assert graph.steppers["x"].dir_pin == "dummy:P0.0"
+    assert graph.mcus["dummy"].connection == "dummy"
+
+
+def test_split_pin_handles_bare_qualified_and_empty_inputs() -> None:
+    """``split_pin`` is the canonical pin-qualifier parser."""
+
+    assert split_pin("PF13") == (None, "PF13")
+    assert split_pin("a:PF13") == ("a", "PF13")
+    assert split_pin("rs485_com:RA") == ("rs485_com", "RA")
+    assert split_pin(None) == (None, None)
+    assert split_pin("") == (None, None)
+    assert split_pin("a:") == ("a", None)
+    assert split_pin(":PF13") == (None, "PF13")

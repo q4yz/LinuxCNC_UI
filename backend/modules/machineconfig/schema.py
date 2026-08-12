@@ -7,6 +7,18 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+#: Allowed values for the ``connection`` keyword of an ``[mcu]`` section.
+#:
+#: ``rs485`` / ``remora-spi`` / ``remora-eth`` / ``parallelport`` /
+#: ``dummy``. Anything else raises :class:`InvalidConnectionError`.
+#: The list is the runtime contract the :mod:`config_txt_generator`
+#: branches on, so adding a value here is the single source-of-truth
+#: change required for a new transport.
+ALLOWED_CONNECTION_TYPES: frozenset[str] = frozenset(
+    {"rs485", "remora-spi", "remora-eth", "parallelport", "dummy"}
+)
+
+
 class SectionKind(str, Enum):
     """Supported machine-configuration section types."""
 
@@ -26,13 +38,12 @@ class SectionKind(str, Enum):
 class SectionSchema:
     """Schema selected for one concrete configuration section.
 
-    ``allowed_keys`` is ``None`` only for MCU sections. MCU configuration is
-    intentionally bypassed because LinuxCNC does not consume Klipper's MCU
-    transport settings.
+    ``allowed_keys`` is the strict set of keywords the section may
+    declare. Unknown keywords raise :class:`UndefinedKeywordError`.
     """
 
     kind: SectionKind
-    allowed_keys: frozenset[str] | None
+    allowed_keys: frozenset[str]
     object_name: str | None = None
 
 
@@ -127,8 +138,16 @@ TMC2209_KEYS = frozenset(
 FAN_KEYS = frozenset({"pin", "max_power", "cycle_time", "hardware_pwm", "off_below"})
 FAN_IGNORED_KEYS = frozenset({"cycle_time", "hardware_pwm", "off_below"})
 
-SECTION_SCHEMAS: dict[SectionKind, frozenset[str] | None] = {
-    SectionKind.MCU: None,
+# MCU sections accept the three transport / board keywords. The
+# ``connection`` value is constrained via the parser to
+# :data:`ALLOWED_CONNECTION_TYPES`. ``interface`` is a free-form
+# transport selector (``com0`` for RS-485, ``socket://...`` for
+# Remora-Eth, etc.). ``board`` is the operator-visible board name
+# passed through to ``config.txt``'s ``Board`` field.
+MCU_KEYS = frozenset({"connection", "interface", "board"})
+
+SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
+    SectionKind.MCU: MCU_KEYS,
     SectionKind.PRINTER: PRINTER_KEYS,
     SectionKind.STEPPER: STEPPER_KEYS,
     SectionKind.ENDSTOP_SWITCH: ENDSTOP_SWITCH_KEYS,
@@ -258,12 +277,14 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
 
 __all__ = [
+    "ALLOWED_CONNECTION_TYPES",
     "ALLOWED_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "EXTRUDER_KEYS",
     "FAN_KEYS",
     "FAN_IGNORED_KEYS",
     "HEATER_KEYS",
+    "MCU_KEYS",
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
     "SECTION_SCHEMAS",

@@ -199,6 +199,43 @@ export const useServoThreadStore = defineStore("servoThread", () => {
   }
 
   /**
+   * Send a JSON command over the open telemetry socket.
+   *
+   * The /ws/telemetry channel is now bidirectional: the backend
+   * accepts ``jog_axis`` / ``jog_keepalive`` / ``jog_stop`` JSON
+   * messages and dispatches them to the same ``ws_jog_*`` helpers
+   * the legacy REST endpoints use. Fire-and-forget — the
+   * 10 Hz ``full_state`` / ``delta`` broadcast reflects the
+   * new state on the next tick, so a missing reply is fine.
+   *
+   * No-op with a ``console.warn`` when the socket isn't open. The
+   * backend watchdog will eventually force-stop the axis if
+   * keep-alives stop arriving, so a missing send is a safe
+   * failure mode (matches the documented safety contract).
+   *
+   * @param {Record<string, any>} payload
+   * @returns {boolean} true when the message was queued on the socket
+   */
+  function send(payload) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[servoThread] cannot send: socket not open",
+        payload,
+      );
+      return false;
+    }
+    try {
+      socket.send(JSON.stringify(payload));
+      return true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[servoThread] send failed:", err);
+      return false;
+    }
+  }
+
+  /**
    * Internal: open the socket and wire the lifecycle handlers.
    * Split out from ``start()`` so the reconnect path (set up by
    * ``onclose``) can call it without re-entering the idempotency
@@ -327,6 +364,12 @@ export const useServoThreadStore = defineStore("servoThread", () => {
     // Lifecycle.
     start,
     stop,
+    // Bidirectional — send JSON commands over the open socket.
+    // The backend's ``/ws/telemetry`` handler dispatches jog /
+    // keepalive / stop messages to the same ``ws_jog_*`` helpers
+    // the REST endpoints use, so behaviour is identical and the
+    // WS path is the canonical transport going forward.
+    send,
   };
 });
 

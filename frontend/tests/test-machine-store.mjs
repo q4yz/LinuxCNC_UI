@@ -58,17 +58,42 @@ test("store builds the ModulesMachineService.jogAxis payload for continuous jogs
   assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
   assert.match(text, /distance:\s*0/);
   // After the initial command, the store schedules a setInterval
-  // that pings the keepalive endpoint on the configured cadence —
-  // the historical default is 250 ms; the runtime value lives in
-  // ``keepaliveIntervalMs.value`` and is bound from the module
-  // settings (with a 250 ms fallback).
+  // that pings the keepalive over the open WebSocket at the
+  // configured cadence — the historical default is 250 ms; the
+  // runtime value lives in ``keepaliveIntervalMs.value`` and is
+  // bound from the module settings (with a 250 ms fallback).
   assert.match(text, /setInterval\s*\(/);
-  assert.match(text, /ModulesMachineService\.jogKeepalive/);
+  // Canonical: keep-alive goes over the WebSocket (no HTTP spam).
+  assert.match(
+    text,
+    /servo\.send\(\s*\{\s*type:\s*["']jog_keepalive["']/,
+    "jogContinuous must send jog_keepalive over the WS, not REST",
+  );
   // The cadence is read from the module settings and falls back to
   // the historical 250 ms value.
   assert.match(text, /setInterval\([\s\S]*intervalMs\)/);
   assert.match(text, /DEFAULT_KEEPALIVE_INTERVAL_MS\s*=\s*250/);
   assert.match(text, /interval\s*<=\s*2000/);
+});
+
+test("store sends jog_axis and jog_stop over the WebSocket", () => {
+  // The /ws/telemetry channel is bidirectional; the module
+  // store routes both jog start and jog stop through
+  // ``servo.send({type: "jog_axis", ...})`` and
+  // ``servo.send({type: "jog_stop", ...})`` so the legacy REST
+  // endpoints are no longer the primary path. A regression that
+  // re-introduces a REST-only jog start or stop is caught here.
+  const text = readStore();
+  assert.match(
+    text,
+    /servo\.send\(\s*\{\s*type:\s*["']jog_axis["']/,
+    "jog / jogContinuous must send jog_axis over the WS",
+  );
+  assert.match(
+    text,
+    /servo\.send\(\s*\{\s*type:\s*["']jog_stop["']/,
+    "jogStop must send jog_stop over the WS",
+  );
 });
 
 test("store clears jogIntervals on jogStop", () => {

@@ -43,6 +43,7 @@ from ..models.hardware_json_models import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
 )
+from .config_txt_generator import REMORA_CONNECTION_TYPES
 from .axis_builder import AxisBuilder, stepgen_scale
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.hardware_json_generator")
@@ -608,10 +609,32 @@ def build_hardware_json(
     for fan_section, fan in graph.fans.items():
         fan_records.append(_standalone_fan_payload(fan_section, fan))
 
-    # HAL type from the MCU section if present.
+    # HAL type from the MCU section if present. With multi-MCU the
+    # decision collapses to "remora" if any remora transport is
+    # declared, otherwise the first declared MCU's transport (which
+    # the HAL generator maps to "parallel" via
+    # :func:`connection_to_hal_type`). The legacy back-compat
+    # property :attr:`MachineConfigGraph.mcu` returns the first
+    # entry, which matches the historical single-MCU flow.
     hal_type = "remora"
-    if hasattr(graph, "mcu") and graph.mcu:
-        hal_type = getattr(graph.mcu, "hal_type", "remora")
+    primary_mcu = graph.mcu if hasattr(graph, "mcu") else None
+    if primary_mcu is not None:
+        hal_type = getattr(primary_mcu, "hal_type", "remora")
+    # Multi-MCU inventory — every declared section becomes an
+    # :class:`McuInfo` record. The list is empty when the profile
+    # declares no MCU at all (back-compat: a v2 consumer that never
+    # added the field sees ``[]``).
+    mcu_records: list[dict[str, Any]] = []
+    for name, mcu in graph.mcus.items():
+        mcu_records.append(
+            {
+                "id": name,
+                "connection": mcu.connection,
+                "interface": mcu.interface,
+                "board": mcu.board,
+                "is_remora": mcu.connection in REMORA_CONNECTION_TYPES,
+            }
+        )
 
     # Validate the structured payload against the strict model.
     # The cross-reference validator runs here and surfaces any
@@ -629,6 +652,7 @@ def build_hardware_json(
         "tools": tool_records,
         "temperature_sensors": temperature_sensor_records,
         "fans": fan_records,
+        "mcus": mcu_records,
     }
 
     model = _HardwareJsonModel.model_validate(payload)

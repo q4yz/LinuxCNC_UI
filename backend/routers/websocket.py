@@ -262,11 +262,66 @@ async def telemetry_loop():
         await asyncio.sleep(0.1)
 
 
+async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
+    """Route a JSON command received over the telemetry socket.
+
+    The frontend sends commands (``jog_axis`` / ``jog_keepalive`` /
+    ``jog_stop``) as JSON messages over the same open socket the
+    telemetry loop uses for ``full_state`` / ``delta`` / ``error``
+    broadcasts. This replaces the legacy ``POST /jog`` /
+    ``POST /jog/keepalive`` / ``POST /jog/stop`` round-trips so a
+    continuous jog does not spam four HTTP requests per axis per
+    second (250 ms cadence) on top of the 10 Hz broadcast.
+
+    Single source of truth: every dispatch calls the same
+    ``ws_jog_*`` helper that the REST handlers use, so the WS
+    and REST paths cannot drift apart. Unknown message types log
+    a warning and are silently dropped — the broadcast is one-way
+    and a stray inbound message must never crash the loop.
+    """
+    mtype = msg.get("type")
+    if mtype == "jog_keepalive":
+        from modules.machine.jog import ws_jog_keepalive
+        axes = msg.get("axes") or []
+        if not isinstance(axes, list):
+            logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
+            return
+        ws_jog_keepalive([int(a) for a in axes])
+        return
+    if mtype == "jog_axis":
+        from modules.machine.jog import ws_jog_axis
+        velocities = msg.get("velocities") or {}
+        if not isinstance(velocities, dict):
+            logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
+            return
+        distance = float(msg.get("distance") or 0)
+        # Coerce keys to int (JSON dict keys are always strings)
+        coerced = {}
+        for axis, velocity in velocities.items():
+            try:
+                coerced[int(axis)] = float(velocity)
+            except (TypeError, ValueError):
+                logger.warning("jog_axis: dropping bad axis/velocity pair %r=%r", axis, velocity)
+        ws_jog_axis(coerced, distance)
+        return
+    if mtype == "jog_stop":
+        from modules.machine.jog import ws_jog_stop
+        axes = msg.get("axes") or []
+        if not isinstance(axes, list):
+            logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))
+            return
+        ws_jog_stop([int(a) for a in axes])
+        return
+    # Unknown message types are logged at DEBUG so a curious
+    # operator inspecting the log doesn't see noise on every frame.
+    logger.debug("unknown WS message type: %r", mtype)
+
+
 @router.websocket("/telemetry")
 async def websocket_telemetry(websocket: WebSocket):
     """
     The main WebSocket endpoint for UI clients to connect to
-    for real-time machine telemetry.
+    for real-time machine telemetry and to send jog commands.
 
     ``get_current_state()`` is None-safe (returns the offline
     snapshot when ``get_machine_stat()`` is ``None``), so the
@@ -291,9 +346,35 @@ async def websocket_telemetry(websocket: WebSocket):
         last_broadcast_state.update(deepcopy(current_state))
 
         while True:
-            # We don't expect messages from the client on this channel,
-            # but we need to wait for a disconnect
-            await websocket.receive_text()
+            # Wait for the next inbound message. JSON parse errors
+            # are logged and ignored so a malformed client message
+            # cannot crash the broadcast loop. ``receive_text()``
+            # raises ``WebSocketDisconnect`` when the client closes
+            # the socket, which the outer ``except`` handles.
+            text = await websocket.receive_text()
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                logger.warning(
+                    "ignoring non-JSON WS message: %r", text[:120]
+                )
+                continue
+            if not isinstance(payload, dict):
+                logger.warning(
+                    "ignoring non-object WS message: %r", payload
+                )
+                continue
+            try:
+                await _dispatch_inbound(websocket, payload)
+            except Exception as exc:  # noqa: BLE001 — see comment below
+                # A buggy command handler must not kill the socket.
+                # The broadcast loop must keep running so the
+                # ``full_state`` / ``delta`` stream survives a single
+                # bad command. The watchdog still force-stops the
+                # axis if the keep-alive stops pinging, so a
+                # silently-discarded keep-alive is a safe failure
+                # mode.
+                logger.exception("WS inbound dispatch failed: %s", exc)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:

@@ -40,6 +40,15 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+#: Connection types accepted on an MCU section. Mirrors
+#: :data:`modules.machineconfig.schema.ALLOWED_CONNECTION_TYPES`
+#: so the hardware.json consumer can branch on the same vocabulary
+#: the parser enforces.
+HARDWARE_MCU_CONNECTION_TYPES = frozenset(
+    {"rs485", "remora-spi", "remora-eth", "parallelport", "dummy"}
+)
+
+
 # Type alias for the endstop behaviour tag. ``None`` means the
 # endstop is exposed to user macros only — it is NOT a kinematic
 # constraint and does NOT participate in homing or e-stop logic.
@@ -180,8 +189,8 @@ class Fan(BaseModel):
     """A single output fan.
 
     ``max_power`` (0.0–1.0) is the PWM duty-cycle ceiling. The
-    Remora board JSON uses an 8-bit ``pwm_max`` field; the runtime
-    scales ``max_power`` to 0–255 before pushing the value into the
+    Remora board JSON uses an 8-bit ``pwm_max`` field; the
+    runtime scales ``max_power`` to 0–255 before pushing the value into the
     firmware. Persisting the float here keeps the round-trip
     deterministic (no need to re-read ``config.txt`` to recover the
     duty-cycle cap).
@@ -198,6 +207,37 @@ class Fan(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
     max_power: float | None = None
+
+
+class McuInfo(BaseModel):
+    """A single MCU record exposed in ``hardware.json``.
+
+    The list is a transparency surface — consumers querying the
+    hardware contract can see what ``[mcu]`` / ``[mcu NAME]``
+    sections the source profile declared, the transport each one
+    targets, and any operator-set board name. The runtime does NOT
+    branch on this list (the existing single-remora assumption still
+    holds); the field exists so the editor / dashboard can render
+    the multi-MCU story the moment the multi-board future lands.
+
+    ``id`` is the section header's object name (``"mcu"`` for the
+    bare ``[mcu]`` form, ``"a"`` for ``[mcu a]``); it doubles as a
+    pin-qualifier prefix in the source syntax.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    connection: Literal[
+        "rs485", "remora-spi", "remora-eth", "parallelport", "dummy"
+    ]
+    interface: str | None = None
+    board: str | None = None
+    # True for MCUs that the Remora board firmware addresses
+    # (``remora-spi`` / ``remora-eth``). Computed at payload-build
+    # time so the consumer can show which transports are candidates
+    # for a ``config.txt`` flash.
+    is_remora: bool = False
 
 
 # ---------------------------------------------------------------------- #
@@ -324,6 +364,12 @@ class HardwareJson(BaseModel):
     tools: list[Tool] = Field(default_factory=list)
     temperature_sensors: list[TemperatureSensor] = Field(default_factory=list)
     fans: list[Fan] = Field(default_factory=list)
+    # Multi-MCU inventory declared by the source profile. Optional
+    # on the wire for back-compat with v2 consumers that didn't have
+    # multi-MCU support; new emitters always populate it. Field is
+    # additive (no cross-reference resolution needed) and stays
+    # inside the v2 envelope.
+    mcus: list["McuInfo"] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_references(self) -> "HardwareJson":
@@ -460,6 +506,7 @@ __all__ = [
     "EndstopView",
     "Fan",
     "HardwareJson",
+    "McuInfo",
     "Stepper",
     "TemperatureSensor",
     "Tool",

@@ -21,6 +21,7 @@ from .models import (
     TMC2209,
 )
 from .schema import (
+    ALLOWED_CONNECTION_TYPES,
     EXTRUDER_KEYS,
     FAN_IGNORED_KEYS,
     HEATER_KEYS,
@@ -246,6 +247,109 @@ class DuplicateStepperPinError(ConfigValidationError):
         )
 
 
+class InvalidConnectionError(ConfigValidationError):
+    """Raised when an MCU's ``connection`` keyword is not in the enum."""
+
+    kind = "invalid_connection"
+
+    def __init__(
+        self,
+        section: str,
+        value: str,
+        allowed: frozenset[str] | list[str] | tuple[str, ...],
+    ) -> None:
+        self.section = section
+        self.key = "connection"
+        self.value = value
+        self.allowed = sorted(allowed)
+        super().__init__(
+            f"Invalid value '{value}' for 'connection' in section "
+            f"[{section}]; expected one of {self.allowed}"
+        )
+
+
+class UndefinedMcuError(ConfigValidationError):
+    """Raised when a pin reference names an MCU that wasn't declared.
+
+    Klipper multi-MCU syntax lets a stepper / heater / fan / endstop
+    pin be prefixed with the target MCU's name (``a:PF13``). The
+    parser enforces that the prefix matches a section actually
+    declared in the same profile, because a typo would otherwise
+    silently route a pin onto a board that wasn't built.
+
+    The diagnostic names both the missing MCU and the section /
+    keyword the orphan pin lives under so the operator can locate
+    it in the editor.
+    """
+
+    kind = "undefined_mcu"
+
+    def __init__(
+        self,
+        section: str,
+        key: str,
+        mcu_name: str,
+        declared: list[str] | tuple[str, ...],
+    ) -> None:
+        self.section = section
+        self.key = key
+        self.mcu_name = mcu_name
+        self.declared = list(declared)
+        super().__init__(
+            f"Section [{section}] references unknown MCU '{mcu_name}' "
+            f"in '{key}'. Declared MCUs: {self.declared}"
+        )
+
+
+class DuplicateMcuSectionError(ConfigValidationError):
+    """Raised when two sections resolve to the same MCU object name.
+
+    The schema regex guarantees one section per name; two distinct
+    sections like ``[mcu]`` and ``[mcu mcu]`` would both resolve to
+    ``"mcu"``. The parser rejects that with the diagnostic naming
+    the two source section headers so the operator can rename one.
+    """
+
+    kind = "duplicate_mcu"
+
+    def __init__(self, section_a: str, section_b: str, name: str) -> None:
+        self.section_a = section_a
+        self.section_b = section_b
+        self.name = name
+        super().__init__(
+            f"Sections [{section_a}] and [{section_b}] both declare "
+            f"MCU '{name}'. Rename one."
+        )
+
+
+def split_pin(pin: str | None) -> tuple[str | None, str | None]:
+    """Split a Klipper multi-MCU pin reference into ``(mcu_name, raw)``.
+
+    Klipper syntax lets a pin be qualified with an MCU prefix::
+
+        step_pin: PF13            -> (None, 'PF13')
+        step_pin: a:PF13          -> ('a', 'PF13')
+        step_pin: rs485_com:RA    -> ('rs485_com', 'RA')
+
+    Returns ``(None, None)`` for a falsy input so callers can chain
+    ``if pin is None`` checks without special-casing the empty
+    string. The split is strictly on the *first* colon — subsequent
+    colons are part of the raw pin (none of Klipper's standard pin
+    formats contain a colon, but the convention keeps us future-safe).
+    """
+    if pin is None:
+        return (None, None)
+    text = pin.strip()
+    if not text:
+        return (None, None)
+    if ":" not in text:
+        return (None, text)
+    mcu_part, _, rest = text.partition(":")
+    mcu_part = mcu_part.strip() or None
+    rest = rest.strip() or None
+    return (mcu_part, rest)
+
+
 # Heater-shaped sections ALL must carry these three physical fields.
 # Stepper fields are optional for extruders (some toolheads declare
 # them on a separate ``[stepper_*]`` section); the heater fields are
@@ -374,15 +478,18 @@ class MachineConfigParser:
             self._validate_keywords(section_name, section, section_schema.allowed_keys)
 
             if section_schema.kind is SectionKind.MCU:
-                # MCU sections are mostly ignored for LinuxCNC, but we
-                # extract ``hal_type`` so the HAL generator can switch
-                # between Remora and parallel templates.
-                graph.mcu = self._parse_mcu(section_name, section)
-                logger.info(
-                    "Bypassing [%s]: Klipper MCU transport settings are ignored for LinuxCNC (hal_type=%s)",
-                    section_name,
-                    graph.mcu.hal_type if graph.mcu else "remora",
-                )
+                mcu = self._parse_mcu(section_name, section)
+                if section_schema.object_name in graph.mcus:
+                    existing_section = _find_section_name_for_mcu(
+                        section_schema.object_name,
+                        graph.mcus,
+                    )
+                    raise DuplicateMcuSectionError(
+                        existing_section or section_name,
+                        section_name,
+                        section_schema.object_name,
+                    )
+                graph.mcus[section_schema.object_name] = mcu
                 continue
 
             if section_schema.kind is SectionKind.PRINTER:
@@ -445,6 +552,7 @@ class MachineConfigParser:
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
         self._validate_stepper_pins(graph)
+        self._validate_all_pin_mcu_references(graph)
 
         return graph
 
@@ -474,20 +582,25 @@ class MachineConfigParser:
             ("enable_pin", "enable_pin"),
             ("endstop_pin", "endstop_pin"),
         )
-        # ``owners`` maps ``(pin_key, pin_value)`` -> (axis_label, section_name).
-        # ``axis_label`` is the Klipper axis identifier (``y`` from
-        # ``[stepper_y]``) — the operator-facing label that the error
-        # message surfaces. ``section_name`` is the dict key used by
-        # ``graph.steppers`` so multi-motor axes (e.g. ``[stepper_y]``
-        # + ``[stepper_y1]``) coexist under distinct keys.
-        owners: dict[tuple[str, str], tuple[str, str]] = {}
+        # ``owners`` maps ``(pin_key, mcu_prefix, pin_value)`` ->
+        # ``(axis_label, section_name)``. The MCU prefix is the
+        # Klipper multi-MCU qualifier (``mcu_a:PF13`` -> ``"mcu_a"``,
+        # bare ``PF13`` -> ``None``). Two steppers that share the same
+        # raw pin string but address different transports (e.g.
+        # one on the remora MCU, one on an RS-485 companion) are
+        # therefore not flagged as duplicates — only same-prefix
+        # collisions trigger the error.
+        owners: dict[tuple[str, str | None, str], tuple[str, str]] = {}
 
         for section_name, stepper in graph.steppers.items():
             for attr_name, pin_key in pin_slots:
                 pin_value = getattr(stepper, attr_name, None)
                 if not pin_value:
                     continue
-                key = (pin_key, pin_value)
+                mcu_prefix, raw_pin = split_pin(pin_value)
+                if raw_pin is None:
+                    continue
+                key = (pin_key, mcu_prefix, raw_pin)
                 existing = owners.get(key)
                 if existing is not None:
                     prior_axis, _ = existing
@@ -505,7 +618,6 @@ class MachineConfigParser:
         section: configparser.SectionProxy,
         allowed_keys: frozenset[str] | None,
     ) -> None:
-        # MCU sections are explicitly ignored and therefore bypass key checks.
         if allowed_keys is None:
             return
         for key in section:
@@ -749,9 +861,107 @@ class MachineConfigParser:
         section_name: str,
         section: configparser.SectionProxy,
     ) -> MCU:
-        return MCU(
-            hal_type=self._optional_string(section, "hal_type") or "remora",
+        """Build an :class:`MCU` from an ``[mcu NAME]`` section.
+
+        The defaults preserve the historical single-MCU flow:
+
+        * ``connection`` defaults to ``"remora-spi"``.
+        * ``board`` defaults to ``"BIGTREETECH OCTOPUS"`` so a
+          back-compat empty ``[mcu]`` produces the same
+          ``config.txt`` it did before this section became
+          first-class (the snapshot test relies on it).
+        """
+        connection_raw = (
+            self._optional_string(section, "connection") or "remora-spi"
         )
+        if connection_raw not in ALLOWED_CONNECTION_TYPES:
+            raise InvalidConnectionError(
+                section_name, connection_raw, ALLOWED_CONNECTION_TYPES
+            )
+        board = self._optional_string(section, "board") or "BIGTREETECH OCTOPUS"
+        return MCU(
+            connection=connection_raw,
+            interface=self._optional_string(section, "interface"),
+            board=board,
+        )
+
+    @staticmethod
+    def _validate_pin_mcu(
+        section_name: str,
+        key: str,
+        pin: str | None,
+        declared_mcus: list[str],
+    ) -> None:
+        """Reject a pin reference whose MCU prefix doesn't match a declared MCU.
+
+        Bare pins (no ``:`` in their value) are accepted as implicit
+        references to "the active remora MCU" — the compiler resolves
+        them at emit time. Pins with a qualifier must match a section
+        declared in the same profile; orphans raise
+        :class:`UndefinedMcuError` with the source section, the
+        schema key, and the list of valid MCU names so the operator
+        can fix the typo in one glance.
+        """
+        mcu_name, _ = split_pin(pin)
+        if mcu_name is None:
+            return
+        if mcu_name not in declared_mcus:
+            raise UndefinedMcuError(
+                section_name, key, mcu_name, declared_mcus
+            )
+
+    @staticmethod
+    def _validate_all_pin_mcu_references(graph: MachineConfigGraph) -> None:
+        """Walk every pin-emitting section once to enforce MCU qualifiers.
+
+        The check runs after the graph is fully built so the
+        :attr:`MachineConfigGraph.mcus` dict is complete and the
+        declared-MCU list is final. Errors point at the offending
+        section + key, never at an unnamed record.
+        """
+        declared = list(graph.mcus.keys())
+        for section_name, stepper in graph.steppers.items():
+            for attr in ("step_pin", "dir_pin", "enable_pin", "endstop_pin"):
+                pin = getattr(stepper, attr, None)
+                MachineConfigParser._validate_pin_mcu(
+                    section_name, attr, pin, declared
+                )
+        for name, endstop in graph.endstop_switches.items():
+            MachineConfigParser._validate_pin_mcu(
+                f"endstop_switch {name}", "pin", endstop.pin, declared
+            )
+        for section_name, heater in graph.heaters.items():
+            is_extruder = isinstance(heater, Extruder)
+            pin_keys = [
+                "heater_pin",
+                "sensor_pin",
+            ]
+            if is_extruder:
+                pin_keys.extend(["step_pin", "dir_pin", "enable_pin"])
+            for attr in pin_keys:
+                pin = getattr(heater, attr, None)
+                MachineConfigParser._validate_pin_mcu(
+                    section_name, attr, pin, declared
+                )
+        if graph.spindle_analog is not None:
+            for attr in ("pwm_pin", "enable_pin"):
+                MachineConfigParser._validate_pin_mcu(
+                    "spindle_analog",
+                    attr,
+                    getattr(graph.spindle_analog, attr, None),
+                    declared,
+                )
+        for section_name, tmc in graph.tmc2209s.items():
+            MachineConfigParser._validate_pin_mcu(
+                f"tmc2209 {section_name}",
+                "uart_pin",
+                tmc.uart_pin,
+                declared,
+            )
+        for section_name, fan in graph.fans.items():
+            MachineConfigParser._validate_pin_mcu(
+                section_name, "pin", fan.pin, declared
+            )
 
     def _parse_fan(
         self,
@@ -871,6 +1081,30 @@ def _option_present(section: configparser.SectionProxy, key: str) -> bool:
     return section[key].strip() != ""
 
 
+def _find_section_name_for_mcu(
+    name: str,
+    mcus: dict,
+) -> str | None:
+    """Best-effort recovery of the source section header for an MCU.
+
+    The parser only stores :class:`MCU` records — not the section
+    headers they came from — because historically there was at most
+    one such section. With multi-MCU support the duplicate-section
+    diagnostic would prefer the original ``[mcu]`` / ``[mcu NAME]``
+    header for human consumption.
+
+    Returns ``None`` when the lookup fails — the parser then falls
+    back to ``section_name`` from the call site, which is always
+    available and is sufficient for the toast message.
+    """
+    # The dataclass doesn't currently carry the source header, so we
+    # only know whether the key exists. Without a richer record the
+    # caller falls back to ``section_name``; this stays as a hook
+    # for the future introspection layer to fill in.
+    _ = name, mcus
+    return None
+
+
 def _option_stripped(section: configparser.SectionProxy, key: str) -> str | None:
     if key not in section:
         return None
@@ -892,16 +1126,20 @@ __all__ = [
     "ConfigValidationError",
     "DuplicateFanError",
     "DuplicateHeaterError",
+    "DuplicateMcuSectionError",
     "DuplicateStepperPinError",
+    "InvalidConnectionError",
     "InvalidValueError",
     "KlipperConfigParser",
     "MachineConfigParser",
     "MissingRequiredKeywordError",
     "MultipleExtrudersError",
     "UndefinedKeywordError",
+    "UndefinedMcuError",
     "UnknownStepperError",
     "UnsupportedSectionError",
     "derive_fan_name",
     "derive_heater_name",
     "parse_config",
+    "split_pin",
 ]
