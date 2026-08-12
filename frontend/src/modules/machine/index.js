@@ -6,26 +6,28 @@ import manifest from "./manifest.js";
 import DroPanel from "./components/DroPanel.vue";
 import JogControls from "./components/JogControls.vue";
 import { useMachineStore } from "./store.js";
+import { useServoThreadStore } from "../../stores/servoThread.js";
 import {
   registerMachineStore,
   unregisterMachineStore,
-} from "../../stores/machine-compat.js";
+} from "../../stores/machineStoreShim.js";
 
 export default {
   manifest,
-  // Toggling this hook is idempotent thanks to the ``connect()``
-  // guard inside the store.
   onLoad(/* ctx */) {
-    // Register only once the registry has decided to mount this
-    // module. Keeps direct imports of the optional store from
-    // changing the shell's fallback behaviour.
+    // Register this module's store with the legacy compat shim
+    // so pre-migration components that call ``useMachineStore()``
+    // resolve to the module store. Then open the 10 Hz WebSocket
+    // on the servo thread (idempotent — see the guard inside
+    // ``stores/servoThread.js``).
     registerMachineStore(useMachineStore);
-    useMachineStore().connect();
+    useServoThreadStore().start();
   },
   onUnload() {
-    // Disconnect the WebSocket and cancel any running keep-alive
-    // intervals. ``disconnect()`` is also idempotent.
-    useMachineStore().disconnect();
+    // Close the socket and clear the shim's registration. The
+    // store teardown is idempotent — ``stop()`` is a no-op when
+    // the socket is already closed.
+    useServoThreadStore().stop();
     unregisterMachineStore(useMachineStore);
   },
   // Re-export the components so ``DashboardView`` can keep them out

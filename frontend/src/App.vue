@@ -7,8 +7,9 @@ import { computed, defineAsyncComponent, markRaw, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import registry from './core/modules/registry'
-import { useMachineStore } from './stores/machine-compat'
+import { useMachineStore } from './stores/machineStoreShim'
 import { useBaseThreadStore } from './stores/baseThread'
+import { useServoThreadStore } from './stores/servoThread'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
@@ -30,6 +31,12 @@ const store = useMachineStore()
 // for the first poll to land. The poll is cheap enough (one HTTP
 // request per second) to keep running for the entire session.
 useBaseThreadStore().start()
+
+// The servo-thread store owns the 10 Hz ``/ws/telemetry``
+// WebSocket transport. The machine MODULE also opens it on
+// mount; this fallback boot ensures the shell still sees a
+// populated ``status`` when the module is disabled or absent.
+const servoThread = useServoThreadStore();
 
 const route = useRoute()
 const router = useRouter()
@@ -90,10 +97,11 @@ const moduleView = computed(() => {
   return null
 })
 
-// Connect the machine store on first mount if the module is not
-// registered (the real machine module wires this up itself).
+// Open the 10 Hz WebSocket on first mount if the machine module
+// is not registered (the real module wires this up itself via
+// ``modules/machine/index.js::onLoad``). ``start()`` is idempotent.
 if (!registry.modules.has('machine')) {
-  store.connect()
+  servoThread.start()
 }
 
 // Sidebar navigates via Vue Router. Keeping this thin keeps the

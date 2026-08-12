@@ -5,7 +5,7 @@
 //
 // The header now carries a small machine-state readout directly
 // under the button. The state string comes from the canonical
-// State Facade (``stores/machineStore.js::systemState``) which
+// State Facade (``stores/stateFacade.js::systemState``) which
 // always tracks the current LinuxCNC facet — high-resolution
 // vocabulary (Estop / PowerOff / Idle / Running / Paused /
 // Loaded / Offline / Updating / Failure). Every state change is
@@ -14,13 +14,13 @@
 
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine-compat.js'
+import { useMachineStore } from '../stores/machineStoreShim.js'
 // Direct facade import for the high-resolution ``systemState``
 // getter. The machine store (``modules/machine/store.js``) only
 // exposes the coarser ``machineStateText`` (ESTOP/OFF/ON/READY);
 // the facade is the canonical source for the 8-state vocabulary
 // per ``.agent/STATE.md`` § 6.
-import { useMachineStore as useFacadeStore } from '../stores/machineStore.js'
+import { useMachineStore as useFacadeStore } from '../stores/stateFacade.js'
 
 const store = useMachineStore()
 const facade = useFacadeStore()

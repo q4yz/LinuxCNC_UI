@@ -111,7 +111,7 @@ function handleSpindle(action) {
           </label>
         </div>
 
-        <div class="flex flex-col gap-2" :class="{ 'opacity-40 pointer-events-none grayscale': !manualOverride }">
+        <div class="flex flex-col gap-2" :class="{ 'opacity-40  grayscale': !manualOverride }">
           <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
             <span>{{ minRpm }}</span>
             <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ manualSpeed }} RPM</span>

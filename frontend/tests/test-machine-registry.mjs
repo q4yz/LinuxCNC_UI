@@ -114,27 +114,26 @@ test("machine manifest matches the store id", async () => {
   assert.match(storeText, /defineStore\(\s*STORE_ID/);
 });
 
-test("machine store wires the WebSocket transport", async () => {
+test("machine store composes the servo-thread transport instead of owning the WebSocket", async () => {
+  // After the servo/base runtime split, the 10 Hz
+  // ``/ws/telemetry`` socket lives in ``stores/servoThread.js``.
+  // The module store composes that store for telemetry. A
+  // regression that re-introduces a ``new WebSocket(wsUrl)`` call
+  // back into the module store would re-bloat the file to ~700
+  // lines and break the runtime split.
   const fs = await import("node:fs/promises");
   const text = await fs.readFile(
     resolve(repoRoot, "frontend/src/modules/machine/store.js"),
     "utf-8",
   );
-  // The store owns the WebSocket subscription; this regression
-  // test guards against someone moving the ``new WebSocket(wsUrl)``
-  // call back to a legacy monolithic store.
   assert.match(
     text,
-    /new WebSocket\(\s*wsUrl\s*\)/,
-    "useMachineStore must instantiate the WebSocket itself",
+    /useServoThreadStore\s*\(/,
+    "machine store must compose useServoThreadStore",
   );
-  // Idempotency guard prevents double-sockets.
-  assert.match(
+  assert.doesNotMatch(
     text,
-    /connectionStatus\.value\s*===\s*['"]connected['"]/,
-  );
-  assert.match(
-    text,
-    /connectionStatus\.value\s*===\s*['"]connecting['"]/,
+    /new\s+WebSocket\s*\(/,
+    "machine store must not instantiate its own WebSocket",
   );
 });

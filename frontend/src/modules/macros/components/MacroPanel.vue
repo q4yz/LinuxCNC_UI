@@ -23,7 +23,7 @@ import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store.js";
-import { useMachineStore } from "../../../stores/machine-compat.js";
+import { useMachineStore } from "../../../stores/machineStoreShim.js";
 
 const store = useMacrosStore();
 const machine = useMachineStore();

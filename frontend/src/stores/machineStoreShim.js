@@ -1,7 +1,26 @@
-// Optional compatibility adapter for consumers that predate the machine
-// module.  The real implementation registers itself here when the module is
-// mounted; when the module is absent (or disabled), the fallback store keeps
-// the rest of the shell renderable without importing a deleted module path.
+// Machine-store shim.
+//
+// Optional compatibility adapter for consumers that predate the
+// machine module. The real implementation (the machine module's
+// ``useMachineStore``) registers itself here when the module is
+// mounted; when the module is absent (or disabled), the fallback
+// store keeps the rest of the shell renderable without importing
+// a deleted module path.
+//
+// The shim holds three things:
+//
+//   * ``useFallbackMachineStore`` — the inert store used when no
+//     machine module is registered. Mirrors the legacy pre-module
+//     shape so old widgets keep reading fields they expect.
+//   * ``registerMachineStore`` / ``unregisterMachineStore`` — the
+//     registration hooks the machine module uses to swap itself in.
+//   * ``useMachineStore`` — the consumer entry point that resolves
+//     to either the registered module store or the fallback.
+//
+// The companion store is ``stores/stateFacade.js`` (the canonical
+// State Facade per ``.agent/STATE.md`` § 6); widgets that only
+// need the high-resolution state vocabulary should import from
+// there directly and skip this shim entirely.
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";

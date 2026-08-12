@@ -1,6 +1,6 @@
 <script setup>
 // ActivePrintWidget — dashboard widget driven by the State Facade
-// (``stores/machineStore.js``). Three visual states:
+// (``stores/stateFacade.js``). Three visual states:
 //
 //   * Standby — Idle / PowerOff / Estop / Offline / Updating /
 //     Failure. Shows the five newest G-code files via the facade's
@@ -27,7 +27,7 @@
 
 import { computed, ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineStore, SystemState } from "../stores/machineStore.js";
+import { useMachineStore, SystemState } from "../stores/stateFacade.js";
 import { useBaseThreadStore } from "../stores/baseThread.js";
 import {useConsoleStore} from "../stores/console.js";
 import {ModulesProgramService, ProgramFilesService} from "../../generated/api/index.ts";

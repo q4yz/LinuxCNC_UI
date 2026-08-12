@@ -55,14 +55,14 @@ test("EStopHeader uses <script setup> Composition API", () => {
   assert.match(text, /<script\s+setup>/);
 });
 
-test("EStopHeader imports the machine store through the compat adapter", () => {
+test("EStopHeader imports the machine store through the compat shim", () => {
   // The header must work whether or not the machine module is
-  // mounted; the compat adapter is the contract for that
+  // mounted; the compat shim is the contract for that
   // nullable-module guarantee (``.agent/STATE.md`` § 7).
   const text = readText(headerPath);
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machine-compat\.js['"]/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machineStoreShim\.js['"]/,
   );
 });
 
@@ -193,12 +193,12 @@ test("App.vue restructures the shell into a column so the header sits above the 
 
 test("EStopHeader imports the State Facade for the high-resolution machine state", () => {
   const text = readText(headerPath);
-  // The facade lives at ``frontend/src/stores/machineStore.js``;
+  // The facade lives at ``frontend/src/stores/stateFacade.js``;
   // the import must use that path so Pinia can wire the facade
   // singleton that the machine module's WebSocket handler updates.
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machineStore\.js['"]/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/stateFacade\.js['"]/,
     "EStopHeader must import useMachineStore from the State Facade",
   );
   // ``systemState`` is destructured via storeToRefs (Pinia reactivity

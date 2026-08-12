@@ -131,11 +131,11 @@ The dashboard / programs / settings built-ins always render via
 
 ### 2.3 State Facade
 
-`frontend/src/stores/machineStore.js` is the **State Facade**: the
+`frontend/src/stores/stateFacade.js` is the **State Facade**: the
 raw integers from the WebSocket (`task_state`, `interp_state`,
 `estop`, `…`) plus a clean `systemState` string getter that widgets
-consume. The machine module's WebSocket handler calls
-`useMachineStore().updateStatus({...})` on every `full_state` /
+consume. The servo-thread store calls
+`useStateFacadeStore().updateStatus({...})` on every `full_state` /
 `delta` payload, so the facade is always the latest snapshot. When
 the machine module is not mounted, the facade defaults to `ESTOP`
 so the UI never claims the machine is idle when we have no data.
@@ -147,9 +147,9 @@ mirroring the LinuxCNC runtime split:
 
 * **Servo thread** — `GET /ws/telemetry`, 10 Hz WebSocket. Owns
   the time-critical fields (`task_state`, `estop`, `position`,
-  `interp_state`, `g5x_index`, `errors`). Wired by the machine
-  module's WebSocket handler and mirrored into the State Facade
-  (see § 2.3).
+  `interp_state`, `g5x_index`, `errors`). Transport + reactive
+  state live in `frontend/src/stores/servoThread.js`; the State
+  Facade is mirrored on every frame via `updateStatus()`.
 * **Base thread** — `GET /api/v1/base-thread/snapshot`, 1 Hz REST.
   Bundles every slow stream the dashboard polls anyway
   (`progress`, `sensors`, `tools`). Owned by the

@@ -1,10 +1,18 @@
-// State Facade store. Exposes raw LinuxCNC integers
-// (``task_state``, ``interp_state``, ``estop``) plus a clean
-// string-based ``systemState`` getter so the frontend never does
-// integer math against the wire protocol. ``updateStatus`` is the
-// single sanctioned entry point for telemetry — called by the
-// machine module's WebSocket handler on every ``full_state`` /
-// ``delta`` update. See ``.agent/STATE.md`` § 6.
+// State Facade store.
+//
+// Exposes raw LinuxCNC integers (``task_state``, ``interp_state``,
+// ``estop``) plus a clean string-based ``systemState`` getter so
+// the frontend never does integer math against the wire
+// protocol. ``updateStatus`` is the single sanctioned entry point
+// for telemetry — called by the servo-thread store on every
+// ``full_state`` / ``delta`` update. See ``.agent/STATE.md`` § 6.
+//
+// The runtime split: the high-frequency 10 Hz WebSocket telemetry
+// lives in ``stores/servoThread.js`` (the "servo thread"); the 1 Hz
+// REST snapshot lives in ``stores/baseThread.js`` (the "base
+// thread"). This facade is the consumer surface for both — any
+// widget that just needs "what's the machine doing?" reads from
+// here and never touches the transport details.
 
 import { defineStore } from "pinia";
 

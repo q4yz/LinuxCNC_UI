@@ -1,9 +1,28 @@
-// Machine module Pinia store. Owns the WebSocket transport, the
-// reactive full-state object, the per-axis keep-alive handles, and
-// every hardware/program-lifecycle action. The temperature fields
-// are republished on the event bus so the temperature module can
-// ingest updates without owning the transport. See
-// ``.agent/STATE.md`` § 2 (store id rule), § 6 (state facade).
+// Machine module Pinia store.
+//
+// Owns the machine-module-specific actions (jog, home, set
+// position, set coordinate system, set target temperature, program
+// lifecycle) and the per-axis keep-alive timers. The high-
+// frequency telemetry now lives in ``stores/servoThread.js`` —
+// this store composes that store for the live ``status`` /
+// ``connectionStatus`` / ``errors`` fields so widgets that bind
+// against the legacy ``useMachineStore()`` shim (see
+// ``stores/machineStoreShim.js``) keep working unchanged.
+//
+// The runtime split:
+//
+//   * Servo thread — 10 Hz ``/ws/telemetry`` WebSocket stream.
+//     Transport + reactive state live in ``stores/servoThread.js``.
+//
+//   * Base thread — 1 Hz ``/api/v1/base-thread/snapshot`` REST
+//     round-trip (program progress, temperature sensors, tool
+//     list). See ``stores/baseThread.js``.
+//
+// This store registers itself with the legacy compat shim so
+// pre-migration components that call ``useMachineStore()`` (via
+// ``stores/machineStoreShim.js``) get a coherent view. The shim
+// resolves to this store when the machine module is mounted; when
+// it isn't, the shim's fallback store keeps the shell renderable.
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
@@ -13,8 +32,12 @@ import { generateSetOffset } from "../../config/gcodes.js";
 import { ModulesMachineService } from "../../../generated/api/services/ModulesMachineService";
 import { ModulesProgramService } from "../../../generated/api/services/ModulesProgramService";
 import { useConsoleStore } from "../../stores/console.js";
+import { useServoThreadStore } from "../../stores/servoThread.js";
+import {
+  registerMachineStore,
+  unregisterMachineStore,
+} from "../../stores/machineStoreShim.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
-import { useMachineStore as useMachineFacadeStore } from "../../stores/machineStore.js";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
 const AXIS_NAMES = ["X", "Y", "Z"];
@@ -31,101 +54,98 @@ const machineSettings = createModuleSettings(manifest.id);
 const STORE_ID = `module_${manifest.id}`;
 
 
-const isPlainObject = (value) =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
-const applyDelta = (target, delta) => {
-  if (!isPlainObject(target) || !isPlainObject(delta)) {
-    return target;
-  }
-
-  for (const key of Object.keys(delta)) {
-    const deltaValue = delta[key];
-
-    if (isPlainObject(deltaValue)) {
-      if (!isPlainObject(target[key])) {
-        target[key] = {};
-      }
-      applyDelta(target[key], deltaValue);
-    } else {
-      target[key] = deltaValue;
-    }
-  }
-
-  return target;
-};
-
-
 export const useMachineStore = defineStore(STORE_ID, () => {
-  // --- Reactive state ---------------------------------------------- //
+  // ──────────────────────────────────────────────────────────────── //
+  // Composed state                                                     //
+  // ──────────────────────────────────────────────────────────────── //
 
-  const connectionStatus = ref("disconnected");
-  // 'disconnected' | 'connecting' | 'connected'
-  const status = reactive({
-    task_state: 1,
-    estop: 1,
-    task_mode: 1,
-    position: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    actual_position: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    relative_position: [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    state: 1,
-    file: "",
-    homed: [0, 0, 0],
-    interp_state: 1,
-    current_line: 0,
-    // Stays 0 until the backend publishes it; ``printProgress``
-    // collapses to 0 by contract when the total is unknown.
-    total_lines: 0,
-    g5x_index: 1,
-  });
-  const errors = ref([]);
+  // Telemetry state comes from the servo-thread store (10 Hz
+  // ``/ws/telemetry`` WebSocket). The machine module is no longer
+  // the owner of the socket or the ``status`` payload — see
+  // ``stores/servoThread.js`` for the transport.
+  const servo = useServoThreadStore();
+  const { status, connectionStatus, errors, isUpdating } =
+    storeToRefs(servo);
+
+  // ──────────────────────────────────────────────────────────────── //
+  // Module-private state                                               //
+  // ──────────────────────────────────────────────────────────────── //
+
+  // Per-axis keep-alive handles for continuous jogging. Cleared
+  // on ``stopContinuousJog`` / on module teardown.
   const jogIntervals = reactive({});
+
+  // Persisted settings. ``refreshSettings()`` populates these
+  // from the backend; the machine module owns the read because
+  // they're module-scoped.
   const defaultJogVelocity = ref(DEFAULT_JOG_VELOCITY);
   const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
-  const isUpdating = ref(false);
 
-  // --- Derived values ----------------------------------------------- //
+  // ──────────────────────────────────────────────────────────────── //
+  // Derived values                                                     //
+  // ──────────────────────────────────────────────────────────────── //
 
-  const droX = computed(() => (status.relative_position[0] || 0).toFixed(3));
-  const droY = computed(() => (status.relative_position[1] || 0).toFixed(3));
-  const droZ = computed(() => (status.relative_position[2] || 0).toFixed(3));
+  const droX = computed(
+    () => (status.value.relative_position?.[0] || 0).toFixed(3),
+  );
+  const droY = computed(
+    () => (status.value.relative_position?.[1] || 0).toFixed(3),
+  );
+  const droZ = computed(
+    () => (status.value.relative_position?.[2] || 0).toFixed(3),
+  );
 
-  const isEstop = computed(() => status.estop === 1);
-  const isMachineOn = computed(() => status.task_state === 4);
+  const isEstop = computed(() => status.value.estop === 1);
+  const isMachineOn = computed(() => status.value.task_state === 4);
 
   const machineStateText = computed(() => {
-    if (status.estop === 1) return "ESTOP";
-    if (status.task_state === 3) return "OFF";
-    if (status.task_state === 4) return "ON";
+    if (status.value.estop === 1) return "ESTOP";
+    if (status.value.task_state === 3) return "OFF";
+    if (status.value.task_state === 4) return "ON";
     return "READY";
   });
 
   // ``isPrinting`` and ``isPaused`` are mutually exclusive: a paused
-  // program is *not* reported as printing so the widget can swap its
-  // "Pause" button for "Resume" without flickering.
-
+  // program is *not* reported as printing so the widget can swap
+  // its "Pause" button for "Resume" without flickering.
   const isPrinting = computed(
-    () => status.task_state === 2 && status.interp_state !== 3,
+    () => status.value.task_state === 2 && status.value.interp_state !== 3,
   );
   const isPaused = computed(
-    () => status.task_state === 2 && status.interp_state === 3,
+    () => status.value.task_state === 2 && status.value.interp_state === 3,
   );
+
+  // Mirrors the SystemState.LOADED branch of the State Facade:
+  // machine is ON, interpreter is idle, but a file is selected.
+  // Used by the dashboard widget to render the "Loaded" branch
+  // with a dedicated Start button.
+  const isLoaded = computed(
+    () =>
+      status.value.task_state === 4 &&
+      status.value.interp_state === 1 &&
+      typeof status.value.file === "string" &&
+      status.value.file.length > 0,
+  );
+
   const printProgress = computed(() => {
-    const total = Number(status.total_lines);
-    const current = Number(status.current_line);
+    const total = Number(status.value.total_lines);
+    const current = Number(status.value.current_line);
     if (!Number.isFinite(total) || total <= 0) return 0;
     if (!Number.isFinite(current) || current < 0) return 0;
     return Math.min(100, (current / total) * 100);
   });
 
-  // --- Non-reactive handles ----------------------------------------- //
+  // ──────────────────────────────────────────────────────────────── //
+  // Lifecycle                                                          //
+  // ──────────────────────────────────────────────────────────────── //
 
-  let socket = null;
-  let reconnectTimer = null;
-  let shouldReconnect = true;
+  // Re-exported from the servo-thread store. The machine module's
+  // ``start`` / ``stop`` surface used to open and close the socket
+  // directly — that responsibility moved to ``useServoThreadStore``
+  // and the boot is wired from ``App.vue`` so the transport
+  // outlives any single module.
+
   let settingsLoaded = false;
-
-  // --- Module settings ------------------------------------------------- //
 
   async function refreshSettings() {
     try {
@@ -141,220 +161,32 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
 
       const interval = Number(settings.keepalive_interval_ms);
-      if (Number.isFinite(interval) && interval >= 50 && interval <= 2000) {
+      if (
+        Number.isFinite(interval) &&
+        interval >= 50 &&
+        interval <= 2000
+      ) {
         keepaliveIntervalMs.value = interval;
       }
       settingsLoaded = true;
     } catch (err) {
-      // Settings are optional while the machine module is disabled or
-      // during the first frontend render. Keep safe historical defaults.
+      // Settings are optional while the machine module is
+      // disabled or during the first frontend render. Keep safe
+      // historical defaults.
       settingsLoaded = true;
       // eslint-disable-next-line no-console
       console.warn("Machine settings unavailable; using defaults", err);
     }
   }
 
-  // --- WebSocket transport ------------------------------------------ //
-
-  function connect() {
-    if (
-      connectionStatus.value === "connected" ||
-      connectionStatus.value === "connecting"
-    ) {
-      return;
-    }
-
-    shouldReconnect = true;
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    if (!settingsLoaded) {
-      void refreshSettings();
-    }
-
-    if (typeof window === "undefined" || typeof WebSocket === "undefined") {
-      connectionStatus.value = "disconnected";
-      useMachineFacadeStore().updateStatus({
-        connectionStatus: connectionStatus.value,
-        isUpdating: isUpdating.value,
-        status: { ...status },
-      });
-      return;
-    }
-
-    connectionStatus.value = "connecting";
-    useMachineFacadeStore().updateStatus({
-      connectionStatus: connectionStatus.value,
-      isUpdating: isUpdating.value,
-      status: { ...status },
-    });
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/telemetry`;
-    const currentSocket = new WebSocket(wsUrl);
-    socket = currentSocket;
-
-    currentSocket.onopen = () => {
-      // eslint-disable-next-line no-console
-      console.log("Connected to LinuxCNC Telemetry");
-      connectionStatus.value = "connected";
-      // Mirror to the State Facade so its ``systemState`` flips out
-      // of ``Offline`` immediately.
-      useMachineFacadeStore().updateStatus({
-        connectionStatus: connectionStatus.value,
-        isUpdating: isUpdating.value,
-        status: { ...status },
-      });
-    };
-
-    currentSocket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-
-        if (payload.type === "full_state") {
-          // Replace the entire state in one shot so a delta and
-          // its follow-up ``full_state`` cannot drift apart.
-          const next = payload.data || {};
-          for (const key of Object.keys(status)) {
-            delete status[key];
-          }
-          Object.assign(status, next);
-
-          // Mirror raw telemetry to the State Facade. See
-          // ``.agent/STATE.md`` § 6.
-          useMachineFacadeStore().updateStatus({
-            connectionStatus: connectionStatus.value,
-            isUpdating: isUpdating.value,
-            status: next,
-          });
-
-          // Sensors moved to the base-thread snapshot
-          // (``stores/baseThread.js``). The WebSocket no longer
-          // carries them so we do not republish on
-          // ``state.temperatures``.
-
-          // Replay historical LinuxCNC errors through the global
-          // console store so the operator's ``ConsolePanel`` shows
-          // the backlog on reconnect / page reload. The live
-          // ``error`` channel below handles new events; we dedupe
-          // here so the same entry never renders twice.
-          if (Array.isArray(next.errors)) {
-            const liveTimes = new Set(errors.value.map((e) => e.time));
-            for (const entry of next.errors) {
-              if (liveTimes.has(entry.time)) continue;
-              errors.value.push(entry);
-              useConsoleStore().error(`LinuxCNC: ${entry.text}`, {
-                title: `LinuxCNC error (kind=${entry.kind})`,
-                popup: true,
-              });
-            }
-          }
-        } else if (payload.type === "delta") {
-          applyDelta(status, payload.data);
-
-          // Forward the post-delta snapshot to the facade.
-          useMachineFacadeStore().updateStatus({
-            connectionStatus: connectionStatus.value,
-            isUpdating: isUpdating.value,
-            status: { ...status },
-          });
-
-          // Sensors moved to the base-thread snapshot; the
-          // ``delta`` branch does not republish on
-          // ``state.temperatures``.
-        } else if (payload.type === "error") {
-          errors.value.push(payload.data);
-          // Route the event through the global console store so the
-          // operator's ``ConsolePanel`` renders the row and the toast
-          // fires. ``popup: true`` is required because
-          // ``core/console.js`` short-circuits ``_emitToast`` when the
-          // flag is missing — that was the silent-bug the previous
-          // round shipped.
-          useConsoleStore().error(`LinuxCNC: ${payload.data.text}`, {
-            title: `LinuxCNC error (kind=${payload.data.kind})`,
-            popup: true,
-          });
-          // eslint-disable-next-line no-console
-          console.error("Machine Error:", payload.data.text);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("Failed to parse websocket message", err);
-      }
-    };
-
-    currentSocket.onclose = () => {
-      // Ignore a close event from a socket that was explicitly
-      // replaced. Prevents stale sockets from changing the status of
-      // a newer connection.
-      if (socket !== currentSocket) return;
-
-      // eslint-disable-next-line no-console
-      console.warn(
-        "WebSocket disconnected. Retrying in 2 seconds...",
-      );
-      connectionStatus.value = "disconnected";
-      socket = null;
-
-      // Mirror to the State Facade so its ``systemState`` reports
-      // ``Offline`` immediately.
-      useMachineFacadeStore().updateStatus({
-        connectionStatus: connectionStatus.value,
-        isUpdating: isUpdating.value,
-        status: { ...status },
-      });
-
-      if (shouldReconnect && reconnectTimer === null) {
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          connect();
-        }, 2000);
-      }
-    };
-
-    currentSocket.onerror = (err) => {
-      // eslint-disable-next-line no-console
-      console.error("WebSocket error:", err);
-      if (socket === currentSocket) currentSocket.close();
-    };
-  }
-
-  function disconnect() {
-    shouldReconnect = false;
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-
-    const currentSocket = socket;
-    // Clear the reference before closing so the async onclose
-    // handler cannot schedule a reconnect during teardown.
-    socket = null;
-    if (currentSocket) currentSocket.close();
-    connectionStatus.value = "disconnected";
-    // Mirror to the State Facade so its ``systemState`` reports
-    // ``Offline`` immediately.
-    useMachineFacadeStore().updateStatus({
-      connectionStatus: connectionStatus.value,
-      isUpdating: isUpdating.value,
-      status: { ...status },
-    });
-
-    // Clear any running keep-alive intervals to release timers in
-    // case the module is being torn down under a hot-reload.
-    for (const axis of Object.keys(jogIntervals)) {
-      clearInterval(jogIntervals[axis]);
-      delete jogIntervals[axis];
-    }
-  }
-
-  // --- Hardware actions --------------------------------------------- //
+  // ──────────────────────────────────────────────────────────────── //
+  // Hardware actions                                                   //
+  // ──────────────────────────────────────────────────────────────── //
 
   async function toggleEstop() {
     const consoleStore = useConsoleStore();
     // ``estop == 1`` means we need to reset; otherwise we engage.
-    const targetState = status.estop === 1 ? "estop_reset" : "estop";
+    const targetState = status.value.estop === 1 ? "estop_reset" : "estop";
     try {
       await ModulesMachineService.setMachineState({ state: targetState });
       if (targetState === "estop") {
@@ -365,7 +197,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     } catch (err) {
       consoleStore.error(
         `Failed to toggle ESTOP: ${err.message}`,
-
       );
       // eslint-disable-next-line no-console
       console.error("Failed to toggle ESTOP", err);
@@ -375,9 +206,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
   async function togglePower() {
     const consoleStore = useConsoleStore();
     // ``task_state`` 4 == ON, 3 == OFF.
-    const isOn = status.task_state === 4;
-    const isEstop = status.estop === 1;
-    if (isEstop && !isOn) {
+    const isOn = status.value.task_state === 4;
+    const estop = status.value.estop === 1;
+    if (estop && !isOn) {
       consoleStore.warning(
         "Cannot turn on machine while ESTOP is active",
       );
@@ -409,7 +240,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         ? defaultJogVelocity.value
         : DEFAULT_JOG_VELOCITY;
       consoleStore.info(
-        `Jogging ${axisName} axis ${distance}mm`
+        `Jogging ${axisName} axis ${distance}mm`,
       );
       await ModulesMachineService.jogAxis({
         velocities: { [axis]: velocity },
@@ -417,7 +248,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       });
     } catch (err) {
       consoleStore.error(
-        `Failed to jog ${axisName}: ${err.message}`
+        `Failed to jog ${axisName}: ${err.message}`,
       );
       // eslint-disable-next-line no-console
       console.error("Failed to jog axis", axis, err);
@@ -447,15 +278,16 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
 
       consoleStore.info(
-        `Jogging ${axisName} axis continuously...`
+        `Jogging ${axisName} axis continuously...`,
       );
       await ModulesMachineService.jogAxis({
         velocities: { [axis]: jogVelocity },
         distance: 0,
       });
 
-      // Keep-alive cadence comes from the persisted module setting
-      // (250 ms fallback). The backend watchdog trips at 500 ms.
+      // Keep-alive cadence comes from the persisted module
+      // setting (250 ms fallback). The backend watchdog trips at
+      // 500 ms.
       jogIntervals[axis] = setInterval(async () => {
         try {
           await ModulesMachineService.jogKeepalive({ axes: [axis] });
@@ -470,7 +302,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     } catch (err) {
       consoleStore.error(
         `Failed to start continuous jog: ${err.message}`,
-
       );
       // eslint-disable-next-line no-console
       console.error("Failed to start continuous jog", err);
@@ -490,12 +321,16 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       consoleStore.info(`${axisName} Jog stopped`);
     } catch (err) {
       consoleStore.error(
-        `Failed to stop jog: ${err.message}`
+        `Failed to stop jog: ${err.message}`,
       );
       // eslint-disable-next-line no-console
       console.error("Failed to stop jog", err);
     }
   }
+
+  // ──────────────────────────────────────────────────────────────── //
+  // Homing + coordinate system                                         //
+  // ──────────────────────────────────────────────────────────────── //
 
   async function homeAxis(axisIndex) {
     const consoleStore = useConsoleStore();
@@ -504,7 +339,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       await ModulesMachineService.homeAxis({ axis: axisIndex });
       consoleStore.success(
         `Homed axis ${axisIndex} successfully`,
-
       );
     } catch (err) {
       consoleStore.error(
@@ -536,13 +370,13 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     if (!axisName) return;
     try {
       consoleStore.command(
-        `Setting work offset for ${axisName} to ${value}...`
+        `Setting work offset for ${axisName} to ${value}...`,
       );
       const cmd = generateSetOffset(axisName, value);
       await ModulesMachineService.runMdiCommand({ command: cmd });
     } catch (err) {
       consoleStore.error(
-        `Failed to set position for ${axisName}: ${err.message}`
+        `Failed to set position for ${axisName}: ${err.message}`,
       );
       // eslint-disable-next-line no-console
       console.error("Failed to set position for axis", axisIndex, err);
@@ -553,18 +387,22 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       consoleStore.command(
-        `Switching to Coordinate System: ${gcodeString}`
+        `Switching to Coordinate System: ${gcodeString}`,
       );
       await ModulesMachineService.runMdiCommand({ command: gcodeString });
     } catch (err) {
       consoleStore.error(
-        `Failed to switch Coordinate System: ${err.message}`
+        `Failed to switch Coordinate System: ${err.message}`,
       );
       // eslint-disable-next-line no-console
       console.error("Failed to switch coordinate system", err);
     }
   }
 
+  // ──────────────────────────────────────────────────────────────── //
+  // Program lifecycle actions                                          //
+  // ──────────────────────────────────────────────────────────────── //
+  //
   // Each action only dispatches the request — the backend's
   // telemetry stream mirrors the new state on the next tick so
   // widgets do not need to maintain local flags.
@@ -574,8 +412,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       // Step 1 of the two-step lifecycle: load the program into
-      // the interpreter. The backend (program/router.py) validates
-      // the filename against the upload root, calls
+      // the interpreter. The backend (program/router.py)
+      // validates the filename against the upload root, calls
       // ``command.program_open``, and returns 200 on success. The
       // widget's reactive state transitions to SystemState.LOADED
       // on the next telemetry tick and the operator presses Start
@@ -642,10 +480,27 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // --- Public surface ------------------------------------------------ //
+  // ──────────────────────────────────────────────────────────────── //
+  // Compatibility shim                                                 //
+  // ──────────────────────────────────────────────────────────────── //
+  //
+  // ``stores/machineStoreShim.js`` resolves ``useMachineStore()``
+  // to whichever store was registered last. The machine module
+  // registers itself on mount and unregisters on teardown so the
+  // shim falls back to its inert fallback when the module is
+  // disabled.
+
+  // Register this store on mount via the immediate callback so
+  // hot-reloads don't end up with a stale registration pointing
+  // at a torn-down instance.
+  registerMachineStore(useMachineStore);
+
+  // ──────────────────────────────────────────────────────────────── //
+  // Public surface                                                    //
+  // ──────────────────────────────────────────────────────────────── //
 
   return {
-    // Reactive state.
+    // Reactive state (composed from the servo-thread store).
     connectionStatus,
     status,
     errors,
@@ -662,10 +517,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     machineStateText,
     isPrinting,
     isPaused,
+    isLoaded,
     printProgress,
-    // WebSocket transport.
-    connect,
-    disconnect,
+    // Settings.
     refreshSettings,
     // Hardware actions.
     toggleEstop,
@@ -696,6 +550,15 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 export function useMachineRefs() {
   const store = useMachineStore();
   return { store, ...storeToRefs(store) };
+}
+
+/**
+ * Called from ``modules/machine/index.js`` when the module is
+ * torn down. Clears the registration so the shim falls back to
+ * its inert fallback on the next mount.
+ */
+export function unregister() {
+  unregisterMachineStore(useMachineStore);
 }
 
 export default useMachineStore;

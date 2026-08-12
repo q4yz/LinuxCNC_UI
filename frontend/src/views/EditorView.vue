@@ -39,8 +39,10 @@ import {
   sourceLabel,
 } from '../stores/editor.js';
 import { openInEditor } from '../helpers/openInEditor.js';
+import {useConsoleStore} from "../stores/console.js";
 
 const editorStore = useEditorStore();
+const consoleStore = useConsoleStore()
 const route = useRoute();
 const router = useRouter();
 
@@ -169,8 +171,17 @@ async function promptUnsavedClose() {
 }
 
 async function saveEditor() {
-  if (!hasValidTarget.value) return
-  await editorStore.saveFile(editorContent.value)
+  if (!hasValidTarget.value){
+    consoleStore.error(`Has no valid target: ${hasValidTarget.value}`, { popup: true })
+    return
+  }
+  try {
+    await editorStore.saveFile(editorContent.value)
+    consoleStore.success(`File '${currentName.value}' saved successfully!`, { popup: true })
+
+  } catch (error) {
+    consoleStore.error(`Failed to save file: ${error.message || error}`, { popup: true })
+  }
 }
 
 async function saveAndCloseEditor() {
@@ -234,7 +245,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="hasValidTarget" class="fixed inset-0 z-50 flex flex-col bg-gray-900">
+  <div v-if="hasValidTarget" class="fixed inset-0 z-10 flex flex-col bg-gray-900">
     <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
       <span class="font-mono text-blue-300">
         Editing {{ currentName }} ({{ sourceLabel(currentSource) }})

@@ -30,7 +30,7 @@ const repoRoot = resolve(here, "../..");
 
 const facadePath = resolve(
   repoRoot,
-  "frontend/src/stores/machineStore.js",
+  "frontend/src/stores/stateFacade.js",
 );
 
 function readFacade() {
@@ -41,7 +41,7 @@ test("facade file exists", () => {
   // The whole rest of the suite is moot if the file is missing.
   assert.ok(
     readFileSync(facadePath, "utf-8").length > 0,
-    "expected frontend/src/stores/machineStore.js to exist",
+    "expected frontend/src/stores/stateFacade.js to exist",
   );
 });
 
@@ -169,31 +169,32 @@ test("facade is registered as a Pinia store via defineStore", () => {
   assert.match(text, /actions:\s*\{/);
 });
 
-test("machine module store forwards telemetry to the facade on every WS message", () => {
-  // The facade is useless in production unless the module store
-  // actually calls ``updateStatus`` when telemetry arrives.
-  const modulePath = resolve(
+test("servo-thread store forwards telemetry to the facade on every WS message", () => {
+  // The facade is useless in production unless the servo-thread
+  // store (which owns the WebSocket) calls ``updateStatus`` on
+  // every ``full_state`` / ``delta`` payload. The machine module
+  // store composes the servo thread; it does not import the
+  // facade directly.
+  const servoPath = resolve(
     repoRoot,
-    "frontend/src/modules/machine/store.js",
+    "frontend/src/stores/servoThread.js",
   );
-  const text = readFileSync(modulePath, "utf-8");
-  // Import the facade from the module store.
+  const text = readFileSync(servoPath, "utf-8");
+  // Import the facade from the servo-thread store.
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\.\/\.\.\/stores\/machineStore\.js["']/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\/stateFacade\.js["']/,
   );
-  // Forward on the full_state and delta branches.
-  assert.match(
-    text,
-    /useMachineFacadeStore\(\s*\)\.updateStatus\(/,
-  );
+  // Forward on the full_state and delta branches via the
+  // mirror helper.
+  assert.match(text, /useFacadeStore\s*\(/);
   assert.match(text, /payload\.type\s*===\s*["']full_state["']/);
   assert.match(text, /payload\.type\s*===\s*["']delta["']/);
 });
 
 test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
-  // The widget must consume the facade — not the legacy machine-compat
-  // adapter — so the State Facade actually drives the dashboard.
+  // The widget must consume the facade — not the legacy compat
+  // shim — so the State Facade actually drives the dashboard.
   const widgetPath = resolve(
     repoRoot,
     "frontend/src/components/ActivePrintWidget.vue",
@@ -201,11 +202,34 @@ test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
   const text = readFileSync(widgetPath, "utf-8");
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/machineStore\.js["']/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/stateFacade\.js["']/,
   );
   assert.match(text, /systemState/);
   // No legacy machine-compat import — the widget is fully migrated.
   assert.doesNotMatch(text, /machine-compat/);
+});
+
+test("machine module store no longer owns the WebSocket transport", () => {
+  // The 10 Hz ``/ws/telemetry`` socket lives in
+  // ``stores/servoThread.js``; the module store is a thin
+  // orchestrator that composes it. A regression that brings the
+  // socket back into the module store would re-bloat the file to
+  // ~700 lines and break the runtime split.
+  const modulePath = resolve(
+    repoRoot,
+    "frontend/src/modules/machine/store.js",
+  );
+  const text = readFileSync(modulePath, "utf-8");
+  assert.doesNotMatch(
+    text,
+    /new\s+WebSocket\s*\(/,
+    "modules/machine/store.js must not own the WebSocket — use stores/servoThread.js",
+  );
+  assert.match(
+    text,
+    /useServoThreadStore\s*\(/,
+    "modules/machine/store.js must compose useServoThreadStore",
+  );
 });
 
 test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {

@@ -209,15 +209,18 @@ generated OpenAPI client so modules keep working even when
 
 ## 6. State Facade
 
-The `stores/machineStore.js` Pinia store is the facade for raw
+The `stores/stateFacade.js` Pinia store is the facade for raw
 LinuxCNC telemetry. The backend's WebSocket stream ships raw
 integers (`task_state`, `interp_state`, `estop`, ...) to the
 browser. The facade exposes those raw values verbatim **and** offers
 a clean `systemState` string getter so widgets never have to do
 integer math against the wire protocol.
 
-The machine module's WebSocket handler calls
-`useMachineStore().updateStatus({...})` on every `full_state` /
+The runtime split: the 10 Hz WebSocket telemetry lives in
+`stores/servoThread.js` (the "servo thread"); the 1 Hz REST
+snapshot lives in `stores/baseThread.js` (the "base thread").
+The servo-thread store calls
+`useStateFacadeStore().updateStatus({...})` on every `full_state` /
 `delta` payload to keep the facade in sync. When the machine module
 is not mounted the facade renders its initial defaults (which bias
 toward `ESTOP` — the UI must never claim the machine is idle when we
@@ -235,7 +238,7 @@ Every dashboard panel and every sidebar entry checks
 `registry.modules.has(id)` before rendering. The reactive Map
 means the `computed` re-evaluates the moment the registry flips a
 module into its mounted set after boot completes. The
-`stores/machine-compat.js` shim provides a fallback `useMachineStore`
+`stores/machineStoreShim.js` shim provides a fallback `useMachineStore`
 so the shell can render even when the machine module is excluded.
 
 ---
@@ -289,8 +292,19 @@ until the migration window closes:
 - `frontend/src/stores/machine.js` — pre-module monolith. Replaced by
   `frontend/src/modules/machine/store.js`, but the compat shim keeps
   it importable.
-- `frontend/src/stores/machine-compat.js` — the optional adapter
-  that lets the shell render without the machine module mounted.
+- `frontend/src/stores/stateFacade.js` — the canonical State Facade
+  Pinia store (exposes `systemState`, `printProgress`,
+  `isEstopActive`, `recentFiles`, the `updateStatus()` action, and
+  the `TASK_STATE` / `INTERP_STATE` / `SystemState` constant
+  tables). Renamed from `stores/machineStore.js`.
+- `frontend/src/stores/servoThread.js` — the 10 Hz WebSocket
+  transport (`/ws/telemetry`) and the time-critical reactive
+  state (`status` with position / task_state / errors).
+- `frontend/src/stores/baseThread.js` — the 1 Hz REST snapshot
+  store (program progress, temperature sensors, tool list).
+- `frontend/src/stores/machineStoreShim.js` — the optional compat
+  adapter that lets the shell render without the machine module
+  mounted. Renamed from `stores/machine-compat.js`.
 - `frontend/src/components/FileManager.vue` — the G-code file list,
   still mounted as a full-page view rather than a module shell.
 - `frontend/src/components/ActivePrintWidget.vue` — the print

@@ -103,7 +103,7 @@ const _renderEpoch = ref(Date.now());
     regions; each toast re-enables pointer events on itself.
   -->
   <div
-    class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
+    class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
     data-test="toast-container"
     :data-render-epoch="_renderEpoch"
   >

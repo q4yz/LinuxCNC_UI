@@ -3,7 +3,7 @@ import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
 import { ModulesMachineService } from '../../generated/api/services/ModulesMachineService'
 import { filterAutocompleteCommands } from '../config/gcodes'
-import { useMachineStore } from '../stores/machine-compat'
+import { useMachineStore } from '../stores/machineStoreShim'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()

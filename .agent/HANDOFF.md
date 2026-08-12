@@ -18,7 +18,7 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 - **What was done.** `EStopHeader.vue` now reads the high-resolution
   ``systemState`` from the State Facade
-  (``frontend/src/stores/machineStore.js``) and renders a small
+  (``frontend/src/stores/stateFacade.js``) and renders a small
   colour-coded badge directly under the STOP button. The badge
   covers the full 8-state vocabulary (Estop / PowerOff / Idle /
   Running / Paused / Loaded / Offline / Updating / Failure) with

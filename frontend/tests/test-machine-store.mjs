@@ -1,21 +1,24 @@
-// Machine store behavioural tests.
+// Machine module store behavioural tests.
 //
 // Run with: node --test frontend/tests/test-machine-store.mjs
 //
-// These tests focus on the **static structure** of the store
-// because we cannot drive a Pinia store from bare ``node --test``
-// (no Pinia runtime). The accompanying ``vite build`` step in CI
-// catches dynamic / type-level regressions; the test suite here
-// covers the contract a refactor must respect:
+// The machine module store composes ``stores/servoThread.js`` for
+// the 10 Hz WebSocket telemetry (which owns the transport) and
+// adds the module-specific actions (jog, home, set position,
+// program lifecycle, settings). These tests cover the contract
+// the module store must respect after the servo/base split:
 //
 //   * ``jogContinuous`` + ``jogStop`` round-trip populates and
 //     empties ``jogIntervals``.
 //   * The store calls ``ModulesMachineService.jogKeepalive`` while a
 //     continuous jog is active.
-//   * Disconnecting from the store clears every keep-alive
-//     interval.
-//   * WebSocket auto-reconnect is bounded (2 s back-off) so we
-//     don't hammer the backend in a network glitch.
+//   * ``jogStop`` clears every remaining keep-alive interval.
+//   * The store composes the servo-thread store for telemetry
+//     rather than owning the WebSocket itself.
+//
+// Tests for the WebSocket transport itself (reconnect cadence,
+// ``full_state`` / ``delta`` dispatch, console-store error routing)
+// live in ``test-servo-thread.mjs``.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -39,7 +42,7 @@ test("store exposes jogIntervals as a reactive map", () => {
   const text = readStore();
   // ``jogIntervals`` is declared as ``reactive({})`` so we can
   // mutate it from actions without losing reactivity.
-  assert.match(text, /const\s+jogIntervals\s*=\s*reactive\(\{\s*\}\)/);
+  assert.match(text, /const\s+jogIntervals\s*=\s*reactive\(\s*\{\s*\}\s*\)/);
   // ``jogIntervals`` is exposed as a top-level return value so
   // ``storeToRefs`` callers stay reactive.
   assert.match(text, /jogIntervals\s*,/);
@@ -51,9 +54,6 @@ test("store builds the ModulesMachineService.jogAxis payload for continuous jogs
   // ``distance: 0`` and the supplied velocity.  The store
   // breaks the call across two lines (object literal), so
   // the regex tolerates the newline and trailing whitespace.
-  // (The generated client was renamed from ``JoggingService``
-  // to ``ModulesMachineService`` after the legacy service
-  // classes were consolidated under the module prefix.)
   assert.match(text, /ModulesMachineService\.jogAxis\s*\(\s*\{/);
   assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
   assert.match(text, /distance:\s*0/);
@@ -69,29 +69,23 @@ test("store builds the ModulesMachineService.jogAxis payload for continuous jogs
   assert.match(text, /setInterval\([\s\S]*intervalMs\)/);
   assert.match(text, /DEFAULT_KEEPALIVE_INTERVAL_MS\s*=\s*250/);
   assert.match(text, /interval\s*<=\s*2000/);
-
 });
 
-test("store clears jogIntervals on stop and disconnect", () => {
+test("store clears jogIntervals on jogStop", () => {
   const text = readStore();
-  // ``jogStop`` clears the per-axis interval.
+  // ``jogStop`` clears the per-axis interval for the axis it
+  // is asked to stop. Bulk cleanup on module unmount lives in
+  // ``modules/machine/components/JogControls.vue`` so a hot-
+  // reload during a continuous jog releases the axis within the
+  // watchdog window.
   assert.match(text, /clearInterval\(jogIntervals\[axis\]\)/);
   assert.match(text, /delete\s+jogIntervals\[axis\]/);
-  // ``disconnect`` clears every remaining interval so a
-  // ``--reload`` during a jog releases the axis within the
-  // watchdog window.
-  assert.match(text, /for\s*\(\s*const\s+axis\s+of\s+Object\.keys\(jogIntervals\)/);
-});
-
-test("store auto-reconnects on socket close with a 2 s back-off", () => {
-  const text = readStore();
-  assert.match(text, /reconnectTimer\s*=\s*setTimeout\([\s\S]*connect\(\)[\s\S]*2000/);
 });
 
 test("store rejects ESTOP-driven power-on", () => {
   const text = readStore();
-  // The ``togglePower`` action refuses to power on when ESTOP
-  // is active. Pattern: ``Cannot turn on machine while ESTOP is
+  // The ``togglePower`` action refuses to power on when ESTOP is
+  // active. Pattern: ``Cannot turn on machine while ESTOP is
   // active`` is the operator-facing message.
   assert.match(text, /Cannot turn on machine while ESTOP/);
 });
@@ -99,16 +93,33 @@ test("store rejects ESTOP-driven power-on", () => {
 test("store forwards MDI commands through ModulesMachineService.runMdiCommand", () => {
   const text = readStore();
   // ``setPosition`` and ``setCoordinateSystem`` both funnel
-  // through the legacy MDI endpoint. (The generated client was
-  // renamed from ``MachineStateService`` to
-  // ``ModulesMachineService`` after the legacy service classes
-  // were consolidated under the module prefix.)
+  // through the legacy MDI endpoint.
   assert.match(text, /ModulesMachineService\.runMdiCommand\(\s*\{\s*command:/);
 });
 
 test("store converts setPosition to G10 L20 P0 via generateSetOffset", () => {
   const text = readStore();
   assert.match(text, /generateSetOffset\(axisName,\s*value\)/);
+});
+
+test("store composes the servo-thread store for telemetry", () => {
+  const text = readStore();
+  // The 10 Hz ``/ws/telemetry`` socket lives in
+  // ``stores/servoThread.js`` — the module store composes that
+  // store for ``status`` / ``connectionStatus`` / ``errors``.
+  // A regression that brings the socket back into the module
+  // store would re-bloat the file to ~700 lines and break the
+  // runtime split.
+  assert.match(
+    text,
+    /useServoThreadStore\s*\(/,
+    "machine store must compose useServoThreadStore",
+  );
+  assert.doesNotMatch(
+    text,
+    /new\s+WebSocket\s*\(/,
+    "machine store must not own the WebSocket — use stores/servoThread.js",
+  );
 });
 
 test("store no longer publishes state.temperatures", () => {
@@ -131,55 +142,13 @@ test("store no longer publishes state.temperatures", () => {
   );
 });
 
-test("store connects with idempotency guard", () => {
+test("store registers itself with the compat shim on mount", () => {
   const text = readStore();
-  // A second ``connect()`` while a socket is already open must
-  // no-op rather than opening another WebSocket.
-  assert.match(
-    text,
-    /if\s*\(\s*connectionStatus\.value\s*===\s*['"]connected['"]\s*\|\|/,
-  );
-  assert.match(
-    text,
-    /connectionStatus\.value\s*===\s*['"]connecting['"]\s*\)\s*\{[^}]*return/,
-  );
-});
-
-test("store handles connectionStatus as a ref", () => {
-  const text = readStore();
-  assert.match(text, /const\s+connectionStatus\s*=\s*ref\(\s*['"]disconnected['"]\s*\)/);
-});
-
-test("store handles errors as a ref array", () => {
-  const text = readStore();
-  assert.match(text, /const\s+errors\s*=\s*ref\(\s*\[\s*\]\s*\)/);
-});
-
-test("store routes LinuxCNC WS errors through the console store with popup", () => {
-  // Regression guard for the silent-bug where the WebSocket
-  // ``error`` branch only logged to the browser devtools console
-  // (console.error) instead of routing through ``useConsoleStore()``,
-  // so the operator's ``ConsolePanel`` never saw the row and the
-  // toast never fired. ``popup: true`` is required because
-  // ``core/console.js`` short-circuits ``_emitToast`` when the
-  // flag is missing.
-  const text = readStore();
-  assert.match(
-    text,
-    /payload\.type === "error"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
-    "the WS error branch must call useConsoleStore().error() with popup:true",
-  );
-});
-
-test("store replays full_state errors through the console store", () => {
-  // The backend keeps a bounded error history on ``SharedMachineState``
-  // and ships it on ``full_state``. The frontend replays those
-  // entries through ``useConsoleStore().error()`` so the operator's
-  // ``ConsolePanel`` shows the backlog on reload / reconnect.
-  const text = readStore();
-  assert.match(
-    text,
-    /payload\.type === "full_state"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
-    "the full_state branch must replay historical errors via useConsoleStore",
-  );
+  // Pre-migration consumers call ``useMachineStore()`` from the
+  // shim. The module store registers itself so those calls
+  // resolve to this store. The shim's ``registerMachineStore``
+  // helper is the only sanctioned entry point.
+  assert.match(text, /registerMachineStore\s*\(/);
+  assert.match(text, /unregisterMachineStore\s*\(/);
+  assert.match(text, /import\s*\{[^}]*registerMachineStore[^}]*\}/);
 });

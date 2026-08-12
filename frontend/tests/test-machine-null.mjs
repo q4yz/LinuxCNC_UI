@@ -15,8 +15,9 @@
 //   * The new ``modules/machine/components/DroPanel.vue`` and
 //     ``modules/machine/components/JogControls.vue`` are in place.
 //   * Pre-migration consumer components (ConsolePanel, DebugPanel,
-//     GCodeViewer, UpdateManager) route through ``machine-compat``,
-//     the nullable adapter that lets the shell build even when the
+//     GCodeViewer, UpdateManager) route through ``machineStoreShim``
+//     (the renamed successor of the old ``machine-compat``), the
+//     nullable adapter that lets the shell build even when the
 //     machine module folder has been removed.
 
 import { test } from "node:test";
@@ -152,9 +153,10 @@ test("legacy stores/machine.js shim is removed after migration window closes", (
   // at ``stores/machine.js`` (which used to re-export the module
   // store for third-party consumers) and the raw
   // ``services/machineApi.js`` wrapper are both deleted. All machine
-  // consumers should now import from ``stores/machine-compat``
-  // (nullable shell adapter) or directly from
-  // ``modules/machine/store.js`` / ``ModulesMachineService``.
+  // consumers should now import from
+  // ``stores/machineStoreShim.js`` (nullable shell adapter, the
+  // renamed successor of ``stores/machine-compat.js``) or directly
+  // from ``modules/machine/store.js`` / ``ModulesMachineService``.
   assert.equal(
     existsSync(legacyStoreShim),
     false,
@@ -167,18 +169,24 @@ test("legacy stores/machine.js shim is removed after migration window closes", (
   );
 });
 
-test("App.vue connects only when the machine module is not mounted", () => {
-  // The module's ``onLoad`` already opens the WebSocket;
-  // App.vue's connect() must guard against a double-socket by
-  // checking ``registry.modules.has('machine')`` first. The
-  // ``connect()`` action itself is also idempotent per the
-  // store implementation.
+test("App.vue starts the servo thread only when the machine module is not mounted", () => {
+  // The module's ``onLoad`` already opens the WebSocket via
+  // ``useServoThreadStore().start()``; App.vue's fallback boot
+  // must guard against a double-socket by checking
+  // ``registry.modules.has('machine')`` first. The ``start()``
+  // action itself is also idempotent per the store
+  // implementation.
   const appPath = resolve(repoRoot, "frontend/src/App.vue");
   const source = readFileSync(appPath, "utf-8");
   assert.match(
     source,
     /registry\.modules\.has\(\s*['"]machine['"]\s*\)/,
-    "App.vue must consult the registry before calling store.connect()",
+    "App.vue must consult the registry before starting the servo thread",
+  );
+  assert.match(
+    source,
+    /servoThread\.start\(\s*\)/,
+    "App.vue must call servoThread.start() when the module is absent",
   );
 });
 
