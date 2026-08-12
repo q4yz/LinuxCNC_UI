@@ -174,9 +174,20 @@ test("CameraStore persists preferences via the module settings client", () => {
     /window\.localStorage/,
     "cameraStore.js must not read window.localStorage (migration to backend done)",
   );
-  assert.match(
+  // Debouncing was deliberately removed — a single operator typing
+  // into a single form does not produce bursts worth coalescing.
+  // Writes are instead serialised through the ``writePreferences``
+  // chain so they never overlap on the wire and the server receives
+  // them in order. The tripwire below forbids bringing the debounce
+  // back without a deliberate decision.
+  assert.doesNotMatch(
     text,
     /PREFERENCE_DEBOUNCE_MS/,
-    "cameraStore.js must debounce PUT writes (typed rename should not spam the server)",
+    "cameraStore.js must not bring back the 400 ms debounce; writes are serialised through writePreferences instead",
+  );
+  assert.match(
+    text,
+    /writePreferences/,
+    "cameraStore.js must serialise writes via the writePreferences helper",
   );
 });

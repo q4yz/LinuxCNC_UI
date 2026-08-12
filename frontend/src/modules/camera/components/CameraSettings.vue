@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { createModuleSettings } from "../../../core/modules/settings.js";
+import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
 import { useCameraStore } from "../cameraStore.js";
 import manifest from "../manifest.js";
 
@@ -81,6 +82,27 @@ async function saveIpCameraUrl() {
   } finally {
     settingsSaving.value = false;
   }
+}
+
+/**
+ * Confirm-and-delete an IP camera row. The store action clears the
+ * ``ip_camera_url`` and drops the matching preference row in one
+ * round-trip, so the persisted settings never orphan the removed
+ * camera's custom name.
+ *
+ * @param {{ id: string, source: string }} device
+ */
+async function confirmRemove(device) {
+  if (!device || device.source !== "ip") return;
+  const shouldRemove = await useConfirm({
+    title: "Remove IP camera?",
+    question: `Remove "${device.id}" from this machine? The custom name and preferences for this camera will be deleted.`,
+    confirmButtonText: "Remove",
+    confirmButtonStyle: ModalButtonStyle.DANGER,
+    rejectButtonText: "Cancel",
+  });
+  if (!shouldRemove) return;
+  await store.deleteIpCamera(device);
 }
 
 onMounted(() => {
@@ -185,6 +207,13 @@ onMounted(() => {
                 <span class="rounded bg-gray-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-300">
                   {{ device.source }}
                 </span>
+                <span
+                  v-if="device.historical"
+                  class="rounded bg-amber-900/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
+                  title="This camera is no longer the configured IP cam — the custom name and orientation are persisted from a prior session"
+                >
+                  offline
+                </span>
               </div>
               <p class="mb-3 truncate font-mono text-xs text-gray-500" :title="device.id">
                 {{ device.id }}
@@ -230,6 +259,21 @@ onMounted(() => {
                 >
                 Hide from cycle
               </label>
+            </div>
+
+            <!-- Remove button: only IP cameras are user-removable from
+                 this surface; USB cameras come and go with the host
+                 hardware. The action clears the URL and drops the
+                 preference row so the persisted settings stay clean. -->
+            <div v-if="device.source === 'ip'" class="flex shrink-0">
+              <button
+                type="button"
+                :title="`Remove ${device.id}`"
+                class="rounded border border-red-800 bg-red-900/40 px-3 py-1.5 text-xs font-semibold text-red-200 transition-colors hover:bg-red-800 hover:text-white"
+                @click="confirmRemove(device)"
+              >
+                Remove
+              </button>
             </div>
           </div>
         </li>

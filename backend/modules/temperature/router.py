@@ -3,16 +3,17 @@
 The router is mounted by the registry under
 ``/api/v1/modules/temperature``. It exposes:
 
-* ``GET  /sensors``               — list all temperature sensors.
 * ``POST /sensors/{name}/target`` — set a sensor's target temperature.
 
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
 
 The :func:`_collect_sensors` helper is the single source of truth
-for reading the sensor dict; the HTTP endpoint delegates to it and
-the base-thread snapshot (``routers/base_thread.py``) imports the
-same helper so the two surfaces stay byte-for-byte identical.
+for reading the sensor dict; the base-thread snapshot
+(``routers/base_thread.py``) imports the same helper so the
+canonical 1 Hz snapshot is the only public surface for sensor data.
+The legacy ``GET /sensors`` endpoint was superseded by the snapshot
+and has been removed.
 """
 
 import logging
@@ -49,8 +50,7 @@ class SensorReading(BaseModel):
     """One temperature sensor reading.
 
     Used by the snapshot response model (``routers/base_thread.py``)
-    and reused by the legacy ``GET /sensors`` endpoint so the wire
-    shape stays consistent.
+    so the wire shape stays consistent across the slow-channel surface.
     """
 
     actual: float = Field(
@@ -62,18 +62,6 @@ class SensorReading(BaseModel):
         description=(
             "Set-point temperature in Celsius. ``0`` for sensors "
             "without a controllable heater."
-        ),
-    )
-
-
-class SensorsResponse(BaseModel):
-    """Response body for ``GET /sensors``."""
-
-    sensors: Dict[str, Dict[str, float]] = Field(
-        default_factory=dict,
-        description=(
-            "Map of sensor name to its current state. Each entry has "
-            "an 'actual' reading and, when controllable, a 'target'."
         ),
     )
 
@@ -100,11 +88,10 @@ class SetTargetResponse(BaseModel):
 def _collect_sensors() -> Dict[str, Dict[str, float]]:
     """Read the live sensor dict from the stat channel.
 
-    Returns a plain dict (sensor name -> ``{actual, target}``) so
-    both the HTTP endpoint and the base-thread snapshot can
-    serialise it the same way. Falls back to ``{}`` when the NML
-    channel is offline — the dashboard's empty-state UI handles
-    the no-data case cleanly.
+    Returns a plain dict (sensor name -> ``{actual, target}``) so the
+    base-thread snapshot can serialise it the same way. Falls back to
+    ``{}`` when the NML channel is offline — the dashboard's
+    empty-state UI handles the no-data case cleanly.
     """
     stat = get_machine_stat()
     if stat is None:
@@ -114,22 +101,6 @@ def _collect_sensors() -> Dict[str, Dict[str, float]]:
         poll()
     sensors = getattr(stat, "temperatures", None) or {}
     return {name: dict(values) for name, values in sensors.items()}
-
-
-@router.get(
-    "/sensors",
-    response_model=SensorsResponse,
-    summary="List Temperature Sensors",
-    description=(
-        "Return the current sensor dictionary as exposed by the "
-        "hardware layer. Polls the underlying stat object first so "
-        "fresh readings are returned even if the WebSocket "
-        "telemetry loop has not yet broadcast them."
-    ),
-)
-def list_sensors() -> SensorsResponse:
-    """List all temperature sensors known to the hardware layer."""
-    return SensorsResponse(sensors=_collect_sensors())
 
 
 @router.post(
@@ -183,7 +154,6 @@ __all__ = [
     "router",
     "SetTargetRequest",
     "SetTargetResponse",
-    "SensorsResponse",
     "SensorReading",
     "_collect_sensors",
 ]

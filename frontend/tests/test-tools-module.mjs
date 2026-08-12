@@ -13,12 +13,13 @@
 //   * ``toolStore.js`` declares its Pinia store id as
 //     ``module_tools`` per ``MODULE_SYSTEM_ROADMAP.md`` § 12
 //     Gotcha #2.
-//   * The store is backend-driven — no hard-coded SEED_TOOLS; the
-//     tool list comes from ``GET /api/v1/modules/tools/tools`` plus
-//     an optional ``state.tools`` event-bus topic (mirrors the
-//     temperature module).
-//   * The store POSTs spindle + extruder + tool-target commands to
-//     the documented module URLs.
+//   * The store is backend-driven — the tool list comes from the
+//     shared base-thread snapshot (``stores/baseThread.js``); no
+//     hard-coded seed list, no own polling interval.
+//   * Every write action goes through the OpenAPI-generated
+//     ``ModulesToolsService`` client. The store never hand-rolls
+//     ``fetch`` calls (see ``.agent/context/LESSONS_LEARNED.md``
+//     § 2.7). Errors are routed through ``describeError``.
 //   * The panel renders one chip per tool in the header and a
 //     single card body, dispatched by ``selectedTool.type``:
 //     spindle_digital / spindle_analog / extruder / heated_bed.
@@ -112,29 +113,17 @@ test("toolStore.js declares the store id as module_tools via the prefix template
   assert.match(text, /import\s+manifest\s+from\s+["']\.\/manifest\.js["']/);
 });
 
-test("toolStore is backend-driven — no hard-coded SEED_TOOLS", () => {
+test("toolStore consumes the base-thread snapshot — no own polling", () => {
   const text = read(storePath);
   // The mock fixture array is gone; the store reads tools from
   // the shared base-thread snapshot
   // (``stores/baseThread.js``) so the dashboard only issues one
   // HTTP request per second for every slow stream.
   assert.doesNotMatch(text, /SEED_TOOLS/);
-  // The store must not GET the ``/api/v1/modules/tools/tools``
-  // listing directly. POSTs to ``/spindle``, ``/extruder``, and
-  // the per-tool ``/tools/{id}/target`` are still allowed — the
-  // listing endpoint is what moved to the snapshot. The check is
-  // intentionally a ``fetch(...)`` call shape rather than a
-  // generic string match so docstrings / comments that mention
-  // the legacy endpoint URL don't trip the test.
-  assert.doesNotMatch(
-    text,
-    /fetch\([^)]*\/api\/v1\/modules\/tools\/tools\b/,
-    "toolStore must not fetch the /tools REST listing directly",
-  );
-  // Polling cadence is now owned by the base-thread store; the
-  // tools store delegates to ``useBaseThreadStore().refresh()``.
   assert.match(text, /useBaseThreadStore\s*\(/);
   assert.match(text, /refreshTools/);
+  // The store must NOT own a polling interval — the base-thread
+  // store fires every 1 s, no second ``setInterval`` is needed.
   assert.doesNotMatch(
     text,
     /setInterval\s*\(\s*refreshTools/,
@@ -142,17 +131,37 @@ test("toolStore is backend-driven — no hard-coded SEED_TOOLS", () => {
   );
 });
 
-test("toolStore actions POST to documented endpoints", () => {
+test("toolStore never hand-rolls HTTP — every call goes through ModulesToolsService", () => {
+  // See ``.agent/context/LESSONS_LEARNED.md`` § 2.7. The tripwire
+  // pattern matches the temperature module's hand-rolled
+  // ``fetch`` in TemperaturePanel.vue (a separate cleanup pass).
   const text = read(storePath);
-  assert.match(text, /\/api\/v1\/modules\/tools\/spindle/);
-  assert.match(text, /\/api\/v1\/modules\/tools\/extruder/);
-  // The tool-target endpoint is nested under ``/tools/{id}/target``
-  // to match the temperature module's ``/sensors/{name}/target``
-  // pattern. The store URL-builds with ``encodeURIComponent``.
+  // No raw fetch / postJson / XMLHttpRequest in the store. Allow
+  // ``useBaseThreadStore`` (which itself uses the generated
+  // ``BaseThreadService``) — that's the exception, not the rule.
+  assert.doesNotMatch(text, /\bfetch\s*\(/);
+  assert.doesNotMatch(text, /\bpostJson\s*\(/);
+  assert.doesNotMatch(text, /XMLHttpRequest/);
+  // And no hand-rolled URL strings — the generated client owns
+  // those. ``http://`` is a reasonable proxy for "URL literal".
+  assert.doesNotMatch(text, /\/api\/v1\/modules\/tools\//);
+  // The store imports ``ModulesToolsService`` and routes every
+  // write action through it.
   assert.match(
     text,
-    /\/api\/v1\/modules\/tools\/tools\/\$\{encodeURIComponent\(toolId\)\}\/target/,
+    /import\s+\{[^}]*ModulesToolsService[^}]*\}\s+from\s+["'][^"']*generated\/api\/services\/ModulesToolsService/,
   );
+  assert.match(text, /ModulesToolsService\.controlSpindle\s*\(/);
+  assert.match(text, /ModulesToolsService\.controlExtruder\s*\(/);
+  assert.match(text, /ModulesToolsService\.setToolTarget\s*\(/);
+  // Errors flow through the canonical describeError helper
+  // (``core/error-format.js``) so the console store sees the
+  // same envelope shape as every other module.
+  assert.match(
+    text,
+    /import\s+\{[^}]*describeError[^}]*\}\s+from\s+["'][^"']*core\/error-format/,
+  );
+  assert.match(text, /describeError\s*\(\s*err\s*\)/);
 });
 
 test("toolStore exposes selection state for the panel header", () => {
@@ -182,6 +191,10 @@ test("ToolPanel.vue renders chip header + single-card body", () => {
   // Each per-type card is imported and dispatched on the selected
   // tool only — no ``v-for`` over the body.
   assert.doesNotMatch(text, /v-for="tool in toolStore\.tools"/);
+  // The panel does not own its own polling lifecycle — the
+  // base-thread store is booted once at app mount.
+  assert.doesNotMatch(text, /toolStore\.start\s*\(/);
+  assert.doesNotMatch(text, /toolStore\.stop\s*\(/);
 });
 
 test("SpindleCard.vue renders digital-spindle controls", () => {
@@ -194,6 +207,27 @@ test("SpindleCard.vue renders digital-spindle controls", () => {
   // min_rpm / max_rpm helper text appears when present.
   assert.match(text, /min_rpm/);
   assert.match(text, /max_rpm/);
+  // The runtime overlay fields are surfaced as a status row.
+  assert.match(text, /is_connected/);
+  assert.match(text, /error_count/);
+  // The input does NOT ``v-model`` directly onto ``props.tool`` —
+  // the base-thread snapshot replaces the tool record every 1 s,
+  // which would wipe the operator's typed value within a second.
+  // The cards own a local ref seeded on chip switch instead.
+  assert.doesNotMatch(
+    text,
+    /v-model(?:\.number)?="tool\.set_speed"/,
+    "SpindleCard must not v-model directly onto tool.set_speed",
+  );
+  assert.doesNotMatch(
+    text,
+    /v-model(?:\.number)?="tool\.target_rpm"/,
+    "SpindleCard must not v-model directly onto tool.target_rpm",
+  );
+  // Local ref + chip-switch watch + seedFromTool.
+  assert.match(text, /\bsetSpeed\s*=\s*ref\(/);
+  assert.match(text, /\btargetRpm\s*=\s*ref\(/);
+  assert.match(text, /watch\s*\(\s*\(\)\s*=>\s*props\.tool\?\.id/);
 });
 
 test("AnalogSpindleCard.vue hides feedback tiles", () => {
@@ -204,6 +238,14 @@ test("AnalogSpindleCard.vue hides feedback tiles", () => {
   assert.doesNotMatch(text, /Actual RPM/);
   assert.doesNotMatch(text, /Target RPM/);
   assert.doesNotMatch(text, /Reverse/);
+  // Same local-ref tripwire as the digital card.
+  assert.doesNotMatch(
+    text,
+    /v-model(?:\.number)?="tool\.set_speed"/,
+    "AnalogSpindleCard must not v-model directly onto tool.set_speed",
+  );
+  assert.match(text, /\bsetSpeed\s*=\s*ref\(/);
+  assert.match(text, /watch\s*\(\s*\(\)\s*=>\s*props\.tool\?\.id/);
 });
 
 test("HeaterControls.vue renders the shared heat block", () => {
@@ -233,6 +275,36 @@ test("ExtruderCard.vue composes heat + motion in one card", () => {
   // Logarithmic distance array lives here now (moved out of the
   // panel when the per-type bodies were extracted).
   assert.match(text, /\[\s*0\.1\s*,\s*1\s*,\s*10\s*,\s*50\s*,\s*100\s*\]/);
+  // Same local-ref tripwire as the spindle cards — both the
+  // speed input and the distance slider bind to local refs so a
+  // 1 s snapshot cannot wipe the operator's choices.
+  assert.doesNotMatch(
+    text,
+    /v-model(?:\.number)?="tool\.set_speed"/,
+    "ExtruderCard must not v-model directly onto tool.set_speed",
+  );
+  assert.doesNotMatch(
+    text,
+    /v-model(?:\.number)?="tool\.distance_index"/,
+    "ExtruderCard must not v-model directly onto tool.distance_index",
+  );
+  assert.match(text, /\bsetSpeed\s*=\s*ref\(/);
+  assert.match(text, /\bdistanceIndex\s*=\s*ref\(/);
+  assert.match(text, /watch\s*\(\s*\(\)\s*=>\s*props\.tool\?\.id/);
+});
+
+test("toolStore no longer mutates the tool record", () => {
+  // The base-thread snapshot replaces ``tools`` every 1 s; the
+  // store must not write ``tool.target_rpm = ...`` (or any other
+  // tool field) because the write would be wiped before the
+  // operator sees it. The cards own their own optimistic
+  // ``targetRpm`` local ref instead.
+  const text = read(storePath);
+  assert.doesNotMatch(
+    text,
+    /tool\.target_rpm\s*=/,
+    "toolStore must not mutate tool.target_rpm (snapshot would wipe it)",
+  );
 });
 
 test("DashboardView wires ToolPanel via the nullable panelFor pattern", () => {

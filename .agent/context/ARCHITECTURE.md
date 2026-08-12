@@ -140,6 +140,37 @@ consume. The machine module's WebSocket handler calls
 the machine module is not mounted, the facade defaults to `ESTOP`
 so the UI never claims the machine is idle when we have no data.
 
+### 2.4 Servo thread / base thread split
+
+The dashboard reads two distinct transports from the backend,
+mirroring the LinuxCNC runtime split:
+
+* **Servo thread** — `GET /ws/telemetry`, 10 Hz WebSocket. Owns
+  the time-critical fields (`task_state`, `estop`, `position`,
+  `interp_state`, `g5x_index`, `errors`). Wired by the machine
+  module's WebSocket handler and mirrored into the State Facade
+  (see § 2.3).
+* **Base thread** — `GET /api/v1/base-thread/snapshot`, 1 Hz REST.
+  Bundles every slow stream the dashboard polls anyway
+  (`progress`, `sensors`, `tools`). Owned by the
+  `frontend/src/stores/baseThread.js` Pinia store.
+
+The split exists because the 10 Hz WebSocket must not carry
+bookkeeping fields (a 100 ms stat poll would re-read the full
+sensor / tool list and clog NML), and the 1 Hz snapshot must not
+become the time-critical transport (the DRO / Estop panels would
+jitter).
+
+The `baseThread` store is a Pinia OPTIONS-API store with three
+top-level refs (`progress`, `sensors`, `tools`). Consumer modules
+read via `storeToRefs(baseThread)` and watch with `deep: true` so
+the top-level reassignment propagates across module boundaries.
+The store is booted once in `App.vue` at the top level of
+`<script setup>` (`useBaseThreadStore().start()`). The full
+contract — including how to add a new stream — is in
+`frontend/src/stores/baseThread.js` § USAGE and in
+`.agent/STATE.md` § 12.
+
 ## 3. Config invariants
 
 | Source | Consumers |

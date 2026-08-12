@@ -4,11 +4,14 @@ Covers:
 
 * Boot-time discovery + router mounting under
   ``/api/v1/modules/temperature``.
-* ``GET /sensors`` returns the mock's sensor dictionary.
-* ``POST /sensors/{name}/target`` dispatches ``set_temperature`` to
-  the hardware layer and reflects in subsequent ``GET /sensors``.
+* ``POST /sensors/{name}/target`` dispatches ``set_temperature``
+  to the hardware layer and the mock surfaces the new target.
 * The legacy ``POST /api/v1/machine/temperature`` endpoint is no
   longer registered.
+* The historical ``GET /sensors`` listing endpoint was superseded
+  by the base-thread snapshot
+  (``GET /api/v1/base-thread/snapshot``), which is now the only
+  public surface for the sensor dict.
 """
 
 from __future__ import annotations
@@ -121,109 +124,16 @@ def test_legacy_temperature_endpoint_is_gone(tmp_data_root, clean_env):
     assert "/api/v1/machine/temperature" not in paths
 
 
-def test_get_sensors_returns_mock_dict_empty_when_no_hardware_json(
-    tmp_data_root, clean_env, monkeypatch
-):
-    """``GET /api/v1/modules/temperature/sensors`` returns an empty
-    dict when no ``hardware.json`` is present (issue #97).
-
-    The mock used to hard-code ``extruder/bed/cpu`` at import time;
-    the dynamic sensor list now starts as ``{}`` when the operator
-    has not yet deployed a profile. The endpoint must serialise
-    that empty dict verbatim.
-    """
-    from services import hardware_loader
-
-    empty_dir = tmp_data_root / "no_active"
-    empty_dir.mkdir()
-    monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", empty_dir
-    )
-    # The mock singleton was initialised before this monkey-patch
-    # was applied; force a re-seed so the empty directory is
-    # honoured.
-    from hardware import linuxcnc_mock
-
-    linuxcnc_mock.reseed_from_hardware_json()
-
-    from modules.temperature.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-
-    client = TestClient(app)
-    resp = client.get("/api/v1/modules/temperature/sensors")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert isinstance(body, dict) and "sensors" in body
-    assert body["sensors"] == {}
-
-
-def test_get_sensors_returns_dynamic_heater_list_from_hardware_json(
-    tmp_data_root, clean_env, monkeypatch
-):
-    """``GET /api/v1/modules/temperature/sensors`` exposes the sensor
-    list from ``machine_config/active/hardware.json`` (issue #97 +
-    v2 hardware.json model).
-
-    The test fixture drops a fake v2 ``hardware.json`` with two
-    temperature sensors in a ``tmp_path`` tree and asserts the mock
-    seeds those two sensors (no more, no less). Each entry must
-    carry an ``actual`` reading.
-    """
-    from services import hardware_loader
-
-    active_dir = tmp_data_root / "machine_config" / "active"
-    active_dir.mkdir(parents=True, exist_ok=True)
-    # v2 hardware.json: ``temperature_sensors[]`` is the canonical
-    # list the mock seeds from. The heater_bed sensor id is ``bed``
-    # (``heater_`` prefix stripped per ``_temperature_sensor_id``).
-    (active_dir / "hardware.json").write_text(
-        '{"temperature_sensors": ['
-        '{"id": "extruder", "pin": "PA1"}, '
-        '{"id": "bed", "pin": "PA0"}'
-        "]}",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", active_dir
-    )
-
-    # The mock singleton was initialised before this monkey-patch
-    # was applied; force a re-seed so the freshly written
-    # ``hardware.json`` is honoured.
-    from hardware import linuxcnc_mock
-
-    linuxcnc_mock.reseed_from_hardware_json()
-
-    from modules.temperature.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-
-    client = TestClient(app)
-    resp = client.get("/api/v1/modules/temperature/sensors")
-    assert resp.status_code == 200
-    sensors = resp.json()["sensors"]
-    # The mock must report exactly the sensors declared in
-    # ``hardware.json`` — no legacy ``cpu`` sensor.
-    assert set(sensors.keys()) == {"extruder", "bed"}
-    # Each seeded entry has the documented starting state.
-    for name, entry in sensors.items():
-        assert "actual" in entry
-        assert entry["actual"] == 25.0
-        assert entry["target"] == 0.0
-
-
 def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch):
-    """``POST /sensors/{name}/target`` updates the mock's state and
-    is visible on the next ``GET /sensors`` (issue #97).
+    """``POST /sensors/{name}/target`` updates the mock's state.
 
-    The mock now seeds the sensor list from ``hardware.json`` so the
-    test drops a fake active ``hardware.json`` with a ``heater_bed``
-    entry before exercising the ``POST /sensors/{name}/target`` flow.
+    The mock seeds the sensor list from ``hardware.json`` so the test
+    drops a fake active ``hardware.json`` with a ``heater_bed`` entry
+    before exercising the ``POST /sensors/{name}/target`` flow. The
+    follow-up assertion confirms the mock now reports the new target
+    on the next read — a regression here would break the operator's
+    "set 60 °C" feedback loop regardless of which surface surfaces
+    the value.
     """
     from services import hardware_loader
 
@@ -262,11 +172,16 @@ def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch
     assert body["sensor_name"] == "heater_bed"
     assert body["target"] == 60.0
 
-    # Verify the mock now reports the new target.
-    resp = client.get("/api/v1/modules/temperature/sensors")
-    assert resp.status_code == 200
-    sensors = resp.json()["sensors"]
-    assert sensors["heater_bed"]["target"] == 60.0
+    # The legacy ``GET /sensors`` endpoint is gone; the canonical
+    # surface for the live sensor dict is the base-thread snapshot.
+    # Read the mock directly to confirm the dispatch landed — the
+    # mock's ``set_temperature`` keys the entry on the same name
+    # the router received (here ``heater_bed``).
+    from hardware import linuxcnc_mock as _mock
+
+    with _mock._machine_state.lock:  # noqa: SLF001
+        reading = _mock._machine_state.temperatures.get("heater_bed", {})
+    assert reading.get("target") == 60.0
 
 
 def test_set_target_validates_range(tmp_data_root, clean_env):
@@ -388,7 +303,9 @@ def test_get_router_returns_apirouter(tmp_data_root, clean_env):
     instance = TemperatureModule()
     router = instance.get_router()
     assert isinstance(router, APIRouter)
-    # The router must expose the two documented endpoints.
+    # The historical ``GET /sensors`` listing endpoint was
+    # superseded by the base-thread snapshot; only the target
+    # setter remains.
     paths = {route.path for route in router.routes}
-    assert "/sensors" in paths
+    assert "/sensors" not in paths
     assert "/sensors/{name}/target" in paths

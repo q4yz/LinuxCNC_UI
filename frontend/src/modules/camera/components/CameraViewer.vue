@@ -114,12 +114,12 @@ onMounted(() => {
 });
 
 // Clean up when leaving the page to free the USB hardware and
-// flush any pending debounced PUT so a 399 ms-old rename isn't lost
-// on navigation.
+// await any in-flight preference write so the most recent
+// keystroke is not lost on navigation.
 onBeforeUnmount(async () => {
   if (streamTimer) clearTimeout(streamTimer);
   streamUrl.value = "";
-  await store.flushPendingPreferenceWrite();
+  await store.awaitInFlightPreferenceWrite();
 });
 </script>
 

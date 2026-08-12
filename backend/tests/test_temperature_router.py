@@ -8,9 +8,6 @@ tests do not depend on the real ``linuxcnc`` binary or the
 
 Coverage (issue #43 § 3):
 
-* ``GET /sensors`` — calls ``stat.poll()`` before reading
-  ``temperatures``; coerces the nested dict into plain
-  ``dict[str, dict[str, float]]`` for the response.
 * ``POST /sensors/{name}/target`` — happy-path invocation of
   ``execute_sync_cmd("set_temperature", 0, name, req.target)``,
   response echoes the applied target.
@@ -18,6 +15,12 @@ Coverage (issue #43 § 3):
   ``sensor_name`` in the JSON body.
 * Error handling — empty/invalid URL name → ``400``; raised
   ``Exception`` from ``execute_sync_cmd`` → ``500``.
+
+The historical ``GET /sensors`` listing endpoint was superseded
+by the base-thread snapshot
+(``GET /api/v1/base-thread/snapshot``), which is now the only
+public surface for the sensor dict. The legacy GET tests moved
+to ``test_base_thread_snapshot.py``.
 """
 
 from __future__ import annotations
@@ -39,166 +42,6 @@ def _build_router_app() -> FastAPI:
     app = FastAPI()
     app.include_router(temperature_router, prefix="/api/v1/modules/temperature")
     return app
-
-
-# ---------------------------------------------------------------------------
-# GET /sensors
-# ---------------------------------------------------------------------------
-
-
-def test_get_sensors_calls_stat_poll_before_reading():
-    """``GET /sensors`` must call ``stat.poll()`` before fetching
-    ``temperatures`` so fresh readings are returned even when the
-    WebSocket telemetry loop has not yet broadcast them (issue #43
-    § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    # Build a mock stat object that records the order of calls.
-    stat = MagicMock()
-    stat.poll = MagicMock()
-    stat.temperatures = {
-        "extruder": {"actual": 50.0, "target": 60.0},
-        "bed": {"actual": 25.0, "target": 0.0},
-        "cpu": {"actual": 40.0},
-    }
-
-    with patch(
-        "modules.temperature.router.get_machine_stat",
-        return_value=stat,
-    ) as get_stat:
-        resp = client.get("/api/v1/modules/temperature/sensors")
-
-    assert resp.status_code == 200
-    # The factory must have been called to fetch the stat object.
-    get_stat.assert_called_once_with()
-    # ``poll()`` must be invoked on the stat object before the
-    # temperatures are read.
-    stat.poll.assert_called_once_with()
-
-
-def test_get_sensors_response_matches_sensors_response_schema():
-    """The ``GET /sensors`` response must match the
-    :class:`SensorsResponse` schema — a top-level ``sensors`` dict
-    whose values are themselves plain ``dict`` (not MagicMock /
-    namespace objects) so Pydantic can serialise them in a
-    deterministic shape (issue #43 § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    stat = MagicMock()
-    stat.temperatures = {
-        "extruder": {"actual": 50.0, "target": 60.0},
-        "bed": {"actual": 25.0, "target": 0.0},
-        "cpu": {"actual": 40.0},
-    }
-
-    with patch(
-        "modules.temperature.router.get_machine_stat",
-        return_value=stat,
-    ):
-        resp = client.get("/api/v1/modules/temperature/sensors")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    # Top-level shape.
-    assert set(body.keys()) == {"sensors"}
-    sensors = body["sensors"]
-    # The mock injected three sensors — they must all be present.
-    assert set(sensors.keys()) == {"extruder", "bed", "cpu"}
-    # Each value must be a plain dict with the documented keys.
-    for sensor_dict in sensors.values():
-        assert isinstance(sensor_dict, dict)
-        assert "actual" in sensor_dict
-    # And the actual values must round-trip via the standard JSON
-    # number type.
-    assert sensors["extruder"]["actual"] == 50.0
-    assert sensors["extruder"]["target"] == 60.0
-    assert sensors["cpu"] == {"actual": 40.0}
-
-
-def test_get_sensors_response_dicts_are_plain_dicts_not_mock_objects():
-    """The router must coerce each sensor entry to a plain ``dict``
-    before constructing the response so Pydantic serialises it
-    consistently — even if the hardware layer returned a
-    ``MagicMock`` (issue #43 § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    # Build a stat whose temperatures contain a ``MagicMock`` value
-    # rather than a plain dict. The router must wrap each entry in
-    # ``dict(...)`` so the response is JSON-serialisable.
-    inner = MagicMock()
-    # ``dict()`` over a MagicMock would iterate its attributes and
-    # build a dict-of-MagicMocks; the resulting JSON is a plain
-    # object, which is what we want to verify.
-    stat = MagicMock()
-    stat.temperatures = {"extruder": inner}
-
-    with patch(
-        "modules.temperature.router.get_machine_stat",
-        return_value=stat,
-    ):
-        resp = client.get("/api/v1/modules/temperature/sensors")
-
-    assert resp.status_code == 200
-    sensors = resp.json()["sensors"]
-    # The outer container is a plain dict.
-    assert isinstance(sensors, dict)
-    # The inner container is also a plain dict — not a MagicMock.
-    assert isinstance(sensors["extruder"], dict)
-    # And the response is serialisable: it round-trips through
-    # ``json.dumps`` without raising.
-    import json
-
-    json.dumps(sensors)
-
-
-def test_get_sensors_handles_empty_temperatures():
-    """An empty ``temperatures`` mapping must yield ``{"sensors": {}}``
-    rather than a 500.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    stat = MagicMock()
-    stat.temperatures = {}
-
-    with patch(
-        "modules.temperature.router.get_machine_stat",
-        return_value=stat,
-    ):
-        resp = client.get("/api/v1/modules/temperature/sensors")
-
-    assert resp.status_code == 200
-    assert resp.json() == {"sensors": {}}
-
-
-def test_get_sensors_tolerates_missing_temperatures_attribute():
-    """Some stat implementations may not expose ``temperatures`` at
-    all. The router must treat the missing attribute as an empty
-    dict rather than raising ``AttributeError``.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    # ``spec=['poll']`` constrains the mock to expose only ``poll``,
-    # so accessing ``stat.temperatures`` raises ``AttributeError``
-    # and ``getattr(stat, "temperatures", None)`` falls back to
-    # ``None`` (then ``or {}`` → empty dict).
-    stat = MagicMock(spec=["poll"])
-
-    with patch(
-        "modules.temperature.router.get_machine_stat",
-        return_value=stat,
-    ):
-        resp = client.get("/api/v1/modules/temperature/sensors")
-
-    assert resp.status_code == 200
-    assert resp.json() == {"sensors": {}}
 
 
 # ---------------------------------------------------------------------------

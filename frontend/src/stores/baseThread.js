@@ -21,6 +21,55 @@
 // The store exposes a manual ``refresh()`` action so a future
 // "force update" button (or a settings PUT) can trigger an
 // out-of-band poll without waiting for the next interval.
+//
+// ───────────────────────────────────────────────────────────────────
+// USAGE
+// ───────────────────────────────────────────────────────────────────
+//
+// Boot the store ONCE at app mount, then read from any consumer:
+//
+//   // frontend/src/App.vue (script setup, top level)
+//   import { useBaseThreadStore } from './stores/baseThread'
+//   useBaseThreadStore().start()       // idempotent — safe to call
+//                                      // from hot-reload boundaries
+//
+//   // any consumer module
+//   import { useBaseThreadStore } from '../../stores/baseThread.js'
+//   const baseThread = useBaseThreadStore()
+//   const { progress, sensors, tools } = storeToRefs(baseThread)
+//
+//   // out-of-band refresh (e.g. after a settings PUT)
+//   await baseThread.refresh()
+//
+// Adding a new slow stream (e.g. ``fans``):
+//
+//   1. Add a top-level field to the backend
+//      ``BaseThreadSnapshotResponse`` Pydantic model in
+//      ``backend/routers/base_thread.py`` and populate it in
+//      ``get_base_thread_snapshot()``.
+//   2. ``npm run generate-api`` to regenerate the TypeScript client.
+//   3. Add a ref to ``state`` here and a defensive write inside
+//      ``refresh()`` (mirror the ``sensors`` / ``tools`` block).
+//   4. Update consumers — no new timer, no new endpoint.
+//
+// ───────────────────────────────────────────────────────────────────
+// GOTCHAS (see ``.agent/context/LESSONS_LEARNED.md`` § 2.5)
+// ───────────────────────────────────────────────────────────────────
+//
+// * ``_pollHandle`` is a non-state property on the Pinia store
+//   instance — it starts as ``undefined``. The ``start`` / ``stop``
+//   gates must use a truthy check (``if (this._pollHandle)``), not
+//   a strict-null check (``if (this._pollHandle !== null)``), or
+//   the first ``start()`` call returns early and the 1 Hz poll
+//   never begins.
+// * Consumers in sibling modules must watch with ``deep: true`` and
+//   pull the current value synchronously at setup time. Pinia
+//   OPTIONS-API's top-level reassignment does not always
+//   rebroadcast across module boundaries via the proxy.
+// * The WebSocket telemetry (servo thread) deliberately does NOT
+//   carry temperature sensors, tool list, or program progress —
+//   those moved to this base-thread snapshot. Do not add them back
+//   to ``/ws/telemetry``.
 import { defineStore } from "pinia";
 import { BaseThreadService } from "../../generated/api/index.ts";
 

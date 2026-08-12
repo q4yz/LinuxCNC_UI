@@ -51,7 +51,8 @@ def test_tools_module_boots_and_registers_router(tmp_data_root, clean_env):
 def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
     """The legacy flat-file ``POST /api/v1/machine/tools`` shape is
     not present on the new module router — Issue #64 ships the
-    module router only.
+    module router only. The historical ``GET /tools`` listing
+    endpoint was superseded by the base-thread snapshot.
     """
     from modules.tools.module import setup
     from modules.tools.router import router as tools_router
@@ -63,10 +64,10 @@ def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
     paths = {route.path for route in tools_router.routes}
     assert "/spindle" in paths
     assert "/extruder" in paths
-    # New operator-facing endpoints landed with the dynamic-config
-    # pass: ``GET /tools`` (list) + ``POST /tools/{id}/target``
-    # (heating-tool target). Both must be registered.
-    assert "/tools" in paths
+    # ``POST /tools/{id}/target`` is the only remaining tool
+    # endpoint on this router; ``GET /tools`` was retired in
+    # favour of the base-thread snapshot.
+    assert "/tools" not in paths
     assert "/tools/{tool_id}/target" in paths
     # No legacy prefix.
     assert "/api/v1/machine/tools" not in paths
@@ -264,148 +265,10 @@ def _write_hardware_json(tmp_path, payload):
     return active_dir
 
 
-def test_get_tools_returns_empty_when_no_hardware_json(
-    tmp_data_root, clean_env, monkeypatch, tmp_path
-):
-    """``GET /tools`` returns ``{ tools: [] }`` with 200 when no
-    ``hardware.json`` is present — mirrors the temperature module's
-    empty-sensor behaviour so the ToolPanel renders the "No tools
-    configured yet" placeholder instead of failing to mount.
-    """
-    import json
-    from pathlib import Path
-
-    from services import tools_loader
-
-    # Point the loader at a directory with no hardware.json so
-    # the router sees the missing-file case.
-    empty = tmp_path / "empty_active"
-    empty.mkdir()
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", empty)
-    # ``tools_loader`` resolves via ``Path(__file__).parents[2]``;
-    # patch the helper's ``_PROJECT_ROOT`` so the resolved path
-    # has no hardware.json to read.
-    monkeypatch.setattr(
-        tools_loader, "_PROJECT_ROOT", tmp_path / "no_repo"
-    )
-
-    app = _build_app(tmp_data_root)
-    client = TestClient(app)
-    resp = client.get("/api/v1/modules/tools/tools")
-    assert resp.status_code == 200
-    assert resp.json() == {"tools": []}
-
-
-def test_get_tools_returns_hardware_json_records(
-    tmp_data_root, clean_env, monkeypatch, tmp_path
-):
-    """``GET /tools`` returns the ``tools[]`` array from the active
-    ``hardware.json`` overlaid with runtime state. Extruder +
-    heated_bed surfaces ``actual`` / ``target`` from the mock's
-    sensor dict; spindle_digital surfaces ``actual_rpm`` from
-    ``spindle_actual``; spindle_analog passes through unchanged.
-    """
-    from hardware import linuxcnc_mock
-    from services import tools_loader
-
-    hardware_payload = {
-        "version": "2.0",
-        "machine": "test",
-        "source": "KlipperToLinuxCNCCompiler",
-        "kinematics": "cartesian",
-        "hal_type": "remora",
-        "axes": [],
-        "steppers": [],
-        "drivers": [],
-        "endstops": [],
-        "tools": [
-            {
-                "id": "heater_extruder",
-                "type": "extruder",
-                "sensor": "extruder",
-                "heater_pin": "PE3",
-                "control": "pid",
-                "min_temp": 0,
-                "max_temp": 250,
-            },
-            {
-                "id": "heater_bed",
-                "type": "heated_bed",
-                "sensor": "bed",
-                "heater_pin": "PB7",
-                "control": "watermark",
-                "min_temp": 0,
-                "max_temp": 130,
-            },
-            {
-                "id": "spindle_digital",
-                "type": "spindle_digital",
-                "min_rpm": 5000,
-                "max_rpm": 24000,
-                "signal_at_speed": "at-speed1",
-            },
-            {
-                "id": "spindle_analog",
-                "type": "spindle_analog",
-                "pwm_pin": "PA6",
-                "enable_pin": "PA7",
-                "min_rpm": 0,
-                "max_rpm": 24000,
-            },
-        ],
-        "temperature_sensors": [
-            {"id": "extruder", "pin": "PA1"},
-            {"id": "bed", "pin": "PA0"},
-        ],
-        "fans": [],
-    }
-    _write_hardware_json(tmp_path, hardware_payload)
-    # The mock's seeder reads via its own path resolution — patch
-    # its PROJECT_ROOT too so reseed_from_hardware_json() picks up
-    # the fixture above.
-    monkeypatch.setattr(
-        "hardware.linuxcnc_mock._PROJECT_ROOT", tmp_path
-    )
-    linuxcnc_mock.reseed_from_hardware_json()
-    # Patch the tools loader's project root as well so the
-    # router reads from the fixture.
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", tmp_path)
-
-    # Mutate the mock's sensor / spindle state so the overlay
-    # surfaces non-default values (proves the runtime read path,
-    # not the default-zero fallback).
-    with linuxcnc_mock._machine_state.lock:
-        linuxcnc_mock._machine_state.temperatures["extruder"] = {
-            "actual": 198.5, "target": 210.0,
-        }
-        linuxcnc_mock._machine_state.temperatures["bed"] = {
-            "actual": 60.0, "target": 65.0,
-        }
-        linuxcnc_mock._machine_state.spindle_actual["spindle_digital"] = {
-            "actual": 11800,
-        }
-
-    app = _build_app(tmp_data_root)
-    client = TestClient(app)
-    resp = client.get("/api/v1/modules/tools/tools")
-    assert resp.status_code == 200
-    tools_by_id = {t["id"]: t for t in resp.json()["tools"]}
-    assert set(tools_by_id.keys()) == {
-        "heater_extruder", "heater_bed",
-        "spindle_digital", "spindle_analog",
-    }
-    # Heating tool runtime overlay.
-    assert tools_by_id["heater_extruder"]["actual"] == 198.5
-    assert tools_by_id["heater_extruder"]["target"] == 210.0
-    assert tools_by_id["heater_bed"]["actual"] == 60.0
-    assert tools_by_id["heater_bed"]["target"] == 65.0
-    # Digital spindle runtime overlay.
-    assert tools_by_id["spindle_digital"]["actual_rpm"] == 11800
-    # Analog spindle: no runtime overlay — ``actual_rpm`` is absent.
-    assert "actual_rpm" not in tools_by_id["spindle_analog"]
-    # Static fields pass through unchanged.
-    assert tools_by_id["spindle_digital"]["min_rpm"] == 5000
-    assert tools_by_id["spindle_digital"]["max_rpm"] == 24000
+# The historical ``GET /tools`` listing endpoint was superseded by
+# the base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
+# which is now the only public surface for the tool list. The legacy
+# GET tests moved to ``test_base_thread_snapshot.py``.
 
 
 # ---------------------------------------------------------------------- #
@@ -656,8 +519,12 @@ def test_get_router_returns_apirouter(tmp_data_root, clean_env):
     instance = ToolsModule()
     router = instance.get_router()
     assert isinstance(router, APIRouter)
+    # The historical ``GET /tools`` listing endpoint was superseded
+    # by the base-thread snapshot, which is now the only public
+    # surface for the tool list. Only the MDI and target-setter
+    # routes remain on this router.
     paths = {route.path for route in router.routes}
     assert "/spindle" in paths
     assert "/extruder" in paths
-    assert "/tools" in paths
+    assert "/tools" not in paths
     assert "/tools/{tool_id}/target" in paths

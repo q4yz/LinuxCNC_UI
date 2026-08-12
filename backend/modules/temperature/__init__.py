@@ -5,13 +5,18 @@ can discover this module via ``backend.modules.temperature.setup``.
 
 The temperature module owns:
 
-* ``GET /api/v1/modules/temperature/sensors`` — return the current
-  sensors dictionary (read-through of the hardware layer).
 * ``POST /api/v1/modules/temperature/sensors/{name}/target`` —
   dispatch a ``set_temperature`` command to the hardware layer.
 * Four canonical settings endpoints mounted by the registry under
   ``/api/v1/modules/temperature/settings`` (see
   :class:`core.module_registry.ModuleRegistry._build_default_settings_router`).
+
+The historical ``GET /sensors`` listing endpoint was superseded
+by the base-thread snapshot
+(``GET /api/v1/base-thread/snapshot``) which now carries the
+sensor dict alongside progress and tools in a single 1 Hz
+round-trip. Sensor reads now go through
+:func:`backend.modules.temperature.router._collect_sensors`.
 
 Mock simulation (``_temp_simulation_loop``) deliberately stays in
 :mod:`hardware.linuxcnc_mock` per the audit's recommendation: the

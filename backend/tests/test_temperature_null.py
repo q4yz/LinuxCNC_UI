@@ -71,9 +71,13 @@ def test_temperature_module_not_imported_yields_empty_mount(
     ]
     assert summary, "expected boot summary log line"
     assert "temperature" not in reg.modules
-    # The endpoint must not be registered.
+    # The surviving ``/sensors/{name}/target`` route must not be
+    # registered when the module is absent.
     client = TestClient(app)
-    resp = client.get("/api/v1/modules/temperature/sensors")
+    resp = client.post(
+        "/api/v1/modules/temperature/sensors/extruder/target",
+        json={"sensor_name": "extruder", "target": 50.0},
+    )
     assert resp.status_code == 404
 
 

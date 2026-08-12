@@ -84,6 +84,144 @@ cycle, so the chart history survives.
 
 ## 2. Frontend discipline
 
+### 2.7 Never hand-roll HTTP calls when a generated OpenAPI service exists
+
+**Symptom.** The tools store initially shipped with a local
+`postJson` helper plus raw `fetch()` calls for every backend route
+(`GET /tools`, `POST /spindle`, `POST /extruder`,
+`POST /tools/{id}/target`). Same shape was duplicated in
+`TemperaturePanel.vue` for the per-sensor target endpoint. The two
+surfaces drift independently — a backend field rename silently
+breaks the hand-written `fetch` while the generated client tracks
+it via `npm run generate-api`.
+
+**Root cause.** The generated `ModulesToolsService` (and its
+peers under `frontend/generated/api/services/`) sits next to the
+store, but the store's author reached for the familiar `fetch`
+shape because every other module file already had a similar
+helper. There was no tripwire so the regression stayed invisible.
+
+**Fix.** Every backend module endpoint has a generated
+counterpart under
+`frontend/generated/api/services/Modules<Name>Service.ts`. Module
+stores import the service and call its static methods; errors
+flow through `describeError` from `core/error-format.js` so the
+console store sees the same envelope shape as every other
+module. The temperature module is mid-migration —
+`TemperaturePanel.vue:37` still has raw `fetch` for the per-sensor
+target endpoint; the store layer already consumes via
+`useBaseThreadStore()`. Same lesson applies there.
+
+**One exception.** `frontend/src/core/modules/settings.js` is
+deliberately hand-rolled `fetch` (per its own header comment § 2)
+so module stores keep working when `generated/api/` is stale —
+e.g. a fresh checkout before `npm run generate-api` has run. The
+exception is the **settings** endpoint, not the data endpoints.
+
+**Tripwire.** No `fetch(...)` call in a module store file. The
+template is `test-tools-module.mjs`:
+- `assert.doesNotMatch(text, /\bfetch\s*\(/);`
+- `assert.doesNotMatch(text, /\bpostJson\s*\(/);`
+- `assert.doesNotMatch(text, /\/api\/v1\/modules\/<id>\//);`
+- `assert.match(text, /import\s+\{[^}]*Modules<Name>Service[^}]*\}\s+from\s+["'][^"']*generated\/api\/services\/Modules<Name>Service/);`
+
+Add the same guard to every module's `test-<id>-module.mjs` so a
+future regression is caught before merge.
+
+### 2.5 Strict-null idempotency gate silently disables the poll
+
+**Symptom.** The `baseThread` store's `start()` was called at app
+mount from `App.vue`, but the 1 Hz REST poll never fired. The
+WebSocket telemetry worked, but the temperature sensor dict and
+tool list stayed empty indefinitely. No error was logged.
+
+**Root cause.** The action used a strict-null check on its
+non-state handle:
+
+```js
+start() {
+  if (this._pollHandle !== null) return;   // BUG
+  this._pollHandle = setInterval(...);
+}
+```
+
+`_pollHandle` is a non-state property on the Pinia store
+instance, so it starts as `undefined`. The expression
+`undefined !== null` evaluates to `true`, and the function
+returned early on the first call — never scheduling the
+`setInterval`. The companion test asserted the broken check
+(`/if\s*\(\s*this\._pollHandle\s*!==\s*null\s*\)\s*return/`) so it
+"protected" the bug instead of catching it.
+
+**Fix.** Use a truthy check that catches both `undefined` and
+`null`:
+
+```js
+start() {
+  if (this._pollHandle) return;        // catches undefined AND null
+  this._pollHandle = setInterval(...);
+}
+stop() {
+  if (!this._pollHandle) return;       // symmetric
+  clearInterval(this._pollHandle);
+  this._pollHandle = null;
+}
+```
+
+The companion test was updated to match the truthy check AND
+gained an `assert.doesNotMatch` that explicitly forbids the
+broken strict-null pattern, so the regression cannot be
+reintroduced silently.
+
+**Tripwire.** Any idempotency gate on a non-state property must
+use a truthy check (`if (this.handle)`) or the loose-null check
+(`if (this.handle != null)`). Strict-null (`!== null` / `=== null`)
+silently breaks on the first call when the property has never
+been set.
+
+**See also.** `frontend/src/stores/baseThread.js` header comment
+§ GOTCHAS, `.agent/STATE.md` § 12.6.
+
+### 2.6 Cross-module reactivity needs `deep: true` and a sync ingest
+
+**Symptom.** A consumer module's `watch(() => baseThread.sensors, ...)`
+never fired when the baseThread store's `refresh()` action updated
+the `sensors` ref via `this.sensors = next`. The UI rendered the
+empty state indefinitely.
+
+**Root cause.** Pinia OPTIONS-API state is wrapped in `reactive()`
+and exposed via the store proxy. Top-level reassignment
+(`this.sensors = next`) inside an action triggers reactivity for
+the *owning* store, but the rebroadcast through `storeToRefs` and
+across module boundaries intermittently misses the trigger. The
+default `deep: false` watcher only fires on reference change, and
+the timing of the proxy read in a sibling module can see the
+new value already without firing the side effect.
+
+**Fix.** Two changes:
+
+1. Pull the current value synchronously at setup time so the
+   panel renders populated on the first frame, regardless of
+   whether the first 1 Hz tick has landed:
+
+```js
+const baseThread = useBaseThreadStore();
+ingest(baseThread.sensors);            // sync initial pull
+stopSensorWatch = watch(
+  () => baseThread.sensors,
+  (next) => { if (next) ingest(next); },
+  { immediate: true, deep: true },     // deep: true for cross-module
+);
+```
+
+2. Always pass `deep: true` for any cross-module watcher over a
+   baseThread snapshot field. The payload is small (a handful of
+   sensor / tool rows) so the deep-traversal cost is negligible.
+
+**See also.** `frontend/src/modules/temperature/store.js`,
+`frontend/src/modules/tools/toolStore.js`, `frontend/src/stores/baseThread.js`
+header comment § GOTCHAS.
+
 ### 2.1 No hardcoded G-code in components
 
 **Symptom.** Reviewers found `M3 S{speed}` and `G10 L20 P0`

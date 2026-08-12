@@ -12,6 +12,108 @@ the current sections.
 
 ---
 
+## 12. Base-Thread Snapshot Store (servo ↔ base-thread split)
+
+The dashboard reads two distinct transport streams from the backend:
+
+* **Servo thread** — `GET /ws/telemetry`, 10 Hz WebSocket. Carries
+  the time-critical fields the DRO / Estop / status panels need on
+  every frame (`task_state`, `estop`, `position`, `interp_state`,
+  `g5x_index`, `state`, `file`, `homed`, `errors`). Owned by the
+  machine module's WebSocket handler.
+* **Base thread** — `GET /api/v1/base-thread/snapshot`, 1 Hz REST
+  round-trip. Carries the slow streams the dashboard polls anyway:
+  `progress` (G-code line counters), `sensors` (temperature), `tools`
+  (operator-facing tool list), `timestamp` (ISO-8601 UTC).
+
+The base-thread store lives at
+`frontend/src/stores/baseThread.js`. It is a Pinia OPTIONS-API
+store with three top-level refs (`progress`, `sensors`, `tools`)
+and three actions (`refresh`, `start`, `stop`). The full contract
+— including how to boot it, how to consume it, and how to add a
+new stream — is documented in the file's header comment.
+
+### 12.1 Why two transports
+
+The split mirrors the LinuxCNC runtime: the 10 Hz WebSocket is the
+"servo thread" for time-critical panels; the 1 Hz snapshot is the
+"base thread" for bookkeeping. Conflating them either:
+
+1. Saturates NML — every 100 ms stat poll would re-read the full
+   sensor / tool list and clog the status channel.
+2. Wastes bandwidth — the 30 s temperature chart never needs a
+   10 Hz update.
+
+The snapshot endpoint
+(`backend/routers/base_thread.py`) is the single canonical source
+for every slow stream the dashboard cares about. Adding a new
+slow stream is one new top-level field on the response, one new
+ref on the store, and one new consumer — no new endpoint, no new
+timer.
+
+### 12.2 What lives on the WebSocket (servo thread) only
+
+* `task_state`, `estop`, `task_mode`, `state`, `interp_state` —
+  fast-changing task state.
+* `position`, `actual_position`, `relative_position` — DRO axes
+  at 10 Hz so the position display does not jitter.
+* `g5x_index`, `homed`, `file`, `errors` — status / mode / file
+  context.
+
+### 12.3 What lives on the snapshot (base thread) only
+
+* `progress` — G-code `current_line` / `motion_line` / `total_lines`.
+* `sensors` — temperature sensor dict (keyed by sensor name).
+* `tools` — operator-facing tool list with runtime state overlaid.
+* `timestamp` — ISO-8601 UTC, lets the frontend detect a stalled
+  poll.
+
+### 12.4 What was deliberately removed from the WebSocket
+
+The legacy `target_temp` / `actual_temp` fields were dropped from
+the WebSocket payload when the snapshot landed. The mock still
+keeps them on `_machine_state` for simulation-loop bookkeeping,
+but the telemetry surface no longer exposes them. The temperature
+module reads them via the snapshot's `sensors` dict instead.
+
+### 12.5 Adding a new slow stream
+
+```text
+1. backend/routers/base_thread.py
+   - Add a top-level field to ``BaseThreadSnapshotResponse``.
+   - Populate it in ``get_base_thread_snapshot()``.
+2. ``npm run generate-api`` (regenerates the TS client).
+3. frontend/src/stores/baseThread.js
+   - Add a ref to ``state``.
+   - Add a defensive write inside ``refresh()`` mirroring the
+     existing ``sensors`` / ``tools`` blocks.
+4. Consumer module
+   - ``const baseThread = useBaseThreadStore()``
+   - ``const { newStream } = storeToRefs(baseThread)``
+   - Pull the current value synchronously at setup time
+     (``newStream.value = baseThread.newStream``) so the panel
+     renders populated on the first frame.
+   - Watch with ``deep: true`` so cross-module reactivity
+     propagates the top-level reassignment.
+```
+
+### 12.6 Gotchas (also see `LESSONS_LEARNED.md` § 2.5)
+
+* `_pollHandle` on the baseThread store is a non-state property
+  on the Pinia store instance — it starts as `undefined`. The
+  `start` / `stop` gates must use a truthy check (`if (this._pollHandle)`),
+  not a strict-null check. A strict-null check returns early on
+  the first call and silently disables the 1 Hz poll.
+* Consumer modules must read the snapshot directly via
+  `storeToRefs(baseThread)` and watch with `deep: true`. The
+  Pinia OPTIONS-API proxy does not always rebroadcast a
+  top-level reassignment across module boundaries.
+* `useBaseThreadStore().start()` is called once from `App.vue`
+  at the top level of `<script setup>`. Do NOT also call it from
+  a module's `onLoad` — that would stack intervals on hot-reload.
+
+---
+
 ## 1. Module Discovery
 
 Modules are discovered via Vite's lazy `import.meta.glob` with

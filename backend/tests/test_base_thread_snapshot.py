@@ -148,26 +148,36 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
 
 
 def test_snapshot_mirrors_individual_endpoints(
-    tmp_data_root, clean_env, monkeypatch
+    tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """End-to-end: load a file, run, and assert the snapshot
     surfaces ``progress.total_lines`` from the cache, ``current_line``
-    advancing, and the same sensor / tool payload the dedicated
-    endpoints return.
+    advancing, the live sensor reading, and the (empty) tool list.
     """
     _reset_mock_program_state()
     _reset_line_count_cache()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
+    # The tools loader reads the active ``hardware.json`` on import.
+    # Patch it to a directory with no tools so the test sees a clean
+    # baseline (the dev environment's real ``hardware.json`` is
+    # ignored). The mock's sensor list is reseeded against the same
+    # empty path so the only sensor is the one we inject below.
+    from services import tools_loader
+
+    empty = tmp_path / "empty_active"
+    empty.mkdir()
+    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", empty)
+    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
+
     app, _ = _base_thread_app(tmp_data_root)
     client = TestClient(app)
 
-    # Seed a sensor and a tool into the mock so the snapshot picks
-    # them up. The mock's stat.temperatures and stat.spindle_actual
-    # are populated by ``_seed_*_from_hardware``; we re-seed here
-    # because the test program root is empty.
-    from hardware import linuxcnc_mock
-
+    # Inject the sensor reading we want to assert on. The mock
+    # re-seeded the dict empty above, so the only key is ours.
     with linuxcnc_mock._machine_state.lock:
         linuxcnc_mock._machine_state.temperatures["extruder"] = {
             "actual": 195.4,
@@ -195,16 +205,20 @@ def test_snapshot_mirrors_individual_endpoints(
     assert body["progress"]["interp_state"] == 2  # INTERP_READING
     assert body["progress"]["file"].endswith("test.gcode")
 
-    # Sensors block — mirrors ``GET /sensors``.
-    sensors_resp = client.get("/api/v1/modules/temperature/sensors").json()
-    assert body["sensors"] == sensors_resp["sensors"]
+    # Sensors block — the snapshot is now the canonical surface for
+    # the sensor dict (the legacy ``GET /sensors`` endpoint was
+    # removed in favour of this snapshot). Assert the inline shape
+    # directly so a regression that breaks either the snapshot or
+    # the underlying ``_collect_sensors`` helper surfaces here.
     assert body["sensors"]["extruder"]["actual"] == pytest.approx(195.4)
+    assert body["sensors"]["extruder"]["target"] == pytest.approx(200.0)
 
-    # Tools block — mirrors ``GET /tools``. Empty because the test
-    # root has no hardware.json, but the field must be present.
+    # Tools block — the snapshot is now the canonical surface for
+    # the tool list. Empty because the test root has no
+    # ``hardware.json``, but the field must be present and
+    # serialise as a JSON array.
     assert isinstance(body["tools"], list)
-    tools_resp = client.get("/api/v1/modules/tools/tools").json()
-    assert body["tools"] == tools_resp["tools"]
+    assert body["tools"] == []
 
     assert "timestamp" in body
 
@@ -260,3 +274,91 @@ def test_snapshot_timestamp_is_iso8601_utc(
     # Format: ``2026-08-12T12:34:56.789012Z``
     assert ts.endswith("Z")
     assert "T" in ts
+
+
+# ---------------------------------------------------------------------- #
+# Tool telemetry overlay                                                   #
+# ---------------------------------------------------------------------- #
+
+
+def _write_v2_hardware_json(tmp_path: Path, payload: dict) -> Path:
+    """Drop a v2-shape ``hardware.json`` into ``tmp_path`` and
+    return the directory the loader reads from."""
+    import json
+
+    target = tmp_path / "machine_config" / "active"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "hardware.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_snapshot_overlays_spindle_digital_runtime_state(
+    tmp_data_root, clean_env, monkeypatch, tmp_path
+):
+    """The snapshot's ``tools`` block must overlay every operator-
+    facing spindle telemetry field from the mock's
+    ``spindle_actual`` dict: ``actual_rpm``, ``is_connected``,
+    ``error_count``. The ToolPanel's spindle card reads all three
+    — a regression that drops any of them shows up as a blank
+    tile on the dashboard.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+    _isolated_program_root(tmp_data_root, monkeypatch)
+
+    from hardware import linuxcnc_mock
+    from services import tools_loader
+
+    # Drop a hardware.json with a single spindle_digital tool so
+    # the snapshot surfaces exactly one row. Re-point both the
+    # mock's seeder AND the tools loader at ``tmp_path`` so the
+    # fixture is honoured.
+    active_root = _write_v2_hardware_json(tmp_path, {
+        "version": "2.0",
+        "machine": "test",
+        "source": "KlipperToLinuxCNCCompiler",
+        "kinematics": "cartesian",
+        "hal_type": "remora",
+        "axes": [],
+        "steppers": [],
+        "drivers": [],
+        "endstops": [],
+        "tools": [
+            {
+                "id": "spindle_digital",
+                "type": "spindle_digital",
+                "min_rpm": 5000,
+                "max_rpm": 24000,
+            },
+        ],
+        "temperature_sensors": [],
+        "fans": [],
+    })
+    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", active_root)
+    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", active_root)
+    linuxcnc_mock.reseed_from_hardware_json()
+
+    # Inject non-default telemetry so the assertion proves the
+    # read-through path, not the default-zero fallback.
+    with linuxcnc_mock._machine_state.lock:
+        linuxcnc_mock._machine_state.spindle_actual["spindle_digital"] = {
+            "actual": 11800,
+            "is_connected": True,
+            "error_count": 3,
+        }
+
+    app, _ = _base_thread_app(tmp_data_root)
+    client = TestClient(app)
+    body = client.get("/api/v1/base-thread/snapshot").json()
+
+    assert len(body["tools"]) == 1
+    tool = body["tools"][0]
+    assert tool["id"] == "spindle_digital"
+    assert tool["actual_rpm"] == 11800
+    assert tool["is_connected"] is True
+    assert tool["error_count"] == 3
+    # Static fields pass through unchanged.
+    assert tool["min_rpm"] == 5000
+    assert tool["max_rpm"] == 24000

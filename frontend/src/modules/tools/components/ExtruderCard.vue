@@ -6,6 +6,14 @@
 // ``EXTRUDER_DISTANCE_OPTIONS`` and the ``distanceFor`` clamp that
 // used to live in the panel itself — they were extracted here when
 // the per-type markup was split into focused cards.
+//
+// Local ``setSpeed`` / ``distanceIndex`` ref pattern — see
+// SpindleCard.vue for the rationale (the base-thread snapshot
+// replaces ``props.tool`` every 1 s, so binding ``v-model`` to
+// ``props.tool.set_speed`` would wipe the typed value within a
+// second).
+
+import { ref, watch } from "vue";
 
 import { useToolStore } from "../toolStore.js";
 import HeaterControls from "./HeaterControls.vue";
@@ -20,21 +28,40 @@ const toolStore = useToolStore();
 // Index 0 = 0.1 mm, index 4 = 100 mm.
 const EXTRUDER_DISTANCE_OPTIONS = Object.freeze([0.1, 1, 10, 50, 100]);
 
-function distanceFor(tool) {
-  // Clamp the index so a stale value cannot throw on access.
-  const idx = Math.min(
-    Math.max(Number(tool.distance_index) || 0, 0),
-    EXTRUDER_DISTANCE_OPTIONS.length - 1,
-  );
-  return EXTRUDER_DISTANCE_OPTIONS[idx];
+// Local working state — seeded from the snapshot on first arrival
+// and re-seeded when the operator switches chips. ``distanceIndex
+// = 2`` (10 mm) is the historical default the dashboard used
+// before the per-card extraction.
+const setSpeed = ref(0);
+const distanceIndex = ref(2);
+
+function seedFromTool() {
+  const t = props.tool || {};
+  setSpeed.value =
+    typeof t.set_speed === "number" && t.set_speed > 0
+      ? t.set_speed
+      : 300;
+  distanceIndex.value =
+    typeof t.distance_index === "number"
+      ? Math.min(
+          Math.max(Number(t.distance_index) || 0, 0),
+          EXTRUDER_DISTANCE_OPTIONS.length - 1,
+        )
+      : 2;
+}
+seedFromTool();
+watch(() => props.tool?.id, seedFromTool);
+
+function distanceFor() {
+  return EXTRUDER_DISTANCE_OPTIONS[distanceIndex.value];
 }
 
 function handleExtruder(action) {
   toolStore.sendExtruderCommand(
     props.tool.id,
     action,
-    distanceFor(props.tool),
-    props.tool.set_speed,
+    distanceFor(),
+    setSpeed.value,
   );
 }
 </script>
@@ -49,7 +76,7 @@ function handleExtruder(action) {
           Speed (mm/min)
         </label>
         <input
-          v-model.number="tool.set_speed"
+          v-model.number="setSpeed"
           type="number"
           class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
         >
@@ -76,11 +103,11 @@ function handleExtruder(action) {
       <div class="flex justify-between text-xs text-gray-400 mb-2">
         <span>Distance (mm)</span>
         <span class="font-mono text-blue-400 font-bold">
-          {{ distanceFor(tool) }} mm
+          {{ distanceFor() }} mm
         </span>
       </div>
       <input
-        v-model.number="tool.distance_index"
+        v-model.number="distanceIndex"
         type="range"
         min="0"
         :max="EXTRUDER_DISTANCE_OPTIONS.length - 1"

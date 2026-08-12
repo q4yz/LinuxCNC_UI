@@ -45,7 +45,6 @@ from services import (
     clear_line_count_cache,
     count_lines,
     get_program_service,
-    lookup_line_count,
     raise_bad_request,
     raise_conflict,
     raise_not_found,
@@ -377,67 +376,23 @@ def load_program(payload: LoadProgramRequest) -> StatusResponse:
     # is in sync with ``program_open`` so the loop returns
     # immediately; real LinuxCNC needs a few NML ticks.
     _await_load(target)
-    # Cache the line count so ``GET /progress`` (and the base-thread
-    # snapshot) can return a real denominator. Real LinuxCNC never
-    # reports ``total_lines``; the mock stamps a 1000-line placeholder
-    # but its file pointer is the absolute path, so caching by path
-    # keeps both drivers consistent. We cache **after** the load
-    # commits so a slow interpreter cannot cache a total for a file
-    # the interpreter hasn't actually loaded yet.
+    # Cache the line count so the base-thread snapshot can return
+    # a real denominator. Real LinuxCNC never reports ``total_lines``;
+    # the mock stamps a 1000-line placeholder but its file pointer
+    # is the absolute path, so caching by path keeps both drivers
+    # consistent. We cache **after** the load commits so a slow
+    # interpreter cannot cache a total for a file the interpreter
+    # hasn't actually loaded yet.
     register_line_count(str(target), count_lines(str(target)))
     return StatusResponse(status="success")
 
 
-@router.get(
-    "/progress",
-    summary="Get Program Progress",
-    description=(
-        "Return a 1 Hz-friendly snapshot of the active program's "
-        "progress: ``current_line`` and ``motion_line`` from "
-        "``linuxcnc.stat``, plus the cached ``total_lines`` for the "
-        "loaded file. Cheap enough for the dashboard to poll once a "
-        "second without saturating NML."
-    ),
-    operation_id="getProgramProgress",
-    response_model=ProgramProgressResponse,
-)
-def get_program_progress() -> ProgramProgressResponse:
-    """Return the active program's progress snapshot.
-
-    Reads from the cached NML stat channel so the response stays
-    consistent with ``stat.poll()`` consumed elsewhere. ``current_line``
-    and ``motion_line`` are read with ``getattr`` defaults because
-    older mock revisions did not populate ``motion_line`` and a
-    fresh connection can briefly return ``None`` for either field
-    before the first poll lands.
-
-    ``total_lines`` comes from :data:`_TOTAL_LINES_CACHE` keyed by the
-    interpreter's ``stat.file``. The cache is populated by ``POST /load``
-    and cleared by ``POST /unload`` so a stale total can never leak
-    across runs.
-    """
-    stat = get_machine_stat()
-    file_path = ""
-    current_line = 0
-    motion_line = 0
-    interp_state = int(getattr(linuxcnc, "INTERP_IDLE", 1))
-    if stat is not None:
-        poll = getattr(stat, "poll", None)
-        if callable(poll):
-            poll()
-        file_path = str(getattr(stat, "file", "") or "")
-        current_line = int(getattr(stat, "current_line", 0) or 0)
-        motion_line = int(getattr(stat, "motion_line", 0) or 0)
-        interp_state = int(getattr(stat, "interp_state", interp_state) or interp_state)
-
-    total_lines = lookup_line_count(file_path)
-    return ProgramProgressResponse(
-        current_line=max(0, current_line),
-        motion_line=max(0, motion_line),
-        total_lines=max(0, total_lines),
-        file=file_path,
-        interp_state=interp_state,
-    )
+# ``ProgramProgressResponse`` is the inner type consumed by the
+# base-thread snapshot (``routers/base_thread.py``); the public
+# module previously exposed a standalone ``GET /progress`` endpoint
+# which is now superseded by that snapshot. The helper that builds
+# the inner payload lives in
+# :func:`backend.routers.base_thread.get_base_thread_snapshot`.
 
 
 __all__ = [
@@ -449,7 +404,6 @@ __all__ = [
     "resume_program",
     "trigger_parser",
     "load_program",
-    "get_program_progress",
     "StatusResponse",
     "ProgramProgressResponse",
     "ParseResponse",

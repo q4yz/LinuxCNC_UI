@@ -136,11 +136,14 @@ def _seed_spindle_actual_from_hardware():
 
     Only ``spindle_digital`` tools contribute — analog spindles
     have no RPM feedback path so they're absent from the runtime
-    dict. Each seeded entry starts at ``0`` RPM; a future
-    telemetry source (HAL pin / RS-485 polling) is expected to
-    overwrite this on every tick. The temperature-module analogue
-    already runs a simulation loop; the spindle module does not
-    yet — operators currently see ``0`` until telemetry lands.
+    dict. Each seeded entry carries the full operator-facing
+    telemetry shape (``actual``, ``is_connected``, ``error_count``)
+    so the ToolPanel's spindle card has every field rendered from
+    day one. Defaults: ``actual = 0``, ``is_connected = False``,
+    ``error_count = 0``. A future telemetry source (HAL pin /
+    RS-485 polling) is expected to overwrite these on every tick;
+    no simulation loop runs today so operators see the defaults
+    until telemetry lands.
     """
     payload = _load_hardware_payload()
     with _machine_state.lock:
@@ -157,7 +160,11 @@ def _seed_spindle_actual_from_hardware():
                 continue
             tool_id = tool.get("id")
             if isinstance(tool_id, str) and tool_id:
-                _machine_state.spindle_actual[tool_id] = {"actual": 0}
+                _machine_state.spindle_actual[tool_id] = {
+                    "actual": 0,
+                    "is_connected": False,
+                    "error_count": 0,
+                }
 
 
 class SharedMachineState:

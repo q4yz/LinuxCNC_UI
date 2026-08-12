@@ -1,9 +1,11 @@
 <script setup>
 // Tools panel. Header shows one chip per tool reported by the
 // backend; the body renders a single tool at a time, dispatched by
-// ``selectedTool.type``. The tool list is loaded from the backend
-// via ``toolStore.start()`` — there is no hard-coded seed list
-// anymore (the loader mirrors the temperature module).
+// ``selectedTool.type``. The tool list is read from the shared
+// base-thread snapshot (``stores/baseThread.js``) — the base-thread
+// store owns the 1 Hz polling loop, booted once at app mount, so
+// the panel just consumes the snapshot and never starts / stops
+// its own timer.
 //
 // The per-type bodies live in sibling components:
 //   * ``SpindleCard.vue``        — digital spindle with RPM feedback.
@@ -11,7 +13,6 @@
 //   * ``HeatedBedCard.vue``      — heated bed (heat only).
 //   * ``ExtruderCard.vue``       — extruder (heat + motion).
 
-import { onBeforeUnmount, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 
 import AnalogSpindleCard from "./AnalogSpindleCard.vue";
@@ -22,16 +23,6 @@ import { useToolStore } from "../toolStore.js";
 
 const toolStore = useToolStore();
 const { tools, selectedToolId, selectedTool } = storeToRefs(toolStore);
-
-onMounted(() => {
-  // Kick off the polling loop. ``stop()`` is wired below so the
-  // interval cannot leak across navigation.
-  toolStore.start();
-});
-
-onBeforeUnmount(() => {
-  toolStore.stop();
-});
 </script>
 
 <template>

@@ -1,105 +1,71 @@
-// Tools module Pinia store. Owns the backend-driven tool list and
-// the single-tool selection state. Reads tools from the shared
-// base-thread snapshot (``stores/baseThread.js``) so the dashboard
-// only issues one HTTP request per second for every slow stream.
-// Mirrors the temperature module's pattern — the canonical
-// ``useBaseThreadStore()`` is the only source of truth; the
-// per-module store here is a renderer that subscribes via ``watch``.
+// Tools module Pinia store. Consumes the operator-facing tool list
+// from the shared base-thread snapshot
+// (``stores/baseThread.js``) — the base-thread store owns the 1 Hz
+// REST round-trip so the dashboard only issues one HTTP request per
+// second for every slow stream (program progress, temperature
+// sensors, tool list). All write actions (spindle / extruder /
+// tool-target) go through the OpenAPI-generated
+// ``ModulesToolsService`` client; the store never hand-rolls
+// ``fetch`` calls. Errors are routed through
+// :func:`core/error-format.js` ``describeError`` so the console
+// store sees the same envelope shape as every other module.
 //
-// The list used to be loaded from ``GET /api/v1/modules/tools/tools``
-// and pushed via the ``state.tools`` event-bus topic; both paths
-// are gone. The 1 Hz snapshot replaces them.
-//
-// Tool object shape (from hardware.json ``tools[]``):
-//
-//   {
-//     id, name,
-//     type: "extruder" | "spindle_digital" | "spindle_analog"
-//         | "heated_bed" | "laser",
-//     // spindle shared
-//     min_rpm, max_rpm,
-//     // spindle analog only
-//     pwm_pin, enable_pin,
-//     // spindle digital only
-//     signal_*: ...,
-//     // extruder + heated_bed only (heat fields)
-//     sensor, heater_pin, fan, control, min_temp, max_temp,
-//   }
-//
-// Tools with a sensor / heater_pin (extruder + heated_bed) also
-// surface on the temperature chart via the temperature_sensors[] +
-// tools[] cross-reference in hardware.json. The ToolPanel renders
-// one card per tool, dispatched by ``type``.
+// See ``.agent/context/LESSONS_LEARNED.md`` § 2.7 (never hand-roll
+// HTTP when a generated service exists) and § 2.6 (cross-module
+// reactivity needs ``deep: true`` + sync initial pull).
 
 import { defineStore, storeToRefs } from "pinia";
 import { computed, onScopeDispose, ref, watch } from "vue";
 
-import { eventBus } from "../../core/modules/event-bus.js";
-import { useConsoleStore } from "../../stores/console.js";
+import { describeError } from "../../core/error-format.js";
+import { ModulesToolsService } from "../../../generated/api/services/ModulesToolsService";
 import { useBaseThreadStore } from "../../stores/baseThread.js";
+import { useConsoleStore } from "../../stores/console.js";
 import manifest from "./manifest.js";
-
-const TOPIC = "state.tools";
 
 // ``module_`` prefix prevents collisions with legacy top-level
 // stores. See ``.agent/STATE.md`` § 2.
 const STORE_ID = `module_${manifest.id}`;
 
-/**
- * POST helper. Throws an Error with the server-supplied detail on
- * non-2xx, returns the parsed JSON on success. Centralising the
- * error mapping keeps the action bodies focused on UI concerns.
- *
- * @param {string} url
- * @param {Record<string, unknown>} body
- * @returns {Promise<Record<string, unknown>>}
- */
-async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    let detail = response.statusText;
-    try {
-      const text = await response.text();
-      if (text) detail = text;
-    } catch (_) {
-      // Best-effort: statusText is fine when the body is empty.
-    }
-    throw new Error(`${response.status} ${detail}`);
-  }
-  return response.json();
-}
-
 export const useToolStore = defineStore(STORE_ID, () => {
-  // --- reactive state ------------------------------------------- //
-  /** @type {import('vue').Ref<Array<Record<string, any>>>} */
-  const tools = ref([]);
-  // Currently-selected tool id. ``null`` until the first ingest
-  // populates ``tools``; the panel picks the first tool as the
-  // default at that point. See ``ingest`` below.
+  // --- selection state (store-owned) ------------------------------ //
+  // The tool list itself is owned by ``useBaseThreadStore`` — see
+  // the watcher at the bottom of this closure. Selection is the
+  // only piece of state that genuinely belongs to the tools
+  // module.
   const selectedToolId = ref(/** @type {string | null} */ (null));
 
   // --- non-reactive handles ------------------------------------- //
+  // Stop handle for the base-thread tools watcher. Set when the
+  // watcher is registered (immediately below) and cleared by
+  // ``onScopeDispose``.
   let stopToolsWatch = null;
-  let busUnsub = null;
-  // Tracks whether the store has been started by ``onLoad`` so
-  // hot-reloads / double-mounts don't accumulate listeners.
-  let running = false;
 
-  // --- computed ------------------------------------------------- //
+  // --- base-thread consumer -------------------------------------- //
+  // The base-thread store already polls
+  // ``GET /api/v1/base_thread/snapshot`` every second; the
+  // ``tools`` field on the snapshot is populated by
+  // ``routers/base_thread.py::_collect_tools`` which delegates to
+  // ``modules/tools/router.py::_collect_tools``. Consuming it here
+  // keeps the tools panel in sync with every other slow stream
+  // without a second timer.
+  const baseThread = useBaseThreadStore();
+  // ``storeToRefs`` keeps reactivity through the proxy so consumers
+  // that destructure ``tools`` get a reactive ref rather than a
+  // stale snapshot. ``storeToRefs`` is mandatory — see
+  // ``.agent/context/LESSONS_LEARNED.md`` § 2.3.
+  const { tools } = storeToRefs(baseThread);
 
-  // The tool the panel should render. ``null`` until at least one
-  // tool is available or while the operator's selection points at a
-  // tool the backend dropped.
+  // The currently-selected tool. ``null`` when the list is empty
+  // or the operator's selection points at a tool the backend
+  // dropped.
   const selectedTool = computed(() => {
     if (!selectedToolId.value) return null;
-    return tools.value.find((t) => t.id === selectedToolId.value) || null;
+    const list = baseThread.tools || [];
+    return list.find((t) => t.id === selectedToolId.value) || null;
   });
 
-  // --- actions -------------------------------------------------- //
+  // --- helpers -------------------------------------------------- //
 
   /**
    * Update the active tool. The chip row in ``ToolPanel.vue``
@@ -113,64 +79,26 @@ export const useToolStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Force an out-of-band base-thread refresh. Replaces the old
-   * direct ``GET /tools`` poll — the snapshot endpoint is the
-   * canonical source now, so a "refresh tools" action is just a
-   * snapshot refresh. Kept on the public action surface so any
-   * future "refresh now" button keeps working.
+   * Refresh the base-thread snapshot out-of-band. Kept on the
+   * public surface so a future "Refresh now" button can force a
+   * re-read without waiting for the next 1 Hz tick. Delegates to
+   * the base-thread store — the tools store never owns its own
+   * polling interval (see ``.agent/context/LESSONS_LEARNED.md``
+   * § 2.6 for the cross-module reactivity rules).
    */
   async function refreshTools() {
-    await useBaseThreadStore().refresh();
+    await baseThread.refresh();
   }
+
+  // --- actions (all via ModulesToolsService) --------------------- //
 
   /**
-   * Normalise the snapshot payload and merge it into ``tools``.
-   * Accepts a raw array, ``{ tools: [...] }``, or ``{ items: [...]
-   * }``; auto-selects the first tool when the list grows from
-   * empty so the panel has something to render on first arrival.
-   *
-   * @param {*} payload
-   */
-  function ingest(payload) {
-    if (!payload) return;
-    let next = null;
-    if (Array.isArray(payload)) {
-      next = payload;
-    } else if (payload.tools && Array.isArray(payload.tools)) {
-      next = payload.tools;
-    } else if (payload.items && Array.isArray(payload.items)) {
-      next = payload.items;
-    }
-    if (!next) return;
-    // Shallow-clone each row so the store never mutates the
-    // upstream payload in place. Telemetry payloads are
-    // deep-frozen by the event bus.
-    tools.value = next.map((tool) => ({ ...tool }));
-    // Auto-pick the first tool only when nothing is selected yet —
-    // never override an explicit operator choice.
-    if (!selectedToolId.value && tools.value.length > 0) {
-      selectedToolId.value = tools.value[0].id;
-    }
-  }
-
-  function start() {
-    if (running) return;
-    running = true;
-    // Tools come from the shared base-thread snapshot
-    // (``stores/baseThread.js``), started at app boot. We no
-    // longer schedule a ``refreshTools`` interval here — one
-    // HTTP request per second covers every slow stream.
-  }
-
-  function stop() {
-    running = false;
-  }
-
-  /**
-   * Send a spindle command and optimistically mirror the new
-   * target RPM on the matching tool so the panel reflects the
-   * operator's intent immediately. Errors are routed to the
-   * console store for visibility in the persistent log.
+   * Send a spindle command. The cards own their own optimistic
+   * ``targetRpm`` local ref (see SpindleCard.vue) — the store no
+   * longer mutates the tool object because the base-thread
+   * snapshot replaces it on every 1 s poll anyway. Errors are
+   * routed to the console store via ``describeError`` so the
+   * operator sees the same envelope shape as every other module.
    *
    * @param {string} toolId
    * @param {"forward"|"backward"|"stop"} action
@@ -178,22 +106,15 @@ export const useToolStore = defineStore(STORE_ID, () => {
    */
   async function sendSpindleCommand(toolId, action, speed) {
     try {
-      await postJson("/api/v1/modules/tools/spindle", {
+      await ModulesToolsService.controlSpindle({
         tool_id: toolId,
         action,
         speed,
       });
-      // Optimistic UI update — only the target RPM changes from
-      // the operator's perspective. ``actual_rpm`` would normally
-      // come back via telemetry and is left untouched here.
-      const tool = tools.value.find((t) => t.id === toolId);
-      if (tool) {
-        tool.target_rpm = action === "stop" ? 0 : speed;
-      }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : String(err ?? "unknown error");
-      useConsoleStore().error(`Spindle command failed: ${message}`);
+      useConsoleStore().error(
+        `Spindle command failed: ${describeError(err)}`,
+      );
     }
   }
 
@@ -209,7 +130,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
    */
   async function sendExtruderCommand(toolId, action, distance, speed) {
     try {
-      await postJson("/api/v1/modules/tools/extruder", {
+      await ModulesToolsService.controlExtruder({
         tool_id: toolId,
         action,
         distance,
@@ -219,86 +140,61 @@ export const useToolStore = defineStore(STORE_ID, () => {
         `${action} ${distance}mm at ${speed}mm/min`,
       );
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : String(err ?? "unknown error");
-      useConsoleStore().error(`Extruder command failed: ${message}`);
+      useConsoleStore().error(
+        `Extruder command failed: ${describeError(err)}`,
+      );
     }
   }
 
   /**
    * Set the target temperature for a heating tool (extruder /
-   * heated_bed). Mirrors the temperature module's per-sensor
-   * ``POST /api/v1/modules/temperature/sensors/{name}/target``
-   * contract, but keyed on tool id rather than sensor name — the
-   * temperature module owns the sensor channel, the tools module
-   * owns the operator-facing target command.
+   * heated_bed). The router looks up the tool's ``sensor``
+   * reference and dispatches ``set_temperature`` to the hardware
+   * layer; the temperature module owns the sensor channel, the
+   * tools module owns the operator-facing target command.
    *
    * @param {string} toolId
    * @param {number} target Degrees Celsius (0 turns the heater off).
    */
   async function sendToolTarget(toolId, target) {
     try {
-      await postJson(
-        `/api/v1/modules/tools/tools/${encodeURIComponent(toolId)}/target`,
-        {
-          tool_id: toolId,
-          target,
-        },
-      );
+      await ModulesToolsService.setToolTarget(toolId, {
+        tool_id: toolId,
+        target,
+      });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : String(err ?? "unknown error");
-      useConsoleStore().error(`Tool target failed: ${message}`);
+      useConsoleStore().error(
+        `Tool target failed: ${describeError(err)}`,
+      );
     }
   }
 
-  // Subscribe to the base-thread store's ``tools`` ref. The
-  // base-thread store fires every second; we shallow-clone each
-  // tool before storing so a downstream mutation cannot leak back
-  // into the base-thread store. The watcher is ``deep: true`` so
-  // the top-level reassignment inside the baseThread store's
-  // ``refresh()`` action reliably fires across module boundaries
-  // — Pinia's OPTIONS-API proxy does not always rebroadcast a
-  // shallow reassignment to consumers in sibling modules. The
-  // payload is small (a handful of tool rows) so the
-  // deep-traversal cost is negligible.
-  const baseThread = useBaseThreadStore();
-  // Pull the current value synchronously so the panel renders
-  // populated tools on the first frame, even if the dashboard
-  // mounts before the first 1 Hz tick has landed.
-  ingest(baseThread.tools);
+  // --- watch the base-thread snapshot --------------------------- //
+  // ``deep: true`` because Pinia's OPTIONS-API top-level
+  // reassignment in the baseThread store does not always
+  // rebroadcast across module boundaries via the proxy; see
+  // ``.agent/context/LESSONS_LEARNED.md`` § 2.6. The payload is a
+  // handful of tool rows so the deep-traversal cost is
+  // negligible. The ``immediate: true`` flag ensures the watcher
+  // fires on subscription so the first frame renders populated
+  // tools, even if the panel mounts before the first 1 Hz tick.
   stopToolsWatch = watch(
     () => baseThread.tools,
     (next) => {
-      if (Array.isArray(next)) {
-        ingest(next);
+      if (!selectedToolId.value && Array.isArray(next) && next.length > 0) {
+        selectedToolId.value = next[0].id;
       }
     },
     { immediate: true, deep: true },
   );
 
-  // Backwards-compat: the legacy ``state.tools`` bus topic is no
-  // longer published (the WebSocket no longer carries tools) but
-  // we keep a no-op subscription so future publishers do not
-  // crash if they happen to push the topic.
-  busUnsub = eventBus.subscribe(TOPIC, (_topic, payload) => {
-    if (Array.isArray(payload)) {
-      ingest(payload);
-    }
-  });
-
-  // Auto-stop when the pinia scope goes away (component unmount,
-  // app teardown) so the watcher cannot leak across navigation.
-  // See ``.agent/STATE.md`` § 10.
+  // Auto-clean the watcher when the pinia scope goes away
+  // (component unmount, app teardown) so the subscriber cannot
+  // leak across navigation. See ``.agent/STATE.md`` § 10.
   onScopeDispose(() => {
-    stop();
     if (stopToolsWatch) {
       stopToolsWatch();
       stopToolsWatch = null;
-    }
-    if (busUnsub) {
-      busUnsub();
-      busUnsub = null;
     }
   });
 
@@ -308,9 +204,6 @@ export const useToolStore = defineStore(STORE_ID, () => {
     selectedToolId,
     selectedTool,
     setSelectedToolId,
-    ingest,
-    start,
-    stop,
     refreshTools,
     sendSpindleCommand,
     sendExtruderCommand,

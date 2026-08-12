@@ -1,14 +1,9 @@
 """HTTP router for the tools module.
 
 The router is mounted by the registry under
-``/api/v1/modules/tools``. It exposes four endpoints — two that
-drive the machine via MDI commands, two that surface the
-operator-facing tool list:
+``/api/v1/modules/tools``. It exposes the three endpoints that
+still drive the machine and operator commands:
 
-* ``GET  /tools`` — list every tool the active ``hardware.json``
-  declares, overlaid with runtime state (actual / target temp for
-  heating tools, actual RPM for digital spindles). The frontend
-  ToolPanel polls this every second.
 * ``POST /tools/{id}/target`` — set the target temperature for a
   heating tool (extruder / heated_bed). The router looks up the
   tool's ``sensor`` reference and dispatches a ``set_temperature``
@@ -18,6 +13,12 @@ operator-facing tool list:
 * ``POST /extruder`` — extrude or retract material on a 3D-printer
   extruder axis using relative (``G91``) ``G1 E{dist} F{speed}``
   moves, restoring absolute (``G90``) mode afterwards.
+
+The legacy ``GET /tools`` listing endpoint was superseded by the
+base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
+which now carries the tool list alongside progress and sensors in
+a single 1 Hz round-trip. The :func:`_collect_tools` helper
+remains the single source of truth for the tool payload.
 
 The two MDI endpoints share the same safety preamble: switch the
 task into ``MODE_MDI`` first (blocking until the mode change is
@@ -142,24 +143,8 @@ class ToolCommandResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------- #
-# Tool list / target                                                      #
+# Tool target                                                             #
 # ---------------------------------------------------------------------- #
-
-
-class ToolsResponse(BaseModel):
-    """Response body for ``GET /tools``.
-
-    Mirrors the canonical shape the frontend's ``toolStore.ingest``
-    accepts: ``{ tools: [...] }`` with each entry carrying the
-    hardware.json ``tools[]`` record plus any runtime-state fields
-    (``actual`` / ``target`` for heating tools, ``actual_rpm`` for
-    digital spindles).
-    """
-
-    tools: List[dict] = Field(
-        default_factory=list,
-        description="Operator-facing tool list, ordered as declared in hardware.json.",
-    )
 
 
 class SetToolTargetRequest(BaseModel):
@@ -333,8 +318,8 @@ _HEATING_TOOL_TYPES = frozenset({"extruder", "heated_bed"})
 def _collect_tools() -> List[dict]:
     """Return the active ``hardware.json`` tool list with runtime state.
 
-    Public helper used by both ``GET /tools`` and the base-thread
-    snapshot (``routers/base_thread.py``) so the two surfaces stay
+    Public helper used by the base-thread snapshot
+    (``routers/base_thread.py``) so the slow-channel surface stays
     byte-for-byte identical. Returns an empty list when
     ``hardware.json`` is missing — mirrors the temperature module's
     empty-state behaviour so the ToolPanel renders the "No tools
@@ -357,9 +342,10 @@ def _overlay_runtime_state(tool: dict) -> dict:
       ``_machine_state.temperatures[tool.sensor]``. Defaults to
       ``0.0`` / ``0.0`` when the sensor hasn't been seeded yet
       (e.g. test boot without a hardware.json that names it).
-    * ``spindle_digital``: overlay ``actual_rpm`` from
+    * ``spindle_digital``: overlay ``actual_rpm``,
+      ``is_connected``, and ``error_count`` from
       ``_machine_state.spindle_actual[tool.id]``. Defaults to
-      ``0`` when no telemetry has arrived yet.
+      ``0`` / ``False`` / ``0`` when no telemetry has arrived yet.
     * All other tools (spindle_analog, laser): pass through
       unchanged.
     """
@@ -385,32 +371,13 @@ def _overlay_runtime_state(tool: dict) -> dict:
                     tool_id,
                 )
             out["actual_rpm"] = reading.get("actual", 0) if reading else 0
+            out["is_connected"] = (
+                reading.get("is_connected", False) if reading else False
+            )
+            out["error_count"] = (
+                reading.get("error_count", 0) if reading else 0
+            )
     return out
-
-
-@router.get(
-    "/tools",
-    response_model=ToolsResponse,
-    summary="List Operator-Facing Tools",
-    description=(
-        "Return the ``tools[]`` array from the active "
-        "``hardware.json``, augmented with the current runtime "
-        "state for each entry: ``actual`` / ``target`` temperature "
-        "for heating tools (extruder, heated_bed), ``actual_rpm`` "
-        "for digital spindles. The ToolPanel polls this endpoint "
-        "every second."
-    ),
-    operation_id="listTools",
-)
-def list_tools() -> ToolsResponse:
-    """List every tool the active ``hardware.json`` declares.
-
-    Returns an empty list when the file is missing — mirrors the
-    temperature module's empty-state behaviour so the ToolPanel
-    renders the "No tools configured yet" placeholder instead of
-    failing to mount.
-    """
-    return ToolsResponse(tools=_collect_tools())
 
 
 # ---------------------------------------------------------------------- #
@@ -500,7 +467,6 @@ __all__ = [
     "SpindleCommand",
     "ExtruderCommand",
     "ToolCommandResponse",
-    "ToolsResponse",
     "SetToolTargetRequest",
     "SetToolTargetResponse",
     "_collect_tools",

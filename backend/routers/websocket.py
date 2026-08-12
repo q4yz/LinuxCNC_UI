@@ -84,6 +84,12 @@ def _offline_state_snapshot() -> dict:
     (``routers/base_thread.py``) for the same reason; the 10 Hz
     ``/ws/telemetry`` stream only carries the time-critical
     fields the DRO / status panels need on every frame.
+
+    Program progress moved to the base-thread snapshot as well
+    (``progress.current_line`` / ``progress.motion_line`` /
+    ``progress.total_lines``). The 1 Hz snapshot is the canonical
+    surface for every slow stream; the WebSocket no longer carries
+    any of them.
     """
     return {
         "task_state": getattr(linuxcnc, "STATE_ESTOP", 1),
@@ -97,8 +103,6 @@ def _offline_state_snapshot() -> dict:
         "homed": [0, 0, 0],
         "interp_state": getattr(linuxcnc, "INTERP_IDLE", 1),
         "g5x_index": 1,
-        "target_temp": 0.0,
-        "actual_temp": 0.0,
     }
 
 
@@ -125,8 +129,6 @@ def get_current_state() -> dict:
     # Safe fallback if attributes don't exist in mock yet
     interp_state = getattr(machine_stat, 'interp_state', 0)
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
-    target_temp = getattr(machine_stat, 'target_temp', 0.0)
-    actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
 
     # Calculate Relative Work Coordinates for the DRO
     actual_position = getattr(machine_stat, 'actual_position', (0.0,) * 9)
@@ -154,8 +156,6 @@ def get_current_state() -> dict:
         "homed": machine_stat.homed,
         "interp_state": interp_state,
         "g5x_index": g5x_index,
-        "target_temp": target_temp,
-        "actual_temp": actual_temp,
         # Bounded recent LinuxCNC error-channel history (max 100
         # entries, oldest dropped first). ``telemetry_loop`` keeps
         # this fresh on every poll so a reload / reconnect sees the
