@@ -205,30 +205,33 @@ test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
     /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/stateFacade\.js["']/,
   );
   assert.match(text, /systemState/);
-  // No legacy machine-compat import — the widget is fully migrated.
+  // No legacy compat-shim import — the widget reads from the
+  // runtime stores layer (``stores/machine.js`` /
+  // ``stores/stateFacade.js``) instead.
+  assert.doesNotMatch(text, /machineStoreShim/);
   assert.doesNotMatch(text, /machine-compat/);
 });
 
-test("machine module store no longer owns the WebSocket transport", () => {
+test("machine store no longer owns the WebSocket transport", () => {
   // The 10 Hz ``/ws/telemetry`` socket lives in
-  // ``stores/servoThread.js``; the module store is a thin
-  // orchestrator that composes it. A regression that brings the
-  // socket back into the module store would re-bloat the file to
-  // ~700 lines and break the runtime split.
+  // ``stores/servoThread.js``; the cross-module machine store
+  // composes it. A regression that brings the socket back into
+  // ``stores/machine.js`` would re-bloat the file to ~700 lines
+  // and break the runtime split.
   const modulePath = resolve(
     repoRoot,
-    "frontend/src/modules/machine/store.js",
+    "frontend/src/stores/machine.js",
   );
   const text = readFileSync(modulePath, "utf-8");
   assert.doesNotMatch(
     text,
     /new\s+WebSocket\s*\(/,
-    "modules/machine/store.js must not own the WebSocket — use stores/servoThread.js",
+    "stores/machine.js must not own the WebSocket — use stores/servoThread.js",
   );
   assert.match(
     text,
     /useServoThreadStore\s*\(/,
-    "modules/machine/store.js must compose useServoThreadStore",
+    "stores/machine.js must compose useServoThreadStore",
   );
 });
 

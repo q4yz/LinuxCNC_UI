@@ -237,9 +237,23 @@ the file-load contract is finalised.
 Every dashboard panel and every sidebar entry checks
 `registry.modules.has(id)` before rendering. The reactive Map
 means the `computed` re-evaluates the moment the registry flips a
-module into its mounted set after boot completes. The
-`stores/machineStoreShim.js` shim provides a fallback `useMachineStore`
-so the shell can render even when the machine module is excluded.
+module into its mounted set after boot completes. Some modules
+ship a fallback shim so the shell renders even when the module
+is excluded — see the per-module notes below.
+
+| Module | Nullable? | Mechanism |
+|---|---|---|
+| `camera` | yes | Self-registers; shell renders placeholders |
+| `temperature` | **no** (hard dep) | None — direct import |
+| `machine` | **no** (hard dep) | `stores/machineStoreShim.js` deleted in the consolidation that moved the cross-module store to `stores/machine.js` |
+| `tools`, `program`, `macros`, `machineconfig` | yes | Each defines its own fallback |
+
+The machine module's nullable contract was retired together
+with the shim: the simpler cross-module surface (every consumer
+imports from one of four `stores/` files) was worth more than the
+"delete the module folder, keep the build green" guarantee. The
+temperature module has never had it, and treating the machine
+module as a hard dependency aligns the two large modules.
 
 ---
 
@@ -302,9 +316,11 @@ until the migration window closes:
   state (`status` with position / task_state / errors).
 - `frontend/src/stores/baseThread.js` — the 1 Hz REST snapshot
   store (program progress, temperature sensors, tool list).
-- `frontend/src/stores/machineStoreShim.js` — the optional compat
-  adapter that lets the shell render without the machine module
-  mounted. Renamed from `stores/machine-compat.js`.
+- `frontend/src/stores/machine.js` — the cross-module machine
+  store (jog / home / set-position / program-lifecycle actions
+  + DRO computed values + module-scoped settings). The machine
+  module's own components import via the module's
+  ``../store.js`` re-export.
 - `frontend/src/components/FileManager.vue` — the G-code file list,
   still mounted as a full-page view rather than a module shell.
 - `frontend/src/components/ActivePrintWidget.vue` — the print

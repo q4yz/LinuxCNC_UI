@@ -7,20 +7,12 @@ import { computed, defineAsyncComponent, markRaw, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import registry from './core/modules/registry'
-import { useMachineStore } from './stores/machineStoreShim'
 import { useBaseThreadStore } from './stores/baseThread'
 import { useServoThreadStore } from './stores/servoThread'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import EStopHeader from './components/EStopHeader.vue'
-
-// ``useMachineStore`` is supplied by the optional compatibility
-// adapter. When the machine module is mounted, the module registers
-// its real store before the app mounts; when it is absent, the
-// adapter is intentionally inert so the shell can still render
-// its placeholders.
-const store = useMachineStore()
 
 // The base-thread store is the dashboard's "slow channel" — one
 // 1 Hz REST round-trip that bundles every slow stream (program

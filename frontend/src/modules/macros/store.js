@@ -41,7 +41,7 @@ import {
 } from "../../../generated/api/index.ts";
 import manifest from "./manifest.js";
 import { useConsoleStore } from "../../stores/console.js";
-import { useMachineStore } from "../../stores/machineStoreShim.js";
+import { useMachineStore } from "../../stores/machine.js";
 import { describeError as describeErrorShared } from "../../core/error-format.js";
 import { parseMacro, validateMacroKindName } from "./parser.js";
 

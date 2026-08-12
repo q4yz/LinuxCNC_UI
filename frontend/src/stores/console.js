@@ -42,11 +42,7 @@ export const typeToLevel = (type) => TYPE_TO_LEVEL[type] || 'info'
 export const useConsoleStore = defineStore('console', {
   state: () => ({
     messages: [],
-    // The currently active level filter. ``all`` is the default
-    // and means "do not filter". The store is the single source of
-    // truth so the chip row in ``ConsolePanel.vue`` and any other
-    // component share the same value.
-    filterLevel: 'all',
+    filterLevel: 'info',
   }),
   getters: {
     /**

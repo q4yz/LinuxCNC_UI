@@ -1,11 +1,9 @@
-// Nullable-module guarantee for the frontend machine module.
+// Machine module structural tests.
 //
 // Run with: node --test frontend/tests/test-machine-null.mjs
 //
-// Mirrors ``frontend/tests/test-camera-null.mjs``.  We assert the
-// static structure that lets a developer delete
-// ``frontend/src/modules/machine/`` without breaking the dashboard
-// build:
+// Pins the static structure the machine module's components and
+// cross-module consumers depend on:
 //
 //   * ``DashboardView.vue`` lazily imports the machine panel via
 //     ``defineAsyncComponent`` + ``import.meta.glob``.
@@ -14,11 +12,15 @@
 //     ``components/JogControls.vue`` are gone.
 //   * The new ``modules/machine/components/DroPanel.vue`` and
 //     ``modules/machine/components/JogControls.vue`` are in place.
-//   * Pre-migration consumer components (ConsolePanel, DebugPanel,
-//     GCodeViewer, UpdateManager) route through ``machineStoreShim``
-//     (the renamed successor of the old ``machine-compat``), the
-//     nullable adapter that lets the shell build even when the
-//     machine module folder has been removed.
+//   * The machine store lives at ``stores/machine.js`` (the
+//     cross-module runtime layer); the module's ``store.js`` is a
+//     thin re-export.
+//
+// The nullable-module guarantee (deleting
+// ``modules/machine/`` keeps the build green) was dropped in
+// the same refactor that deleted ``stores/machineStoreShim.js`` —
+// the machine module is now a hard dependency, same as the
+// temperature module.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -51,15 +53,19 @@ const newJogControls = resolve(
 );
 const newStore = resolve(
   repoRoot,
+  "frontend/src/stores/machine.js",
+);
+const moduleStoreReexport = resolve(
+  repoRoot,
   "frontend/src/modules/machine/store.js",
 );
 const legacyMachineApi = resolve(
   repoRoot,
   "frontend/src/services/machineApi.js",
 );
-const legacyStoreShim = resolve(
+const removedShim = resolve(
   repoRoot,
-  "frontend/src/stores/machine.js",
+  "frontend/src/stores/machineStoreShim.js",
 );
 
 test("DashboardView uses defineAsyncComponent for the machine panel", () => {
@@ -138,7 +144,10 @@ test("new modules/machine/components/ files exist", () => {
   assert.ok(existsSync(newJogControls), `expected ${newJogControls}`);
 });
 
-test("module store file exposes useMachineStore", () => {
+test("stores/machine.js exposes useMachineStore", () => {
+  // The machine store body lives in ``stores/machine.js`` (the
+  // cross-module runtime layer). The module's own components
+  // import via the historical ``../store.js`` re-export.
   assert.ok(existsSync(newStore));
   const text = readFileSync(newStore, "utf-8");
   assert.match(
@@ -146,21 +155,19 @@ test("module store file exposes useMachineStore", () => {
     /export\s+const\s+useMachineStore\s*=\s*defineStore/,
     "machine store must export useMachineStore via defineStore",
   );
+  // And the module-side re-export file exists.
+  assert.ok(existsSync(moduleStoreReexport));
 });
 
-test("legacy stores/machine.js shim is removed after migration window closes", () => {
-  // Issue #47 closes the migration window: the compatibility shim
-  // at ``stores/machine.js`` (which used to re-export the module
-  // store for third-party consumers) and the raw
-  // ``services/machineApi.js`` wrapper are both deleted. All machine
-  // consumers should now import from
-  // ``stores/machineStoreShim.js`` (nullable shell adapter, the
-  // renamed successor of ``stores/machine-compat.js``) or directly
-  // from ``modules/machine/store.js`` / ``ModulesMachineService``.
+test("the removed compat shim is gone", () => {
+  // The shim was deleted in the consolidation that moved the
+  // machine store to ``stores/machine.js``. The migration window
+  // for third-party consumers is closed; the machine module is
+  // a hard dependency (same as the temperature module).
   assert.equal(
-    existsSync(legacyStoreShim),
+    existsSync(removedShim),
     false,
-    `expected ${legacyStoreShim} to be removed after issue #47`,
+    `expected ${removedShim} to be removed`,
   );
   assert.equal(
     existsSync(legacyMachineApi),

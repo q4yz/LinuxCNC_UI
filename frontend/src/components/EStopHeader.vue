@@ -14,12 +14,12 @@
 
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machineStoreShim.js'
+import { useMachineStore } from '../stores/machine.js'
 // Direct facade import for the high-resolution ``systemState``
-// getter. The machine store (``modules/machine/store.js``) only
-// exposes the coarser ``machineStateText`` (ESTOP/OFF/ON/READY);
-// the facade is the canonical source for the 8-state vocabulary
-// per ``.agent/STATE.md`` § 6.
+// getter. The machine store (``stores/machine.js``) only exposes
+// the coarser ``machineStateText`` (ESTOP/OFF/ON/READY); the facade
+// is the canonical source for the 8-state vocabulary per
+// ``.agent/STATE.md`` § 6.
 import { useMachineStore as useFacadeStore } from '../stores/stateFacade.js'
 
 const store = useMachineStore()

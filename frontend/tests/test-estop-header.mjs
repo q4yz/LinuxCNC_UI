@@ -55,14 +55,16 @@ test("EStopHeader uses <script setup> Composition API", () => {
   assert.match(text, /<script\s+setup>/);
 });
 
-test("EStopHeader imports the machine store through the compat shim", () => {
-  // The header must work whether or not the machine module is
-  // mounted; the compat shim is the contract for that
-  // nullable-module guarantee (``.agent/STATE.md`` § 7).
+test("EStopHeader imports the machine store", () => {
+  // The header reads the canonical machine store (now at
+  // ``stores/machine.js``) for ``toggleEstop`` and the legacy
+  // ``isEstop`` boolean. The State Facade
+  // (``stores/stateFacade.js``) is imported separately for the
+  // high-resolution ``systemState`` vocabulary.
   const text = readText(headerPath);
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machineStoreShim\.js['"]/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machine\.js['"]/,
   );
 });
 

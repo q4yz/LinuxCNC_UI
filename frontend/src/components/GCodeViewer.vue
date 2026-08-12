@@ -2,7 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { useMachineStore } from '../stores/machineStoreShim'
+import { useMachineStore } from '../stores/machine.js'
 
 const store = useMachineStore()
 

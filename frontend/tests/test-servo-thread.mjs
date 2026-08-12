@@ -36,7 +36,7 @@ const servoPath = resolve(
 );
 const modulePath = resolve(
   repoRoot,
-  "frontend/src/modules/machine/store.js",
+  "frontend/src/stores/machine.js",
 );
 
 function readServo() {
@@ -138,21 +138,22 @@ test("servo-thread store exposes a send() action for inbound WS commands", () =>
   assert.match(text, /\bsend\s*,/);
 });
 
-test("machine module store does NOT instantiate its own WebSocket", () => {
+test("machine store does NOT instantiate its own WebSocket", () => {
   // The transport moved to ``stores/servoThread.js`` — a
-  // regression that brings it back into the module store
-  // re-bloats the file to ~700 lines and breaks the runtime
-  // split. The tripwire lives here so the new file owns it.
+  // regression that brings it back into the cross-module
+  // store would re-bloat the file to ~700 lines and break the
+  // runtime split. The tripwire lives here so the new file
+  // owns it.
   const text = readModule();
   assert.doesNotMatch(
     text,
     /new\s+WebSocket\s*\(/,
-    "modules/machine/store.js must not own the WebSocket — use stores/servoThread.js",
+    "stores/machine.js must not own the WebSocket — use stores/servoThread.js",
   );
   assert.match(
     text,
     /useServoThreadStore\s*\(/,
-    "modules/machine/store.js must compose useServoThreadStore",
+    "stores/machine.js must compose useServoThreadStore",
   );
 });
 

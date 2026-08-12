@@ -1,17 +1,20 @@
-// Machine module store behavioural tests.
+// Machine store behavioural tests.
 //
 // Run with: node --test frontend/tests/test-machine-store.mjs
 //
-// The machine module store composes ``stores/servoThread.js`` for
-// the 10 Hz WebSocket telemetry (which owns the transport) and
-// adds the module-specific actions (jog, home, set position,
-// program lifecycle, settings). These tests cover the contract
-// the module store must respect after the servo/base split:
+// The machine store lives at ``stores/machine.js`` (the cross-module
+// runtime layer) and is re-exported by ``modules/machine/store.js``.
+// It composes ``stores/servoThread.js`` for the 10 Hz WebSocket
+// telemetry (which owns the transport) and adds the module-specific
+// actions (jog, home, set position, program lifecycle, settings).
+// These tests cover the contract the store must respect after the
+// servo/base split:
 //
 //   * ``jogContinuous`` + ``jogStop`` round-trip populates and
 //     empties ``jogIntervals``.
-//   * The store calls ``ModulesMachineService.jogKeepalive`` while a
-//     continuous jog is active.
+//   * The keep-alive ping goes over the WebSocket via
+//     ``servo.send({type: "jog_keepalive", ...})`` — no REST
+//     round-trip per axis per 250 ms.
 //   * ``jogStop`` clears every remaining keep-alive interval.
 //   * The store composes the servo-thread store for telemetry
 //     rather than owning the WebSocket itself.
@@ -31,7 +34,7 @@ const repoRoot = resolve(here, "../..");
 
 const storePath = resolve(
   repoRoot,
-  "frontend/src/modules/machine/store.js",
+  "frontend/src/stores/machine.js",
 );
 
 function readStore() {
@@ -167,13 +170,24 @@ test("store no longer publishes state.temperatures", () => {
   );
 });
 
-test("store registers itself with the compat shim on mount", () => {
+test("store does NOT call the removed compat shim", () => {
+  // The compat shim (formerly ``stores/machineStoreShim.js``) is
+  // gone — the machine module is now a hard dependency. A
+  // regression that re-introduces a registration call would
+  // re-bloat the cross-module surface.
   const text = readStore();
-  // Pre-migration consumers call ``useMachineStore()`` from the
-  // shim. The module store registers itself so those calls
-  // resolve to this store. The shim's ``registerMachineStore``
-  // helper is the only sanctioned entry point.
-  assert.match(text, /registerMachineStore\s*\(/);
-  assert.match(text, /unregisterMachineStore\s*\(/);
-  assert.match(text, /import\s*\{[^}]*registerMachineStore[^}]*\}/);
+  assert.doesNotMatch(
+    text,
+    /registerMachineStore\s*\(/,
+    "stores/machine.js must not call the removed registerMachineStore",
+  );
+  assert.doesNotMatch(
+    text,
+    /unregisterMachineStore\s*\(/,
+    "stores/machine.js must not call the removed unregisterMachineStore",
+  );
+  assert.doesNotMatch(
+    text,
+    /import\s*\{[^}]*registerMachineStore[^}]*\}/,
+  );
 });

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useMachineStore } from '../stores/machineStoreShim'
+import { useMachineStore } from '../stores/machine.js'
 
 const store = useMachineStore()
 const throttledState = ref({})
