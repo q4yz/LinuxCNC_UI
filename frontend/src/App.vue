@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import registry from './core/modules/registry'
 import { useMachineStore } from './stores/machine-compat'
+import { useBaseThreadStore } from './stores/baseThread'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
@@ -19,6 +20,16 @@ import EStopHeader from './components/EStopHeader.vue'
 // adapter is intentionally inert so the shell can still render
 // its placeholders.
 const store = useMachineStore()
+
+// The base-thread store is the dashboard's "slow channel" — one
+// 1 Hz REST round-trip that bundles every slow stream (program
+// progress, temperature sensors, tool list) into one payload. We
+// boot it at app mount rather than from any specific panel so a
+// view mounted later (e.g. the dashboard's ActivePrintWidget) gets
+// populated data on its first frame instead of waiting a second
+// for the first poll to land. The poll is cheap enough (one HTTP
+// request per second) to keep running for the entire session.
+useBaseThreadStore().start()
 
 const route = useRoute()
 const router = useRouter()

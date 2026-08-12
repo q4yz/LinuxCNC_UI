@@ -8,6 +8,11 @@ The router is mounted by the registry under
 
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
+
+The :func:`_collect_sensors` helper is the single source of truth
+for reading the sensor dict; the HTTP endpoint delegates to it and
+the base-thread snapshot (``routers/base_thread.py``) imports the
+same helper so the two surfaces stay byte-for-byte identical.
 """
 
 import logging
@@ -31,11 +36,33 @@ class SetTargetRequest(BaseModel):
         min_length=1,
         description="Logical sensor identifier (e.g., 'extruder', 'bed').",
     )
+
     target: float = Field(
         ...,
         ge=0.0,
         le=400.0,
         description="Target temperature in Celsius (0–400 °C).",
+    )
+
+
+class SensorReading(BaseModel):
+    """One temperature sensor reading.
+
+    Used by the snapshot response model (``routers/base_thread.py``)
+    and reused by the legacy ``GET /sensors`` endpoint so the wire
+    shape stays consistent.
+    """
+
+    actual: float = Field(
+        ...,
+        description="Current temperature reading in Celsius.",
+    )
+    target: float = Field(
+        ...,
+        description=(
+            "Set-point temperature in Celsius. ``0`` for sensors "
+            "without a controllable heater."
+        ),
     )
 
 
@@ -58,14 +85,35 @@ class SetTargetResponse(BaseModel):
         default="success",
         description="Outcome reported by the hardware layer.",
     )
+
     sensor_name: str = Field(
         ...,
         description="Echo of the sensor name that was updated.",
     )
+
     target: float = Field(
         ...,
         description="Echo of the target value that was applied.",
     )
+
+
+def _collect_sensors() -> Dict[str, Dict[str, float]]:
+    """Read the live sensor dict from the stat channel.
+
+    Returns a plain dict (sensor name -> ``{actual, target}``) so
+    both the HTTP endpoint and the base-thread snapshot can
+    serialise it the same way. Falls back to ``{}`` when the NML
+    channel is offline — the dashboard's empty-state UI handles
+    the no-data case cleanly.
+    """
+    stat = get_machine_stat()
+    if stat is None:
+        return {}
+    poll = getattr(stat, "poll", None)
+    if callable(poll):
+        poll()
+    sensors = getattr(stat, "temperatures", None) or {}
+    return {name: dict(values) for name, values in sensors.items()}
 
 
 @router.get(
@@ -81,13 +129,7 @@ class SetTargetResponse(BaseModel):
 )
 def list_sensors() -> SensorsResponse:
     """List all temperature sensors known to the hardware layer."""
-    stat = get_machine_stat()
-    stat.poll()
-    sensors = getattr(stat, "temperatures", None) or {}
-    # Coerce each entry to a plain dict so Pydantic serialises it
-    # consistently regardless of how the mock returned it.
-    payload = {name: dict(values) for name, values in sensors.items()}
-    return SensorsResponse(sensors=payload)
+    return SensorsResponse(sensors=_collect_sensors())
 
 
 @router.post(
@@ -135,3 +177,13 @@ def set_target(name: str, req: SetTargetRequest) -> SetTargetResponse:
         sensor_name=name,
         target=req.target,
     )
+
+
+__all__ = [
+    "router",
+    "SetTargetRequest",
+    "SetTargetResponse",
+    "SensorsResponse",
+    "SensorReading",
+    "_collect_sensors",
+]

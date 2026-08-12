@@ -114,15 +114,32 @@ test("toolStore.js declares the store id as module_tools via the prefix template
 
 test("toolStore is backend-driven — no hard-coded SEED_TOOLS", () => {
   const text = read(storePath);
-  // The mock fixture array is gone; the store loads from the
-  // backend instead. Polls ``/api/v1/modules/tools/tools`` and
-  // subscribes to the ``state.tools`` event-bus topic.
+  // The mock fixture array is gone; the store reads tools from
+  // the shared base-thread snapshot
+  // (``stores/baseThread.js``) so the dashboard only issues one
+  // HTTP request per second for every slow stream.
   assert.doesNotMatch(text, /SEED_TOOLS/);
-  assert.match(text, /\/api\/v1\/modules\/tools\/tools/);
-  assert.match(text, /state\.tools/);
-  // Polling cadence is exposed via the store surface.
+  // The store must not GET the ``/api/v1/modules/tools/tools``
+  // listing directly. POSTs to ``/spindle``, ``/extruder``, and
+  // the per-tool ``/tools/{id}/target`` are still allowed — the
+  // listing endpoint is what moved to the snapshot. The check is
+  // intentionally a ``fetch(...)`` call shape rather than a
+  // generic string match so docstrings / comments that mention
+  // the legacy endpoint URL don't trip the test.
+  assert.doesNotMatch(
+    text,
+    /fetch\([^)]*\/api\/v1\/modules\/tools\/tools\b/,
+    "toolStore must not fetch the /tools REST listing directly",
+  );
+  // Polling cadence is now owned by the base-thread store; the
+  // tools store delegates to ``useBaseThreadStore().refresh()``.
+  assert.match(text, /useBaseThreadStore\s*\(/);
   assert.match(text, /refreshTools/);
-  assert.match(text, /DEFAULT_POLL_MS/);
+  assert.doesNotMatch(
+    text,
+    /setInterval\s*\(\s*refreshTools/,
+    "toolStore must not own a polling interval",
+  );
 });
 
 test("toolStore actions POST to documented endpoints", () => {

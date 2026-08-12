@@ -36,38 +36,23 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
-from typing import Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from hardware import execute_sync_cmd, get_machine_stat, linuxcnc, linuxcnc_mock
 from services import (
+    clear_line_count_cache,
+    count_lines,
     get_program_service,
+    lookup_line_count,
     raise_bad_request,
     raise_conflict,
     raise_not_found,
+    register_line_count,
 )
 
 logger = logging.getLogger("backend.modules.program.router")
-
-
-# ---------------------------------------------------------------------------
-# Line-count cache
-# ---------------------------------------------------------------------------
-#
-# Real LinuxCNC's ``linuxcnc.stat`` exposes ``current_line`` /
-# ``motion_line`` but never ``total_lines``. We derive the total at
-# ``program_open`` time by reading the file once and caching the count
-# keyed by the absolute path LinuxCNC committed into ``stat.file``.
-# The mock already stamps ``total_lines`` on ``_machine_state`` so the
-# cache entry is just a mirror of the mock's value for that driver.
-#
-# The cache is intentionally small (one entry per loaded file); a
-# single program run only ever has one file loaded, but the router
-# does not enforce that and a multi-file batch is conceivable.
-_TOTAL_LINES_CACHE: Dict[str, int] = {}
 
 
 class StatusResponse(BaseModel):
@@ -228,7 +213,7 @@ def unload_program() -> StatusResponse:
     # The cached line count is meaningless once the file pointer is
     # cleared — drop the whole map so a follow-up ``/progress`` does
     # not surface a stale total for a file that is no longer loaded.
-    _clear_total_lines_cache()
+    clear_line_count_cache()
     return StatusResponse(status="success")
 
 
@@ -287,37 +272,6 @@ unresponsive runtime surfaces as ``504 Gateway Timeout`` rather than
 a stale success.
 """
 LOAD_TIMEOUT_S = 5.0
-
-
-def _count_lines(path: str) -> int:
-    """Return the line count of ``path`` or ``0`` if it cannot be read.
-
-    Real LinuxCNC never reports a total-line count, so the dashboard
-    cannot render a meaningful percentage without it. We read the
-    file once at load time and cache the count keyed by path; this
-    helper is the single place that touches the filesystem so the
-    ``try/except`` boundary is easy to reason about.
-    """
-    try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        logger.warning("Could not count lines in %s: %s", path, exc)
-        return 0
-    if not text:
-        return 0
-    # ``splitlines`` swallows the trailing newline of the last line,
-    # matching LinuxCNC's own line-counter convention. An empty file
-    # becomes ``[]`` which we already covered with the early return.
-    return len(text.splitlines())
-
-
-def _clear_total_lines_cache() -> None:
-    """Drop every cached line count.
-
-    Called from the abort path so a follow-up run cannot accidentally
-    read a stale total for a file that has been replaced.
-    """
-    _TOTAL_LINES_CACHE.clear()
 
 
 def _stat_file_path() -> str:
@@ -423,14 +377,14 @@ def load_program(payload: LoadProgramRequest) -> StatusResponse:
     # is in sync with ``program_open`` so the loop returns
     # immediately; real LinuxCNC needs a few NML ticks.
     _await_load(target)
-    # Cache the line count so ``GET /progress`` can return a real
-    # denominator. Real LinuxCNC never reports ``total_lines``; the
-    # mock stamps a 1000-line placeholder but its file pointer is
-    # the absolute path, so caching by path keeps both drivers
-    # consistent. We cache **after** the load commits so a slow
-    # interpreter cannot cache a total for a file the interpreter
-    # hasn't actually loaded yet.
-    _TOTAL_LINES_CACHE[str(target)] = _count_lines(str(target))
+    # Cache the line count so ``GET /progress`` (and the base-thread
+    # snapshot) can return a real denominator. Real LinuxCNC never
+    # reports ``total_lines``; the mock stamps a 1000-line placeholder
+    # but its file pointer is the absolute path, so caching by path
+    # keeps both drivers consistent. We cache **after** the load
+    # commits so a slow interpreter cannot cache a total for a file
+    # the interpreter hasn't actually loaded yet.
+    register_line_count(str(target), count_lines(str(target)))
     return StatusResponse(status="success")
 
 
@@ -476,7 +430,7 @@ def get_program_progress() -> ProgramProgressResponse:
         motion_line = int(getattr(stat, "motion_line", 0) or 0)
         interp_state = int(getattr(stat, "interp_state", interp_state) or interp_state)
 
-    total_lines = _TOTAL_LINES_CACHE.get(file_path, 0)
+    total_lines = lookup_line_count(file_path)
     return ProgramProgressResponse(
         current_line=max(0, current_line),
         motion_line=max(0, motion_line),

@@ -89,6 +89,10 @@ def test_get_current_state_returns_offline_snapshot_when_channels_offline():
     assert snapshot["relative_position"] == [0.0] * 9
     assert snapshot["file"] == ""
     assert snapshot["interp_state"] == 1  # INTERP_IDLE
+    # Sensors moved to the base-thread snapshot. The 10 Hz
+    # WebSocket stream no longer carries them so the dashboard
+    # cannot accidentally double-fetch via a stale ``full_state``.
+    assert "temperatures" not in snapshot
 
 
 def test_telemetry_loop_survives_one_offline_tick():

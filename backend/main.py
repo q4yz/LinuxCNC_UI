@@ -18,7 +18,7 @@ from services.console_logger import get_console_logger
 # Issue #49 retired the legacy ``compiler`` router: the
 # machineconfig module's ``/compile`` and ``/deploy`` endpoints
 # supersede it and the frontend no longer references it.
-from routers import websocket, files, system
+from routers import base_thread, websocket, files, system
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -105,6 +105,7 @@ app.add_middleware(
 # above), which routes them under ``/api/v1/modules/{id}``.
 app.include_router(files.router)
 app.include_router(system.router)
+app.include_router(base_thread.router)
 app.include_router(websocket.router)
 
 @app.get("/")

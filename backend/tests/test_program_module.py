@@ -465,9 +465,9 @@ class TestLoadThenStartRoundTrip:
 
 def _reset_progress_cache() -> None:
     """Drop the line-count cache so each test starts from a clean slate."""
-    from modules.program import router as program_router
+    from services.line_count_cache import unregister_all
 
-    program_router._TOTAL_LINES_CACHE.clear()
+    unregister_all()
 
 
 def test_progress_endpoint_reports_current_line_and_cached_total(
@@ -571,9 +571,9 @@ def test_progress_endpoint_handles_missing_file_in_cache(
     _reset_progress_cache()
     target = _isolated_program_root(tmp_data_root, monkeypatch)
 
-    from modules.program import router as program_router
+    from services.line_count_cache import register as register_line_count
 
-    program_router._TOTAL_LINES_CACHE[str(target)] = 9
+    register_line_count(str(target), 9)
 
     from hardware import linuxcnc_mock
 

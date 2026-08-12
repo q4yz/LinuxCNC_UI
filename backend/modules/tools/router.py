@@ -330,6 +330,20 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
 _HEATING_TOOL_TYPES = frozenset({"extruder", "heated_bed"})
 
 
+def _collect_tools() -> List[dict]:
+    """Return the active ``hardware.json`` tool list with runtime state.
+
+    Public helper used by both ``GET /tools`` and the base-thread
+    snapshot (``routers/base_thread.py``) so the two surfaces stay
+    byte-for-byte identical. Returns an empty list when
+    ``hardware.json`` is missing — mirrors the temperature module's
+    empty-state behaviour so the ToolPanel renders the "No tools
+    configured yet" placeholder instead of failing to mount.
+    """
+    raw = load_active_tools()
+    return [_overlay_runtime_state(tool) for tool in raw]
+
+
 def _overlay_runtime_state(tool: dict) -> dict:
     """Augment a hardware.json tool record with runtime telemetry.
 
@@ -396,9 +410,7 @@ def list_tools() -> ToolsResponse:
     renders the "No tools configured yet" placeholder instead of
     failing to mount.
     """
-    raw = load_active_tools()
-    overlaid = [_overlay_runtime_state(tool) for tool in raw]
-    return ToolsResponse(tools=overlaid)
+    return ToolsResponse(tools=_collect_tools())
 
 
 # ---------------------------------------------------------------------- #
@@ -491,6 +503,7 @@ __all__ = [
     "ToolsResponse",
     "SetToolTargetRequest",
     "SetToolTargetResponse",
+    "_collect_tools",
     "M3_FORWARD",
     "M4_BACKWARD",
     "M5_STOP",

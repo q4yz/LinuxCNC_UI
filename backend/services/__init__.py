@@ -39,6 +39,12 @@ from .remora_signal_map import (
     get_sp_index,
     invalidate_cache as reset_remora_signal_map_cache,
 )
+from .line_count_cache import (
+    count_lines,
+    lookup as lookup_line_count,
+    register as register_line_count,
+    unregister_all as clear_line_count_cache,
+)
 
 __all__ = [
     "ActiveFileService",
@@ -48,6 +54,8 @@ __all__ = [
     "MCodeFileService",
     "ProgramFileService",
     "StagedFileService",
+    "clear_line_count_cache",
+    "count_lines",
     "get_active_service",
     "get_config_service",
     "get_mcode_service",
@@ -55,12 +63,14 @@ __all__ = [
     "get_program_service",
     "get_sp_index",
     "get_staged_service",
+    "lookup_line_count",
     "raise_bad_request",
     "raise_bad_request_from",
     "raise_conflict",
     "raise_conflict_from",
     "raise_not_found",
     "raise_not_found_from",
+    "register_line_count",
     "reset_remora_signal_map_cache",
     "reset_service_cache",
 ]

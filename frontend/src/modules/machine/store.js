@@ -14,7 +14,6 @@ import { ModulesMachineService } from "../../../generated/api/services/ModulesMa
 import { ModulesProgramService } from "../../../generated/api/services/ModulesProgramService";
 import { useConsoleStore } from "../../stores/console.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
-import { eventBus } from "../../core/modules/event-bus.js";
 import { useMachineStore as useMachineFacadeStore } from "../../stores/machineStore.js";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
@@ -25,9 +24,6 @@ const HOME_ALL = -1;
 const DEFAULT_JOG_VELOCITY = 500;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
-// Bus topic the machine store publishes so the temperature module
-// can ingest sensor updates without owning the WebSocket transport.
-const STATE_TEMPERATURES_TOPIC = "state.temperatures";
 const machineSettings = createModuleSettings(manifest.id);
 
 // ``module_`` prefix prevents collisions with legacy top-level
@@ -233,9 +229,10 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             status: next,
           });
 
-          eventBus.publish(STATE_TEMPERATURES_TOPIC, {
-            temperatures: status.temperatures || {},
-          });
+          // Sensors moved to the base-thread snapshot
+          // (``stores/baseThread.js``). The WebSocket no longer
+          // carries them so we do not republish on
+          // ``state.temperatures``.
 
           // Replay historical LinuxCNC errors through the global
           // console store so the operator's ``ConsolePanel`` shows
@@ -263,9 +260,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             status: { ...status },
           });
 
-          eventBus.publish(STATE_TEMPERATURES_TOPIC, {
-            temperatures: status.temperatures || {},
-          });
+          // Sensors moved to the base-thread snapshot; the
+          // ``delta`` branch does not republish on
+          // ``state.temperatures``.
         } else if (payload.type === "error") {
           errors.value.push(payload.data);
           // Route the event through the global console store so the

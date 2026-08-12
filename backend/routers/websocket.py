@@ -79,6 +79,11 @@ def _offline_state_snapshot() -> dict:
     endpoint so the dashboard can poll them at 1 Hz without the
     10 Hz telemetry loop saturating NML. The broadcast no longer
     carries them.
+
+    Sensors moved to the base-thread snapshot
+    (``routers/base_thread.py``) for the same reason; the 10 Hz
+    ``/ws/telemetry`` stream only carries the time-critical
+    fields the DRO / status panels need on every frame.
     """
     return {
         "task_state": getattr(linuxcnc, "STATE_ESTOP", 1),
@@ -94,7 +99,6 @@ def _offline_state_snapshot() -> dict:
         "g5x_index": 1,
         "target_temp": 0.0,
         "actual_temp": 0.0,
-        "temperatures": {},
     }
 
 
@@ -123,8 +127,6 @@ def get_current_state() -> dict:
     g5x_index = getattr(machine_stat, 'g5x_index', 1)
     target_temp = getattr(machine_stat, 'target_temp', 0.0)
     actual_temp = getattr(machine_stat, 'actual_temp', 0.0)
-    # Multi-sensor temperatures dict (if available)
-    temperatures = getattr(machine_stat, 'temperatures', None)
 
     # Calculate Relative Work Coordinates for the DRO
     actual_position = getattr(machine_stat, 'actual_position', (0.0,) * 9)
@@ -154,7 +156,6 @@ def get_current_state() -> dict:
         "g5x_index": g5x_index,
         "target_temp": target_temp,
         "actual_temp": actual_temp,
-        "temperatures": temperatures,
         # Bounded recent LinuxCNC error-channel history (max 100
         # entries, oldest dropped first). ``telemetry_loop`` keeps
         # this fresh on every poll so a reload / reconnect sees the

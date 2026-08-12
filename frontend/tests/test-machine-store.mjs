@@ -111,19 +111,24 @@ test("store converts setPosition to G10 L20 P0 via generateSetOffset", () => {
   assert.match(text, /generateSetOffset\(axisName,\s*value\)/);
 });
 
-test("store publishes state.temperatures to the event bus", () => {
+test("store no longer publishes state.temperatures", () => {
+  // Sensors moved to the base-thread snapshot
+  // (``stores/baseThread.js``). The 10 Hz WebSocket stream no
+  // longer carries them; the machine store therefore does not
+  // publish a ``state.temperatures`` event-bus topic. Any module
+  // that needs sensor data reads it from
+  // ``useBaseThreadStore().sensors`` via ``storeToRefs``.
   const text = readStore();
-  // The temperature module is the consumer; we publish on every
-  // ``full_state`` and ``delta`` so the rolling chart keeps
-  // moving even though the machine store no longer owns the
-  // temperature field. The topic literal is hoisted into a
-  // ``STATE_TEMPERATURES_TOPIC`` constant, so we check for
-  // either the literal or the constant reference.
-  assert.match(
+  assert.doesNotMatch(
     text,
-    /const\s+STATE_TEMPERATURES_TOPIC\s*=\s*['"]state\.temperatures['"]/,
+    /STATE_TEMPERATURES_TOPIC/,
+    "machine store must not define STATE_TEMPERATURES_TOPIC",
   );
-  assert.match(text, /eventBus\.publish\(\s*STATE_TEMPERATURES_TOPIC/);
+  assert.doesNotMatch(
+    text,
+    /eventBus\.publish\(\s*['"]state\.temperatures['"]/,
+    "machine store must not publish the state.temperatures topic",
+  );
 });
 
 test("store connects with idempotency guard", () => {

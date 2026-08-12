@@ -1,14 +1,14 @@
-// Tools module Pinia store. Owns the backend-driven tool list, the
-// single-tool selection state, and the three actions that dispatch
-// HTTP POSTs to the backend router (spindle + extruder + tool
-// target). ``useConsoleStore`` is instantiated inside each action
-// to avoid the circular-initialisation trap. See ``.agent/STATE.md``
-// § 2, § 9.
+// Tools module Pinia store. Owns the backend-driven tool list and
+// the single-tool selection state. Reads tools from the shared
+// base-thread snapshot (``stores/baseThread.js``) so the dashboard
+// only issues one HTTP request per second for every slow stream.
+// Mirrors the temperature module's pattern — the canonical
+// ``useBaseThreadStore()`` is the only source of truth; the
+// per-module store here is a renderer that subscribes via ``watch``.
 //
-// The list is loaded from ``GET /api/v1/modules/tools/tools`` and
-// optionally pushed via the ``state.tools`` event-bus topic — the
-// poll is the source of truth, the subscription just provides
-// faster updates. Mirrors the temperature module's loader pattern.
+// The list used to be loaded from ``GET /api/v1/modules/tools/tools``
+// and pushed via the ``state.tools`` event-bus topic; both paths
+// are gone. The 1 Hz snapshot replaces them.
 //
 // Tool object shape (from hardware.json ``tools[]``):
 //
@@ -32,17 +32,14 @@
 // one card per tool, dispatched by ``type``.
 
 import { defineStore, storeToRefs } from "pinia";
-import { computed, onScopeDispose, ref } from "vue";
+import { computed, onScopeDispose, ref, watch } from "vue";
 
 import { eventBus } from "../../core/modules/event-bus.js";
 import { useConsoleStore } from "../../stores/console.js";
+import { useBaseThreadStore } from "../../stores/baseThread.js";
 import manifest from "./manifest.js";
 
 const TOPIC = "state.tools";
-
-// 1 s cadence matches the temperature module; the chart shape is
-// not configurable on the tools panel so a constant is sufficient.
-const DEFAULT_POLL_MS = 1_000;
 
 // ``module_`` prefix prevents collisions with legacy top-level
 // stores. See ``.agent/STATE.md`` § 2.
@@ -84,13 +81,12 @@ export const useToolStore = defineStore(STORE_ID, () => {
   // populates ``tools``; the panel picks the first tool as the
   // default at that point. See ``ingest`` below.
   const selectedToolId = ref(/** @type {string | null} */ (null));
-  const pollMs = ref(DEFAULT_POLL_MS);
 
   // --- non-reactive handles ------------------------------------- //
-  let pollHandle = null;
+  let stopToolsWatch = null;
   let busUnsub = null;
-  // Tracks whether the store has been started by ``onMounted`` so
-  // hot-reloads / double-mounts don't accumulate intervals.
+  // Tracks whether the store has been started by ``onLoad`` so
+  // hot-reloads / double-mounts don't accumulate listeners.
   let running = false;
 
   // --- computed ------------------------------------------------- //
@@ -117,25 +113,18 @@ export const useToolStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Pull the live tool state from the backend and ingest it. The
-   * ``GET /api/v1/modules/tools/tools`` endpoint returns
-   * ``{ tools: [...] }`` (canonical) — ``ingest`` also tolerates
-   * ``{ items: [...] }`` or a raw array so the loader doesn't have
-   * to be rewritten when the backend shape is finalised.
+   * Force an out-of-band base-thread refresh. Replaces the old
+   * direct ``GET /tools`` poll — the snapshot endpoint is the
+   * canonical source now, so a "refresh tools" action is just a
+   * snapshot refresh. Kept on the public action surface so any
+   * future "refresh now" button keeps working.
    */
   async function refreshTools() {
-    try {
-      const data = await fetch(
-        `/api/v1/modules/${manifest.id}/tools`,
-      ).then(async (r) => (r.ok ? r.json() : null));
-      if (data) ingest(data);
-    } catch (_) {
-      // Best-effort — keep the last known list visible.
-    }
+    await useBaseThreadStore().refresh();
   }
 
   /**
-   * Normalise the backend payload and merge it into ``tools``.
+   * Normalise the snapshot payload and merge it into ``tools``.
    * Accepts a raw array, ``{ tools: [...] }``, or ``{ items: [...]
    * }``; auto-selects the first tool when the list grows from
    * empty so the panel has something to render on first arrival.
@@ -167,18 +156,14 @@ export const useToolStore = defineStore(STORE_ID, () => {
   function start() {
     if (running) return;
     running = true;
-    // Fetch tool state immediately so the panel isn't empty on
-    // first render, then poll at the configured cadence.
-    refreshTools();
-    pollHandle = setInterval(refreshTools, pollMs.value);
+    // Tools come from the shared base-thread snapshot
+    // (``stores/baseThread.js``), started at app boot. We no
+    // longer schedule a ``refreshTools`` interval here — one
+    // HTTP request per second covers every slow stream.
   }
 
   function stop() {
     running = false;
-    if (pollHandle !== null) {
-      clearInterval(pollHandle);
-      pollHandle = null;
-    }
   }
 
   /**
@@ -267,17 +252,50 @@ export const useToolStore = defineStore(STORE_ID, () => {
     }
   }
 
-  // The bus delivers deep-frozen payloads; we shallow-clone before
-  // storing. See ``.agent/STATE.md`` § 3.
+  // Subscribe to the base-thread store's ``tools`` ref. The
+  // base-thread store fires every second; we shallow-clone each
+  // tool before storing so a downstream mutation cannot leak back
+  // into the base-thread store. The watcher is ``deep: true`` so
+  // the top-level reassignment inside the baseThread store's
+  // ``refresh()`` action reliably fires across module boundaries
+  // — Pinia's OPTIONS-API proxy does not always rebroadcast a
+  // shallow reassignment to consumers in sibling modules. The
+  // payload is small (a handful of tool rows) so the
+  // deep-traversal cost is negligible.
+  const baseThread = useBaseThreadStore();
+  // Pull the current value synchronously so the panel renders
+  // populated tools on the first frame, even if the dashboard
+  // mounts before the first 1 Hz tick has landed.
+  ingest(baseThread.tools);
+  stopToolsWatch = watch(
+    () => baseThread.tools,
+    (next) => {
+      if (Array.isArray(next)) {
+        ingest(next);
+      }
+    },
+    { immediate: true, deep: true },
+  );
+
+  // Backwards-compat: the legacy ``state.tools`` bus topic is no
+  // longer published (the WebSocket no longer carries tools) but
+  // we keep a no-op subscription so future publishers do not
+  // crash if they happen to push the topic.
   busUnsub = eventBus.subscribe(TOPIC, (_topic, payload) => {
-    ingest(payload);
+    if (Array.isArray(payload)) {
+      ingest(payload);
+    }
   });
 
   // Auto-stop when the pinia scope goes away (component unmount,
-  // app teardown) so the polling interval cannot leak across
-  // navigation. See ``.agent/STATE.md`` § 10.
+  // app teardown) so the watcher cannot leak across navigation.
+  // See ``.agent/STATE.md`` § 10.
   onScopeDispose(() => {
     stop();
+    if (stopToolsWatch) {
+      stopToolsWatch();
+      stopToolsWatch = null;
+    }
     if (busUnsub) {
       busUnsub();
       busUnsub = null;
@@ -289,7 +307,6 @@ export const useToolStore = defineStore(STORE_ID, () => {
     tools,
     selectedToolId,
     selectedTool,
-    pollMs,
     setSelectedToolId,
     ingest,
     start,
