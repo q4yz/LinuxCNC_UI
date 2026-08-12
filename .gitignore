@@ -70,3 +70,5 @@ img/
 /machine_config/ready_for_deploy/machine.cfg
 /machine_config/ready_for_deploy/machine.hal
 /backend/data/modules/temperature/settings.json
+/machine_config/example/goal/machine.cfg
+/machine_config/example/goal/machine.hal

@@ -53,6 +53,8 @@ trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null" SIGINT SIGTERM EXIT
 # Keep the script alive so the background processes keep running
 wait
 
+#python3 -m venv venv --system-site-packages
+
 #[APPLICATIONS]
 ## LinuxCNC will run this script automatically after Axis starts
 #APP = /home/linuxcnc/Downloads/LinuxCNC_UI/start_dev.sh
