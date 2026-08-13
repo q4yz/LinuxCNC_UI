@@ -136,16 +136,10 @@ class ConsoleLogger:
         if self._closed:
             return
 
-        # Validate the level early so a typo is caught before we
-        # touch the file. The Enum allows the string form for
-        # callers that pass literals.
         if isinstance(level, str):
             try:
                 level = LogLevel(level.upper())
             except ValueError:
-                # Unknown levels are clamped to INFO rather than
-                # raising — the persistent mirror should never
-                # be the reason a command fails.
                 level = LogLevel.INFO
 
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

@@ -36,7 +36,7 @@ def _minimal_payload() -> dict:
         "kinematics": "cartesian",
         "hal_type": "remora",
         "axes": [
-            {"id": "x", "steppers": ["stepper_x"], "endstops": []},
+            {"id": "x", "steppers": ["stepper_x"]},
         ],
         "steppers": [
             {
@@ -86,9 +86,7 @@ class TestRootValidation:
         assert model.temperature_sensors == []
         assert model.fans == []
         assert model.endstops == []
-        assert model.axes == [
-            Axis(id="x", steppers=["stepper_x"], endstops=[])
-        ]
+        assert model.axes == [Axis(id="x", steppers=["stepper_x"])]
 
     def test_to_dict_omits_none_values(self) -> None:
         """The serialised payload drops None values to keep the JSON lean."""
@@ -96,8 +94,6 @@ class TestRootValidation:
         payload = _minimal_payload()
         model = model_validate(payload)
         serialised = to_dict(model)
-        # No ``None`` literal anywhere — the consumer can rely on
-        # ``value is None`` checks because the field is absent.
         flat = str(serialised)
         assert "None" not in flat
 
@@ -110,7 +106,7 @@ class TestRootValidation:
 class TestIdUniqueness:
     def test_duplicate_axis_id_rejected(self) -> None:
         payload = _minimal_payload()
-        payload["axes"].append(payload["axes"][0])
+        payload["axes"].append({"id": "x", "steppers": []})
         with pytest.raises(ValueError, match="Duplicate id 'x'"):
             model_validate(payload)
 
@@ -122,23 +118,11 @@ class TestIdUniqueness:
 
     def test_duplicate_endstop_id_rejected(self) -> None:
         payload = _minimal_payload()
-        payload["endstops"].append(
-            {
-                "id": "endstop_x_min",
-                "stepper": "stepper_x",
-                "pin": "^PC0",
-                "pos": 0.0,
-                "type": "Estop",
-            }
-        )
-        payload["endstops"].append(
-            {
-                "id": "endstop_x_min",
-                "stepper": "stepper_x",
-                "pin": "^PC1",
-                "pos": 0.0,
-                "type": "Estop",
-            }
+        payload["endstops"].extend(
+            [
+                {"id": "endstop_x_min", "pin": "^PC0"},
+                {"id": "endstop_x_min", "pin": "^PC1"},
+            ]
         )
         with pytest.raises(ValueError, match="Duplicate id 'endstop_x_min'"):
             model_validate(payload)
@@ -172,7 +156,6 @@ class TestIdUniqueness:
         payload["temperature_sensors"].append(
             {"id": "x", "pin": "PA1"}
         )
-        # Both share the id "x" but live in different lists.
         model = model_validate(payload)
         assert model.tools[0].id == "x"
         assert model.temperature_sensors[0].id == "x"
@@ -191,21 +174,13 @@ class TestIdPattern:
     def test_id_must_be_lowercase_snake(self, entity_key: str) -> None:
         payload = _minimal_payload()
         if entity_key == "axes":
-            payload["axes"].append({"id": "X", "steppers": [], "endstops": []})
+            payload["axes"].append({"id": "X", "steppers": []})
         elif entity_key == "steppers":
             payload["steppers"].append(dict(payload["steppers"][0], id="Stepper-X"))
         elif entity_key == "drivers":
             payload["drivers"].append({"id": "Driver-X", "type": "TMC2209"})
         elif entity_key == "endstops":
-            payload["endstops"].append(
-                {
-                    "id": "Endstop-X",
-                    "stepper": "stepper_x",
-                    "pin": "^PC0",
-                    "pos": 0.0,
-                    "type": "Estop",
-                }
-            )
+            payload["endstops"].append({"id": "Endstop-X", "pin": "^PC0"})
         elif entity_key == "tools":
             payload["tools"].append(
                 {
@@ -237,34 +212,26 @@ class TestCrossReferences:
             model_validate(payload)
 
     def test_axis_endstop_reference_must_resolve(self) -> None:
-        """Inline ``axis.endstops[*].id`` must point at a top-level record."""
+        """``axis.endstop`` is a string id; it must point at a top-level record."""
         payload = _minimal_payload()
-        payload["axes"][0]["endstops"].append(
-            {"id": "endstop_x_min", "type": "Estop", "pos": 0.0}
-        )
-        with pytest.raises(
-            ValueError, match="inline endstop 'endstop_x_min'"
-        ):
+        payload["axes"][0]["endstop"] = "endstop_x_min"
+        with pytest.raises(ValueError, match="references unknown endstop"):
             model_validate(payload)
+
+    def test_axis_endstop_pin_does_not_require_record(self) -> None:
+        """``axis.endstop_pin`` is the inline Klipper form. No matching
+        top-level endstop entity is required — the pin stands on its own.
+        """
+        payload = _minimal_payload()
+        payload["axes"][0]["endstop_pin"] = "PG6"
+        model = model_validate(payload)
+        assert model.axes[0].endstop_pin == "PG6"
+        assert model.endstops == []
 
     def test_stepper_driver_reference_must_resolve(self) -> None:
         payload = _minimal_payload()
         payload["steppers"][0]["driver"] = "unknown_driver"
         with pytest.raises(ValueError, match="references unknown driver 'unknown_driver'"):
-            model_validate(payload)
-
-    def test_endstop_stepper_reference_must_resolve(self) -> None:
-        payload = _minimal_payload()
-        payload["endstops"].append(
-            {
-                "id": "endstop_x_min",
-                "stepper": "unknown_stepper",
-                "pin": "^PC0",
-                "pos": 0.0,
-                "type": "Estop",
-            }
-        )
-        with pytest.raises(ValueError, match="references unknown stepper 'unknown_stepper'"):
             model_validate(payload)
 
     def test_tool_sensor_reference_must_resolve_to_temperature_sensor(self) -> None:
@@ -290,10 +257,6 @@ class TestCrossReferences:
         across lists is allowed, but a wrong-list reference is
         rejected.
         """
-        # The minimum payload adds a tool with no sensor. We
-        # simulate a future pressure_sensors list by adding it
-        # manually; the validator must not satisfy the tool's
-        # ``sensor`` reference from it.
         payload = _minimal_payload()
         payload["tools"].append(
             {
@@ -304,11 +267,6 @@ class TestCrossReferences:
                 "sensor": "pressure_extruder",
             }
         )
-        # ``pressure_extruder`` is a future type id; the v2 model
-        # doesn't know it. The validator fails because the id
-        # isn't in ``temperature_sensors``. (If a future
-        # ``pressure_sensors`` list is added, the lookup table
-        # for ``tool.sensor`` is intentionally NOT extended.)
         with pytest.raises(ValueError, match="references unknown temperature sensor"):
             model_validate(payload)
 
@@ -346,55 +304,139 @@ class TestCrossReferences:
     def test_one_endstop_record_per_switch(self) -> None:
         """Each Klipper ``[endstop_switch NAME]`` produces ONE record."""
         payload = _minimal_payload()
-        payload["endstops"].append(
-            {
-                "id": "endstop_x_min",
-                "stepper": "stepper_x",
-                "pin": "^PC0",
-                "pos": 0.0,
-                "type": "Estop",
-            }
-        )
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "^PC0"})
         model = model_validate(payload)
         assert len(model.endstops) == 1
-        assert model.endstops[0].type == "Estop"
+        assert model.endstops[0].pin == "^PC0"
 
 
 # ---------------------------------------------------------------------- #
-# Endstop type enum                                                        #
+# Axis.endstop exclusivity                                                 #
 # ---------------------------------------------------------------------- #
 
 
-class TestEndstopType:
-    def test_unknown_type_rejected(self) -> None:
+class TestAxisEndstopExclusivity:
+    """Either ``endstop`` or ``endstop_pin`` may be set on an axis, never both."""
+
+    def test_endstop_only(self) -> None:
+        payload = _minimal_payload()
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
+        payload["axes"][0]["endstop"] = "endstop_x_min"
+        model = model_validate(payload)
+        assert model.axes[0].endstop == "endstop_x_min"
+        assert model.axes[0].endstop_pin is None
+
+    def test_endstop_pin_only(self) -> None:
+        payload = _minimal_payload()
+        payload["axes"][0]["endstop_pin"] = "PG6"
+        model = model_validate(payload)
+        assert model.axes[0].endstop_pin == "PG6"
+        assert model.axes[0].endstop is None
+
+    def test_neither_field_set_is_allowed(self) -> None:
+        """An axis with no endstop at all (e.g. extruder joints) is valid."""
+        payload = _minimal_payload()
+        model = model_validate(payload)
+        assert model.axes[0].endstop is None
+        assert model.axes[0].endstop_pin is None
+
+    def test_both_endstop_and_endstop_pin_rejected(self) -> None:
+        payload = _minimal_payload()
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
+        payload["axes"][0]["endstop"] = "endstop_x_min"
+        payload["axes"][0]["endstop_pin"] = "PG6"
+        with pytest.raises(ValueError, match="sets both 'endstop' and 'endstop_pin'"):
+            model_validate(payload)
+
+
+# ---------------------------------------------------------------------- #
+# Endstop multi-axis reuse                                                  #
+# ---------------------------------------------------------------------- #
+
+
+class TestEndstopMultiAxis:
+    """One Endstop entity may be referenced by multiple axes."""
+
+    def test_two_axes_share_same_endstop(self) -> None:
+        payload = _minimal_payload()
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
+        payload["axes"].append(
+            {"id": "z", "steppers": [], "endstop": "endstop_x_min"}
+        )
+        model = model_validate(payload)
+        endstop_refs = {a.endstop for a in model.axes if a.endstop}
+        assert endstop_refs == {"endstop_x_min"}
+
+
+# ---------------------------------------------------------------------- #
+# Axis.pos                                                                  #
+# ---------------------------------------------------------------------- #
+
+
+class TestAxisPos:
+    def test_pos_optional(self) -> None:
+        payload = _minimal_payload()
+        model = model_validate(payload)
+        assert model.axes[0].pos is None
+
+    def test_pos_stored_on_axis(self) -> None:
+        payload = _minimal_payload()
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
+        payload["axes"][0]["endstop"] = "endstop_x_min"
+        payload["axes"][0]["pos"] = 5.5
+        model = model_validate(payload)
+        assert model.axes[0].pos == 5.5
+
+
+# ---------------------------------------------------------------------- #
+# Endstop entity shape                                                     #
+# ---------------------------------------------------------------------- #
+
+
+class TestEndstopShape:
+    """Top-level Endstop records are stripped to ``{id, pin}``."""
+
+    def test_endstop_accepts_only_id_and_pin(self) -> None:
+        payload = _minimal_payload()
+        payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
+        model = model_validate(payload)
+        assert model.endstops[0].id == "endstop_x_min"
+        assert model.endstops[0].pin == "PG6"
+
+    def test_endstop_rejects_legacy_type_field(self) -> None:
+        """``type`` was the previous behaviour discriminator; the new
+        schema forbids it so a stale payload fails loudly.
+        """
         payload = _minimal_payload()
         payload["endstops"].append(
-            {
-                "id": "endstop_x_min",
-                "stepper": "stepper_x",
-                "pin": "^PC0",
-                "pos": 0.0,
-                "type": "macro",
-            }
+            {"id": "endstop_x_min", "pin": "PG6", "type": "Home"}
         )
         with pytest.raises(ValueError, match="type"):
             model_validate(payload)
 
-    def test_all_valid_types_accepted(self) -> None:
-        """``None``, ``"Estop"``, and ``"Home"`` are all valid."""
-        for type_value in (None, "Estop", "Home"):
-            payload = _minimal_payload()
-            payload["endstops"].append(
-                {
-                    "id": "endstop_x_min",
-                    "stepper": "stepper_x",
-                    "pin": "^PC0",
-                    "pos": 0.0,
-                    "type": type_value,
-                }
-            )
-            model = model_validate(payload)
-            assert model.endstops[0].type == type_value
+    def test_endstop_rejects_legacy_pos_field(self) -> None:
+        """``pos`` moved onto Axis; a top-level Endstop carrying it fails."""
+        payload = _minimal_payload()
+        payload["endstops"].append(
+            {"id": "endstop_x_min", "pin": "PG6", "pos": 0.0}
+        )
+        with pytest.raises(ValueError, match="pos"):
+            model_validate(payload)
+
+    def test_endstop_rejects_legacy_stepper_field(self) -> None:
+        """The previous ``stepper`` back-reference is gone (one endstop
+        can be used by multiple axes, so a single owner is no longer
+        well-defined)."""
+        payload = _minimal_payload()
+        payload["endstops"].append(
+            {
+                "id": "endstop_x_min",
+                "pin": "PG6",
+                "stepper": "stepper_x",
+            }
+        )
+        with pytest.raises(ValueError, match="stepper"):
+            model_validate(payload)
 
 
 # ---------------------------------------------------------------------- #
@@ -408,19 +450,12 @@ class TestErrorAggregation:
         consumer doesn't fix them one at a time.
         """
         payload = _minimal_payload()
-        # Two axes reference the same stepper_id (one valid, one bogus).
-        payload["axes"].append({"id": "y", "steppers": ["stepper_x"], "endstops": []})
-        # A bogus inline endstop reference.
-        payload["axes"][0]["endstops"].append(
-            {"id": "endstop_x_min", "type": "Estop", "pos": 0.0}
-        )
-        # Two duplicate steppers.
+        payload["axes"].append({"id": "y", "steppers": ["stepper_x"]})
+        payload["axes"][0]["endstop"] = "missing_endstop"
         payload["steppers"].append(dict(payload["steppers"][0]))
         with pytest.raises(ValueError) as exc_info:
             model_validate(payload)
         message = str(exc_info.value)
-        # All three errors are surfaces in the same message.
         assert "Duplicate id 'stepper_x'" in message
-        assert "inline endstop 'endstop_x_min'" in message
-        # The duplicate-axis error would be inside the same message.
+        assert "references unknown endstop 'missing_endstop'" in message
         assert message.count(" - ") >= 2

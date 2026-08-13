@@ -1,7 +1,7 @@
 """End-to-end tests for the jog keep-alive happy path.
 
 These tests exercise the full request → hardware → keep-alive →
-watchdog path through a built ``MachineModule`` instance and the
+watchdog path through a built ``AxisModule`` instance and the
 canonical settings endpoints. They mirror the issue § 4.1 test
 list (``test_jog_keepalive.py``).
 """
@@ -32,114 +32,14 @@ def _run(coro):
 
 @pytest.fixture()
 def machine_app(tmp_data_root, clean_env):
-    """Build a fresh FastAPI app backed by the ``MachineModule``."""
-    from modules.machine.module import MachineModule
+    """Build a fresh FastAPI app backed by the ``AxisModule``."""
+    from modules.axis.module import AxisModule
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[MachineModule()])
+    reg.boot(app, bus=EventBus(), candidates=[AxisModule()])
     return app, reg
 
-
-def test_keepalive_endpoint_refreshes_active_axis(machine_app):
-    """A ping to ``/jog/keepalive`` refreshes the stamp without
-    halting the axis. This is the canonical "frontend is healthy"
-    signal that the watchdog uses to leave the axis alone.
-    """
-    app, _ = machine_app
-    client = TestClient(app)
-
-    # Start a continuous jog on axis 0.
-    resp = client.post(
-        "/api/v1/modules/machine/jog",
-        json={"velocities": {"0": 1000.0}, "distance": 0.0},
-    )
-    assert resp.status_code == 200
-
-    from modules.machine import jog
-
-    initial = jog._active_jogs.get(0)
-    assert initial is not None
-
-    # Wait 100 ms so a refreshed stamp is measurably later.
-    time.sleep(0.1)
-
-    # Keep-alive (the value used by the frontend at 250 ms cadence).
-    resp = client.post(
-        "/api/v1/modules/machine/jog/keepalive",
-        json={"axes": [0]},
-    )
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
-
-    after = jog._active_jogs.get(0)
-    assert after is not None
-    assert after >= initial
-
-    # Cleanup so the watchdog does not see a stale entry after
-    # the test exits.
-    client.post(
-        "/api/v1/modules/machine/jog/stop",
-        json={"axes": [0]},
-    )
-
-
-def test_stop_endpoint_removes_axis_from_active_set(machine_app):
-    """``POST /jog/stop`` drops the axis from the watchdog map so
-    the watchdog cannot accidentally force-stop the axis after
-    the user has explicitly stopped it.
-    """
-    app, _ = machine_app
-    client = TestClient(app)
-
-    client.post(
-        "/api/v1/modules/machine/jog",
-        json={"velocities": {"1": 800.0}, "distance": 0.0},
-    )
-    from modules.machine import jog
-
-    assert 1 in jog._active_jogs
-
-    resp = client.post(
-        "/api/v1/modules/machine/jog/stop",
-        json={"axes": [1]},
-    )
-    assert resp.status_code == 200
-    assert 1 not in jog._active_jogs
-
-
-def test_keepalive_for_unknown_axis_is_a_noop(machine_app):
-    """Pinging an axis that has not been started is harmless — the
-    watchdog just ignores it. This guards against the frontend
-    leaking a stale keep-alive during navigation.
-    """
-    app, _ = machine_app
-    client = TestClient(app)
-
-    resp = client.post(
-        "/api/v1/modules/machine/jog/keepalive",
-        json={"axes": [42]},
-    )
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
-
-
-def test_increment_jog_does_not_register_axis(machine_app):
-    """A step jog (``distance != 0``) does NOT register the axis
-    with the watchdog because the watchdog's job is to catch a
-    runaway continuous jog, not a one-shot move.
-    """
-    app, _ = machine_app
-    client = TestClient(app)
-
-    from modules.machine import jog
-
-    resp = client.post(
-        "/api/v1/modules/machine/jog",
-        json={"velocities": {"2": 500.0}, "distance": 1.0},
-    )
-    assert resp.status_code == 200
-    assert jog._active_jogs == {}
 
 
 # ────────────────────────────────────────────────────────────────────── #
@@ -161,7 +61,7 @@ def _ws_dispatch(msg: dict) -> None:
     so we drive it to completion via ``asyncio.run`` — the same
     pattern used in ``test_jog_watchdog.py``.
     """
-    from routers.websocket import _dispatch_inbound
+    from routers.servo_thread import _dispatch_inbound
     _run(_dispatch_inbound(None, msg))
 
 
@@ -177,7 +77,7 @@ def test_ws_keepalive_dispatches_to_watchdog(machine_app):
     # ``_active_jogs`` dict is wired. The WebSocket itself is not
     # opened — the dispatch path is pure.
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.machine import jog
+    from modules.axis import jog
 
     # Wipe the active set so the test does not depend on prior
     # state. ``_active_jogs`` is module-private; the helper uses
@@ -217,7 +117,7 @@ def test_ws_keepalive_for_unknown_axis_is_noop(machine_app):
     phantom axis into the active set.
     """
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.machine import jog
+    from modules.axis import jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -235,7 +135,7 @@ def test_ws_jog_axis_registers_continuous_jog(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.machine import jog
+    from modules.axis import jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -272,7 +172,7 @@ def test_ws_jog_stop_removes_axis_from_active_set(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.machine import jog
+    from modules.axis import jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -292,7 +192,7 @@ def test_ws_dispatch_ignores_unknown_type(machine_app):
     stream.
     """
     machine_app  # noqa: F841
-    from modules.machine import jog
+    from modules.axis import jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -312,7 +212,7 @@ def test_ws_dispatch_rejects_malformed_axes(machine_app):
     client must not be able to corrupt the watchdog state.
     """
     machine_app  # noqa: F841
-    from modules.machine import jog
+    from modules.axis import jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()

@@ -20,10 +20,14 @@ Two guarantees are enforced:
     high-frequency publishers (encoder, temperature sampler) from
     flooding downstream subscribers.
 
-The two rules are deliberately orthogonal: ``TelemetryBus`` (see
-:mod:`core.telemetry.bus`) gets a *by-reference* path explicitly
-opted-in by its consumers, because the 100 Hz telemetry stream cannot
-afford the cost of re-instantiating Pydantic models on every tick.
+The two rules are deliberately orthogonal: this bus is **by-value**
+— payloads are frozen Pydantic models — so module-to-module commands
+across independent codebases stay safe. A separate by-reference
+pub/sub channel had been prototyped under ``backend.core.telemetry.bus``
+(removed as orphan code; the high-frequency telemetry stream has no
+in-process consumer yet) — when the high-frequency telemetry stream
+needs to be pub/sub, it should be re-introduced as a fresh module
+rather than ``HTTPException``-throwing through this one.
 """
 
 from __future__ import annotations
@@ -144,8 +148,10 @@ class EventBus:
 
         Plain dicts/lists/scalars are returned by reference because
         deep-copying arbitrary JSON would surprise perf-sensitive
-        modules (see the TelemetryBus sibling for the by-reference
-        escape hatch).
+        modules. The removed ``backend.core.telemetry.bus`` package
+        used to be the by-reference escape hatch for high-frequency
+        telemetry; if that surface returns, it should be a fresh
+        module rather than a flag on this one.
         """
         if isinstance(payload, BaseModel):
             return payload.model_copy(deep=True)

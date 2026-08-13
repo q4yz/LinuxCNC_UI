@@ -36,7 +36,7 @@ import { defineStore } from "pinia";
 import { reactive, ref } from "vue";
 
 import {
-  ModulesMachineService,
+  ModulesMachineStateService,
   ModulesMacrosService,
 } from "../../../generated/api/index.ts";
 import manifest from "./manifest.js";
@@ -342,7 +342,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * "Run" a ``macro`` row. Reads its content, parses it into
    * blocks, and dispatches each ``static`` block as one MDI
    * command per non-blank line via
-   * ``ModulesMachineService.runMdiCommand``. ``python`` blocks
+   * ``ModulesMachineStateService.runMdiCommand``. ``python`` blocks
    * are surfaced to the console as warnings — the backend
    * interpreter is not implemented yet, so we explicitly do not
    * feed them to the hardware layer.
@@ -429,7 +429,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
         }
 
         try {
-          await ModulesMachineService.runMdiCommand({ command: line });
+          await ModulesMachineStateService.runMdiCommand({ command: line });
           staticDispatched += 1;
         } catch (error) {
           consoleStore.error(

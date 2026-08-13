@@ -216,32 +216,39 @@ test("machine module JogControls unmount stops all in-flight jogs", () => {
 
 test("machine module uses the module-scoped URL prefixes", () => {
   // The frontend's generated services were updated to point
-  // at the module URLs (``/api/v1/modules/machine/...``). The
-  // original flat URLs must no longer appear in the service
-  // definitions.
-  //
-  // NOTE: After the issue #41 follow-up, the generated service
-  // classes were consolidated under the ``ModulesMachineService``
-  // / ``ModulesProgramService`` names (the legacy
-  // ``MachineStateService`` / ``JoggingService`` /
-  // ``ProgramExecutionService`` were renamed and unified). The
-  // test now reads the current file names so the assertions
-  // continue to track the real shape of the generated client.
-  const machineSvc = resolve(
+  // at the module URLs. After the state-module extraction,
+  // ``ModulesAxisService`` only carries the ``/home`` endpoint
+  // (homing is an axis-motion action); ``/state``, ``/mode``,
+  // and ``/mdi`` live in the separate state module exposed as
+  // ``ModulesMachineStateService`` under
+  // ``/api/v1/modules/machine_state/...``. The original flat
+  // ``/api/v1/machine/...`` URLs must no longer appear in the
+  // service definitions. Jog goes over the ``/ws/telemetry``
+  // WebSocket exclusively, so the historical ``/jog``,
+  // ``/jog/keepalive``, and ``/jog/stop`` REST URLs are no
+  // longer asserted here.
+  const axisSvc = resolve(
     repoRoot,
-    "frontend/generated/api/services/ModulesMachineService.ts",
+    "frontend/generated/api/services/ModulesAxisService.ts",
+  );
+  const stateSvc = resolve(
+    repoRoot,
+    "frontend/generated/api/services/ModulesMachineStateService.ts",
   );
   const programSvc = resolve(
     repoRoot,
     "frontend/generated/api/services/ModulesProgramService.ts",
   );
 
-  const machineText = existsSync(machineSvc)
-    ? readFileSync(machineSvc, "utf-8")
+  const axisText = existsSync(axisSvc)
+    ? readFileSync(axisSvc, "utf-8")
     : readFileSync(
         resolve(repoRoot, "frontend/src/modules/machine/store.js"),
         "utf-8",
       );
+  const stateText = existsSync(stateSvc)
+    ? readFileSync(stateSvc, "utf-8")
+    : "";
   const programText = existsSync(programSvc)
     ? readFileSync(programSvc, "utf-8")
     : readFileSync(
@@ -253,39 +260,38 @@ test("machine module uses the module-scoped URL prefixes", () => {
   // source-only checkout. In that case, still verify that consumers use
   // the module-scoped service names; a build with a generated client
   // performs the URL checks below.
-  if (!existsSync(machineSvc) || !existsSync(programSvc)) {
-    assert.match(machineText, /ModulesMachineService/);
+  if (!existsSync(axisSvc) || !existsSync(programSvc)) {
+    assert.match(axisText, /ModulesAxisService/);
     assert.match(programText, /ModulesProgramService/);
     return;
   }
 
-  // The generated client groups the machine state and jog operations
-  // under one module service after the registry migration.
-  const jogText = machineText;
-
-  // Spot-check the URLs that the store actually calls.
-  for (const url of [
-    "/api/v1/modules/machine/state",
-    "/api/v1/modules/machine/mode",
-    "/api/v1/modules/machine/home",
-    "/api/v1/modules/machine/mdi",
-  ]) {
+  // ``ModulesAxisService`` exposes only ``/home`` (homing is
+  // the one axis-motion action kept on the axis module; the
+  // state / mode / MDI endpoints moved to the state module).
+  for (const url of ["/api/v1/modules/axis/home"]) {
     assert.match(
-      machineText,
+      axisText,
       new RegExp(url.replace(/\//g, "\\/")),
-      `ModulesMachineService must use ${url}`,
+      `ModulesAxisService must use ${url}`,
     );
   }
-  for (const url of [
-    "/api/v1/modules/machine/jog",
-    "/api/v1/modules/machine/jog/keepalive",
-    "/api/v1/modules/machine/jog/stop",
-  ]) {
-    assert.match(
-      machineText,
-      new RegExp(url.replace(/\//g, "\\/")),
-      `ModulesMachineService must use ${url}`,
-    );
+  // ``ModulesMachineStateService`` carries the state / mode / MDI
+  // endpoints that used to live alongside ``/home``. The URL
+  // prefix is ``/api/v1/modules/machine_state`` (the manifest
+  // id of the state module, with the underscore).
+  if (stateText) {
+    for (const url of [
+      "/api/v1/modules/machine_state/state",
+      "/api/v1/modules/machine_state/mode",
+      "/api/v1/modules/machine_state/mdi",
+    ]) {
+      assert.match(
+        stateText,
+        new RegExp(url.replace(/\//g, "\\/")),
+        `ModulesMachineStateService must use ${url}`,
+      );
+    }
   }
   // The legacy ``/api/v1/machine/...`` URLs must no longer
   // appear anywhere in the machine-related generated services.
@@ -295,16 +301,11 @@ test("machine module uses the module-scoped URL prefixes", () => {
     "/api/v1/machine/home",
     "/api/v1/machine/jog",
   ]) {
-    assert.doesNotMatch(
-      machineText,
-      new RegExp(url.replace(/\//g, "\\/")),
-      `ModulesMachineService must not use legacy ${url}`,
-    );
-    assert.doesNotMatch(
-      jogText,
-      new RegExp(url.replace(/\//g, "\\/")),
-      `ModulesMachineService must not use legacy ${url}`,
-    );
+    const re = new RegExp(url.replace(/\//g, "\\/"));
+    assert.doesNotMatch(axisText, re, `ModulesAxisService must not use legacy ${url}`);
+    if (stateText) {
+      assert.doesNotMatch(stateText, re, `ModulesMachineStateService must not use legacy ${url}`);
+    }
   }
 
   // Program endpoints moved to /api/v1/modules/program/...

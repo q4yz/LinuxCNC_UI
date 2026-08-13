@@ -51,14 +51,15 @@ test("store exposes jogIntervals as a reactive map", () => {
   assert.match(text, /jogIntervals\s*,/);
 });
 
-test("store builds the ModulesMachineService.jogAxis payload for continuous jogs", () => {
+test("store builds the jog-axis payload over the WebSocket for continuous jogs", () => {
   const text = readStore();
-  // ``jogContinuous`` posts a ``jogAxis`` request with
-  // ``distance: 0`` and the supplied velocity.  The store
-  // breaks the call across two lines (object literal), so
-  // the regex tolerates the newline and trailing whitespace.
-  assert.match(text, /ModulesMachineService\.jogAxis\s*\(\s*\{/);
-  assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*velocity/);
+  // ``jogContinuous`` posts a ``jog_axis`` event over the
+  // ``/ws/telemetry`` channel with ``distance: 0`` and the
+  // supplied velocity. The store breaks the call across two
+  // lines (object literal), so the regex tolerates the newline
+  // and trailing whitespace.
+  assert.match(text, /servo\.send\(\s*\{\s*type:\s*["']jog_axis["']/);
+  assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*jogVelocity/);
   assert.match(text, /distance:\s*0/);
   // After the initial command, the store schedules a setInterval
   // that pings the keepalive over the open WebSocket at the
@@ -118,11 +119,15 @@ test("store rejects ESTOP-driven power-on", () => {
   assert.match(text, /Cannot turn on machine while ESTOP/);
 });
 
-test("store forwards MDI commands through ModulesMachineService.runMdiCommand", () => {
+test("store forwards MDI commands through ModulesMachineStateService.runMdiCommand", () => {
   const text = readStore();
   // ``setPosition`` and ``setCoordinateSystem`` both funnel
-  // through the legacy MDI endpoint.
-  assert.match(text, /ModulesMachineService\.runMdiCommand\(\s*\{\s*command:/);
+  // through the MDI endpoint. After the state-module extraction,
+  // MDI lives in ``backend.modules.state.router`` (tag
+  // ``modules:machine_state``); the regenerated client wrapper is
+  // ``ModulesMachineStateService``. ``homeAxis`` stays on
+  // ``ModulesAxisService`` because homing is an axis action.
+  assert.match(text, /ModulesMachineStateService\.runMdiCommand\(\s*\{\s*command:/);
 });
 
 test("store converts setPosition to G10 L20 P0 via generateSetOffset", () => {

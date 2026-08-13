@@ -5,13 +5,28 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("linuxcnc_mock")
 
-from services.hardware_loader import load_active_heaters
-
 
 # Module-level path resolution so tests can monkey-patch the
 # ``hardware.json`` location the seeders read from. Mirrors the
 # convention in :mod:`services.hardware_loader`.
 _PROJECT_ROOT = None
+
+# Lazy-import the temperature helper to break the circular load
+# chain. ``modules.temperature.hardware_loader`` reads the active
+# ``hardware.json``; importing it at module scope would deadlock the
+# hardware package initialisation when ``linuxcnc_mock`` is
+# triggered as a fallback by ``hardware.connection``.
+_load_active_heaters = None
+
+
+def _get_load_active_heaters():
+    global _load_active_heaters
+    if _load_active_heaters is None:
+        from modules.temperature.config_mapper import (
+            load_active_heaters as _lah,
+        )
+        _load_active_heaters = _lah
+    return _load_active_heaters
 
 
 def _get_project_root():
@@ -114,7 +129,7 @@ def _seed_temperatures_from_hardware():
     """
     with _machine_state.lock:
         _machine_state.temperatures = {}
-        for name in load_active_heaters():
+        for name in _get_load_active_heaters()():
             _machine_state.temperatures[name] = {'actual': 25.0, 'target': 0.0}
         legacy_extruder = next(
             (
@@ -306,8 +321,15 @@ def reseed_from_hardware_json():
     _seed_spindle_actual_from_hardware()
 
 
-_seed_temperatures_from_hardware()
-_seed_spindle_actual_from_hardware()
+# Boot-time seeding is deferred to ``reseed_from_hardware_json``
+# which the FastAPI lifespan in ``backend/main.py`` calls explicitly
+# on startup. The eager seed used to import the temperature
+# module's loader at module-load time, which created a circular
+# chain: ``hardware`` triggers ``linuxcnc_mock``, which re-imported
+# ``modules.temperature``, which re-imported ``hardware`` mid-init.
+# Deferring the seed breaks the cycle; the lifespan in ``main.py``
+# is the single production caller — tests call the same helper
+# explicitly after monkey-patching ``_PROJECT_ROOT``.
 
 def _jog_simulation_loop():
     """Background thread to actually move coordinates during a continuous jog in the mock"""

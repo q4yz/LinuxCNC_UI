@@ -2,12 +2,12 @@
 
 Mirrors the historical 500 ms keep-alive window from
 ``backend/routers/jog.py``. The watchdog reads the module-private
-``_active_jogs`` map owned by :mod:`backend.modules.machine.jog` and
+``_active_jogs`` map owned by :mod:`backend.modules.axis.jog` and
 force-stops any axis whose last-ping timestamp is older than the
 configured timeout (read from the module settings at startup).
 
-The watchdog is started by :meth:`MachineModule.on_load` and stopped
-by :meth:`MachineModule.on_unload`. Because the registry may invoke
+The watchdog is started by :meth:`AxisModule.on_load` and stopped
+by :meth:`AxisModule.on_unload`. Because the registry may invoke
 ``on_unload`` more than once under ``uvicorn --reload``, the watchdog
 helpers :func:`start_watchdog` and :func:`stop_watchdog` are
 idempotent.
@@ -29,7 +29,7 @@ from typing import Optional
 
 from hardware import execute_sync_cmd, linuxcnc
 
-logger = logging.getLogger("backend.modules.machine.jog_watchdog")
+logger = logging.getLogger("backend.modules.axis.jog_watchdog")
 
 
 # Keep a reference to the real dispatch function so tests and hardware

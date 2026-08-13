@@ -34,6 +34,7 @@ from .http_errors import (
     raise_not_found,
     raise_not_found_from,
 )
+from .machine_service import get_machine_control_service, ProgramProgressResponse
 from .remora_signal_map import (
     get_pv_index,
     get_sp_index,
@@ -73,5 +74,7 @@ __all__ = [
     "register_line_count",
     "reset_remora_signal_map_cache",
     "reset_service_cache",
+    "get_machine_control_service",
+    "ProgramProgressResponse"
 ]
 

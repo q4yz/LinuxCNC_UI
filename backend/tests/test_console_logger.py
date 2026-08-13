@@ -185,14 +185,20 @@ def test_relogger_reopens_after_close(isolated_logger):
 
 
 def _machine_app(tmp_data_root, clean_env, log_path: Path):
-    """Build a FastAPI app with the machine module booted against a
-    private log file."""
-    from modules.machine.module import MachineModule
+    """Build a FastAPI app with the axis + state modules booted
+    against a private log file.
+    """
+    from modules.axis.module import AxisModule
+    from modules.state.module import StateModule
 
     reset_console_logger(log_path)
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[MachineModule()])
+    reg.boot(
+        app,
+        bus=EventBus(),
+        candidates=[AxisModule(), StateModule()],
+    )
     return app, reg
 
 
@@ -205,7 +211,7 @@ def test_mdi_endpoint_writes_command_and_response(
     client = TestClient(app)
 
     resp = client.post(
-        "/api/v1/modules/machine/mdi",
+        "/api/v1/modules/machine_state/mdi",
         json={"command": "G1 X10"},
     )
     assert resp.status_code == 200
@@ -227,7 +233,7 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
     from fastapi import HTTPException
 
     from hardware import execute_sync_cmd as real_execute_sync_cmd
-    from modules import machine as machine_pkg
+    from services import machine_service as svc
 
     log_path = tmp_path / "console_history.log"
     app, _ = _machine_app(tmp_data_root, clean_env, log_path)
@@ -237,13 +243,15 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
             raise HTTPException(status_code=400, detail="Bad command")
         return real_execute_sync_cmd(cmd_name, cmd_timeout, *args)
 
-    # The router imported the symbol directly, so we patch the
-    # module-global reference rather than the ``hardware`` import.
-    monkeypatch.setattr(machine_pkg.router, "execute_sync_cmd", fake_execute_sync_cmd)
+    # The state router calls into ``MachineControlService.run_mdi``
+    # which dispatches via ``execute_sync_cmd`` imported in
+    # ``services.machine_service``. Patching that module-global
+    # makes the facade raise so the route returns 400.
+    monkeypatch.setattr(svc, "execute_sync_cmd", fake_execute_sync_cmd)
 
     client = TestClient(app)
     resp = client.post(
-        "/api/v1/modules/machine/mdi",
+        "/api/v1/modules/machine_state/mdi",
         json={"command": "G99"},
     )
     assert resp.status_code == 400

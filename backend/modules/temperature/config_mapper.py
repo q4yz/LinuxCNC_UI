@@ -6,6 +6,15 @@ temperature simulator) are both seeded from the active
 ``machine.cfg`` actually declared — not a hard-coded list of three
 "sensor" names.
 
+This is the canonical home for :func:`load_active_heaters`. The
+helper lives next to the temperature module because both consumers
+(temperature module + linuxcnc_mock) are siblings of this file —
+a ``backend.services.hardware_loader`` would create a top-level
+import cycle between the temperature module and the hardware /
+services layers. The previous :mod:`backend.services.hardware_loader`
+was removed; the public surface is now ``from
+modules.temperature.hardware_loader import load_active_heaters``.
+
 A single helper keeps the path-resolution and JSON-parse logic in
 one place. The mock and the temperature module both call
 :func:`load_active_heaters` so a future move to a different active
@@ -40,12 +49,17 @@ import logging
 from pathlib import Path
 from typing import List
 
-logger = logging.getLogger("backend.services.hardware_loader")
+logger = logging.getLogger("backend.modules.temperature.hardware_loader")
 
 
 #: Project root = ``<repo>``. Computed relative to this file so the
-#: helper resolves correctly regardless of the calling cwd.
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+#: helper resolves correctly regardless of the calling cwd. The
+#: depth is ``parents[3]`` because this file lives under
+#: ``backend/modules/temperature/`` (the previous home was
+#: ``backend/services/`` where ``parents[2]`` was correct). The
+#: extra ``../`` walks back through ``modules/`` and ``backend/``
+#: to reach the repository root.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_ACTIVE_DIR = _PROJECT_ROOT / "machine_config" / "active"
 _DEFAULT_HARDWARE_JSON = _DEFAULT_ACTIVE_DIR / "hardware.json"
 

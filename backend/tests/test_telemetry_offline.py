@@ -47,7 +47,7 @@ async def _drive_one_tick():
     a no-op then cancel the wrapping task after one round so the
     real test only pays for one cycle.
     """
-    from routers import websocket as ws_mod
+    from routers import servo_thread as ws_mod
 
     real_sleep = asyncio.sleep
 
@@ -74,7 +74,7 @@ def test_get_current_state_returns_offline_snapshot_when_channels_offline():
     The operator-facing UI relies on this to render the red "Estop"
     badge rather than a stale frame when LinuxCNC is unreachable.
     """
-    from routers import websocket as ws_mod
+    from routers import servo_thread as ws_mod
 
     with patch.object(ws_mod, "get_machine_stat", return_value=None):
         snapshot = ws_mod.get_current_state()
@@ -105,7 +105,7 @@ def test_telemetry_loop_survives_one_offline_tick():
     implementation re-fetches inside the body and skips the
     ``.poll()`` call when either channel is offline.
     """
-    from routers import websocket as ws_mod
+    from routers import servo_thread as ws_mod
 
     with patch.object(ws_mod, "get_machine_stat", return_value=None), \
          patch.object(ws_mod, "get_machine_error", return_value=None):
@@ -130,7 +130,7 @@ def test_websocket_telemetry_cleans_up_on_non_disconnect_exception():
     of the backend's lifetime, slowly growing the list and
     wasting broadcast cycles.
     """
-    from routers import websocket as ws_mod
+    from routers import servo_thread as ws_mod
 
     class FakeWS:
         """Stand-in for a real WebSocket that always raises on poll.

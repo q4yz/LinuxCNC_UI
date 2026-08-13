@@ -118,10 +118,12 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     _reset_mock_program_state()
     _reset_line_count_cache()
 
-    from routers import base_thread as bt
+    from services import machine_service as machine_service_mod
     from services.line_count_cache import unregister_all
 
-    monkeypatch.setattr(bt, "get_machine_stat", lambda: None)
+    monkeypatch.setattr(
+        machine_service_mod, "get_machine_stat", lambda: None
+    )
 
     app, _ = _base_thread_app(tmp_data_root)
     client = TestClient(app)
@@ -137,7 +139,12 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
         "interp_state": 1,  # INTERP_IDLE
     }
     assert body["sensors"] == {}
-    assert body["tools"] == []
+    # ``tools`` is loaded from ``hardware.json`` independently of
+    # the NML stat channel — the operator-facing panel still wants
+    # to show the configured tool list even when LinuxCNC is offline.
+    # We only assert the field is a list; the contents depend on
+    # the dev environment's ``hardware.json``.
+    assert isinstance(body["tools"], list)
     assert "timestamp" in body
     unregister_all()
 
@@ -163,11 +170,11 @@ def test_snapshot_mirrors_individual_endpoints(
     # baseline (the dev environment's real ``hardware.json`` is
     # ignored). The mock's sensor list is reseeded against the same
     # empty path so the only sensor is the one we inject below.
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     empty = tmp_path / "empty_active"
     empty.mkdir()
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", empty)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", empty)
     monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
     from hardware import linuxcnc_mock
 
@@ -309,7 +316,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     _isolated_program_root(tmp_data_root, monkeypatch)
 
     from hardware import linuxcnc_mock
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     # Drop a hardware.json with a single spindle_digital tool so
     # the snapshot surfaces exactly one row. Re-point both the
@@ -336,7 +343,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
         "temperature_sensors": [],
         "fans": [],
     })
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", active_root)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", active_root)
     monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", active_root)
     linuxcnc_mock.reseed_from_hardware_json()
 

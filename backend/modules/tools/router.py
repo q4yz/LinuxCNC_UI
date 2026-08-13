@@ -17,8 +17,10 @@ still drive the machine and operator commands:
 The legacy ``GET /tools`` listing endpoint was superseded by the
 base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
 which now carries the tool list alongside progress and sensors in
-a single 1 Hz round-trip. The :func:`_collect_tools` helper
-remains the single source of truth for the tool payload.
+a single 1 Hz round-trip. The :func:`collect_tools` helper lives
+in :mod:`backend.services.machine_service` and is the single
+source of truth for the tool payload — this router no longer
+overlays runtime state directly.
 
 The two MDI endpoints share the same safety preamble: switch the
 task into ``MODE_MDI`` first (blocking until the mode change is
@@ -35,13 +37,12 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
-from typing import List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc, linuxcnc_mock
-from services.tools_loader import load_active_tools
+from hardware import execute_sync_cmd, linuxcnc
+from modules.tools.config_mapper import load_active_tools
 
 logger = logging.getLogger("backend.modules.tools.router")
 
@@ -305,82 +306,6 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
 
 
 # ---------------------------------------------------------------------- #
-# Tool list endpoint                                                       #
-# ---------------------------------------------------------------------- #
-
-
-# Tools that surface runtime heat state (``actual`` / ``target``)
-# read from ``_machine_state.temperatures``. Spindle / laser
-# tools are absent from that dict.
-_HEATING_TOOL_TYPES = frozenset({"extruder", "heated_bed"})
-
-
-def _collect_tools() -> List[dict]:
-    """Return the active ``hardware.json`` tool list with runtime state.
-
-    Public helper used by the base-thread snapshot
-    (``routers/base_thread.py``) so the slow-channel surface stays
-    byte-for-byte identical. Returns an empty list when
-    ``hardware.json`` is missing — mirrors the temperature module's
-    empty-state behaviour so the ToolPanel renders the "No tools
-    configured yet" placeholder instead of failing to mount.
-    """
-    raw = load_active_tools()
-    return [_overlay_runtime_state(tool) for tool in raw]
-
-
-def _overlay_runtime_state(tool: dict) -> dict:
-    """Augment a hardware.json tool record with runtime telemetry.
-
-    Reads from the mock's ``_machine_state`` under the lock so the
-    read is consistent — a polling caller never sees a half-updated
-    dict. Returns a **shallow copy** of the input so the helper
-    cannot accidentally mutate the loader's source list.
-
-    * Heating tools (extruder + heated_bed with a non-null
-      ``sensor``): overlay ``actual`` / ``target`` from
-      ``_machine_state.temperatures[tool.sensor]``. Defaults to
-      ``0.0`` / ``0.0`` when the sensor hasn't been seeded yet
-      (e.g. test boot without a hardware.json that names it).
-    * ``spindle_digital``: overlay ``actual_rpm``,
-      ``is_connected``, and ``error_count`` from
-      ``_machine_state.spindle_actual[tool.id]``. Defaults to
-      ``0`` / ``False`` / ``0`` when no telemetry has arrived yet.
-    * All other tools (spindle_analog, laser): pass through
-      unchanged.
-    """
-    out = dict(tool)
-    if tool.get("type") in _HEATING_TOOL_TYPES:
-        sensor_id = tool.get("sensor")
-        if isinstance(sensor_id, str) and sensor_id:
-            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
-                reading = linuxcnc_mock._machine_state.temperatures.get(
-                    sensor_id,
-                )
-            if reading:
-                out["actual"] = reading.get("actual", 0.0)
-                out["target"] = reading.get("target", 0.0)
-            else:
-                out["actual"] = 0.0
-                out["target"] = 0.0
-    elif tool.get("type") == "spindle_digital":
-        tool_id = tool.get("id")
-        if isinstance(tool_id, str) and tool_id:
-            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
-                reading = linuxcnc_mock._machine_state.spindle_actual.get(
-                    tool_id,
-                )
-            out["actual_rpm"] = reading.get("actual", 0) if reading else 0
-            out["is_connected"] = (
-                reading.get("is_connected", False) if reading else False
-            )
-            out["error_count"] = (
-                reading.get("error_count", 0) if reading else 0
-            )
-    return out
-
-
-# ---------------------------------------------------------------------- #
 # Tool target endpoint                                                     #
 # ---------------------------------------------------------------------- #
 
@@ -469,7 +394,6 @@ __all__ = [
     "ToolCommandResponse",
     "SetToolTargetRequest",
     "SetToolTargetResponse",
-    "_collect_tools",
     "M3_FORWARD",
     "M4_BACKWARD",
     "M5_STOP",

@@ -1,4 +1,4 @@
-"""Machine module — :class:`PluggableModule` implementation.
+"""Axis module — :class:`PluggableModule` implementation.
 
 This file is the entrypoint the registry imports via the package
 ``setup()`` factory. It owns:
@@ -6,14 +6,24 @@ This file is the entrypoint the registry imports via the package
 * the static :class:`ModuleManifest` describing the module,
 * the per-module :class:`MachineSettings` defaults passed to the
   registry's :class:`SettingsStore`,
-* machine state, movement, and G-code execution HTTP controls,
-* the lifecycle hooks :meth:`on_load` and :meth:`on_unload`,
-* the start/stop of the 500 ms jog safety watchdog.
+* the jog-watchdog lifecycle hooks :meth:`on_load` and
+  :meth:`on_unload`.
 
-The actual HTTP routers live in :mod:`backend.modules.machine.router`
-and :mod:`backend.modules.machine.jog`; settings schema in
-:mod:`backend.modules.machine.settings`; the watchdog in
-:mod:`backend.modules.machine.jog_watchdog`.
+Scope: this module owns the "axis" surface — jog control plus the
+``/home`` endpoint. The ``/home`` endpoint is an axis-motion action
+(similar in nature to jog dispatch), so it lives here rather than
+in the ``state`` module. The state / mode / MDI endpoints live in
+:mod:`backend.modules.state.router`; both routers call into the
+shared layer-2 facade :class:`MachineControlService` from
+:mod:`backend.services.machine_service`.
+
+The HTTP router lives in :mod:`backend.modules.axis.router` and
+currently exposes only ``POST /home``. Jog REST endpoints were
+deprecated in favour of the ``/ws/telemetry`` channel; jog
+WS-dispatch helpers live in :mod:`backend.modules.axis.jog`;
+the watchdog background task in
+:mod:`backend.modules.axis.jog_watchdog`. Settings schema in
+:mod:`backend.modules.axis.settings`.
 
 The watchdog is started in :meth:`on_load` rather than at import
 time so the registry can wire the per-module :class:`SettingsStore`
@@ -36,18 +46,20 @@ from core.protocols import (
 )
 
 from . import jog_watchdog
-from .jog import router as jog_router
-from .router import router as machine_router
+from .router import router as axis_router
 from .settings import MachineSettings
 
-logger = logging.getLogger("backend.modules.machine")
+logger = logging.getLogger("backend.modules.axis")
 
 
 _MANIFEST = ModuleManifest(
-    id="machine",
-    title="Machine",
+    id="axis",
+    title="Axis",
     version="0.1.0",
-    description="DRO, jogging, state, MDI, home, and G-code execution.",
+    description=(
+        "Jog control + watchdog for axis motion, plus the /home "
+        "endpoint. State / mode / MDI live in the machine_state module."
+    ),
     # No sidebar entry — the machine dashboard lives at the root,
     # mounted by ``App.vue`` rather than as a top-level nav item.
     sidebar=None,
@@ -55,35 +67,30 @@ _MANIFEST = ModuleManifest(
 )
 
 
-class MachineModule:
+class AxisModule:
     """The :class:`PluggableModule` instance the registry boots.
 
-    The module owns three routers (state/mode/home/mdi in
-    :mod:`backend.modules.machine.router`; jog/keepalive/stop in
-    :mod:`backend.modules.machine.jog`) plus one long-lived
-    background task — the 500 ms keep-alive watchdog in
-    :mod:`backend.modules.machine.jog_watchdog`. The watchdog needs
-    the module-private ``_active_jogs`` map that lives with the
-    router, so we keep both in the same package.
+    The module owns the jog-watchdog background task in
+    :mod:`backend.modules.axis.jog_watchdog`. The watchdog needs the
+    module-private ``_active_jogs`` map that lives with the jog
+    helpers in :mod:`backend.modules.axis.jog`, so we keep both in
+    the same package.
 
-    Concatenating the two routers into one :class:`APIRouter` at
-    mount time would also work, but the two files stay split so
-    future readers can grep ``POST /jog`` / ``POST /state``
-    independently. The registry only sees one router though —
-    ``get_router`` returns the merged instance.
+    The router exposes only ``POST /home`` today — jog REST
+    endpoints were deprecated in favour of the ``/ws/telemetry``
+    channel and the state / mode / MDI endpoints live in
+    :mod:`backend.modules.state.router`. ``get_router`` returns
+    the ``APIRouter`` so the registry can mount it under
+    ``/api/v1/modules/axis``.
     """
 
     manifest = _MANIFEST
 
     def __init__(self) -> None:
-        # Merge the two module-level routers into one so the
-        # registry can mount a single ``APIRouter`` under
-        # ``/api/v1/modules/machine``. ``include_router`` keeps all
-        # operation ids and tags intact.
-        merged = APIRouter(tags=["modules:machine"])
-        merged.include_router(machine_router)
-        merged.include_router(jog_router)
-        self._router: APIRouter = merged
+        # Axis module's HTTP router. Currently exposes ``POST /home``;
+        # jog REST endpoints were deprecated. The router itself lives
+        # in :mod:`backend.modules.axis.router`.
+        self._router: APIRouter = axis_router
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -103,7 +110,7 @@ class MachineModule:
         first continuous jog is registered.
         """
         jog_watchdog.start_watchdog(ctx.settings)
-        logger.info("Machine module loaded.")
+        logger.info("Axis module loaded.")
 
     def on_unload(self) -> None:
         """Cancel the watchdog and clear module-private state.
@@ -115,22 +122,20 @@ class MachineModule:
         try:
             jog_watchdog.stop_watchdog()
         except Exception as exc:  # noqa: BLE001 - defensive
-            logger.error("MachineModule.on_unload: stop_watchdog raised %s", exc)
-        logger.info("Machine module unloaded.")
+            logger.error("AxisModule.on_unload: stop_watchdog raised %s", exc)
+        logger.info("Axis module unloaded.")
 
     # ------------------------------------------------------------------ #
     # Registry hooks                                                     #
     # ------------------------------------------------------------------ #
 
     def get_router(self) -> APIRouter:
-        """Return the merged machine HTTP router.
+        """Return the axis module's HTTP router.
 
-        The router exposes both the state/mode/home/mdi endpoints
-        (from :mod:`backend.modules.machine.router`) and the
-        jog/keepalive/stop endpoints (from
-        :mod:`backend.modules.machine.jog`). The registry mounts it
-        at ``/api/v1/modules/machine`` with OpenAPI tag
-        ``modules:machine``.
+        The router exposes ``POST /home``; jog REST endpoints were
+        deprecated in favour of the ``/ws/telemetry`` channel.
+        The registry mounts the router at
+        ``/api/v1/modules/axis`` with OpenAPI tag ``modules:axis``.
         """
         return self._router
 
@@ -152,7 +157,7 @@ def setup() -> PluggableModule:
     isolated between tests and avoids leaking class-level state
     across reloads.
     """
-    return MachineModule()
+    return AxisModule()
 
 
-__all__ = ["MachineModule", "setup", "MachineSettings"]
+__all__ = ["AxisModule", "setup", "MachineSettings"]

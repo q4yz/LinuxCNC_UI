@@ -51,7 +51,7 @@ def test_temperature_module_boots_and_registers_router(
     sensors (in the v2 ``hardware.json`` shape) asserts the seeded
     palette flows through to ``GET /api/v1/modules/temperature/settings``.
     """
-    from services import hardware_loader
+    from modules.temperature import config_mapper
 
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ def test_temperature_module_boots_and_registers_router(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", active_dir
+        config_mapper, "_DEFAULT_ACTIVE_DIR", active_dir
     )
 
     app, reg = _build_app(tmp_data_root)
@@ -135,7 +135,7 @@ def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch
     "set 60 °C" feedback loop regardless of which surface surfaces
     the value.
     """
-    from services import hardware_loader
+    from modules.temperature import config_mapper
 
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +144,7 @@ def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", active_dir
+        config_mapper, "_DEFAULT_ACTIVE_DIR", active_dir
     )
 
     # The mock singleton was initialised before this monkey-patch

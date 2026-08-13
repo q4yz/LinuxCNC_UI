@@ -98,9 +98,11 @@ test("macros store imports ModulesMacrosService from the generated client", () =
   );
   assert.match(storeText, /\bgenerated\/api\b/);
   // The dashboard "Run" path dispatches each static block line as
-  // an MDI command via the machine module, so both generated
-  // services must be reachable from the store.
-  assert.match(storeText, /\bModulesMachineService\b/);
+  // an MDI command via the state module's
+  // ``/api/v1/modules/machine_state/mdi`` endpoint, so the
+  // generated ``ModulesMachineStateService`` wrapper must be
+  // reachable from the store (tag ``modules:machine_state``).
+  assert.match(storeText, /\bModulesMachineStateService\b/);
 });
 
 test("macros store calls every documented macro endpoint", () => {

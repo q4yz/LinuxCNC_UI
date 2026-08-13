@@ -1,29 +1,30 @@
 """Hardware connection layer — LinuxCNC NML channel wrapper.
 
-The connection module used to call ``linuxcnc.stat()`` /
-``linuxcnc.command()`` / ``linuxcnc.error_channel()`` at import
-time. Those constructors open NML channels to a running LinuxCNC
-instance (status / command / error channels — see
-``.agent/doc/linuxcnc_docs.htlm``). On a system where the real
-``linuxcnc`` package is installed but LinuxCNC itself isn't
-running yet, the constructors raise ``linuxcnc.error`` and the
-backend crashes before FastAPI can boot.
+This module is now a thin facade over the ``hardware.connection``
+low-level helpers. The class-level abstractions (HAL-pin mapper,
+HAL subscription manager, hardware-layer service) live in
+dedicated sibling files inside the ``hardware/`` package:
 
-The fix replaces the eager singletons with three
-:class:`_LazyChannel` wrappers that:
+  * :file:`hardware/device_config_mapper.py` — ``DeviceConfigMapper``
+    (``.cfg`` → HAL pin translation, Layer 1).
+  * :file:`hardware/hal_subscription-manager.py` —
+    ``HalSubscriptionManager`` (HAL pin polling, Layer 0).
+  * :class:`services.machine_service.MachineService` —
+    hardware-layer endstop + G-code facade (Layer 2).
 
-* try the constructor on first call;
-* cache the result on success and reuse it for every subsequent
-  call (the historical contract);
-* on failure (any exception, typically ``linuxcnc.error``) log a
-  warning, cache the timestamp, return ``None``, and rate-limit
-  retries with exponential backoff (1 s → 30 s).
+This file only owns:
 
-The HTTP / WebSocket layers already tolerate ``None`` returns via
-``getattr(machine_stat, 'attr', default)``; :func:`execute_sync_cmd`
-translates a missing channel into ``HTTPException(503)`` so the
-frontend gets a clear "LinuxCNC not running" signal instead of the
-backend vanishing.
+  * the lazy NML channel wrapper (``_LazyChannel``);
+  * the linuxcnc / hal fallback module selection;
+  * the public dispatch helpers (``execute_sync_cmd``,
+    ``execute_gcode``);
+  * the legacy :class:`Connection` object wrapper kept around
+    because historical routers imported it.
+
+The ``Connection`` class, ``default_mapper``, ``hal_manager``, and
+``machine_service`` re-exports below are kept for backward
+compatibility — modern code imports the dedicated classes from
+their canonical modules instead.
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ from fastapi import HTTPException
 logger = logging.getLogger("backend.hardware.connection")
 
 # ---------------------------------------------------------------------------
-# Module selection: real linuxcnc vs. mock fallback
+# Module selection: real linuxcnc/hal vs. mock fallback
 # ---------------------------------------------------------------------------
 #
 # Two distinct failure modes:
@@ -57,9 +58,17 @@ except ImportError:
     logger.warning("Could not import real linuxcnc. Falling back to linuxcnc_mock.")
     USE_MOCK = True
 
+try:
+    import hal
+    HAS_HAL = True
+except ImportError:
+    hal = None
+    HAS_HAL = False
+    logger.warning("HAL module unavailable; HAL pin polling will run in mock mode.")
+
 
 # ---------------------------------------------------------------------------
-# Lazy channel wrapper
+# Lazy channel wrapper (Layer 0: Low-Level Connection)
 # ---------------------------------------------------------------------------
 
 
@@ -153,18 +162,13 @@ class _LazyChannel:
 INITIAL_BACKOFF_S = _LazyChannel.INITIAL_BACKOFF_S
 MAX_BACKOFF_S = _LazyChannel.MAX_BACKOFF_S
 
-
-# ---------------------------------------------------------------------------
-# Module-level channel singletons
-# ---------------------------------------------------------------------------
-
 _stat_ch = _LazyChannel("stat")
 _cmd_ch = _LazyChannel("command")
 _error_ch = _LazyChannel("error_channel")
 
 
 # ---------------------------------------------------------------------------
-# Public API (preserves the historical function signatures)
+# Public Helper Functions (Layer 0)
 # ---------------------------------------------------------------------------
 
 
@@ -209,6 +213,52 @@ def is_linuxcnc_connected() -> bool:
         and _cmd_ch.is_connected()
         and _error_ch.is_connected()
     )
+
+
+def execute_gcode(gcode: str, timeout: float = 10.0) -> dict:
+    """Execute raw G-code via LinuxCNC MDI mode and return result state.
+
+    Sets the task mode to ``MDI`` (when not already there) before
+    dispatching so a stale ``MODE_AUTO`` does not silently swallow
+    the command. Mirrors the historical ``execute_sync_cmd("mdi")``
+    helper but exposes the timeout as a parameter — 10 s is the
+    historical default for "G28 home all" / similar long moves.
+
+    Raises:
+        HTTPException: 503 when the command / stat channel is
+            offline; 400 on LinuxCNC RCS_ERROR (parse / execution);
+            408 on timeout; 500 on any other failure.
+    """
+    cmd = get_machine_cmd()
+    stat = get_machine_stat()
+
+    if cmd is None or stat is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
+        )
+
+    try:
+        stat.poll()
+        if stat.task_mode != linuxcnc.MODE_MDI:
+            cmd.mode(linuxcnc.MODE_MDI)
+            cmd.wait_complete(1.0)
+
+        cmd.mdi(gcode)
+        ret = cmd.wait_complete(timeout)
+
+        if ret == getattr(linuxcnc, "RCS_DONE", 1):
+            return {"status": "success", "gcode": gcode}
+        if ret == getattr(linuxcnc, "RCS_ERROR", 3):
+            raise HTTPException(
+                status_code=400, detail=f"G-code execution error: {gcode}"
+            )
+        raise HTTPException(status_code=408, detail="G-code command timed out")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error("G-code execution failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
@@ -263,56 +313,20 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Optional machine-config injection
-# ---------------------------------------------------------------------------
-#
-# ``set_machine_config`` used to hold a parsed ``MachineConfig``
-# instance shared across requests. The historical source —
-# ``core.config_manager.MachineConfig`` — has been retired because
-# it hard-coded ``machine_config/machine.cfg`` and broke Linux
-# boot when no such file existed. This shim keeps the public
-# symbol available for any third-party caller; downstream hardware
-# code reads its own configuration from the ``machineconfig``
-# module's ``hardware.json`` payload (live, per-request), so the
-# shim is a deliberate no-op that logs at DEBUG for visibility.
-#:deprecated: will be removed in a future release; per-request
-#   ``hardware.json`` is the new source of truth.
-
-# Optional injected MachineConfig instance (kept as None for back-compat)
-machine_config = None
-
-
-def set_machine_config(cfg) -> None:
-    """Inject a parsed MachineConfig instance into the hardware layer.
-
-    .. deprecated::
-        The historical ``core.config_manager.MachineConfig`` source
-        has been retired. Hardware state is read per-request from
-        the ``machineconfig`` module's ``hardware.json`` payload
-        via :func:`services.hardware_loader.load_active_hardware`
-        and friends. This shim exists only so existing imports
-        keep resolving; the parameter is ignored and a DEBUG line
-        is emitted for visibility.
-    """
-    logger.debug(
-        "set_machine_config() is a no-op shim (deprecated); cfg=%r", cfg
-    )
-
-
-# ---------------------------------------------------------------------------
-# Connection facade
+# Connection facade object (legacy compatibility)
 # ---------------------------------------------------------------------------
 
 
 class Connection:
-    """Thin wrapper exposing the hardware interface as an object.
+    """Legacy Object wrapper for backwards compatibility.
 
-    Mirrors the module-level helpers so legacy callers that imported
-    the ``connection`` singleton keep working.
+    The historical router imported :data:`connection` and called
+    methods on it (``connection.get_machine_stat()``,
+    ``connection.execute_sync_cmd(...)``). Modern code imports the
+    module-level helpers directly (e.g. ``get_machine_stat``,
+    ``execute_sync_cmd``) so this wrapper exists only for the
+    historical call sites.
     """
-
-    def set_machine_config(self, cfg) -> None:
-        return set_machine_config(cfg)
 
     def get_machine_stat(self):
         return get_machine_stat()
@@ -332,19 +346,52 @@ class Connection:
         return execute_sync_cmd(cmd_name, cmd_timeout, *args)
 
 
-# Module-level singleton for callers that prefer the object form.
 connection = Connection()
+
+
+# ---------------------------------------------------------------------------
+# Re-exports for backward compatibility
+# ---------------------------------------------------------------------------
+#
+# The class-level abstractions used to live inline here. After the
+# previous round split them into dedicated sibling files, this
+# module kept duplicate definitions (a tech-debt cleanup item).
+# This re-export block makes the canonical modules the single source
+# of truth while preserving ``from hardware.connection import X``
+# for any consumer that hasn't migrated yet.
+
+from .device_config_mapper import DeviceConfigMapper  # noqa: E402,F401
+from .hal_subscription_manager import (  # noqa: E402,F401
+    HalSubscriptionManager,
+    hal_manager,
+)
+# ``MachineService`` / ``machine_service`` / ``default_mapper``
+# live in ``services.machine_service`` (the hardware-folder
+# facade) and are NOT re-exported here to avoid the
+# ``services.machine_service`` ↔ ``hardware.connection`` circular
+# import. Consumers that need them should import from
+# ``services.machine_service`` directly.
 
 
 __all__ = [
     "USE_MOCK",
+    "HAS_HAL",
     "linuxcnc",
+    "hal",
     "get_machine_stat",
     "get_machine_cmd",
     "get_machine_error",
     "is_linuxcnc_connected",
     "execute_sync_cmd",
-    "set_machine_config",
+    "execute_gcode",
     "Connection",
     "connection",
+    "DeviceConfigMapper",
+    "HalSubscriptionManager",
+    "hal_manager",
+    # Note: ``MachineService`` / ``machine_service`` /
+    # ``default_mapper`` are intentionally NOT re-exported here to
+    # avoid the ``services.machine_service`` ↔
+    # ``hardware.connection`` circular import. Import them from
+    # ``services.machine_service`` directly.
 ]

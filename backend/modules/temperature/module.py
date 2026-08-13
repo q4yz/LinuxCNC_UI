@@ -7,8 +7,8 @@ temperature feature. The module is intentionally small:
   ``machine_config/active/hardware.json`` so the seeded
   ``sensor_colors`` map matches what the operator's machine.cfg
   actually declared. The helper lives in
-  :mod:`backend.services.hardware_loader` so the mock and the
-  settings seed always agree.
+  :mod:`backend.modules.temperature.hardware_loader` so the mock
+  and the settings seed always agree.
 * ``on_unload`` is idempotent (no-op).
 * ``get_router`` returns the :data:`router` built by
   :mod:`backend.modules.temperature.router`.
@@ -31,7 +31,7 @@ from core.protocols import (
     ModuleManifest,
     PluggableModule,
 )
-from services.hardware_loader import load_active_heaters
+from .config_mapper import load_active_heaters
 
 from .router import router as _router
 from .settings import TemperatureSettings, seed_colors
@@ -47,7 +47,7 @@ class TemperatureModule:
     the registry to render a Settings tab for this module. The
     :meth:`get_settings_model` hook returns a fresh
     :class:`TemperatureSettings` instance — the
-    :func:`backend.services.hardware_loader.load_active_heaters`
+    :func:`modules.temperature.hardware_loader.load_active_heaters`
     helper seeds the ``sensor_colors`` map so a freshly deployed
     machine starts with the canonical colour palette for every
     heater the operator declared.

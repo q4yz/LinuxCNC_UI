@@ -725,26 +725,30 @@ max_temp: 130
         "driver_stepper_z",
     ]
 
-    # Three endstop records — one per Klipper switch. Phase A
-    # collapsed the v1 3-records-per-switch model into one record
-    # whose ``type`` carries the runtime role (``"Home"`` /
-    # ``"Estop"`` / ``None``).
+    # Three endstop records — one per Klipper switch. Each carries
+    # only ``{id, pin}``; behaviour tags were dropped when the schema
+    # was slimmed to mirror the Klipper source shape.
     endstop_records = payload["endstops"]
     assert len(endstop_records) == 3
     endstop_ids = {r["id"] for r in endstop_records}
     assert endstop_ids == {"endstop_x_min", "endstop_y_min", "endstop_z_min"}
     for record in endstop_records:
-        # Each record carries the inline ``{id, type, pos}`` view
-        # fields PLUS the HAL-wiring fields (``pin``, ``stepper``).
-        assert set(record.keys()) >= {"id", "type", "pos", "pin", "stepper"}
-        # ``position_endstop`` is set on every stepper → ``"Home"``.
-        assert record["type"] == "Home"
-        assert record["pos"] == 0.0
+        assert set(record.keys()) == {"id", "pin"}
 
-    # Inline ``axis.endstops[*]`` views carry only ``{id, type, pos}``.
+    # Each Cartesian axis references its endstop by id and carries
+    # its ``pos``; the extruder (A) axis is endstop-less.
+    axes_by_letter = {a["id"]: a for a in payload["axes"]}
+    assert axes_by_letter["x"]["endstop"] == "endstop_x_min"
+    assert axes_by_letter["y"]["endstop"] == "endstop_y_min"
+    assert axes_by_letter["z"]["endstop"] == "endstop_z_min"
+    assert axes_by_letter["a"].get("endstop") is None
+    assert axes_by_letter["a"].get("endstop_pin") is None
+    assert axes_by_letter["x"]["pos"] == 0.0
+    assert axes_by_letter["y"]["pos"] == 0.0
+    assert axes_by_letter["z"]["pos"] == 0.0
+    # The old ``endstops`` array on each axis is gone.
     for axis in payload["axes"]:
-        for view in axis["endstops"]:
-            assert set(view.keys()) == {"id", "type", "pos"}
+        assert "endstops" not in axis
 
     # Two tools (extruder + heated_bed), two temperature sensors.
     assert [t["id"] for t in payload["tools"]] == ["heater_extruder", "heater_bed"]

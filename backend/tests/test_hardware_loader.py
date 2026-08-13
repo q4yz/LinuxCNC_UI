@@ -1,4 +1,4 @@
-"""Tests for ``backend.services.hardware_loader``."""
+"""Tests for ``backend.modules.temperature.hardware_loader``."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from services.hardware_loader import load_active_heaters
+from modules.temperature.config_mapper import load_active_heaters
 
 
 # ---------------------------------------------------------------------- #

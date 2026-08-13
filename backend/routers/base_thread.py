@@ -37,11 +37,9 @@ from typing import Dict, List
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from hardware import get_machine_stat, linuxcnc
-from modules.program.router import ProgramProgressResponse
-from modules.temperature.router import _collect_sensors
-from modules.tools.router import _collect_tools
-from services import lookup_line_count
+
+from services import get_machine_control_service, ProgramProgressResponse
+from services.machine_service import collect_sensors, collect_tools
 
 logger = logging.getLogger("backend.routers.base_thread")
 
@@ -89,55 +87,9 @@ class BaseThreadSnapshotResponse(BaseModel):
     )
 
 
-def _empty_progress() -> ProgramProgressResponse:
-    """Safe zeroed progress snapshot for the offline / unloaded case.
+def _read_progress() -> ProgramProgressResponse:
+    return get_machine_control_service().progress_program()
 
-    Used when the NML stat channel is offline so the snapshot
-    endpoint never raises — the dashboard's empty-state UI handles
-    the no-data case cleanly.
-    """
-    return ProgramProgressResponse(
-        current_line=0,
-        motion_line=0,
-        total_lines=0,
-        file="",
-        interp_state=int(getattr(linuxcnc, "INTERP_IDLE", 1)),
-    )
-
-
-def _read_progress(stat) -> ProgramProgressResponse:
-    """Read the current program progress from the NML stat channel.
-
-    The function polls the channel first so a fresh connection that
-    hasn't yet broadcast a progress frame still returns valid
-    numbers. ``current_line`` / ``motion_line`` are read with
-    ``getattr`` defaults because older mock revisions did not
-    populate ``motion_line`` and a fresh connection can briefly
-    return ``None`` for either field before the first poll lands.
-
-    The ``total_lines`` field comes from the line-count cache
-    populated at ``POST /load`` time (real LinuxCNC never reports
-    a total; the cache is the authoritative source). The cache is
-    cleared at ``POST /unload`` so a stale total can never leak
-    across runs.
-    """
-    poll = getattr(stat, "poll", None)
-    if callable(poll):
-        poll()
-    file_path = str(getattr(stat, "file", "") or "")
-    current_line = int(getattr(stat, "current_line", 0) or 0)
-    motion_line = int(getattr(stat, "motion_line", 0) or 0)
-    interp_state = int(
-        getattr(stat, "interp_state", getattr(linuxcnc, "INTERP_IDLE", 1))
-        or getattr(linuxcnc, "INTERP_IDLE", 1)
-    )
-    return ProgramProgressResponse(
-        current_line=max(0, current_line),
-        motion_line=max(0, motion_line),
-        total_lines=max(0, lookup_line_count(file_path)),
-        file=file_path,
-        interp_state=interp_state,
-    )
 
 
 @router.get(
@@ -163,15 +115,14 @@ def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
     not running" rather than a 5xx. Every sub-collector is
     None-safe for the same reason.
     """
-    stat = get_machine_stat()
-    if stat is None:
-        progress = _empty_progress()
-        sensors: Dict[str, Dict[str, float]] = {}
-        tools: List[dict] = []
-    else:
-        progress = _read_progress(stat)
-        sensors = _collect_sensors()
-        tools = _collect_tools()
+
+    progress = _read_progress()
+    sensors = collect_sensors()
+    tools = collect_tools()
+
+
+
+
 
     timestamp = (
         datetime.now(timezone.utc)

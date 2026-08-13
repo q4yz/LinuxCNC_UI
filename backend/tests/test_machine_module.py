@@ -1,20 +1,24 @@
-"""Tests for the machine backend module.
+"""Tests for the axis backend module.
 
 Covers:
 
-* ``ModuleRegistry.boot([MachineModule()])`` mounts the router
-  under ``/api/v1/modules/machine`` so ``/state`` / ``/mode`` /
-  ``/home`` / ``/mdi`` are reachable.
+* ``ModuleRegistry.boot([AxisModule()])`` mounts the router under
+  ``/api/v1/modules/axis`` so ``/home`` is reachable.
 * The four canonical settings endpoints are mounted by the
   registry, and ``MachineSettings`` defaults survive a round-trip.
-* The router rejects an unknown ``state`` payload with ``400`` per
-  the Pydantic validation contract.
+* ``POST /home`` rejects an unknown ``state`` payload with ``400``
+  per the Pydantic validation contract (the home endpoint
+  delegates validation to :class:`MachineControlService`).
 * The legacy ``routers/machine.py`` and ``routers/jog.py`` modules
   are gone (the file-level deletion enforced by issue #38 § 6
   Risk #7).
 
 The settings test mirrors the camera settings test
 (``test_camera_settings.py``) so reviewers can compare the two.
+
+State / mode / MDI endpoint coverage lives in
+``test_machine_state_module.py`` since those endpoints now live in
+the new ``machine_state`` module after the router split.
 """
 from __future__ import annotations
 
@@ -29,87 +33,55 @@ from core.module_registry import ModuleRegistry
 from core.protocols import PluggableModule
 
 
-def _machine_app(tmp_data_root, clean_env):
-    """Build a FastAPI app with the machine module booted."""
-    from modules.machine.module import MachineModule
+def _axis_app(tmp_data_root, clean_env):
+    """Build a FastAPI app with the axis module booted."""
+    from modules.axis.module import AxisModule
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[MachineModule()])
+    reg.boot(app, bus=EventBus(), candidates=[AxisModule()])
     return app, reg
 
 
-def test_machine_module_satisfies_protocol(tmp_data_root, clean_env):
-    """MachineModule is a PluggableModule with the documented
+def test_axis_module_satisfies_protocol(tmp_data_root, clean_env):
+    """AxisModule is a PluggableModule with the documented
     manifest attributes.
     """
-    from modules.machine.module import MachineModule
+    from modules.axis.module import AxisModule
 
-    instance = MachineModule()
+    instance = AxisModule()
     assert isinstance(instance, PluggableModule)
-    assert instance.manifest.id == "machine"
-    assert instance.manifest.title == "Machine"
+    assert instance.manifest.id == "axis"
+    assert instance.manifest.title == "Axis"
     assert instance.manifest.settings_panel is True
 
 
-def test_machine_endpoints_are_mounted(tmp_data_root, clean_env):
-    """The merged machine router exposes state / mode / home / mdi
-    endpoints under ``/api/v1/modules/machine``."""
-    app, _ = _machine_app(tmp_data_root, clean_env)
+def test_axis_home_endpoint_is_mounted(tmp_data_root, clean_env):
+    """``POST /home`` is reachable under ``/api/v1/modules/axis``.
+
+    The router's ``get_router`` returns a single ``APIRouter`` so we
+    only check the operation is wired by exercising it with the
+    happy-path payload.
+    """
+    app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    # The router's ``get_router`` returns a single merged
-    # ``APIRouter`` so we only check that all four operation_ids are
-    # wired by exercising them with the ``happy-path`` payload.
     resp = client.post(
-        "/api/v1/modules/machine/state",
-        json={"state": "on"},
-    )
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "success"}
-
-    resp = client.post(
-        "/api/v1/modules/machine/mode",
-        json={"mode": "manual"},
+        "/api/v1/modules/axis/home",
+        json={"axis": -1},
     )
     assert resp.status_code == 200
     assert resp.json() == {"status": "success"}
 
 
-def test_machine_invalid_state_returns_400(tmp_data_root, clean_env):
-    """``POST /state`` rejects unknown state strings with 400."""
-    app, _ = _machine_app(tmp_data_root, clean_env)
-    client = TestClient(app)
-
-    resp = client.post(
-        "/api/v1/modules/machine/state",
-        json={"state": "banana"},
-    )
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Invalid state"
-
-
-def test_machine_invalid_mode_returns_400(tmp_data_root, clean_env):
-    """``POST /mode`` rejects unknown mode strings with 400."""
-    app, _ = _machine_app(tmp_data_root, clean_env)
-    client = TestClient(app)
-
-    resp = client.post(
-        "/api/v1/modules/machine/mode",
-        json={"mode": "warp"},
-    )
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Invalid mode"
-
-
-def test_machine_settings_endpoints_are_mounted(tmp_data_root, clean_env):
+def test_axis_settings_endpoints_are_mounted(tmp_data_root, clean_env):
     """The canonical four settings endpoints are wired by the
     registry. ``MachineSettings`` defaults are returned on GET.
     """
-    app, _ = _machine_app(tmp_data_root, clean_env)
+    app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    resp = client.get("/api/v1/modules/machine/settings")
+    resp = client.get("/api/v1/modules/axis/settings")
     assert resp.status_code == 200
     payload = resp.json()
     # Defaults from the Pydantic schema.
@@ -122,86 +94,66 @@ def test_machine_settings_endpoints_are_mounted(tmp_data_root, clean_env):
 
     # PUT bulk returns the merged payload.
     resp = client.put(
-        "/api/v1/modules/machine/settings",
+        "/api/v1/modules/axis/settings",
         json={"default_jog_velocity": 750.0},
     )
     assert resp.status_code == 200
     assert resp.json()["default_jog_velocity"] == 750.0
 
     # GET round-trips.
-    resp = client.get("/api/v1/modules/machine/settings")
+    resp = client.get("/api/v1/modules/axis/settings")
     assert resp.json()["default_jog_velocity"] == 750.0
 
     # Per-key PUT.
     resp = client.put(
-        "/api/v1/modules/machine/settings/jog_watchdog_timeout_ms",
+        "/api/v1/modules/axis/settings/jog_watchdog_timeout_ms",
         json=750,
     )
     assert resp.json()["jog_watchdog_timeout_ms"] == 750
 
 
-def test_machine_registry_logs_mounted_summary(
+def test_axis_registry_logs_mounted_summary(
     tmp_data_root, clean_env, caplog
 ):
-    """The boot summary line includes the machine module id."""
-    from modules.machine.module import MachineModule
+    """The boot summary line includes the axis module id."""
+    from modules.axis.module import AxisModule
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
     with caplog.at_level(logging.INFO, logger="core.module_registry"):
-        reg.boot(app, bus=EventBus(), candidates=[MachineModule()])
+        reg.boot(app, bus=EventBus(), candidates=[AxisModule()])
     summary = [
         r.message
         for r in caplog.records
         if "registry: mounted=" in r.message
     ]
     assert summary, "expected the boot summary log line"
-    assert "mounted=['machine']" in summary[0]
+    assert "mounted=['axis']" in summary[0]
 
 
-def test_machine_jog_endpoint_registers_watchdog_state(
+def test_axis_jog_dispatch_is_registered_with_watchdog(
     tmp_data_root, clean_env
 ):
-    """``POST /jog`` (continuous) registers the axis with the
-    watchdog; ``POST /jog/keepalive`` refreshes; ``POST /jog/stop``
-    removes the entry. Mirrors the historical contract from
-    ``routers/jog.py``.
+    """Jog dispatch (called by the WebSocket ``ws_jog_*`` helpers)
+    registers the active axis with the watchdog. The historical
+    ``POST /jog`` / ``/jog/keepalive`` / ``/jog/stop`` REST
+    endpoints were deprecated in favour of the ``/ws/telemetry``
+    channel and are intentionally no longer exposed; this test
+    pins the watchdog-side state contract that both transports
+    share.
     """
-    from modules.machine import jog
-    from modules.machine.module import MachineModule
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[MachineModule()])
-    client = TestClient(app)
+    from modules.axis import jog
+    from modules.axis.jog import ws_jog_axis, ws_jog_stop
 
     # No active jogs at start.
     assert jog._active_jogs == {}
 
     # Continuous jog on axis 0 (X) → watchdog state populated.
-    resp = client.post(
-        "/api/v1/modules/machine/jog",
-        json={"velocities": {"0": 1000.0}, "distance": 0.0},
-    )
-    assert resp.status_code == 200
-    assert 0 in jog._active_jogs
-
-    # Keep-alive refreshes (we cannot easily assert the timestamp
-    # moved forward without mocking ``time.time``, but the call
-    # should be a no-op for axes that are already active).
-    resp = client.post(
-        "/api/v1/modules/machine/jog/keepalive",
-        json={"axes": [0]},
-    )
-    assert resp.status_code == 200
+    ws_jog_axis(velocities={0: 1000.0}, distance=0.0)
     assert 0 in jog._active_jogs
 
     # Stop removes the entry.
-    resp = client.post(
-        "/api/v1/modules/machine/jog/stop",
-        json={"axes": [0]},
-    )
-    assert resp.status_code == 200
+    ws_jog_stop(axes=[0])
     assert jog._active_jogs == {}
 
 
@@ -222,13 +174,13 @@ def test_machine_legacy_routers_are_gone(tmp_data_root, clean_env):
     assert jog_spec is None, "routers/jog.py must be deleted"
 
 
-def test_machine_on_load_is_idempotent(tmp_data_root, clean_env):
+def test_axis_on_load_is_idempotent(tmp_data_root, clean_env):
     """Repeated ``on_load`` followed by ``on_unload`` is safe —
     calling the watchdog helpers more than once must not raise.
     """
-    from modules.machine.module import MachineModule
+    from modules.axis.module import AxisModule
 
-    instance = MachineModule()
+    instance = AxisModule()
     # ``on_load`` without a registry-built ``ModuleContext`` is
     # acceptable as long as ``ctx.settings`` is not required — the
     # watchdog tolerates a missing settings store. We synthesize a
@@ -237,13 +189,13 @@ def test_machine_on_load_is_idempotent(tmp_data_root, clean_env):
     from core.settings_store import SettingsStore
 
     settings = SettingsStore(
-        module_id="machine", data_root=tmp_data_root, defaults=None
+        module_id="axis", data_root=tmp_data_root, defaults=None
     )
     fake_ctx = type(
         "_Ctx",
         (),
         {
-            "module_id": "machine",
+            "module_id": "axis",
             "event_bus": default_bus,
             "settings": settings,
             "extras": {},
@@ -256,30 +208,3 @@ def test_machine_on_load_is_idempotent(tmp_data_root, clean_env):
     # The settings store must still answer a GET — the watchdog
     # lifecycle is decoupled from the settings store.
     assert settings.read_all() == {}
-
-
-def test_require_machine_ready_returns_503_when_channels_offline():
-    """``_require_machine_ready`` translates an offline NML
-    channel into ``HTTPException(503)`` instead of crashing with
-    ``AttributeError`` on ``None.poll()``.
-
-    Pinning the contract guards against a future re-enable of
-    the ``/print`` / ``/pause`` / ``/resume`` / ``/stop``
-    endpoints (currently commented out in ``router.py``) silently
-    shipping a 500 on offline boots.
-    """
-    from unittest.mock import patch
-
-    from fastapi import HTTPException
-
-    from modules.machine.router import _require_machine_ready
-
-    with patch(
-        "modules.machine.router.get_machine_stat",
-        return_value=None,
-    ):
-        with pytest.raises(HTTPException) as excinfo:
-            _require_machine_ready()
-
-    assert excinfo.value.status_code == 503
-    assert "linuxcnc" in excinfo.value.detail.lower()

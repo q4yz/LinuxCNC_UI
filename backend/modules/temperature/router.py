@@ -8,21 +8,21 @@ The router is mounted by the registry under
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
 
-The :func:`_collect_sensors` helper is the single source of truth
-for reading the sensor dict; the base-thread snapshot
-(``routers/base_thread.py``) imports the same helper so the
-canonical 1 Hz snapshot is the only public surface for sensor data.
-The legacy ``GET /sensors`` endpoint was superseded by the snapshot
-and has been removed.
+The :func:`collect_sensors` helper is the single source of truth
+for reading the sensor dict; it lives in
+:mod:`backend.services.machine_service` and the base-thread
+snapshot (``routers/base_thread.py``) consumes the same helper so
+the canonical 1 Hz snapshot is the only public surface for sensor
+data. The legacy ``GET /sensors`` endpoint was superseded by the
+snapshot and has been removed.
 """
 
 import logging
-from typing import Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, get_machine_stat
+from hardware import execute_sync_cmd
 
 logger = logging.getLogger("backend.modules.temperature.router")
 
@@ -85,24 +85,6 @@ class SetTargetResponse(BaseModel):
     )
 
 
-def _collect_sensors() -> Dict[str, Dict[str, float]]:
-    """Read the live sensor dict from the stat channel.
-
-    Returns a plain dict (sensor name -> ``{actual, target}``) so the
-    base-thread snapshot can serialise it the same way. Falls back to
-    ``{}`` when the NML channel is offline — the dashboard's
-    empty-state UI handles the no-data case cleanly.
-    """
-    stat = get_machine_stat()
-    if stat is None:
-        return {}
-    poll = getattr(stat, "poll", None)
-    if callable(poll):
-        poll()
-    sensors = getattr(stat, "temperatures", None) or {}
-    return {name: dict(values) for name, values in sensors.items()}
-
-
 @router.post(
     "/sensors/{name}/target",
     response_model=SetTargetResponse,
@@ -116,6 +98,7 @@ def _collect_sensors() -> Dict[str, Dict[str, float]]:
     ),
 )
 def set_target(name: str, req: SetTargetRequest) -> SetTargetResponse:
+    #Should call machine_Service
     """Set the target temperature for ``name``.
 
     The ``sensor_name`` field in the body is accepted but ``name``
@@ -155,5 +138,4 @@ __all__ = [
     "SetTargetRequest",
     "SetTargetResponse",
     "SensorReading",
-    "_collect_sensors",
 ]

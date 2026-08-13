@@ -18,8 +18,11 @@ pass to enforce every reference resolves into the right list.
 IDs are auto-assigned from the Klipper section name. ``[stepper_x]``
 becomes ``id: "stepper_x"``; ``[heater_bed]`` becomes
 ``id: "heater_bed"``. The same convention applies to switches —
-``[endstop_switch X_MIN]`` produces three records (one per role)
-with the same ``endstop_id`` (``"X_MIN"``) and distinct record ids.
+``[endstop_switch X_MIN]`` (or an inline ``endstop_pin:`` on
+``[stepper_x]``) becomes a single ``Endstop`` record with id
+``"endstop_x_min"`` carrying only ``{id, pin}``. Each axis hosts
+the switch via a single ``endstop: "endstop_x_min"`` reference; one
+switch may be referenced by multiple axes.
 
 The ``tools`` list is the operator-facing view: every ``[extruder]``,
 ``[heater_bed]``, ``[heater_generic]``, ``[spindle]``, and
@@ -36,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..models import MachineConfigGraph
 from ..models.hardware_json_models import (
@@ -89,34 +92,12 @@ def _endstop_id(endstop_section: str) -> str:
     """Canonical id for an endstop record.
 
     One record per Klipper ``[endstop_switch NAME]`` section; the id
-    is ``endstop_<NAME>``. Inline ``Axis.endstops[*].id`` entries
-    reference this same id so the runtime can find the full record.
-    The id is lower-cased to match the canonical ``^[a-z][a-z0-9_]*$``
+    is ``endstop_<NAME>``. Axes reference this id via
+    ``Axis.endstop`` so the runtime can find the pin. The id is
+    lower-cased to match the canonical ``^[a-z][a-z0-9_]*$``
     pattern enforced by the hardware.json v2 model.
     """
     return f"endstop_{endstop_section.lower()}"
-
-
-def _infer_endstop_type(stepper) -> Optional[str]:
-    """Return the endstop behaviour inferred from the Klipper stepper.
-
-    Rules:
-
-    * ``"Home"`` when ``position_endstop`` is explicitly set on the
-      stepper — the switch is the home reference.
-    * ``"Estop"`` when only ``endstop_pin`` is set — the switch is
-      a safety stop, not used for homing.
-    * ``None`` when neither is present — the endstop is macros-only
-      and has no kinematic role (rare; future use).
-
-    The inference keeps the Klipper source as the single source of
-    truth without requiring a new ``switch_type:`` keyword.
-    """
-    if stepper.position_endstop is not None:
-        return "Home"
-    if stepper.endstop_pin is not None:
-        return "Estop"
-    return None
 
 
 def _heater_id(heater_section: str) -> str:
@@ -169,42 +150,17 @@ def _fan_id(heater_section: str) -> str:
 # ---------------------------------------------------------------------- #
 
 
-def _endstop_record(
-    endstop_section: str,
-    stepper_id: str,
-    pin: str,
-    pos: float | None,
-    endstop_type: Optional[str],
-) -> dict[str, Any]:
+def _endstop_record(endstop_section: str, pin: str) -> dict[str, Any]:
     """Build the top-level endstop record (one per Klipper switch).
 
-    Carries the full HAL-wiring fields (``pin``, ``stepper``) plus
-    the inferred ``type`` so the runtime can route the switch to
-    the right HAL signal. ``pos`` is the position on the axis
-    (defaults to ``0.0`` when the Klipper source omits
-    ``position_endstop``).
+    Mirrors the Klipper source shape: just ``{id, pin}``. The
+    positional field (``Axis.pos``) and any behavioural tag are
+    carried on the axis that hosts the switch; one record can be
+    referenced by any number of axes.
     """
-    pos_value = pos if pos is not None else 0.0
     return {
         "id": _endstop_id(endstop_section),
-        "type": endstop_type,
-        "pos": pos_value,
-        "stepper": stepper_id,
         "pin": pin,
-    }
-
-
-def _endstop_inline_view(endstop_section: str, pos: float | None, endstop_type: Optional[str]) -> dict[str, Any]:
-    """Build the inline ``Axis.endstops[*]`` entry.
-
-    Carries only ``{id, type, pos}`` — enough for the runtime to
-    find the matching top-level record and route the switch.
-    """
-    pos_value = pos if pos is not None else 0.0
-    return {
-        "id": _endstop_id(endstop_section),
-        "type": endstop_type,
-        "pos": pos_value,
     }
 
 
@@ -426,21 +382,29 @@ def _driver_payload(driver_id: str, stepper) -> dict[str, Any]:
 def _axis_payload(
     letter: str,
     stepper_ids: list[str],
-    endstop_views: list[dict[str, Any]],
+    endstop_id: str | None,
+    pos: float | None,
 ) -> dict[str, Any]:
     """Build an axis entry.
 
     The axis id is the lower-case letter of the canonical stepper it
     owns. Multi-motor axes share the id so the axes list stays
     unique; the underlying steppers are still listed individually.
-    ``endstop_views`` is a list of inline ``{id, type, pos}`` dicts;
-    the full endstop records (with ``pin`` / ``stepper``) live at
-    the top-level ``endstops`` array.
+
+    ``endstop_id`` is a single string id referencing a top-level
+    ``Endstop`` record (or ``None`` when the axis has no endstop);
+    one endstop record can be referenced by multiple axes. ``pos``
+    carries ``stepper.position_endstop`` (or the
+    ``[endstop_switch] position`` override) so the runtime can
+    validate the homing sequence without re-reading the source
+    profile. Fields with ``None`` values are dropped during
+    serialisation.
     """
     return {
         "id": _axis_id(None, letter),
         "steppers": stepper_ids,
-        "endstops": endstop_views,
+        "endstop": endstop_id,
+        "pos": pos,
     }
 
 
@@ -492,11 +456,15 @@ def build_hardware_json(
 
     # Axis records — one per unique axis letter. Multi-motor axes
     # share the letter; the underlying steppers are still listed
-    # individually. Inline ``endstops`` views are built below when
-    # the endstop records are emitted (so we can dedupe by axis
-    # letter in one pass).
-    inline_views_by_letter: dict[str, list[dict[str, Any]]] = {
-        letter: [] for letter in letters_in_order
+    # individually. Each axis carries at most one endstop
+    # reference and one ``pos`` value. The per-axis ``endstop_id``
+    # and ``pos`` are populated by the two passes below; a
+    # separate ``[endstop_switch NAME]`` section takes precedence
+    # over the inline form (a Klipper config can override the
+    # inferred ``<AXIS>_MIN`` name).
+    axis_state: dict[str, dict[str, Any]] = {
+        letter: {"endstop_id": None, "pos": None}
+        for letter in letters_in_order
     }
     endstop_records: list[dict[str, Any]] = []
 
@@ -504,72 +472,53 @@ def build_hardware_json(
     #    ``endstop_pin: ...`` + optional ``position_endstop: ...``.
     #    The Klipper switch name defaults to ``<AXIS>_MIN`` (the
     #    LinuxCNC convention) when no explicit ``[endstop_switch]``
-    #    section overrides it.
-    seen_endstop_names: set[str] = set()
+    #    section overrides it. Each switch becomes one top-level
+    #    record; the owning axis gains an ``endstop`` reference and
+    #    a ``pos``.
+    inline_endstop_names: set[str] = set()
     for letter, stepper in graph.steppers.items():
         if stepper.endstop_pin is None:
             continue
         endstop_section = f"{letter.upper()}_MIN"
-        if endstop_section in seen_endstop_names:
-            # A separate ``[endstop_switch]`` already covered this
-            # switch; skip the inline duplicate so the hardware.json
-            # stays a 1-record-per-switch list.
+        if endstop_section in inline_endstop_names:
             continue
-        stepper_id = stepper_id_by_letter.get(
-            letter.lower(),
-            f"stepper_{letter.lower()}",
-        )
-        endstop_type = _infer_endstop_type(stepper)
         endstop_records.append(
-            _endstop_record(
-                endstop_section,
-                stepper_id,
-                stepper.endstop_pin,
-                stepper.position_endstop,
-                endstop_type,
-            )
+            _endstop_record(endstop_section, stepper.endstop_pin)
         )
-        seen_endstop_names.add(endstop_section)
-        if letter.lower() in inline_views_by_letter:
-            inline_views_by_letter[letter.lower()].append(
-                _endstop_inline_view(
-                    endstop_section,
-                    stepper.position_endstop,
-                    endstop_type,
-                )
+        inline_endstop_names.add(endstop_section)
+        if letter.lower() in axis_state:
+            axis_state[letter.lower()]["endstop_id"] = _endstop_id(
+                endstop_section
             )
+            axis_state[letter.lower()]["pos"] = stepper.position_endstop
 
     # 2. Separate ``[endstop_switch NAME]`` sections. These take
     #    precedence over the inline form (a Klipper config can
-    #    override the inferred ``<AXIS>_MIN`` name with an explicit
-    #    one). Inline switches with the same name are skipped above.
+    #    override the inferred ``<AXIS>_MIN`` name with an
+    #    explicit one). Inline switches with the same name are
+    #    skipped above. The owning axis is derived from
+    #    ``EndstopSwitch.stepper.axis``.
     for endstop_name, endstop in graph.endstop_switches.items():
         if not endstop.stepper:
             continue
         axis_letter = endstop.stepper.axis.lower()
-        stepper_id = stepper_id_by_letter.get(
-            axis_letter,
-            f"stepper_{axis_letter}",
-        )
-        endstop_type = _infer_endstop_type(endstop.stepper)
-        endstop_records.append(
-            _endstop_record(
-                endstop_name,
-                stepper_id,
-                endstop.pin,
-                endstop.position,
-                endstop_type,
-            )
-        )
-        seen_endstop_names.add(endstop_name)
-        if axis_letter in inline_views_by_letter:
-            inline_views_by_letter[axis_letter].append(
-                _endstop_inline_view(
-                    endstop_name, endstop.position, endstop_type
+        if endstop.pin is not None:
+            endstop_records.append(_endstop_record(endstop_name, endstop.pin))
+        if axis_letter in axis_state:
+            axis_state[axis_letter]["endstop_id"] = _endstop_id(endstop_name)
+            # ``[endstop_switch] position`` wins when explicitly set;
+            # otherwise fall back to the stepper's
+            # ``position_endstop`` (which path 1 would have
+            # inherited), and finally to whatever path 1 already
+            # recorded (None for axes with no inline endstop).
+            if endstop.position is not None:
+                axis_state[axis_letter]["pos"] = endstop.position
+            elif axis_state[axis_letter]["pos"] is None:
+                axis_state[axis_letter]["pos"] = (
+                    endstop.stepper.position_endstop
                 )
-            )
 
-    # Now assemble the axis records with their inline views.
+    # Now assemble the axis records with their endstop references.
     axes_records: list[dict[str, Any]] = []
     for letter in letters_in_order:
         stepper_ids = [
@@ -577,8 +526,14 @@ def build_hardware_json(
             for name, stepper in graph.steppers.items()
             if stepper.axis.lower() == letter
         ]
+        state = axis_state[letter]
         axes_records.append(
-            _axis_payload(letter, stepper_ids, inline_views_by_letter[letter])
+            _axis_payload(
+                letter,
+                stepper_ids,
+                state["endstop_id"],
+                state["pos"],
+            )
         )
 
     # Tool records — one per Klipper heater-shaped section plus one

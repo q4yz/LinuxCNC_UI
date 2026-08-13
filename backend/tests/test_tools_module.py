@@ -285,7 +285,7 @@ def test_set_tool_target_dispatches_set_temperature(
     sensor.
     """
     from hardware import linuxcnc_mock
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     hardware_payload = {
         "version": "2.0",
@@ -317,7 +317,7 @@ def test_set_tool_target_dispatches_set_temperature(
     monkeypatch.setattr(
         "hardware.linuxcnc_mock._PROJECT_ROOT", tmp_path
     )
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
     linuxcnc_mock.reseed_from_hardware_json()
 
     app = _build_app(tmp_data_root)
@@ -346,7 +346,7 @@ def test_set_tool_target_rejects_unknown_tool(
     with ``404`` so a frontend typo surfaces as a structured
     error instead of a silent no-op.
     """
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
@@ -355,7 +355,7 @@ def test_set_tool_target_rejects_unknown_tool(
         "axes": [], "steppers": [], "drivers": [], "endstops": [],
         "tools": [], "temperature_sensors": [], "fans": [],
     })
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -375,7 +375,7 @@ def test_set_tool_target_rejects_non_heating_tool(
     message instead of dispatching ``set_temperature`` on a
     ``None`` sensor.
     """
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
@@ -393,7 +393,7 @@ def test_set_tool_target_rejects_non_heating_tool(
         "temperature_sensors": [],
         "fans": [],
     })
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -412,7 +412,7 @@ def test_set_tool_target_validates_range(
     targets with ``422`` — same contract as the temperature
     module's per-sensor endpoint.
     """
-    from services import tools_loader
+    from modules.tools import config_mapper
 
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
@@ -431,7 +431,7 @@ def test_set_tool_target_validates_range(
         "temperature_sensors": [{"id": "extruder", "pin": "PA1"}],
         "fans": [],
     })
-    monkeypatch.setattr(tools_loader, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)

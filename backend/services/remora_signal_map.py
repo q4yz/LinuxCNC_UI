@@ -43,7 +43,7 @@ logger = logging.getLogger("backend.services.remora_signal_map")
 
 
 # ---------------------------------------------------------------------------
-# Path resolution — same convention as hardware_loader.py
+# Path resolution — same convention as config_mapper.py
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]

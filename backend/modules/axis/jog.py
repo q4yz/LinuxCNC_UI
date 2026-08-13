@@ -2,10 +2,10 @@
 
 This module owns the three jog endpoints and the module-private
 ``_active_jogs`` dictionary that backs the keep-alive watchdog. The
-watchdog itself lives in :mod:`backend.modules.machine.jog_watchdog`
+watchdog itself lives in :mod:`backend.modules.axis.jog_watchdog`
 so it can be started and stopped independently from the router.
 
-Endpoints (REST, **deprecated** — see ``websocket.py`` for the
+Endpoints (REST, **deprecated** — see ``servo_thread.py`` for the
 canonical WebSocket path)
 -----------------
 
@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 
 from hardware import execute_sync_cmd, linuxcnc
 
-logger = logging.getLogger("backend.modules.machine.jog")
+logger = logging.getLogger("backend.modules.axis.jog")
 
 
 # ---------------------------------------------------------------------- #
@@ -154,7 +154,7 @@ class JogStatusResponse(BaseModel):
 def ws_jog_keepalive(axes: List[int]) -> None:
     """Refresh the watchdog timer for ``axes``.
 
-    Public so ``backend/routers/websocket.py`` can dispatch the
+    Public so ``backend/routers/servo_thread.py`` can dispatch the
     ``{"type": "jog_keepalive", "axes": [...]}`` inbound message
     to the same watchdog update the REST endpoint performs. Axes
     that are not currently registered as active are ignored — the
@@ -211,7 +211,7 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
 def ws_jog_stop(axes: List[int]) -> None:
     """Stop the continuous jog registered on ``axes``.
 
-    Public so ``backend/routers/websocket.py`` can dispatch the
+    Public so ``backend/routers/servo_thread.py`` can dispatch the
     ``{"type": "jog_stop", "axes": [...]}`` inbound message to the
     same watchdog-cleanup path the REST endpoint performs.
     """
@@ -223,132 +223,19 @@ def ws_jog_stop(axes: List[int]) -> None:
         _stop_axis(axis)
 
 
-# ---------------------------------------------------------------------- #
-# Endpoints                                                              #
-# ---------------------------------------------------------------------- #
-
-
-# The router is module-level so the registry can mount it under
-# ``/api/v1/modules/machine``. The endpoints take no ``prefix``
-# because the registry supplies it.
-router = APIRouter()
-
-
-@router.post(
-    "/jog",
-    summary="Jog Axis",
-    description=(
-        "**Deprecated** — prefer the ``/ws/telemetry`` socket with "
-        "a JSON message of type ``jog_axis`` and the same payload. "
-        "The REST endpoint will be removed in the next major "
-        "release.\n\n"
-        "Initiates a jog. Supports step, continuous, or stop "
-        "commands depending on the velocity and distance parameters. "
-        "A continuous jog (distance=0) registers the axis with the "
-        "500 ms keep-alive watchdog; the watchdog force-stops the "
-        "axis if no keep-alive ping arrives within the configured "
-        "timeout."
-    ),
-    operation_id="jogAxis",
-    response_model=JogResponse,
-    deprecated=True,
-)
-def jog_axis(cmd: JogCommand) -> JogResponse:
-    """Initiate a jog.
-
-    **Deprecated** — see ``ws_jog_axis`` for the canonical entry
-    point shared with the WebSocket transport. The REST endpoint
-    is kept as a backward-compat fallback; new code should send a
-    ``jog_axis`` JSON message over the ``/ws/telemetry`` socket
-    instead.
-    """
-    warnings.warn(
-        "POST /api/v1/modules/machine/jog is deprecated; "
-        "send {type: 'jog_axis', ...} over /ws/telemetry instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    ws_jog_axis(cmd.velocities, cmd.distance)
-    results: Dict[str, str] = {
-        str(axis): "success" for axis in cmd.velocities.keys() if cmd.velocities[axis] != 0
-    }
-    return JogResponse(status="ok", results=results)
-
-
-@router.post(
-    "/jog/keepalive",
-    summary="Jog Keep-Alive",
-    description=(
-        "**Deprecated** — prefer the ``/ws/telemetry`` socket with "
-        "a JSON message of type ``jog_keepalive`` and the same "
-        "payload. The REST endpoint will be removed in the next "
-        "major release.\n\n"
-        "Refreshes the watchdog timer for an actively jogging axis. "
-        "Must be called frequently (e.g., every 250 ms) during a "
-        "continuous jog."
-    ),
-    operation_id="jogKeepalive",
-    response_model=JogStatusResponse,
-    deprecated=True,
-)
-def jog_keepalive(cmd: JogStopCommand) -> JogStatusResponse:
-    """Refresh the watchdog timer for ``cmd.axes``.
-
-    **Deprecated** — see ``ws_jog_keepalive`` for the canonical
-    entry point shared with the WebSocket transport.
-    """
-    warnings.warn(
-        "POST /api/v1/modules/machine/jog/keepalive is deprecated; "
-        "send {type: 'jog_keepalive', ...} over /ws/telemetry instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    ws_jog_keepalive(list(cmd.axes))
-    return JogStatusResponse(status="ok")
-
-
-@router.post(
-    "/jog/stop",
-    summary="Stop Jogging",
-    description=(
-        "**Deprecated** — prefer the ``/ws/telemetry`` socket with "
-        "a JSON message of type ``jog_stop`` and the same payload. "
-        "The REST endpoint will be removed in the next major "
-        "release.\n\n"
-        "Explicitly stops a continuous jog and removes it from the "
-        "watchdog. Idempotent: stopping an axis that is not "
-        "currently active is a no-op."
-    ),
-    operation_id="jogStop",
-    response_model=JogStatusResponse,
-    deprecated=True,
-)
-def stop_jog(cmd: JogStopCommand) -> JogStatusResponse:
-    """Stop the continuous jog registered on ``cmd.axes``.
-
-    **Deprecated** — see ``ws_jog_stop`` for the canonical entry
-    point shared with the WebSocket transport.
-    """
-    warnings.warn(
-        "POST /api/v1/modules/machine/jog/stop is deprecated; "
-        "send {type: 'jog_stop', ...} over /ws/telemetry instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    ws_jog_stop(list(cmd.axes))
-    return JogStatusResponse(status="ok")
-
-
 __all__ = [
-    "router",
-    "jog_axis",
-    "jog_keepalive",
-    "stop_jog",
-    # Public so ``backend/routers/websocket.py`` can dispatch
+    # Public so ``backend/routers/servo_thread.py`` can dispatch
     # inbound JSON messages to the same watchdog / dispatch
     # logic. Single source of truth for the three jog actions.
+    #
+    # ``router`` is intentionally absent — the FastAPI router for
+    # the jog endpoints now lives in ``modules/machine/router.py``'s
+    # merged router (see ``module.py::AxisModule.__init__``),
+    # which keeps the jog watchdog helpers (``_active_jogs``,
+    # ``ws_jog_*``) in the same package as the watchdog itself
+    # (in ``jog_watchdog.py``). Importing ``router`` from this
+    # module was a stale pattern that broke after the consolidation.
     "ws_jog_axis",
-    "ws_jog_keepalive",
     "ws_jog_stop",
     "_active_jogs",
     "_active_jogs_lock",

@@ -279,7 +279,7 @@ def test_websocket_payload_omits_line_counters(
     _reset_mock_program_state()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
-    from routers.websocket import get_current_state
+    from routers.servo_thread import get_current_state
 
     # Before the load the snapshot must already omit the counters.
     before = get_current_state()

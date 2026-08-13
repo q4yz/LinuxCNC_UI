@@ -20,10 +20,15 @@ from pydantic import ValidationError
 
 from core.module_registry import ModuleRegistry
 from modules.temperature.settings import TemperatureSettings
+from modules.temperature.module import setup
+
+from hardware import linuxcnc_mock
+from modules.temperature  import config_mapper
+
 
 
 def _app(tmp_data_root):
-    from modules.temperature.module import setup
+
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
@@ -40,14 +45,11 @@ def test_settings_defaults_are_returned(tmp_data_root, clean_env, monkeypatch):
     Without a fixture, the mock reports zero heaters and the seeded
     palette is therefore empty.
     """
-    from services import hardware_loader
-
     empty_dir = tmp_data_root / "no_active"
     empty_dir.mkdir()
     monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", empty_dir
+        config_mapper, "_DEFAULT_ACTIVE_DIR", empty_dir
     )
-    from hardware import linuxcnc_mock
 
     linuxcnc_mock.reseed_from_hardware_json()
 
@@ -74,7 +76,6 @@ def test_settings_defaults_seed_from_active_heaters(
     alphabetical sort maps them to the first three palette entries
     (the 6-colour palette wraps modulo N).
     """
-    from services import hardware_loader
 
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
@@ -87,9 +88,8 @@ def test_settings_defaults_seed_from_active_heaters(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", active_dir
+        config_mapper, "_DEFAULT_ACTIVE_DIR", active_dir
     )
-    from hardware import linuxcnc_mock
 
     linuxcnc_mock.reseed_from_hardware_json()
 
@@ -107,14 +107,12 @@ def test_settings_defaults_seed_from_active_heaters(
 
 
 def test_put_settings_persists_new_unit(tmp_data_root, clean_env, monkeypatch):
-    from services import hardware_loader
-
     empty_dir = tmp_data_root / "no_active"
     empty_dir.mkdir()
     monkeypatch.setattr(
-        hardware_loader, "_DEFAULT_ACTIVE_DIR", empty_dir
+        config_mapper, "_DEFAULT_ACTIVE_DIR", empty_dir
     )
-    from hardware import linuxcnc_mock
+
 
     linuxcnc_mock.reseed_from_hardware_json()
 

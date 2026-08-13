@@ -16,7 +16,7 @@ from services.console_logger import get_console_logger
 # Issue #49 retired the legacy ``compiler`` router: the
 # machineconfig module's ``/compile`` and ``/deploy`` endpoints
 # supersede it and the frontend no longer references it.
-from routers import base_thread, websocket, files, system
+from routers import base_thread, servo_thread, files, system
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +37,21 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting LinuxCNC background tasks...")
 
+    # Seed the mock hardware layer's sensor + spindle dicts from the
+    # active ``hardware.json`` so the base-thread snapshot's
+    # ``sensors`` and ``tools`` blocks are populated on the very
+    # first request. The seed used to run eagerly in
+    # ``hardware.linuxcnc_mock`` at import time, but it was
+    # deferred to ``reseed_from_hardware_json()`` to break the
+    # hardware -> temperature -> hardware circular import. This
+    # lifespan is the single canonical production caller — see
+    # the matching note in ``hardware/linuxcnc_mock.py``.
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
+
     # Start the continuous WebSocket publisher
-    task_telemetry = asyncio.create_task(websocket.telemetry_loop())
+    task_telemetry = asyncio.create_task(servo_thread.telemetry_loop())
 
     # Discover / load pluggable hardware modules. ``registry`` injects
     # the EventBus into each module and mounts any routers they expose
@@ -46,11 +59,10 @@ async def lifespan(app: FastAPI):
     # package is logged but never fatal; the ``MODULES_ENABLED`` env
     # var (comma-separated) restricts which discovered modules boot.
     #
-    # The jog safety watchdog (formerly in ``routers/jog.py``) now
-    # ships inside ``modules/machine/jog_watchdog.py`` and is
-    # started/stopped by ``MachineModule.on_load`` /
-    # ``MachineModule.on_unload`` — the registry ``boot`` /
-    # ``shutdown`` pair below manages it for us.
+    # The jog safety watchdog ships inside
+    # ``modules/axis/jog_watchdog.py`` and is started/stopped by
+    # ``AxisModule.on_load`` / ``AxisModule.on_unload`` — the
+    # registry ``boot`` / ``shutdown`` pair below manages it for us.
     registry.boot(app)
     app.state.module_registry = registry
 
@@ -103,13 +115,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include modular routers. The ``machine`` / ``program`` routers are
-# mounted by the ``registry.boot(app)`` call inside ``lifespan`` (see
-# above), which routes them under ``/api/v1/modules/{id}``.
+# Include modular routers. The ``axis`` / ``machine_state`` /
+# ``program`` modules are mounted by the ``registry.boot(app)`` call
+# inside ``lifespan`` (see above), which routes them under
+# ``/api/v1/modules/{id}``. ``axis`` exposes ``/home``;
+# ``machine_state`` exposes ``/state``, ``/mode``, ``/mdi``. Both
+# call into the shared ``MachineControlService`` singleton from
+# :mod:`backend.services.machine_service`.
 app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(base_thread.router)
-app.include_router(websocket.router)
+app.include_router(servo_thread.router)
 
 @app.get("/")
 def read_root():

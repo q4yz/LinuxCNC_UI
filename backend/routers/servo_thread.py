@@ -1,3 +1,28 @@
+"""Servo-thread telemetry stream.
+
+LinuxCNC's runtime uses two parallel threads:
+
+* a fast **servo thread** that handles time-critical work
+  (position controllers, trajectory planner);
+* a slower **base thread** that handles bookkeeping (UI updates,
+  status reporting).
+
+The web UI mirrors that split:
+
+* this WebSocket is the "servo thread" — a 10 Hz broadcast stream
+  carrying estop, task_state, position, errors, and anything the
+  DRO / status panels need on every frame, plus a bidirectional
+  channel for jog commands (``jog_axis`` / ``jog_keepalive`` /
+  ``jog_stop``) so a continuous jog does not spam the REST layer;
+* the partner endpoint ``/api/v1/base-thread/snapshot`` is the
+  "base thread" — one round-trip per second collects every slow
+  stream the dashboard cares about (program progress, temperature
+  sensors, tool list) in a single payload.
+
+The ``/ws/telemetry`` URL and the ``websocket_telemetry`` /
+``telemetry_loop`` identifiers are preserved across the rename so
+the frontend's URL surface stays intact.
+"""
 import asyncio
 from copy import deepcopy
 import json
@@ -9,7 +34,7 @@ from hardware import get_machine_stat, get_machine_error, linuxcnc
 from hardware import linuxcnc_mock
 from services.console_logger import LogLevel, get_console_logger
 
-logger = logging.getLogger("backend.routers.websocket")
+logger = logging.getLogger("backend.routers.servo_thread")
 router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])
 
 
@@ -19,18 +44,15 @@ class ConnectionManager:
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
-        """Accepts a new connection and adds it to the pool."""
         await websocket.accept()
         self.active_connections.append(websocket)
         logger.info(f"WebSocket Client connected. Total clients: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        """Removes a connection from the pool."""
         self.active_connections.remove(websocket)
         logger.info(f"WebSocket Client disconnected. Total clients: {len(self.active_connections)}")
 
     async def broadcast(self, message: str):
-        """Sends a text message to all active clients."""
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
@@ -42,26 +64,22 @@ last_broadcast_state: dict = {}
 
 
 def get_dict_diff(new_dict: dict, old_dict: dict) -> dict:
-    """Return only the keys that changed or are new in new_dict."""
     diff = {}
 
     for key, new_value in new_dict.items():
         old_value = old_dict.get(key)
-
-        if isinstance(new_value, dict):
-            if isinstance(old_value, dict):
-                nested_diff = get_dict_diff(new_value, old_value)
-                if nested_diff:
-                    diff[key] = nested_diff
-            else:
-                diff[key] = new_value
-        elif isinstance(new_value, list):
-            if new_value != old_value:
-                diff[key] = new_value
+        if is_nested(new_value) and is_nested(old_value):
+            nested_diff = get_dict_diff(new_value, old_value)
+            diff[key] = nested_diff
         elif new_value != old_value:
             diff[key] = new_value
-
+        else:
+            pass
     return diff
+
+
+def is_nested(new_value) -> bool:
+    return isinstance(new_value, dict)
 
 
 def _offline_state_snapshot() -> dict:
@@ -281,7 +299,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
     """
     mtype = msg.get("type")
     if mtype == "jog_keepalive":
-        from modules.machine.jog import ws_jog_keepalive
+        from modules.axis.jog import ws_jog_keepalive
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
@@ -289,7 +307,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
         ws_jog_keepalive([int(a) for a in axes])
         return
     if mtype == "jog_axis":
-        from modules.machine.jog import ws_jog_axis
+        from modules.axis.jog import ws_jog_axis
         velocities = msg.get("velocities") or {}
         if not isinstance(velocities, dict):
             logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
@@ -305,7 +323,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
         ws_jog_axis(coerced, distance)
         return
     if mtype == "jog_stop":
-        from modules.machine.jog import ws_jog_stop
+        from modules.axis.jog import ws_jog_stop
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))

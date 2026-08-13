@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
-import { ModulesMachineService } from '../../generated/api/services/ModulesMachineService'
+import { ModulesMachineStateService } from '../../generated/api/services/ModulesMachineStateService'
 import { filterAutocompleteCommands } from '../config/gcodes'
 import { useMachineStore } from '../stores/machine.js'
 
@@ -79,7 +79,7 @@ const submitCommand = async () => {
     if (machineStore.isEstop) {
        consoleStore.error("Machine is in ESTOP. Command rejected.")
     } else {
-       await ModulesMachineService.runMdiCommand({ command: cmd })
+       await ModulesMachineStateService.runMdiCommand({ command: cmd })
        consoleStore.success(`Executed: ${cmd}`)
     }
   } catch (e) {

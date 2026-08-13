@@ -11,7 +11,7 @@ Field semantics:
 
 * ``jog_watchdog_timeout_ms`` — Backend-side keep-alive watchdog
   window. The jog safety watchdog reads this value once when it
-  starts in :meth:`MachineModule.on_load`; the value is settable at
+  starts in :meth:`AxisModule.on_load`; the value is settable at
   runtime via PUT ``/settings``, but the watchdog only re-reads it
   on a restart (which is acceptable for v1). Changing this on the fly
   is unsafe — operators should set it and reboot.

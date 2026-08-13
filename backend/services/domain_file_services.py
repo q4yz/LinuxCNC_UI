@@ -41,8 +41,7 @@ logger = logging.getLogger("backend.services.domain_file_services")
 # Shared paths                                                            #
 # ---------------------------------------------------------------------- #
 
-#: Backend root = ``<repo>/backend``.  Module-local paths are computed
-#: relative to this anchor so the four roots live next to the source.
+
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 _MACHINE_CONFIG_DIR = _PROJECT_ROOT / "machine_config"
@@ -50,11 +49,6 @@ _PROFILES_DIR = _MACHINE_CONFIG_DIR / "profiles"
 _STAGED_DIR = _MACHINE_CONFIG_DIR / "ready_for_deploy"
 _ACTIVE_DIR = _MACHINE_CONFIG_DIR / "active"
 _NC_FILES_DIR = _PROJECT_ROOT / "nc_files"
-#: LinuxCNC's ``[RS274NGC]USER_M_PATH``. Custom M-codes (M100..M199)
-#: drop in here as bare ``M<num>`` files; the interpreter expands
-#: ``M<num>`` MDI calls into the file's content. Lives next to
-#: ``machine_config/profiles/`` and is therefore reachable through
-#: the machineconfig router the same way profile content is.
 _M_CODES_DIR = _MACHINE_CONFIG_DIR / "m_codes"
 
 
@@ -108,12 +102,7 @@ class MCodeFileService(FileService):
     """
 
     default_read_only = False
-
-    #: LinuxCNC's reserved custom-M-code range. M100..M199 maps to
-    #: ``M1\d{2}`` so the regex is intentionally tight.
     MCODE_NAME = re.compile(r"^M1\d{2}$")
-
-    #: Public alias used by the macros router + frontend validator.
     KIND = "mcode"
 
     @classmethod

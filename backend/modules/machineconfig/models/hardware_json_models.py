@@ -35,7 +35,7 @@ discriminator; a spindle tool's ``pwm_pin`` does NOT resolve into
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -49,36 +49,49 @@ HARDWARE_MCU_CONNECTION_TYPES = frozenset(
 )
 
 
-# Type alias for the endstop behaviour tag. ``None`` means the
-# endstop is exposed to user macros only — it is NOT a kinematic
-# constraint and does NOT participate in homing or e-stop logic.
-# ``"Estop"`` flags a switch that kills motion when triggered.
-# ``"Home"`` flags a switch used by LinuxCNC's homing sequence.
-EndstopType = Optional[Literal["Estop", "Home"]]
-
-
 # ---------------------------------------------------------------------- #
 # Entity models                                                           #
 # ---------------------------------------------------------------------- #
 
 
 class Axis(BaseModel):
-    """A kinematic axis. Owns a list of steppers (multi-motor axes)
-    and a list of inline endstop views (the kinematic constraints).
+    """A kinematic axis. Owns the steppers that drive it plus an
+    optional endstop switch.
 
-    The inline ``endstops`` entries carry only ``{id, type, pos}`` —
-    enough for the runtime to find the right record and route it
-    to the appropriate HAL signal. The full record (with ``pin``
-    and ``stepper``) lives at the top-level ``endstops`` array so
-    HAL wiring stays centralised; the inline entries reference
-    those records by ``id``.
+    An axis is wired to a switch via exactly one of two fields:
+
+    * ``endstop`` — a string id reference into the top-level
+      ``endstops[]`` array. The switch is a first-class entity
+      shared with any other axis that also references the same id
+      (one physical switch can serve multiple axes).
+    * ``endstop_pin`` — an inline pin string, mirroring Klipper's
+      ``endstop_pin:`` syntax. Provided for input compatibility with
+      hand-edited ``hardware.json`` files; the compiler always
+      converts this form into a top-level ``Endstop`` entity plus
+      an ``endstop`` reference before emitting.
+
+    ``pos`` carries the axis position at which the switch fires
+    (Klipper's ``position_endstop``); the runtime uses it during
+    homing. Both forms are mutually exclusive — the model rejects
+    a payload that sets both.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     steppers: list[str]
-    endstops: list["EndstopView"] = Field(default_factory=list)
+    endstop: str | None = None
+    endstop_pin: str | None = None
+    pos: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_endstop_exclusive(self) -> "Axis":
+        if self.endstop is not None and self.endstop_pin is not None:
+            raise ValueError(
+                f"Axis '{self.id}' sets both 'endstop' and 'endstop_pin'; "
+                f"only one may be set."
+            )
+        return self
 
 
 class Stepper(BaseModel):
@@ -124,43 +137,25 @@ class Driver(BaseModel):
     sense_resistor: float | None = None
 
 
-class EndstopView(BaseModel):
-    """Inline endstop entry embedded inside :class:`Axis.endstops`.
-
-    Carries only the fields the runtime needs to find the record
-    and decide how to wire it (``id``, ``type``, ``pos``). The full
-    record (with ``pin`` / ``stepper``) lives at the top-level
-    ``endstops`` array.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    type: EndstopType = None
-    pos: float
-
-
 class Endstop(BaseModel):
-    """Full endstop record at the top-level ``endstops`` array.
+    """A single physical endstop switch.
 
-    Each Klipper ``[endstop_switch NAME]`` produces ONE record per
-    switch. The ``type`` field tells the runtime how to use the
-    switch:
+    Mirrors the Klipper source: just an id and a pin. The schema
+    deliberately strips the previous ``type``, ``pos``, and
+    ``stepper`` back-reference fields — the axis that hosts the
+    switch already carries its position (``Axis.pos``) and the
+    behavioural tag is implicit from context (switches referenced
+    by an axis are part of that axis's homing sequence).
 
-    * ``"Estop"`` — the switch kills motion when triggered.
-    * ``"Home"`` — the switch is used by LinuxCNC's homing sequence.
-    * ``None`` — the switch is macros-only (no kinematic role).
-
-    ``pos`` is the position of the switch on the axis (in user
-    units), so the runtime can validate the homing sequence.
+    One ``Endstop`` can be referenced by multiple axes; the
+    cross-reference validator walks every ``Axis.endstop`` to
+    ensure the id resolves into this list, but it does not
+    constrain how many axes may share the record.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    type: EndstopType = None
-    pos: float
-    stepper: str
     pin: str
 
 
@@ -403,7 +398,13 @@ class HardwareJson(BaseModel):
         fans_idx = {f.id: i for i, f in enumerate(self.fans)}
         endstops_idx = {e.id: i for i, e in enumerate(self.endstops)}
 
-        # Every axis.steppers[i] must exist in steppers[].
+        # Every axis.steppers[i] must exist in steppers[]; every
+        # ``axis.endstop`` must resolve into the top-level
+        # ``endstops[]`` list. ``axis.endstop_pin`` is a free-form
+        # pin string and does NOT require a matching record (it
+        # is the inline Klipper form). Mutual exclusion between
+        # ``endstop`` and ``endstop_pin`` lives on
+        # :meth:`Axis._validate_endstop_exclusive`.
         for axis in self.axes:
             for stepper_id in axis.steppers:
                 if stepper_id not in steppers_idx:
@@ -411,16 +412,11 @@ class HardwareJson(BaseModel):
                         f"Axis '{axis.id}' references unknown stepper "
                         f"'{stepper_id}'."
                     )
-            # The inline ``axis.endstops[*]`` entries reference
-            # the top-level ``endstops[]`` records by id; validate
-            # the link so a renamed record surfaces here instead of
-            # at runtime.
-            for view in axis.endstops:
-                if view.id not in endstops_idx:
-                    errors.append(
-                        f"Axis '{axis.id}' inline endstop '{view.id}' "
-                        f"does not match any top-level endstop record."
-                    )
+            if axis.endstop is not None and axis.endstop not in endstops_idx:
+                errors.append(
+                    f"Axis '{axis.id}' references unknown endstop "
+                    f"'{axis.endstop}'."
+                )
 
         # Every stepper.driver must exist in drivers[].
         for stepper in self.steppers:
@@ -428,14 +424,6 @@ class HardwareJson(BaseModel):
                 errors.append(
                     f"Stepper '{stepper.id}' references unknown driver "
                     f"'{stepper.driver}'."
-                )
-
-        # Every endstop.stepper must exist in steppers[].
-        for endstop in self.endstops:
-            if endstop.stepper not in steppers_idx:
-                errors.append(
-                    f"Endstop '{endstop.id}' references unknown stepper "
-                    f"'{endstop.stepper}'."
                 )
 
         # Every tool.sensor must exist in temperature_sensors[].
@@ -523,8 +511,6 @@ __all__ = [
     "Axis",
     "Driver",
     "Endstop",
-    "EndstopType",
-    "EndstopView",
     "Fan",
     "HardwareJson",
     "McuInfo",

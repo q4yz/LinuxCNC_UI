@@ -23,7 +23,8 @@ import { defineStore, storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
 
 import { generateSetOffset } from "../config/gcodes.js";
-import { ModulesMachineService } from "../../generated/api/services/ModulesMachineService";
+import { ModulesAxisService } from "../../generated/api/services/ModulesAxisService";
+import { ModulesMachineStateService } from "../../generated/api/services/ModulesMachineStateService";
 import { ModulesProgramService } from "../../generated/api/services/ModulesProgramService";
 import { useConsoleStore } from "./console.js";
 import { useServoThreadStore } from "./servoThread.js";
@@ -181,7 +182,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // ``estop == 1`` means we need to reset; otherwise we engage.
     const targetState = status.value.estop === 1 ? "estop_reset" : "estop";
     try {
-      await ModulesMachineService.setMachineState({ state: targetState });
+      await ModulesMachineStateService.setMachineState({ state: targetState });
       if (targetState === "estop") {
         consoleStore.warning("E-STOP Engaged");
       } else {
@@ -209,7 +210,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
     const targetState = isOn ? "off" : "on";
     try {
-      await ModulesMachineService.setMachineState({ state: targetState });
+      await ModulesMachineStateService.setMachineState({ state: targetState });
       if (targetState === "on") {
         consoleStore.success("Machine Power ON");
       } else {
@@ -236,22 +237,15 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Jogging ${axisName} axis ${distance}mm`,
       );
       // Prefer the open WebSocket — no extra HTTP round-trip per
-      // jog start. The REST endpoint stays as a fallback in case
-      // the socket is mid-reconnect.
+      // jog start. Jog goes over the ``/ws/telemetry`` channel
+      // exclusively; the historical REST endpoints were removed
+      // when the machine module was renamed to ``axis`` (see
+      // ``backend/modules/axis/router.py``).
       servo.send({
         type: "jog_axis",
         velocities: { [axis]: velocity },
         distance,
       });
-      try {
-        await ModulesMachineService.jogAxis({
-          velocities: { [axis]: velocity },
-          distance,
-        });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("Failed to jog axis (REST fallback)", axis, err);
-      }
     } catch (err) {
       consoleStore.error(
         `Failed to jog ${axisName}: ${err.message}`,
@@ -287,22 +281,16 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Jogging ${axisName} axis continuously...`,
       );
       // Start the jog over WS so the backend's watchdog
-      // registers the axis on the very first frame. The REST
-      // fallback covers the WS-reconnect case.
+      // registers the axis on the very first frame. Jog goes over
+      // the ``/ws/telemetry`` channel exclusively; the historical
+      // REST endpoints were removed when the machine module was
+      // renamed to ``axis`` (see
+      // ``backend/modules/axis/router.py``).
       servo.send({
         type: "jog_axis",
         velocities: { [axis]: jogVelocity },
         distance: 0,
       });
-      try {
-        await ModulesMachineService.jogAxis({
-          velocities: { [axis]: jogVelocity },
-          distance: 0,
-        });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("Failed to start continuous jog (REST fallback)", err);
-      }
 
       // Keep-alive cadence comes from the persisted module
       // setting (250 ms fallback). The backend watchdog trips at
@@ -333,15 +321,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       }
 
       // Prefer the WebSocket — the stop takes effect on the next
-      // 10 Hz broadcast tick. REST stays as a fallback in case
-      // the socket is mid-reconnect.
+      // 10 Hz broadcast tick. Jog goes over the
+      // ``/ws/telemetry`` channel exclusively; the historical REST
+      // endpoints were removed when the machine module was
+      // renamed to ``axis`` (see
+      // ``backend/modules/axis/router.py``).
       servo.send({ type: "jog_stop", axes: [axis] });
-      try {
-        await ModulesMachineService.jogStop({ axes: [axis] });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("Failed to stop jog (REST fallback)", err);
-      }
       consoleStore.info(`${axisName} Jog stopped`);
     } catch (err) {
       consoleStore.error(
@@ -360,7 +345,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       consoleStore.info(`Homing axis index ${axisIndex}...`);
-      await ModulesMachineService.homeAxis({ axis: axisIndex });
+      await ModulesAxisService.homeAxis({ axis: axisIndex });
       consoleStore.success(
         `Homed axis ${axisIndex} successfully`,
       );
@@ -377,7 +362,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
     try {
       consoleStore.info("Homing all axes...");
-      await ModulesMachineService.homeAxis({ axis: HOME_ALL });
+      await ModulesAxisService.homeAxis({ axis: HOME_ALL });
       consoleStore.success("All axes homed successfully");
     } catch (err) {
       consoleStore.error(
@@ -397,7 +382,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         `Setting work offset for ${axisName} to ${value}...`,
       );
       const cmd = generateSetOffset(axisName, value);
-      await ModulesMachineService.runMdiCommand({ command: cmd });
+      await ModulesMachineStateService.runMdiCommand({ command: cmd });
     } catch (err) {
       consoleStore.error(
         `Failed to set position for ${axisName}: ${err.message}`,
@@ -413,7 +398,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
       consoleStore.command(
         `Switching to Coordinate System: ${gcodeString}`,
       );
-      await ModulesMachineService.runMdiCommand({ command: gcodeString });
+      await ModulesMachineStateService.runMdiCommand({ command: gcodeString });
     } catch (err) {
       consoleStore.error(
         `Failed to switch Coordinate System: ${err.message}`,
