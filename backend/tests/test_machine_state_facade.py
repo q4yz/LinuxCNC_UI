@@ -1,4 +1,4 @@
-"""Tests for the state-facade read path on ``MachineControlService``.
+"""Tests for the state-facade read path on ``StateService``.
 
 These tests pin the contract that hides the linuxcnc NML integer
 constants from API consumers. Every test runs hermetically: the
@@ -8,10 +8,10 @@ no real LinuxCNC instance is needed.
 Coverage:
 
 * ``MachineState`` enum surface — values, JSON serialisability.
-* ``MachineControlService.get_state()`` — every priority branch
+* ``StateService.get_state()`` — every priority branch
   (OFFLINE / ESTOP / POWER_OFF / IDLE / LOADED / RUNNING / PAUSED /
   FAILURE).
-* ``MachineControlService.get_state_snapshot()`` — JSON shape
+* ``StateService.get_state_snapshot()`` — JSON shape
   stability, ``raw_*`` field round-trip.
 * ``GET /api/v1/modules/machine/state`` — FastAPI round-trip via
   ``TestClient``.
@@ -43,9 +43,9 @@ conn_mod = importlib.import_module("hardware.connection")
 # maps cleanly.
 linuxcnc = conn_mod.linuxcnc
 
-from services.machine_service import (  # noqa: E402
-    MachineControlService,
+from modules.state.service import (  # noqa: E402
     MachineState,
+    StateService,
 )
 from modules.state.router import router as state_router  # noqa: E402
 
@@ -133,13 +133,13 @@ class TestGetState:
 
     def test_returns_offline_when_stat_channel_is_none(self):
         """NML channel has not connected yet → ``OFFLINE``."""
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(conn_mod, "get_machine_stat", return_value=None):
             assert svc.get_state() is MachineState.OFFLINE
 
     def test_returns_estop_when_task_state_is_estop(self):
         """``STATE_ESTOP`` → ``ESTOP``."""
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ESTOP", 1),
             estop=1,
@@ -152,7 +152,7 @@ class TestGetState:
         frontend state facade applies the same priority, so the
         backend cannot disagree.
         """
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=1,
@@ -169,14 +169,14 @@ class TestGetState:
         ``POWER_OFF`` — the operator only cares whether the
         machine is ready to take a cut.
         """
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(task_state=task_state, estop=0)
         with patch.object(conn_mod, "get_machine_stat", return_value=stat):
             assert svc.get_state() is MachineState.POWER_OFF
 
     def test_returns_loaded_when_file_set_and_interp_idle(self):
         """``STATE_ON`` + ``INTERP_IDLE`` + file path → ``LOADED``."""
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -197,7 +197,7 @@ class TestGetState:
         as ``RUNNING`` — the operator just needs to know "is the
         cut active?".
         """
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -207,7 +207,7 @@ class TestGetState:
             assert svc.get_state() is MachineState.RUNNING
 
     def test_returns_paused_when_interp_paused(self):
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -217,7 +217,7 @@ class TestGetState:
             assert svc.get_state() is MachineState.PAUSED
 
     def test_returns_idle_when_no_file_and_interp_idle(self):
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -231,7 +231,7 @@ class TestGetState:
         """A future LinuxCNC build that adds a state we don't
         know about yet → ``FAILURE`` rather than crashing.
         """
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(task_state=99, estop=0)
         with patch.object(conn_mod, "get_machine_stat", return_value=stat):
             assert svc.get_state() is MachineState.FAILURE
@@ -239,7 +239,7 @@ class TestGetState:
     def test_returns_offline_when_poll_raises(self):
         """A buggy stat impl must not crash the request handler.
         """
-        svc = MachineControlService()
+        svc = StateService()
 
         class _BrokenStat:
             def poll(self):
@@ -263,7 +263,7 @@ class TestGetStateSnapshot:
         """The set of top-level keys is the wire contract; adding
         a key is OK but removing one is a breaking change.
         """
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -284,7 +284,7 @@ class TestGetStateSnapshot:
         }
 
     def test_snapshot_uses_clean_enum_string_for_state(self):
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -296,7 +296,7 @@ class TestGetStateSnapshot:
         assert snap["state"] == "loaded"
 
     def test_snapshot_offline_when_channel_none(self):
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(conn_mod, "get_machine_stat", return_value=None):
             snap = svc.get_state_snapshot()
         assert snap["state"] == MachineState.OFFLINE.value
@@ -307,7 +307,7 @@ class TestGetStateSnapshot:
         assert snap["homed"] == [0, 0, 0]
 
     def test_snapshot_passes_through_homed_array(self):
-        svc = MachineControlService()
+        svc = StateService()
         stat = _fake_stat(
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=0,
@@ -397,7 +397,7 @@ class TestDeprecatedPassthroughs:
     """
 
     def test_get_machine_stat_warns(self):
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(
             conn_mod, "get_machine_stat", return_value=_fake_stat()
         ):
@@ -405,19 +405,19 @@ class TestDeprecatedPassthroughs:
                 svc.get_machine_stat()
 
     def test_get_machine_cmd_warns(self):
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(conn_mod, "get_machine_cmd", return_value=None):
             with pytest.warns(DeprecationWarning, match="get_machine_cmd"):
                 svc.get_machine_cmd()
 
     def test_get_machine_error_warns(self):
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(conn_mod, "get_machine_error", return_value=None):
             with pytest.warns(DeprecationWarning, match="get_machine_error"):
                 svc.get_machine_error()
 
     def test_is_linuxcnc_connected_warns(self):
-        svc = MachineControlService()
+        svc = StateService()
         with patch.object(
             conn_mod, "is_linuxcnc_connected", return_value=False
         ):
@@ -425,3 +425,4 @@ class TestDeprecatedPassthroughs:
                 DeprecationWarning, match="is_linuxcnc_connected"
             ):
                 svc.is_linuxcnc_connected()
+

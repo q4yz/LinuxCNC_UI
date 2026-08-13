@@ -10,14 +10,15 @@ This file is the entrypoint the registry imports via the package
 
 Scope is narrow: this module is the HTTP surface for machine state,
 mode, and MDI. The business logic lives in
-:mod:`backend.services.machine_service` (the
-``MachineControlService`` facade); this module is a thin wrapper
-that delegates to the facade's singleton.
+:mod:`modules.state.service` (the :class:`StateService` facade);
+this module is a thin wrapper that delegates to the facade's
+singleton.
 
 The HTTP router lives in :mod:`backend.modules.state.router`. The
-``/home`` endpoint intentionally lives in the axis module because
-homing is an axis-motion action; everything else (state / mode /
-MDI) lives here.
+business facade (:class:`StateService`) lives in
+:mod:`modules.state.service`. The ``/home`` endpoint intentionally
+lives in the axis module because homing is an axis-motion action;
+everything else (state / mode / MDI) lives here.
 
 The state module has no user-tunable settings today, so
 :meth:`get_settings_model` returns ``None`` and the registry skips
@@ -66,11 +67,11 @@ class StateModule:
     ``on_unload`` are no-ops kept for protocol symmetry with
     :class:`backend.modules.axis.AxisModule`.
 
-    The router exposes ``GET /state``, ``POST /state``, ``POST /mode``,
-    and ``POST /mdi``; the ``/home`` endpoint lives in the axis
-    module. Both routers call into the shared
-    :class:`MachineControlService` singleton in
-    :mod:`backend.services.machine_service`.
+The router exposes ``GET /state``, ``POST /state``, ``POST /mode``,
+and ``POST /mdi``; the ``/home`` endpoint lives in the axis
+module. Both routers call into the shared :class:`StateService`
+singleton in :mod:`modules.state.service` (and the axis module
+into :class:`AxisService` in :mod:`modules.axis.service`).
     """
 
     manifest = _MANIFEST

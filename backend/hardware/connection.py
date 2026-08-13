@@ -9,7 +9,7 @@ dedicated sibling files inside the ``hardware/`` package:
     (``.cfg`` → HAL pin translation, Layer 1).
   * :file:`hardware/hal_subscription-manager.py` —
     ``HalSubscriptionManager`` (HAL pin polling, Layer 0).
-  * :class:`services.machine_service.MachineService` —
+  * :class:`backend.services.machine_service.MachineService` —
     hardware-layer endstop + G-code facade (Layer 2).
 
 This file only owns:

@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
 from core.module_registry import ModuleRegistry
+from modules.state import service as state_service_module
 from services import console_logger as console_logger_module
 from services.console_logger import (
     ConsoleLogger,
@@ -233,7 +234,6 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
     from fastapi import HTTPException
 
     from hardware import execute_sync_cmd as real_execute_sync_cmd
-    from services import machine_service as svc
 
     log_path = tmp_path / "console_history.log"
     app, _ = _machine_app(tmp_data_root, clean_env, log_path)
@@ -243,11 +243,11 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
             raise HTTPException(status_code=400, detail="Bad command")
         return real_execute_sync_cmd(cmd_name, cmd_timeout, *args)
 
-    # The state router calls into ``MachineControlService.run_mdi``
-    # which dispatches via ``execute_sync_cmd`` imported in
-    # ``services.machine_service``. Patching that module-global
+    # The state router calls into ``StateService.run_mdi`` which
+    # dispatches via ``execute_sync_cmd`` imported in
+    # ``modules.state.service``. Patching that module-global
     # makes the facade raise so the route returns 400.
-    monkeypatch.setattr(svc, "execute_sync_cmd", fake_execute_sync_cmd)
+    monkeypatch.setattr(state_service_module, "execute_sync_cmd", fake_execute_sync_cmd)
 
     client = TestClient(app)
     resp = client.post(

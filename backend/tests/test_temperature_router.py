@@ -59,7 +59,7 @@ def test_set_target_success_path_calls_execute_sync_cmd_with_exact_args():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         return_value={"status": "success"},
     ) as exec_cmd:
         resp = client.post(
@@ -87,7 +87,7 @@ def test_set_target_accepts_boundary_targets():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         return_value={"status": "success"},
     ) as exec_cmd:
         for value in (0.0, 400.0):
@@ -110,7 +110,7 @@ def test_set_target_rejects_out_of_range_target_payload():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
     ) as exec_cmd:
         resp = client.post(
             "/api/v1/modules/temperature/sensors/extruder/target",
@@ -131,7 +131,7 @@ def test_set_target_default_status_when_hardware_omits_it():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         return_value={},  # no status key
     ):
         resp = client.post(
@@ -157,7 +157,7 @@ def test_set_target_url_param_takes_precedence_over_body():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         return_value={"status": "success"},
     ) as exec_cmd:
         resp = client.post(
@@ -182,7 +182,7 @@ def test_set_target_url_and_body_match_succeeds():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         return_value={"status": "success"},
     ) as exec_cmd:
         resp = client.post(
@@ -213,7 +213,7 @@ def test_set_target_url_name_cannot_be_empty():
     from modules.temperature.router import set_target as set_target_fn
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
     ) as exec_cmd:
         with pytest.raises(Exception) as excinfo:
             set_target_fn(name="", req=MagicMock(sensor_name="bed", target=60.0))
@@ -237,7 +237,7 @@ def test_set_target_url_name_must_be_a_string():
     from modules.temperature.router import set_target as set_target_fn
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
     ) as exec_cmd:
         with pytest.raises(HTTPException) as excinfo:
             set_target_fn(name=None, req=MagicMock(sensor_name="bed", target=60.0))
@@ -258,7 +258,7 @@ def test_set_target_http_exception_passes_through():
 
     boom = HTTPException(status_code=400, detail="Command execution error")
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         side_effect=boom,
     ):
         resp = client.post(
@@ -279,7 +279,7 @@ def test_set_target_generic_exception_returns_500():
     client = TestClient(app)
 
     with patch(
-        "modules.temperature.router.execute_sync_cmd",
+        "modules.temperature.service.execute_sync_cmd",
         side_effect=RuntimeError("hardware went away"),
     ):
         resp = client.post(
@@ -289,3 +289,4 @@ def test_set_target_generic_exception_returns_500():
 
     assert resp.status_code == 500
     assert "hardware went away" in resp.json()["detail"]
+

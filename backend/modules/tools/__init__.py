@@ -21,7 +21,7 @@ by the base-thread snapshot
 (``GET /api/v1/base-thread/snapshot``) which now carries the
 tool list alongside progress and sensors in a single 1 Hz
 round-trip. Tool reads now go through
-:func:`backend.services.machine_service.collect_tools`.
+:func:`modules.tools.service.collect_tools`.
 
 All hardware access goes through :func:`hardware.execute_sync_cmd`
 so the module stays compatible with :mod:`hardware.linuxcnc_mock`.

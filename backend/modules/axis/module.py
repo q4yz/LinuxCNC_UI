@@ -13,9 +13,9 @@ Scope: this module owns the "axis" surface — jog control plus the
 ``/home`` endpoint. The ``/home`` endpoint is an axis-motion action
 (similar in nature to jog dispatch), so it lives here rather than
 in the ``state`` module. The state / mode / MDI endpoints live in
-:mod:`backend.modules.state.router`; both routers call into the
-shared layer-2 facade :class:`MachineControlService` from
-:mod:`backend.services.machine_service`.
+:mod:`backend.modules.state.router`; both routers call into their
+own dedicated service singleton (:class:`AxisService` /
+:class:`StateService`).
 
 The HTTP router lives in :mod:`backend.modules.axis.router` and
 currently exposes only ``POST /home``. Jog REST endpoints were

@@ -6,7 +6,7 @@ Pins the contract after the ``/home`` endpoint moved from
 
 * be reachable at ``POST /api/v1/modules/axis/home`` when mounted
   by the registry,
-* delegate to :meth:`MachineControlService.home_axis` so the
+* delegate to :meth:`AxisService.home_axis` so the
   facade's ``MODE_MANUAL`` pre-switch + axis dispatch happens
   exactly as it did before the move,
 * keep the ``homeAxis`` operation_id so the regenerated OpenAPI
@@ -36,7 +36,7 @@ def _axis_app(tmp_data_root, clean_env):
 def test_axis_home_endpoint_dispatches_to_facade(
     tmp_data_root, clean_env
 ):
-    """``POST /home`` calls ``MachineControlService.home_axis``.
+    """``POST /home`` calls ``AxisService.home_axis``.
 
     We patch the facade method so the test runs hermetically
     without a live NML channel; the dispatch path is the contract
@@ -48,7 +48,7 @@ def test_axis_home_endpoint_dispatches_to_facade(
     client = TestClient(app)
 
     with patch(
-        "services.machine_service.MachineControlService.home_axis"
+        "modules.axis.service.AxisService.home_axis"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
@@ -72,7 +72,7 @@ def test_axis_home_endpoint_accepts_negative_axis(
     client = TestClient(app)
 
     with patch(
-        "services.machine_service.MachineControlService.home_axis"
+        "modules.axis.service.AxisService.home_axis"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",

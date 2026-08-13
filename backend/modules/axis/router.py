@@ -3,12 +3,11 @@
 The axis module owns two kinds of endpoints:
 
 * ``POST /home`` — dispatch a home command via the
-  :class:`MachineControlService` facade. The endpoint always
-  switches to ``MODE_MANUAL`` first so a stale ``MODE_AUTO`` does
-  not silently swallow the home command. The handler is a thin
-  wrapper around :func:`get_machine_control_service` from
-  :mod:`backend.services.machine_service`; the axis module does
-  not own the business logic, only the HTTP edge.
+  :class:`AxisService` facade. The endpoint always switches to
+  ``MODE_MANUAL`` first so a stale ``MODE_AUTO`` does not silently
+  swallow the home command. The handler is a thin wrapper around
+  :func:`get_axis_service` from :mod:`modules.axis.service`; the
+  axis module does not own the business logic, only the HTTP edge.
 
 * (Historically) jog REST endpoints — ``/jog``, ``/jog/keepalive``,
   ``/jog/stop`` were deprecated in favour of the ``/ws/telemetry``
@@ -17,7 +16,8 @@ The axis module owns two kinds of endpoints:
 The state / mode / MDI endpoints moved to
 :mod:`backend.modules.state.router` when the HTTP surface was split
 along semantic lines (axis-motion actions vs. machine-task
-actions). The two routers share the same layer-2 facade singleton.
+actions). The two routers each call into their own dedicated
+service singleton (``StateService`` / ``AxisService``).
 
 The router is mounted under ``/api/v1/modules/axis`` by the
 registry, so the home endpoint is reachable at
@@ -30,7 +30,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from services.machine_service import get_machine_control_service
+from modules.axis.service import get_axis_service
 
 
 router = APIRouter()
@@ -72,10 +72,10 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
 
     The endpoint always switches to ``MODE_MANUAL`` first so a stale
     ``MODE_AUTO`` does not silently swallow the home command. This
-    happens inside :meth:`MachineControlService.home_axis`; the
+    happens inside :meth:`AxisService.home_axis`; the
     router only translates the HTTP edge.
     """
-    get_machine_control_service().home_axis(cmd.axis)
+    get_axis_service().home_axis(cmd.axis)
     return _StatusResponse(status="success")
 
 

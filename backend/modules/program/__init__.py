@@ -11,6 +11,12 @@ endpoints verbatim from ``router.py`` so the registry can mount them
 under ``/api/v1/modules/program`` today, and the dedicated UI can
 follow later without churning the URL surface.
 
+The business facade (:class:`ProgramService` +
+:class:`ProgramProgressResponse`) lives in
+:mod:`modules.program.service`; the router imports only the
+singleton accessor (``get_program_lifecycle_service``) — never the
+class — so a refactor of the facade does not touch this file.
+
 The endpoints are intentionally defined here rather than imported
 from the legacy ``routers/machine.py`` because that file is being
 deleted as part of this migration. Any operator who relied on the

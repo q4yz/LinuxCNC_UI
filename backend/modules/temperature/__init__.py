@@ -16,7 +16,7 @@ by the base-thread snapshot
 (``GET /api/v1/base-thread/snapshot``) which now carries the
 sensor dict alongside progress and tools in a single 1 Hz
 round-trip. Sensor reads now go through
-:func:`backend.services.machine_service.collect_sensors`.
+:func:`modules.temperature.service.collect_sensors`.
 
 Mock simulation (``_temp_simulation_loop``) deliberately stays in
 :mod:`hardware.linuxcnc_mock` per the audit's recommendation: the

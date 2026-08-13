@@ -18,17 +18,14 @@ The legacy ``GET /tools`` listing endpoint was superseded by the
 base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
 which now carries the tool list alongside progress and sensors in
 a single 1 Hz round-trip. The :func:`collect_tools` helper lives
-in :mod:`backend.services.machine_service` and is the single
-source of truth for the tool payload — this router no longer
-overlays runtime state directly.
+in :mod:`modules.tools.service` and is the single source of
+truth for the tool payload — this router no longer overlays
+runtime state directly.
 
-The two MDI endpoints share the same safety preamble: switch the
-task into ``MODE_MDI`` first (blocking until the mode change is
-acknowledged) so the subsequent ``mdi`` call is accepted by the
-interpreter. The MDI dispatch itself is non-blocking
-(``wait_complete(timeout=0)``) because the operator's tool panel
-is fire-and-forget — multiple consecutive presses should queue
-cleanly rather than stall on a hard wait.
+The router delegates every hardware-touching call to
+:func:`get_tools_service` in :mod:`modules.tools.service` — the
+router itself does not import ``hardware.*`` so the rule "no
+router is allowed to import any hardware file" stays enforced.
 
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
@@ -38,35 +35,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd, linuxcnc
-from modules.tools.config_mapper import load_active_tools
+from modules.tools.service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.router")
-
-
-# ---------------------------------------------------------------------- #
-# Constants                                                               #
-# ---------------------------------------------------------------------- #
-
-
-# Canonical LinuxCNC MDI strings. Kept module-private so the router
-# functions below stay readable. The constants are exported through
-# :data:`__all__` for unit tests that want to assert the exact
-# strings the endpoint emits (Issue #64 acceptance criteria).
-M3_FORWARD = "M3 S{speed}"
-M4_BACKWARD = "M4 S{speed}"
-M5_STOP = "M5"
-G91_RELATIVE = "G91"
-G90_ABSOLUTE = "G90"
-G1_EXTRUDE = "G1 E{dist} F{speed}"
-
-# Allowed action vocabulary. Centralised so the request validators
-# below share a single source of truth.
-_SPINDLE_ACTIONS = {"forward", "backward", "stop"}
-_EXTRUDER_ACTIONS = {"extrude", "retract"}
 
 
 # ---------------------------------------------------------------------- #
@@ -202,32 +176,10 @@ class SetToolTargetResponse(BaseModel):
 router = APIRouter(tags=["modules:tools"])
 
 
-def _ensure_mdi_mode() -> None:
-    """Switch the task into MDI mode and wait for the change to commit.
-
-    The interpreter silently ignores ``mdi`` calls issued while the
-    task is in ``MANUAL`` / ``AUTO`` mode (see
-    :mod:`hardware.linuxcnc_mock`). The machine module's router
-    uses the same ``mode`` + ``wait_complete(timeout=5)`` preamble
-    before every ``mdi`` dispatch, so we mirror that here.
-    """
-    execute_sync_cmd(
-        "mode",
-        5,
-        getattr(linuxcnc, "MODE_MDI", 3),
-    )
-
-
-def _dispatch_mdi(command: str) -> None:
-    """Issue a single MDI command without waiting for completion.
-
-    The operator's tool panel is fire-and-forget — multiple rapid
-    presses should queue rather than block on a hard wait. We pass
-    ``timeout=0`` to :func:`hardware.execute_sync_cmd` so the
-    underlying ``mdi`` call returns immediately.
-    """
-    logger.info("tools mdi -> %s", command)
-    execute_sync_cmd("mdi", 0, command)
+# Allowed action vocabulary. Centralised so the request validators
+# below share a single source of truth.
+_SPINDLE_ACTIONS = {"forward", "backward", "stop"}
+_EXTRUDER_ACTIONS = {"extrude", "retract"}
 
 
 @router.post(
@@ -237,33 +189,23 @@ def _dispatch_mdi(command: str) -> None:
     description=(
         "Start, reverse, or stop the spindle via the canonical "
         "LinuxCNC M-codes: ``M3 S{speed}`` (forward), "
-        "``M4 S{speed}`` (backward), or ``M5`` (stop). The router "
-        "switches the task into MDI mode before dispatching so the "
-        "interpreter accepts the command."
+        "M4 S{speed}`` (backward), or ``M5`` (stop). The router "
+        "delegates to :class:`ToolsService.control_spindle`, which "
+        "switches the task into MDI mode before dispatching."
     ),
     operation_id="controlSpindle",
 )
 def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
     """Handle a spindle command request."""
     if cmd.action not in _SPINDLE_ACTIONS:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=400,
             detail=f"Invalid spindle action: {cmd.action!r}",
         )
 
-    _ensure_mdi_mode()
-
-    if cmd.action == "forward":
-        mdi = M3_FORWARD.format(speed=cmd.speed)
-    elif cmd.action == "backward":
-        mdi = M4_BACKWARD.format(speed=cmd.speed)
-    else:  # cmd.action == "stop"
-        # M5 ignores the S-word; the request body's ``speed`` is
-        # accepted but unused so the front-end doesn't have to
-        # branch on action before posting.
-        mdi = M5_STOP
-
-    _dispatch_mdi(mdi)
+    mdi = get_tools_service().control_spindle(cmd.tool_id, cmd.action, cmd.speed)
     return ToolCommandResponse(status="success", command=mdi, tool_id=cmd.tool_id)
 
 
@@ -272,7 +214,8 @@ def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
     response_model=ToolCommandResponse,
     description=(
         "Extrude or retract material on the extruder axis. The "
-        "router switches into relative distance mode (``G91``), "
+        "router delegates to :class:`ToolsService.control_extruder`, "
+        "which switches into relative distance mode (``G91``), "
         "issues a single ``G1 E{dist} F{speed}`` move — the sign "
         "of ``dist`` is inverted for the retract direction — and "
         "restores absolute mode (``G90``) so subsequent commands "
@@ -284,24 +227,16 @@ def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
 def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
     """Handle an extruder command request."""
     if cmd.action not in _EXTRUDER_ACTIONS:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=400,
             detail=f"Invalid extruder action: {cmd.action!r}",
         )
 
-    _ensure_mdi_mode()
-
-    # Per Issue #64: retract is a negative distance relative to the
-    # extruder's positive-feed direction. The frontend passes an
-    # always-positive ``distance`` so the operator never has to
-    # remember the sign convention.
-    signed_dist = cmd.distance if cmd.action == "extrude" else -cmd.distance
-
-    _dispatch_mdi(G91_RELATIVE)
-    move = G1_EXTRUDE.format(dist=signed_dist, speed=cmd.speed)
-    _dispatch_mdi(move)
-    _dispatch_mdi(G90_ABSOLUTE)
-
+    move = get_tools_service().control_extruder(
+        cmd.tool_id, cmd.action, cmd.distance, cmd.speed
+    )
     return ToolCommandResponse(status="success", command=move, tool_id=cmd.tool_id)
 
 
@@ -316,30 +251,17 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
     summary="Set Tool Target Temperature",
     description=(
         "Set the target temperature for a heating tool "
-        "(extruder / heated_bed). The router looks up the tool's "
-        "``sensor`` reference and dispatches ``set_temperature`` "
-        "to the hardware layer — the sensor channel itself is "
-        "owned by the temperature module."
+        "(extruder / heated_bed). The router delegates to "
+        ":class:`ToolsService.set_tool_target`, which looks up the "
+        "tool's ``sensor`` reference and dispatches "
+        "``set_temperature`` to the hardware layer."
     ),
     operation_id="setToolTarget",
 )
 def set_tool_target(
     tool_id: str, req: SetToolTargetRequest
 ) -> SetToolTargetResponse:
-    """Set the target temperature for ``tool_id``.
-
-    The URL's ``{tool_id}`` is canonical — a body ``tool_id``
-    mismatch is logged at DEBUG and ignored. Returns ``404`` when
-    the tool is not declared in the active ``hardware.json`` so a
-    frontend typo surfaces as a structured error instead of a
-    silent no-op. Returns ``400`` when the tool exists but is not
-    a heating tool (no ``sensor`` reference).
-    """
-    if not tool_id or not isinstance(tool_id, str):
-        raise HTTPException(
-            status_code=400,
-            detail="Tool id must be a non-empty string",
-        )
+    """Set the target temperature for ``tool_id``."""
     if tool_id != req.tool_id:
         logger.debug(
             "tool_id in body (%r) differs from URL (%r); URL wins",
@@ -347,43 +269,12 @@ def set_tool_target(
             tool_id,
         )
 
-    raw_tools = load_active_tools()
-    tool = next((t for t in raw_tools if t.get("id") == tool_id), None)
-    if tool is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown tool id: {tool_id!r}",
-        )
-    sensor_id = tool.get("sensor")
-    if not isinstance(sensor_id, str) or not sensor_id:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Tool {tool_id!r} has no temperature sensor "
-                "(spindle / laser tools cannot accept a target)"
-            ),
-        )
-
-    try:
-        execute_sync_cmd("set_temperature", 0, sensor_id, req.target)
-    except HTTPException:
-        # ``execute_sync_cmd`` already produces actionable HTTP
-        # errors; surface them verbatim.
-        raise
-    except Exception as exc:  # noqa: BLE001 - defensive
-        logger.error(
-            "set_temperature(%s, %s) failed: %s",
-            sensor_id,
-            req.target,
-            exc,
-        )
-        raise HTTPException(status_code=500, detail=str(exc))
-
+    sensor = get_tools_service().set_tool_target(tool_id, req.target)
     return SetToolTargetResponse(
         status="success",
         tool_id=tool_id,
         target=req.target,
-        sensor=sensor_id,
+        sensor=sensor,
     )
 
 
@@ -394,10 +285,4 @@ __all__ = [
     "ToolCommandResponse",
     "SetToolTargetRequest",
     "SetToolTargetResponse",
-    "M3_FORWARD",
-    "M4_BACKWARD",
-    "M5_STOP",
-    "G91_RELATIVE",
-    "G90_ABSOLUTE",
-    "G1_EXTRUDE",
 ]

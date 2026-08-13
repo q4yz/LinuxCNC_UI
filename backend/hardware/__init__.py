@@ -32,7 +32,7 @@ __all__ = [
     "hal_manager",
     # Note: ``MachineService`` / ``machine_service`` / ``default_mapper``
     # were removed from the ``hardware`` re-export surface to break
-    # the circular import between ``services.machine_service`` and
+    # the circular import between ``backend.services.machine_service`` and
     # ``hardware.connection``. They live in
     # :mod:`backend.services.machine_service` — import from there.
 ]

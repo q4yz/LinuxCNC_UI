@@ -8,7 +8,7 @@ Covers:
   registry, and ``MachineSettings`` defaults survive a round-trip.
 * ``POST /home`` rejects an unknown ``state`` payload with ``400``
   per the Pydantic validation contract (the home endpoint
-  delegates validation to :class:`MachineControlService`).
+  delegates validation to :class:`AxisService`).
 * The legacy ``routers/machine.py`` and ``routers/jog.py`` modules
   are gone (the file-level deletion enforced by issue #38 § 6
   Risk #7).

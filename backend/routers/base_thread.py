@@ -38,8 +38,12 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 
-from services import get_machine_control_service, ProgramProgressResponse
-from services.machine_service import collect_sensors, collect_tools
+from modules.program.service import (
+    ProgramProgressResponse,
+    get_program_lifecycle_service,
+)
+from modules.temperature.service import collect_sensors
+from modules.tools.service import collect_tools
 
 logger = logging.getLogger("backend.routers.base_thread")
 
@@ -88,7 +92,7 @@ class BaseThreadSnapshotResponse(BaseModel):
 
 
 def _read_progress() -> ProgramProgressResponse:
-    return get_machine_control_service().progress_program()
+    return get_program_lifecycle_service().progress_program()
 
 
 

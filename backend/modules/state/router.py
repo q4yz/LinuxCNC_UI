@@ -11,11 +11,11 @@ state rather than on a specific axis::
 The ``/home`` endpoint lives in :mod:`backend.modules.axis.router`
 because homing is an axis-motion action; this module owns everything
 else that used to live on the historical
-``backend.services.machine_service::machine_control_router`.
+``backend.services.machine_service::machine_control_router``.
 
-Each handler is a thin wrapper around :class:`MachineControlService`
-in :mod:`backend.services.machine_service`. The router imports only
-the singleton accessor (``get_machine_control_service``) — never the
+Each handler is a thin wrapper around :class:`StateService`
+in :mod:`backend.modules.state.service`. The router imports only
+the singleton accessor (``get_state_service``) — never the
 facade class — so the layer-2 split can evolve independently of the
 HTTP surface.
 
@@ -32,8 +32,8 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from modules.state.service import get_state_service
 from services.console_logger import LogLevel, get_console_logger
-from services.machine_service import get_machine_control_service
 
 
 logger = logging.getLogger("backend.modules.state.router")
@@ -127,11 +127,11 @@ class _StatusResponse(BaseModel):
 )
 def _get_state_endpoint() -> _StateSnapshot:
     """Read-side facade — delegates to
-    :meth:`MachineControlService.get_state_snapshot` and lets
+    :meth:`StateService.get_state_snapshot` and lets
     FastAPI's response-model coercion turn the dict into the
     documented :class:`_StateSnapshot` shape.
     """
-    snapshot = get_machine_control_service().get_state_snapshot()
+    snapshot = get_state_service().get_state_snapshot()
     return _StateSnapshot(**snapshot)
 
 
@@ -151,7 +151,7 @@ def _set_state_endpoint(cmd: _StateCommand) -> _StatusResponse:
     matches the historical router's surface.
     """
     try:
-        get_machine_control_service().set_state(cmd.state)
+        get_state_service().set_state(cmd.state)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid state")
     return _StatusResponse(status="success")
@@ -168,7 +168,7 @@ def _set_state_endpoint(cmd: _StateCommand) -> _StatusResponse:
 def _set_mode_endpoint(cmd: _ModeCommand) -> _StatusResponse:
     """Translate ``mode`` via the facade and dispatch."""
     try:
-        get_machine_control_service().set_mode(cmd.mode)
+        get_state_service().set_mode(cmd.mode)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid mode")
     return _StatusResponse(status="success")
@@ -201,7 +201,7 @@ def _run_mdi_endpoint(cmd: _MdiCommand) -> _StatusResponse:
     console_logger = get_console_logger()
     console_logger.log_command(cmd.command)
     try:
-        get_machine_control_service().run_mdi(cmd.command)
+        get_state_service().run_mdi(cmd.command)
     except HTTPException as exc:
         console_logger.log_response(
             f"Error: {exc.detail}",

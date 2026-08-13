@@ -10,19 +10,26 @@ prefixes it when mounting.
 
 The :func:`collect_sensors` helper is the single source of truth
 for reading the sensor dict; it lives in
-:mod:`backend.services.machine_service` and the base-thread
-snapshot (``routers/base_thread.py``) consumes the same helper so
-the canonical 1 Hz snapshot is the only public surface for sensor
+:mod:`modules.temperature.service` and the base-thread snapshot
+(``routers/base_thread.py``) consumes the same helper so the
+canonical 1 Hz snapshot is the only public surface for sensor
 data. The legacy ``GET /sensors`` endpoint was superseded by the
 snapshot and has been removed.
+
+The router delegates every hardware-touching call to
+:func:`get_temperature_service` in :mod:`modules.temperature.service`
+— the router itself does not import ``hardware.*`` so the rule "no
+router is allowed to import any hardware file" stays enforced.
 """
+
+from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from hardware import execute_sync_cmd
+from modules.temperature.service import get_temperature_service
 
 logger = logging.getLogger("backend.modules.temperature.router")
 
@@ -91,14 +98,13 @@ class SetTargetResponse(BaseModel):
     summary="Set Sensor Target Temperature",
     description=(
         "Dispatch a ``set_temperature`` command to the hardware layer "
-        "for the named sensor. The command is forwarded verbatim via "
-        ":func:`hardware.execute_sync_cmd`; the simulation thread "
+        "for the named sensor. The router delegates to "
+        ":class:`TemperatureService.set_target`; the simulation thread "
         "(when enabled) starts on first invocation and runs "
         "process-wide."
     ),
 )
 def set_target(name: str, req: SetTargetRequest) -> SetTargetResponse:
-    #Should call machine_Service
     """Set the target temperature for ``name``.
 
     The ``sensor_name`` field in the body is accepted but ``name``
@@ -106,26 +112,14 @@ def set_target(name: str, req: SetTargetRequest) -> SetTargetResponse:
     identifier and the body field is kept for backward compatibility
     with the legacy ``POST /api/v1/machine/temperature`` payload.
     """
-    if not name or not isinstance(name, str):
-        raise HTTPException(
-            status_code=400,
-            detail="Sensor name must be a non-empty string",
-        )
     if name != req.sensor_name:
         logger.debug(
             "sensor_name in body (%r) differs from URL (%r); URL wins",
             req.sensor_name,
             name,
         )
-    try:
-        result = execute_sync_cmd("set_temperature", 0, name, req.target)
-    except HTTPException:
-        # ``execute_sync_cmd`` already produces actionable HTTP errors.
-        raise
-    except Exception as exc:  # noqa: BLE001 - defensive: surface any failure
-        logger.error("set_temperature(%s, %s) failed: %s", name, req.target, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
 
+    result = get_temperature_service().set_target(name, req.target)
     return SetTargetResponse(
         status=result.get("status", "success"),
         sensor_name=name,

@@ -119,9 +119,9 @@ app.add_middleware(
 # ``program`` modules are mounted by the ``registry.boot(app)`` call
 # inside ``lifespan`` (see above), which routes them under
 # ``/api/v1/modules/{id}``. ``axis`` exposes ``/home``;
-# ``machine_state`` exposes ``/state``, ``/mode``, ``/mdi``. Both
-# call into the shared ``MachineControlService`` singleton from
-# :mod:`backend.services.machine_service`.
+# ``machine_state`` exposes ``/state``, ``/mode``, ``/mdi``. Each
+# router calls into its own dedicated service singleton from the
+# matching ``modules/<name>/service.py`` module.
 app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(base_thread.router)

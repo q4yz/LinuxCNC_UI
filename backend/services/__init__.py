@@ -10,6 +10,12 @@ The routers (``backend/routers/`` and the
 ``backend/modules/machineconfig/router.py`` module router) are
 the only consumers — they stay thin HTTP wrappers and delegate
 the actual filesystem work to one of the four services.
+
+The per-module service classes (``StateService``, ``AxisService``,
+``ProgramService``, ``ToolsService``, ``TemperatureService``) live
+in their respective modules (``modules/<name>/service.py``) and
+must be imported directly from there — they are intentionally not
+re-exported from this package surface.
 """
 
 from .file_service import FileMetadata, FileService
@@ -34,7 +40,6 @@ from .http_errors import (
     raise_not_found,
     raise_not_found_from,
 )
-from .machine_service import get_machine_control_service, ProgramProgressResponse
 from .remora_signal_map import (
     get_pv_index,
     get_sp_index,
@@ -74,7 +79,5 @@ __all__ = [
     "register_line_count",
     "reset_remora_signal_map_cache",
     "reset_service_cache",
-    "get_machine_control_service",
-    "ProgramProgressResponse"
 ]
 

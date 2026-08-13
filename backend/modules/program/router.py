@@ -47,7 +47,7 @@ from services.line_count_cache import (
     register as register_line_count,
     unregister_all as clear_line_count_cache,
 )
-from services.machine_service import get_machine_control_service
+from modules.program.service import get_program_lifecycle_service
 logger = logging.getLogger("backend.modules.program.router")
 
 
@@ -98,7 +98,7 @@ def load_program(payload: LoadProgramRequest):
 
     # 2. Hardware Execution (Service responsibility)
     try:
-        get_machine_control_service().load_program(str(target))
+        get_program_lifecycle_service().load_program(str(target))
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc))
 
@@ -110,7 +110,7 @@ def load_program(payload: LoadProgramRequest):
 @router.post("/run", response_model=StatusResponse)
 def run_program(line_number: int = 0):
     try:
-        get_machine_control_service().start_program(line_number)
+        get_program_lifecycle_service().start_program(line_number)
         return StatusResponse(status="success")
     except RuntimeError as exc:
         # Translate the service's pure python error to HTTP 409 Conflict
@@ -119,26 +119,26 @@ def run_program(line_number: int = 0):
 
 @router.post("/stop", response_model=StatusResponse)
 def stop_program():
-    get_machine_control_service().stop_program()
+    get_program_lifecycle_service().stop_program()
     return StatusResponse(status="success")
 
 
 @router.post("/unload", response_model=StatusResponse)
 def unload_program():
-    get_machine_control_service().unload_program()
+    get_program_lifecycle_service().unload_program()
     clear_line_count_cache()
     return StatusResponse(status="success")
 
 
 @router.post("/pause", response_model=StatusResponse)
 def pause_program():
-    get_machine_control_service().pause_program()
+    get_program_lifecycle_service().pause_program()
     return StatusResponse(status="success")
 
 
 @router.post("/resume", response_model=StatusResponse)
 def resume_program():
-    get_machine_control_service().resume_program()
+    get_program_lifecycle_service().resume_program()
     return StatusResponse(status="success")
 
 @router.post(

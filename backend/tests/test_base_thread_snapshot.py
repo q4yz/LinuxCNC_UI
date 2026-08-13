@@ -25,6 +25,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import hardware.connection as connection_mod
+
 
 # ---------------------------------------------------------------------- #
 # Helpers                                                                 #
@@ -118,11 +120,10 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     _reset_mock_program_state()
     _reset_line_count_cache()
 
-    from services import machine_service as machine_service_mod
     from services.line_count_cache import unregister_all
 
     monkeypatch.setattr(
-        machine_service_mod, "get_machine_stat", lambda: None
+        connection_mod, "get_machine_stat", lambda: None
     )
 
     app, _ = _base_thread_app(tmp_data_root)

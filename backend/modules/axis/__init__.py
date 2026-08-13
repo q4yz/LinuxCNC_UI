@@ -9,6 +9,7 @@ The split mirrors the discovery layout described in :file:`MODULE_SYSTEM_ROADMAP
     backend/modules/axis/
     ├── __init__.py        # this file
     ├── module.py          # AxisModule + setup() + on_load/on_unload
+    ├── service.py         # AxisService (homing facade)
     ├── router.py          # POST /home (axis-motion action)
     ├── jog.py             # WS-dispatch helpers + _active_jogs state
     ├── jog_watchdog.py    # 500 ms keep-alive safety watchdog
@@ -23,13 +24,8 @@ without crossing boundaries.
 The ``POST /home`` endpoint lives here because homing is an
 axis-motion action (similar in nature to jog dispatch). The state /
 mode / MDI endpoints live in :mod:`backend.modules.state.router`;
-both routers call into the shared layer-2 facade
-:class:`MachineControlService` from :mod:`backend.services.machine_service`.
-
-The previous ``machine`` module split Service / Adapter / Facade
-responsibility across three sibling files — those are gone. The
-``backend.modules.axis`` is jog + home dispatch, and the
-hardware-folder facade is :mod:`backend.services.machine_service`.
+the two routers each call into their own dedicated service
+singleton (:class:`AxisService` and :class:`StateService`).
 """
 from .module import AxisModule, setup
 
