@@ -707,15 +707,18 @@ async def camera_stream(
         return await _proxy_stream_response(camera_id)
 
     # ``/dev/videoN`` (or anything else the supervisor understands).
-    # ``spawn_or_reuse`` returns the per-device ustreamer URL; the
-    # 302 redirect is fine here because both endpoints are on the
-    # same origin (``localhost:8000``), so no credential stripping
-    # concerns apply.
+    # ``spawn_or_reuse`` returns the per-device ustreamer URL
+    # (``http://127.0.0.1:{port}/?action=stream``). We proxy that URL
+    # through the backend rather than 302-redirecting the browser
+    # to it — a redirect would point the browser at the backend host's
+    # localhost, which is unreachable from the operator's shop
+    # workstation. The proxy makes the camera reachable same-origin,
+    # the same pattern used for HTTP / HTTPS IP cameras above.
     try:
         info = _supervisor.spawn_or_reuse(camera_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return RedirectResponse(url=info["url"], status_code=302)
+    return await _proxy_stream_response(info["url"])
 
 
 async def _proxy_stream_response(url: str) -> StreamingResponse:

@@ -451,6 +451,133 @@ def test_stream_endpoint_returns_503_for_rtsp_url(
     assert "RTSP" in resp.json()["detail"]
 
 
+def test_stream_endpoint_proxies_usb_camera_url(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """``/stream?id=/dev/videoN`` proxies the per-device ustreamer URL.
+
+    Regression for the operator's setup where the supervisor spawned
+    ustreamer correctly (``pid=27032`` on port 8080, ``pid=27051`` on
+    port 8081 — verified in the backend logs) but ``/stream`` returned
+    302 to ``http://127.0.0.1:{port}/?action=stream``. The redirect
+    pointed the browser at the backend host's localhost — a URL
+    unreachable from the operator's shop workstation — so the camera
+    panel showed a broken image despite ustreamer being alive and
+    serving MJPEG.
+
+    The fix unifies USB cameras and IP cameras behind the same
+    ``MjpegProxy`` class: the backend opens the httpx connection to
+    the supervisor's per-device URL on the operator's behalf and
+    streams the MJPEG bytes back through a same-origin
+    ``StreamingResponse``.
+
+    The test pins both halves of the contract:
+    1. The supervisor still returns the canonical ``http://127.0.0.1:{port}/?action=stream``
+       URL (lock the URL shape so a future port-allocation refactor
+       does not silently break this contract).
+    2. The router calls ``MjpegProxy`` with that URL — the response is
+       200 OK with the upstream's MJPEG bytes and the upstream's
+       exact ``Content-Type`` (boundary preserved verbatim).
+    """
+    import modules.camera.router as router_module
+
+    # Synthesize what ustreamer sends. The boundary parameter is
+    # whatever ustreamer's ``-d`` flag selected; the test asserts the
+    # backend forwards it verbatim.
+    expected_body = (
+        b"--ipcamera\r\n"
+        b"Content-Type: image/jpeg\r\n\r\n"
+        b"\xff\xd8\xff\xe0jpeg\r\n"
+        b"--ipcamera\r\n"
+    )
+    expected_content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+
+    captured_url: list[str] = []
+
+    class _FakeProxy:
+        """Stand-in for the real ``MjpegProxy`` class.
+
+        Records the URL the router handed it (so the test can assert
+        the supervisor's URL contract), then yields the synthesized
+        MJPEG body the way a real upstream would.
+        """
+
+        def __init__(self, url):
+            captured_url.append(url)
+            self.content_type = expected_content_type
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def iter_bytes(self):
+            yield expected_body
+
+    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/modules/camera/stream?id=/dev/video0")
+
+    # Critical: NO 302 — the browser must receive the MJPEG body
+    # directly from the same-origin backend.
+    assert resp.status_code == 200
+    assert resp.headers.get("location") is None
+    # The supervisor's per-device URL is forwarded to the proxy
+    # unchanged. Pin this so a future port-allocation refactor does
+    # not silently break the proxy contract.
+    assert captured_url == ["http://127.0.0.1:8080/?action=stream"]
+    # Upstream Content-Type passes through verbatim — the boundary
+    # parameter is what lets the browser parse the multipart stream.
+    assert resp.headers["content-type"] == expected_content_type
+    # Body bytes forwarded 1:1.
+    assert resp.content == expected_body
+    # Defense-in-depth cache headers.
+    assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert resp.headers["pragma"] == "no-cache"
+
+
+def test_stream_endpoint_proxies_second_usb_camera(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """``/stream?id=/dev/video1`` proxies the second per-device ustreamer URL.
+
+    Confirms the supervisor's port allocation is deterministic across
+    multiple devices: ``/dev/video0`` → port 8080, ``/dev/video1`` →
+    port 8081, etc. A future refactor that re-uses ports or allocates
+    dynamically would trip this test.
+    """
+    import modules.camera.router as router_module
+
+    captured_urls: list[str] = []
+
+    class _FakeProxy:
+        def __init__(self, url):
+            captured_urls.append(url)
+            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def iter_bytes(self):
+            yield b"--ipcamera\r\n"
+
+    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/modules/camera/stream?id=/dev/video1")
+    assert resp.status_code == 200
+    assert captured_urls == ["http://127.0.0.1:8081/?action=stream"]
+
+
 def test_shutdown_is_idempotent(fake_ustreamer):
     from modules.camera.router import _supervisor
 
@@ -607,15 +734,41 @@ def test_stream_endpoint_returns_503_with_message_when_ustreamer_missing(
     assert "ustreamer is not installed" in resp.json()["detail"]
 
 
-def test_stream_endpoint_returns_302_when_child_spawned(
-    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+def test_stream_endpoint_proxies_usb_camera_via_default_device(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
 ):
+    """``/stream`` (no id) proxies the configured ``default_device_id``.
+
+    End-to-end: save ``/dev/video0`` as the default device, hit
+    ``/stream`` with no id query parameter, and verify the proxy
+    receives the supervisor's per-device URL. This is the path the
+    frontend hits on first camera-viewer mount (no id, picks up
+    the persisted default).
+    """
     import modules.camera.router as router_module
 
     monkeypatch_which = __import__("pytest").MonkeyPatch()
     monkeypatch_which.setattr(
         router_module.shutil, "which", lambda _name: "/usr/bin/ustreamer"
     )
+
+    captured_urls: list[str] = []
+
+    class _FakeProxy:
+        def __init__(self, url):
+            captured_urls.append(url)
+            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def iter_bytes(self):
+            yield b"--ipcamera\r\n"
+
+    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
 
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -626,11 +779,13 @@ def test_stream_endpoint_returns_302_when_child_spawned(
     )
     assert resp.status_code == 200
 
-    resp = client.get("/api/v1/modules/camera/stream", follow_redirects=False)
-    assert resp.status_code == 302
-    location = resp.headers["location"]
-    assert location.startswith("http://127.0.0.1:")
-    assert location.endswith("/?action=stream")
+    resp = client.get("/api/v1/modules/camera/stream")
+    assert resp.status_code == 200
+    # No 302 — the response is the proxy's MJPEG body directly.
+    assert resp.headers.get("location") is None
+    # The default-device-id path resolved to the supervisor's URL and
+    # the router forwarded it to the proxy.
+    assert captured_urls == ["http://127.0.0.1:8080/?action=stream"]
     monkeypatch_which.undo()
 
 

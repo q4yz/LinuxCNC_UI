@@ -14,7 +14,45 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 MJPEG proxy passes through upstream Content-Type (incl. boundary)
+### 1.1 USB cameras proxy through the same MJPEG path as IP cameras
+
+- **What was done.** The supervisor's ``spawn_or_reuse`` was
+  spawning ustreamer correctly (``pid=27032`` on port 8080,
+  ``pid=27051`` on port 8081) but the ``/stream`` endpoint was
+  returning **302 Found** to ``http://127.0.0.1:{port}/?action=stream``.
+  The browser dutifully followed the redirect to the backend
+  host's localhost — a URL unreachable from the operator's shop
+  workstation — so the camera panel showed a broken image despite
+  ustreamer being alive and serving MJPEG.
+- **Fix.** Two-line change in
+  ``backend/modules/camera/router.py``: the ``/dev/videoN``
+  branch in ``camera_stream()`` now calls
+  ``await _proxy_stream_response(info["url"])`` instead of
+  ``RedirectResponse(url=info["url"])``. The proxy class
+  (``MjpegProxy`` in ``mjpeg_proxy.py``) opens its own httpx
+  connection to ``http://127.0.0.1:{port}/?action=stream`` on
+  the backend host and streams the MJPEG bytes back to the browser
+  through a same-origin ``StreamingResponse``.
+- **Architectural outcome.** USB cameras and HTTP / HTTPS IP
+  cameras now share one plumbing path:
+  ``spawn_or_reuse`` → URL → ``MjpegProxy`` → ``StreamingResponse``.
+  RTSP remains the one special case (rejected with a 503 since
+  httpx can't consume it).
+- **Tests.** Updated ``test_stream_endpoint_returns_302_when_child_spawned``
+  → ``test_stream_endpoint_proxies_usb_camera_via_default_device``
+  in ``test_camera_ustreamer_supervisor.py``. Added
+  ``test_stream_endpoint_proxies_usb_camera_url`` and
+  ``test_stream_endpoint_proxies_second_usb_camera`` — both pin
+  the supervisor's URL contract
+  (``http://127.0.0.1:{8080+index}/?action=stream``) and assert
+  the router forwards it to the proxy rather than redirecting.
+- **Status.** Complete. After uvicorn restart + browser reload,
+  the operator's USB cameras should render live.
+- **Caveat.** None for the basic proxy path. See the next entry
+  (1.1) for the upstream-Content-Type boundary handling that
+  this build depends on.
+
+### 1.2 MJPEG proxy passes through upstream Content-Type (incl. boundary)
 
 - **What was done.** The first iteration of the MJPEG proxy
   (commit 1.1 below) returned 200 OK but the operator's browser
