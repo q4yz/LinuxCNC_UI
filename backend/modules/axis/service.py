@@ -39,14 +39,9 @@ class AxisService:
         """
         execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
         execute_sync_cmd("teleop_enable", 1.0, 0)
-        execute_sync_cmd("home", 3, -1)
+
 
     def home_single_axes(self, axis: int) -> None:
-        """Home a single specific axis.
-
-        Always switches to MODE_MANUAL first to ensure the command
-        is accepted by LinuxCNC.
-        """
         if axis == -1:
             self.home_all_axes()
             return

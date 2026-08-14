@@ -69,6 +69,10 @@ def _stop_axis(axis: int) -> None:
     s.poll()
     is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
 
+    if hasattr(s, 'joints') and hasattr(s, 'homed') and s.joints > 0:
+        if all(s.homed[:s.joints]):
+            is_teleop = True
+
     execute_sync_cmd("jog", 0, getattr(linuxcnc, "JOG_STOP", 0), is_teleop, axis)
 
 
@@ -182,6 +186,14 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
     s.poll()
     is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
 
+    if hasattr(s, 'joints') and hasattr(s, 'homed') and s.joints > 0:
+        if all(s.homed[:s.joints]):
+            if not is_teleop:
+                logger.info("Self-healing: Machine fully homed but in Free mode. Forcing Teleop.")
+                execute_sync_cmd("teleop_enable", 0, 1)
+            is_teleop = True
+    teleop_flag = 1 if is_teleop else 0
+
     for axis, velocity in velocities.items():
         if velocity == 0:
             continue
@@ -191,7 +203,7 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_INCREMENT", 2),
-                is_teleop,
+                teleop_flag,
                 axis,
                 velocity,
                 distance,
@@ -203,7 +215,7 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_CONTINUOUS", 1),
-                is_teleop,
+                teleop_flag,
                 axis,
                 velocity,
             )
