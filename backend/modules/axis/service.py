@@ -38,6 +38,7 @@ class AxisService:
         is accepted by LinuxCNC, mirroring the behavior of the AXIS GUI.
         """
         execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
+        execute_sync_cmd("teleop_enable", 1.0, 0)
         execute_sync_cmd("home", 3, -1)
 
     def home_single_axes(self, axis: int) -> None:
@@ -51,6 +52,7 @@ class AxisService:
             return
 
         execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
+        execute_sync_cmd("teleop_enable", 1.0, 0)
         execute_sync_cmd("home", 3, axis)
 
 
