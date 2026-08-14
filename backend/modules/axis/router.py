@@ -75,7 +75,7 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
     happens inside :meth:`AxisService.home_axis`; the
     router only translates the HTTP edge.
     """
-    get_axis_service().home_axis(cmd.axis)
+    get_axis_service().home_single_axes(cmd.axis)
     return _StatusResponse(status="success")
 
 

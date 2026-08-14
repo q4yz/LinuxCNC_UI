@@ -31,35 +31,27 @@ class AxisService:
     axis.
     """
 
-    def home_axis(self, axis: int) -> None:
-        """Home a single axis (or every axis when ``axis == -1``).
-
-        Always switches to ``MODE_MANUAL`` first so a stale
-        ``MODE_AUTO`` does not silently swallow the home command.
-        ``axis == -1`` triggers a sweep across the canonical three
-        Cartesian axes (X, Y, Z); a non-``-1`` value homes a single
-        axis.
-        """
-        warnings.warn(
-            "home_axis() is deprecated and will be removed "
-            "Use home_all_axes() or home_single_axes() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        execute_sync_cmd("mode", 0, getattr(linuxcnc, "MODE_MANUAL", 1))
-        if axis == -1:
-            for i in range(3):
-                execute_sync_cmd("home", 3, i)
-            return
-        execute_sync_cmd("home", 3, axis)
-
     def home_all_axes(self) -> None:
-        execute_gcode("G38", 120)
-        return None
+        """Home all axes according to the INI file's HOME_SEQUENCE.
 
-    def home_single_axes(self, axis: int):
-        return None
+        Always switches to MODE_MANUAL first to ensure the command
+        is accepted by LinuxCNC, mirroring the behavior of the AXIS GUI.
+        """
+        execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
+        execute_sync_cmd("home", 3, -1)
+
+    def home_single_axes(self, axis: int) -> None:
+        """Home a single specific axis.
+
+        Always switches to MODE_MANUAL first to ensure the command
+        is accepted by LinuxCNC.
+        """
+        if axis == -1:
+            self.home_all_axes()
+            return
+
+        execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
+        execute_sync_cmd("home", 3, axis)
 
 
 _axis_service: Optional[AxisService] = None
