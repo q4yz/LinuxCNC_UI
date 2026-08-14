@@ -65,12 +65,11 @@ active_jogs_lock = _active_jogs_lock
 
 
 def _stop_axis(axis: int) -> None:
-    """Force-stop ``axis`` via the hardware layer.
+    s = linuxcnc.stat()
+    s.poll()
+    is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
 
-    Public-ish so the watchdog can call it without re-importing
-    ``execute_sync_cmd``.
-    """
-    execute_sync_cmd("jog", 0, getattr(linuxcnc, "JOG_STOP", 0), True, axis)
+    execute_sync_cmd("jog", 0, getattr(linuxcnc, "JOG_STOP", 0), is_teleop, axis)
 
 
 def clear_active_jogs() -> None:
@@ -179,6 +178,10 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
         "mode", 0, getattr(linuxcnc, "MODE_MANUAL", 1)
     )
 
+    s = linuxcnc.stat()
+    s.poll()
+    is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
+
     for axis, velocity in velocities.items():
         if velocity == 0:
             continue
@@ -188,21 +191,19 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_INCREMENT", 2),
-                True,
+                is_teleop,
                 axis,
                 velocity,
                 distance,
             )
         else:
-            # Continuous — register with the watchdog so a missed
-            # keep-alive force-stops the axis.
             with _active_jogs_lock:
                 _active_jogs[axis] = time.time()
             execute_sync_cmd(
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_CONTINUOUS", 1),
-                True,
+                is_teleop,
                 axis,
                 velocity,
             )
