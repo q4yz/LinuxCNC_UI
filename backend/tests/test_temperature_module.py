@@ -244,6 +244,8 @@ def test_on_load_executes_without_error(tmp_data_root, clean_env):
     """``on_load`` is a no-op today; it must execute without raising
     and must accept a :class:`ModuleContext` (issue #43 § 1).
     """
+    from fastapi import FastAPI
+
     from core.event_bus import EventBus
     from core.settings_store import SettingsStore
     from modules.temperature.module import TemperatureModule
@@ -257,6 +259,7 @@ def test_on_load_executes_without_error(tmp_data_root, clean_env):
             data_root=tmp_data_root,
             defaults=None,
         ),
+        app=FastAPI(),
     )
     # Should not raise.
     instance.on_load(ctx)

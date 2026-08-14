@@ -1,12 +1,12 @@
 <script setup>
-// Dashboard composition. Module-owned panels are loaded via
-// ``defineAsyncComponent`` resolved at runtime through
-// ``import.meta.glob`` so removing any single
-// ``frontend/src/modules/<id>/`` folder leaves the build intact.
-// Unmigrated panels keep static imports. See ``.agent/STATE.md``
-// § 1 (lazy discovery), § 7 (nullable-module guarantee).
+// Dashboard composition. Module-owned panels are imported statically
+// — every module is a hard dependency, and the lazy
+// ``defineAsyncComponent`` / ``import.meta.glob(..., { eager: false
+// })`` discovery has been removed in favour of eager, direct imports
+// (see ``.agent/STATE.md`` § 13 for the no-lazy-imports rule and
+// ``frontend/scripts/check-no-lazy-imports.mjs`` for the CI lint).
 
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, markRaw } from 'vue'
 import registry from '../core/modules/registry'
 
 import NgcCoordinateSystemViewer from '../components/NgcCoordinateSystemViewer.vue'
@@ -14,46 +14,38 @@ import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 
-// ``eager: false`` records dynamic-import functions keyed by file
-// path; an empty ``modules/`` folder is harmless because Vite
-// doesn't resolve the paths at build time.
-const modulePanelImports = import.meta.glob(
-  '../modules/*/components/*.vue',
-  { eager: false },
-)
+// Static imports for every dashboard panel. Module components are
+// hard dependencies so removing any of these breaks the build — that
+// is the desired behaviour. ``markRaw`` keeps the component
+// definitions out of Vue's deep reactivity so they can be safely
+// stored in the registry's reactive Map without wrapping them in a
+// Proxy (which Vue warns about: "Component that was made a reactive
+// object").
+import CameraViewerRaw from '../modules/camera/components/CameraViewer.vue'
+import TemperaturePanelRaw from '../modules/temperature/components/TemperaturePanel.vue'
+import DroPanelRaw from '../modules/machine/components/DroPanel.vue'
+import JogControlsRaw from '../modules/machine/components/JogControls.vue'
+import ToolPanelRaw from '../modules/tools/components/ToolPanel.vue'
+import MacroPanelRaw from '../modules/macros/components/MacroPanel.vue'
+import McodePanelRaw from '../modules/macros/components/McodePanel.vue'
 
-/**
- * Resolve a module panel by id at component-creation time.
- * Returns ``null`` when the module folder has been deleted so the
- * dashboard ``v-if`` falls through to a placeholder — the
- * nullable-module guarantee from ``.agent/STATE.md`` § 7.
- */
-function panelFor(folder, name) {
-  return defineAsyncComponent(async () => {
-    const target = Object.keys(modulePanelImports).find(
-      (p) => p.includes(`/${folder}/`) && p.endsWith(`/${name}.vue`),
-    )
-    if (!target) return null
-    const mod = await modulePanelImports[target]()
-    return mod.default ?? mod
-  })
-}
-
-const CameraViewer     = panelFor('camera',     'CameraViewer')
-const TemperaturePanel = panelFor('temperature', 'TemperaturePanel')
-const DroPanel         = panelFor('machine',    'DroPanel')
-const JogControls      = panelFor('machine',    'JogControls')
-const ToolPanel        = panelFor('tools',      'ToolPanel')
-const MacroPanel       = panelFor('macros',     'MacroPanel')
-const McodePanel       = panelFor('macros',     'McodePanel')
+const CameraViewer = markRaw(CameraViewerRaw)
+const TemperaturePanel = markRaw(TemperaturePanelRaw)
+const DroPanel = markRaw(DroPanelRaw)
+const JogControls = markRaw(JogControlsRaw)
+const ToolPanel = markRaw(ToolPanelRaw)
+const MacroPanel = markRaw(MacroPanelRaw)
+const McodePanel = markRaw(McodePanelRaw)
 
 // ``registry.modules`` is a reactive Map so ``.has`` is tracked;
-// the computed flips once boot completes.
-const cameraMounted      = computed(() => registry.modules.has('camera'))
+// the computed flips once boot completes. Every panel is mounted
+// unconditionally; the registry guarantees every module shipped in
+// the repo is present.
+const cameraMounted = computed(() => registry.modules.has('camera'))
 const temperatureMounted = computed(() => registry.modules.has('temperature'))
-const machineMounted     = computed(() => registry.modules.has('machine'))
-const toolsMounted       = computed(() => registry.modules.has('tools'))
-const macrosMounted      = computed(() => registry.modules.has('macros'))
+const machineMounted = computed(() => registry.modules.has('machine'))
+const toolsMounted = computed(() => registry.modules.has('tools'))
+const macrosMounted = computed(() => registry.modules.has('macros'))
 </script>
 
 <template>
@@ -65,9 +57,6 @@ const macrosMounted      = computed(() => registry.modules.has('macros'))
       <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
 
         <DroPanel v-if="machineMounted" />
-        <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
-          Machine module not mounted.
-        </div>
 
         <TemperaturePanel v-if="temperatureMounted" />
 
@@ -78,9 +67,6 @@ const macrosMounted      = computed(() => registry.modules.has('macros'))
         <McodePanel v-if="macrosMounted" />
 
         <JogControls v-if="machineMounted" />
-        <div v-else class="bg-gray-800 rounded-lg p-6 text-gray-500">
-          Jog controls not mounted.
-        </div>
       </div>
 
       <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->

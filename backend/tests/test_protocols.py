@@ -29,7 +29,11 @@ def test_protocol_is_runtime_checkable():
     """Duck-typed objects satisfy the protocol without inheriting."""
 
     class Stub:
-        manifest = ModuleManifest(id="demo", title="Demo")
+        manifest = ModuleManifest(
+            id="demo",
+            title="Demo",
+            sidebar=SidebarEntry(id="demo", label="Demo"),
+        )
 
         def on_load(self, ctx: ModuleContext) -> None:
             return None
@@ -38,14 +42,21 @@ def test_protocol_is_runtime_checkable():
             return None
 
         def get_router(self):
-            return None
+            # The contract requires a non-null router; the stub
+            # returns a minimal APIRouter to satisfy the type
+            # check.
+            from fastapi import APIRouter
 
-        # ``get_settings_model`` is part of the protocol as of Phase 2d
-        # (see Issue #31 / module system extension). Modules that don't
-        # ship a Pydantic defaults model return ``None`` — same shape
-        # the registry's ``_resolve_settings_model`` accepts.
+            return APIRouter()
+
+        # ``get_settings_model`` is part of the protocol and must
+        # return a non-null :class:`BaseModel` (see
+        # ``.agent/contracts/backend-module.md`` § 1).
         def get_settings_model(self):
-            return None
+            class _Empty(BaseModel):
+                pass
+
+            return _Empty()
 
     assert isinstance(Stub(), PluggableModule)
 
@@ -54,13 +65,25 @@ def test_object_failing_protocol_is_rejected():
     """An object missing ``on_unload`` is not a PluggableModule."""
 
     class Broken:
-        manifest = ModuleManifest(id="broken", title="Broken")
+        manifest = ModuleManifest(
+            id="broken",
+            title="Broken",
+            sidebar=SidebarEntry(id="broken", label="Broken"),
+        )
 
         def on_load(self, ctx):
             return None
 
         def get_router(self):
-            return None
+            from fastapi import APIRouter
+
+            return APIRouter()
+
+        def get_settings_model(self):
+            class _Empty(BaseModel):
+                pass
+
+            return _Empty()
 
     assert not isinstance(Broken(), PluggableModule)
 
@@ -82,12 +105,16 @@ def test_module_manifest_serialises_to_json():
 
 def test_module_context_carries_event_bus_and_settings():
     """ModuleContext is a plain dataclass wiring the bus + settings."""
+    from fastapi import FastAPI
+
     from core.event_bus import EventBus
     from core.settings_store import SettingsStore
 
     bus = EventBus()
     store = SettingsStore(module_id="demo", data_root="/tmp")
-    ctx = ModuleContext(module_id="demo", event_bus=bus, settings=store)
+    app = FastAPI()
+    ctx = ModuleContext(module_id="demo", event_bus=bus, settings=store, app=app)
     assert ctx.module_id == "demo"
     assert ctx.event_bus is bus
     assert ctx.settings is store
+    assert ctx.app is app

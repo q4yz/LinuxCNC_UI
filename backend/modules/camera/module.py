@@ -28,7 +28,7 @@ from typing import Optional
 
 from fastapi import APIRouter
 
-from core.protocols import ModuleContext, ModuleManifest, PluggableModule
+from core.protocols import ModuleContext, ModuleManifest, PluggableModule, SidebarEntry
 
 from .router import bind_settings_store, router as camera_router, stop_manager
 from .settings import CameraSettings
@@ -44,7 +44,12 @@ _MANIFEST = ModuleManifest(
         "Live USB webcam MJPEG stream with on-demand capture "
         "management (Issue #56)."
     ),
-    sidebar=None,
+    sidebar=SidebarEntry(
+        id="camera",
+        label="Camera",
+        icon="",
+        order=50,
+    ),
     settings_panel=True,
 )
 

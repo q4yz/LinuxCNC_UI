@@ -24,7 +24,7 @@ forcing module authors to inherit from a base class.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Dict, List, Protocol, runtime_checkable
 
 from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel, Field
@@ -40,15 +40,18 @@ class ModuleManifest(BaseModel):
     module's runtime hooks have been invoked. It is intentionally a
     pure data model so it can be serialized to JSON without pulling
     in any module-specific code.
+
+    Every field is required. Modules are mandatory dependencies; the
+    manifest must declare a sidebar entry, a version, and a description.
     """
 
     id: str = Field(..., description="Unique module identifier (kebab/snake).")
     title: str = Field(..., description="Human-readable display name.")
     version: str = Field(default="0.0.0", description="Semantic-ish version string.")
     description: str = Field(default="", description="One-line description.")
-    sidebar: Optional["SidebarEntry"] = Field(
-        default=None,
-        description="Optional sidebar entry the module contributes.",
+    sidebar: "SidebarEntry" = Field(
+        ...,
+        description="Sidebar entry the module contributes (required).",
     )
     settings_panel: bool = Field(
         default=False,
@@ -66,7 +69,7 @@ class SidebarEntry(BaseModel):
 
     id: str = Field(..., description="Stable route identifier (must be unique app-wide).")
     label: str = Field(..., description="Display label rendered in the sidebar.")
-    icon: str = Field(default="", description="Optional SVG/HTML icon string.")
+    icon: str = Field(default="", description="SVG/HTML icon string.")
     order: int = Field(
         default=100,
         description="Sort weight. Lower numbers appear earlier in the sidebar.",
@@ -78,9 +81,9 @@ class ModuleContext:
     """Runtime context handed to a module during :meth:`PluggableModule.on_load`.
 
     The context is the single object a module receives at boot. It owns
-    references to the shared services (event bus, settings store) plus
-    the module's own identifier so it can build module-scoped namespaces
-    without inspecting globals.
+    references to the shared services (event bus, settings store, FastAPI
+    app) plus the module's own identifier so it can build module-scoped
+    namespaces without inspecting globals.
     """
 
     module_id: str
@@ -89,10 +92,10 @@ class ModuleContext:
     # The FastAPI application the module's router will be mounted onto.
     # Modules that need to register FastAPI-level concerns (exception
     # handlers, middleware) read this attribute from inside ``on_load``
-    # rather than reaching for a global. ``None`` when the registry
-    # is driving a non-FastAPI lifecycle (e.g. tests).
-    app: Optional["FastAPI"] = None
-    # Optional extra slots modules can populate to share data with the
+    # rather than reaching for a global. Every boot path goes through a
+    # FastAPI app; this is no longer optional.
+    app: "FastAPI"
+    # Open extra slots modules can populate to share data with the
     # frontend registry. Kept open so we don't churn the protocol every
     # time the contract grows.
     extras: Dict[str, Any] = field(default_factory=dict)
@@ -115,9 +118,9 @@ class PluggableModule(Protocol):
     :meth:`ModuleRegistry.discover`. The registry treats the returned
     object as a black box that obeys these members.
 
-    The contract deliberately keeps the surface small so module authors
-    can opt in incrementally: a module that only wants to ship
-    background work can implement :meth:`on_load` and skip the rest.
+    Every member is required. Modules are mandatory dependencies; the
+    registry refuses to mount a module that returns ``None`` from
+    :meth:`get_router` or :meth:`get_settings_model`.
     """
 
     manifest: ModuleManifest
@@ -153,37 +156,24 @@ class PluggableModule(Protocol):
         """
         ...
 
-    def get_router(self) -> Optional[APIRouter]:
-        """Return the module's HTTP router, if any.
+    def get_router(self) -> APIRouter:
+        """Return the module's HTTP router.
 
-        Returning ``None`` marks the module as *internal*: it only
-        interacts via the event bus and/or background work. Returning
-        a router causes the registry to mount the routes under
-        ``/api/v1/modules/{id}``.
-
-        Settings endpoints are **not** part of this router: the
-        registry always mounts a canonical four-endpoint settings
-        surface (``GET/PUT`` bulk, ``GET/PUT`` per-key) at
-        ``/api/v1/modules/{id}/settings`` backed by
-        :class:`core.settings_store.SettingsStore`. Modules that want
-        extra settings-related endpoints should add them to the router
-        returned here, optionally under a sub-prefix.
+        MUST return a non-null :class:`fastapi.APIRouter`. The registry
+        mounts it at ``/api/v1/modules/{id}``. Settings endpoints are
+        mounted separately by the registry; modules do **not** expose
+        settings routes via this router.
         """
         ...
 
-    def get_settings_model(self) -> Optional[BaseModel]:
-        """Return a Pydantic defaults instance, if any.
+    def get_settings_model(self) -> BaseModel:
+        """Return a Pydantic defaults instance.
 
-        The registry constructs a per-module :class:`SettingsStore`
-        and passes the returned model as the ``defaults`` argument.
-        ``None`` means the module has no Pydantic schema and the store
-        stores arbitrary JSON (current behaviour for modules without
-        a schema).
-
-        The method is **optional**. Modules that don't need typed
-        defaults can omit it. The registry uses :func:`getattr` and
-        tolerates ``AttributeError`` so older module code keeps
-        working unchanged.
+        MUST return a non-null :class:`pydantic.BaseModel` subclass
+        instance. The registry passes the returned model to
+        :class:`SettingsStore` as the ``defaults`` argument. Every
+        module has typed settings, even when the only field is a
+        single boolean toggle.
         """
         ...
 

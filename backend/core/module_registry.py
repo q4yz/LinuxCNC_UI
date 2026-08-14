@@ -54,6 +54,17 @@ logger = logging.getLogger(__name__)
 _MODULES_ENABLED_ENV = "MODULES_ENABLED"
 
 
+class ContractViolation(RuntimeError):
+    """Raised when a module violates the PluggableModule contract.
+
+    The module is mandatory: every module must declare a Pydantic
+    settings model and return a non-null APIRouter. When either hook
+    returns ``None`` or raises, the registry wraps the failure in
+    this exception so the surrounding ``_mount`` can skip the module
+    cleanly while logging the root cause.
+    """
+
+
 def _parse_enabled() -> Optional[set]:
     """Return the ``MODULES_ENABLED`` whitelist, or ``None`` for "all".
 
@@ -297,40 +308,48 @@ class ModuleRegistry:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _resolve_settings_model(instance: PluggableModule) -> Optional[BaseModel]:
-        """Return the Pydantic defaults instance a module wants, if any.
+    def _resolve_settings_model(instance: PluggableModule) -> BaseModel:
+        """Return the Pydantic defaults instance a module declares.
 
-        Modules opt-in by defining ``get_settings_model()``. We tolerate
-        missing methods, raised exceptions, and non-BaseModel return
-        values so a buggy module never crashes the boot path.
+        The contract requires ``get_settings_model()`` to return a
+        non-null :class:`pydantic.BaseModel` instance. A ``None`` return
+        or a raised exception is a contract violation: the module is
+        skipped and the error is logged so the boot summary line still
+        emits. We do **not** silently fall back to untyped JSON — the
+        module author must fix the contract.
         """
-        getter = getattr(instance, "get_settings_model", None)
-        if getter is None:
-            return None
         try:
-            model = getter()
+            model = instance.get_settings_model()
         except Exception as exc:  # noqa: BLE001 - intentional broad catch
             logger.error(
                 "Module %s.get_settings_model() raised: %s",
-                getattr(instance, "manifest", None)
-                and instance.manifest.id
-                or "?",
+                instance.manifest.id,
                 exc,
                 exc_info=True,
             )
-            return None
+            raise ContractViolation(
+                f"{instance.manifest.id}.get_settings_model() raised"
+            ) from exc
         if model is None:
-            return None
+            logger.error(
+                "Module %s.get_settings_model() returned None; "
+                "the contract requires a Pydantic BaseModel instance.",
+                instance.manifest.id,
+            )
+            raise ContractViolation(
+                f"{instance.manifest.id}.get_settings_model() returned None"
+            )
         if not isinstance(model, BaseModel):
             logger.error(
                 "Module %s.get_settings_model() must return a BaseModel "
                 "instance, got %s",
-                getattr(instance, "manifest", None)
-                and instance.manifest.id
-                or "?",
+                instance.manifest.id,
                 type(model).__name__,
             )
-            return None
+            raise ContractViolation(
+                f"{instance.manifest.id}.get_settings_model() returned "
+                f"{type(model).__name__}, expected BaseModel"
+            )
         return model
 
     def _mount(
@@ -345,10 +364,18 @@ class ModuleRegistry:
         logger.info("Mounting module: %s (%s)", module_id, manifest.title)
 
         # 1. Settings store + ModuleContext (cheap, no I/O yet).
-        # Modules may expose a Pydantic ``defaults`` model via the
-        # optional ``get_settings_model()`` hook; absent that, the
-        # store starts with no schema and persists arbitrary JSON.
-        defaults_model = self._resolve_settings_model(instance)
+        # Modules MUST expose a Pydantic ``defaults`` model via the
+        # ``get_settings_model()`` hook — non-null is a contract
+        # requirement.
+        try:
+            defaults_model = self._resolve_settings_model(instance)
+        except ContractViolation as exc:
+            logger.error(
+                "Module %s is not contract-compliant (%s). Skipping mount.",
+                module_id,
+                exc,
+            )
+            return
         settings = SettingsStore(
             module_id=module_id,
             data_root=self._data_root,
@@ -387,14 +414,21 @@ class ModuleRegistry:
             tags=[f"modules:{module_id}:settings"],
         )
 
-        # 4. Mount the public router, if any.
+        # 4. Mount the public router. MUST be non-null per the
+        #    contract — a ``None`` return is a contract violation.
         router = instance.get_router()
-        if router is not None:
-            app.include_router(
-                router,
-                prefix=f"/api/v1/modules/{module_id}",
-                tags=[f"modules:{module_id}"],
+        if router is None:
+            logger.error(
+                "Module %s.get_router() returned None; the contract "
+                "requires a non-null APIRouter. Skipping mount.",
+                module_id,
             )
+            return
+        app.include_router(
+            router,
+            prefix=f"/api/v1/modules/{module_id}",
+            tags=[f"modules:{module_id}"],
+        )
 
         self.modules[module_id] = instance
         self.manifests[module_id] = manifest

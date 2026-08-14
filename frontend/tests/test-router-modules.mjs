@@ -118,15 +118,15 @@ test("registerModuleRoutes is awaited after boot in main.js", () => {
   );
 });
 
-test("Registry _mount records the module's mainView", () => {
+test("Registry _mount records the module's mainView (with markRaw)", () => {
   const text = read(registryPath);
-  // The contract relied on by App.vue's loadModuleView — every
-  // mounted record must carry ``mainView`` (or ``null``) so the
-  // new App.vue path can short-circuit the alphabetical glob
-  // discovery.
+  // The contract relied on by App.vue's ``moduleView`` computed —
+  // every mounted record must carry the module's ``mainView``
+  // wrapped in ``markRaw`` so Vue does not warn about reactive
+  // components when the registry stores them in its reactive Map.
   assert.match(
     text,
-    /mainView:\s*instance\.mainView/,
+    /mainView:\s*markRaw\s*\(\s*instance\.mainView\s*\)/,
     "registry._mount must include mainView from instance.mainView",
   );
 });

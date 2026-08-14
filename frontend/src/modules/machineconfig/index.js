@@ -3,21 +3,16 @@
 // operator lands on Machine Config; ``onUnload`` is a no-op because
 // the store owns no timers or sockets.
 //
-// ``mainView`` is the new top-level Vue component the registry routes
-// ``/machineconfig`` to; it replaces the dashboard surface that used
-// to live in ``EditorView.vue``'s ``v-else`` branch. ``App.vue`` reads
-// ``mainView`` synchronously from the record so a sidebar click on
-// "Machine Config" lands on the full panel grid instead of the empty
-// ``/config`` route. See ``.agent/STATE.md`` § 9.
-
-import { defineAsyncComponent } from 'vue'
+// ``mainView`` is the top-level Vue component the registry routes
+// ``/machineconfig`` to. ``App.vue`` reads ``mainView`` synchronously
+// from the record so a sidebar click on "Machine Config" lands on
+// the full panel grid. The module is a hard dependency: components
+// are imported **statically** (no ``defineAsyncComponent``), per the
+// no-lazy-imports rule documented in ``.agent/STATE.md`` § 13.
 
 import manifest from "./manifest.js";
 import { useMachineConfigStore } from "./store.js";
-
-const MachineConfigView = defineAsyncComponent(
-  () => import('./components/MachineConfigView.vue')
-);
+import MachineConfigView from './components/MachineConfigView.vue';
 
 export default {
   manifest,

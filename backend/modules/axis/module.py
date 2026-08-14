@@ -43,6 +43,7 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from . import jog_watchdog
@@ -60,9 +61,12 @@ _MANIFEST = ModuleManifest(
         "Jog control + watchdog for axis motion, plus the /home "
         "endpoint. State / mode / MDI live in the machine_state module."
     ),
-    # No sidebar entry — the machine dashboard lives at the root,
-    # mounted by ``App.vue`` rather than as a top-level nav item.
-    sidebar=None,
+    # The axis module has no sidebar entry — the machine dashboard
+    # is mounted at the root by ``App.vue``. The manifest declares
+    # the entry explicitly anyway because the contract forbids a
+    # None sidebar; the empty ``id`` keeps it from being merged into
+    # the nav list.
+    sidebar=SidebarEntry(id="", label="", icon="", order=100),
     settings_panel=True,
 )
 

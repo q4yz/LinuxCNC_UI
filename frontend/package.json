@@ -9,8 +9,10 @@
     "preview": "vite preview",
     "generate-api": "node scripts/generate-api.mjs",
     "clean": "node scripts/clean.mjs",
+    "lint:no-lazy-imports": "node scripts/check-no-lazy-imports.mjs",
+    "lint:store-ids": "node scripts/check-store-ids.mjs",
     "postinstall": "node scripts/generate-api.mjs --install",
-    "test": "node --test \"tests/**/*.mjs\""
+    "test": "node --import ./scripts/vue-test-loader-register.mjs --test \"tests/**/*.mjs\""
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

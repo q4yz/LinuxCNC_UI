@@ -245,20 +245,27 @@ test("EditorView closes non-gcode files by routing to machineconfig", () => {
   assert.match(viewText, /['"]programs['"]/);
 });
 
-test("App.vue prefers the explicit module mainView", () => {
+test("App.vue reads the module mainView from the registry", () => {
   const appText = readText(resolve(repoRoot, "frontend/src/App.vue"));
-  // The new path reads ``mainView`` from the registry record first,
-  // falling back to the alphabetical glob discovery for unconverted
-  // modules.
+  // App.vue looks up the registry record by the current route's
+  // name and hands the ``mainView`` straight to ``<component>``.
+  // The lazy ``import.meta.glob`` discovery and the
+  // ``loadModuleView`` helper were retired with the no-lazy-imports
+  // rule documented in ``.agent/STATE.md`` § 13.
   assert.match(
     appText,
-    /record\?\.mainView/,
-    "App.vue must consult record.mainView before falling back to glob discovery",
+    /registry\.modules\.get\(\s*name\s*\)/,
+    "App.vue must look up the registry record by route name",
   );
   assert.match(
     appText,
-    /registry\.modules\.get\(\s*moduleId\s*\)/,
-    "App.vue must look up the module record by id",
+    /record\?\.mainView/,
+    "App.vue must read mainView off the registry record",
+  );
+  assert.doesNotMatch(
+    appText,
+    /\bloadModuleView\b/,
+    "App.vue must not use a loadModuleView helper (lazy imports are banned)",
   );
   assert.match(
     appText,

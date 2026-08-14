@@ -51,10 +51,17 @@ logger = logging.getLogger("backend.modules.tools.router")
 class SpindleCommand(BaseModel):
     """Request body for ``POST /spindle``.
 
-    The ``tool_id`` is accepted verbatim and logged so operators can
-    correlate a command with the spindle it targeted; the backend
-    currently has only one physical spindle so the field is not
-    interpreted by the hardware layer.
+    The ``tool_id`` is accepted verbatim and looked up in the active
+    ``hardware.json`` ``tools[]`` list — spindles are now an
+    inventory (bare ``[spindle]`` → ``spindle_digital``, plus any
+    named ``[spindle NAME]`` → ``spindle_digital_NAME``). The
+    service raises ``404`` when the id is unknown.
+
+    The optional ``override`` field writes the relative
+    ``halui.spindle.override.scale`` pin before every M-code
+    dispatch. Defaults to ``1.0`` (the LinuxCNC native default) so
+    existing callers keep their behaviour. The range mirrors
+    LinuxCNC's documented ``[0.0, 2.0]`` band.
     """
 
     tool_id: str = Field(
@@ -71,6 +78,16 @@ class SpindleCommand(BaseModel):
         ge=0,
         le=200_000,
         description="Target RPM for 'forward' / 'backward'; ignored for 'stop'.",
+    )
+    override: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Relative spindle override (0.0–2.0; 1.0 = 100 %). "
+            "Written to halui.spindle.override.scale before each "
+            "M-code dispatch when it differs from 1.0."
+        ),
     )
 
 
@@ -205,7 +222,9 @@ def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
             detail=f"Invalid spindle action: {cmd.action!r}",
         )
 
-    mdi = get_tools_service().control_spindle(cmd.tool_id, cmd.action, cmd.speed)
+    mdi = get_tools_service().control_spindle(
+        cmd.tool_id, cmd.action, cmd.speed, cmd.override
+    )
     return ToolCommandResponse(status="success", command=mdi, tool_id=cmd.tool_id)
 
 

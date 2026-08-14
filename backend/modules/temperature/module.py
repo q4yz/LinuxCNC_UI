@@ -30,6 +30,7 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 from .config_mapper import load_active_heaters
 
@@ -58,6 +59,12 @@ class TemperatureModule:
         title="Temperature",
         version="0.1.0",
         description="Heater target / actual sensor monitoring.",
+        # The temperature module has no sidebar entry — it lives
+        # inside the dashboard grid rather than as a top-level nav
+        # item. The manifest declares the entry explicitly anyway
+        # because the contract forbids a None sidebar; the empty
+        # ``id`` keeps it from being merged into the nav list.
+        sidebar=SidebarEntry(id="", label="", icon="", order=100),
         settings_panel=True,
     )
 

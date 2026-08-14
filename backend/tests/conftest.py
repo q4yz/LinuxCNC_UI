@@ -20,5 +20,20 @@ def tmp_data_root(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def clean_env(monkeypatch):
-    """Strip ``MODULES_ENABLED`` so tests get the default behaviour."""
+    """Strip ``MODULES_ENABLED`` so tests get the default behaviour.
+
+    Also resets the :class:`ToolsService` singleton's in-memory
+    spindle state machine so state does not leak between tests. The
+    state machine rejects mid-spin direction reversals with a 409;
+    without this reset a test that ran ``forward`` would leave the
+    spindle in ``forward`` and break a subsequent ``backward`` test.
+    """
     monkeypatch.delenv("MODULES_ENABLED", raising=False)
+    try:
+        from modules.tools.service import get_tools_service
+        svc = get_tools_service()
+        svc._spindle_state.clear()
+    except Exception:
+        # Service may not be importable in every test context; the
+        # reset is best-effort.
+        pass

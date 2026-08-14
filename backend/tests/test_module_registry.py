@@ -10,14 +10,18 @@ from fastapi import FastAPI
 
 from core.event_bus import EventBus
 from core.module_registry import ModuleRegistry
-from core.protocols import ModuleContext, ModuleManifest, PluggableModule
+from core.protocols import ModuleContext, ModuleManifest, PluggableModule, SidebarEntry
 
 
 class _StubModule:
     """A minimal PluggableModule implementation used by these tests."""
 
     def __init__(self, mid: str, title: str, *, with_router: bool = False) -> None:
-        self.manifest = ModuleManifest(id=mid, title=title)
+        self.manifest = ModuleManifest(
+            id=mid,
+            title=title,
+            sidebar=SidebarEntry(id=mid, label=title),
+        )
         self._with_router = with_router
         self.loaded = False
         self.unloaded = False
@@ -32,7 +36,13 @@ class _StubModule:
 
     def get_router(self):
         if not self._with_router:
-            return None
+            from fastapi import APIRouter
+
+            # The contract requires a non-null router; the stub
+            # returns an empty one when ``with_router=False`` so
+            # tests that don't care about routing can still
+            # satisfy the type check.
+            return APIRouter()
         from fastapi import APIRouter
 
         router = APIRouter()
@@ -42,6 +52,17 @@ class _StubModule:
             return {"ok": True, "module": self.manifest.id}
 
         return router
+
+    def get_settings_model(self):
+        from pydantic import BaseModel
+
+        class _Empty(BaseModel):
+            """Stub settings model — empty schema, just enough to
+            satisfy the contract's non-null requirement."""
+
+        # The contract requires a non-null Pydantic defaults
+        # model; the stub returns an instance of a tiny subclass.
+        return _Empty()
 
 
 def _fresh_registry(tmp_data_root) -> ModuleRegistry:

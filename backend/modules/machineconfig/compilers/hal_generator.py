@@ -43,7 +43,7 @@ from __future__ import annotations
 import logging
 from typing import Mapping
 
-from ..models import Axis, IniConfig, Joint, MachineConfigGraph
+from ..models import Axis, IniConfig, Joint, MachineConfigGraph, SpindleDigital
 
 logger = logging.getLogger("backend.modules.machineconfig.compilers.hal_generator")
 
@@ -457,7 +457,47 @@ class HalGenerator:
     # ----- Spindle digital block (vfdmod <-> pyvcp hooks) ----------- #
 
     def _build_spindle_digital_block(self) -> str:
-        """Emit the vfdmod <-> pyvcp wiring block for the digital spindle.
+        """Emit one vfdmod <-> pyvcp wiring block per digital spindle.
+
+        Iterates :attr:`MachineConfigGraph.spindle_digitals` and
+        delegates to :meth:`_build_single_spindle_block`. The bare
+        ``[spindle]`` form produces a single block identical to the
+        historical output (no signal-name suffix). Named forms like
+        ``[spindle test]`` get their pyvcp signal names suffixed by
+        ``_test`` so multiple spindles do not collide on the shared
+        ``TargetRpm`` / ``at-speed1`` / ... pyvcp signal names.
+        """
+        if self._graph is None or not self._graph.spindle_digitals:
+            return ""
+
+        blocks: list[str] = []
+        for spindle_id, spindle in self._graph.spindle_digitals.items():
+            blocks.append(
+                self._build_single_spindle_block(spindle_id, spindle)
+            )
+        return "\n".join(blocks)
+
+    @staticmethod
+    def _spindle_pyvcp_suffix(spindle_id: str) -> str:
+        """Return the pyvcp-signal suffix for a spindle canonical id.
+
+        Bare form (``spindle_digital``) → empty suffix so the
+        generated HAL is byte-identical to the historical single
+        output. Named form (``spindle_digital_test``) → ``_test`` so
+        ``pyvcp.TargetRpm_test`` / ``pyvcp.at-speed1_test`` stay
+        distinct across multiple spindles.
+        """
+        if spindle_id == "spindle_digital":
+            return ""
+        prefix = "spindle_digital_"
+        if spindle_id.startswith(prefix):
+            return "_" + spindle_id[len(prefix):]
+        return "_" + spindle_id
+
+    def _build_single_spindle_block(
+        self, spindle_id: str, digital: SpindleDigital
+    ) -> str:
+        """Emit the vfdmod <-> pyvcp wiring block for one digital spindle.
 
         Renders one ``net`` line per populated ``*_signal`` field on
         :class:`~.klipper_models.SpindleDigital`, and one
@@ -466,11 +506,13 @@ class HalGenerator:
         can see where each signal is supposed to live. Always emits
         the trailing ``loadusr -W vfdmod vfd.ini`` so vfdmod is
         loaded even when the user has not filled any signal yet.
-        """
-        if self._graph is None or self._graph.spindle_digital is None:
-            return ""
 
-        digital = self._graph.spindle_digital
+        The pyvcp-side signal name is suffixed by the canonical id
+        (e.g. ``pyvcp.TargetRpm_test``) when ``spindle_id`` is not
+        the bare ``spindle_digital`` form, so multiple spindles do
+        not collide on shared pyvcp signal names.
+        """
+        suffix = self._spindle_pyvcp_suffix(spindle_id)
 
         # (display_name, vfdmod_path, attr_name). ``display_name``
         # is the default signal name the user expects to find in
@@ -488,7 +530,7 @@ class HalGenerator:
         ]
 
         lines: list[str] = []
-        lines.append("# Spindle digital (vfdmod <-> pyvcp) signal wiring")
+        lines.append(f"# Spindle digital [{spindle_id}] (vfdmod <-> pyvcp) signal wiring")
         lines.append(
             "# Populated signals below are emitted as live 'net' lines;"
             " unpopulated signals appear as commented placeholders."
@@ -498,17 +540,19 @@ class HalGenerator:
 
         for default_name, vfdmod_path, attr in signals:
             value = getattr(digital, attr)
+            pyvcp_default = f"{default_name}{suffix}"
             if value:
+                pyvcp_value = f"{value}{suffix}" if suffix else value
                 # 18-char column for the signal name so it lines up
                 # with the 16-char ``# net <name>`` column used by
                 # the placeholder lines below (the extra 2 chars
                 # account for the absent ``# `` prefix).
                 lines.append(
-                    f"net {value:<18} {vfdmod_path:<38} pyvcp.{value}"
+                    f"net {value:<18} {vfdmod_path:<38} pyvcp.{pyvcp_value}"
                 )
             else:
                 lines.append(
-                    f"# net {default_name:<16} {vfdmod_path:<38} pyvcp.{default_name}"
+                    f"# net {default_name:<16} {vfdmod_path:<38} pyvcp.{pyvcp_default}"
                     f"   # TODO: manual hookup"
                 )
 
@@ -518,17 +562,21 @@ class HalGenerator:
         # emit the whole line as a placeholder.
         at1 = digital.at_speed1_signal
         at2 = digital.at_speed2_signal
+        pyvcp_left_default = f"at-speed1{suffix}"
+        pyvcp_right_default = f"at-speed2{suffix}"
         if at1 or at2:
             left = at1 or "at-speed1"
             right = at2 or "at-speed2"
+            pyvcp_left = f"{left}{suffix}" if suffix else left
+            pyvcp_right = f"{right}{suffix}" if suffix else right
             lines.append(
-                f"net spindle-at-speed vfdmod.spindle.at-speed"
-                f" <= pyvcp.{left} <= pyvcp.{right}"
+                f"net spindle-at-speed{suffix} vfdmod.spindle.at-speed"
+                f" <= pyvcp.{pyvcp_left} <= pyvcp.{pyvcp_right}"
             )
         else:
             lines.append(
-                "# net spindle-at-speed vfdmod.spindle.at-speed"
-                " <= pyvcp.at-speed1 <= pyvcp.at-speed2"
+                f"# net spindle-at-speed{suffix} vfdmod.spindle.at-speed"
+                f" <= pyvcp.{pyvcp_left_default} <= pyvcp.{pyvcp_right_default}"
                 "   # TODO: manual hookup"
             )
 

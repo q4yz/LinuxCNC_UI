@@ -1,16 +1,20 @@
-// Tools module entrypoint. Store is lazily initialised on first
-// ``useToolStore()`` call inside ``ToolPanel.vue`` — we deliberately
-// skip the eager ``onLoad`` factory call because Pinia's
-// ``activePinia`` isn't always wired through Vite's pre-bundle yet.
-// See ``.agent/STATE.md`` § 1, § 4.
+// Tools module entrypoint. The store is initialised eagerly when
+// ``onLoad`` runs — Pinia's active instance is wired up before
+// ``registry.boot()`` in ``main.js``. The contract forbids lazy
+// stores (``.agent/STATE.md`` § 13).
 
 import manifest from "./manifest.js";
 import ToolPanel from "./components/ToolPanel.vue";
+import { useToolStore } from "./toolStore.js";
 
 export default {
   manifest,
+  mainView: ToolPanel,
   onLoad(/* ctx */) {
-    // No-op. Store factory runs on first ``useToolStore()`` call.
+    // Eagerly construct the store against the active Pinia
+    // instance. Idempotent — calling ``useToolStore()`` twice
+    // returns the same instance.
+    useToolStore();
   },
   onUnload() {
     // No background work to release; Pinia tears the store down

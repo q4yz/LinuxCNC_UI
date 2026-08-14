@@ -337,10 +337,13 @@ class TestMacrosHTTP:
         client = TestClient(app)
 
         # The canonical settings endpoints are mounted by the
-        # registry. Macros has no settings schema → empty payload.
+        # registry with the typed defaults from
+        # :class:`MacrosSettings` (see
+        # ``.agent/contracts/backend-module.md`` § 1 — every module
+        # returns a non-null Pydantic model).
         resp = client.get("/api/v1/modules/macros/settings")
         assert resp.status_code == 200
-        assert resp.json() == {}
+        assert resp.json() == {"show_dangerous_macros": False}
 
         # The list endpoint is wired up and returns the empty list
         # shape.
@@ -599,6 +602,8 @@ def test_setup_returns_isolated_instances(tmp_data_root, clean_env):
 
 
 def test_on_load_executes_without_error(tmp_data_root, clean_env):
+    from fastapi import FastAPI
+
     from modules.macros.module import MacrosModule
 
     instance = MacrosModule()
@@ -610,6 +615,7 @@ def test_on_load_executes_without_error(tmp_data_root, clean_env):
             data_root=tmp_data_root,
             defaults=None,
         ),
+        app=FastAPI(),
     )
     instance.on_load(ctx)
 
@@ -622,11 +628,17 @@ def test_on_unload_is_idempotent(tmp_data_root, clean_env):
     instance.on_unload()  # second call must also be a no-op
 
 
-def test_get_settings_model_returns_none(tmp_data_root, clean_env):
+def test_get_settings_model_returns_typed_model(tmp_data_root, clean_env):
+    # The contract requires ``get_settings_model`` to return a
+    # non-null Pydantic ``BaseModel``. The macros module ships
+    # :class:`MacrosSettings` so the canonical four settings
+    # endpoints expose a typed payload from first boot.
     from modules.macros.module import MacrosModule
+    from modules.macros.settings import MacrosSettings
 
     instance = MacrosModule()
-    assert instance.get_settings_model() is None
+    model = instance.get_settings_model()
+    assert isinstance(model, MacrosSettings)
 
 
 def test_get_router_returns_apirouter(tmp_data_root, clean_env):

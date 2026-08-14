@@ -280,22 +280,21 @@ test("EditorView imports every Vue lifecycle hook it calls", () => {
 test("App.vue wraps the async module view in markRaw()", () => {
   // Regression guard for the
   //   "Vue received a Component that was made a reactive object"
-  // warning that fires on every route change. ``<component
-  // :is="moduleView">`` consumes the cached AsyncComponentWrapper
-  // and Vue would otherwise deep-reactivise it on each render.
-  // ``markRaw`` blocks the Proxy wrap; ``shallowRef`` on the cache
-  // Map keeps the keys/values shallow.
+  // warning that fires on every route change. The contract
+  // rewrite moved the ``markRaw`` into the registry itself
+  // (``registry.js::_mount``); App.vue no longer wraps an
+  // ``AsyncComponentWrapper`` because lazy imports are forbidden
+  // (``.agent/STATE.md`` § 13).
   const appText = readText(
     resolve(repoRoot, "frontend/src/App.vue"),
   )
-  assert.match(
+  assert.doesNotMatch(
     appText,
-    /\bmarkRaw\s*\(\s*defineAsyncComponent\b/,
-    "App.vue must markRaw() the AsyncComponentWrapper",
-  )
-  assert.match(
-    appText,
-    /\bshallowRef\(/,
-    "App.vue must use shallowRef for the module view cache",
-  )
+    /\bdefineAsyncComponent\s*\(/,
+    "App.vue must not call defineAsyncComponent (no-lazy-imports rule)",
+  );
+  // The registry's reactive Map stores the components; the
+  // registry itself applies ``markRaw`` so App.vue does not need
+  // to. We assert the registry applies it on the registry's
+  // record path below.
 })

@@ -30,20 +30,22 @@ app.component('v-chart', ECharts)
 app.use(pinia)
 app.use(router)
 
-// Boot the registry before mounting so the optional machine adapter
-// can register the real module store before legacy shell components
-// instantiate. A broken module is still isolated: the shell mounts
-// from the fallback path. Module-owned Vue Router routes are
-// registered *after* boot completes — ``registerModuleRoutes`` walks
-// ``registry.modules`` and adds one route per sidebar entry so a
-// sidebar click on e.g. Camera resolves the same way a built-in
-// click does. See ``router/index.js`` for the contract.
-registry.boot()
-  .then(() => registerModuleRoutes(registry))
-  .catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error('[registry] boot failed:', err)
-  })
-  .finally(() => {
-    app.mount('#app')
-  })
+// Boot the registry before mounting so the module's ``onLoad``
+// hooks run before any shell component instantiates. The boot is
+// synchronous (the contract forbids ``onLoad`` returning a Promise)
+// so we do not need a Promise chain here; ``boot()`` returns
+// ``undefined``.
+//
+// Module-owned Vue Router routes are registered *after* boot
+// completes — ``registerModuleRoutes`` walks ``registry.modules`` and
+// adds one route per sidebar entry so a sidebar click on e.g. Camera
+// resolves the same way a built-in click does. See
+// ``router/index.js`` for the contract.
+try {
+  registry.boot()
+  registerModuleRoutes(registry)
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.error('[registry] boot failed:', err)
+}
+app.mount('#app')

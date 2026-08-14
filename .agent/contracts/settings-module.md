@@ -6,6 +6,11 @@ The matching implementation lives in
 and is mounted by
 [`backend/core/module_registry.py`](backend/core/module_registry.py).
 
+> **Modules are mandatory.** Every backend module exposes the four
+> canonical settings endpoints through this contract. A module
+> without a Pydantic defaults model does not exist — every module
+> returns a non-null `BaseModel` from `get_settings_model()`.
+
 ## 1. Storage Layout
 
 Settings are persisted per module at:
@@ -55,10 +60,10 @@ The contract is exercised by the test
 which monkey-patches `os.replace` to raise and asserts the original
 file is unchanged.
 
-## 4. Defaults Merge
+## 4. Defaults Merge — Pydantic Model Required
 
-`SettingsStore` accepts an optional Pydantic model instance at
-construction:
+Every module declares its defaults as a Pydantic model instance.
+`SettingsStore` accepts the model at construction:
 
 ```python
 class CameraSettings(BaseModel):
@@ -92,10 +97,11 @@ Tests verify this in
 
 ## 6. Validation Rules
 
-The store is intentionally untyped — it stores any JSON-serialisable
-value. Modules that want strict validation must validate on the
-endpoint boundary (using Pydantic request models) and reject bad
-input before it reaches the store.
+The store is intentionally untyped at the storage layer — it stores
+any JSON-serialisable value. The Pydantic defaults model is the
+single source of truth for the schema; modules validate on the
+endpoint boundary (using the Pydantic model) and reject bad input
+before it reaches the store.
 
 The frontend settings client (see
 [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) § 4) treats the payload
@@ -115,7 +121,11 @@ as opaque JSON and does no validation.
 
 A settings surface is "ready" when:
 
-- [ ] Module manifest declares `settings_panel=True` if it wants a UI tab.
-- [ ] All persisted values flow through `read_all` / `write_all` / `write_key`.
+- [ ] `get_settings_model()` returns a non-null Pydantic `BaseModel`
+      instance.
+- [ ] Module manifest declares `settingsPanel=true` if the module
+      wants a UI tab on the frontend.
+- [ ] All persisted values flow through `read_all` / `write_all` /
+      `write_key`.
 - [ ] Defaults are Pydantic models so new keys can be added later.
 - [ ] The atomic-write property is verified by the included test.

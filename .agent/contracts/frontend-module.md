@@ -1,10 +1,29 @@
 # Frontend Module Contract (`FrontendModule`)
 
-The canonical contract every pluggable frontend module must satisfy.
-Authoritative source for what the registry expects and what module
-authors must implement. Living document — the matching JS code lives
-in [`frontend/src/core/modules/protocols.js`](frontend/src/core/modules/protocols.js)
-and [`frontend/src/core/modules/registry.js`](frontend/src/core/modules/registry.js).
+The canonical contract every pluggable frontend module **must**
+satisfy. Authoritative source for what the registry expects and what
+module authors must implement. Living document — the matching JS
+code lives in
+[`frontend/src/core/modules/protocols.js`](frontend/src/core/modules/protocols.js)
+and
+[`frontend/src/core/modules/registry.js`](frontend/src/core/modules/registry.js).
+
+> **Modules are mandatory.** Every module that ships in
+> `frontend/src/modules/<id>/` is a hard dependency: its code is
+> loaded eagerly by Vite at app start, its `onLoad` runs during
+> `registry.boot()`, its sidebar entry is merged into the nav, and
+> its `mainView` / `settingsPanel` is rendered when the user navigates
+> to the matching route. No module is "nullable" — there is no
+> concept of a module that may be absent at runtime. A module that
+> is not ready to satisfy the full contract does not ship.
+
+> **No lazy imports.** Module code is loaded **eagerly**. The
+> registry walks `frontend/src/modules/<id>/index.js` via a **static**
+> import — `import.meta.glob(..., { eager: true })` only. Dynamic
+> `import()`, `defineAsyncComponent`, and `import.meta.glob(..., {
+> eager: false })` are forbidden inside any module surface. The CI
+> lint `frontend/scripts/check-no-lazy-imports.mjs` rejects any
+> violation. See `.agent/STATE.md` § 13 for the rationale.
 
 ## 1. The `FrontendModule` Interface
 
@@ -13,13 +32,15 @@ and [`frontend/src/core/modules/registry.js`](frontend/src/core/modules/registry
  * @typedef {Object} FrontendModule
  * @property {FrontendModuleManifest} manifest
  * @property {(ctx: ModuleContext) => void} onLoad
- * @property {() => void} [onUnload]
+ * @property {() => void} onUnload
+ * @property {import('vue').Component} mainView
+ * @property {import('vue').Component} settingsPanel
  */
 ```
 
-A module is any object whose default export has the three fields above.
-The registry walks `frontend/src/modules/<id>/index.js` via
-`import.meta.glob` and consumes the default export.
+A module is any object whose default export has every field above —
+none are optional. The registry walks `frontend/src/modules/<id>/index.js`
+statically and consumes the default export.
 
 ## 2. FrontendModuleManifest
 
@@ -27,21 +48,20 @@ The registry walks `frontend/src/modules/<id>/index.js` via
 |-------|------|----------|-------------|
 | `id` | `string` | yes | Must match the backend `ModuleManifest.id`. |
 | `title` | `string` | yes | Human-readable display name. |
-| `version` | `string` | no | Semantic-ish version. Default `"0.0.0"`. |
-| `description` | `string` | no | One-line description. |
-| `sidebar` | `SidebarEntry` | no | Sidebar entry the module contributes. |
-| `settingsPanel` | `boolean` | no | Whether this module exposes a Settings tab. Default `false`. |
+| `version` | `string` | yes | Semantic-ish version. No default — every module declares one. |
+| `description` | `string` | yes | One-line description. Empty string is fine. |
+| `sidebar` | `SidebarEntry` | yes | Sidebar entry the module contributes. No `undefined`. |
+| `settingsPanel` | `boolean` | yes | Whether this module exposes a Settings tab. |
+| `mainView` | `import('vue').Component` | yes | Top-level view rendered by `App.vue` when this module's route is active. |
 
 ## 3. SidebarEntry
-
-Same shape as the backend equivalent:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | `string` | yes | Stable route id, unique app-wide. |
 | `label` | `string` | yes | Display text. |
-| `icon` | `string` | no | SVG/HTML icon string. |
-| `order` | `number` | no | Sort weight. Lower numbers appear earlier. Default `100`. |
+| `icon` | `string` | yes | SVG/HTML icon string. Empty string allowed. |
+| `order` | `number` | yes | Sort weight. Lower numbers appear earlier. |
 
 ## 4. ModuleContext
 
@@ -85,8 +105,7 @@ continuing to the next subscriber.
 
 Frozen copies exist for the same reason as the backend: modules are
 independent codebases we don't trust to be disciplined about payload
-mutation. See `MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #3` (not present in the working tree)
-for the design rationale.
+mutation.
 
 ## 7. TelemetryBus — By-Reference Escape Hatch
 
@@ -108,24 +127,23 @@ telemetryBus.subscribe('full_state', (topic, payload) => {
 });
 ```
 
-## 8. Discovery — `import.meta.glob`
+## 8. Discovery — Eager Static Glob
 
-The registry uses Vite's `import.meta.glob` with `eager: false` to
-discover modules:
+The registry walks `frontend/src/modules/<id>/index.js` via a **static,
+eager** glob:
 
 ```js
 const moduleImports = import.meta.glob(
   '../modules/*/index.js',
-  { eager: false },
+  { eager: true },
 );
 ```
 
-The glob is **lazy** (see
-`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1` (not present in the working tree)
-so a module disabled by the `MODULES_ENABLED` whitelist never
-appears in the bundle, even at runtime. See
-`MODULE_SYSTEM_ROADMAP.md § 12 Gotcha #1` (not present in the
-working tree).
+`{ eager: true }` is mandatory. A module that ships in the repo
+ships its code at app start; there is no "module disabled at build
+time" path. The whitelist still exists (see § 9) but it only
+controls whether `onLoad` is called and whether the module record
+enters the registry map, not whether the JS is loaded.
 
 ## 9. Whitelist — `MODULES_ENABLED`
 
@@ -138,17 +156,45 @@ also gates the frontend registry. The frontend reads it via
 - `MODULES_ENABLED=camera` → only mount the `camera` module.
 - Unknown ids log a dev-only warning and are ignored.
 
-## 10. Module Skeleton
+The whitelist is a deployment opt-out, not a removal path. A
+module excluded by the whitelist still has its JS in the bundle
+(it was loaded eagerly), it just does not run `onLoad` and is not
+visible in the sidebar / settings.
+
+## 10. Eager Module Store Boot
+
+Module stores are created in `onLoad` (not lazily on first
+`useXxxStore()` call). The `activePinia` race documented in the
+previous contract is now resolved by ordering:
+
+1. `main.js` calls `app.use(pinia)` before `registry.boot()`.
+2. `registry.boot()` calls `onLoad(ctx)` which may call
+   `useXxxStore()` to construct the store against the wired
+   Pinia instance.
+3. `onLoad` returns synchronously; a module may not return a
+   Promise from `onLoad`.
+
+The Pinia 3.x `activePinia._s.has(...)` timing trap that motivated
+the lazy-store pattern is no longer relevant because the boot
+sequence is deterministic.
+
+## 11. Module Skeleton
 
 ```js
 // frontend/src/modules/camera/index.js
+import CameraViewer from "./components/CameraViewer.vue";
+import CameraSettings from "./components/CameraSettings.vue";
+
 export default {
   manifest: {
     id: 'camera',
     title: 'Camera',
     sidebar: { id: 'camera', label: 'Camera', order: 30 },
     settingsPanel: true,
+    mainView: CameraViewer,
   },
+  mainView: CameraViewer,
+  settingsPanel: CameraSettings,
   onLoad(ctx) {
     ctx.eventBus.subscribe('module.camera.snapshot', (topic, payload) => {
       // payload is deep-frozen; clone before storing.
@@ -161,13 +207,21 @@ export default {
 }
 ```
 
-## 11. Acceptance Checklist
+## 12. Acceptance Checklist
 
 A frontend module is "ready" when:
 
-- [ ] Default export has `manifest`, `onLoad`, and (optionally) `onUnload`.
+- [ ] Default export has every required field (`manifest`, `onLoad`,
+      `onUnload`, `mainView`, `settingsPanel`).
 - [ ] `manifest.id` matches the backend manifest.
+- [ ] `manifest.sidebar` is set (no `undefined`).
+- [ ] `mainView` is a non-null Vue component imported **statically**.
+- [ ] `settingsPanel` is a non-null Vue component imported **statically**.
 - [ ] Pinia store ids match `^module_[a-z][a-z0-9_]+$` (lint passes).
 - [ ] Subscribers treat `eventBus` payloads as frozen.
 - [ ] `telemetryBus` payloads are cloned before storing.
 - [ ] `onUnload` is idempotent.
+- [ ] `onLoad` returns synchronously (no `Promise<void>`).
+- [ ] No `defineAsyncComponent`, dynamic `import()`, or
+      `import.meta.glob(..., { eager: false })` anywhere in the
+      module surface (lint passes).

@@ -205,15 +205,21 @@ The backend has a structurally identical registry
 graph. The two registries discover the same module ids on either
 side; the manifest id is the contract.
 
-**Lazy boot.** Both registries use `import.meta.glob` (frontend) and
-`importlib.import_module` (backend) with lazy semantics. A module
-whose view is never mounted (or whose router is never hit) never
-pays an initialization cost.
+**Eager boot.** Both registries use eager loading: the frontend
+uses `import.meta.glob(..., { eager: true })` and components are
+imported statically inside `App.vue` and `DashboardView.vue`.
+The backend's `importlib.import_module` runs the module's
+`__init__.py` and `setup()` factory at boot. There is no
+"module disabled at build time" path — every module that ships
+is a hard dependency.
 
-**Nullable-module guarantee.** Deleting a module folder leaves the
-rest of the app booting and building. The dashboard's machine slot
-renders a placeholder card when the registry reports the module
-absent; the build succeeds because the Vite glob is lazy.
+**Modules are mandatory.** The previous nullable-module
+guarantee (deleting a module folder leaves the app booting and
+building) has been retired. Every module returns a non-null
+`APIRouter` and a non-null Pydantic `BaseModel` from
+`get_router()` / `get_settings_model()`. The contract forbids
+`None` returns and the registry refuses to mount a module that
+violates it. See `.agent/STATE.md` § 7 and § 13.
 
 ## 5. Event bus
 

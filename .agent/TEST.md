@@ -44,6 +44,11 @@ timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null
 npm --prefix frontend run generate-api
 
 # 5. Frontend Verification
+# 5a. Module lints (no-lazy-imports + store id regex)
+node frontend/scripts/check-no-lazy-imports.mjs
+node frontend/scripts/check-store-ids.mjs
+
+# 5b. Production build + tests
 npm --prefix frontend run build
 node --test "frontend/tests/**/*.mjs"
 ```

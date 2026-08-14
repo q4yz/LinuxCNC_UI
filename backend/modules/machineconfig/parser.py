@@ -210,6 +210,27 @@ class DuplicateFanError(ConfigValidationError):
         )
 
 
+class DuplicateSpindleError(ConfigValidationError):
+    """Raised when two digital-spindle sections resolve to the same canonical id.
+
+    Mirrors :class:`DuplicateFanError`. Two sections like ``[spindle]``
+    and ``[spindle ]`` (or ``[spindle test]`` and ``[spindle test]``)
+    would both resolve to the same id; the parser rejects that so
+    downstream tool records do not collide.
+    """
+
+    kind = "duplicate_spindle"
+
+    def __init__(self, section_a: str, section_b: str, name: str) -> None:
+        self.section_a = section_a
+        self.section_b = section_b
+        self.name = name
+        super().__init__(
+            f"Sections [{section_a}] and [{section_b}] both compile to "
+            f"the same spindle id '{name}'."
+        )
+
+
 class DuplicateStepperPinError(ConfigValidationError):
     """Raised when two distinct stepper sections share a physical pin.
 
@@ -408,6 +429,27 @@ def derive_fan_name(section_name: str) -> str:
     return f"{kind}_{instance.replace(' ', '_')}"
 
 
+def derive_spindle_name(section_name: str) -> str:
+    """Return the canonical digital-spindle id for a Klipper section header.
+
+    Examples:
+        [spindle]            -> "spindle_digital"
+        [spindle test]       -> "spindle_digital_test"
+        [spindle mill_h]     -> "spindle_digital_mill_h"
+
+    The bare ``[spindle]`` form maps to ``"spindle_digital"`` (not
+    ``"spindle"``) so the canonical id is distinct from the section
+    header — the runtime vocabulary uses ``"spindle_digital"`` as the
+    ``type`` discriminator in ``hardware.json`` and operators never
+    see a bare ``"spindle"`` id on the frontend.
+    """
+    parts = section_name.split(maxsplit=1)
+    if len(parts) == 1:
+        return "spindle_digital"
+    kind, instance = parts
+    return f"spindle_digital_{instance.replace(' ', '_')}"
+
+
 class MachineConfigParser:
     """Parse a Klipper-style INI file into a strict dataclass graph.
 
@@ -468,6 +510,10 @@ class MachineConfigParser:
         # Order in which fan-shaped sections appear in the source file.
         # Same rationale as ``heater_section_order``.
         fan_section_order: list[str] = []
+        # Order in which digital-spindle sections appear in the source
+        # file. Same rationale as ``heater_section_order`` — used for
+        # duplicate-id detection in ``_validate_spindle_uniqueness``.
+        spindle_section_order: list[str] = []
 
         for section_name in parser.sections():
             section_schema = schema_for_section(section_name)
@@ -517,9 +563,10 @@ class MachineConfigParser:
                 heater_section_order.append(section_name)
                 graph.heaters[heater.name] = heater
             elif section_schema.kind is SectionKind.SPINDLE:
-                graph.spindle_digital = self._parse_spindle_digital(
-                    section_name, section
-                )
+                spindle = self._parse_spindle_digital(section_name, section)
+                spindle_id = derive_spindle_name(section_name)
+                graph.spindle_digitals[spindle_id] = spindle
+                spindle_section_order.append(section_name)
             elif section_schema.kind is SectionKind.SPINDLE_ANALOG:
                 graph.spindle_analog = self._parse_spindle_analog(
                     section_name, section
@@ -551,6 +598,7 @@ class MachineConfigParser:
         # Both validations are cheap and produce structured errors.
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
+        self._validate_spindle_uniqueness(spindle_section_order)
         self._validate_stepper_pins(graph)
         self._validate_all_pin_mcu_references(graph)
 
@@ -697,6 +745,25 @@ class MachineConfigParser:
             canonical = derive_fan_name(section_name)
             if canonical in seen:
                 raise DuplicateFanError(
+                    seen[canonical], section_name, canonical
+                )
+            seen[canonical] = section_name
+
+    @staticmethod
+    def _validate_spindle_uniqueness(spindle_section_order: list[str]) -> None:
+        """Reject two digital-spindle sections that resolve to the same id.
+
+        Mirrors :meth:`_validate_fan_uniqueness`. Two distinct section
+        headers (e.g. ``[spindle]`` and ``[spindle]`` in different
+        positions, or ``[spindle test]`` declared twice) would both
+        resolve to ``"spindle_digital_test"``; the parser rejects that
+        so the runtime never sees two tool records with the same id.
+        """
+        seen: dict[str, str] = {}
+        for section_name in spindle_section_order:
+            canonical = derive_spindle_name(section_name)
+            if canonical in seen:
+                raise DuplicateSpindleError(
                     seen[canonical], section_name, canonical
                 )
             seen[canonical] = section_name
@@ -1127,6 +1194,7 @@ __all__ = [
     "DuplicateFanError",
     "DuplicateHeaterError",
     "DuplicateMcuSectionError",
+    "DuplicateSpindleError",
     "DuplicateStepperPinError",
     "InvalidConnectionError",
     "InvalidValueError",
@@ -1140,6 +1208,7 @@ __all__ = [
     "UnsupportedSectionError",
     "derive_fan_name",
     "derive_heater_name",
+    "derive_spindle_name",
     "parse_config",
     "split_pin",
 ]

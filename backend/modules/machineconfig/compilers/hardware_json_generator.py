@@ -240,18 +240,23 @@ def _tool_payload_from_spindle_analog(spindle) -> dict[str, Any]:
     }
 
 
-def _tool_payload_from_spindle_digital(spindle) -> dict[str, Any]:
-    """Build a Tool entry for the ``[spindle]`` section.
+def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, Any]:
+    """Build a Tool entry for one ``[spindle ...]`` section.
 
     Digital spindle — carries the HAL signal aliases the vfdmod
     driver expects. The ToolPanel renders the digital card
     (Actual RPM + Target RPM + Forward / Reverse / Stop) and the
     HAL generator emits the live net lines for populated signals,
     with ``# TODO: manual hookup`` placeholders for empty ones.
+
+    ``spindle_id`` is the canonical id (``spindle_digital`` for the
+    bare ``[spindle]`` form, ``spindle_digital_test`` for
+    ``[spindle test]``, ...). Each instance gets its own tool
+    record so the runtime can address them independently.
     """
     return {
-        "id": "spindle_digital",
-        "name": _friendly_tool_name("spindle_digital", "spindle_digital"),
+        "id": spindle_id,
+        "name": _friendly_tool_name(spindle_id, "spindle_digital"),
         "type": "spindle_digital",
         "min_rpm": spindle.min_rpm,
         "max_rpm": spindle.max_rpm,
@@ -554,8 +559,10 @@ def build_hardware_json(
             fan_records.append(_fan_payload(heater_section, heater))
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
-    if graph.spindle_digital is not None:
-        tool_records.append(_tool_payload_from_spindle_digital(graph.spindle_digital))
+    for spindle_id, spindle in graph.spindle_digitals.items():
+        tool_records.append(
+            _tool_payload_from_spindle_digital(spindle_id, spindle)
+        )
 
     # Standalone fan sections (``[fan]``, ``[fan_generic foo]``) become
     # their own ``fans`` records keyed by the canonical id. The id is

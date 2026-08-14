@@ -1,10 +1,9 @@
-import { defineAsyncComponent } from "vue";
-
 import manifest from "./manifest.js";
 
-// Keep component imports lazy so the camera module remains removable
-// and the registry can inspect this entrypoint outside Vite-based
-// environments.
+// The camera module is a hard dependency. Components are imported
+// **statically** — no ``defineAsyncComponent``, no dynamic
+// ``import()`` — see ``.agent/STATE.md`` § 13 and
+// ``frontend/scripts/check-no-lazy-imports.mjs``.
 //
 // ``mainView`` is the camera module's top-level view; ``App.vue`` and
 // ``router/index.js::registerModuleRoutes`` both consult it so the
@@ -13,12 +12,8 @@ import manifest from "./manifest.js";
 // dashboard already uses — no wrapper, no duplicated state — so the
 // store, the stream URL and the Switch-Camera button all behave
 // identically in both surfaces.
-const CameraViewer = defineAsyncComponent(
-  () => import("./components/CameraViewer.vue"),
-);
-const CameraSettings = defineAsyncComponent(
-  () => import("./components/CameraSettings.vue"),
-);
+import CameraViewer from "./components/CameraViewer.vue";
+import CameraSettings from "./components/CameraSettings.vue";
 
 export default {
   manifest,
@@ -26,7 +21,8 @@ export default {
   settingsPanel: CameraSettings,
   mainView: CameraViewer,
   onLoad() {
-    // Pinia state is initialized lazily by the viewer or settings panel.
+    // Pinia state is initialised eagerly when the dashboard mounts
+    // via the module's store import.
   },
   onUnload() {
     // The camera stream is browser-owned and closes when its image unmounts.

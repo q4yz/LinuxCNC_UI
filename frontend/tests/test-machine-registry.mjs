@@ -48,11 +48,15 @@ test("machine module manifest has the documented shape", async () => {
   assert.equal(manifest.title, "Machine");
   assert.equal(typeof manifest.version, "string");
   assert.ok(manifest.description);
-  // ``machine`` has no sidebar entry (it lives at the dashboard
-  // root rather than as a nav item) and contributes a settings
-  // tab so the Settings page renders a Machine tab.
+  // ``machine`` contributes a settings tab so the Settings page
+  // renders a Machine tab. The contract requires every manifest
+  // to declare the ``sidebar`` field; the machine module ships
+  // an empty ``SidebarEntry`` because it lives at the dashboard
+  // root rather than as a top-level nav item. The registry
+  // filters the entry out by its empty ``id``.
   assert.equal(manifest.settingsPanel, true);
-  assert.equal(manifest.sidebar, undefined);
+  assert.equal(typeof manifest.sidebar, "object");
+  assert.equal(manifest.sidebar.id, "");
 });
 
 test("machine store pinia id matches the module_ prefix rule", async () => {

@@ -191,6 +191,15 @@ _HEATER_GENERIC_SECTION = re.compile(
 _FAN_SECTION = re.compile(
     r"^fan(?:_generic)?(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
 )
+# Digital spindle sections mirror the fan naming pattern:
+#   [spindle]            -> bare (canonical id = "spindle_digital")
+#   [spindle test]       -> named instance, id = "spindle_digital_test"
+# The canonical id is intentionally distinct from the section header
+# so the runtime vocabulary ("spindle_digital" type tag) and the
+# Klipper vocabulary ("spindle" section header) stay decoupled.
+_SPINDLE_DIGITAL_SECTION = re.compile(
+    r"^spindle(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
+)
 
 
 def schema_for_section(section: str) -> SectionSchema | None:
@@ -254,8 +263,17 @@ def schema_for_section(section: str) -> SectionSchema | None:
             section,
         )
 
-    if section.lower() == "spindle":
-        return SectionSchema(SectionKind.SPINDLE, SPINDLE_KEYS, "spindle")
+    spindle_match = _SPINDLE_DIGITAL_SECTION.fullmatch(section.lower())
+    if spindle_match:
+        # The schema object_name is the raw section header so the
+        # parser can derive the canonical id via
+        # :func:`parser.derive_spindle_name`. Empty ``name`` -> "spindle"
+        # (bare form) -> canonical id "spindle_digital".
+        return SectionSchema(
+            SectionKind.SPINDLE,
+            SPINDLE_KEYS,
+            section,
+        )
 
     if section.lower() == "spindle_analog":
         return SectionSchema(

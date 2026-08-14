@@ -6,17 +6,16 @@ can be deleted in this issue. The dedicated UI and the autonomous
 program lifecycle are slated for Phase 3 proper — for now the
 module exposes the HTTP surface only.
 
-Why is there no separate settings schema yet? The endpoints do not
-read any settings, and inventing a schema just to populate the
-settings tab would amount to dead UI. The manifest keeps
-``settings_panel=False`` so the Settings view does not render an
-empty tab. A later issue will add ``settings_panel=True`` once the
-schema has real keys.
+The module declares a typed settings surface so the canonical four
+endpoints expose a non-empty payload from first boot; see
+:mod:`backend.modules.program.settings`. ``settings_panel`` stays
+``False`` for now because the Settings UI does not yet render the
+program module — a future issue will flip it to ``True`` once the
+frontend gains a settings tab for this module.
 """
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -25,9 +24,11 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from .router import router as _router
+from .settings import ProgramSettings
 
 logger = logging.getLogger("backend.modules.program")
 
@@ -37,7 +38,12 @@ _MANIFEST = ModuleManifest(
     title="Program",
     version="0.1.0",
     description="Program lifecycle (run / stop / pause / resume / parse).",
-    sidebar=None,
+    sidebar=SidebarEntry(
+        id="program",
+        label="Program",
+        icon="",
+        order=80,
+    ),
     settings_panel=False,
 )
 
@@ -62,19 +68,16 @@ class ProgramModule:
         """
         return _router
 
-    def get_settings_model(self) -> Optional[BaseModel]:
-        """Return ``None`` — the program module has no settings schema.
+    def get_settings_model(self) -> BaseModel:
+        """Return a fresh :class:`ProgramSettings` defaults instance.
 
-        Returning ``None`` is the documented contract for modules
-        without a Pydantic defaults model; the registry falls back
-        to untyped JSON and exposes the four canonical settings
-        endpoints anyway. The :class:`PluggableModule` protocol
-        requires this method to exist even when the module has
-        nothing to declare — the runtime check
-        ``isinstance(obj, PluggableModule)`` looks for the method
-        by name.
+        The contract requires every module to return a non-null
+        Pydantic :class:`BaseModel`. Returning a typed model here
+        seeds the per-module :class:`SettingsStore` so the four
+        canonical settings endpoints expose a non-empty payload from
+        first boot. See :mod:`backend.modules.program.settings`.
         """
-        return None
+        return ProgramSettings()
 
 
 def setup() -> PluggableModule:
@@ -82,4 +85,4 @@ def setup() -> PluggableModule:
     return ProgramModule()
 
 
-__all__ = ["ProgramModule", "setup"]
+__all__ = ["ProgramModule", "setup", "ProgramSettings"]

@@ -116,22 +116,20 @@ module reads them via the snapshot's `sensors` dict instead.
 
 ## 1. Module Discovery
 
-Modules are discovered via Vite's lazy `import.meta.glob` with
-`eager: false`. The glob lives in both
-`frontend/src/core/modules/registry.js` and
-`frontend/src/views/DashboardView.vue`. An empty `modules/`
-folder is graceful — the registry boots with zero modules.
-
-**Why lazy?** Original bug: eager imports pulled every module's JS
-into the bundle even when the `MODULES_ENABLED` whitelist excluded
-it. The current behaviour makes the whitelist meaningful.
+Modules are discovered via Vite's **eager** `import.meta.glob`
+with `eager: true`. The glob lives in
+`frontend/src/core/modules/registry.js` — it is the single
+source of truth for module discovery. Components inside a
+module are imported **statically** in `DashboardView.vue` and
+`App.vue`. An empty `modules/` folder is graceful — the
+registry boots with zero modules — but every module that
+ships in the repo is mandatory (see § 7).
 
 **Path geometry.** `registry.js` lives at
 `frontend/src/core/modules/`, so the glob uses `../../modules/*/index.js`
-(two segments up). `DashboardView.vue` lives at
-`frontend/src/views/`, so it uses `../modules/*/components/*.vue`
-(one segment up). The two-segment path is the easy one to get
-wrong — the tripwire comment lives in `registry.js`.
+(two segments up). Don't copy the one-segment path from
+`DashboardView.vue` — the tripwire comment lives in
+`registry.js`.
 
 ---
 
@@ -170,21 +168,18 @@ that subscribe to `telemetryBus` must clone before storing.
 
 ---
 
-## 4. Lazy Module Store Boot
+## 4. Eager Module Store Boot
 
-Module stores are **lazily** initialised on the first
-`useXxxStore()` call inside the component, not in `onLoad`. The
-registry boots modules as part of `main.js` and the timing of
-`app.use(pinia)` relative to module `onLoad` is fragile — Pinia 3.x's
-`useStore` reads `pinia._s` and throws
-`Cannot read properties of undefined (reading 'has')` when
-`activePinia` has not been wired through Vite's pre-bundled Pinia
-instance. Letting the panel trigger the first call sidesteps that
-race entirely.
+Module stores are **eagerly** initialised inside `onLoad`. The
+`activePinia` race that motivated the previous lazy-store
+pattern is no longer relevant because the boot sequence is
+deterministic: `main.js` calls `app.use(pinia)` before
+`registry.boot()`, so `useXxxStore()` inside `onLoad` finds the
+active Pinia instance.
 
-Consequence: a module whose view is never mounted will never start
-its polling loop. This is intentional — no resource cost for
-unmounted modules.
+Consequence: a module's polling loop / WebSocket transport
+starts at app boot, not at first mount. Operators get a
+populated dashboard on the first frame.
 
 ---
 
@@ -232,28 +227,26 @@ the file-load contract is finalised.
 
 ---
 
-## 7. Nullable-Module Guarantee
+## 7. Modules Are Mandatory
 
-Every dashboard panel and every sidebar entry checks
-`registry.modules.has(id)` before rendering. The reactive Map
-means the `computed` re-evaluates the moment the registry flips a
-module into its mounted set after boot completes. Some modules
-ship a fallback shim so the shell renders even when the module
-is excluded — see the per-module notes below.
+Every module that ships in `frontend/src/modules/<id>/` is a hard
+dependency: its code is loaded eagerly, its `onLoad` runs at app
+boot, its sidebar entry is merged into the nav, and its
+`mainView` / `settingsPanel` is rendered when the user navigates
+to the matching route. **No module is "nullable"** — there is no
+concept of a module that may be absent at runtime. A module that
+is not ready to satisfy the full contract does not ship.
 
-| Module | Nullable? | Mechanism |
-|---|---|---|
-| `camera` | yes | Self-registers; shell renders placeholders |
-| `temperature` | **no** (hard dep) | None — direct import |
-| `machine` | **no** (hard dep) | `stores/machineStoreShim.js` deleted in the consolidation that moved the cross-module store to `stores/machine.js` |
-| `tools`, `program`, `macros`, `machineconfig` | yes | Each defines its own fallback |
+The `MODULES_ENABLED` whitelist remains as a deployment opt-out
+(see § 9 below) but it does not change the fact that every
+module is mandatory at the code level. Excluding a module from
+the whitelist leaves its JS in the bundle (Vite's `eager: true`
+glob ships it) and skips only the `onLoad` boot and the sidebar
+merge.
 
-The machine module's nullable contract was retired together
-with the shim: the simpler cross-module surface (every consumer
-imports from one of four `stores/` files) was worth more than the
-"delete the module folder, keep the build green" guarantee. The
-temperature module has never had it, and treating the machine
-module as a hard dependency aligns the two large modules.
+The previous nullable-module guarantee (with the per-module
+table) was retired in the rewrite that produced § 13. Modules are
+now uniformly mandatory.
 
 ---
 
@@ -343,3 +336,47 @@ switches, and the editor Close action use the queue-based confirm service in
 `frontend/src/core/confirm.js`. `ModalConfirmHost.vue` is mounted once in
 `App.vue`; feature code calls the Promise-based `useConfirm()` API rather than
 native `window.confirm` dialogs.
+
+---
+
+## 13. No-Lazy-Imports Rule
+
+Lazy imports inside the module surface are forbidden. The
+contract documented in
+[`.agent/contracts/frontend-module.md`](contracts/frontend-module.md)
+bans every flavour of lazy import the codebase used to rely on:
+
+- `import.meta.glob(..., { eager: false })` is forbidden inside
+  any module surface. The single allowed glob is the registry's
+  `import.meta.glob('../../modules/*/index.js', { eager: true })`
+  in `frontend/src/core/modules/registry.js`.
+- `defineAsyncComponent(() => import('./foo.vue'))` is
+  forbidden. Components are imported statically.
+- Dynamic `import()` of any module-owned path is forbidden.
+- Module stores are constructed eagerly inside `onLoad` (see
+  § 4) — no lazy `useXxxStore()` indirection from inside the
+  components.
+
+The CI lint `frontend/scripts/check-no-lazy-imports.mjs`
+enforces the rule at build time. It scans every `.vue`, `.js`,
+and `.ts` file under `frontend/src/modules/` and
+`frontend/src/core/` for the forbidden patterns and exits
+non-zero on the first hit. The script is wired into
+[`.agent/TEST.md`](TEST.md) so the rule trips before the bundle
+is built.
+
+**Why now.** The previous contract allowed modules to be
+nullable (see § 7) and lazy imports made that work: deleting a
+module folder left the build green because nothing referenced
+the deleted path statically. Modules are mandatory now, so
+there is no upside to lazy imports — they hide module
+dependencies instead of making them explicit. The eager surface
+catches missing modules at build time (a static import errors)
+and makes the dependency graph readable in the IDE.
+
+The legacy `defineAsyncComponent` and `import.meta.glob(..., {
+eager: false })` calls were removed from every module entrypoint
+(`frontend/src/modules/<id>/index.js`) and from `App.vue` /
+`DashboardView.vue` as part of this rewrite. The registry's
+glob remains the one eager exception — its purpose is module
+discovery, not lazy loading.

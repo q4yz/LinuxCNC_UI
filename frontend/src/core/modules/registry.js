@@ -1,20 +1,31 @@
 // Frontend module registry. Discovers, filters, and mounts modules
-// under ``src/modules/*/index.js``. See ``.agent/STATE.md`` § 1, § 7
-// for the discovery and nullable-module rules.
+// under ``src/modules/*/index.js``. See ``.agent/STATE.md`` § 1, § 13
+// for the eager-discovery and no-lazy-imports rules.
+//
+// Modules are mandatory: every module that ships in
+// ``frontend/src/modules/<id>/`` is a hard dependency. There is no
+// "nullable" surface — ``mainView`` and ``settingsPanel`` must be
+// non-null Vue components, the manifest must carry a sidebar entry,
+// and the module's JS is loaded eagerly so removing the folder is a
+// build failure rather than a graceful no-op.
 
-import { reactive } from "vue";
+import { markRaw, reactive } from "vue";
 import { eventBus } from "./event-bus";
 import { telemetryBus } from "./telemetry-bus";
 import { createModuleSettings } from "./settings";
 
-// ``eager: false`` is mandatory — see ``.agent/STATE.md`` § 1.
+// ``eager: true`` is mandatory — see ``.agent/STATE.md`` § 13. Module
+// JS ships at app start; the ``MODULES_ENABLED`` whitelist only
+// controls whether ``onLoad`` runs and whether the record enters the
+// registry map, not whether the code is loaded.
+//
 // Path uses two ``..`` segments: this file is in
 // ``frontend/src/core/modules/`` (one segment up would land in
 // ``frontend/src/core/``). Don't copy the one-segment path from
 // ``DashboardView.vue``.
 const moduleImports = import.meta.glob(
   "../../modules/*/index.js",
-  { eager: false },
+  { eager: true },
 );
 
 /**
@@ -67,8 +78,12 @@ class FrontendRegistry {
    * module's ``onLoad`` hook. Idempotent: a second ``boot()`` call
    * is a no-op so the registry can be safely imported twice (e.g.
    * by tests).
+   *
+   * The module's ``onLoad`` hook MUST be synchronous. Modules that
+   * previously returned a Promise are no longer accepted; the
+   * registry logs a warning and treats the module as failed.
    */
-  async boot() {
+  boot() {
     if (this._booted) return;
     this._booted = true;
 
@@ -83,11 +98,11 @@ class FrontendRegistry {
 
     // Build the candidate list synchronously. ``moduleImports`` is
     // an object keyed by absolute path; the path itself encodes the
-    // module id (``/modules/<id>/index.js``).
+    // module id (``/modules/<id>/index.js``). With ``eager: true``
+    // the imports have already resolved to module objects.
     const candidates = Object.entries(moduleImports);
     const byId = new Map();
-    for (const [path, importer] of candidates) {
-      const mod = await importer();
+    for (const [path, mod] of candidates) {
       const instance = mod.default ?? mod;
       const manifest = instance?.manifest;
       if (!manifest || !manifest.id) {
@@ -149,33 +164,57 @@ class FrontendRegistry {
       telemetryBus: this.telemetryBus,
       settings: createModuleSettings(id),
     };
+    // The contract requires a synchronous ``onLoad``. A Promise
+    // return is a contract violation — the registry used to log a
+    // warning and continue; it now refuses the module entirely.
+    if (typeof instance.onLoad !== "function") {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[registry] module '${id}' has no onLoad function; refusing mount`,
+      );
+      return;
+    }
     try {
-      const result = instance.onLoad?.(ctx);
+      const result = instance.onLoad(ctx);
       if (result && typeof result.then === "function") {
         // eslint-disable-next-line no-console
-        console.warn(
-          `[registry] module '${id}' returned a Promise from onLoad(); awaiting it is not supported`,
+        console.error(
+          `[registry] module '${id}' returned a Promise from onLoad(); refusing mount (the contract forbids async onLoad)`,
         );
+        return;
       }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[registry] module '${id}' onLoad threw:`, err);
       return;
     }
+    if (typeof instance.onUnload !== "function") {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[registry] module '${id}' has no onUnload function; refusing mount`,
+      );
+      return;
+    }
+    if (!instance.mainView) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[registry] module '${id}' is missing mainView; refusing mount`,
+      );
+      return;
+    }
+    // ``markRaw`` keeps the Vue component definitions out of the
+    // reactive proxy so Vue does not warn about "Component that
+    // was made a reactive object" when the registry stores them in
+    // its reactive Map. The Map is reactive; the components are
+    // intentionally not.
     this.modules.set(id, {
       manifest: instance.manifest,
       context: ctx,
-      sidebar: instance.sidebar ?? instance.manifest.sidebar ?? null,
-      // Module-supplied settings-tab component. Optional — modules
-      // without one still get a tab via ``settingsPanels()`` so the
-      // legacy placeholder keeps working.
-      settingsPanel: instance.settingsPanel ?? null,
-      // Module-supplied top-level view. ``App.vue`` prefers this over
-      // the legacy alphabetical glob discovery over ``components/*`` —
-      // new modules should always export ``mainView``. ``null`` falls
-      // through to the legacy path (kept so unconverted modules keep
-      // working during the migration window).
-      mainView: instance.mainView ?? null,
+      sidebar: instance.sidebar ?? instance.manifest.sidebar,
+      settingsPanel: instance.settingsPanel
+        ? markRaw(instance.settingsPanel)
+        : null,
+      mainView: markRaw(instance.mainView),
     });
   }
 

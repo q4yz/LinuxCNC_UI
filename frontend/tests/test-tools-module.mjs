@@ -80,8 +80,15 @@ test("manifest exports id='tools', title='Tools', settingsPanel: false", () => {
   assert.match(text, /title:\s*['"]Tools['"]/);
   // Issue #64: tools live in the dashboard grid, no Settings tab.
   assert.match(text, /settingsPanel:\s*false/);
-  // No sidebar entry — the panel is dashboard-bound.
-  assert.doesNotMatch(text, /sidebar:\s*\{/);
+  // The contract requires every manifest to declare the
+  // ``sidebar`` field, even when the module does not contribute a
+  // nav entry. The manifest ships an empty ``SidebarEntry`` the
+  // registry filters out by ``id``.
+  assert.match(
+    text,
+    /sidebar:\s*\{\s*id:\s*['"]{2}/,
+    "manifest must declare an empty sidebar entry (contract requirement)",
+  );
 });
 
 test("index.js default export has manifest / onLoad / onUnload", () => {
@@ -303,9 +310,19 @@ test("toolStore no longer mutates the tool record", () => {
   );
 });
 
-test("DashboardView wires ToolPanel via the nullable panelFor pattern", () => {
+test("DashboardView statically imports ToolPanel (no lazy discovery)", () => {
+  // Tools module is a hard dependency. ``panelFor`` and the lazy
+  // ``import.meta.glob(..., { eager: false })`` discovery pattern
+  // were removed in the contract rewrite; see ``.agent/STATE.md``
+  // § 13 for the no-lazy-imports rule.
   const text = read(dashboardPath);
-  assert.match(text, /panelFor\(['"]tools['"]\s*,\s*['"]ToolPanel['"]\)/);
+  assert.match(
+    text,
+    /import\s+ToolPanelRaw\s+from\s+['"]\.\.\/modules\/tools\/components\/ToolPanel\.vue['"]/,
+    "DashboardView must statically import ToolPanel from the module folder",
+  );
   assert.match(text, /toolsMounted/);
+  // The panel is still gated on the registry so future module
+  // opt-outs (via ``MODULES_ENABLED``) continue to hide the slot.
   assert.match(text, /<ToolPanel\s+v-if="toolsMounted"/);
 });

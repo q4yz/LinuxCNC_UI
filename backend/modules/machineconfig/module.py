@@ -35,6 +35,7 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from services import (
@@ -69,7 +70,12 @@ _MANIFEST = ModuleManifest(
     version="0.1.0",
     description="Profiles, compilation, staged/active viewer, deployment.",
     # Module owns a sidebar entry so the app's left rail picks it up.
-    sidebar={"id": "machineconfig", "label": "Machine Config", "order": 60},
+    sidebar=SidebarEntry(
+        id="machineconfig",
+        label="Machine Config",
+        icon="",
+        order=60,
+    ),
     settings_panel=True,
 )
 
@@ -99,9 +105,11 @@ class MachineConfigModule:
         # the FastAPI app is available. The handler is module-owned
         # because the error class (``ConfigValidationError``) is
         # module-owned; a global registration in ``main.py`` would
-        # couple the parser to the application shell. ``ctx.app`` is
-        # ``None`` under the test-only ``isolated_machine_config``
-        # fixture path — see ``tests/conftest.py`` for the contract.
+        # couple the parser to the application shell. The
+        # ``ctx.app`` guard is a defensive belt-and-braces check for
+        # test fixtures that bypass the FastAPI lifespan — the
+        # :class:`ModuleContext` contract now guarantees a non-null
+        # ``app`` in production boot paths.
         if ctx.app is not None:
             register_exception_handlers(ctx.app)
 

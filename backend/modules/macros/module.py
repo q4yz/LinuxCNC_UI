@@ -14,17 +14,16 @@ thin: every filesystem concern is delegated so the module class
 itself has no I/O to perform in ``on_load`` and can stay
 non-blocking (see :file:`.agent/contracts/backend-module.md` § 5).
 
-The module intentionally does **not** expose a typed Pydantic
-settings schema — there are no settings for a pure CRUD module. The
-registry mounts the canonical four settings endpoints anyway, but
-they will always return ``{}`` because the module has no defaults
-model.
+The module exposes a typed Pydantic settings schema via
+:mod:`backend.modules.macros.settings`. The schema is intentionally
+small — a single toggle for the dashboard's "dangerous macros"
+visibility — but the contract forbids a ``None`` returns from
+``get_settings_model()``.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -33,9 +32,11 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from .router import router as _router
+from .settings import MacrosSettings
 
 logger = logging.getLogger("backend.modules.macros")
 
@@ -60,11 +61,16 @@ _MANIFEST = ModuleManifest(
         "universal editor's profile mode picks them up the same way "
         "it picks up ``.cfg`` / ``.ini`` config files."
     ),
-    # No sidebar entry; the dashboard panel + Machine Config
-    # section cover both UIs.
-    sidebar=None,
-    # The settings endpoints are mounted by the registry and return
-    # an empty payload for this module (no typed settings schema).
+    # The macros module has no top-level sidebar entry — the
+    # dashboard panel + Machine Config section cover both UIs.
+    # The manifest declares the entry explicitly anyway because the
+    # contract forbids a None sidebar; the empty ``id`` keeps it
+    # from being merged into the nav list.
+    sidebar=SidebarEntry(id="", label="", icon="", order=100),
+    # The settings endpoints are mounted by the registry and expose
+    # the typed payload from :class:`MacrosSettings`. ``settings_panel``
+    # stays ``False`` because the Settings UI does not yet render a
+    # macros tab; flip to ``True`` when the frontend gains one.
     settings_panel=False,
 )
 
@@ -131,14 +137,13 @@ class MacrosModule:
         """
         return self._router
 
-    def get_settings_model(self) -> Optional[BaseModel]:
-        """Return ``None``; macros has no typed settings schema.
+    def get_settings_model(self) -> BaseModel:
+        """Return a fresh :class:`MacrosSettings` defaults instance.
 
-        The registry falls back to untyped JSON for the canonical
-        settings endpoints, which return an empty ``{}`` for this
-        module today.
+        The contract requires a non-null :class:`BaseModel`. See
+        :mod:`backend.modules.macros.settings` for the schema.
         """
-        return None
+        return MacrosSettings()
 
 
 # ---------------------------------------------------------------------- #
@@ -150,10 +155,10 @@ def setup() -> PluggableModule:
     """Factory consumed by :class:`ModuleRegistry.discover`.
 
     A fresh instance per ``setup()`` call keeps per-module state
-    isolated between tests and avoids leaking class-level state
+    isolated between test runs and avoids leaking class-level state
     across reloads.
     """
     return MacrosModule()
 
 
-__all__ = ["MacrosModule", "setup"]
+__all__ = ["MacrosModule", "setup", "MacrosSettings"]

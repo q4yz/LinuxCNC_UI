@@ -120,23 +120,22 @@ def test_state_invalid_mode_returns_400(tmp_data_root, clean_env):
     assert resp.json()["detail"] == "Invalid mode"
 
 
-def test_state_module_settings_router_returns_empty(
+def test_state_module_settings_router_returns_typed_payload(
     tmp_data_root, clean_env
 ):
-    """The state module has no Pydantic settings defaults today.
-
-    ``get_settings_model`` returns ``None`` so the registry still
-    mounts the canonical settings router (it's a registry-level
-    concern, not a per-module opt-out) but with an empty schema.
-    ``GET /api/v1/modules/machine_state/settings`` returns an
-    empty dict until the module declares a settings model.
+    """The contract requires every module to return a non-null
+    Pydantic settings model. The state module ships
+    :class:`StateSettings` (introduced in the contract rewrite —
+    see ``.agent/contracts/backend-module.md`` § 1) so the
+    canonical settings endpoints expose a typed payload from first
+    boot.
     """
     app, _ = _state_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
     resp = client.get("/api/v1/modules/machine_state/settings")
     assert resp.status_code == 200
-    assert resp.json() == {}
+    assert resp.json() == {"confirm_mode_change": False}
 
 
 def test_state_registry_logs_mounted_summary(

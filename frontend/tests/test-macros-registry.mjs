@@ -70,11 +70,16 @@ test("macros manifest has the documented shape", () => {
   assert.match(manifest, /id:\s*(['"`])macros\1/);
   assert.match(manifest, /title:\s*(['"`])Macros\1/);
   assert.match(manifest, /settingsPanel:\s*true/);
-  // No sidebar; both surfaces live on the dashboard + Machine
-  // Config column. The previous attempt at a sidebar entry was
-  // rolled back when the user said this module's UI sits in
-  // those two places.
-  assert.doesNotMatch(manifest, /sidebar:\s*\{/);
+  // The contract requires every manifest to declare the
+  // ``sidebar`` field. The macros module ships an empty
+  // ``SidebarEntry`` because both surfaces (dashboard panel +
+  // Machine Config column) live outside the top-level nav. The
+  // registry filters the entry out by ``id``.
+  assert.match(
+    manifest,
+    /sidebar:\s*\{\s*id:\s*['"]{2}/,
+    "manifest must declare an empty sidebar entry (contract requirement)",
+  );
 });
 
 test("macros store id follows the module_ prefix rule", () => {
@@ -263,20 +268,26 @@ test("macros parser exports the M-code name regex", () => {
   );
 });
 
-test("DashboardView mounts MacroPanel + McodePanel via the registry shim", () => {
+test("DashboardView statically imports MacroPanel + McodePanel", () => {
   const dashboardText = readText(dashboardPath);
-  // Both panels are wired through the same nullable
-  // ``panelFor(<id>, <Component>)`` shape used by the rest of the
-  // dashboard.
-  assert.match(
+  // Both panels are hard dependencies and are imported statically
+  // — no ``panelFor``, no ``defineAsyncComponent``, no
+  // ``import.meta.glob(..., { eager: false })``. See
+  // ``.agent/STATE.md`` § 13 for the no-lazy-imports rule.
+  assert.doesNotMatch(
     dashboardText,
-    /panelFor\(\s*['"]macros['"]\s*,\s*['"]MacroPanel['"]\s*\)/,
-    "DashboardView must register MacroPanel via panelFor('macros', 'MacroPanel')",
+    /panelFor\(\s*['"]macros['"]/,
+    "DashboardView must not use the legacy panelFor lazy discovery for the macros module",
   );
   assert.match(
     dashboardText,
-    /panelFor\(\s*['"]macros['"]\s*,\s*['"]McodePanel['"]\s*\)/,
-    "DashboardView must register McodePanel via panelFor('macros', 'McodePanel')",
+    /import\s+MacroPanelRaw\s+from\s+['"]\.\.\/modules\/macros\/components\/MacroPanel\.vue['"]/,
+    "DashboardView must statically import MacroPanel from the module folder",
+  );
+  assert.match(
+    dashboardText,
+    /import\s+McodePanelRaw\s+from\s+['"]\.\.\/modules\/macros\/components\/McodePanel\.vue['"]/,
+    "DashboardView must statically import McodePanel from the module folder",
   );
   // Reactive ``registry.modules.has('macros')`` gate so the panels
   // hide cleanly when the module is unmounted.

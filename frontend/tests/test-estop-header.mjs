@@ -93,12 +93,14 @@ test("EStopHeader button delegates to the machine store's toggleEstop action", (
   assert.match(text, /async\s+function\s+pressEStop\s*\(\s*\)/);
 });
 
-test("EStopHeader uses position: sticky with top: 0 so it pins to the viewport", () => {
+test("EStopHeader pins to the top-right of the viewport", () => {
   const text = readText(headerPath);
-  // ``sticky`` + ``top-0`` is the documented contract from the
-  // issue acceptance criteria.
-  assert.match(text, /\bsticky\b/);
+  // The header uses ``fixed top-0 right-0`` to anchor the
+  // STOP button to the top-right corner. The state readout
+  // badge sits below it on the same wrapper.
+  assert.match(text, /\bfixed\b/);
   assert.match(text, /\btop-0\b/);
+  assert.match(text, /\bright-0\b/);
 });
 
 test("EStopHeader has a high z-index so it sits above other elements", () => {
@@ -125,17 +127,14 @@ test("EStopHeader button uses standard E-Stop iconography (red, large, STOP labe
   assert.match(text, /aria-label\s*=\s*["']Emergency Stop["']/);
 });
 
-test("EStopHeader exposes the active / clear state chips", () => {
-  // The header must surface the current ``isEstop`` flag so the
-  // operator gets visual confirmation when E-Stop is engaged.
+test("EStopHeader exposes the machine-state readout", () => {
+  // The header carries a small machine-state badge under the
+  // STOP button. The badge drives its color from a state map
+  // and exposes a stable ``data-testid`` so e2e suites can
+  // target it.
   const text = readText(headerPath);
-  // ``v-if`` on ``isEstop`` is the canonical reactive binding.
-  assert.match(text, /v-if\s*=\s*["']isEstop["']/);
-  assert.match(text, /v-else\b/);
-  // The chips themselves carry stable ``data-testid`` hooks so
-  // future e2e work can target them.
-  assert.match(text, /data-testid\s*=\s*["']estop-state-active["']/);
-  assert.match(text, /data-testid\s*=\s*["']estop-state-clear["']/);
+  assert.match(text, /data-testid\s*=\s*["']estop-machine-state["']/);
+  assert.match(text, /systemState/);
 });
 
 // ---------------------------------------------------------------------- //

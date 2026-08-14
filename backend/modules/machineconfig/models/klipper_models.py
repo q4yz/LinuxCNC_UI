@@ -280,7 +280,13 @@ class MachineConfigGraph:
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
     heaters: dict[str, Heater] = field(default_factory=dict)
     spindle_analog: SpindleAnalog | None = None
-    spindle_digital: SpindleDigital | None = None
+    # Multiple digital spindles keyed by canonical id
+    # (``spindle_digital`` for the bare form,
+    # ``spindle_digital_test`` for ``[spindle test]``, ...).
+    # Single-spindle callers should prefer the ``spindle_digital``
+    # deprecated property below — it returns the first declared
+    # record and preserves the historical ``| None`` shape.
+    spindle_digitals: dict[str, SpindleDigital] = field(default_factory=dict)
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
     fans: dict[str, Fan] = field(default_factory=dict)
     # Multiple MCUs. The key is the section's object name
@@ -298,6 +304,22 @@ class MachineConfigGraph:
         the rest of the codebase migrates.
         """
         for value in self.mcus.values():
+            return value
+        return None
+
+    @property
+    def spindle_digital(self) -> SpindleDigital | None:
+        """Back-compat accessor returning the first declared digital spindle.
+
+        Historical callers read ``graph.spindle_digital`` to learn the
+        single spindle's HAL signal map. The multi-instance world uses
+        :attr:`spindle_digitals` for the full inventory; this property
+        keeps the legacy single-spindle API alive while the rest of
+        the codebase migrates. Returns the first declared record (in
+        dict insertion order) so a profile with one bare ``[spindle]``
+        behaves identically to before.
+        """
+        for value in self.spindle_digitals.values():
             return value
         return None
 

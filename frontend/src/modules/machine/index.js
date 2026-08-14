@@ -1,6 +1,7 @@
 // Machine module entrypoint. The frontend registry imports this file
-// lazily and consumes the default export. See ``.agent/STATE.md`` § 1
-// (lazy discovery), § 2 (store id).
+// **statically** — no ``import.meta.glob(..., { eager: false })``,
+// no ``defineAsyncComponent`` — per the no-lazy-imports rule in
+// ``.agent/STATE.md`` § 13.
 
 import manifest from "./manifest.js";
 import DroPanel from "./components/DroPanel.vue";
@@ -9,6 +10,7 @@ import { useServoThreadStore } from "../../stores/servoThread.js";
 
 export default {
   manifest,
+  mainView: DroPanel,
   onLoad(/* ctx */) {
     // Open the 10 Hz ``/ws/telemetry`` WebSocket on the servo
     // thread (idempotent — see the guard inside
@@ -20,9 +22,6 @@ export default {
     // ``stop()`` is a no-op when the socket is already closed.
     useServoThreadStore().stop();
   },
-  // Re-export the components so ``DashboardView`` can keep them out
-  // of the initial bundle via ``defineAsyncComponent``. See
-  // ``.agent/STATE.md`` § 1.
   components: {
     DroPanel,
     JogControls,

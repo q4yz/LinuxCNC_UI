@@ -118,8 +118,7 @@ class MachineStubService:
     surfaces every pending stub method name in one place.
     """
 
-    def get_spindle(self):
-        pass
+
 
     def get_heater(self):
         pass
@@ -136,14 +135,7 @@ class MachineStubService:
     def set_fan_speed(self, fan_speed: int) -> None:
         pass
 
-    def set_spindle_speed(self):
-        pass
 
-    def set_spindle_override_relative(self):
-        pass
-
-    def set_spindle_override_absolute(self):
-        pass
 
 
 _machine_service: Optional[MachineService] = None

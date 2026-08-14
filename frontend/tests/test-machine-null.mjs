@@ -1,13 +1,15 @@
 // Machine module structural tests.
 //
-// Run with: node --test frontend/tests/test-machine-null.mjs
+// Run with: node --import ../scripts/vue-test-loader-register.mjs
+//             --test test-machine-null.mjs
 //
 // Pins the static structure the machine module's components and
 // cross-module consumers depend on:
 //
-//   * ``DashboardView.vue`` lazily imports the machine panel via
-//     ``defineAsyncComponent`` + ``import.meta.glob``.
-//   * The DRO and JogControls slots gate on ``v-if="machineMounted"``.
+//   * ``DashboardView.vue`` statically imports ``DroPanel`` and
+//     ``JogControls`` from the module folder (no lazy discovery).
+//   * The DRO and JogControls slots gate on
+//     ``v-if="machineMounted"``.
 //   * The legacy ``components/DroPanel.vue`` and
 //     ``components/JogControls.vue`` are gone.
 //   * The new ``modules/machine/components/DroPanel.vue`` and
@@ -16,11 +18,12 @@
 //     cross-module runtime layer); the module's ``store.js`` is a
 //     thin re-export.
 //
-// The nullable-module guarantee (deleting
-// ``modules/machine/`` keeps the build green) was dropped in
-// the same refactor that deleted ``stores/machineStoreShim.js`` —
-// the machine module is now a hard dependency, same as the
-// temperature module.
+// The machine module is a hard dependency. The previous
+// nullable-module guarantee was retired in the same refactor that
+// deleted ``stores/machineStoreShim.js``; the no-lazy-imports rule
+// documented in ``.agent/STATE.md`` § 13 made the lazy-discovery
+// scaffolding (``panelFor``, ``defineAsyncComponent``,
+// ``import.meta.glob(..., { eager: false })``) obsolete.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -68,27 +71,26 @@ const removedShim = resolve(
   "frontend/src/stores/machineStoreShim.js",
 );
 
-test("DashboardView uses defineAsyncComponent for the machine panel", () => {
+test("DashboardView statically imports the machine module panels", () => {
   const source = readFileSync(dashboardPath, "utf-8");
-  assert.match(
+  // The machine module is a hard dependency — its panels must be
+  // imported statically. ``panelFor`` and ``defineAsyncComponent``
+  // were retired when lazy imports were banned in the contract
+  // rewrite (see ``.agent/STATE.md`` § 13).
+  assert.doesNotMatch(
     source,
-    /defineAsyncComponent/,
-    "DashboardView must use defineAsyncComponent so the machine chunk is split",
-  );
-  // The machine panels are loaded via the generic `panelFor`
-  // helper, which performs the dynamic import at runtime — not
-  // a literal ``import('.../DroPanel.vue')`` call. The regex
-  // below looks for that helper invocation so a regression that
-  // re-adds a static import is still caught.
-  assert.match(
-    source,
-    /panelFor\(\s*['"]machine['"]\s*,\s*['"]DroPanel['"]\s*\)/,
-    "DashboardView must lazily resolve DroPanel via panelFor",
+    /panelFor\(\s*['"]machine['"]/,
+    "DashboardView must not use the legacy panelFor lazy discovery for the machine module",
   );
   assert.match(
     source,
-    /panelFor\(\s*['"]machine['"]\s*,\s*['"]JogControls['"]\s*\)/,
-    "DashboardView must lazily resolve JogControls via panelFor",
+    /import\s+DroPanelRaw\s+from\s+['"]\.\.\/modules\/machine\/components\/DroPanel\.vue['"]/,
+    "DashboardView must statically import DroPanel from the module folder",
+  );
+  assert.match(
+    source,
+    /import\s+JogControlsRaw\s+from\s+['"]\.\.\/modules\/machine\/components\/JogControls\.vue['"]/,
+    "DashboardView must statically import JogControls from the module folder",
   );
 });
 
@@ -101,11 +103,11 @@ test("DashboardView guards the machine slots with v-if and a placeholder", () =>
     /registry\.modules\.has\(['"]machine['"]\)/,
     "machineMounted computed must read from the registry",
   );
-  // When the module is not mounted the dashboard renders a
-  // placeholder card rather than throwing — keep the layout
-  // consistent.
-  assert.match(source, /v-else/);
-  assert.match(source, /not mounted/i);
+  // When the module is excluded by ``MODULES_ENABLED`` the
+  // dashboard renders no card. With the no-lazy-imports rule
+  // the panel itself is statically imported, so there is no
+  // longer a ``v-else`` placeholder — the slot simply hides.
+  assert.doesNotMatch(source, /\bv-else\b/);
 });
 
 test("DashboardView does not statically import the legacy machine paths", () => {
@@ -176,24 +178,24 @@ test("the removed compat shim is gone", () => {
   );
 });
 
-test("App.vue starts the servo thread only when the machine module is not mounted", () => {
-  // The module's ``onLoad`` already opens the WebSocket via
-  // ``useServoThreadStore().start()``; App.vue's fallback boot
-  // must guard against a double-socket by checking
-  // ``registry.modules.has('machine')`` first. The ``start()``
-  // action itself is also idempotent per the store
-  // implementation.
+test("App.vue does not start the servo thread (machine module owns it)", () => {
+  // The machine module is a hard dependency; its ``onLoad``
+  // opens the WebSocket via ``useServoThreadStore().start()``.
+  // App.vue previously guarded a fallback boot with
+  // ``registry.modules.has('machine')``; that path is gone
+  // because the module is always present at runtime. See
+  // ``.agent/STATE.md`` § 7 for the modules-are-mandatory rule.
   const appPath = resolve(repoRoot, "frontend/src/App.vue");
   const source = readFileSync(appPath, "utf-8");
-  assert.match(
+  assert.doesNotMatch(
     source,
     /registry\.modules\.has\(\s*['"]machine['"]\s*\)/,
-    "App.vue must consult the registry before starting the servo thread",
+    "App.vue must not consult the registry for the machine module (it is a hard dependency)",
   );
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /servoThread\.start\(\s*\)/,
-    "App.vue must call servoThread.start() when the module is absent",
+    /servoThread\.start\s*\(/,
+    "App.vue must not call servoThread.start() (the machine module owns it)",
   );
 });
 

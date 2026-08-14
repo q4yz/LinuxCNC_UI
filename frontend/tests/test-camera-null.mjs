@@ -1,26 +1,32 @@
-// Nullable-module guarantee for the frontend camera module.
+// Camera module contract — hard-dependency regression guard.
 //
-// Run with: node --test frontend/tests/test-camera-null.mjs
+// Run with: node --import ../scripts/vue-test-loader-register.mjs
+//             --test test-camera-null.mjs
 //
-// Issue #2 requires the camera module to be **removable** without
-// breaking the dashboard build. We cannot dynamically delete
-// ``frontend/src/modules/camera/`` at test time (the import would
-// fail mid-suite), so this test takes a static-analysis approach:
+// The camera module is a hard dependency (per the contract
+// rewrite, see ``.agent/STATE.md`` § 7). The legacy "removable
+// module" guarantee was retired — the dashboard now statically
+// imports ``CameraViewer`` from the module folder and the registry
+// refuses to mount a module without a non-null ``mainView``. This
+// file is now a structural-assertion suite that pins the
+// hard-dependency invariants:
 //
-//   1. The dashboard view uses ``defineAsyncComponent`` for the camera
-//      panel — never a static import. Without this, deleting the
-//      camera folder would crash the build (Gotcha #1).
-//   2. The dashboard renders the camera slot behind a ``v-if`` that
-//      reads the registry — so a missing module produces an empty
-//      cell, not an error.
-//   3. The camera store follows the ``module_camera`` convention from
-//      Gotcha #2, which is checked by the build's store-id lint.
-//   4. The legacy ``frontend/src/components/CameraPanel.vue`` wrapper
-//      is gone — the module owns the canonical implementation via
-//      ``CameraViewer``, exposed through the module's ``mainView``.
-//   5. The module's ``index.js`` exports a ``mainView`` so
-//      ``App.vue`` and ``registerModuleRoutes`` resolve the camera
-//      route deterministically (no file-naming heuristics).
+//   1. The dashboard view statically imports ``CameraViewer`` from
+//      the module folder — never via lazy discovery
+//      (``defineAsyncComponent`` or ``import.meta.glob(..., { eager:
+//      false })``).
+//   2. The dashboard still gates the camera slot behind a ``v-if``
+//      so the slot is hidden when the registry excludes the module
+//      via ``MODULES_ENABLED``.
+//   3. The camera store follows the ``module_camera`` convention
+//      from Gotcha #2, which is checked by the build's store-id
+//      lint.
+//   4. The legacy ``frontend/src/components/CameraPanel.vue``
+//      wrapper is gone — the module owns the canonical
+//      implementation via ``CameraViewer``, exposed through the
+//      module's ``mainView``.
+//   5. The module's ``index.js`` exports a non-null ``mainView``
+//      so the contract test in the registry passes.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -52,17 +58,21 @@ const cameraViewer = resolve(
   "frontend/src/modules/camera/components/CameraViewer.vue",
 );
 
-test("DashboardView uses defineAsyncComponent for the camera viewer", () => {
+test("DashboardView statically imports CameraViewer (no lazy discovery)", () => {
   const source = readFileSync(dashboardPath, "utf-8");
-  assert.match(
+  // The camera module is a hard dependency; the dashboard must
+  // import it statically. ``panelFor`` and ``defineAsyncComponent``
+  // were retired when lazy imports were banned in the contract
+  // rewrite (see ``.agent/STATE.md`` § 13).
+  assert.doesNotMatch(
     source,
-    /defineAsyncComponent/,
-    "DashboardView must use defineAsyncComponent so the camera chunk is split",
+    /panelFor\(\s*['"]camera['"]/,
+    "DashboardView must not use the legacy panelFor lazy discovery for the camera module",
   );
   assert.match(
     source,
-    /panelFor\(\s*['"]camera['"]\s*,\s*['"]CameraViewer['"]\s*\)/,
-    "DashboardView must lazily resolve the camera module's CameraViewer.vue",
+    /import\s+CameraViewerRaw\s+from\s+['"]\.\.\/modules\/camera\/components\/CameraViewer\.vue['"]/,
+    "DashboardView must statically import the camera module's CameraViewer.vue",
   );
 });
 
@@ -111,21 +121,28 @@ test("modules/camera/components/CameraPanel.vue is removed in favor of mainView"
   );
 });
 
-test("camera/index.js exports mainView: CameraViewer", () => {
+test("camera/index.js statically imports and exports mainView: CameraViewer", () => {
   const text = readFileSync(cameraIndex, "utf-8");
   // The registry contract: ``mainView`` on the module's default
   // export is what ``App.vue`` and ``registerModuleRoutes`` mount
-  // for the route the sidebar resolves to. Without it the camera
-  // page falls back to the alphabetical glob discovery which used
-  // to pick the (now-deleted) CameraPanel.vue.
-  //
-  // The camera module loads ``CameraViewer`` lazily through
-  // ``defineAsyncComponent`` so removing the module folder stays
-  // a no-op for the registry bootstrap (see camera/index.js comment).
+  // for the route the sidebar resolves to. The no-lazy-imports
+  // rule (``.agent/STATE.md`` § 13) bans ``defineAsyncComponent``
+  // and dynamic ``import()`` from the module surface, so the
+  // module must import its main view statically.
+  assert.doesNotMatch(
+    text,
+    /\bdefineAsyncComponent\s*\(/,
+    "camera/index.js must not call defineAsyncComponent (no-lazy-imports rule)",
+  );
+  assert.doesNotMatch(
+    text,
+    /import\s*\(\s*["']\.\/components\/CameraViewer\.vue["']\s*\)/,
+    "camera/index.js must not dynamic-import CameraViewer.vue",
+  );
   assert.match(
     text,
-    /import\(["']\.\/components\/CameraViewer\.vue["']\)/,
-    "camera/index.js must dynamic-import the CameraViewer component",
+    /import\s+CameraViewer\s+from\s+["']\.\/components\/CameraViewer\.vue["']/,
+    "camera/index.js must statically import CameraViewer from the components folder",
   );
   assert.match(
     text,

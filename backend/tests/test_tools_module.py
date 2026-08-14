@@ -42,10 +42,14 @@ def test_tools_module_boots_and_registers_router(tmp_data_root, clean_env):
 
     client = TestClient(app)
     # Confirm the canonical settings endpoints are mounted by the
-    # registry (no Pydantic defaults model today → empty dict).
+    # registry with the typed defaults from
+    # :class:`ToolsSettings` (see ``.agent/contracts/backend-module.md``
+    # § 1 — every module returns a non-null Pydantic model).
     resp = client.get("/api/v1/modules/tools/settings")
     assert resp.status_code == 200
-    assert resp.json() == {}
+    payload = resp.json()
+    assert payload["confirm_spindle_start"] is False
+    assert payload["max_spindle_rpm"] == 12000
 
 
 def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
@@ -500,15 +504,20 @@ def test_on_unload_executes_without_error(tmp_data_root, clean_env):
     instance.on_unload()  # idempotent
 
 
-def test_get_settings_model_returns_none(tmp_data_root, clean_env):
-    """Issue #64 ships without a typed Pydantic defaults schema;
-    ``get_settings_model`` must return ``None`` so the registry
-    falls back to untyped JSON.
+def test_get_settings_model_returns_typed_model(tmp_data_root, clean_env):
+    """The contract requires ``get_settings_model`` to return a
+    non-null Pydantic ``BaseModel``. The tools module ships
+    :class:`ToolsSettings` (introduced in the contract rewrite —
+    see ``.agent/contracts/backend-module.md`` § 1) so the
+    canonical four settings endpoints expose a typed payload from
+    first boot.
     """
     from modules.tools.module import ToolsModule
+    from modules.tools.settings import ToolsSettings
 
     instance = ToolsModule()
-    assert instance.get_settings_model() is None
+    model = instance.get_settings_model()
+    assert isinstance(model, ToolsSettings)
 
 
 def test_get_router_returns_apirouter(tmp_data_root, clean_env):

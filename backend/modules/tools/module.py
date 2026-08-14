@@ -12,17 +12,16 @@ no background work is scheduled today because all spindle /
 extruder interactions are operator-initiated and complete in a
 single request (Issue #64).
 
-The module intentionally does **not** expose a typed Pydantic
-settings schema — the issue's hard-coded mock tool list will be
-replaced by a dynamic config in a follow-up. Until then,
-``get_settings_model`` returns ``None`` and the registry falls back
-to untyped JSON for the canonical settings endpoints.
+The module exposes a typed Pydantic settings schema via
+:mod:`backend.modules.tools.settings`. The schema is intentionally
+small so the canonical four settings endpoints expose a non-empty
+payload from first boot; new knobs land as new keys on
+:class:`ToolsSettings` without breaking the contract.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -31,9 +30,11 @@ from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from .router import router as _router
+from .settings import ToolsSettings
 
 logger = logging.getLogger("backend.modules.tools")
 
@@ -48,11 +49,17 @@ _MANIFEST = ModuleManifest(
         "via the canonical hardware.json ``tools[]`` list."
     ),
     # Tools live inside the dashboard grid, not as a top-level
-    # nav item — matches the temperature module.
-    sidebar=None,
-    # No settings panel yet. The mock tool list is hard-coded in
-    # the frontend store (see ``frontend/src/modules/tools/``)
-    # until dynamic configuration lands.
+    # nav item — matches the temperature module. The manifest
+    # declares the sidebar entry explicitly because the contract
+    # forbids a None sidebar.
+    sidebar=SidebarEntry(
+        id="tools",
+        label="Tools",
+        icon="",
+        order=90,
+    ),
+    # Settings panel stays off until the Settings UI gains a tab
+    # for this module.
     settings_panel=False,
 )
 
@@ -111,25 +118,23 @@ class ToolsModule:
         """
         return self._router
 
-    def get_settings_model(self) -> Optional[BaseModel]:
-        """Return ``None`` until a typed settings schema exists.
+    def get_settings_model(self) -> BaseModel:
+        """Return a fresh :class:`ToolsSettings` defaults instance.
 
-        Issue #64 intentionally ships without a Pydantic defaults
-        model — the dynamic tool configuration is a follow-up.
-        Returning ``None`` lets the registry fall back to untyped
-        JSON for the canonical settings endpoints.
+        The contract requires a non-null :class:`BaseModel`. See
+        :mod:`backend.modules.tools.settings` for the schema.
         """
-        return None
+        return ToolsSettings()
 
 
 def setup() -> PluggableModule:
     """Factory consumed by :class:`ModuleRegistry.discover`.
 
     A fresh instance per ``setup()`` call keeps per-module state
-    isolated between tests and avoids leaking class-level state
+    isolated between test runs and avoids leaking class-level state
     across reloads.
     """
     return ToolsModule()
 
 
-__all__ = ["ToolsModule", "setup"]
+__all__ = ["ToolsModule", "setup", "ToolsSettings"]

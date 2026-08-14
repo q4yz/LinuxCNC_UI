@@ -20,23 +20,26 @@ business facade (:class:`StateService`) lives in
 lives in the axis module because homing is an axis-motion action;
 everything else (state / mode / MDI) lives here.
 
-The state module has no user-tunable settings today, so
-:meth:`get_settings_model` returns ``None`` and the registry skips
-the canonical four-endpoint settings router for this module.
+The state module declares a typed settings surface via
+:mod:`backend.modules.state.settings` so the canonical four
+endpoints expose a non-empty payload from first boot.
 """
 from __future__ import annotations
 
 import logging
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from core.protocols import (
     ModuleContext,
     ModuleManifest,
     PluggableModule,
+    SidebarEntry,
 )
 
 from .router import router as state_router
+from .settings import StateSettings
 
 logger = logging.getLogger("backend.modules.state")
 
@@ -49,12 +52,16 @@ _MANIFEST = ModuleManifest(
         "Read/set machine state, mode, and MDI. "
         "Home lives in the axis module."
     ),
-    # No sidebar entry — the machine dashboard lives at the root,
-    # mounted by ``App.vue`` rather than as a top-level nav item.
-    sidebar=None,
+    # The state module has no sidebar entry — the machine dashboard
+    # is mounted at the root by ``App.vue``. The manifest declares
+    # the entry explicitly anyway because the contract forbids a
+    # None sidebar; the empty ``id`` keeps it from being merged into
+    # the nav list.
+    sidebar=SidebarEntry(id="", label="", icon="", order=100),
     # No settings panel — the state module has no user-tunable
-    # settings today. Adding one later is a single-line flip here
-    # plus a Pydantic defaults model in a sibling ``settings.py``.
+    # settings today. The typed defaults schema in
+    # :mod:`backend.modules.state.settings` keeps the canonical
+    # four endpoints non-empty without rendering a Settings tab.
     settings_panel=False,
 )
 
@@ -113,15 +120,13 @@ into :class:`AxisService` in :mod:`modules.axis.service`).
         """
         return self._router
 
-    def get_settings_model(self):
-        """Return ``None`` — the state module has no settings today.
+    def get_settings_model(self) -> BaseModel:
+        """Return a fresh :class:`StateSettings` defaults instance.
 
-        The registry reads this via :func:`getattr` and tolerates
-        ``AttributeError`` / ``None`` so opting out is a single
-        ``None`` return. When a future settings schema lands,
-        replace with a Pydantic ``BaseModel`` subclass.
+        The contract requires a non-null :class:`BaseModel`. See
+        :mod:`backend.modules.state.settings` for the schema.
         """
-        return None
+        return StateSettings()
 
 
 def setup() -> PluggableModule:
@@ -134,4 +139,4 @@ def setup() -> PluggableModule:
     return StateModule()
 
 
-__all__ = ["StateModule", "setup"]
+__all__ = ["StateModule", "setup", "StateSettings"]
