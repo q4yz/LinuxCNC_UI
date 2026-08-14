@@ -68,6 +68,29 @@ async function saveIpCameraUrl() {
 
   try {
     const normalizedUrl = ipCameraUrl.value.trim();
+
+    // Client-side guard against the ``user:pass@host`` antipattern.
+    // Chrome 86+ strips userinfo from cross-origin redirect Location
+    // headers as a credential-leak hardening; the operator-facing
+    // hint at save time is friendlier than the 503 the backend would
+    // surface on the next /stream request.
+    try {
+      const parsed = new URL(normalizedUrl);
+      if (parsed.username || parsed.password) {
+        throw new Error(
+          "URL contains embedded credentials (user:pass@host). " +
+          "Move them into query parameters (?user=...&pwd=...).",
+        );
+      }
+    } catch (parseError) {
+      settingsError.value =
+        parseError instanceof Error
+          ? parseError.message
+          : "Invalid IP camera URL";
+      settingsSaving.value = false;
+      return;
+    }
+
     const payload = await settings.writeKey("ip_camera_url", normalizedUrl);
     ipCameraUrl.value =
       typeof payload.ip_camera_url === "string"
@@ -133,7 +156,7 @@ onMounted(() => {
             type="text"
             inputmode="url"
             autocomplete="url"
-            placeholder="rtsp://camera.local/stream"
+            placeholder="http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
             :disabled="settingsLoading || settingsSaving"
             class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -146,6 +169,15 @@ onMounted(() => {
           {{ settingsSaving ? "Saving..." : "Save URL" }}
         </button>
       </form>
+
+      <p class="text-xs text-gray-500">
+        Put credentials in query parameters
+        (<code class="rounded bg-gray-800 px-1">&amp;user=...&amp;pwd=...</code>).
+        The browser forwards them across the cross-origin redirect.
+        Embedded
+        <code class="rounded bg-gray-800 px-1">user:pass@host</code>
+        credentials are stripped by Chrome and won't reach the camera.
+      </p>
 
       <p v-if="settingsError" class="text-xs text-red-300" role="alert">
         {{ settingsError }}

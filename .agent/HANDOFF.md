@@ -14,7 +14,56 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Remove offline (historical) feature; every stored camera is cycleable
+### 1.1 Revert IP camera /stream to 302 redirect; credentials travel in query parameters
+
+- **Why.** The MJPEG proxy we shipped for IP cameras was solving
+  two problems — credentials stripped from cross-origin
+  ``<img>`` redirects (Chrome 86+ hardens ``user:pass@host`` in
+  Location headers) and missing ``;boundary=…`` content-type.
+  The second was a backend-side fix (proxy captures and
+  forwards the upstream's content-type verbatim); the first can
+  be solved without proxying by moving credentials into **query
+  parameters**, which Chrome / Edge / Safari do not strip on
+  cross-origin navigation. The proxy was over-engineered for
+  IP cameras: the upstream is already reachable from the
+  browser, no CORS headers are required for ``<img>`` rendering,
+  and ``?user=…&pwd=…`` reaches the upstream intact.
+- **Change.** ``backend/modules/camera/router.py`` —
+  ``camera_stream()`` is now ``def`` again (no longer
+  ``async def``); the HTTP / HTTPS branch returns
+  ``RedirectResponse(url, 302)`` via a new ``_redirect_to_ip_camera()``
+  helper. ``_redirect_to_ip_camera()`` parses the URL and rejects
+  any with embedded userinfo (the ``user:pass@host`` antipattern)
+  with a 503 + a clear operator hint. RTSP still rejected with 503.
+  ``/dev/videoN`` (ustreamer on localhost) keeps the proxy path —
+  the browser still can't reach ``127.0.0.1:{port}`` from a
+  different host.
+- **Frontend.** ``CameraSettings.vue`` — input placeholder is
+  now ``http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara``
+  (was ``rtsp://camera.local/stream``) and a help-text paragraph
+  explains the query-param convention. ``saveIpCameraUrl()``
+  validates the URL client-side via ``new URL(...).username`` and
+  rejects embedded userinfo at save time so the operator sees the
+  error inline rather than as a 503 on the next /stream request.
+- **Tests.** ``backend/tests/test_camera_ustreamer_supervisor.py``
+  — replaced ``test_stream_endpoint_proxies_ip_camera_url`` and
+  ``test_stream_endpoint_passes_through_upstream_content_type``
+  with three redirect tests:
+  ``test_stream_endpoint_returns_302_to_ip_camera_url``
+  (query params preserved verbatim),
+  ``test_stream_endpoint_returns_503_when_ip_camera_url_has_embedded_userinfo``
+  (defensive 503 for stale / hand-edited ``settings.json``), and
+  ``test_stream_endpoint_preserves_https_for_redirect``
+  (HTTPS doesn't get downgraded). USB-camera proxy tests are
+  unchanged — ustreamer URLs still go through ``MjpegProxy``.
+- **Status.** Complete.
+- **Operator deployment note.** The operator must update the IP
+  camera URL in the Settings panel to the query-parameter form
+  (``?user=…&pwd=…``). Old ``user:pass@host`` URLs return 503
+  with a clear hint. The backend validator prevents saving
+  embedded userinfo going forward.
+
+### 1.2 Remove offline (historical) feature; every stored camera is cycleable
 
 - **What was done.** Dropped the ``historical: true`` synthetic
   flag from ``mergeStoredCamerasIntoDevices`` so every stored

@@ -305,135 +305,94 @@ def test_diagnostic_skips_dependency_checks_for_ip_url(
     assert snap["message"] == ""
 
 
-def test_stream_endpoint_proxies_ip_camera_url(
-    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+def test_stream_endpoint_returns_302_to_ip_camera_url(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):
-    """End-to-end: ``GET /stream?id=http://...`` proxies MJPEG bytes.
+    """``/stream?id=http://...&user=...&pwd=...`` returns a 302 redirect.
 
-    Regression for the operator's URL where the browser fetched
-    ``http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0`` fine but
-    rendered a broken image when the backend 302-redirected to it.
-    Chrome strips embedded credentials on cross-origin ``<img>``
-    redirects, so the upstream returned 401 and the browser showed
-    nothing.
-
-    The fix: the backend now proxies the upstream MJPEG bytes
-    one-for-one with credentials lifted into an ``Authorization``
-    header. The browser sees a same-origin
-    ``multipart/x-mixed-replace;boundary=...`` response with no
-    credentials and renders the live stream.
-
-    Boundary pass-through is asserted explicitly — see
-    ``test_stream_endpoint_passes_through_upstream_content_type``
-    below for the dedicated boundary regression.
+    The camera is reachable from the browser directly; the backend
+    just redirects with credentials in query parameters. Chrome
+    strips userinfo (``user:pass@host``) from cross-origin
+    Location headers; query parameters are not stripped and reach
+    the upstream intact.
     """
-    import modules.camera.router as router_module
-    from modules.camera.mjpeg_proxy import MjpegProxy
-
-    expected_body = (
-        b"--ipcamera\r\n"
-        b"Content-Type: image/jpeg\r\n\r\n"
-        b"\xff\xd8\xff\xe0fake-jpeg\r\n"
-        b"--ipcamera\r\n"
-    )
-
-    class _FakeProxy:
-        def __init__(self, url):
-            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def iter_bytes(self):
-            yield expected_body
-
-    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
-
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
-    resp = client.get(f"/api/v1/modules/camera/stream?id={url}")
+    url = (
+        "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
+    )
+    # Use ``params=`` so TestClient URL-encodes the ``id`` value
+    # correctly (an embedded ``&`` would otherwise be misread as a
+    # query-string separator).
+    resp = client.get(
+        "/api/v1/modules/camera/stream",
+        params={"id": url},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    # Query params preserved verbatim — this is the whole point of the
+    # design. If a future refactor accidentally URL-encodes them or
+    # strips them, the camera never sees the credentials.
+    assert resp.headers["location"] == url
 
-    assert resp.status_code == 200
-    assert "multipart/x-mixed-replace" in resp.headers["content-type"]
-    # The proxy yields the synthetic bytes verbatim.
-    assert expected_body in resp.content
 
-
-def test_stream_endpoint_passes_through_upstream_content_type(
-    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+def test_stream_endpoint_returns_503_when_ip_camera_url_has_embedded_userinfo(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):
-    """The 200 response must carry the upstream's Content-Type verbatim.
+    """URLs with ``user:pass@host`` syntax return 503 with a clear hint.
 
-    Regression for the operator's IP camera URL where the proxy
-    returned 200 OK with hard-coded ``multipart/x-mixed-replace``
-    (no boundary) and the browser rendered nothing. The fix
-    captures the upstream's exact ``Content-Type`` —
-    ``multipart/x-mixed-replace;boundary=ipcamera`` — and uses it
-    on the StreamingResponse.
-
-    The ``;boundary=...`` parameter is what lets the browser parse
-    the multipart stream into frames. Without it the browser
-    silently fails to render. This test pins the boundary
-    pass-through contract directly so a future contributor who
-    reverts to a hard-coded ``media_type`` will trip the test
-    instead of breaking the dashboard.
+    Chrome strips userinfo from cross-origin Location headers; trying
+    to forward such a URL would silently break the stream because
+    the upstream gets the request without credentials and returns
+    401. The dashboard's input validator should catch this on
+    save, but if a URL with embedded userinfo slips through
+    (older ``settings.json``, manual API call, race between save
+    and validate), the endpoint surfaces a clear operator-facing
+    message rather than silently breaking the redirect.
     """
-    import modules.camera.router as router_module
-
-    expected_boundary = "ipcamera"
-    expected_content_type = (
-        f"multipart/x-mixed-replace;boundary={expected_boundary}"
-    )
-    expected_body = (
-        b"--ipcamera\r\n"
-        b"Content-Type: image/jpeg\r\n\r\n"
-        b"\xff\xd8\xff\xe0fake-jpeg\r\n"
-        b"--ipcamera\r\n"
-    )
-
-    class _FakeProxy:
-        def __init__(self, url):
-            self.content_type = expected_content_type
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def iter_bytes(self):
-            yield expected_body
-
-    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
-
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
-    resp = client.get(f"/api/v1/modules/camera/stream?id={url}")
+    bad_url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    resp = client.get(
+        "/api/v1/modules/camera/stream",
+        params={"id": bad_url},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 503
+    assert "user:pass@host" in resp.json()["detail"]
+    assert "query parameters" in resp.json()["detail"]
 
-    assert resp.status_code == 200
-    # Critical: the upstream's exact Content-Type (with the
-    # ``;boundary=...`` parameter) must reach the browser. Hard-coding
-    # ``multipart/x-mixed-replace`` here is the bug this test pins.
-    assert resp.headers["content-type"] == expected_content_type
-    # And the body must start with the matching boundary delimiter so
-    # the parser finds the first frame.
-    assert resp.content.startswith(b"--ipcamera\r\n")
-    # Defense-in-depth cache headers.
-    assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-    assert resp.headers["pragma"] == "no-cache"
+
+def test_stream_endpoint_preserves_https_for_redirect(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+):
+    """HTTPS IP camera URLs redirect unchanged — no downgrade to HTTP.
+
+    A future contributor might accidentally rewrite the scheme
+    (e.g., a misguided "always redirect to HTTP" cleanup). This
+    test pins that we forward whatever the operator configured.
+    """
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    url = (
+        "https://camera.example.com/stream?token=abc123&rate=0"
+    )
+    resp = client.get(
+        "/api/v1/modules/camera/stream",
+        params={"id": url},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == url
 
 
 def test_stream_endpoint_returns_503_for_rtsp_url(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):
-    """RTSP URLs are not supported by the proxy module.
+    """RTSP URLs are not supported by the IP-camera redirect.
 
     ``httpx`` does not speak RTSP and the backend does not ship
     ffmpeg / gst-launch to transcode. The endpoint surfaces a

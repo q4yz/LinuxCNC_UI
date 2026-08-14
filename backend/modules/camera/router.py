@@ -694,17 +694,20 @@ async def camera_stream(
             status_code=503,
             detail=(
                 "RTSP camera URLs are not supported by the IP-camera "
-                "proxy. The backend can consume HTTP / HTTPS MJPEG "
+                "redirect. The backend can consume HTTP / HTTPS MJPEG "
                 "streams only."
             ),
         )
 
-    # HTTP / HTTPS: proxy the upstream MJPEG bytes back to the
-    # browser. The proxy module handles credentials, upstream auth
-    # failures, and connection errors — every failure surfaces as a
-    # 503 with a single-line operator hint in the ``detail`` field.
+    # HTTP / HTTPS: redirect to the upstream URL with credentials
+    # in query parameters. Chrome 86+ strips ``user:pass@host``
+    # userinfo from cross-origin redirect Location headers as a
+    # credential-leak hardening; query parameters are not stripped
+    # and reach the upstream intact. The dashboard's input
+    # validator ensures operators store credentials as
+    # ``?user=...&pwd=...`` rather than embedded in the host.
     if camera_id.startswith(("http://", "https://")):
-        return await _proxy_stream_response(camera_id)
+        return _redirect_to_ip_camera(camera_id)
 
     # ``/dev/videoN`` (or anything else the supervisor understands).
     # ``spawn_or_reuse`` returns the per-device ustreamer URL
@@ -712,13 +715,42 @@ async def camera_stream(
     # through the backend rather than 302-redirecting the browser
     # to it — a redirect would point the browser at the backend host's
     # localhost, which is unreachable from the operator's shop
-    # workstation. The proxy makes the camera reachable same-origin,
-    # the same pattern used for HTTP / HTTPS IP cameras above.
+    # workstation. The proxy makes the camera reachable same-origin.
     try:
         info = _supervisor.spawn_or_reuse(camera_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return await _proxy_stream_response(info["url"])
+
+
+def _redirect_to_ip_camera(url: str) -> RedirectResponse:
+    """Validate the URL and return a 302 redirect.
+
+    Chrome 86+ strips ``user:pass@host`` userinfo from cross-origin
+    redirect Location headers as a credential-leak hardening. Query
+    parameters are not stripped — they reach the upstream intact. The
+    dashboard's input validator ensures operators store credentials
+    as ``?user=...&pwd=...``; if a URL with embedded userinfo slips
+    through (older settings.json, manual API call, race between save
+    and validate), we surface a clear operator hint rather than
+    silently breaking the redirect.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "IP camera URL contains embedded credentials "
+                "(user:pass@host). Move them into query parameters "
+                "(?user=...&pwd=...) so the browser forwards them "
+                "across the cross-origin redirect; Chrome strips "
+                "userinfo from Location headers and they would be "
+                "lost otherwise."
+            ),
+        )
+    return RedirectResponse(url=url, status_code=302)
 
 
 async def _proxy_stream_response(url: str) -> StreamingResponse:
