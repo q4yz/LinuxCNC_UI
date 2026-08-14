@@ -454,3 +454,49 @@ class TestLoadThenStartRoundTrip:
 # ``test_base_thread_snapshot.py`` module exercises the contract the
 # dashboard depends on; this file stays focused on the lifecycle
 # endpoints (load / run / stop / pause / resume / unload).
+
+
+# ---------------------------------------------------------------------- #
+# OpenAPI operation_id contract                                            #
+# ---------------------------------------------------------------------- #
+
+
+def test_program_router_exposes_short_operation_ids(tmp_data_root, clean_env):
+    """Each lifecycle endpoint must expose a short ``operationId``.
+
+    The OpenAPI generator turns ``operationId`` into the generated
+    client's static method name. Without an explicit ``operationId``
+    the generator falls back to a URL-derived long name
+    (``loadProgramApiV1ModulesProgramLoadPost``), and the frontend's
+    calls to ``ModulesProgramService.loadProgram(...)`` etc. fail
+    with ``TypeError: ... is not a function``.
+
+    The fix is six one-line ``operation_id=`` arguments on the
+    router decorators. This test pins the contract — a future
+    contributor who drops an ``operation_id=`` will trip the test
+    instead of breaking the dashboard silently.
+    """
+    app, _ = _program_app(tmp_data_root)
+    schema = app.openapi()
+    paths = schema["paths"]
+    expected = {
+        ("/api/v1/modules/program/load", "post"): "loadProgram",
+        ("/api/v1/modules/program/run", "post"): "runProgram",
+        ("/api/v1/modules/program/stop", "post"): "stopProgram",
+        ("/api/v1/modules/program/unload", "post"): "unloadProgram",
+        ("/api/v1/modules/program/pause", "post"): "pauseProgram",
+        ("/api/v1/modules/program/resume", "post"): "resumeProgram",
+    }
+    for (path, method), op_id in expected.items():
+        assert path in paths, f"endpoint {path!r} missing from OpenAPI schema"
+        assert method in paths[path], (
+            f"endpoint {method.upper()} {path!r} missing from OpenAPI schema"
+        )
+        actual = paths[path][method].get("operationId")
+        assert actual == op_id, (
+            f"{method.upper()} {path!r}: expected operationId={op_id!r}, "
+            f"got {actual!r}. The frontend will call "
+            f"ModulesProgramService.{op_id}(...) — without this "
+            f"operationId the generated method name does not match "
+            f"and the dashboard shows 'is not a function'."
+        )

@@ -14,7 +14,104 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Camera migrated from OpenCV to ustreamer; dependency diagnostics wired through
+### 1.1 MJPEG proxy passes through upstream Content-Type (incl. boundary)
+
+- **What was done.** The first iteration of the MJPEG proxy
+  (commit 1.1 below) returned 200 OK but the operator's browser
+  still rendered no image. ``curl -i`` against the backend
+  revealed ``content-type: multipart/x-mixed-replace`` — the
+  proxy hard-coded the response media-type and dropped the
+  upstream's ``;boundary=ipcamera`` parameter. Browsers parse
+  ``multipart/x-mixed-replace`` streams by splitting on
+  ``--<boundary>\r\n``; without the boundary the browser silently
+  fails to render.
+- **Fix.** ``backend/modules/camera/mjpeg_proxy.py`` rewritten as
+  :class:`MjpegProxy` (context manager) instead of a generator.
+  ``__aenter__`` opens the upstream connection and captures the
+  exact ``Content-Type`` header synchronously; ``iter_bytes()``
+  yields MJPEG chunks; ``__aexit__`` closes the upstream
+  socket. ``backend/modules/camera/router.py``'s
+  ``_proxy_stream_response`` is now ``async def`` (FastAPI
+  supports async handlers returning ``StreamingResponse``) and
+  passes ``proxy.content_type`` as ``media_type`` plus
+  ``Cache-Control: no-cache, no-store, must-revalidate`` /
+  ``Pragma: no-cache`` / ``X-Accel-Buffering: no`` defense-in-depth
+  headers.
+- **Tests.** ``test_camera_mjpeg_proxy.py`` rewritten to drive
+  the class (23 cases — split_url, error_message_for_status,
+  __aenter__ / iter_bytes / __aexit__, credentials extraction,
+  all upstream error codes, missing content-type fallback,
+  cleanup, idempotent __exit__). New integration test
+  ``test_stream_endpoint_passes_through_upstream_content_type``
+  in ``test_camera_ustreamer_supervisor.py`` pins the exact
+  ``Content-Type: multipart/x-mixed-replace;boundary=ipcamera``
+  contract directly — a future contributor who reverts to a
+  hard-coded media-type trips the test instead of breaking the
+  dashboard.
+- **Status.** Complete. After uvicorn restart + browser reload,
+  the operator's IP camera should render live.
+- **Caveat.** RTSP still rejected (httpx can't consume RTSP,
+  ffmpeg/gst-launch out of scope).
+
+### 1.2 MJPEG proxy replaces 302 redirect for IP camera URLs
+
+- **What was done.** The camera module's previous 302 redirect to
+  IP camera URLs broke on every mainstream browser because Chrome 86+
+  (and Firefox/Safari equivalents) strip embedded credentials
+  (``http://user:pass@host/path``) from cross-origin ``<img>``
+  redirects as a credential-leak hardening. The upstream camera
+  returned ``200 + multipart/x-mixed-replace`` to the original URL
+  but ``401`` to the credential-stripped redirect, and the dashboard
+  rendered a broken-image glyph even though the operator's curl
+  showed the upstream serving 6.99 MB of MJPEG just fine.
+- **Fix.** ``backend/modules/camera/mjpeg_proxy.py`` — new module
+  that opens its own authenticated HTTP connection to the upstream
+  with credentials lifted out of the URL into an ``Authorization:
+  Basic`` header, and proxies the MJPEG bytes back to the browser
+  one-for-one via a FastAPI ``StreamingResponse``. The browser sees
+  a same-origin ``multipart/x-mixed-replace`` response with no
+  embedded credentials, so no browser security policy interferes.
+- **Router rewrite.** ``backend/modules/camera/router.py``
+  branches on the camera id:
+  - ``/dev/videoN`` → unchanged 302 redirect to the per-device
+    ``ustreamer`` URL.
+  - ``http://`` / ``https://`` → proxy via the new module.
+  - ``rtsp://`` → 503 with a single-line operator hint (RTSP needs
+    ffmpeg/gst-launch to transcode to MJPEG, out of scope).
+- **Tests.** 18 new cases in
+  ``backend/tests/test_camera_mjpeg_proxy.py`` cover split_url,
+  error_message_for_status, the proxy generator (mocked httpx),
+  and the integration with the router. Old redirect test replaced
+  with ``test_stream_endpoint_proxies_ip_camera_url``. RTSP test
+  asserts the 503 + clear message.
+- **Status.** Complete.
+- **Caveat.** RTSP is intentionally rejected with a clear diagnostic
+  rather than crashing or hanging on a useless connection. If an
+  operator needs RTSP support, the supervisor's diagnostic layer
+  points at ffmpeg / gst-launch as the migration path.
+
+### 1.2 Program router missing `operation_id` blocked the dashboard
+
+- **What was done.** ``backend/modules/program/router.py`` was
+  missing ``operation_id=`` on six lifecycle endpoints (``load``,
+  ``run``, ``stop``, ``unload``, ``pause``, ``resume``). The
+  OpenAPI generator fell back to URL-derived method names like
+  ``loadProgramApiV1ModulesProgramLoadPost``, and the frontend's
+  ``ActivePrintWidget``, ``FileManager``, and ``stores/machine.js``
+  calls to ``ModulesProgramService.loadProgram(...)`` etc. failed
+  with ``TypeError: ... is not a function``.
+- **Fix.** Added ``operation_id=`` to each of the six endpoints.
+  Regenerated ``frontend/generated/api/services/ModulesProgramService.ts``
+  via ``npm --prefix frontend run generate-api`` so the client now
+  exposes the six short method names.
+- **Test.** ``test_program_router_exposes_short_operation_ids`` in
+  ``backend/tests/test_program_module.py`` asserts each endpoint
+  advertises the expected ``operationId`` in the OpenAPI schema.
+  Future contributors who drop an ``operation_id=`` will trip the
+  test instead of breaking the dashboard silently.
+- **Status.** Complete.
+
+### 1.3 Camera migrated from OpenCV to ustreamer; dependency diagnostics wired through
 
 - **What was done.** Removed the ``opencv-python-headless``
   dependency from ``backend/requirements.txt``. The camera module

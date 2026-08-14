@@ -226,12 +226,55 @@ async def telemetry_loop():
                 await asyncio.sleep(0.1)
                 continue
 
-            # Poll status
-            machine_stat.poll()
+            # Poll status.
+            #
+            # The cpython linuxcnc bindings surface the C-level NML
+            # "buffer empty" condition as ``poll()`` returning ``-1``
+            # *without* raising — ctypes then logs ``error return
+            # without exception set`` the next time a Python error is
+            # raised anywhere on the same thread. We catch both the
+            # explicit exception (linuxcnc.error is OSError-derived)
+            # and the ctypes-level "return without exception set"
+            # RuntimeError the binding can synthesise, and treat both
+            # as a transient state: skip the broadcast for this tick
+            # and let the loop retry on the next 100 ms cycle. The
+            # outer ``except Exception`` is still a safety net for
+            # anything unexpected, but with these two local handlers
+            # the typical LinuxCNC-startup race no longer spams the
+            # log at 10 Hz.
+            try:
+                machine_stat.poll()
+            except OSError as exc:
+                logger.debug(
+                    "telemetry_loop: stat.poll() raised OSError (%s); "
+                    "skipping this tick", exc,
+                )
+                await asyncio.sleep(0.1)
+                continue
+            except RuntimeError as exc:
+                # ``error return without exception set`` is reported by
+                # ctypes as a RuntimeError. Treat the same as OSError.
+                logger.debug(
+                    "telemetry_loop: stat.poll() raised RuntimeError (%s); "
+                    "skipping this tick", exc,
+                )
+                await asyncio.sleep(0.1)
+                continue
+
             current_state = get_current_state()
 
-            # Poll errors
-            error = machine_error.poll()
+            # Poll errors. Same race applies — a fresh LinuxCNC task
+            # may not have an error channel ready on the first few
+            # ticks. Swallow the transient failure the same way.
+            try:
+                error = machine_error.poll()
+            except (OSError, RuntimeError) as exc:
+                logger.debug(
+                    "telemetry_loop: error_channel.poll() raised %s (%s); "
+                    "skipping this tick", type(exc).__name__, exc,
+                )
+                await asyncio.sleep(0.1)
+                continue
             if error and manager.active_connections:
                 kind, text = error
                 timestamp = datetime.now().isoformat()

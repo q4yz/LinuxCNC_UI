@@ -56,13 +56,14 @@ import subprocess
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 from .detection import USBDeviceInfo, detect_usb_cameras
+from .mjpeg_proxy import MjpegProxy, MjpegProxyError
 from .settings import CameraSettings
 
 logger = logging.getLogger("backend.modules.camera")
@@ -283,11 +284,29 @@ class UstreamerSupervisor:
         Spawns the child if it is not already running. Raises
         :class:`RuntimeError` if the spawn fails — callers should
         translate that into an actionable HTTP error.
+
+        HTTP / HTTPS / RTSP URLs are a special case: ``ustreamer``
+        cannot consume them, so the supervisor serves them by
+        returning the URL itself. The ``/stream`` endpoint turns
+        that into a 302 redirect and the browser fetches the
+        upstream MJPEG directly. No subprocess is spawned, no
+        ``/dev/videoN`` device is needed, and the dependency
+        checks (ustreamer on PATH, Linux platform, …) do not
+        apply. This is what lets operators paste an arbitrary IP
+        camera URL into the Settings panel and have it Just Work.
         """
         if not camera_id:
             raise RuntimeError("camera_id is required")
 
         with self._lock:
+            # IP camera passthrough: the browser fetches the URL
+            # directly via the 302 redirect, so the supervisor has
+            # no subprocess to manage. Returning the URL verbatim
+            # also means an upstream URL with embedded credentials
+            # (``http://user:pass@host/path``) is preserved as-is.
+            if camera_id.startswith(("http://", "https://", "rtsp://")):
+                return {"id": camera_id, "url": camera_id}
+
             cooldown_until = self._cooldown_until.get(camera_id)
             if cooldown_until is not None:
                 now = datetime.now(timezone.utc)
@@ -360,6 +379,22 @@ class UstreamerSupervisor:
                     "message": "",
                 }
 
+            # IP camera passthrough: the supervisor never spawns a
+            # subprocess for HTTP / HTTPS sources, so the absence of
+            # a child entry is the normal case rather than a failure.
+            # The ``/stream`` endpoint proxies these via the MJPEG
+            # proxy module (so embedded credentials are not stripped
+            # by the browser on a cross-origin redirect); ``status()``
+            # reports ``running=True`` so the operator's UI does not
+            # render a confusing "no camera" placeholder.
+            if active_id.startswith(("http://", "https://")):
+                return {
+                    "running": True,
+                    "active_id": active_id,
+                    "ustreamer_url": active_id,
+                    "message": "",
+                }
+
             proc = self._procs.get(active_id)
             if proc is None or proc.poll() is not None:
                 # Child not running or has exited. Operator needs to
@@ -405,11 +440,29 @@ class UstreamerSupervisor:
 
         Caller must hold :attr:`_lock`. Resolution order:
 
-        1. Non-Linux platform → dependency message (ustreamer is Linux-only).
-        2. ``ustreamer`` binary missing on PATH.
-        3. ``camera_id`` provided but not present in ``/dev/video*``.
-        4. No devices and no IP camera configured.
+        1. RTSP URL → not supported (the proxy module handles HTTP /
+           HTTPS only; RTSP would need ffmpeg or gst-launch to
+           transcode into MJPEG, which is out of scope).
+        2. HTTP / HTTPS URL → empty (the proxy module handles every
+           other concern — credentials, network errors, upstream
+           auth failures — itself and surfaces them as 503s).
+        3. Non-Linux platform → dependency message (ustreamer is
+           Linux-only).
+        4. ``ustreamer`` binary missing on PATH.
+        5. ``camera_id`` provided but not present in ``/dev/video*``.
+        6. No devices and no IP camera configured.
         """
+        if camera_id and camera_id.startswith("rtsp://"):
+            return (
+                "RTSP camera URLs are not supported by the IP-camera "
+                "proxy. The backend can consume HTTP / HTTPS MJPEG "
+                "streams only; converting RTSP to MJPEG requires "
+                "ffmpeg or gst-launch and is out of scope."
+            )
+
+        if camera_id and camera_id.startswith(("http://", "https://")):
+            return ""
+
         if not sys.platform.startswith("linux"):
             return (
                 "The camera module requires Linux; ustreamer does not "
@@ -423,12 +476,11 @@ class UstreamerSupervisor:
             )
 
         known = self.known_device_ids()
-        if camera_id and not camera_id.startswith(("http://", "https://", "rtsp://")):
-            if camera_id not in known:
-                return (
-                    f"Camera {camera_id} is not present. Reconnect the "
-                    f"camera or pick another device."
-                )
+        if camera_id and camera_id not in known:
+            return (
+                f"Camera {camera_id} is not present. Reconnect the "
+                f"camera or pick another device."
+            )
 
         if not known and not self.read_ip_camera_url():
             return (
@@ -466,23 +518,12 @@ class UstreamerSupervisor:
     def _spawn_locked(
         self, camera_id: str, port: int
     ) -> "subprocess.Popen[bytes]":
-        """Spawn ``ustreamer -d <id> -p <port> ...``. Caller holds lock."""
-        # ``camera_id`` may be an HTTP/RTSP URL (the IP-camera
-        # passthrough). ustreamer cannot consume those directly; the
-        # operator is expected to have set the URL only as a logical
-        # marker and rely on the IP-camera entry showing up in the
-        # picker. The supervisor still allocates a port so the URL
-        # field has a stable value to display, but the child is not
-        # spawned — the frontend surfaces the URL as a non-streamable
-        # historical row.
-        if camera_id.startswith(("http://", "https://", "rtsp://")):
-            raise RuntimeError(
-                f"Camera source {camera_id!r} is an HTTP/RTSP URL — "
-                "ustreamer does not consume those. Use a local "
-                "/dev/videoN device or terminate the IP-camera URL "
-                "in the Settings panel."
-            )
+        """Spawn ``ustreamer -d <id> -p <port> ...``. Caller holds lock.
 
+        IP camera URLs (HTTP / HTTPS / RTSP) are short-circuited in
+        :meth:`spawn_or_reuse` before reaching this helper, so the
+        ``camera_id`` here is always a ``/dev/videoN`` path.
+        """
         args = [
             "ustreamer",
             "-d", camera_id,
@@ -610,25 +651,30 @@ def list_devices() -> Dict[str, object]:
     "/stream",
     summary="Get Live MJPEG Stream",
     description=(
-        "Returns a 302 redirect to the per-device ``ustreamer`` MJPEG "
-        "URL (``http://127.0.0.1:{port}/?action=stream``). Without "
-        "query parameters the configured ``default_device_id`` is "
-        "used; empty on first boot results in 503. When the stream "
-        "cannot be served for any reason (dependency missing, device "
-        "absent, platform unsupported, child crashed) the response "
-        "is a 503 whose ``detail`` is a single-line operator hint."
+        "Returns the MJPEG stream. For ``/dev/videoN`` sources the "
+        "endpoint 302-redirects to the per-device ``ustreamer`` URL "
+        "(``http://127.0.0.1:{port}/?action=stream``). For HTTP / "
+        "HTTPS sources the backend proxies the upstream MJPEG bytes "
+        "verbatim (credentials travel in an ``Authorization`` header "
+        "so the browser never sees them on a cross-origin redirect). "
+        "Without query parameters the configured "
+        "``default_device_id`` is used; empty on first boot results "
+        "in 503. When the stream cannot be served for any reason the "
+        "response is a 503 whose ``detail`` is a single-line "
+        "operator hint."
     ),
     operation_id="streamCamera",
 )
-def camera_stream(
+async def camera_stream(
     id: Optional[str] = Query(
         default=None,
         description=(
-            "Camera identifier (``/dev/videoN`` path or HTTP/RTSP URL). "
+            "Camera identifier (``/dev/videoN`` path, HTTP/HTTPS URL, "
+            "or RTSP URL — RTSP is not supported and returns 503). "
             "Defaults to the configured ``default_device_id``."
         ),
     ),
-) -> RedirectResponse:
+):
     camera_id = id or _supervisor.read_default_device_id()
     if not camera_id:
         raise HTTPException(
@@ -638,11 +684,114 @@ def camera_stream(
                 "Settings panel, then request /stream?id=<device_id>."
             ),
         )
+
+    # RTSP cannot be proxied (httpx doesn't speak RTSP and we don't
+    # ship ffmpeg / gst-launch). Surface the same 503 shape as every
+    # other failure mode so the frontend's diagnostic panel renders
+    # it the same way.
+    if camera_id.startswith("rtsp://"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "RTSP camera URLs are not supported by the IP-camera "
+                "proxy. The backend can consume HTTP / HTTPS MJPEG "
+                "streams only."
+            ),
+        )
+
+    # HTTP / HTTPS: proxy the upstream MJPEG bytes back to the
+    # browser. The proxy module handles credentials, upstream auth
+    # failures, and connection errors — every failure surfaces as a
+    # 503 with a single-line operator hint in the ``detail`` field.
+    if camera_id.startswith(("http://", "https://")):
+        return await _proxy_stream_response(camera_id)
+
+    # ``/dev/videoN`` (or anything else the supervisor understands).
+    # ``spawn_or_reuse`` returns the per-device ustreamer URL; the
+    # 302 redirect is fine here because both endpoints are on the
+    # same origin (``localhost:8000``), so no credential stripping
+    # concerns apply.
     try:
         info = _supervisor.spawn_or_reuse(camera_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return RedirectResponse(url=info["url"], status_code=302)
+
+
+async def _proxy_stream_response(url: str) -> StreamingResponse:
+    """Open the upstream, capture content-type, return the streaming body.
+
+    Async because the upstream's response headers must be in hand
+    before ``media_type`` is set on the ``StreamingResponse``. FastAPI
+    supports async handlers that return ``StreamingResponse``.
+
+    The previous design hard-coded ``media_type="multipart/x-mixed-replace"``
+    which silently broke the operator's IP camera: the upstream sent
+    ``Content-Type: multipart/x-mixed-replace;boundary=ipcamera`` and
+    the browser needs the ``;boundary=...`` parameter to parse the
+    multipart stream into frames. Without it the browser renders
+    nothing. The :class:`MjpegProxy` class captures the upstream's
+    exact content-type synchronously in ``__aenter__`` so we can
+    surface it on the ``StreamingResponse``.
+    """
+    proxy = MjpegProxy(url)
+    try:
+        await proxy.__aenter__()
+    except MjpegProxyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.ConnectError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not connect to the upstream camera. Check the "
+                "host, port, and that the camera is reachable from "
+                "this backend."
+            ),
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Upstream camera timed out. The device is on the "
+                "network but stopped responding."
+            ),
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Upstream camera connection failed: {exc}",
+        ) from exc
+
+    # Build the body iterator with explicit cleanup so a client
+    # disconnect tears down the upstream socket cleanly even if the
+    # generator is mid-yield. ``__aexit__`` is idempotent so the
+    # router's body wrapper finalising the iterator twice (once via
+    # the ``finally``, once via FastAPI's response cleanup) is safe.
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in proxy.iter_bytes():
+                yield chunk
+        finally:
+            await proxy.__aexit__(None, None, None)
+
+    return StreamingResponse(
+        body(),
+        # Pass through the upstream's exact content-type — the
+        # ``;boundary=...`` parameter is what lets the browser parse
+        # the multipart stream into frames. Without it the browser
+        # silently fails to render.
+        media_type=proxy.content_type,
+        headers={
+            # Prevent the browser from caching a partial or
+            # truncated MJPEG response — the URL already carries
+            # ``&t=...`` cache-busters but defense-in-depth is cheap.
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            # Disable nginx buffering in case the operator fronts
+            # the backend with a reverse proxy.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

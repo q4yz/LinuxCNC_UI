@@ -219,6 +219,238 @@ def test_shutdown_terminates_every_child(fake_ustreamer, fake_linux_with_devices
     assert _supervisor._procs == {}
 
 
+# ---------------------------------------------------------------------- #
+# IP camera URL passthrough                                                #
+# ---------------------------------------------------------------------- #
+
+
+def test_spawn_returns_url_verbatim_for_http_source(
+    fake_ustreamer, fake_linux_with_devices,
+):
+    """An ``http://…`` camera id must short-circuit to a 302 redirect.
+
+    ustreamer cannot consume MJPEG streams over HTTP, so the
+    supervisor returns the URL itself; the ``/stream`` endpoint
+    issues a 302 and the browser fetches the upstream MJPEG
+    directly. Crucially the URL is preserved as-is — embedded
+    credentials (``http://user:pass@host/path``) survive the
+    round-trip without rewriting.
+    """
+    from modules.camera.router import _supervisor
+
+    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    info = _supervisor.spawn_or_reuse(url)
+
+    assert info["id"] == url
+    assert info["url"] == url
+    # No subprocess was spawned for the URL.
+    assert _FakeProc.instances == [] or all(
+        "ustreamer" not in (p.args or []) for p in _FakeProc.instances
+    )
+
+
+def test_spawn_returns_url_verbatim_for_https_and_rtsp(
+    fake_ustreamer, fake_linux_with_devices,
+):
+    """``https://`` and ``rtsp://`` URLs are also passthrough."""
+    from modules.camera.router import _supervisor
+
+    for url in (
+        "https://camera.example.com/stream",
+        "rtsp://camera.example.com/live",
+    ):
+        info = _supervisor.spawn_or_reuse(url)
+        assert info["id"] == url
+        assert info["url"] == url
+
+
+def test_status_reports_running_for_ip_camera_default(
+    fake_ustreamer, fake_linux_with_devices, monkeypatch,
+):
+    """``status()`` reports ``running=True`` when the default device
+    is an IP camera URL — there is no supervisor-managed subprocess
+    for those, but the operator's UI must not show a placeholder.
+    """
+    from modules.camera.router import _supervisor
+
+    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: url)
+    monkeypatch.setattr(_supervisor, "read_ip_camera_url", lambda: url)
+
+    snap = _supervisor.status()
+    assert snap["running"] is True
+    assert snap["active_id"] == url
+    assert snap["ustreamer_url"] == url
+    assert snap["message"] == ""
+
+
+def test_diagnostic_skips_dependency_checks_for_ip_url(
+    fake_no_ustreamer, fake_linux_with_devices, monkeypatch,
+):
+    """An IP camera URL must not trigger the ``ustreamer``-missing
+    or platform-unsupported diagnostics — the 302 redirect does not
+    touch any of those dependencies.
+    """
+    from modules.camera.router import _supervisor
+
+    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: url)
+    monkeypatch.setattr(_supervisor, "read_ip_camera_url", lambda: url)
+
+    # ``fake_no_ustreamer`` patches ``shutil.which`` to return None
+    # and the test runs on whatever the host's ``sys.platform`` is —
+    # the diagnostic must still come back empty because the URL
+    # bypasses every check.
+    snap = _supervisor.status()
+    assert snap["message"] == ""
+
+
+def test_stream_endpoint_proxies_ip_camera_url(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """End-to-end: ``GET /stream?id=http://...`` proxies MJPEG bytes.
+
+    Regression for the operator's URL where the browser fetched
+    ``http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0`` fine but
+    rendered a broken image when the backend 302-redirected to it.
+    Chrome strips embedded credentials on cross-origin ``<img>``
+    redirects, so the upstream returned 401 and the browser showed
+    nothing.
+
+    The fix: the backend now proxies the upstream MJPEG bytes
+    one-for-one with credentials lifted into an ``Authorization``
+    header. The browser sees a same-origin
+    ``multipart/x-mixed-replace;boundary=...`` response with no
+    credentials and renders the live stream.
+
+    Boundary pass-through is asserted explicitly — see
+    ``test_stream_endpoint_passes_through_upstream_content_type``
+    below for the dedicated boundary regression.
+    """
+    import modules.camera.router as router_module
+    from modules.camera.mjpeg_proxy import MjpegProxy
+
+    expected_body = (
+        b"--ipcamera\r\n"
+        b"Content-Type: image/jpeg\r\n\r\n"
+        b"\xff\xd8\xff\xe0fake-jpeg\r\n"
+        b"--ipcamera\r\n"
+    )
+
+    class _FakeProxy:
+        def __init__(self, url):
+            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def iter_bytes(self):
+            yield expected_body
+
+    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    resp = client.get(f"/api/v1/modules/camera/stream?id={url}")
+
+    assert resp.status_code == 200
+    assert "multipart/x-mixed-replace" in resp.headers["content-type"]
+    # The proxy yields the synthetic bytes verbatim.
+    assert expected_body in resp.content
+
+
+def test_stream_endpoint_passes_through_upstream_content_type(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """The 200 response must carry the upstream's Content-Type verbatim.
+
+    Regression for the operator's IP camera URL where the proxy
+    returned 200 OK with hard-coded ``multipart/x-mixed-replace``
+    (no boundary) and the browser rendered nothing. The fix
+    captures the upstream's exact ``Content-Type`` —
+    ``multipart/x-mixed-replace;boundary=ipcamera`` — and uses it
+    on the StreamingResponse.
+
+    The ``;boundary=...`` parameter is what lets the browser parse
+    the multipart stream into frames. Without it the browser
+    silently fails to render. This test pins the boundary
+    pass-through contract directly so a future contributor who
+    reverts to a hard-coded ``media_type`` will trip the test
+    instead of breaking the dashboard.
+    """
+    import modules.camera.router as router_module
+
+    expected_boundary = "ipcamera"
+    expected_content_type = (
+        f"multipart/x-mixed-replace;boundary={expected_boundary}"
+    )
+    expected_body = (
+        b"--ipcamera\r\n"
+        b"Content-Type: image/jpeg\r\n\r\n"
+        b"\xff\xd8\xff\xe0fake-jpeg\r\n"
+        b"--ipcamera\r\n"
+    )
+
+    class _FakeProxy:
+        def __init__(self, url):
+            self.content_type = expected_content_type
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def iter_bytes(self):
+            yield expected_body
+
+    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
+    resp = client.get(f"/api/v1/modules/camera/stream?id={url}")
+
+    assert resp.status_code == 200
+    # Critical: the upstream's exact Content-Type (with the
+    # ``;boundary=...`` parameter) must reach the browser. Hard-coding
+    # ``multipart/x-mixed-replace`` here is the bug this test pins.
+    assert resp.headers["content-type"] == expected_content_type
+    # And the body must start with the matching boundary delimiter so
+    # the parser finds the first frame.
+    assert resp.content.startswith(b"--ipcamera\r\n")
+    # Defense-in-depth cache headers.
+    assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert resp.headers["pragma"] == "no-cache"
+
+
+def test_stream_endpoint_returns_503_for_rtsp_url(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+):
+    """RTSP URLs are not supported by the proxy module.
+
+    ``httpx`` does not speak RTSP and the backend does not ship
+    ffmpeg / gst-launch to transcode. The endpoint surfaces a
+    single-line operator hint rather than crashing or hanging on a
+    useless connection attempt.
+    """
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/modules/camera/stream?id=rtsp://camera.local/stream",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 503
+    assert "RTSP" in resp.json()["detail"]
+
+
 def test_shutdown_is_idempotent(fake_ustreamer):
     from modules.camera.router import _supervisor
 
