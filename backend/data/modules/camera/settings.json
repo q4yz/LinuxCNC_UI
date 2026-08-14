@@ -1,0 +1,5 @@
+{
+  "default_device_id": "",
+  "ip_camera_url": "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0",
+  "preferences": {}
+}
