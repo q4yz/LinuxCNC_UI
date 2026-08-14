@@ -77,7 +77,7 @@ def test_ws_keepalive_dispatches_to_watchdog(machine_app):
     # ``_active_jogs`` dict is wired. The WebSocket itself is not
     # opened — the dispatch path is pure.
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     # Wipe the active set so the test does not depend on prior
     # state. ``_active_jogs`` is module-private; the helper uses
@@ -117,7 +117,7 @@ def test_ws_keepalive_for_unknown_axis_is_noop(machine_app):
     phantom axis into the active set.
     """
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -135,7 +135,7 @@ def test_ws_jog_axis_registers_continuous_jog(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -172,7 +172,7 @@ def test_ws_jog_stop_removes_axis_from_active_set(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -192,7 +192,7 @@ def test_ws_dispatch_ignores_unknown_type(machine_app):
     stream.
     """
     machine_app  # noqa: F841
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -212,7 +212,7 @@ def test_ws_dispatch_rejects_malformed_axes(machine_app):
     client must not be able to corrupt the watchdog state.
     """
     machine_app  # noqa: F841
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()

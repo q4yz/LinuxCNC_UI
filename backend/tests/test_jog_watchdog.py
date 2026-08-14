@@ -43,7 +43,8 @@ def _install_watchdog_test_environment(monkeypatch, tmp_path):
     via a local import inside :func:`_loop`. The fixture cleans the
     map before each test so a previous run cannot leak.
     """
-    from modules.axis import jog, jog_watchdog
+    from modules.axis import jog_service as jog
+    from modules.axis import jog_watchdog
     import importlib
 
     # Re-import the watch-dog module so each test gets a fresh task
@@ -62,7 +63,7 @@ def _seed_active_jog(axis: int, timeout_ms: int) -> float:
 
     Returns the ``time.time()`` value used so the test can compare.
     """
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     # Subtracting a generous offset pushes the stamp well past the
     # 500 ms watchdog window. We bypass ``now - t > timeout`` to a
@@ -77,7 +78,8 @@ def test_watchdog_halts_expired_axis_within_one_loop():
     """The watchdog force-stops any axis whose keep-alive is
     older than the configured timeout.
     """
-    from modules.axis import jog, jog_watchdog
+    from modules.axis import jog_service as jog
+    from modules.axis import jog_watchdog
 
     timeout_ms = 500
     # Seed an axis as already stale so the next _loop iteration
@@ -113,7 +115,7 @@ def test_watchdog_halts_expired_axis_within_one_loop():
 
 def test_watchdog_skips_fresh_axes():
     """A keep-alive stamp inside the timeout window is left alone."""
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     timeout_ms = 500
     fresh = time.time()
@@ -143,7 +145,7 @@ def test_keepalive_refresh_blocks_force_stop():
     """Pinging every loop period keeps the axis in the active
     set and never gets force-stopped.
     """
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     timeout_ms = 500
 
@@ -191,7 +193,7 @@ def test_clear_active_jogs_drops_every_entry():
     """``clear_active_jogs`` (used by ``stop_watchdog``) empties
     the map so the next boot does not resume a stale jog.
     """
-    from modules.axis import jog
+    from modules.axis import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs[0] = time.time()

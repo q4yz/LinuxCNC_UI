@@ -20,7 +20,7 @@ own dedicated service singleton (:class:`AxisService` /
 The HTTP router lives in :mod:`backend.modules.axis.router` and
 currently exposes only ``POST /home``. Jog REST endpoints were
 deprecated in favour of the ``/ws/telemetry`` channel; jog
-WS-dispatch helpers live in :mod:`backend.modules.axis.jog`;
+hardware dispatch lives in :mod:`backend.modules.axis.jog_service`;
 the watchdog background task in
 :mod:`backend.modules.axis.jog_watchdog`. Settings schema in
 :mod:`backend.modules.axis.settings`.

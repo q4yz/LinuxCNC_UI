@@ -11,15 +11,16 @@ The split mirrors the discovery layout described in :file:`MODULE_SYSTEM_ROADMAP
     ├── module.py          # AxisModule + setup() + on_load/on_unload
     ├── service.py         # AxisService (homing facade)
     ├── router.py          # POST /home (axis-motion action)
-    ├── jog.py             # WS-dispatch helpers + _active_jogs state
-    ├── jog_watchdog.py    # 500 ms keep-alive safety watchdog
+    ├── jog_service.py     # Hardware dispatch (jog_axis, jog_stop, jog_keepalive) + _active_jogs state
+    ├── jog_watchdog.py    # 500 ms keep-alive safety watchdog (pure logic; no hardware imports)
     └── settings.py        # Pydantic MachineSettings defaults
 
-The 500 ms safety watchdog lives in its own file because it shares
-module-private state with the jog helpers (``_active_jogs``) but
-needs to start and stop independently of the request lifecycle.
-Both files live in the same package so they can ``from . import jog``
-without crossing boundaries.
+The 500 ms safety watchdog is now pure logic — it reads
+``jog_service._active_jogs`` and dispatches
+``jog_service.stop_axis(axis)`` on expired entries. ``jog_service``
+owns every ``from hardware import …`` so the watchdog has zero
+hardware coupling and is trivially unit-testable with a stubbed
+``jog_service``.
 
 The ``POST /home`` endpoint lives here because homing is an
 axis-motion action (similar in nature to jog dispatch). The state /

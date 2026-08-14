@@ -342,15 +342,15 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
     """
     mtype = msg.get("type")
     if mtype == "jog_keepalive":
-        from modules.axis.jog import ws_jog_keepalive
+        from modules.axis.jog_service import jog_keepalive
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
             return
-        ws_jog_keepalive([int(a) for a in axes])
+        jog_keepalive([int(a) for a in axes])
         return
     if mtype == "jog_axis":
-        from modules.axis.jog import ws_jog_axis
+        from modules.axis.jog_service import jog_axis
         velocities = msg.get("velocities") or {}
         if not isinstance(velocities, dict):
             logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
@@ -363,15 +363,15 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
                 coerced[int(axis)] = float(velocity)
             except (TypeError, ValueError):
                 logger.warning("jog_axis: dropping bad axis/velocity pair %r=%r", axis, velocity)
-        ws_jog_axis(coerced, distance)
+        jog_axis(coerced, distance)
         return
     if mtype == "jog_stop":
-        from modules.axis.jog import ws_jog_stop
+        from modules.axis.jog_service import jog_stop
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))
             return
-        ws_jog_stop([int(a) for a in axes])
+        jog_stop([int(a) for a in axes])
         return
     # Unknown message types are logged at DEBUG so a curious
     # operator inspecting the log doesn't see noise on every frame.

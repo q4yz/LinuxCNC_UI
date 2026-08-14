@@ -14,7 +14,51 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Revert IP camera /stream to 302 redirect; credentials travel in query parameters
+### 1.1 Split jog into jog_service (hardware) + jog_watchdog (logic)
+
+- **What was done.** ``backend/modules/axis/jog.py`` carried
+  hardware dispatch *and* module-private state *and* watchdog
+  state *and* dead Pydantic models (orphaned from the deprecated
+  REST endpoints). ``jog_watchdog.py`` had a duplicate
+  ``_stop_axis`` helper with a fallback to ``jog._stop_axis`` —
+  two copies of the same NML command.
+- **Refactor.**
+  - New file ``backend/modules/axis/jog_service.py`` owns every
+    ``from hardware import …`` — the hardware dispatch
+    (``jog_axis``, ``jog_stop``, ``jog_keepalive``, ``stop_axis``),
+    the watchdog's active-jog map (``_active_jogs`` + lock), and the
+    state helpers (``snapshot_active_jogs``,
+    ``clear_active_jogs``, ``_register_active_jog``,
+    ``_unregister_active_jog``).
+  - ``jog_watchdog.py`` is now pure logic — zero hardware imports.
+    Its ``_loop`` calls
+    ``jog_service.snapshot_active_jogs()`` to read state and
+    ``jog_service.stop_axis(axis)`` on expired entries.
+    ``start_watchdog`` / ``stop_watchdog`` keep their contracts.
+  - The misleading ``ws_`` prefix on ``ws_jog_*`` is dropped —
+    the helpers are now named ``jog_axis`` / ``jog_stop`` /
+    ``jog_keepalive` and are called by both the WS dispatcher and
+    (if ever revived) the deprecated REST handlers.
+  - Four dead Pydantic models (``JogCommand``,
+    ``JogStopCommand``, ``JogResponse``, ``JogStatusResponse``)
+    were deleted; ``grep`` confirms zero references anywhere else.
+  - ``backend/modules/axis/jog.py`` is deleted.
+- **Consumers updated.**
+  ``backend/routers/servo_thread.py`` (3 imports + 3 call sites
+  rename ``ws_jog_*`` → ``jog_*``), tests in
+  ``test_machine_module.py`` / ``test_jog_keepalive.py` /
+  ``test_jog_watchdog.py` use ``from modules.axis import
+  jog_service as jog`` so the ~30 existing
+  ``jog._active_jogs`` / ``jog._active_jogs_lock`` references stay
+  intact.
+- **Tests.** Same counts as before — 4 pre-existing failures
+  (mock's ``stat`` class is missing ``motion_mode`` /
+  ``joints``; pre-dates this refactor) and 1 unrelated
+  ``hardware_layers`` failure remain. The refactor preserves
+  test parity; no behaviour change.
+- **Status.** Complete.
+
+### 1.2 Revert IP camera /stream to 302 redirect; credentials travel in query parameters
 
 - **Why.** The MJPEG proxy we shipped for IP cameras was solving
   two problems — credentials stripped from cross-origin

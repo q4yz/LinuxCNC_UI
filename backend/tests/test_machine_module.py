@@ -142,18 +142,18 @@ def test_axis_jog_dispatch_is_registered_with_watchdog(
     pins the watchdog-side state contract that both transports
     share.
     """
-    from modules.axis import jog
-    from modules.axis.jog import ws_jog_axis, ws_jog_stop
+    from modules.axis import jog_service as jog
+    from modules.axis.jog_service import jog_axis, jog_stop
 
     # No active jogs at start.
     assert jog._active_jogs == {}
 
     # Continuous jog on axis 0 (X) → watchdog state populated.
-    ws_jog_axis(velocities={0: 1000.0}, distance=0.0)
+    jog_axis(velocities={0: 1000.0}, distance=0.0)
     assert 0 in jog._active_jogs
 
     # Stop removes the entry.
-    ws_jog_stop(axes=[0])
+    jog_stop(axes=[0])
     assert jog._active_jogs == {}
 
 
