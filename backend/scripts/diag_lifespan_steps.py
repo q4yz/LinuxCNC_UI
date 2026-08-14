@@ -34,13 +34,13 @@ Probes execute in the order they would be exercised at lifespan boot:
    compiler class that registers in the global registry.
 5. ``from main import app; len(app.openapi())`` — full OpenAPI
    schema, the endpoint the codegen script fetches.
-6. ``from modules.camera.module import setup`` + ``setup()`` —
-   camera-module init chain (``router`` → ``detection`` →
-   ``settings``). On hosts whose OpenCV wheel ABI mismatches the
-   local CPU / glibc, mapping the .so emits SIGILL at module-init.
-   This is the regression net introduced after the eager
-   ``import cv2 as _cv2`` at :mod:`modules.camera.router:55` was
-   deleted.
+
+The camera module no longer requires its own probe. The previous
+regression net (Probe 6) covered the OpenCV-era ``cv2`` SIGILL risk;
+the camera module now delegates streaming to ``ustreamer``, an
+external binary spawned by the supervisor rather than imported as a
+Python wheel. The lifespan no longer touches a third-party native
+library for camera streaming.
 
 Run from the repo root via the companion ``scripts/run_diag_lifespan.sh``
 wrapper which sets a 30-second timeout.
@@ -131,43 +131,12 @@ def _probe_openapi_schema() -> None:
     print(f"  paths={paths} components={schemas}", flush=True)
 
 
-def _probe_camera_module() -> None:
-    """Trigger ``modules.camera.module.setup()``.
-
-    The camera module is the third-party ``opencv-python-headless``
-    consumer. On hosts where the prebuilt OpenCV wheel's native ABI
-    is incompatible with the local CPU / glibc baseline, mapping the
-    .so at module-init time emits SIGILL — a kernel signal Python's
-    ``try/except`` cannot catch, which silently kills the FastAPI
-    lifespan before the OpenAPI canary fires.
-
-    The earlier probe chain covered the pydantic_core / machineconfig
-    / compiler / OpenAPI surface but not the camera module. This
-    probe is the regression net for that class of failure: importing
-    :mod:`modules.camera.module` here goes through the same import
-    chain (``from .module import setup`` → :mod:`modules.camera.router`
-    → :mod:`modules.camera.detection`) and surfaces any kernel-level
-    SIGILL as an exit code 132 here rather than as an opaque lifespan
-    crash in :func:`registry.boot`.
-
-    The eager ``import cv2 as _cv2`` previously living at the top of
-    :mod:`modules.camera.router` has been removed; this probe is the
-    protection against reintroduction.
-    """
-    from modules.camera.module import setup as camera_setup
-
-    instance = camera_setup()
-    _ = instance.manifest.id
-    _ = callable(instance.get_router)
-
-
 PROBES: list[tuple[str, callable]] = [
     ("1_pydantic_core_import", _probe_pydantic_core),
     ("2_hardware_json_model_rebuild_force", _probe_model_rebuild),
     ("3_machineconfig_module_setup", _probe_machineconfig_module),
     ("4_compiler_discovery", _probe_compiler_discovery),
     ("5_openapi_schema_generation", _probe_openapi_schema),
-    ("6_camera_module_setup", _probe_camera_module),
 ]
 
 

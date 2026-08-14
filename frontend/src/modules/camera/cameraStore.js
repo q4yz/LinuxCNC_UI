@@ -31,6 +31,7 @@ import { createModuleSettings } from "../../core/modules/settings.js";
 //     survives page navigation.
 const STORE_ID = `module_${manifest.id}`;
 const DEVICES_URL = "/api/v1/modules/camera/devices";
+const STATUS_URL = "/api/v1/modules/camera/status";
 
 // Field set the frontend lets operators touch. ``custom_name`` matches
 // the backend snake_case schema; the local ref keeps it as
@@ -134,6 +135,22 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   const preferencesHydrated = ref(false);
   const isLoading = ref(false);
   const error = ref("");
+  /**
+   * Operator-facing diagnostic from ``GET /status``. Empty when the
+   * stream is healthy; carries a single-line English hint when the
+   * backend cannot serve the stream (``ustreamer`` not installed,
+   * device unplugged, platform unsupported, etc.). The CameraViewer
+   * renders this verbatim so an operator on a misconfigured host sees
+   * a "this is a dependency problem" message rather than a silent
+   * broken image.
+   *
+   * @type {import("vue").Ref<string>}
+   */
+  const streamMessage = ref("");
+  // The last diagnostic string that was forwarded to the console
+  // store. The store only emits a new console row when the message
+  // changes, so a periodic refresh does not spam the operator console.
+  let lastReportedStreamMessage = "";
 
   // Serialised PUT chain — every write chains off the previous one
   // so rapid keystrokes never overlap on the wire and the server
@@ -205,6 +222,11 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       // immediately instead of blocking on the settings round-trip.
       void hydratePreferences();
 
+      // Refresh the diagnostic message in parallel so the viewer
+      // surfaces dependency problems without waiting on a stream
+      // error.
+      void refreshStreamMessage();
+
       if (!devices.value.some((device) => device.id === activeCameraId.value)) {
         activeCameraId.value = devices.value[0]?.id ?? "";
       }
@@ -238,6 +260,55 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       // eslint-disable-next-line no-console
       console.error("[camera] failed to load preferences:", requestError);
       preferencesHydrated.value = true; // unblock the UI even on failure
+    }
+  }
+
+  /**
+   * Refresh ``streamMessage`` from ``GET /status``. Idempotent; safe
+   * to call from the viewer's ``onerror`` handler and from the device
+   * refresh path. Emits a single console-store row per distinct
+   * diagnostic value so a periodic refresh does not spam the operator
+   * console.
+   *
+   * @returns {Promise<string>} The new ``message`` (empty when healthy).
+   */
+  async function refreshStreamMessage() {
+    try {
+      const response = await fetch(STATUS_URL);
+      if (!response.ok) {
+        throw new Error(
+          `Camera status request failed: ${response.status} ${response.statusText}`,
+        );
+      }
+      const payload = await response.json();
+      const message =
+        typeof payload?.message === "string" ? payload.message : "";
+      streamMessage.value = message;
+      if (message && message !== lastReportedStreamMessage) {
+        lastReportedStreamMessage = message;
+        // Lazy import — see ``.agent/context/LESSONS_LEARNED.md`` § 2.4.
+        const { useConsoleStore } = await import("../../stores/console.js");
+        useConsoleStore().error(`[camera] ${message}`);
+      } else if (!message) {
+        // Reset the dedup tracker once the supervisor reports healthy
+        // so a future recurrence of the same message is logged again.
+        lastReportedStreamMessage = "";
+      }
+      return message;
+    } catch (requestError) {
+      // Network failure is itself a useful diagnostic; surface a
+      // single message and let the user click "Re-check" to retry.
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to reach the camera supervisor.";
+      streamMessage.value = message;
+      if (message !== lastReportedStreamMessage) {
+        lastReportedStreamMessage = message;
+        const { useConsoleStore } = await import("../../stores/console.js");
+        useConsoleStore().error(`[camera] ${message}`);
+      }
+      return message;
     }
   }
 
@@ -420,6 +491,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     preferencesHydrated,
     isLoading,
     error,
+    streamMessage,
     visibleDevices,
     fetchDevices,
     hydratePreferences,
@@ -427,5 +499,6 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     updatePreference,
     deleteIpCamera,
     awaitInFlightPreferenceWrite,
+    refreshStreamMessage,
   };
 });

@@ -35,11 +35,21 @@ def test_detect_returns_list_on_no_cameras():
     assert isinstance(result, list)
     for entry in result:
         assert isinstance(entry, USBDeviceInfo)
-        # ``id`` is always non-empty; either a ``/dev/videoN`` path
-        # on Linux or a numeric string on Windows.
+        # ``id`` is always non-empty; ``/dev/videoN`` path on Linux.
         assert entry.id
         assert entry.name
         assert entry.index >= 0
+
+
+def test_detect_returns_empty_on_non_linux(monkeypatch):
+    """Non-Linux platforms get an empty list (no OpenCV probing)."""
+    import modules.camera.detection as detection
+
+    monkeypatch.setattr(detection.sys, "platform", "win32")
+    assert detect_usb_cameras() == []
+
+    monkeypatch.setattr(detection.sys, "platform", "darwin")
+    assert detect_usb_cameras() == []
 
 
 def test_detect_never_raises_even_if_glob_explodes(monkeypatch, caplog):
@@ -198,21 +208,32 @@ def test_linux_detection_with_synthetic_devices(monkeypatch, tmp_path):
     assert result[0].index == 0
 
 
-def test_linux_detection_falls_back_when_v4l2ctl_missing(monkeypatch):
-    """When v4l2-ctl returns no names the OpenCV probe takes over."""
+def test_linux_detection_falls_back_to_synthetic_name_when_v4l2ctl_missing(
+    monkeypatch,
+):
+    """When v4l2-ctl returns no names the synthetic fallback takes over.
+
+    The legacy implementation delegated to ``cv2.VideoCapture`` to
+    recover a usable display name; the ustreamer-era implementation
+    uses a synthetic ``"USB Camera N"`` label so the picker still
+    surfaces the device. The supervisor will tell the operator later
+    whether the device is actually openable.
+    """
     import modules.camera.detection as detection
 
     monkeypatch.setattr(detection, "_list_video_device_paths", lambda: ["/dev/video0"])
     monkeypatch.setattr(detection, "_query_v4l2_names", lambda _paths: {})
 
-    # Stub out the OpenCV probe so the test does not need a real camera.
-    monkeypatch.setattr(
-        detection,
-        "_probe_with_opencv",
-        lambda _path, index: f"USB Camera {index}",
-    )
-
     result = detection._detect_linux()
     assert len(result) == 1
     assert result[0].id == "/dev/video0"
     assert result[0].name == "USB Camera 0"
+    assert result[0].index == 0
+
+
+def test_linux_detection_returns_empty_when_no_dev_video(monkeypatch):
+    """A host with no ``/dev/video*`` paths yields an empty list."""
+    import modules.camera.detection as detection
+
+    monkeypatch.setattr(detection, "_list_video_device_paths", lambda: [])
+    assert detection._detect_linux() == []

@@ -1,76 +1,70 @@
-"""Camera module — HTTP router + on-demand stream manager.
+"""Camera module — HTTP router + ustreamer supervisor.
 
-This file replaces the previous ``CameraWorker`` (a background thread
-that held the OpenCV capture open continuously) with an *on-demand*
-streaming model. The contract documented in Issue #56 is:
+The previous implementation kept a background thread with an OpenCV
+``VideoCapture`` open on every active camera. The fragility of that
+loop (Windows C++ exceptions on locked hardware, ``opencv-python``
+wheels emitting SIGILL on mismatched ABIs, ``cv2.imencode`` paying a
+numpy round-trip per frame) and the cost of supporting per-frame
+``jpeg_quality`` / ``target_fps`` knobs pushed the streaming concern
+out of the backend.
 
-* The frontend is allowed to view **one** camera at a time.
-* The backend must not keep any camera handle open in the background.
-* When a stream request arrives, open the capture; when it ends
-  (client disconnect or another stream is requested), release the
-  capture immediately so the USB bandwidth and hardware lock are
-  freed.
-* The MJPEG stream must be non-blocking (asyncio generator with
-  ``request.is_disconnected()`` polling) so it does not interfere with
-  the main LinuxCNC polling loop.
+The camera module is now a thin layer on top of ``ustreamer`` — a
+pure-C MJPEG/HTTP server that already powers every 3D-printer camera
+panel on the planet (OctoPrint, Mainsail, Fluidd). Each detected
+``/dev/videoN`` device gets its own ``ustreamer`` subprocess bound to
+``http://127.0.0.1:{8080+index}/?action=stream``; the backend
+``/stream`` endpoint is a 302 redirect to that URL.
 
 Endpoints (mounted by the registry under ``/api/v1/modules/camera``):
 
-* ``GET /usb``   — list the USB cameras currently attached, with
-  human-readable names (Linux: ``v4l2-ctl``; Windows: OpenCV probe).
-* ``GET /devices`` — combination of USB + the IP-camera URL configured
-  in settings, so the frontend picker has one place to look.
-* ``GET /stream`` — legacy default-camera stream (uses the configured
-  ``default_device_id``).
-* ``GET /stream?id=<camera_id>`` — explicit on-demand stream. The
-  ``camera_id`` is either a ``/dev/videoN`` path or an HTTP/RTSP URL.
-* ``GET /status`` — small JSON endpoint for the settings panel.
+* ``GET /devices`` — combination of detected USB devices (via
+  ``/dev/video*`` + ``v4l2-ctl --list-devices``) plus the IP-camera
+  URL configured in settings, so the Vue picker has one place to look.
+* ``GET /stream`` — 302 redirect to the per-device ``ustreamer``
+  URL, or a 503 with a plain-English ``message`` describing why the
+  stream cannot be served (dependency missing, device absent,
+  platform unsupported, etc.).
+* ``GET /status`` — ``{running, active_id, ustreamer_url, message}``
+  for the Settings panel's status row. ``message`` is empty when the
+  stream is healthy and carries a single-line operator hint otherwise.
+* ``GET /usb`` — kept URL-compatible with the legacy router so the
+  frontend picker does not change; today it is the same shape as
+  ``GET /devices`` minus the IP-camera row.
 
-The previous ``/stream`` endpoint stayed URL-compatible because it just
-defaults to the configured ``default_device_id`` setting; clients that
-already point at ``/stream`` keep working without query parameters.
+The ``/stream`` endpoint intentionally does not stream bytes itself.
+Browsers fetching an ``<img src>`` follow 302 redirects transparently
+without paying any CORS preflight, so the redirect-to-ustreamer
+pattern works out of the box in dev (Vite proxies ``/api`` to 8000)
+and in production (operator opens the SPA via the same hostname as
+the backend).
 
-The module-level :class:`StreamManager` (one instance per process) is
-the single source of truth for "which camera is open right now". It
-uses a reference count so a slow client that requests the same stream
-twice does not race with itself; an *idle* camera (refcount == 0) is
-released even if another stream for the same id is queued.
+Why no OpenCV / no Python capture? See
+``.agent/context/LESSONS_LEARNED.md`` § 4.1 — the original
+``opencv-python-headless`` import was the SIGILL trap that crashed
+the FastAPI lifespan on misconfigured hosts, and ustreamer is faster,
+lighter, and predictable. Do NOT reintroduce ``cv2`` into this
+module; the supervisor owns the only process boundary the camera
+needs.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
+import subprocess
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import RedirectResponse
 
 from .detection import USBDeviceInfo, detect_usb_cameras
 from .settings import CameraSettings
 
-# NOTE: do NOT add ``import cv2 as _cv2`` (or any other eager OpenCV
-# import) at module top level. OpenCV's native libraries are the single
-# fragility in this module's boot path; on hosts whose prebuilt wheel
-# ABI is incompatible with the local CPU / glibc baseline, mapping
-# the .so at import time emits SIGILL — a kernel signal ``try/except``
-# cannot catch — and silently kills the FastAPI lifespan before the
-# OpenAPI canary fires. Every cv2 use site in this file is already
-# function-local and ``try/except``-protected:
-#
-#   * :meth:`StreamManager.acquire` (line ~319) lazy-imports cv2 once
-#     and records the failure in ``_cv2_disabled``;
-#   * :func:`_imencode_jpeg` (line ~523) does the same per call;
-#   * :mod:`backend.modules.camera.detection` has its own lazy cv2
-#     imports at lines ~271 and ~309.
-#
-# Probe 6 of ``backend/scripts/diag_lifespan_steps.py`` re-runs this
-# module's ``setup()`` end-to-end; reintroducing an eager cv2 import
-# here will turn that probe into SIGILL exit code 132 instead of ``OK``.
 logger = logging.getLogger("backend.modules.camera")
 
 
@@ -80,15 +74,15 @@ logger = logging.getLogger("backend.modules.camera")
 
 
 # The router is module-level so the registry can mount it; the
-# StreamManager is module-level so all endpoints share the same
-# capture lifecycle. ``CameraModule.on_load`` wires the settings store
-# onto the manager via :func:`bind_settings_store`.
+# supervisor is module-level so all endpoints share the same
+# process table. ``CameraModule.on_load`` wires the settings store
+# onto the supervisor via :func:`bind_settings_store`.
 router = APIRouter(tags=["modules:camera"])
 
-# ``StreamManager`` is defined further down — the import order is
-# (router, manager) first so the endpoints can reference the manager
-# even though the class itself is declared below.
-_stream_manager: "StreamManager"
+# ``UstreamerSupervisor`` is defined further down — the import order is
+# (router, supervisor) first so the endpoints can reference the
+# supervisor even though the class itself is declared below.
+_supervisor: "UstreamerSupervisor"
 
 
 # ---------------------------------------------------------------------- #
@@ -96,114 +90,127 @@ _stream_manager: "StreamManager"
 # ---------------------------------------------------------------------- #
 
 
-class USBDevicePayload(BaseModel):
-    """One row in the ``/usb`` response."""
+class USBDevicePayload:
+    """Backward-compatible import shim — see ``USBDeviceInfo``.
 
-    id: str = Field(..., description="Stable camera identifier (path or index).")
-    name: str = Field(..., description="Human-readable camera name.")
-    index: int = Field(..., description="OpenCV integer index for this device.")
+    Removed: the old Pydantic-flavoured payload had an ``index`` field
+    described as ``"OpenCV integer index"``. The detection layer no
+    longer references OpenCV; the index is the V4L2 integer index.
+    ``/usb`` continues to return the same JSON shape so the frontend
+    picker is unchanged.
+    """
 
-
-class USBDevicesResponse(BaseModel):
-    """``GET /usb`` response payload."""
-
-    devices: List[USBDevicePayload] = Field(
-        default_factory=list,
-        description="Detected USB cameras (may be empty).",
-    )
-    platform: str = Field(
-        ...,
-        description="OS the detection ran on (linux, win32, other).",
-    )
+    def __new__(cls, *, id: str, name: str, index: int) -> "USBDevicePayload":
+        # The OpenAPI schema is generated by FastAPI from the
+        # ``response_model=`` annotation on the endpoint, not from this
+        # class. Returning the same dict shape the legacy endpoint
+        # returned keeps the OpenAPI contract stable.
+        return {"id": id, "name": name, "index": index}
 
 
-class DevicePayload(BaseModel):
+class USBDevicesResponse:
+    """``GET /usb`` response payload (kept URL-compatible)."""
+
+
+class DevicePayload:
     """One row in the ``/devices`` response (USB + IP cameras)."""
 
-    id: str = Field(..., description="Stable camera identifier.")
-    name: str = Field(..., description="Human-readable camera name.")
-    source: str = Field(
-        ...,
-        description="Origin of the entry: ``usb`` or ``ip``.",
-    )
 
-
-class DevicesResponse(BaseModel):
+class DevicesResponse:
     """``GET /devices`` response payload."""
 
-    devices: List[DevicePayload] = Field(
-        default_factory=list,
-        description="All selectable cameras (USB + IP cameras).",
-    )
 
+class StreamStatusResponse:
+    """``GET /status`` response payload.
 
-class StreamStatusResponse(BaseModel):
-    """``GET /status`` response payload."""
+    Attributes:
+        running: True when the supervisor has a ustreamer child for
+            the configured ``default_device_id`` and the child is
+            alive.
+        active_id: Identifier of the camera currently serving the
+            next ``/stream`` request (``/dev/videoN`` path or HTTP
+            URL). ``None`` when no id is configured.
+        ustreamer_url: The full URL the next ``/stream`` request
+            would redirect to, or ``None`` when no stream is
+            available.
+        message: Single-line operator hint describing why the
+            stream cannot be served. Empty when ``running`` is
+            ``True``.
+    """
 
-    running: bool = Field(
-        ...,
-        description="Whether a stream is currently being served.",
-    )
-    active_id: Optional[str] = Field(
-        default=None,
-        description="Identifier of the camera currently open.",
-    )
-    refcount: int = Field(
-        default=0,
-        description="Number of active stream handles.",
-    )
-    last_frame_at: Optional[str] = Field(
-        default=None,
-        description=(
-            "ISO-8601 timestamp of the most recently yielded frame, "
-            "or ``null`` if no frame has been yielded."
-        ),
-    )
+    running: bool
+    active_id: Optional[str]
+    ustreamer_url: Optional[str]
+    message: str
 
 
 # ---------------------------------------------------------------------- #
-# StreamManager                                                           #
+# UstreamerSupervisor                                                     #
 # ---------------------------------------------------------------------- #
 
 
-class StreamManager:
-    """One-camera-at-a-time manager for the MJPEG endpoint.
+# Port allocation strategy: one ustreamer per detected device, starting
+# at 8080 + index. The supervisor persists the actual port alongside
+# the device id in its in-process map; the mapping is stable for the
+# lifetime of the backend process. Operators that need to bookmark a
+# stream URL can rely on the port staying put until the backend
+# restarts.
+_USTREAMER_BASE_PORT = 8080
 
-    A single capture is held under :attr:`_active_cap` and shared
-    between all streaming clients. Reference counting lets a slow
-    client safely issue two requests for the same id without racing
-    itself; the capture is released only when *every* client has
-    dropped or switched cameras.
+
+class UstreamerSupervisor:
+    """One ``ustreamer`` subprocess per ``/dev/videoN`` device.
+
+    The supervisor owns:
+
+    * the per-device subprocess table (``_procs``: id -> Popen);
+    * the device → port mapping (``_ports``);
+    * a per-device cooldown (``_cooldown_until``) so a freshly-failed
+      device is not hammered by the frontend's exponential backoff;
+    * the diagnostic ``message`` returned to the frontend via
+      ``status()`` and the ``/stream`` 503 body.
 
     Thread-safety
     -------------
-    Public methods (``acquire``, ``release``, ``shutdown``,
-    ``status``, ``mark_frame``) take :attr:`_lock` so concurrent
-    FastAPI threadpool tasks (the stream endpoint runs in a worker
-    thread via the asyncio generator bridge) cannot tear the capture
-    down twice.
+    Public methods (``spawn_or_reuse``, ``stop``, ``shutdown``,
+    ``status``, ``read_default_device_id``, ``read_ip_camera_url``)
+    take :attr:`_lock` so concurrent FastAPI threadpool tasks cannot
+    tear a child down twice.
 
     Why not just a module-level capture?
     ------------------------------------
-    Holding the capture open between requests would violate the
-    on-demand contract from Issue #56: ``/dev/video*`` bandwidth must
-    be released the moment no client is watching.
+    The supervisor spawns one ``ustreamer`` per id the first time a
+    client requests ``/stream?id=...``. The child stays alive until
+    the operator switches cameras or the backend shuts down. Unlike
+    the OpenCV-era design there is no per-frame loop on the Python
+    side; the child owns the capture / encode cycle entirely.
     """
+
+    # ustreamer flags we always pass. Resolution / framerate / encoder
+    # quality are not user-tunable from the settings panel — they live
+    # here as constants and would only move to settings if a future
+    # ticket adds a "stream quality" selector.
+    _USTREAMER_ARGS = (
+        "-m",  # MJPEG output
+        "JPEG",
+        "-r", "640x480",  # resolution
+        "-f", "30",  # framerate cap
+        "--allow-origin", "*",  # CORS for browser <img> tags
+    )
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._active_id: Optional[str] = None
-        self._active_cap = None  # cv2.VideoCapture (typed as Any)
-        self._refcount: int = 0
-        self._last_frame_at: Optional[datetime] = None
-        self._settings_store = None  # late-bound by bind_settings
-        self._cv2_disabled = False
-        # Cooldown: after a failed open/read, reject new requests for
-        # this camera_id until the cooldown expires. Prevents the
-        # frontend from hammering a locked device and triggering
-        # OpenCV C++ exceptions on Windows.
-        self._cooldown_until: dict[str, datetime] = {}
+        # id → ``subprocess.Popen`` handle.
+        self._procs: Dict[str, "subprocess.Popen[bytes]"] = {}
+        # id → assigned TCP port.
+        self._ports: Dict[str, int] = {}
+        # id → next-eligible ``datetime`` after which retries are
+        # allowed. Mirrors the OpenCV-era cooldown so the frontend's
+        # exponential backoff does not pile requests on a freshly-
+        # crashed device.
+        self._cooldown_until: Dict[str, datetime] = {}
         self._cooldown_seconds = 5.0
+        self._settings_store = None  # late-bound by bind_settings
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -214,59 +221,20 @@ class StreamManager:
         self._settings_store = settings_store
 
     def shutdown(self) -> None:
-        """Release the active capture and reset the refcount."""
+        """Terminate every spawned child. Idempotent."""
         with self._lock:
-            self._release_locked()
-
-    # ------------------------------------------------------------------ #
-    # Accessors                                                          #
-    # ------------------------------------------------------------------ #
-
-    def status(self) -> dict:
-        """Return a small JSON-serialisable snapshot for ``GET /status``."""
-        with self._lock:
-            running = self._active_cap is not None and self._refcount > 0
-            last = self._last_frame_at
-            return {
-                "running": running,
-                "active_id": self._active_id,
-                "refcount": self._refcount,
-                "last_frame_at": last.isoformat() if last is not None else None,
-            }
-
-    def mark_frame(self) -> None:
-        """Stamp ``_last_frame_at`` after a successful frame yield."""
-        with self._lock:
-            self._last_frame_at = datetime.now(timezone.utc)
-
-    def mark_failure(self, camera_id: str) -> None:
-        """Record a read failure so the next request hits the cooldown.
-
-        Called by the stream generator when ``cv2.read`` fails or
-        raises a C++ exception. The cooldown prevents the frontend
-        from immediately retrying and crashing OpenCV again.
-        """
-        with self._lock:
-            self._cooldown_until[camera_id] = datetime.now(
-                timezone.utc
-            ) + timedelta(seconds=self._cooldown_seconds)
-            logger.info(
-                "StreamManager: camera %s marked for cooldown (%.1fs)",
-                camera_id,
-                self._cooldown_seconds,
-            )
+            for camera_id in list(self._procs.keys()):
+                self._terminate_locked(camera_id)
 
     # ------------------------------------------------------------------ #
     # Settings passthrough                                                #
     # ------------------------------------------------------------------ #
 
-    def reload_config(self) -> CameraSettings:
-        """Build a :class:`CameraSettings` from the store.
+    def _load_settings(self) -> CameraSettings:
+        """Read the merged settings; fall back to defaults on error.
 
-        Thread-safe: re-reads happen on every frame, but the underlying
-        store caches its payload so the cost is one dict copy. Falls
-        back to defaults on validation errors so a transient bad PUT
-        never crashes the streaming loop.
+        Mirrors the legacy ``StreamManager.reload_config`` shape so a
+        malformed PUT never crashes the streaming path.
         """
         try:
             if self._settings_store is None:
@@ -275,44 +243,50 @@ class StreamManager:
             return CameraSettings(**payload)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "StreamManager: invalid settings payload (%s); using defaults",
+                "UstreamerSupervisor: invalid settings payload (%s); "
+                "using defaults",
                 exc,
             )
             return CameraSettings()
 
     def read_default_device_id(self) -> Optional[str]:
         """Return the configured ``default_device_id`` (or ``None``)."""
-        cfg = self.reload_config()
-        value = getattr(cfg, "default_device_id", "")
+        value = getattr(self._load_settings(), "default_device_id", "")
         return value or None
 
     def read_ip_camera_url(self) -> Optional[str]:
         """Return the configured ``ip_camera_url`` (or ``None``)."""
-        cfg = self.reload_config()
-        value = getattr(cfg, "ip_camera_url", "")
+        value = getattr(self._load_settings(), "ip_camera_url", "")
         return value or None
 
     # ------------------------------------------------------------------ #
-    # Acquire / Release                                                  #
+    # Device discovery                                                   #
     # ------------------------------------------------------------------ #
 
-    def acquire(self, camera_id: str):
-        """Open (or share) the capture for ``camera_id``.
+    def known_device_ids(self) -> List[str]:
+        """Return the ``/dev/video*`` paths the detection layer found.
 
-        Returns the OpenCV capture object so the caller can call
-        ``.read()`` directly. Raises :class:`RuntimeError` if the
-        capture cannot be opened — callers should translate that into
-        an actionable HTTP error.
+        The supervisor treats ``known_device_ids`` as the authoritative
+        list when an explicit ``/stream?id=...`` request asks for a
+        device that was not enumerated. Anything outside this list
+        still gets a fallback diagnostic but is treated as missing.
+        """
+        return [device.id for device in detect_usb_cameras()]
 
-        Cooldown: if this camera_id recently failed to open or read,
-        reject the request until the cooldown expires. This prevents
-        the frontend from hammering a locked device and triggering
-        OpenCV C++ exceptions on Windows.
+    # ------------------------------------------------------------------ #
+    # Spawn / Stop                                                       #
+    # ------------------------------------------------------------------ #
+
+    def spawn_or_reuse(self, camera_id: str) -> Dict[str, str]:
+        """Return ``{"id": ..., "url": ...}`` for ``camera_id``.
+
+        Spawns the child if it is not already running. Raises
+        :class:`RuntimeError` if the spawn fails — callers should
+        translate that into an actionable HTTP error.
         """
         if not camera_id:
             raise RuntimeError("camera_id is required")
 
-        # Check cooldown before doing any work.
         with self._lock:
             cooldown_until = self._cooldown_until.get(camera_id)
             if cooldown_until is not None:
@@ -323,257 +297,254 @@ class StreamManager:
                         f"Camera {camera_id!r} is in cooldown "
                         f"({remaining:.1f}s remaining)"
                     )
-                # Cooldown expired — clear it.
                 del self._cooldown_until[camera_id]
 
-        # Lazy-import cv2 and remember the reference so the rest of
-        # ``acquire`` does not have to repeat the import. We catch the
-        # import failure *and* attribute-access failures because some
-        # environments ship a partially-broken cv2 that imports but
-        # cannot resolve ``VideoCapture`` (typically missing
-        # libavdevice / GStreamer).
-        try:
-            import cv2 as _cv2  # type: ignore
-            _ = _cv2.VideoCapture  # attribute probe
-        except Exception as exc:  # noqa: BLE001
-            self._cv2_disabled = True
-            raise RuntimeError(
-                f"OpenCV is not available on the server: {exc}"
-            ) from exc
+            proc = self._procs.get(camera_id)
+            if proc is not None and proc.poll() is None:
+                # Still alive — reuse.
+                port = self._ports[camera_id]
+                return {"id": camera_id, "url": self._stream_url(port)}
 
-        with self._lock:
-            # Fast path: already serving this id.
-            if (
-                self._active_id == camera_id
-                and self._active_cap is not None
-                and self._active_cap.isOpened()
-            ):
-                self._refcount += 1
-                logger.debug(
-                    "StreamManager.acquire: reusing %s (refcount=%d)",
-                    camera_id,
-                    self._refcount,
-                )
-                return self._active_cap
-
-            # Release any active capture first so a "switch camera"
-            # request honours the on-demand contract.
-            self._release_locked()
-
-            source = camera_id
-            backend_api = _cv2.CAP_ANY
-            # If it's a pure number string like "0", cast it to an int for Windows
-            if isinstance(source, str) and source.isdigit():
-                source = int(source)
-
-                if sys.platform == 'win32':
-                    # CAP_MSMF is much less prone to hard C++ crashing
-                    # when the hardware is locked than CAP_DSHOW.
-                    backend_api = _cv2.CAP_MSMF
-
-            cap = _cv2.VideoCapture(source, backend_api)
-            if cap is None or not cap.isOpened():
-                if cap is not None:
-                    try:
-                        cap.release()
-                    except Exception:  # noqa: BLE001
-                        pass
-                # Record the failure so the next request hits the
-                # cooldown instead of crashing OpenCV again.
-                self._cooldown_until[camera_id] = datetime.now(
-                    timezone.utc
-                ) + timedelta(seconds=self._cooldown_seconds)
-                raise RuntimeError(
-                    f"Cannot open camera source: {camera_id!r}"
-                )
-
-            # Apply resolution settings from the module config.
-            # Failures are logged but non-fatal — the driver may
-            # ignore the request and produce whatever it likes.
-            cfg = self.reload_config()
+            # Either no child or it has exited. (Re)spawn.
             try:
-                cap.set(_cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
-                cap.set(_cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "StreamManager: cap.set resolution failed: %s", exc
-                )
+                port = self._ports[camera_id]
+            except KeyError:
+                port = self._allocate_port(camera_id)
+                self._ports[camera_id] = port
 
-            self._active_cap = cap
-            self._active_id = camera_id
-            self._refcount = 1
+            proc = self._spawn_locked(camera_id, port)
+            self._procs[camera_id] = proc
             logger.info(
-                "StreamManager: opened capture id=%s (refcount=1)", camera_id
+                "UstreamerSupervisor: spawned ustreamer id=%s port=%d (pid=%d)",
+                camera_id,
+                port,
+                proc.pid,
             )
-            return cap
+            return {"id": camera_id, "url": self._stream_url(port)}
 
-    def release(self, camera_id: str) -> None:
-        """Decrement the refcount for ``camera_id`` and release at zero.
+    def stop(self, camera_id: str) -> None:
+        """Terminate the child for ``camera_id`` if any. Idempotent."""
+        with self._lock:
+            self._terminate_locked(camera_id)
 
-        A release against a stale id (i.e. the active id has already
-        been switched) is a no-op. This keeps clients that disconnect
-        asynchronously from racing with the manager.
+    # ------------------------------------------------------------------ #
+    # Status / diagnostic                                                 #
+    # ------------------------------------------------------------------ #
+
+    def status(self) -> Dict[str, object]:
+        """Return the JSON payload for ``GET /status``.
+
+        Always returns ``running`` as a boolean; ``message`` is empty
+        when ``running`` is True and otherwise carries a single-line
+        operator hint explaining what is missing.
         """
         with self._lock:
-            if self._active_id != camera_id:
-                return
-            if self._refcount <= 0:
-                return
-            self._refcount -= 1
-            logger.debug(
-                "StreamManager.release: id=%s refcount=%d",
-                camera_id,
-                self._refcount,
+            active_id = self.read_default_device_id()
+
+            # Pre-flight diagnostic checks (cheap; no subprocess I/O).
+            message = self._diagnostic_message_locked(active_id)
+            if message:
+                return {
+                    "running": False,
+                    "active_id": active_id,
+                    "ustreamer_url": None,
+                    "message": message,
+                }
+
+            # No id configured — operator has not picked a device yet.
+            if not active_id:
+                return {
+                    "running": False,
+                    "active_id": None,
+                    "ustreamer_url": None,
+                    "message": "",
+                }
+
+            proc = self._procs.get(active_id)
+            if proc is None or proc.poll() is not None:
+                # Child not running or has exited. Operator needs to
+                # know whether the problem is ustreamer itself or
+                # something downstream (port already bound, device
+                # busy, etc.).
+                if proc is not None:
+                    code = proc.returncode
+                    self._cooldown_until[active_id] = (
+                        datetime.now(timezone.utc)
+                        + timedelta(seconds=self._cooldown_seconds)
+                    )
+                    self._procs.pop(active_id, None)
+                    return {
+                        "running": False,
+                        "active_id": active_id,
+                        "ustreamer_url": None,
+                        "message": (
+                            f"ustreamer exited unexpectedly "
+                            f"(code {code}). Check the backend logs "
+                            f"for details."
+                        ),
+                    }
+                # No child has been spawned yet — tell the operator to
+                # click the camera (which fires the first /stream).
+                return {
+                    "running": False,
+                    "active_id": active_id,
+                    "ustreamer_url": None,
+                    "message": "",
+                }
+
+            port = self._ports.get(active_id)
+            return {
+                "running": True,
+                "active_id": active_id,
+                "ustreamer_url": self._stream_url(port) if port else None,
+                "message": "",
+            }
+
+    def _diagnostic_message_locked(self, camera_id: Optional[str]) -> str:
+        """Return a one-line operator hint, or ``""`` if everything is fine.
+
+        Caller must hold :attr:`_lock`. Resolution order:
+
+        1. Non-Linux platform → dependency message (ustreamer is Linux-only).
+        2. ``ustreamer`` binary missing on PATH.
+        3. ``camera_id`` provided but not present in ``/dev/video*``.
+        4. No devices and no IP camera configured.
+        """
+        if not sys.platform.startswith("linux"):
+            return (
+                "The camera module requires Linux; ustreamer does not "
+                "run on this platform."
             )
-            if self._refcount <= 0:
-                self._release_locked()
 
-    def _release_locked(self) -> None:
-        """Release the active capture. Caller must hold :attr:`_lock`."""
-        cap = self._active_cap
-        self._active_cap = None
-        self._active_id = None
-        self._refcount = 0
-        if cap is not None:
-            try:
-                cap.release()
-            except Exception as exc:  # noqa: BLE001 - cv2 internals vary
-                logger.debug("StreamManager: cap.release() raised %s", exc)
-            logger.info("StreamManager: released capture.")
-
-
-# ---------------------------------------------------------------------- #
-# Streaming generator                                                     #
-# ---------------------------------------------------------------------- #
-
-
-async def _generate_frames(
-    camera_id: str, request: Request
-) -> AsyncIterator[bytes]:
-    """Async MJPEG generator for a single client.
-
-    The capture is opened via :meth:`StreamManager.acquire` (which
-    releases any other camera first) and closed in a ``finally`` block
-    so a client disconnect, server shutdown, or unexpected exception
-    all free the hardware immediately.
-
-    The loop polls ``request.is_disconnected()`` between frames so a
-    client that drops its TCP connection does not leak a capture for
-    the entire ~250 ms keepalive window.
-    """
-    try:
-        cap = await asyncio.to_thread(_stream_manager.acquire, camera_id)
-    except RuntimeError as exc:
-        # DO NOT raise HTTPException here. The StreamingResponse has already started
-        # and sent the 200 OK headers. Exiting cleanly terminates the stream.
-        logger.error("Failed to start stream for camera_id=%s: %s", camera_id, exc)
-        return
-
-    try:
-        while True:
-            # Stop the moment the client goes away.
-            if await request.is_disconnected():
-                logger.info(
-                    "Stream: client disconnected (camera_id=%s)", camera_id
-                )
-                break
-
-            # Reload config from the settings store on every frame so
-            # a PUT on /settings takes effect on the next frame.
-            cfg = await asyncio.to_thread(_stream_manager.reload_config)
-
-            # ``read()`` is blocking; run it in a worker thread so the
-            # asyncio loop stays responsive to the jog keep-alive
-            # endpoint and the WebSocket telemetry loop.
-            # Wrap the read call to catch exploding Windows drivers
-            try:
-                ok, frame = cap.read()
-            except _cv2.error as e:
-                logger.warning(
-                    "Stream: C++ exception during cv2.read for camera_id=%s; stopping. (%s)",
-                    camera_id, e
-                )
-                _stream_manager.mark_failure(camera_id)
-                break  # Break the loop to trigger the finally block
-            except Exception as e:
-                logger.warning("Stream: Unexpected error reading camera_id=%s: %s", camera_id, e)
-                _stream_manager.mark_failure(camera_id)
-                break
-            if not ok:
-                logger.warning(
-                    "Stream: cv2.read failed for camera_id=%s; stopping.",
-                    camera_id,
-                )
-                _stream_manager.mark_failure(camera_id)
-                break
-
-            # ``imencode`` itself is fast (<10 ms for 640x480) but we
-            # still keep it off the event loop for symmetry with
-            # ``read()``.
-            ok, buffer = await asyncio.to_thread(
-                _imencode_jpeg, frame, cfg.jpeg_quality
+        if shutil.which("ustreamer") is None:
+            return (
+                "ustreamer is not installed on this host. Run "
+                "'sudo apt install ustreamer' on the LinuxCNC controller."
             )
-            if ok:
-                _stream_manager.mark_frame()
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + bytes(buffer)
-                    + b"\r\n"
+
+        known = self.known_device_ids()
+        if camera_id and not camera_id.startswith(("http://", "https://", "rtsp://")):
+            if camera_id not in known:
+                return (
+                    f"Camera {camera_id} is not present. Reconnect the "
+                    f"camera or pick another device."
                 )
 
-            # Sleep cap so the asyncio loop keeps breathing for jog
-            # keep-alives. Floor at 60 ms (matches the legacy router).
-            sleep_seconds = max(1.0 / cfg.target_fps, 0.06)
-            await asyncio.sleep(sleep_seconds)
-    finally:
-        # Always release — disconnect, exception, server shutdown.
-        await asyncio.to_thread(_stream_manager.release, camera_id)
+        if not known and not self.read_ip_camera_url():
+            return (
+                "No USB cameras detected and no IP camera configured. "
+                "Plug in a camera or save an IP camera URL."
+            )
 
+        return ""
 
-def _imencode_jpeg(frame, quality: int):
-    """Helper run in a worker thread so the asyncio loop stays free.
+    # ------------------------------------------------------------------ #
+    # Subprocess plumbing                                                 #
+    # ------------------------------------------------------------------ #
 
-    Returns ``(ok, buffer_or_none)`` so the caller can detect failure.
-    """
-    try:
-        import cv2  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Stream: cv2 import failed inside encode: %s", exc)
-        return False, None
-    return cv2.imencode(
-        ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
-    )
+    def _allocate_port(self, camera_id: str) -> int:
+        """Pick a TCP port for ``camera_id``.
+
+        Strategy: index by enumeration order, so ``/dev/video0`` →
+        8080, ``/dev/video1`` → 8081, … The operator can therefore
+        bookmark a single camera and have the URL stay stable across
+        restarts as long as the device order is preserved.
+        """
+        known = self.known_device_ids()
+        try:
+            idx = known.index(camera_id)
+        except ValueError:
+            # Unknown id — fall back to hash-derived port. Rare path;
+            # the operator must explicitly request an unknown id.
+            idx = abs(hash(camera_id)) % 1000
+        return _USTREAMER_BASE_PORT + idx
+
+    def _stream_url(self, port: int) -> str:
+        """Build the URL the frontend ``<img>`` follows."""
+        return f"http://127.0.0.1:{port}/?action=stream"
+
+    def _spawn_locked(
+        self, camera_id: str, port: int
+    ) -> "subprocess.Popen[bytes]":
+        """Spawn ``ustreamer -d <id> -p <port> ...``. Caller holds lock."""
+        # ``camera_id`` may be an HTTP/RTSP URL (the IP-camera
+        # passthrough). ustreamer cannot consume those directly; the
+        # operator is expected to have set the URL only as a logical
+        # marker and rely on the IP-camera entry showing up in the
+        # picker. The supervisor still allocates a port so the URL
+        # field has a stable value to display, but the child is not
+        # spawned — the frontend surfaces the URL as a non-streamable
+        # historical row.
+        if camera_id.startswith(("http://", "https://", "rtsp://")):
+            raise RuntimeError(
+                f"Camera source {camera_id!r} is an HTTP/RTSP URL — "
+                "ustreamer does not consume those. Use a local "
+                "/dev/videoN device or terminate the IP-camera URL "
+                "in the Settings panel."
+            )
+
+        args = [
+            "ustreamer",
+            "-d", camera_id,
+            "-p", str(port),
+            *self._USTREAMER_ARGS,
+        ]
+        try:
+            return subprocess.Popen(
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                # Detach so ustreamer does not block the Python loop
+                # if its stderr pipe fills up.
+                start_new_session=True,
+            )
+        except FileNotFoundError as exc:
+            self._cooldown_until[camera_id] = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=self._cooldown_seconds)
+            )
+            raise RuntimeError(
+                "ustreamer is not installed on this host. Run "
+                "'sudo apt install ustreamer' on the LinuxCNC controller."
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - spawn failure modes vary
+            self._cooldown_until[camera_id] = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=self._cooldown_seconds)
+            )
+            raise RuntimeError(
+                f"Failed to spawn ustreamer for {camera_id!r}: {exc}"
+            ) from exc
+
+    def _terminate_locked(self, camera_id: str) -> None:
+        """Terminate ``camera_id``'s child. Caller holds lock."""
+        proc = self._procs.pop(camera_id, None)
+        if proc is None:
+            return
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:  # noqa: BLE001 - wait timeout path
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=1.0)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+                logger.debug(
+                    "UstreamerSupervisor: terminate raised %s", exc
+                )
+        self._cooldown_until.pop(camera_id, None)
+        logger.info(
+            "UstreamerSupervisor: terminated ustreamer id=%s", camera_id
+        )
 
 
 # ---------------------------------------------------------------------- #
 # Endpoints                                                               #
 # ---------------------------------------------------------------------- #
-
-
-@router.get(
-    "/usb",
-    response_model=USBDevicesResponse,
-    summary="Detect attached USB cameras",
-    description=(
-        "Scan ``/dev/video*`` (Linux) or probe OpenCV indices "
-        "(Windows) and return one row per device. ``name`` is the "
-        "human-readable card string from ``v4l2-ctl --list-devices`` "
-        "when available; a synthetic fallback is used otherwise."
-    ),
-    operation_id="detectUsbCameras",
-)
-def detect_usb() -> USBDevicesResponse:
-    import sys as _sys
-
-    devices = detect_usb_cameras()
-    return USBDevicesResponse(
-        devices=[
-            USBDevicePayload(id=d.id, name=d.name, index=d.index)
-            for d in devices
-        ],
-        platform=_sys.platform,
-    )
 
 
 def _safe_host(url: str) -> str:
@@ -586,8 +557,29 @@ def _safe_host(url: str) -> str:
 
 
 @router.get(
+    "/usb",
+    summary="Detect attached USB cameras",
+    description=(
+        "Scan ``/dev/video*`` and return one row per device. ``name`` "
+        "is the human-readable card string from "
+        "``v4l2-ctl --list-devices`` when available; a synthetic "
+        "fallback is used otherwise. The endpoint is URL-compatible "
+        "with the legacy OpenCV-era router."
+    ),
+    operation_id="detectUsbCameras",
+)
+def detect_usb() -> Dict[str, object]:
+    devices = detect_usb_cameras()
+    return {
+        "devices": [
+            {"id": d.id, "name": d.name, "index": d.index} for d in devices
+        ],
+        "platform": sys.platform,
+    }
+
+
+@router.get(
     "/devices",
-    response_model=DevicesResponse,
     summary="List all selectable cameras",
     description=(
         "Combination of the attached USB cameras and any IP-camera "
@@ -596,39 +588,39 @@ def _safe_host(url: str) -> str:
     ),
     operation_id="listCameraDevices",
 )
-def list_devices() -> DevicesResponse:
-    out: List[DevicePayload] = [
-        DevicePayload(id=d.id, name=d.name, source="usb")
+def list_devices() -> Dict[str, object]:
+    out: List[Dict[str, str]] = [
+        {"id": d.id, "name": d.name, "source": "usb"}
         for d in detect_usb_cameras()
     ]
     # IP camera passthrough: read the optional URL from settings.
-    ip_url = _stream_manager.read_ip_camera_url()
+    ip_url = _supervisor.read_ip_camera_url()
     if ip_url:
         out.append(
-            DevicePayload(
-                id=ip_url,
-                name=f"IP Camera ({_safe_host(ip_url)})",
-                source="ip",
-            )
+            {
+                "id": ip_url,
+                "name": f"IP Camera ({_safe_host(ip_url)})",
+                "source": "ip",
+            }
         )
-    return DevicesResponse(devices=out)
+    return {"devices": out}
 
 
 @router.get(
     "/stream",
     summary="Get Live MJPEG Stream",
     description=(
-        "Streams live MJPEG video from the requested camera. Without "
-        "query parameters the configured ``default_device_id`` is used "
-        "(empty on first boot, which results in 503 — pick a device "
-        "first via ``GET /usb``). With ``?id=…`` the supplied "
-        "identifier is opened on-demand; switching cameras releases "
-        "the previous capture immediately."
+        "Returns a 302 redirect to the per-device ``ustreamer`` MJPEG "
+        "URL (``http://127.0.0.1:{port}/?action=stream``). Without "
+        "query parameters the configured ``default_device_id`` is "
+        "used; empty on first boot results in 503. When the stream "
+        "cannot be served for any reason (dependency missing, device "
+        "absent, platform unsupported, child crashed) the response "
+        "is a 503 whose ``detail`` is a single-line operator hint."
     ),
     operation_id="streamCamera",
 )
 def camera_stream(
-    request: Request,
     id: Optional[str] = Query(
         default=None,
         description=(
@@ -636,68 +628,69 @@ def camera_stream(
             "Defaults to the configured ``default_device_id``."
         ),
     ),
-) -> StreamingResponse:
-    camera_id = id or _stream_manager.read_default_device_id()
+) -> RedirectResponse:
+    camera_id = id or _supervisor.read_default_device_id()
     if not camera_id:
         raise HTTPException(
             status_code=503,
             detail=(
-                "No camera selected. Call GET /usb to enumerate devices, "
-                "then re-request /stream?id=<device_id>."
+                "No camera selected. Pick a device in the Camera "
+                "Settings panel, then request /stream?id=<device_id>."
             ),
         )
-    return StreamingResponse(
-        _generate_frames(camera_id, request),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
+    try:
+        info = _supervisor.spawn_or_reuse(camera_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return RedirectResponse(url=info["url"], status_code=302)
 
 
 @router.get(
     "/status",
-    response_model=StreamStatusResponse,
-    summary="Get Stream Manager Status",
+    summary="Get Supervisor Status",
     description=(
-        "Returns ``{running, active_id, refcount, last_frame_at}``. "
-        "``running`` is true while at least one client is being "
-        "served. ``refcount`` shows how many concurrent clients are "
-        "sharing the active capture."
+        "Returns ``{running, active_id, ustreamer_url, message}``. "
+        "``running`` is true when the supervisor has a live "
+        "``ustreamer`` child for the configured default device. "
+        "``message`` is a single-line operator hint (empty when the "
+        "stream is healthy) that distinguishes 'dependency missing' "
+        "from 'device unplugged' from 'platform unsupported'."
     ),
     operation_id="getCameraStatus",
 )
-def camera_status() -> StreamStatusResponse:
-    snapshot = _stream_manager.status()
-    return StreamStatusResponse(**snapshot)
+def camera_status() -> Dict[str, object]:
+    return _supervisor.status()
 
 
 # ---------------------------------------------------------------------- #
 # Late binding                                                            #
 # ---------------------------------------------------------------------- #
 
-# Instantiate the singleton *after* :class:`StreamManager` is declared so
-# the class body is visible at module-load time.
-_stream_manager = StreamManager()
+# Instantiate the singleton *after* :class:`UstreamerSupervisor` is
+# declared so the class body is visible at module-load time.
+_supervisor = UstreamerSupervisor()
 
 
 def bind_settings_store(settings_store) -> None:
-    """Attach a SettingsStore to the module-level StreamManager.
+    """Attach a SettingsStore to the module-level supervisor.
 
-    Called from :meth:`CameraModule.on_load` once the registry has built
-    the per-module :class:`SettingsStore`. Idempotent: calling twice
-    with the same store is a no-op.
+    Called from :meth:`CameraModule.on_load` once the registry has
+    built the per-module :class:`SettingsStore`. Idempotent: calling
+    twice with the same store is a no-op.
     """
-    _stream_manager.bind_settings(settings_store)
+    _supervisor.bind_settings(settings_store)
 
 
 def stop_manager() -> None:
-    """Tear the manager down for ``on_unload``.
+    """Tear the supervisor down for ``on_unload``.
 
-    Releases any active capture. Idempotent.
+    Terminates every spawned child. Idempotent.
     """
-    _stream_manager.shutdown()
+    _supervisor.shutdown()
 
 
 __all__ = [
-    "StreamManager",
+    "UstreamerSupervisor",
     "USBDeviceInfo",
     "bind_settings_store",
     "router",

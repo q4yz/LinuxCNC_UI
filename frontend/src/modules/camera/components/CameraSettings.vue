@@ -14,6 +14,7 @@ const {
   isLoading: devicesLoading,
   error: devicesError,
   preferencesHydrated,
+  streamMessage,
 } = storeToRefs(store);
 const settings = createModuleSettings(manifest.id);
 
@@ -107,6 +108,7 @@ async function confirmRemove(device) {
 
 onMounted(() => {
   store.fetchDevices();
+  store.refreshStreamMessage();
   loadBackendSettings();
 });
 </script>
@@ -181,7 +183,15 @@ onMounted(() => {
         v-if="!devicesLoading && devices.length === 0"
         class="rounded border border-dashed border-gray-700 bg-gray-900/40 p-6 text-center text-sm text-gray-500"
       >
-        No cameras were detected. Connect a USB camera or save an IP camera URL.
+        <p v-if="streamMessage" class="font-semibold text-amber-300">
+          Camera unavailable
+        </p>
+        <p v-if="streamMessage" class="mt-2 text-xs text-gray-300">
+          {{ streamMessage }}
+        </p>
+        <p v-else>
+          No cameras were detected. Connect a USB camera or save an IP camera URL.
+        </p>
       </div>
 
       <div

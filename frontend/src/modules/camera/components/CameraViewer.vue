@@ -13,8 +13,14 @@ const logger = {
 };
 
 const store = useCameraStore();
-const { devices, activeCameraId, cameraPreferences, isLoading, error } =
-  storeToRefs(store);
+const {
+  devices,
+  activeCameraId,
+  cameraPreferences,
+  isLoading,
+  error,
+  streamMessage,
+} = storeToRefs(store);
 
 const activeDevice = computed(() => {
   return devices.value.find((device) => device.id === activeCameraId.value) ?? null;
@@ -68,7 +74,9 @@ const startStream = () => {
 // Exponential backoff on stream failure. The backend enforces a
 // 5-second cooldown after a failed open/read; the frontend mirrors
 // that with a capped exponential backoff so we don't hammer the
-// server while the hardware is locked.
+// server while the hardware is locked. Every retry also refreshes
+// ``streamMessage`` so a dependency problem surfaces with a single
+// operator-facing hint rather than the silent retry loop.
 const handleStreamError = () => {
   retryCount += 1;
   const delay = Math.min(1000 * Math.pow(2, retryCount), MAX_RETRY_DELAY_MS);
@@ -80,6 +88,10 @@ const handleStreamError = () => {
   streamTimer = setTimeout(() => {
     startStream();
   }, delay);
+  // Pull the latest diagnostic from the supervisor. The operator
+  // sees a plain-English hint ("ustreamer is not installed…") instead
+  // of an opaque broken <img>.
+  store.refreshStreamMessage();
 };
 
 // Reset the backoff counter when the stream succeeds.
@@ -110,6 +122,7 @@ watch(
 
 onMounted(() => {
   store.fetchDevices();
+  store.refreshStreamMessage();
   startStream();
 });
 
@@ -155,6 +168,7 @@ onBeforeUnmount(async () => {
       class="flex min-h-[300px] flex-col items-center justify-center px-6 text-center"
     >
       <svg
+        v-if="!streamMessage"
         class="mb-3 h-12 w-12 text-gray-600"
         fill="none"
         viewBox="0 0 24 24"
@@ -168,19 +182,48 @@ onBeforeUnmount(async () => {
           d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
         />
       </svg>
-      <p class="text-sm font-semibold text-gray-300">
+      <svg
+        v-else
+        class="mb-3 h-12 w-12 text-amber-400"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"
+        />
+      </svg>
+      <p
+        v-if="streamMessage"
+        class="text-sm font-semibold text-amber-300"
+        role="alert"
+      >
+        Camera unavailable
+      </p>
+      <p v-else class="text-sm font-semibold text-gray-300">
         {{ isLoading ? "Discovering cameras..." : "No camera available" }}
       </p>
-      <p v-if="error" class="mt-2 max-w-md text-xs text-red-300">
+      <p
+        v-if="streamMessage"
+        class="mt-2 max-w-md text-xs text-gray-300"
+        role="status"
+      >
+        {{ streamMessage }}
+      </p>
+      <p v-else-if="error" class="mt-2 max-w-md text-xs text-red-300">
         {{ error }}
       </p>
       <button
         v-if="!isLoading"
         type="button"
         class="mt-4 rounded bg-gray-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
-        @click="store.fetchDevices()"
+        @click="streamMessage ? store.refreshStreamMessage() : store.fetchDevices()"
       >
-        Refresh Cameras
+        {{ streamMessage ? "Re-check" : "Refresh Cameras" }}
       </button>
     </div>
 

@@ -7,13 +7,19 @@ These tests pin down the persistence contract:
 * ``PUT /api/v1/modules/camera/settings`` persists atomically: no
   ``.tmp`` leftover after a crash, and the merged payload is returned.
 * Single-key PUT upserts into the merged payload.
-* A ``CameraWorker`` re-reads the merged settings on every frame so a
-  PUT takes effect on the next captured frame without a restart.
+* The settings store round-trips the per-camera ``preferences`` map
+  without losing rows.
 
 The atomic-write property is already exercised by
 ``test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt``;
 this test verifies the *module-scoped* write behaviour, not the
 underlying store.
+
+The MJPEG knobs (``width`` / ``height`` / ``jpeg_quality`` /
+``target_fps``) and the ``StreamManager.reload_config`` watcher were
+removed when the camera module moved from OpenCV to ``ustreamer``.
+Resolution / framerate / encoder quality are now supervisor-level
+CLI flags, not user-tunable settings.
 """
 from __future__ import annotations
 
@@ -45,10 +51,6 @@ def test_defaults_served_when_no_persisted_file(tmp_data_root: Path):
     resp = client.get("/api/v1/modules/camera/settings")
     assert resp.status_code == 200
     assert resp.json() == {
-        "width": 640,
-        "height": 480,
-        "jpeg_quality": 70,
-        "target_fps": 15,
         "default_device_id": "",
         "ip_camera_url": "",
         "preferences": {},
@@ -64,13 +66,13 @@ def test_put_persists_atomically(tmp_data_root: Path):
 
     resp = client.put(
         "/api/v1/modules/camera/settings",
-        json={"jpeg_quality": 90},
+        json={"ip_camera_url": "rtsp://camera.local/stream"},
     )
     assert resp.status_code == 200
     merged = resp.json()
-    assert merged["jpeg_quality"] == 90
+    assert merged["ip_camera_url"] == "rtsp://camera.local/stream"
     # Defaults survive the partial update.
-    assert merged["width"] == 640
+    assert merged["default_device_id"] == ""
 
     # The file exists on disk and contains the merged payload.
     on_disk = json.loads(
@@ -78,8 +80,8 @@ def test_put_persists_atomically(tmp_data_root: Path):
             encoding="utf-8",
         )
     )
-    assert on_disk["jpeg_quality"] == 90
-    assert on_disk["width"] == 640
+    assert on_disk["ip_camera_url"] == "rtsp://camera.local/stream"
+    assert on_disk["default_device_id"] == ""
 
     # No leftover .tmp file.
     leftovers = list(
@@ -88,14 +90,16 @@ def test_put_persists_atomically(tmp_data_root: Path):
     assert leftovers == []
 
 
-def test_worker_reloads_settings_each_frame(tmp_data_root: Path):
-    """The StreamManager reads the merged payload before every frame.
+def test_settings_round_trip_via_supervisor_default_device_id(
+    tmp_data_root: Path,
+):
+    """The supervisor reads ``default_device_id`` from the store.
 
-    Issue #56 replaced the background ``CameraWorker`` thread with an
-    on-demand :class:`~modules.camera.router.StreamManager`. The
-    public surface this test pins down is ``reload_config()``: every
-    stream iteration re-reads the merged settings so a PUT takes
-    effect on the next frame without a restart.
+    Replaces the legacy ``reload_config`` test that asserted
+    ``jpeg_quality`` / ``target_fps`` round-trips. The supervisor only
+    consumes ``default_device_id`` (and ``ip_camera_url``) from the
+    settings; the remaining fields (``preferences``) are owned by the
+    frontend.
     """
     from modules.camera import router as camera_router
     from modules.camera.settings import CameraSettings
@@ -106,25 +110,22 @@ def test_worker_reloads_settings_each_frame(tmp_data_root: Path):
         defaults=CameraSettings(),
     )
 
-    # Wire the singleton manager to a fresh settings store — no
-    # FastAPI app needed because we are not exercising HTTP.
     camera_router.bind_settings_store(settings)
-    manager = camera_router._stream_manager
+    supervisor = camera_router._supervisor
 
-    cfg = manager.reload_config()
-    assert cfg.jpeg_quality == 70  # defaults
-    assert cfg.target_fps == 15
+    assert supervisor.read_default_device_id() is None
+    assert supervisor.read_ip_camera_url() is None
 
-    # Persist a new value via the store; the manager must see it.
-    settings.write_key("jpeg_quality", 95)
-    cfg = manager.reload_config()
-    assert cfg.jpeg_quality == 95
+    settings.write_key("default_device_id", "/dev/video0")
+    settings.write_key("ip_camera_url", "rtsp://camera.local/stream")
+
+    assert supervisor.read_default_device_id() == "/dev/video0"
+    assert supervisor.read_ip_camera_url() == "rtsp://camera.local/stream"
 
     # Invalid keys are silently dropped via Pydantic validation; the
-    # manager falls back to defaults rather than crashing the loop.
-    settings.write_all({"width": -1})  # violates ``ge=160``
-    cfg = manager.reload_config()
-    assert cfg.width == 640  # default still wins
+    # supervisor falls back to defaults rather than crashing.
+    settings.write_all({"default_device_id": 12345})  # violates ``str`` type
+    assert supervisor.read_default_device_id() is None
 
 
 def test_per_camera_preferences_round_trip(tmp_data_root: Path):
@@ -164,9 +165,9 @@ def test_per_camera_preferences_round_trip(tmp_data_root: Path):
     assert merged["preferences"]["/dev/video0"]["custom_name"] == "Workshop ceiling"
     assert merged["preferences"]["/dev/video0"]["flip"] is True
     assert merged["preferences"]["/dev/video1"]["hidden"] is True
-    # MJPEG knobs were not in the payload — defaults survive.
-    assert merged["jpeg_quality"] == 70
-    assert merged["target_fps"] == 15
+    # Source-selection knobs were not in the payload — defaults survive.
+    assert merged["ip_camera_url"] == ""
+    assert merged["default_device_id"] == ""
 
     # GET must surface the same payload.
     resp = client.get("/api/v1/modules/camera/settings")
@@ -231,18 +232,17 @@ def test_preferences_put_replaces_top_level_map(tmp_data_root: Path):
 
 def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
     """Partial rows persist as the client wrote them; default-fill happens
-    only inside the Pydantic ``CameraDevicePreference`` coercion path
-    (``StreamManager.reload_config``).
+    only inside the Pydantic ``CameraDevicePreference`` coercion path.
 
     The frontend's ``coercePreference`` always produces rows with all
     four fields, so a partial PUT only happens during forward /
     backward-compat windows. The store's job is to keep the bytes
     durable; the consumer's job is to fill defaults where they are
     read. This test pins both halves: the round-trip preserves the
-    shape the operator wrote, and the StreamManager falls back to
-    defaults when a row is missing keys.
+    shape the operator wrote, and the Pydantic coercion (via
+    ``CameraSettings(**payload)``) fills defaults when a row is
+    missing keys.
     """
-    from modules.camera import router as camera_router
     from modules.camera.settings import CameraSettings
 
     app = _build_app(tmp_data_root)
@@ -265,13 +265,7 @@ def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
     # payload into ``CameraSettings`` and gets a fully-populated row
     # for ``/dev/video0``, with ``flip``/``mirror``/``hidden``
     # materialised from the Pydantic schema.
-    settings = SettingsStore(
-        module_id="camera",
-        data_root=tmp_data_root,
-        defaults=CameraSettings(),
-    )
-    camera_router.bind_settings_store(settings)
-    cfg = camera_router._stream_manager.reload_config()
+    cfg = CameraSettings(**resp.json())
     assert "/dev/video0" in cfg.preferences
     assert cfg.preferences["/dev/video0"].custom_name == "Renamed only"
     assert cfg.preferences["/dev/video0"].flip is False
@@ -280,16 +274,15 @@ def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
 
 
 def test_preferences_invalid_payload_is_dropped_at_consumer(tmp_data_root: Path):
-    """A non-dict ``preferences`` payload is stored verbatim by the router,
-    then filtered to defaults when the StreamManager coerces the dict
-    into ``CameraSettings``.
+    """A malformed ``preferences`` payload is dropped at the consumer.
 
-    Per the settings-module contract (§ 6), the settings store itself is
-    intentionally untyped; validation is the module's job, and it lives
-    in :meth:`StreamManager.reload_config`. A non-dict map ends up
-    coerced by Pydantic into the empty default, which is the documented
-    safe behaviour: a malformed payload cannot crash the streaming
-    loop.
+    Per the settings-module contract (§ 6), the settings store itself
+    is intentionally untyped; validation is the module's job. The
+    supervisor's ``_load_settings`` helper wraps the Pydantic coercion
+    in ``try/except`` so a malformed payload (Pydantic v2 raises
+    :class:`ValidationError` on non-dict ``preferences``) cannot crash
+    the streaming loop — the supervisor falls back to defaults
+    instead.
     """
     from modules.camera import router as camera_router
     from modules.camera.settings import CameraSettings
@@ -300,16 +293,16 @@ def test_preferences_invalid_payload_is_dropped_at_consumer(tmp_data_root: Path)
         defaults=CameraSettings(),
     )
     camera_router.bind_settings_store(settings)
-    manager = camera_router._stream_manager
+    supervisor = camera_router._supervisor
 
-    # This PUT succeeds at the router (the store accepts any JSON
-    # object), but the manager drops it back to defaults because
+    # This PUT succeeds at the store (the store accepts any JSON
+    # object), but the supervisor drops it back to defaults because
     # Pydantic cannot coerce a string into the ``preferences`` field.
     settings.write_all({"preferences": "not-a-dict"})
-    cfg = manager.reload_config()
+    cfg = supervisor._load_settings()
     assert cfg.preferences == {}
 
     # A row of the wrong type is dropped by the per-row validator.
     settings.write_all({"preferences": {"/dev/video0": "not-a-row"}})
-    cfg = manager.reload_config()
+    cfg = supervisor._load_settings()
     assert cfg.preferences == {}

@@ -364,3 +364,86 @@ test("deleteIpCamera on a historical entry preserves the current ip_camera_url",
     "deleteIpCamera must read the active URL before deciding whether to clear it",
   );
 });
+
+test("cameraStore exposes streamMessage and refreshStreamMessage for operator diagnostics", () => {
+  const text = read(storePath);
+  // The supervisor's ``message`` field flows through to the frontend
+  // verbatim so an operator whose ``ustreamer`` is not installed sees
+  // "ustreamer is not installed on this host. Run 'sudo apt install
+  // ustreamer'…" rather than a silent broken <img>.
+  assert.match(
+    text,
+    /streamMessage\s*=\s*ref\(\s*["']["']\s*\)/,
+    "cameraStore must define streamMessage as a string ref (default empty)",
+  );
+  assert.match(
+    text,
+    /function\s+refreshStreamMessage\s*\(/,
+    "cameraStore must define refreshStreamMessage to re-read /status",
+  );
+  assert.match(
+    text,
+    /refreshStreamMessage[\s\S]*\}\s*;/m,
+    "refreshStreamMessage must be returned from the setup function",
+  );
+  // The action must hit the same /status URL the supervisor documents.
+  assert.match(
+    text,
+    /\/api\/v1\/modules\/camera\/status/,
+    "cameraStore must fetch the /api/v1/modules/camera/status endpoint",
+  );
+  // Console-store reporting must be lazy (LESSONS § 2.4 — cross-store
+  // imports belong inside the action, not at module scope) and must
+  // dedup so a periodic refresh does not spam the operator console.
+  assert.match(
+    text,
+    /await\s+import\(\s*["']\.\.\/\.\.\/stores\/console\.js["']\s*\)/,
+    "cameraStore must lazy-import the console store inside refreshStreamMessage",
+  );
+  assert.match(
+    text,
+    /lastReportedStreamMessage/,
+    "cameraStore must dedup repeated diagnostic messages before forwarding to the console store",
+  );
+});
+
+test("CameraViewer renders the diagnostic message when the stream is unavailable", () => {
+  const text = read(viewerPath);
+  // The viewer must surface ``streamMessage`` to the operator. The
+  // generic "No camera available" empty state is no longer the only
+  // failure mode — a misconfigured host needs to see "ustreamer is
+  // not installed" or similar so the operator knows it's a
+  // dependency problem, not a camera problem.
+  assert.match(
+    text,
+    /streamMessage/,
+    "CameraViewer must consume streamMessage from the store",
+  );
+  assert.match(
+    text,
+    /Camera unavailable/,
+    "CameraViewer must render the 'Camera unavailable' heading when streamMessage is set",
+  );
+  assert.match(
+    text,
+    /refreshStreamMessage/,
+    "CameraViewer must call store.refreshStreamMessage to re-fetch the diagnostic",
+  );
+});
+
+test("CameraSettings renders the diagnostic message in its empty-devices row", () => {
+  const text = read(settingsPath);
+  // Same diagnostic surface as the viewer: when ``streamMessage`` is
+  // non-empty, the empty-devices row must surface the operator hint
+  // instead of the generic "connect a USB camera" line.
+  assert.match(
+    text,
+    /streamMessage/,
+    "CameraSettings must consume streamMessage from the store",
+  );
+  assert.match(
+    text,
+    /streamMessage[\s\S]*Camera unavailable/,
+    "CameraSettings must render the 'Camera unavailable' heading in its empty-state row when streamMessage is set",
+  );
+});

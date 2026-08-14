@@ -12,25 +12,26 @@ Platform behaviour:
        card name for each device path. ``v4l2-ctl`` ships with the
        ``v4l-utils`` package and is the standard way to query V4L2
        metadata without opening the device.
-    3. Fall back to OpenCV probing (try ``cv2.VideoCapture``) for any
-       device the ``v4l2-ctl`` parse did not resolve. OpenCV will not
-       produce a name but can confirm the device opens cleanly.
-    4. Last-resort fallback: a synthetic name ``"USB Camera N"`` derived
-       from the device path.
+    3. Fall back to a synthetic name ``"USB Camera N"`` derived from
+       the device path when ``v4l2-ctl`` is missing or unable to
+       resolve the name. There is intentionally no further probe —
+       opening the device just to read its card name would race with
+       the streaming supervisor and is what motivated the move to
+       ``ustreamer`` in the first place.
 
-* **Windows (developer convenience only)**
-    Return indices ``0..MAX_INDEX`` — there is no portable
-    ``/dev/video*`` equivalent. OpenCV probing is used so the frontend
-    still sees only devices that actually open.
+* **Windows / macOS / other**
+    Return an empty list. The camera module is Linux-only because
+    ``ustreamer`` is Linux-only; the operator-facing empty state
+    surfaces the reason through the ``streamMessage`` field on
+    ``GET /api/v1/modules/camera/status``. The frontend renders that
+    message verbatim so operators on Windows see a "this is not
+    supported on this platform" hint rather than a silently-broken
+    camera panel.
 
-* **Other platforms**
-    Return an empty list. The frontend already handles the empty
-    state — no error is raised.
-
-The module never raises. ``v4l2-ctl`` missing, ``cv2`` missing, no
-cameras attached — all of these degrade to an empty list with a log
-entry. The endpoint that consumes this list (``GET /usb``) can serve
-the result verbatim.
+The module never raises. ``v4l2-ctl`` missing, no cameras attached,
+or any other internal failure degrades to an empty list (with a log
+entry). The endpoint that consumes this list (``GET /devices``)
+serves the result verbatim.
 """
 from __future__ import annotations
 
@@ -44,10 +45,6 @@ import sys
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("backend.modules.camera.detection")
-
-# Cap the Windows index probe so a misconfigured dev box does not spend
-# minutes opening phantom devices. Four cameras is plenty for local dev.
-_WINDOWS_MAX_INDEX = 3
 
 # Cap on the ``v4l2-ctl`` call so a hung driver cannot stall the
 # endpoint for more than two seconds.
@@ -90,10 +87,10 @@ def detect_usb_cameras() -> List[USBDeviceInfo]:
     """Return every USB camera the host currently exposes.
 
     The returned list is sorted by ascending ``index`` so the frontend
-    picker sees a stable order. ``index`` is the OpenCV integer index
-    (``0`` for ``/dev/video0``, ``1`` for ``/dev/video1`` …) and doubles
-    as a fallback identifier when ``/dev/video*`` paths are unavailable
-    (e.g. on Windows).
+    picker sees a stable order. ``index`` is the V4L2 integer index
+    (``0`` for ``/dev/video0``, ``1`` for ``/dev/video1`` …). On
+    non-Linux platforms the function returns an empty list and the
+    supervisor's diagnostic message carries the explanation.
 
     The function never raises. All platform-specific errors are caught
     and logged at WARNING so a misconfigured host still boots the
@@ -102,8 +99,6 @@ def detect_usb_cameras() -> List[USBDeviceInfo]:
     try:
         if sys.platform.startswith("linux"):
             return _detect_linux()
-        if sys.platform == "win32":
-            return _detect_windows()
         logger.info("USB camera detection skipped on platform=%s", sys.platform)
         return []
     except Exception as exc:  # noqa: BLE001 - defensive: never crash boot
@@ -129,15 +124,11 @@ def _detect_linux() -> List[USBDeviceInfo]:
     for index, path in enumerate(paths):
         name = names_by_path.get(path)
         if name is None:
-            # Last-ditch: ask OpenCV whether the device opens. If it
-            # does, fall back to a synthetic name so the picker still
-            # surfaces the device.
-            name = _probe_with_opencv(path, index)
-        if name is None:
-            logger.info(
-                "Skipping %s: cannot resolve human-readable name.", path
-            )
-            continue
+            # No ``v4l2-ctl`` (or the call failed). Fall back to a
+            # synthetic name so the picker still surfaces the device
+            # — the supervisor will tell us later whether the device
+            # is actually openable.
+            name = f"USB Camera {index}"
         devices.append(USBDeviceInfo(id=path, name=name, index=index))
 
     devices.sort(key=lambda d: d.index)
@@ -154,9 +145,9 @@ def _list_video_device_paths() -> List[str]:
         return []
     # Filter out metadata siblings (``/dev/video10`` is typically a
     # metadata node on some UVC drivers and does not carry a frame
-    # stream). ``v4l2-ctl --list-devices`` reports these as well, so
-    # letting them through is fine — the loop in ``_detect_linux``
-    # will skip entries we can't resolve.
+    # stream). The supervisor will skip entries that ustreamer cannot
+    # open anyway, but pruning them at the source keeps the picker
+    # clean.
     return [p for p in paths if os.path.exists(p)]
 
 
@@ -169,7 +160,7 @@ def _query_v4l2_names(paths: List[str]) -> Dict[str, str]:
     """Return a mapping of ``/dev/videoX`` -> card name via v4l2-ctl.
 
     Returns an empty dict if ``v4l2-ctl`` is unavailable or fails. The
-    caller is responsible for fallback probing in that case.
+    caller is responsible for the synthetic-name fallback in that case.
     """
     if shutil.which("v4l2-ctl") is None:
         logger.debug("v4l2-ctl not on PATH; skipping name lookup.")
@@ -253,89 +244,6 @@ def _parse_v4l2ctl_output(
                 name_by_path[device_path] = current_name
 
     return name_by_path
-
-
-# ---------------------------------------------------------------------- #
-# OpenCV probe fallback                                                   #
-# ---------------------------------------------------------------------- #
-
-
-def _probe_with_opencv(path: str, index: int) -> Optional[str]:
-    """Try to open ``path`` with OpenCV as a last-resort name source.
-
-    Returns a synthetic name ``"USB Camera N"`` if the device opens
-    cleanly so the picker surfaces it. Returns ``None`` if OpenCV is
-    unavailable or the device cannot be opened.
-    """
-    try:
-        import cv2  # type: ignore  # local import — module is optional
-    except Exception:  # noqa: BLE001 - cv2 may be missing in CI
-        return None
-
-    cap = None
-    try:
-        cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            return None
-        return f"USB Camera {index}"
-    except Exception as exc:  # noqa: BLE001 - cv2 internals vary
-        logger.debug("OpenCV probe for %s failed: %s", path, exc)
-        return None
-    finally:
-        if cap is not None:
-            try:
-                cap.release()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-# ---------------------------------------------------------------------- #
-# Windows                                                                 #
-# ---------------------------------------------------------------------- #
-
-
-def _detect_windows() -> List[USBDeviceInfo]:
-    """Return synthetic ``/dev/videoN``-style entries for Windows.
-
-    OpenCV does not expose a portable device-listing API on Windows,
-    so we probe the first ``_WINDOWS_MAX_INDEX + 1`` indices. Devices
-    that fail to open are filtered out so the frontend never sees a
-    dead picker entry. The ``id`` field is the integer index (since
-    there is no ``/dev/video*`` equivalent); the frontend stores this
-    verbatim and the streaming endpoint will accept it back as the
-    ``id`` query parameter.
-    """
-    try:
-        import cv2  # type: ignore
-    except Exception:  # noqa: BLE001 - cv2 may be missing
-        logger.info("OpenCV not available; returning empty Windows list.")
-        return []
-
-    devices: List[USBDeviceInfo] = []
-    for index in range(_WINDOWS_MAX_INDEX + 1):
-        cap = None
-        try:
-            cap = cv2.VideoCapture(index)
-            if cap.isOpened():
-                devices.append(
-                    USBDeviceInfo(
-                        id=str(index),
-                        name=f"USB Camera {index}",
-                        index=index,
-                    )
-                )
-        except Exception as exc:  # noqa: BLE001 - cv2 internals vary
-            logger.debug("Windows probe for index %d failed: %s", index, exc)
-        finally:
-            if cap is not None:
-                try:
-                    cap.release()
-                except Exception:  # noqa: BLE001
-                    pass
-
-    devices.sort(key=lambda d: d.index)
-    logger.info("Detected %d USB camera(s) on Windows.", len(devices))
-    return devices
 
 
 __all__ = ["USBDeviceInfo", "detect_usb_cameras"]

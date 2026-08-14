@@ -335,6 +335,55 @@ file stays intact until the new one is fully flushed.
 
 ## 4. Module migration order
 
+### 4.1 Camera module does not own capture
+
+The previous implementation kept a background thread with an OpenCV
+``VideoCapture`` open on every active camera. The fragility of that
+loop (Windows C++ exceptions on locked hardware, ``opencv-python``
+wheels emitting SIGILL on mismatched ABIs, ``cv2.imencode`` paying
+a numpy round-trip per frame) and the cost of supporting per-frame
+``jpeg_quality`` / ``target_fps`` knobs pushed the streaming concern
+out of the backend.
+
+The camera module is now a thin layer on top of ``ustreamer`` — a
+pure-C MJPEG/HTTP server that already powers every 3D-printer
+camera panel on the planet (OctoPrint, Mainsail, Fluidd). Each
+detected ``/dev/videoN`` device gets its own ``ustreamer``
+subprocess bound to ``http://127.0.0.1:{8080+index}/?action=stream``;
+the backend ``/stream`` endpoint is a 302 redirect to that URL.
+
+**Tripwire.** Do NOT reintroduce ``cv2`` into
+``backend/modules/camera/``. The supervisor owns the only process
+boundary the camera needs; any new capture code in the backend is
+the regression vector that brings SIGILL back. If a future feature
+needs per-frame processing (e.g. an on-screen reticle), do it in
+``ustreamer``'s user-facing overlays or in a separate frontend
+canvas — never in Python.
+
+### 4.2 Dependency diagnostics for external binaries
+
+When a backend feature depends on an external binary (``ustreamer``
+today; could be ``ffmpeg`` / ``gst-launch-1.0`` / ``mjpg_streamer``
+tomorrow), wire a single-line ``message`` field through the status
+endpoint so operators can distinguish:
+
+* "dependency missing" — the binary is not on ``$PATH``;
+* "device unplugged" — ``/dev/videoN`` is absent;
+* "platform unsupported" — ``sys.platform`` is not Linux;
+* "child crashed" — the subprocess exited non-zero.
+
+Generic 503s look like camera bugs. A plain-English hint
+("ustreamer is not installed on this host. Run 'sudo apt install
+ustreamer' on the LinuxCNC controller.") makes the operator's next
+step obvious and removes the "is this a hardware problem?" guess.
+The CameraViewer renders ``streamMessage`` verbatim with an amber
+"Camera unavailable" panel; the CameraSettings panel surfaces the
+same string in its empty-state row; and the camera store emits a
+single console-store row per distinct diagnostic value so the
+operator console does not go quiet during a sustained outage.
+
+## 5. Test discipline
+
 The order that worked:
 
 1. **camera** — self-contained, no shared state, no telemetry,

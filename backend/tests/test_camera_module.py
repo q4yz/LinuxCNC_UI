@@ -3,8 +3,8 @@
 These tests assert the migration contract from Issue #2:
 
 * ``ModuleRegistry.boot([CameraModule()])`` mounts the router under
-  ``/api/v1/modules/camera/`` so ``/stream`` and ``/status`` are
-  reachable.
+  ``/api/v1/modules/camera/`` so ``/stream``, ``/devices`` and
+  ``/status`` are reachable.
 * The four canonical settings endpoints are mounted under
   ``/api/v1/modules/camera/settings`` by the registry — the module
   itself does not define a settings router.
@@ -13,10 +13,11 @@ These tests assert the migration contract from Issue #2:
 * Removing the module leaves ``mounted=[]`` — the nullable-module
   guarantee (covered separately in ``test_camera_null.py``).
 
-We deliberately do **not** import ``cv2`` here; the worker is wired but
-not started by the boot path. The ``/stream`` and ``/status`` endpoints
-are reachable without a real camera because the worker starts lazily
-on first request and degrades gracefully when OpenCV is missing.
+We deliberately do **not** import ``cv2`` here; the supervisor is wired
+but the first ``ustreamer`` subprocess is spawned lazily on the first
+``/stream`` request. The ``/stream``, ``/status`` and ``/devices``
+endpoints are reachable without a real camera and degrade gracefully
+when ``ustreamer`` is missing.
 """
 from __future__ import annotations
 
@@ -50,22 +51,26 @@ def test_camera_module_satisfies_protocol(tmp_data_root, clean_env):
     assert instance.manifest.settings_panel is True
 
 
-def test_camera_stream_endpoint_is_mounted(tmp_data_root, clean_env):
+def test_camera_status_endpoint_is_mounted(tmp_data_root, clean_env):
     app, _ = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
     # Status endpoint is reachable without a real camera because the
-    # capture is opened lazily on the first /stream request. The new
-    # schema (Issue #56) adds ``active_id`` and ``refcount`` to the
-    # legacy ``{running, last_frame_at}`` keys; we assert the legacy
-    # keys are still present and the new ones reflect "idle".
+    # first ``ustreamer`` subprocess is spawned lazily on the first
+    # ``/stream`` request. The slim (post-OpenCV) schema carries
+    # ``{running, active_id, ustreamer_url, message}``; with no
+    # device configured the supervisor reports ``running=False``.
+    # On Linux with no devices configured the ``message`` is empty;
+    # on Windows the supervisor surfaces the platform-unsupported
+    # diagnostic instead. Both shapes satisfy the schema contract.
     resp = client.get("/api/v1/modules/camera/status")
     assert resp.status_code == 200
     body = resp.json()
     assert body["running"] is False
-    assert body["last_frame_at"] is None
     assert body["active_id"] is None
-    assert body["refcount"] == 0
+    assert body["ustreamer_url"] is None
+    assert "message" in body
+    assert isinstance(body["message"], str)
 
 
 def test_camera_usb_endpoint_is_mounted(tmp_data_root, clean_env):
@@ -73,7 +78,7 @@ def test_camera_usb_endpoint_is_mounted(tmp_data_root, clean_env):
 
     No cameras are attached in the CI sandbox so the ``devices`` list
     is empty, but the endpoint shape (``devices`` + ``platform``)
-    must match the Pydantic schema.
+    must match the documented contract.
     """
     app, _ = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -94,18 +99,14 @@ def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
     app, _ = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    # GET returns defaults merged in. Issue #56 renamed
-    # ``device_index`` (int) to ``default_device_id`` (str) so the
-    # frontend can pass through arbitrary ``/dev/videoN`` paths and
-    # HTTP/RTSP URLs.
+    # GET returns defaults merged in. The slim (post-OpenCV) settings
+    # schema carries only ``{default_device_id, ip_camera_url,
+    # preferences}`` — the four MJPEG knobs were removed when the
+    # module moved to ``ustreamer``.
     resp = client.get("/api/v1/modules/camera/settings")
     assert resp.status_code == 200
     payload = resp.json()
     assert payload == {
-        "width": 640,
-        "height": 480,
-        "jpeg_quality": 70,
-        "target_fps": 15,
         "default_device_id": "",
         "ip_camera_url": "",
         "preferences": {},
@@ -114,28 +115,28 @@ def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
     # PUT bulk returns the merged payload.
     resp = client.put(
         "/api/v1/modules/camera/settings",
-        json={"jpeg_quality": 90},
+        json={"ip_camera_url": "rtsp://camera.local/stream"},
     )
     assert resp.status_code == 200
-    assert resp.json()["jpeg_quality"] == 90
+    assert resp.json()["ip_camera_url"] == "rtsp://camera.local/stream"
 
     # GET round-trips.
     resp = client.get("/api/v1/modules/camera/settings")
-    assert resp.json()["jpeg_quality"] == 90
+    assert resp.json()["ip_camera_url"] == "rtsp://camera.local/stream"
 
     # Per-key PUT.
     resp = client.put(
-        "/api/v1/modules/camera/settings/target_fps",
-        json=24,
+        "/api/v1/modules/camera/settings/default_device_id",
+        json="/dev/video0",
     )
-    assert resp.json()["target_fps"] == 24
+    assert resp.json()["default_device_id"] == "/dev/video0"
 
 
 def test_camera_devices_endpoint_is_mounted(tmp_data_root, clean_env):
     """``GET /devices`` combines USB detection with the IP-camera URL.
 
     Without a configured IP camera the IP row is absent. The endpoint
-    shape must match the Pydantic schema regardless of contents.
+    shape must match the documented contract regardless of contents.
     """
     app, _ = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -148,6 +149,25 @@ def test_camera_devices_endpoint_is_mounted(tmp_data_root, clean_env):
     for entry in body["devices"]:
         assert set(entry.keys()) == {"id", "name", "source"}
         assert entry["source"] in {"usb", "ip"}
+
+
+def test_camera_stream_endpoint_returns_503_when_no_device_selected(
+    tmp_data_root, clean_env,
+):
+    """Without ``default_device_id`` the endpoint returns 503 + hint.
+
+    The OpenCV-era implementation streamed bytes; the ustreamer-era
+    implementation redirects via 302 once a child is spawned. With no
+    device configured the operator has not picked a camera yet, so the
+    endpoint surfaces a single-line operator hint in the 503 ``detail``
+    instead of an opaque redirect.
+    """
+    app, _ = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/modules/camera/stream", follow_redirects=False)
+    assert resp.status_code == 503
+    assert "No camera selected" in resp.json()["detail"]
 
 
 def test_camera_registry_logs_mounted_summary(tmp_data_root, clean_env, caplog):
@@ -170,7 +190,7 @@ def test_camera_registry_logs_mounted_summary(tmp_data_root, clean_env, caplog):
 
 
 def test_camera_on_unload_is_idempotent(tmp_data_root, clean_env):
-    """Repeated ``on_unload`` is safe — the worker tolerates double-stop."""
+    """Repeated ``on_unload`` is safe — the supervisor tolerates double-stop."""
     from modules.camera.module import CameraModule
 
     instance = CameraModule()

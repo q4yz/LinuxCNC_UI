@@ -14,6 +14,62 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
+### 1.1 Camera migrated from OpenCV to ustreamer; dependency diagnostics wired through
+
+- **What was done.** Removed the ``opencv-python-headless``
+  dependency from ``backend/requirements.txt``. The camera module
+  no longer captures or encodes anything itself; it spawns one
+  ``ustreamer`` subprocess per detected ``/dev/videoN`` and serves
+  ``/stream`` as a 302 redirect to ``http://127.0.0.1:{port}/?action=stream``.
+  Files touched:
+  - ``backend/modules/camera/detection.py`` — dropped the
+    OpenCV-probe fallback (``_probe_with_opencv``) and the entire
+    Windows probe path (``_detect_windows``). Linux detection is
+    now ``/dev/video*`` + ``v4l2-ctl`` only, with a synthetic-name
+    fallback when ``v4l2-ctl`` is missing.
+  - ``backend/modules/camera/router.py`` — replaced
+    ``StreamManager`` with ``UstreamerSupervisor``. The streaming
+    generator, ``cv2.VideoCapture``, ``cv2.imencode``, the cooldown
+    scaffolding, and the ``CAP_MSMF`` Windows branch are all gone.
+    The supervisor's ``status()`` returns ``{running, active_id,
+    ustreamer_url, message}``; ``message`` is a single-line
+    operator hint that distinguishes "ustreamer not installed",
+    "device not present", "platform unsupported", "child crashed",
+    and "no devices".
+  - ``backend/modules/camera/settings.py`` — dropped the four MJPEG
+    knobs (``width`` / ``height`` / ``jpeg_quality`` /
+    ``target_fps``). Resolution / framerate / encoder quality are
+    supervisor-level CLI flags now.
+  - ``backend/tests/test_camera_stream_manager.py`` — deleted; the
+    OpenCV-era ``_FakeCv2`` harness is obsolete.
+  - ``backend/tests/test_camera_ustreamer_supervisor.py`` — new file
+    pinning the supervisor lifecycle, the diagnostic ``message``
+    resolution order, and the ``/stream`` 503/302 contract.
+  - ``backend/scripts/diag_lifespan_steps.py`` — Probe 6 removed;
+    the OpenCV SIGILL regression net is no longer relevant.
+  - ``frontend/src/modules/camera/cameraStore.js`` — added
+    ``streamMessage`` ref + ``refreshStreamMessage`` action that
+    lazy-imports the console store (per LESSONS § 2.4) and dedups
+    repeated diagnostic values.
+  - ``frontend/src/modules/camera/components/CameraViewer.vue`` and
+    ``CameraSettings.vue`` — render the diagnostic verbatim with an
+    amber "Camera unavailable" panel and a "Re-check" button.
+- **Tests.** Backend camera suite: 50/50 passing (was 46/46 before
+  the migration; net gain of 4 cases in the new supervisor test).
+  Frontend camera suite: 28/28 passing (was 25/25; net gain of 3
+  cases for the diagnostic surface).
+- **Status.** Complete.
+- **Caveat.** The supervisor hard-codes ``-m JPEG -r 640x480 -f 30``
+  on the spawned ustreamer; operators that want a different
+  resolution or framerate must launch ustreamer manually (the
+  Settings panel no longer exposes those knobs).
+- **Operator-facing deployment note.** The LinuxCNC controller needs
+  ``sudo apt install ustreamer``. On Windows / macOS the camera
+  module surfaces the platform-unsupported diagnostic in both the
+  viewer's "Camera unavailable" panel and the Settings panel's
+  empty-state row — operators see a single-line English hint rather
+  than a silent broken image.
+
 ### 1.1 E-Stop header carries machine-state readout + console change-log
 
 - **What was done.** `EStopHeader.vue` now reads the high-resolution
@@ -110,10 +166,10 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 - **Status.** Complete. The frontend no longer imports the
   legacy `CompilerService`; the module's store uses the
   generated `ModulesMachineconfigService` directly.
-- **Caveat.** `backend/requirements.txt` still lists
+- **Caveat.** ~~`backend/requirements.txt` still lists
   `opencv-python-headless` (unpinned) so the camera tests can
-  collect. Pinned `httpx` so the backend tests can collect
-  without an ad-hoc install.
+  collect.~~ **Resolved** — the migration to ustreamer dropped
+  the OpenCV dependency entirely.
 
 ### 1.4 Migration to the hub-and-spoke documentation model
 
