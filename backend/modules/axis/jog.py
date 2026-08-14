@@ -178,9 +178,7 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
     halt the axis mid-step. Continuous (``distance=0``) registers
     the axis with the watchdog as a sustained jog.
     """
-    execute_sync_cmd(
-        "mode", 0, getattr(linuxcnc, "MODE_MANUAL", 1)
-    )
+    execute_sync_cmd("mode", 0.5, getattr(linuxcnc, "MODE_MANUAL", 1))
 
     s = linuxcnc.stat()
     s.poll()
@@ -190,7 +188,7 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
         if all(s.homed[:s.joints]):
             if not is_teleop:
                 logger.info("Self-healing: Machine fully homed but in Free mode. Forcing Teleop.")
-                execute_sync_cmd("teleop_enable", 0, 1)
+                execute_sync_cmd("teleop_enable", 0.5, 1)
             is_teleop = True
     teleop_flag = 1 if is_teleop else 0
 
