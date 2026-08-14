@@ -66,14 +66,20 @@ active_jogs_lock = _active_jogs_lock
 
 def _stop_axis(axis: int) -> None:
     s = linuxcnc.stat()
-    s.poll()
+    # NML Shared Memory Flush: Doppelter Poll mit winzigem Delay für frische Daten
+    for _ in range(2):
+        s.poll()
+        time.sleep(0.01)
+
     is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
 
+    # State race condition fallback: if fully homed, we are in Teleop
     if hasattr(s, 'joints') and hasattr(s, 'homed') and s.joints > 0:
         if all(s.homed[:s.joints]):
             is_teleop = True
 
-    execute_sync_cmd("jog", 0, getattr(linuxcnc, "JOG_STOP", 0), is_teleop, axis)
+    teleop_flag = 1 if is_teleop else 0
+    execute_sync_cmd("jog", 0, getattr(linuxcnc, "JOG_STOP", 0), teleop_flag, axis)
 
 
 def clear_active_jogs() -> None:
@@ -181,15 +187,27 @@ def ws_jog_axis(velocities: Dict[int, float], distance: float) -> None:
     execute_sync_cmd("mode", 0.5, getattr(linuxcnc, "MODE_MANUAL", 1))
 
     s = linuxcnc.stat()
-    s.poll()
+    # NML Shared Memory Flush: Dreifacher Poll zwingt Python, die frischesten
+    # Statusdaten von LinuxCNC nach dem Modus-Wechsel zu holen.
+    for _ in range(3):
+        s.poll()
+        time.sleep(0.01)
+
     is_teleop = (s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3))
 
+    # Fix state race condition right after homing (Self-Healing)
     if hasattr(s, 'joints') and hasattr(s, 'homed') and s.joints > 0:
         if all(s.homed[:s.joints]):
             if not is_teleop:
                 logger.info("Self-healing: Machine fully homed but in Free mode. Forcing Teleop.")
-                execute_sync_cmd("teleop_enable", 0.5, 1)
+                execute_sync_cmd("teleop_enable", 0.1, 1)
+                # Nach dem Erzwingen von Teleop den Puffer erneut flushen
+                for _ in range(3):
+                    s.poll()
+                    time.sleep(0.01)
             is_teleop = True
+
+    # Explicit cast to int (1 or 0) to avoid Cython bool conversion bugs
     teleop_flag = 1 if is_teleop else 0
 
     for axis, velocity in velocities.items():
