@@ -14,7 +14,34 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 USB cameras proxy through the same MJPEG path as IP cameras
+### 1.1 Remove offline (historical) feature; every stored camera is cycleable
+
+- **What was done.** Dropped the ``historical: true`` synthetic
+  flag from ``mergeStoredCamerasIntoDevices`` so every stored
+  camera (USB, active IP, *and* IP URLs from prior sessions)
+  flows through ``visibleDevices()`` and becomes cycleable via
+  the Switch Camera button. Removed the legacy amber ``offline``
+  badge from the settings panel. Simplified ``deleteIpCamera``
+  to compare the device id against the live ``ip_camera_url``
+  rather than the removed ``historical`` flag.
+- **Files.** ``frontend/src/modules/camera/cameraStore.js``,
+  ``frontend/src/modules/camera/components/CameraSettings.vue``,
+  ``frontend/tests/test-camera-store.mjs`` (4 tests updated to
+  pin the new contract: synthetic entries are *not* flagged
+  historical, ``visibleDevices`` only filters on ``hidden``, no
+  offline badge string, ``deleteIpCamera`` reads settings once
+  and keys on ``isCurrentIpCam``).
+- **Status.** Complete.
+- **Behavior.** Switch Camera cycles through every camera the
+  operator has configured. Picking a stored-but-unreachable IP
+  URL surfaces the same 503 diagnostic as any other unreachable
+  upstream. ``hidden`` ("Hide from cycle") is unchanged — that
+  is an opt-in feature, separate from the offline concept.
+- **Caveat.** None. No backend changes — the proxy already
+  serves any HTTP / HTTPS URL regardless of whether the device is
+  the active ``ip_camera_url`` or a stored preference.
+
+### 1.2 USB cameras proxy through the same MJPEG path as IP cameras
 
 - **What was done.** The supervisor's ``spawn_or_reuse`` was
   spawning ustreamer correctly (``pid=27032`` on port 8080,

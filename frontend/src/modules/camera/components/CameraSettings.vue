@@ -217,13 +217,6 @@ onMounted(() => {
                 <span class="rounded bg-gray-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-300">
                   {{ device.source }}
                 </span>
-                <span
-                  v-if="device.historical"
-                  class="rounded bg-amber-900/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200"
-                  title="This camera is no longer the configured IP cam — the custom name and orientation are persisted from a prior session"
-                >
-                  offline
-                </span>
               </div>
               <p class="mb-3 truncate font-mono text-xs text-gray-500" :title="device.id">
                 {{ device.id }}

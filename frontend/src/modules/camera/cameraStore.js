@@ -325,9 +325,11 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * operator can keep editing custom names, toggle flip/mirror,
    * or remove the orphan entirely.
    *
-   * Synthetic entries are flagged ``historical: true`` so the
-   * Switch Camera button (``visibleDevices``) does not try to
-   * stream a non-existent device.
+   * Every stored camera — including orphaned IP URLs from prior
+   * sessions — is cycleable. If the upstream is unreachable when
+   * the operator picks one, the supervisor's diagnostic panel
+   * surfaces the reason (same as for any other reachable-but-broken
+   * upstream).
    */
   function mergeStoredCamerasIntoDevices() {
     const known = new Set(devices.value.map((d) => d.id));
@@ -338,11 +340,6 @@ export const useCameraStore = defineStore(STORE_ID, () => {
           id,
           name: id,
           source: "ip",
-          // Treat rows flagged with ``historical: false`` explicitly as
-          // still-live; default fallback is historical. The flag is a
-          // forward-compatible escape hatch — settings synced by an
-          // older client without the flag keep working as historical.
-          historical: pref?.historical !== false,
         });
       }
     }
@@ -356,17 +353,19 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * the Watcher in ``CameraViewer`` that auto-steps past a hidden
    * active camera.
    *
-   * Historical IP cameras (orphaned preference keys) are kept out of
-   * the rotation because they have no live stream — activating one
-   * would point the viewer at an id the backend has never heard of.
+   * Operators can cycle through every stored camera (USB + active
+   * IP cam + stored IP URLs from prior sessions). ``hidden`` is the
+   * only filter — operators who don't want a camera in their cycle
+   * opt out via the "Hide from cycle" checkbox in the settings
+   * panel. The previous offline-style filter on stored IP cams
+   * was removed so a user can view any camera they have
+   * configured.
    *
    * @returns {CameraDevice[]}
    */
   function visibleDevices() {
     return devices.value.filter(
-      (device) =>
-        !device.historical &&
-        cameraPreferences.value[device.id]?.hidden !== true,
+      (device) => cameraPreferences.value[device.id]?.hidden !== true,
     );
   }
 
@@ -427,12 +426,10 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * than touching the URL — USB cameras must not be removable from
    * this surface.
    *
-   * Historical (``historical: true``) rows are handled differently
-   * from the live row: removing a historical entry must NOT clear
-   * the currently configured ``ip_camera_url`` (which has long
-   * since changed). The action reads the active URL before
-   * deciding whether to clear it, so historical-only removals
-   * are URL-safe.
+   * The deleted device may be the currently-configured IP camera
+   * URL (live row) or a stored preference for an old URL. The
+   * action reads the active URL before deciding whether to clear
+   * it, so removing a non-active row is URL-safe.
    *
    * @param {CameraDevice} device
    * @returns {Promise<boolean>}
@@ -447,30 +444,26 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       const next = { ...cameraPreferences.value };
       delete next[device.id];
       cameraPreferences.value = next;
-      // One ``writeAll`` clears both the URL and the now-orphaned
-      // preference row so the device list, the persisted settings,
-      // and the in-memory cache stay in lock-step. Historical rows
-      // must NOT touch the active URL — read it first and persist
-      // it back unchanged in the same round-trip.
-      const isCurrentIpCam = device.historical !== true;
+      // Read the current settings once so we can decide whether the
+      // device being deleted is the currently-configured IP camera
+      // URL. If it is, clear the URL; otherwise preserve it so the
+      // live stream keeps working through the cleanup round-trip.
+      const current = await settings.readAll();
+      const isCurrentIpCam = current?.ip_camera_url === device.id;
       const updatePayload = {
         preferences: serializePreferences(next),
-      };
-      if (isCurrentIpCam) {
-        updatePayload.ip_camera_url = "";
-      } else {
-        const current = await settings.readAll();
-        updatePayload.ip_camera_url =
-          typeof current?.ip_camera_url === "string"
+        ip_camera_url: isCurrentIpCam
+          ? ""
+          : typeof current?.ip_camera_url === "string"
             ? current.ip_camera_url
-            : "";
-      }
+            : "",
+      };
       await settings.writeAll(updatePayload);
       // Re-fetch so /devices drops the IP row. ``fetchDevices`` also
       // steps the active camera off the removed device id and
       // re-runs ``mergeStoredCamerasIntoDevices`` (via
-      // ``hydratePreferences``) so any synthetic historical row that
-      // no longer has a preference disappears on the next render.
+      // ``hydratePreferences``) so any synthetic row that no longer
+      // has a preference disappears on the next render.
       await fetchDevices();
       return true;
     } catch (requestError) {

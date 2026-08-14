@@ -302,8 +302,9 @@ test("mergeStoredCamerasIntoDevices folds orphan preference keys into the device
   // (``ip_camera_url``) stops appearing in /devices but its
   // custom-name row stays in the preferences map. Without the merge,
   // those rows are orphaned and the operator cannot rename / hide /
-  // remove them. The merge folds them back in as ``historical``
-  // entries so the settings panel stays usable.
+  // remove them. The merge folds them back in so the settings panel
+  // stays usable — and (after the offline removal) those stored
+  // rows are cycleable too, so a user can view any camera.
   const text = read(storePath);
   assert.match(
     text,
@@ -315,53 +316,82 @@ test("mergeStoredCamerasIntoDevices folds orphan preference keys into the device
     /mergeStoredCamerasIntoDevices\s*\(\s*\)/,
     "hydratePreferences must invoke the merge after loading",
   );
-  // Synthetic entries must be flagged historical so cycling skips them.
-  assert.match(
+  // Synthetic entries must NOT be flagged historical anymore — the
+  // offline / historical concept was removed so every stored
+  // camera is cycleable.
+  assert.doesNotMatch(
     text,
     /historical\s*:\s*[^,}]+/,
-    "synthetic entries must be flagged historical so they can be filtered out of cycling",
+    "synthetic entries must no longer be flagged historical — every stored camera is cycleable",
   );
 });
 
-test("visibleDevices filters out historical cameras (Switch Camera skips offline IPs)", () => {
-  // historical IP cams have no live stream — activating one would
-  // point the viewer at an id the backend has never heard of. The
-  // cycle helper must exclude them.
+test("visibleDevices includes every camera (Switch Camera cycles through stored IP cams too)", () => {
+  // Operators can cycle through every stored camera (USB + active
+  // IP cam + stored IP URLs from prior sessions). ``hidden`` is the
+  // only filter — operators who don't want a camera in their cycle
+  // opt out via the "Hide from cycle" checkbox. The previous
+  // offline-style filter on stored IP cams was removed so a user
+  // can view any camera they have configured.
   const text = read(storePath);
-  assert.match(
+  assert.doesNotMatch(
     text,
     /visibleDevices[\s\S]{0,200}!device\.historical/,
-    "visibleDevices must filter historical entries so the camera cycler skips them",
+    "visibleDevices must no longer filter historical entries — every camera is cycleable",
+  );
+  // ``hidden`` is still the only cycle filter — pins the operator
+  // opt-out path.
+  assert.match(
+    text,
+    /visibleDevices[\s\S]{0,200}hidden/,
+    "visibleDevices must still filter on hidden preferences",
   );
 });
 
-test("CameraSettings.vue marks historical entries with an offline badge", () => {
-  // The operator must be able to tell live from stored entries in
-  // the settings panel at a glance.
+test("CameraSettings.vue does not render an offline badge", () => {
+  // The offline / historical concept was removed so a user can view
+  // any camera they have configured. The Settings panel must not
+  // render the legacy amber "offline" badge on stored rows.
   const text = read(settingsPath);
-  assert.match(
+  assert.doesNotMatch(
     text,
     /device\.historical/,
-    "CameraSettings must render an offline indicator keyed on device.historical",
+    "CameraSettings must not render an offline indicator keyed on device.historical",
+  );
+  assert.doesNotMatch(
+    text,
+    />\s*offline\s*</,
+    "CameraSettings must not render the literal 'offline' badge string",
   );
 });
 
-test("deleteIpCamera on a historical entry preserves the current ip_camera_url", () => {
-  // Removing an offline (historical) IP-cam row must NOT wipe the
-  // currently-configured URL. Hard-coding ``ip_camera_url: ""`` would
-  // silently break the live stream every time the operator cleans
-  // up an orphan.
+test("deleteIpCamera preserves the active ip_camera_url when removing a non-active row", () => {
+  // Removing a stored-but-not-current IP-cam row must NOT wipe the
+  // currently-configured URL. Hard-coding ``ip_camera_url: ""``
+  // would silently break the live stream every time the operator
+  // cleans up an old URL.
+  //
+  // After the offline-removal, ``deleteIpCamera`` no longer keys
+  // on ``device.historical``. It reads the active URL from
+  // settings and compares against the device id directly.
   const text = read(storePath);
-  assert.match(
+  assert.doesNotMatch(
     text,
     /device\.historical/,
-    "deleteIpCamera must consult the historical flag to decide URL handling",
+    "deleteIpCamera must no longer consult the removed historical flag",
   );
-  // And it must read the active URL before deciding whether to clear.
+  // And it must still read the active URL before deciding whether
+  // to clear it.
   assert.match(
     text,
     /settings\.readAll\s*\(\s*\)/,
     "deleteIpCamera must read the active URL before deciding whether to clear it",
+  );
+  // The active URL is preserved as-is when removing a different row.
+  assert.match(
+    text,
+    /ip_camera_url:\s*isCurrentIpCam/,
+    "deleteIpCamera must key the URL-rewrite decision on isCurrentIpCam",
   );
 });
 
