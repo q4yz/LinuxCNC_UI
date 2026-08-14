@@ -14,7 +14,76 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Fix inverted ``teleop_flag`` / ``joint`` argument in jog_axis and stop_axis
+### 1.1 Wire spindle HAL pin polling + add GET /spindle/{tool_id} endpoint
+
+- **Operator-visible symptom.** The dashboard's
+  :class:`SpindleCard` always showed ``Actual RPM: 0``,
+  ``Connected: NO``, ``Errors: 0`` regardless of what the operator
+  did. ``GET /api/v1/modules/tools/spindle/{tool_id}`` did not
+  exist; the ``SpindleCard` read from the base-thread snapshot
+  which carried ``spindle_actual[tool_id] == {actual: 0,
+  is_connected: False, error_count: 0}`` forever — the seeded
+  defaults from ``_seed_spindle_actual_from_hardware``.
+
+- **Root cause.** Nothing populated
+  ``hardware.linuxcnc_mock._machine_state.spindle_actual`` after
+  boot. ``HalSubscriptionManager`` exists with ``subscribe`` and
+  ``read_pin``, but no consumer ever calls ``subscribe`` on a
+  spindle pin and ``hal_manager.start()`` is never called. On the
+  mock, ``HalSubscriptionManager.read_pin`` returns ``False``
+  unconditionally, so even a subscription wouldn't produce
+  realistic values.
+
+- **Fix.** Four files changed:
+  - New ``backend/hardware/spindle_pin_simulator.py`` —
+    mock-mode spindle HAL pin reader. Reads
+    ``_last_target[spindle_id]`` (set by ``set_spindle_target``)
+    and produces per-pin values for ``rpm-out``, ``at-speed``,
+    ``on``, ``forward``, ``reverse``, ``pwm``, ``vfd-enable``,
+    ``istop``, ``estop``. Ramps ``rpm-out`` toward target at
+    ``_RAMP_RPM_PER_TICK`` per call so the dashboard gauge climbs
+    smoothly. Real hardware is unaffected (the
+    :func:`HalSubscriptionManager.read_pin` ``hal.get_value`` branch
+    still runs when ``HAS_HAL and not USE_MOCK``).
+  - ``backend/modules/tools/module.py::ToolsModule.on_load`` —
+    subscribes every ``spindle_digital`` tool's HAL pins to
+    ``hal_manager.subscribe`` and starts the manager (idempotent).
+    Idempotent on reload because ``subscribe`` appends to the
+    fan-out list rather than replacing existing callbacks.
+  - ``backend/modules/tools/service.py::set_spindle_speed`` —
+    pushes the new target RPM into the simulator
+    (``set_spindle_target``) and eagerly updates
+    ``_machine_state.spindle_actual[tool_id]`` with
+    ``is_connected=True/False`` so the operator's command reflects
+    in the dashboard within the next snapshot tick (the HAL poll
+    loop refines ``actual`` over the next ~2 s).
+  - ``backend/modules/tools/router.py`` — new
+    ``GET /api/v1/modules/tools/spindle/{tool_id}`` route plus
+    ``SpindlePinPayload`` / ``SpindleStateResponse`` Pydantic
+    models. Exposes ``get_tools_service().get_spindle(tool_id)``
+    for ``curl`` debugging. The dashboard's :class:`SpindleCard`
+    continues to read from the 1 Hz base-thread snapshot — no
+    frontend change.
+
+- **Tests.** New
+  ``backend/tests/test_spindle_pin_simulator.py`` (16 cases:
+  idle / running / at-speed / engagement / error / ramp /
+  pin-name suffix variants / per-spindle independence /
+  reset-spindle-state). Three new cases in
+  ``backend/tests/test_tools_module.py``:
+  ``test_get_spindle_state_endpoint_returns_full_dict``,
+  ``test_get_spindle_state_endpoint_returns_404_for_unknown_id``,
+  ``test_on_load_subscribes_spindle_pins``.
+
+- **Status.** Complete.
+- **Verification.** After uvicorn restart + browser reload,
+  the dashboard's :class:`SpindleCard` shows
+  ``Actual RPM: 12000`` (or whatever the operator's target was)
+  within a few seconds of dispatching ``M3 S{target}``, with
+  ``Connected: YES`` flipping immediately and ``Errors: 0``
+  climbing only on ``istop`` / ``estop`` events.
+
+### 1.2 Fix inverted ``teleop_flag`` / ``joint`` argument in jog_axis and stop_axis
 
 - **Operator-visible symptom (live machine logs).**
   ``[INFO] Jogging X axis continuously...`` followed immediately

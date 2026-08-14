@@ -34,6 +34,7 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -183,6 +184,58 @@ class SetToolTargetResponse(BaseModel):
     )
 
 
+class SpindlePinPayload(BaseModel):
+    """Per-pin HAL signal map for one digital spindle.
+
+    Mirrors :class:`backend.modules.tools.config_mapper.SpindlePins`
+    as a plain dict for JSON friendliness. ``None`` on any field
+    means the integrator did not wire that signal in
+    ``hardware.json`` — the dashboard renders an "n/a" cell for
+    those.
+    """
+
+    id: str
+    at_speed: Optional[str] = None
+    forward: Optional[str] = None
+    reverse: Optional[str] = None
+    on: Optional[str] = None
+    pwm: Optional[str] = None
+    rpm_out: Optional[str] = None
+    istop: Optional[str] = None
+    estop: Optional[str] = None
+    vfd_enable: Optional[str] = None
+
+
+class SpindleStateResponse(BaseModel):
+    """Response body for ``GET /spindle/{tool_id}``.
+
+    Returns the live HAL pin map plus the latest telemetry
+    snapshot (``actual`` / ``is_connected`` / ``error_count``) and
+    the service-tracked state (``"idle"`` / ``"forward"`` /
+    ``"reverse"``). Used for debugging the spindle pipeline from
+    ``curl``; the dashboard's :class:`SpindleCard` reads from the
+    base-thread snapshot at 1 Hz rather than polling this endpoint.
+    """
+
+    id: str = Field(..., description="Spindle tool id (e.g. 'spindle_digital').")
+    pins: SpindlePinPayload = Field(
+        ..., description="HAL signal map for this spindle."
+    )
+    state: str = Field(
+        ...,
+        description='Operator-tracked state: "idle" | "forward" | "reverse".',
+    )
+    actual: int = Field(
+        ..., description="Live RPM feedback (rpm_out pin, or simulated value)."
+    )
+    is_connected: bool = Field(
+        ..., description="VFD engagement flag (on / forward / vfd_enable True)."
+    )
+    error_count: int = Field(
+        ..., description="Cumulative istop / estop count from the VFD."
+    )
+
+
 # ---------------------------------------------------------------------- #
 # Endpoints                                                               #
 # ---------------------------------------------------------------------- #
@@ -295,6 +348,27 @@ def set_tool_target(
         target=req.target,
         sensor=sensor,
     )
+
+
+@router.get(
+    "/spindle/{tool_id}",
+    response_model=SpindleStateResponse,
+    summary="Get Spindle State",
+    description=(
+        "Read the live state + HAL pin map for ``tool_id``. Returns "
+        "the canonical ``SpindlePins`` record (as a plain dict), "
+        "the live telemetry snapshot (``actual`` / ``is_connected`` "
+        "/ ``error_count``), and the current service-tracked state "
+        "(``idle`` / ``forward`` / ``reverse``). Useful for "
+        "debugging the spindle pipeline from ``curl``; the "
+        "dashboard's :class:`SpindleCard` reads from the 1 Hz "
+        "base-thread snapshot rather than polling this endpoint."
+    ),
+    operation_id="getSpindleState",
+)
+def get_spindle_state(tool_id: str) -> SpindleStateResponse:
+    """Return the live spindle state for ``tool_id``."""
+    return SpindleStateResponse(**get_tools_service().get_spindle(tool_id))
 
 
 __all__ = [

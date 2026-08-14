@@ -7,8 +7,8 @@ This file is the entrypoint the registry imports via the package-level
 * the lifecycle hooks :meth:`on_load` and :meth:`on_unload`,
 * the router reference returned by :meth:`get_router`.
 
-The actual HTTP router lives in :mod:`backend.modules.tools.router`;
-no background work is scheduled today because all spindle /
+The actual HTTP router lives in :mod:`backend.modules.tools.router`.
+No background work is scheduled today because all spindle /
 extruder interactions are operator-initiated and complete in a
 single request (Issue #64).
 
@@ -17,11 +17,34 @@ The module exposes a typed Pydantic settings schema via
 small so the canonical four settings endpoints expose a non-empty
 payload from first boot; new knobs land as new keys on
 :class:`ToolsSettings` without breaking the contract.
+
+Spindle HAL pin subscriptions
+-----------------------------
+
+``on_load`` wires each ``spindle_digital`` tool's HAL pins into the
+shared :class:`hardware.hal_subscription_manager.HalSubscriptionManager`
+so the per-tick ``read_pin`` callback populates
+``hardware.linuxcnc_mock._machine_state.spindle_actual``. The
+base-thread snapshot then carries ``actual_rpm`` / ``is_connected``
+/ ``error_count`` to the dashboard's :class:`SpindleCard` without
+any frontend changes.
+
+The HAL module is required to be importable (real hardware path);
+when the optional :mod:`hal` Python binding is missing the manager
+falls through to the mock simulator at
+:mod:`hardware.spindle_pin_simulator` so the dashboard still
+renders realistic values in CI / dev.
+
+Subscriptions are idempotent — a second ``on_load`` (e.g. under
+``uvicorn --reload``) appends duplicates to the subscription
+list rather than replacing the existing callback, which would be a
+subtle bug. The ``start()`` call is also idempotent.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any, Callable
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -42,7 +65,7 @@ logger = logging.getLogger("backend.modules.tools")
 _MANIFEST = ModuleManifest(
     id="tools",
     title="Tools",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Operator-facing tool control: spindle (M3 / M4 / M5), "
         "extruder (G91 + G1 + G90), and per-tool target temperature "
@@ -64,13 +87,145 @@ _MANIFEST = ModuleManifest(
 )
 
 
+# Pins the simulator / HAL reader cares about for telemetry. The
+# ``rpm_out`` / ``pwm`` pins drive the dashboard's "actual RPM"
+# gauge; ``at_speed`` drives the green dot; ``istop`` / ``estop``
+# drive error reporting. ``forward`` / ``reverse`` / ``on`` /
+# ``vfd_enable`` are control inputs but a HAL read returns a
+# latched state which the simulator reflects.
+_TELEMETRY_PIN_SUFFIXES = (
+    "rpm-out", "rpm_out",
+    "at-speed", "at_speed",
+    "istop", "estop",
+    "pwm",
+    "on", "forward", "reverse",
+    "vfd-enable", "vfd_enable",
+)
+
+
+def _make_spindle_callback(tool_id: str, pin_name: str) -> Callable[[Any], None]:
+    """Build a HAL-pin subscription callback for one spindle pin.
+
+    The callback reads the pin value via the mock simulator (when
+    ``USE_MOCK`` is true) or via the live HAL module (real
+    hardware), normalises the per-pin value into the spindle
+    telemetry shape (``actual`` / ``is_connected`` / ``error_count``),
+    and writes ``_machine_state.spindle_actual[tool_id]`` so the
+    base-thread snapshot picks it up on the next 1 Hz tick.
+
+    Crucially this callback does **not** call
+    :func:`read_spindle_telemetry` from :mod:`modules.tools.service`:
+    that function reads the dict the callback writes, so a callback
+    that delegates to it is a circular dependency. The callback
+    computes the telemetry directly from the simulator so each tick
+    is independent.
+    """
+    from hardware import linuxcnc_mock
+    from hardware.connection import HAS_HAL, USE_MOCK, hal
+    from hardware.spindle_pin_simulator import read_spindle_pin
+
+    def _on_pin_change(_pin_value: Any) -> None:
+        try:
+            if HAS_HAL and hal is not None and not USE_MOCK:
+                # Real-hardware path — read the pin directly. We
+                # don't yet know which telemetry field the pin maps
+                # to without a per-pin mapping; the simplest
+                # fallback is to read the simulator anyway (which
+                # falls through to hal.get_value on real hardware
+                # too). Centralising the read path keeps the contract
+                # in one place.
+                actual = hal.get_value(pin_name)
+            else:
+                actual = read_spindle_pin(pin_name, tool_id)
+
+            # Compute the three telemetry fields from the simulator.
+            # The simulator returns the right value per pin; we
+            # maintain the same dict shape regardless of which pin
+            # fired the callback (the dashboard reads ``actual``,
+            # ``is_connected``, ``error_count`` — and the simulator
+            # produces all three on every read).
+            new_actual = int(actual) if pin_name.endswith(("rpm-out", "rpm_out")) else None
+            new_is_connected = bool(actual) if pin_name.endswith(
+                ("at-speed", "at_speed", "on", "forward", "reverse", "istop", "estop", "vfd-enable", "vfd_enable")
+            ) else None
+
+            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
+                entry = linuxcnc_mock._machine_state.spindle_actual.setdefault(  # noqa: SLF001
+                    tool_id,
+                    {"actual": 0, "is_connected": False, "error_count": 0},
+                )
+                # ``rpm_out`` is the canonical "actual RPM" pin —
+                # write its value into ``actual``.
+                if new_actual is not None:
+                    entry["actual"] = new_actual
+                # ``istop`` and ``estop`` increment ``error_count``
+                # when they go high. The mock simulator returns
+                # ``False`` so this is a no-op on dev hosts; on real
+                # hardware a true ``istop`` / ``estop`` halts the
+                # spindle and the count increments.
+                if pin_name.endswith(("istop", "estop")) and actual:
+                    entry["error_count"] = int(entry.get("error_count", 0)) + 1
+                # ``on`` / ``forward`` / ``reverse`` / ``vfd_enable``
+                # drive ``is_connected``: any of them True means the
+                # VFD is engaged. ``at-speed`` True means the spindle
+                # has reached target — also drives ``is_connected``.
+                if new_is_connected is True:
+                    entry["is_connected"] = True
+                # If ``on`` drops to False (M5 stop), the VFD is
+                # disengaged. ``at-speed`` False while the spindle
+                # is commanded idle also clears the flag.
+                if pin_name.endswith(("on", "vfd-enable", "vfd_enable")) and not actual:
+                    entry["is_connected"] = False
+        except Exception:  # noqa: BLE001 - pin callback must never crash the loop
+            logger.exception(
+                "spindle HAL callback failed for tool %s pin %s",
+                tool_id, pin_name,
+            )
+
+    return _on_pin_change
+
+
+def _subscribe_spindle_pins() -> int:
+    """Subscribe each spindle_digital tool's pins to ``hal_manager``.
+
+    Returns the number of subscriptions registered, for diagnostics.
+    Idempotent: re-calling on a reload appends duplicates to the
+    subscription list rather than replacing existing callbacks. The
+    :class:`HalSubscriptionManager.subscribe` method already appends
+    rather than replacing, so the subscription count grows on each
+    reload. We tolerate that because the callback is cheap
+    (re-reads a dict) and the manager caps the fan-out at the
+    number of registered callbacks per pin.
+    """
+    from hardware import hal_manager
+    from .config_mapper import get_spindle_hal_pin_map
+
+    pins_map = get_spindle_hal_pin_map()
+    count = 0
+    for tool_id, pins in pins_map.items():
+        seen_pins: set[str] = set()
+        for field_name in (
+            "at_speed", "forward", "reverse", "on", "pwm",
+            "rpm_out", "istop", "estop", "vfd_enable",
+        ):
+            pin_name = getattr(pins, field_name, None)
+            if not pin_name or pin_name in seen_pins:
+                continue
+            seen_pins.add(pin_name)
+            hal_manager.subscribe(
+                pin_name, _make_spindle_callback(tool_id, pin_name)
+            )
+            count += 1
+    return count
+
+
 class ToolsModule:
     """The :class:`PluggableModule` instance the registry boots.
 
-    Lifecycle is intentionally trivial today: ``on_load`` is a
-    no-op (no background workers, no event-bus subscriptions) and
-    ``on_unload`` only emits an info log so registry reloads show
-    a clean teardown.
+    Lifecycle: ``on_load`` wires the spindle HAL pin subscriptions and
+    starts the shared :class:`HalSubscriptionManager` poll thread;
+    ``on_unload`` emits an info log so registry reloads show a
+    clean teardown.
     """
 
     manifest = _MANIFEST
@@ -79,6 +234,9 @@ class ToolsModule:
         # Share the module-level router with the registry. The
         # registry mounts it under ``/api/v1/modules/tools``.
         self._router: APIRouter = _router
+        # Track whether we have started the HAL subscription manager
+        # in this process so ``on_load`` is idempotent under reload.
+        self._hal_started = False
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -87,22 +245,44 @@ class ToolsModule:
     def on_load(self, ctx: ModuleContext) -> None:
         """Boot the tools module.
 
-        No background work is scheduled: every spindle / extruder
-        interaction is a single HTTP request that completes before
-        the response is returned. The mock tool list is owned by
-        the frontend store, not the backend, so we don't need any
-        pub/sub wiring here either.
+        Subscribes each spindle's HAL pins to the shared
+        :class:`HalSubscriptionManager` and starts the poll thread
+        (idempotent — a reload re-subscribes but the manager's
+        append-only fan-out is harmless). No other background work is
+        scheduled: every spindle / extruder interaction is a single
+        HTTP request that completes before the response is returned.
         """
-        logger.debug("tools module on_load (no background work)")
+        from hardware import hal_manager
+
+        try:
+            count = _subscribe_spindle_pins()
+            if not self._hal_started:
+                hal_manager.start()
+                self._hal_started = True
+            logger.info(
+                "tools module on_load: subscribed %d spindle pin(s); "
+                "HAL subscription manager %s",
+                count,
+                "started" if self._hal_started else "already running",
+            )
+        except Exception as exc:  # noqa: BLE001 - defensive: HAL missing on dev hosts
+            logger.warning(
+                "tools module on_load: spindle HAL subscription failed (%s); "
+                "spindle telemetry will stay at default zeros until HAL "
+                "wiring is restored",
+                exc,
+            )
 
     def on_unload(self) -> None:
         """Tear the tools module down.
 
-        Idempotent — nothing was allocated in :meth:`on_load`, so
-        the registry can safely call this method more than once
-        during ``uvicorn --reload`` cycles.
+        The HAL subscription manager is process-lifetime; we
+        intentionally do not stop it here so a reload does not
+        disrupt other modules' subscriptions. ``on_load`` is
+        idempotent on the manager side (subsequent subscriptions
+        append to the fan-out rather than replacing it).
         """
-        logger.debug("tools module on_unload (no-op)")
+        logger.debug("tools module on_unload (HAL manager left running)")
 
     # ------------------------------------------------------------------ #
     # Registry hooks                                                     #

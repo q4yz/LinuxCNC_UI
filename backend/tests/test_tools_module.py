@@ -534,6 +534,203 @@ def test_get_router_returns_apirouter(tmp_data_root, clean_env):
     # routes remain on this router.
     paths = {route.path for route in router.routes}
     assert "/spindle" in paths
+    assert "/spindle/{tool_id}" in paths
     assert "/extruder" in paths
     assert "/tools" not in paths
     assert "/tools/{tool_id}/target" in paths
+
+
+# ────────────────────────────────────────────────────────────────────── #
+# Spindle telemetry pipeline                                               #
+# ────────────────────────────────────────────────────────────────────── #
+
+
+def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, monkeypatch):
+    """``GET /spindle/{tool_id}`` returns the live telemetry.
+
+    After ``M3 S{12000}`` the operator expects
+    ``actual`` / ``is_connected`` / ``error_count`` to populate from
+    the mock simulator rather than stay at the seeded defaults.
+    The endpoint surfaces the same dict the base-thread snapshot
+    carries, so a regression in either the simulator or the router
+    surfaces here.
+    """
+    import json
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from core.event_bus import EventBus
+    from core.module_registry import ModuleRegistry
+    from hardware import linuxcnc_mock
+    from modules.tools import config_mapper
+    from modules.tools.module import ToolsModule
+
+    # The mock ignores M-codes while the machine is in STATE_ESTOP
+    # (which is the boot default). Flip it to STATE_ON so the
+    # ``M3 S12000`` dispatch lands.
+    with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
+        linuxcnc_mock._machine_state.task_state = linuxcnc_mock.STATE_ON  # noqa: SLF001
+
+    # Seed a hardware.json with one ``spindle_digital`` so the
+    # spindle loader has something to enumerate. ``_resolve_active_path``
+    # walks ``<PROJECT_ROOT>/machine_config/active/hardware.json`` —
+    # point ``_PROJECT_ROOT`` at our tmp dir for the test.
+    from hardware import linuxcnc_mock as hw_mock
+    active_root = tmp_data_root / "machine_config" / "active"
+    active_root.mkdir(parents=True, exist_ok=True)
+    (active_root / "hardware.json").write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "type": "spindle_digital",
+                        "id": "spindle_digital",
+                        "signal_at_speed": "spindle.0.at-speed",
+                        "signal_forward": "spindle.0.forward",
+                        "signal_reverse": "spindle.0.reverse",
+                        "signal_on": "spindle.0.on",
+                        "signal_rpm_out": "spindle.0.rpm-out",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_data_root)
+    monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
+    hw_mock.reseed_from_hardware_json()
+
+    reg = ModuleRegistry(data_root=tmp_data_root)
+    app = FastAPI()
+    reg.boot(app, bus=EventBus(), candidates=[ToolsModule()])
+    client = TestClient(app)
+
+    # The mock seeds every spindle with default zeros. Ramp the
+    # spindle_main to 12000 RPM via the canonical POST /spindle
+    # endpoint so the service pushes a new target into the simulator.
+    r = client.post(
+        "/api/v1/modules/tools/spindle",
+        json={
+            "tool_id": "spindle_digital",
+            "action": "forward",
+            "speed": 12000,
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    # Read live state via the new GET endpoint.
+    r = client.get("/api/v1/modules/tools/spindle/spindle_digital")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"] == "spindle_digital"
+    assert body["state"] == "forward"
+    # ``is_connected`` flips True on the operator's action — the
+    # endpoint surfaces the eagerly-updated dict, not the simulator
+    # polling rate. The HAL poll loop refines ``actual`` over the
+    # next ~2 s; the test environment does not run the poll thread,
+    # so we assert on the bits that don't depend on it.
+    assert body["is_connected"] is True
+    assert body["error_count"] == 0
+
+
+def test_get_spindle_state_endpoint_returns_404_for_unknown_id(
+    tmp_data_root, clean_env,
+):
+    """Unknown spindle id → 404 with a clear operator-facing message.
+
+    Mirrors the historical behaviour of ``control_spindle`` and
+    ``set_spindle_speed``: a typo in the URL must not silently return
+    default zeros — the operator (or a future curl helper) needs to
+    know the id was unknown.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from core.event_bus import EventBus
+    from core.module_registry import ModuleRegistry
+    from modules.tools.module import ToolsModule
+
+    reg = ModuleRegistry(data_root=tmp_data_root)
+    app = FastAPI()
+    reg.boot(app, bus=EventBus(), candidates=[ToolsModule()])
+    client = TestClient(app)
+
+    r = client.get("/api/v1/modules/tools/spindle/no-such-spindle")
+    assert r.status_code == 404
+    assert "no-such-spindle" in r.json()["detail"]
+
+
+def test_on_load_subscribes_spindle_pins(tmp_data_root, clean_env, monkeypatch):
+    """``on_load`` registers HAL pin subscriptions for every spindle.
+
+    Pinned by counting the ``hal_manager.subscribe`` calls and
+    confirming at least one pin per spindle was registered. The
+    exact pin count depends on the integrator's ``hardware.json``
+    (the bare ``[spindle]`` form has fewer pins than the named
+    ``[spindle NAME]`` form), so we assert ``>= 1`` per spindle.
+    """
+    import json
+
+    from hardware import hal_manager, linuxcnc_mock as hw_mock
+    from core.event_bus import EventBus
+    from core.settings_store import SettingsStore
+    from modules.tools import config_mapper
+    from modules.tools.module import ToolsModule
+
+    # Seed a hardware.json with one ``spindle_digital`` so the
+    # spindle loader has something to enumerate. The bare ``[spindle]``
+    # form gives us one entry; the simulator subscribes to whichever
+    # HAL pins are populated in the row.
+    active_root = tmp_data_root / "machine_config" / "active"
+    active_root.mkdir(parents=True, exist_ok=True)
+    (active_root / "hardware.json").write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "type": "spindle_digital",
+                        "id": "spindle_digital",
+                        "signal_at_speed": "spindle.0.at-speed",
+                        "signal_forward": "spindle.0.forward",
+                        "signal_reverse": "spindle.0.reverse",
+                        "signal_on": "spindle.0.on",
+                        "signal_rpm_out": "spindle.0.rpm-out",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_data_root)
+    monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
+    hw_mock.reseed_from_hardware_json()
+
+    subscription_calls: list[str] = []
+    original_subscribe = hal_manager.subscribe
+
+    def _spy_subscribe(pin_name, callback):
+        subscription_calls.append(pin_name)
+        return original_subscribe(pin_name, callback)
+
+    monkeypatch.setattr(hal_manager, "subscribe", _spy_subscribe)
+    # Avoid actually starting the poll thread in the test environment
+    # — the subscription registration is what we're verifying.
+    monkeypatch.setattr(hal_manager, "start", lambda: None)
+
+    instance = ToolsModule()
+    instance.on_load({
+        "module_id": "tools",
+        "event_bus": EventBus(),
+        "settings": SettingsStore(
+            module_id="tools",
+            data_root=tmp_data_root,
+            defaults=None,
+        ),
+    })
+
+    # At least one pin per spindle_digital was subscribed.
+    assert subscription_calls, "no HAL pin subscriptions registered"
+    # All subscribed pins are non-empty strings — a regression that
+    # passes ``None`` or an empty string would crash the manager.
+    assert all(isinstance(pin, str) and pin for pin in subscription_calls)

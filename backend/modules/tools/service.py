@@ -305,15 +305,50 @@ class ToolsService:
         if dto.state == "idle":
             mdi = M5_STOP
             new_state = "idle"
+            new_target = 0
         else:
             template = (
                 M3_FORWARD if dto.direction == "forward" else M4_BACKWARD
             )
             mdi = template.format(speed=dto.speed)
             new_state = dto.direction
+            new_target = dto.speed
 
         self._dispatch_mdi(mdi)
         self._spindle_state[pins.id] = new_state
+
+        # Push the new target RPM into the mock-mode simulator so
+        # ``hardware.spindle_pin_simulator.read_spindle_pin`` ramps
+        # the spindle toward ``new_target`` RPM on every poll tick.
+        # On real hardware the HAL subscription manager reads the
+        # real ``rpm_out`` pin instead; this call is a no-op in that
+        # path because the simulator is only consulted when
+        # ``USE_MOCK`` is true.
+        try:
+            from hardware.spindle_pin_simulator import (
+                set_spindle_target,
+            )
+            set_spindle_target(pins.id, new_target)
+        except Exception:  # noqa: BLE001 - simulator missing on real hw
+            pass
+
+        # Eagerly update ``_machine_state.spindle_actual`` so the
+        # dashboard's SpindleCard reflects the operator's action
+        # before the HAL poll loop has a chance to fire. The
+        # simulator's per-tick poll refines ``actual`` (the ramp) on
+        # the next iteration; ``is_connected`` flips immediately so
+        # the operator's command reflects in the UI within the
+        # next snapshot tick (~1 s).
+        from hardware import linuxcnc_mock
+        with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
+            entry = linuxcnc_mock._machine_state.spindle_actual.setdefault(  # noqa: SLF001
+                pins.id, {"actual": 0, "is_connected": False, "error_count": 0}
+            )
+            if dto.state == "idle":
+                entry["is_connected"] = False
+            else:
+                entry["is_connected"] = True
+
         return mdi
 
     def set_spindle_override_relative(
