@@ -14,7 +14,53 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
-### 1.1 Split jog into jog_service (hardware) + jog_watchdog (logic)
+### 1.1 Fix inverted ``teleop_flag`` / ``joint`` argument in jog_axis and stop_axis
+
+- **Operator-visible symptom (live machine logs).**
+  ``[INFO] Jogging X axis continuously...`` followed immediately
+  by ``[ERROR] LinuxCNC: JOG_CONT Mode is TELEOP, cannot jog
+  joint`` and ``[INFO] X Jog stopped`` — every continuous jog
+  attempt failed.
+- **Root cause.** The previous implementation labelled the
+  second argument to :func:`linuxcnc.command.jog` as
+  ``teleop_flag`` and passed it directly. That argument is the
+  ``joint`` flag (``1`` for per-joint jogging, ``0`` for
+  Cartesian jogging), and the correct mapping is the **inverse**
+  of the system mode. When ``MODE_MANUAL`` left the system in
+  TELEOP, the code sent ``joint=1`` — which LinuxCNC rejects with
+  ``"Mode is TELEOP, cannot jog joint"``. The "self-healing"
+  block that forced TELEOP on every homed machine made the bug
+  worse: per-joint jogging (the operator's intent in the
+  JogControls UI) requires ``joint=1`` AND FREE/JOINT mode; the
+  block forced TELEOP, which is the opposite of what
+  per-joint jogging needs.
+- **Fix.** ``backend/modules/axis/jog_service.py``:
+  - Renamed ``teleop_flag`` → ``joint_flag`` in both
+    :func:`jog_axis` and :func:`stop_axis`.
+  - Inverted the mapping: ``joint_flag = 0 if is_teleop else 1``.
+  - Dropped the self-healing ``teleop_enable(1)`` block — it
+    was working against the operator's intent. ``MODE_MANUAL``
+    is set explicitly at the top of ``jog_axis``; the
+    self-healing is unnecessary (and wrong) on homed
+    machines.
+  - Updated the docstrings to explain the ``joint`` flag
+    semantics so the next contributor does not re-introduce
+    the bug.
+- **Tests.** New ``backend/tests/test_jog_axis_mode_flag.py``
+  pins the corrected mapping with seven regression cases —
+  three for ``jog_axis`` (FREE mode, TELEOP mode, step jog),
+  two for ``stop_axis`` (FREE mode, TELEOP mode), one pinning
+  the absence of ``teleop_enable`` calls in ``jog_axis``, and
+  one wiring check that the public function names are what the
+  WebSocket dispatcher imports.
+- **Status.** Complete.
+- **Verification.** After uvicorn restart + browser reload,
+  the operator's ``Jogging X axis continuously...`` produces
+  ``[INFO] X Jog stopped`` only when the operator clicks Stop
+  or the watchdog force-stops — never the spurious
+  ``"Mode is TELEOP, cannot jog joint"`` error.
+
+### 1.2 Split jog into jog_service (hardware) + jog_watchdog (logic)
 
 - **What was done.** ``backend/modules/axis/jog.py`` carried
   hardware dispatch *and* module-private state *and* watchdog

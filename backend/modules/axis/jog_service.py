@@ -107,12 +107,17 @@ def stop_axis(axis: int) -> None:
     Used by :func:`jog_stop` (honours an explicit operator stop)
     and by the watchdog (force-stops axes whose keep-alive lapsed).
 
-    Self-healing: if the machine is fully homed but reports
-    ``TRAJ_MODE_FREE`` (a known post-homing state race), force
-    ``teleop_flag = True`` so the ``JOG_STOP`` lands in the right
-    mode. Without this the stop command would be silently ignored
-    for a freshly-homed machine until the operator toggled teleop
-    manually.
+    The ``joint`` flag (NOT ``teleop_flag``) is the second argument
+    to :func:`linuxcnc.command.jog`. It tells LinuxCNC whether the
+    jog to stop is a per-joint jog (``joint=1``) or a Cartesian
+    jog (``joint=0``). The previous implementation labelled this
+    variable ``teleop_flag`` and passed the wrong value — when the
+    system was in TELEOP mode, the variable was ``1`` and got sent
+    as ``joint=1``, which LinuxCNC rejects with
+    "JOG_CONT Mode is TELEOP, cannot jog joint". The correct
+    mapping is the inverse: per-joint jogs carry ``joint=1`` and
+    the system must be in FREE/JOINT mode; Cartesian jogs carry
+    ``joint=0`` and the system must be in TELEOP mode.
     """
     s = linuxcnc.stat()
     # NML Shared Memory Flush: double-poll with a tiny delay for
@@ -125,14 +130,13 @@ def stop_axis(axis: int) -> None:
         s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3)
     )
 
-    # State race condition fallback: if fully homed, we are in Teleop.
-    if hasattr(s, "joints") and hasattr(s, "homed") and s.joints > 0:
-        if all(s.homed[:s.joints]):
-            is_teleop = True
-
-    teleop_flag = 1 if is_teleop else 0
+    # ``joint=1`` when in FREE/JOINT mode (per-joint jogging);
+    # ``joint=0`` when in TELEOP mode (Cartesian jogging). The two
+    # modes are mutually exclusive: passing the wrong flag produces
+    # "Mode is TELEOP, cannot jog joint" (or its mirror image).
+    joint_flag = 0 if is_teleop else 1
     execute_sync_cmd(
-        "jog", 0, getattr(linuxcnc, "JOG_STOP", 0), teleop_flag, axis
+        "jog", 0, getattr(linuxcnc, "JOG_STOP", 0), joint_flag, axis
     )
 
 
@@ -146,9 +150,21 @@ def jog_axis(velocities: Dict[int, float], distance: float) -> None:
       is *not* registered — a step jog completes deterministically
       and the watchdog does not need to track it.
 
-    Self-healing: if the machine is fully homed but reports
-    ``TRAJ_MODE_FREE`` (the post-homing state race), force
-    ``teleop_enable`` so the jog lands in the right mode.
+    The ``joint`` flag (NOT ``teleop_flag``) is the second argument
+    to :func:`linuxcnc.command.jog`. It tells LinuxCNC whether the
+    jog is per-joint (``joint=1``) or Cartesian (``joint=0``). The
+    previous implementation labelled this variable ``teleop_flag``
+    and passed the wrong value — when the system was in TELEOP mode
+    (which the ``mode=MANUAL`` switch above usually leaves it in),
+    the variable was ``1`` and got sent as ``joint=1``, which
+    LinuxCNC rejects with
+    "JOG_CONT Mode is TELEOP, cannot jog joint". The correct
+    mapping is the inverse: per-joint jogs (the operator's intent
+    in the JogControls UI) carry ``joint=1`` and require FREE/JOINT
+    mode; Cartesian jogs carry ``joint=0`` and require TELEOP mode.
+    Trust the operator's current mode — the previous "self-healing"
+    block forced TELEOP on every homed machine, which was the
+    opposite of what per-joint jogging needs.
 
     Public; called by ``POST /jog`` (deprecated REST) and the
     ``/ws/telemetry`` inbound dispatcher.
@@ -166,24 +182,11 @@ def jog_axis(velocities: Dict[int, float], distance: float) -> None:
         s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3)
     )
 
-    # Fix state race condition right after homing (Self-Healing).
-    if hasattr(s, "joints") and hasattr(s, "homed") and s.joints > 0:
-        if all(s.homed[:s.joints]):
-            if not is_teleop:
-                logger.info(
-                    "Self-healing: Machine fully homed but in Free "
-                    "mode. Forcing Teleop."
-                )
-                execute_sync_cmd("teleop_enable", 0.1, 1)
-                # After forcing Teleop, flush the buffer again.
-                for _ in range(3):
-                    s.poll()
-                    time.sleep(0.01)
-            is_teleop = True
-
-    # Explicit cast to int (1 or 0) to avoid Cython bool
-    # conversion bugs in the NML binding.
-    teleop_flag = 1 if is_teleop else 0
+    # ``joint=1`` when in FREE/JOINT mode (per-joint jogging);
+    # ``joint=0`` when in TELEOP mode (Cartesian jogging). The two
+    # modes are mutually exclusive: passing the wrong flag produces
+    # "Mode is TELEOP, cannot jog joint" (or its mirror image).
+    joint_flag = 0 if is_teleop else 1
 
     for axis, velocity in velocities.items():
         if velocity == 0:
@@ -194,7 +197,7 @@ def jog_axis(velocities: Dict[int, float], distance: float) -> None:
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_INCREMENT", 2),
-                teleop_flag,
+                joint_flag,
                 axis,
                 velocity,
                 distance,
@@ -205,7 +208,7 @@ def jog_axis(velocities: Dict[int, float], distance: float) -> None:
                 "jog",
                 0,
                 getattr(linuxcnc, "JOG_CONTINUOUS", 1),
-                teleop_flag,
+                joint_flag,
                 axis,
                 velocity,
             )
