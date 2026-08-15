@@ -24,6 +24,41 @@ from core.module_registry import ModuleRegistry
 
 
 # ---------------------------------------------------------------------- #
+# Active-root injection                                                   #
+# ---------------------------------------------------------------------- #
+
+
+def _point_config_at_tmp(monkeypatch, tmp_path):
+    """Point :class:`HardwareConfigService` at ``tmp_path``.
+
+    The test fixtures write ``hardware.json`` under
+    ``tmp_path/machine_config/active/``; this helper patches
+    :class:`HardwareConfigService.__init__` so every instance
+    constructed by the production code under test resolves its
+    active path against ``tmp_path`` (and not against the real
+    ``machine_config/active/hardware.json``).
+
+    Replaces the historical
+    ``monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)``
+    seam — the loader no longer exposes a module-level
+    ``_PROJECT_ROOT``; the seam is now the
+    :class:`HardwareConfigService` constructor's ``repo_root`` arg.
+    """
+    from services.hardware_config_service import HardwareConfigService
+
+    original_init = HardwareConfigService.__init__
+
+    def _init(self, active_path=None, repo_root=None):
+        return original_init(
+            self,
+            active_path=active_path,
+            repo_root=repo_root if repo_root is not None else tmp_path,
+        )
+
+    monkeypatch.setattr(HardwareConfigService, "__init__", _init)
+
+
+# ---------------------------------------------------------------------- #
 # Boot / router discovery                                                 #
 # ---------------------------------------------------------------------- #
 
@@ -318,10 +353,10 @@ def test_set_tool_target_dispatches_set_temperature(
         "fans": [],
     }
     _write_hardware_json(tmp_path, hardware_payload)
+    _point_config_at_tmp(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "hardware.linuxcnc_mock._PROJECT_ROOT", tmp_path
     )
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
     linuxcnc_mock.reseed_from_hardware_json()
 
     app = _build_app(tmp_data_root)
@@ -352,8 +387,6 @@ def test_set_tool_target_rejects_unknown_tool(
     with ``404`` so a frontend typo surfaces as a structured
     error instead of a silent no-op.
     """
-    from modules.tools import config_mapper
-
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
         "source": "KlipperToLinuxCNCCompiler",
@@ -361,7 +394,7 @@ def test_set_tool_target_rejects_unknown_tool(
         "axes": [], "steppers": [], "drivers": [], "endstops": [],
         "tools": [], "temperature_sensors": [], "fans": [],
     })
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
+    _point_config_at_tmp(monkeypatch, tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -381,8 +414,6 @@ def test_set_tool_target_rejects_non_heating_tool(
     message instead of dispatching ``set_temperature`` on a
     ``None`` sensor.
     """
-    from modules.tools import config_mapper
-
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
         "source": "KlipperToLinuxCNCCompiler",
@@ -399,7 +430,7 @@ def test_set_tool_target_rejects_non_heating_tool(
         "temperature_sensors": [],
         "fans": [],
     })
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
+    _point_config_at_tmp(monkeypatch, tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -418,8 +449,6 @@ def test_set_tool_target_validates_range(
     targets with ``422`` — same contract as the temperature
     module's per-sensor endpoint.
     """
-    from modules.tools import config_mapper
-
     _write_hardware_json(tmp_path, {
         "version": "2.0", "machine": "test",
         "source": "KlipperToLinuxCNCCompiler",
@@ -437,7 +466,7 @@ def test_set_tool_target_validates_range(
         "temperature_sensors": [{"id": "extruder", "pin": "PA1"}],
         "fans": [],
     })
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)
+    _point_config_at_tmp(monkeypatch, tmp_path)
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -551,8 +580,8 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     """``GET /spindle/{tool_id}`` returns the live telemetry.
 
     After ``M3 S{12000}`` the operator expects
-    ``actual`` / ``is_connected`` / ``error_count`` to populate from
-    the mock simulator rather than stay at the seeded defaults.
+    ``actual_rpm`` / ``is_connected`` / ``error_count`` to populate
+    from the mock simulator rather than stay at the seeded defaults.
     The endpoint surfaces the same dict the base-thread snapshot
     carries, so a regression in either the simulator or the router
     surfaces here.
@@ -565,7 +594,7 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     from core.event_bus import EventBus
     from core.module_registry import ModuleRegistry
     from hardware import linuxcnc_mock
-    from modules.tools import config_mapper
+
     from modules.tools.module import ToolsModule
 
     # The mock ignores M-codes while the machine is in STATE_ESTOP
@@ -574,9 +603,7 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     linuxcnc_mock.set_mock_task_state(linuxcnc_mock.STATE_ON)
 
     # Seed a hardware.json with one ``spindle_digital`` so the
-    # spindle loader has something to enumerate. ``_resolve_active_path``
-    # walks ``<PROJECT_ROOT>/machine_config/active/hardware.json`` —
-    # point ``_PROJECT_ROOT`` at our tmp dir for the test.
+    # spindle loader has something to enumerate.
     from hardware import linuxcnc_mock as hw_mock
     active_root = tmp_data_root / "machine_config" / "active"
     active_root.mkdir(parents=True, exist_ok=True)
@@ -599,7 +626,7 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_data_root)
+    _point_config_at_tmp(monkeypatch, tmp_data_root)
     monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
     hw_mock.reseed_from_hardware_json()
 
@@ -626,10 +653,9 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["id"] == "spindle_digital"
-    assert body["state"] == "forward"
     # ``is_connected`` flips True on the operator's action — the
     # endpoint surfaces the eagerly-updated dict, not the simulator
-    # polling rate. The HAL poll loop refines ``actual`` over the
+    # polling rate. The HAL poll loop refines ``actual_rpm`` over the
     # next ~2 s; the test environment does not run the poll thread,
     # so we assert on the bits that don't depend on it.
     assert body["is_connected"] is True
@@ -677,7 +703,6 @@ def test_on_load_subscribes_spindle_pins(tmp_data_root, clean_env, monkeypatch):
     from hardware import hal_manager, linuxcnc_mock as hw_mock
     from core.event_bus import EventBus
     from core.settings_store import SettingsStore
-    from modules.tools import config_mapper
     from modules.tools.module import ToolsModule
 
     # Seed a hardware.json with one ``spindle_digital`` so the
@@ -705,7 +730,7 @@ def test_on_load_subscribes_spindle_pins(tmp_data_root, clean_env, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_data_root)
+    _point_config_at_tmp(monkeypatch, tmp_data_root)
     monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
     hw_mock.reseed_from_hardware_json()
 

@@ -32,7 +32,7 @@ from core.protocols import (
     PluggableModule,
     SidebarEntry,
 )
-from .config_mapper import load_active_heaters
+from .config_mapper import get_temperature_sensors
 
 from .router import router as _router
 from .settings import TemperatureSettings, seed_colors
@@ -79,7 +79,7 @@ class TemperatureModule:
         # the module; ``on_load`` re-reads it to pick up any
         # in-process re-deployment (rare in practice — most operators
         # restart the backend between deploys).
-        self._heater_names: List[str] = load_active_heaters()
+        self._heater_names: List[str] = get_temperature_sensors()
 
     def on_load(self, ctx: ModuleContext) -> None:
         """Boot the temperature module.
@@ -89,7 +89,7 @@ class TemperatureModule:
         process-wide and is started on first ``set_temperature``
         invocation — this method does **not** spawn background work.
         """
-        self._heater_names = load_active_heaters()
+        self._heater_names = get_temperature_sensors()
         logger.debug(
             "temperature module on_load (heaters=%s)",
             self._heater_names,

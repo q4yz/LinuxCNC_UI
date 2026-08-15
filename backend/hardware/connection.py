@@ -316,6 +316,17 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def ensure_mdi_mode() -> None:
+    """Switch the LinuxCNC task into MDI mode and wait for the change to commit.
+
+    Raises:
+        HTTPException: 503 if the command channel is offline, or 408
+            if the mode change times out.
+    """
+    # Fallback to 3 (standard LinuxCNC MDI mode integer) if the constant is missing
+    mode_mdi = getattr(linuxcnc, "MODE_MDI", 3)
+    execute_sync_cmd("mode", 5, mode_mdi)
+
 # ---------------------------------------------------------------------------
 # Mock-transparent telemetry helpers
 # ---------------------------------------------------------------------------
@@ -331,6 +342,7 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
 # snapshots) and dedicated ``update_*`` / ``push_error`` helpers.
 # Production code never imports :mod:`hardware.linuxcnc_mock`
 # directly.
+
 
 
 def read_temperature(sensor_id: str) -> Optional[Dict[str, float]]:
@@ -550,7 +562,6 @@ __all__ = [
     "execute_sync_cmd",
     "execute_gcode",
     "read_temperature",
-    "read_spindle_telemetry",
     "read_error_history",
     "mark_spindle_connected",
     "push_machine_error",

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from modules.temperature.config_mapper import load_active_heaters
+from modules.temperature.config_mapper import get_temperature_sensors
 
 
 # ---------------------------------------------------------------------- #
@@ -95,7 +95,7 @@ class TestV2Model:
         """Two sensors in v2 produce two ids in declaration order."""
         _write_hardware_json(tmp_path, _v2_payload())
 
-        names = load_active_heaters(active_dir=tmp_path)
+        names = get_heaters(active_dir=tmp_path)
 
         assert names == ["extruder", "bed"]
 
@@ -115,7 +115,7 @@ class TestV2Model:
             },
         )
 
-        assert load_active_heaters(active_dir=tmp_path) == [
+        assert get_heaters(active_dir=tmp_path) == [
             "first",
             "second",
             "third",
@@ -127,7 +127,7 @@ class TestV2Model:
             tmp_path,
             {"version": "2.0", "temperature_sensors": []},
         )
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_no_temperature_sensors_key_returns_empty(
         self, tmp_path: Path
@@ -148,7 +148,7 @@ class TestV2Model:
                 ],
             },
         )
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_ignores_entries_without_id(
         self, tmp_path: Path
@@ -165,7 +165,7 @@ class TestV2Model:
                 ],
             },
         )
-        assert load_active_heaters(active_dir=tmp_path) == ["valid"]
+        assert get_heaters(active_dir=tmp_path) == ["valid"]
 
 
 # ---------------------------------------------------------------------- #
@@ -176,19 +176,19 @@ class TestV2Model:
 class TestFailureModes:
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         """No ``hardware.json`` at the expected path returns ``[]``."""
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_malformed_json_returns_empty(self, tmp_path: Path) -> None:
         """Corrupt JSON returns ``[]`` and logs at WARNING (not raised)."""
         target = tmp_path / "hardware.json"
         target.write_text("this is not valid json {", encoding="utf-8")
 
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_non_dict_root_returns_empty(self, tmp_path: Path) -> None:
         """A hardware.json whose root is not an object returns ``[]``."""
         _write_hardware_json(tmp_path, ["not", "a", "dict"])
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_non_list_temperature_sensors_returns_empty(
         self, tmp_path: Path
@@ -198,7 +198,7 @@ class TestFailureModes:
             tmp_path,
             {"version": "2.0", "temperature_sensors": "not a list"},
         )
-        assert load_active_heaters(active_dir=tmp_path) == []
+        assert get_heaters(active_dir=tmp_path) == []
 
     def test_hardware_json_with_standalone_fan_round_trips(
         self, tmp_path: Path

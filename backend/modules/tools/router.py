@@ -39,7 +39,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from modules.tools.tool_service import get_tools_service
+from modules.tools.services.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.router")
 
@@ -208,11 +208,13 @@ class SetToolTargetResponse(BaseModel):
 class SpindlePinPayload(BaseModel):
     """Per-pin HAL signal map for one digital spindle.
 
-    Mirrors :class:`backend.modules.tools.config_mapper.SpindleDigitalPins`
+    Mirrors :class:`backend.modules.tools.dtos.SpindleDigitalPins`
     as a plain dict for JSON friendliness. ``None`` on any field
     means the integrator did not wire that signal in
     ``hardware.json`` — the dashboard renders an "n/a" cell for
-    those.
+    those. ``min_rpm`` / ``max_rpm`` are the configuration clamps
+    (``StaticHalPin``) — exposed numerically for the dashboard's
+    slider bounds.
     """
 
     id: str
@@ -222,35 +224,48 @@ class SpindlePinPayload(BaseModel):
     is_connected: Optional[str] = None
     error_count: Optional[str] = None
     last_error: Optional[str] = None
+    min_rpm: float = 0.0
+    max_rpm: float = 24000.0
 
 
 class SpindleStateResponse(BaseModel):
     """Response body for ``GET /spindle/{tool_id}``.
 
-    Returns the live HAL pin map plus the latest telemetry
-    snapshot (``actual`` / ``is_connected`` / ``error_count``) and
-    the service-tracked state (``"idle"`` / ``"forward"`` /
-    ``"reverse"``). Used for debugging the spindle pipeline from
-    ``curl``; the dashboard's :class:`SpindleCard` reads from the
-    base-thread snapshot at 1 Hz rather than polling this endpoint.
+    Returns the latest :class:`SpindleStateDTO` payload (live RPM,
+    VFD engagement, error count, alarm text, ``at_speed`` latch)
+    and the configuration clamps (``min_rpm`` / ``max_rpm``) the
+    dashboard renders on the slider. Used for debugging the
+    spindle pipeline from ``curl``; the dashboard's
+    :class:`SpindleCard` reads from the base-thread snapshot at 1 Hz
+    rather than polling this endpoint.
     """
 
     id: str = Field(..., description="Spindle tool id (e.g. 'spindle_digital').")
-    pins: SpindlePinPayload = Field(
-        ..., description="HAL signal map for this spindle."
+    target_rpm: float = Field(
+        0.0, description="Last commanded RPM (operator's slider / input)."
     )
-    state: str = Field(
-        ...,
-        description='Operator-tracked state: "idle" | "forward" | "reverse".',
-    )
-    actual: int = Field(
-        ..., description="Live RPM feedback (rpm_out pin, or simulated value)."
+    actual_rpm: float = Field(
+        0.0, description="Live RPM feedback (rpm_out pin, or simulated value)."
     )
     is_connected: bool = Field(
-        ..., description="VFD engagement flag (on / forward / vfd_enable True)."
+        False,
+        description="VFD engagement flag (on / forward / vfd_enable True).",
     )
     error_count: int = Field(
-        ..., description="Cumulative istop / estop count from the VFD."
+        0, description="Cumulative istop / estop count from the VFD."
+    )
+    last_error: str = Field(
+        "", description="Last VFD alarm text (empty when no alarm is active)."
+    )
+    spindle_at_speed: bool = Field(
+        False,
+        description="True when the spindle is running and within 5 % of target.",
+    )
+    min_rpm: float = Field(
+        0.0, description="Lower clamp from hardware.json (dashboard slider bound)."
+    )
+    max_rpm: float = Field(
+        24000.0, description="Upper clamp from hardware.json (dashboard slider bound)."
     )
 
 
@@ -378,14 +393,14 @@ def set_tool_target(
     response_model=SpindleStateResponse,
     summary="Get Spindle State",
     description=(
-        "Read the live state + HAL pin map for ``tool_id``. Returns "
-        "the canonical ``SpindleDigitalPins`` record (as a plain dict), "
-        "the live telemetry snapshot (``actual`` / ``is_connected`` "
-        "/ ``error_count``), and the current service-tracked state "
-        "(``idle`` / ``forward`` / ``reverse``). Useful for "
-        "debugging the spindle pipeline from ``curl``; the "
-        "dashboard's :class:`SpindleCard` reads from the 1 Hz "
-        "base-thread snapshot rather than polling this endpoint."
+        "Read the live ``SpindleStateDTO`` payload for ``tool_id``: "
+        "live RPM (``target_rpm`` / ``actual_rpm``), VFD engagement "
+        "(``is_connected``), error history (``error_count`` / "
+        "``last_error``), ``at_speed`` latch, and the configuration "
+        "clamps (``min_rpm`` / ``max_rpm``). Useful for debugging "
+        "the spindle pipeline from ``curl``; the dashboard's "
+        ":class:`SpindleCard` reads from the 1 Hz base-thread "
+        "snapshot rather than polling this endpoint."
     ),
     operation_id="getSpindleState",
 )

@@ -49,78 +49,13 @@ import logging
 from pathlib import Path
 from typing import List
 
+from services.hardware_config_service import HardwareConfigService
+
 logger = logging.getLogger("backend.modules.temperature.hardware_loader")
 
-
-#: Project root = ``<repo>``. Computed relative to this file so the
-#: helper resolves correctly regardless of the calling cwd. The
-#: depth is ``parents[3]`` because this file lives under
-#: ``backend/modules/temperature/`` (the previous home was
-#: ``backend/services/`` where ``parents[2]`` was correct). The
-#: extra ``../`` walks back through ``modules/`` and ``backend/``
-#: to reach the repository root.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_ACTIVE_DIR = _PROJECT_ROOT / "machine_config" / "active"
-_DEFAULT_HARDWARE_JSON = _DEFAULT_ACTIVE_DIR / "hardware.json"
-
-
-def _resolve_active_dir(active_dir: Path | None) -> Path:
-    """Return the active root, defaulting to ``<repo>/machine_config/active``.
-
-    The helper exposes the ``active_dir`` argument so tests can point at
-    a ``tmp_path`` without monkey-patching module-level globals.
-    """
-    return Path(active_dir) if active_dir is not None else _DEFAULT_ACTIVE_DIR
-
-
-def load_active_heaters(
-    active_dir: Path | None = None,
-    hardware_filename: str = "hardware.json",
-) -> List[str]:
-    """Return the list of sensor ids declared by the active payload.
-
-    Reads ``<active_dir>/<hardware_filename>``, parses the JSON, and
-    returns every entry's ``id`` field from the top-level
-    ``temperature_sensors`` array. The function name is historical —
-    before the v2 hardware.json model, sensors and heaters were the
-    same record. The v2 shape splits them; the caller wants the
-    sensor list (one entry per runtime temperature channel), not
-    the heater list (one entry per controllable thermal output).
-
-    Returns an empty list when:
-
-    * The file does not exist (typical in CI / dev before the first
-      ``deploy`` has run).
-    * The JSON is malformed (logged at WARNING).
-    * The ``temperature_sensors`` key is missing or not an array.
-    * The array exists but every entry lacks an ``id`` field.
-
-    Order is preserved as written in ``hardware.json`` — callers that
-    want a deterministic order should sort the result themselves.
-    """
-    active_root = _resolve_active_dir(active_dir)
-    path = active_root / hardware_filename
-    if not path.exists():
-        logger.debug("hardware_loader: %s missing — returning []", path)
-        return []
-
-    try:
-        with path.open(encoding="utf-8") as fp:
-            payload = json.load(fp)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "hardware_loader: failed to parse %s: %s — returning []",
-            path,
-            exc,
-        )
-        return []
-
-    if not isinstance(payload, dict):
-        return []
-
-    raw_sensors = payload.get("temperature_sensors")
-    if not isinstance(raw_sensors, list):
-        return []
+def get_temperature_sensors(active_path: Path | None = None) -> List[str]:
+    config_service = HardwareConfigService(active_path)
+    raw_sensors = config_service.get_temperature_sensors()
 
     names: List[str] = []
     for entry in raw_sensors:
@@ -131,4 +66,4 @@ def load_active_heaters(
     return names
 
 
-__all__ = ["load_active_heaters"]
+__all__ = ["get_temperature_sensors"]

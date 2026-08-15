@@ -1,6 +1,5 @@
 """Shared pytest fixtures for backend unit tests."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -30,7 +29,7 @@ def clean_env(monkeypatch):
     """
     monkeypatch.delenv("MODULES_ENABLED", raising=False)
     try:
-        from modules.tools.tool_service import get_tools_service
+        from modules.tools.services.tool_service import get_tools_service
         svc = get_tools_service()
         svc._spindle_state.clear()
     except Exception:

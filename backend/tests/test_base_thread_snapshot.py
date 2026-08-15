@@ -47,6 +47,29 @@ def _reset_line_count_cache() -> None:
     unregister_all()
 
 
+def _point_hardware_config_at(monkeypatch, tmp_path) -> None:
+    """Point :class:`HardwareConfigService` at ``tmp_path``.
+
+    Replaces the historical
+    ``monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", tmp_path)``
+    seam — the tools module's loader no longer exposes a module-
+    level ``_PROJECT_ROOT``; the seam is the
+    :class:`HardwareConfigService` constructor's ``repo_root`` arg.
+    """
+    from services.hardware_config_service import HardwareConfigService
+
+    original_init = HardwareConfigService.__init__
+
+    def _init(self, active_path=None, repo_root=None):
+        return original_init(
+            self,
+            active_path=active_path,
+            repo_root=repo_root if repo_root is not None else tmp_path,
+        )
+
+    monkeypatch.setattr(HardwareConfigService, "__init__", _init)
+
+
 def _isolated_program_root(
     tmp_path: Path, monkeypatch, filename: str = "test.gcode"
 ) -> Path:
@@ -167,11 +190,9 @@ def test_snapshot_mirrors_individual_endpoints(
     # baseline (the dev environment's real ``hardware.json`` is
     # ignored). The mock's sensor list is reseeded against the same
     # empty path so the only sensor is the one we inject below.
-    from modules.tools import config_mapper
-
     empty = tmp_path / "empty_active"
     empty.mkdir()
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", empty)
+    _point_hardware_config_at(monkeypatch, empty)
     monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
     from hardware import linuxcnc_mock
 
@@ -309,7 +330,6 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     _isolated_program_root(tmp_data_root, monkeypatch)
 
     from hardware import linuxcnc_mock
-    from modules.tools import config_mapper
 
     # Drop a hardware.json with a single spindle_digital tool so
     # the snapshot surfaces exactly one row. Re-point both the
@@ -336,7 +356,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
         "temperature_sensors": [],
         "fans": [],
     })
-    monkeypatch.setattr(config_mapper, "_PROJECT_ROOT", active_root)
+    _point_hardware_config_at(monkeypatch, active_root)
     monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", active_root)
     linuxcnc_mock.reseed_from_hardware_json()
 

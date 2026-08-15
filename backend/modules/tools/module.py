@@ -145,36 +145,48 @@ def _make_spindle_callback(tool_id: str, pin_name: str) -> Callable[[Any], None]
 
 
 def _subscribe_spindle_pins() -> int:
-    """Subscribe each spindle_digital tool's pins to ``hal_manager``.
-
-    Returns the number of subscriptions registered, for diagnostics.
-    Idempotent: re-calling on a reload appends duplicates to the
-    subscription list rather than replacing existing callbacks. The
-    :class:`HalSubscriptionManager.subscribe` method already appends
-    rather than replacing, so the subscription count grows on each
-    reload. We tolerate that because the callback is cheap
-    (re-reads a dict) and the manager caps the fan-out at the
-    number of registered callbacks per pin.
-    """
+    """Subscribe each spindle_digital tool's pins to ``hal_manager``."""
     from hardware import hal_manager
-    from .config_mapper import get_spindle_hal_pin_maps
+    from dataclasses import fields
 
-    pins_map = get_spindle_hal_pin_maps()
+    # Import your new mappers and config fetchers!
+    from .config_mapper import get_tools
+    from .mapper.digital_spindle_mapper import SpindleDigitalMapper
+
     count = 0
-    for tool_id, pins in pins_map.items():
-        seen_pins: set[str] = set()
-        for field_name in (
-            "spindle_at_speed", "target_rpm", "actual_rpm",
-            "is_connected", "error_count", "last_error",
-        ):
-            pin_name = getattr(pins, field_name, None)
-            if not pin_name or pin_name in seen_pins:
-                continue
-            seen_pins.add(pin_name)
-            hal_manager.subscribe(
-                pin_name, _make_spindle_callback(tool_id, pin_name)
-            )
-            count += 1
+    seen_pins: set[str] = set()
+    raw_tools = get_tools()
+
+    for tool in raw_tools:
+        # We only want to subscribe to digital spindles for now
+        if tool.get("type") == "spindle_digital":
+            tool_id = tool.get("id")
+
+            try:
+                # Use your awesome new mapper to safely parse the tool
+                pins = SpindleDigitalMapper.from_dict_to_SpindleDigitalPins(tool)
+
+                # Loop through every field (rpm_in, rpm_out, is_connected, etc.)
+                for field_def in fields(pins):
+                    hal_pin = getattr(pins, field_def.name)
+
+                    # Thanks to your new HalPin design, only DynamicHalPin
+                    # actually has a valid `pin` string attribute!
+                    pin_name = getattr(hal_pin, "pin", None)
+
+                    if not pin_name or pin_name in seen_pins:
+                        continue
+
+                    seen_pins.add(pin_name)
+
+                    hal_manager.subscribe(
+                        pin_name, _make_spindle_callback(tool_id, pin_name)
+                    )
+                    count += 1
+
+            except Exception as e:
+                logger.warning("Failed to subscribe HAL pins for spindle %s: %s", tool_id, e)
+
     return count
 
 

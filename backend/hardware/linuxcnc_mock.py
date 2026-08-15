@@ -24,7 +24,7 @@ def _get_load_active_heaters():
     global _load_active_heaters
     if _load_active_heaters is None:
         from modules.temperature.config_mapper import (
-            load_active_heaters as _lah,
+            get_temperature_sensors as _lah,
         )
         _load_active_heaters = _lah
     return _load_active_heaters
