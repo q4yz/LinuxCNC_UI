@@ -9,7 +9,7 @@ The split mirrors the discovery layout described in :file:`MODULE_SYSTEM_ROADMAP
     backend/modules/axis/
     ├── __init__.py        # this file
     ├── module.py          # AxisModule + setup() + on_load/on_unload
-    ├── service.py         # AxisService (homing facade)
+    ├── tool_service.py         # AxisService (homing facade)
     ├── router.py          # POST /home (axis-motion action)
     ├── jog_service.py     # Hardware dispatch (jog_axis, jog_stop, jog_keepalive) + _active_jogs state
     ├── jog_watchdog.py    # 500 ms keep-alive safety watchdog (pure logic; no hardware imports)

@@ -47,7 +47,7 @@ from services import (
     get_staged_service,
 )
 
-from .compilers import registry as _compiler_registry  # noqa: F401 - import side effect
+from .compilers import registry as _compiler_registry
 from .router import register_exception_handlers, router as _router
 from .settings import MachineConfigSettings
 

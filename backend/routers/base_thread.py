@@ -43,7 +43,7 @@ from modules.program.service import (
     get_program_lifecycle_service,
 )
 from modules.temperature.service import collect_sensors
-from modules.tools.service import collect_tools
+from modules.tools.tool_service import collect_tools
 
 logger = logging.getLogger("backend.routers.base_thread")
 

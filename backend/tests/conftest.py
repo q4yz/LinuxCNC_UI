@@ -30,7 +30,7 @@ def clean_env(monkeypatch):
     """
     monkeypatch.delenv("MODULES_ENABLED", raising=False)
     try:
-        from modules.tools.service import get_tools_service
+        from modules.tools.tool_service import get_tools_service
         svc = get_tools_service()
         svc._spindle_state.clear()
     except Exception:

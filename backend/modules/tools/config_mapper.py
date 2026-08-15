@@ -34,201 +34,59 @@ and writes the ``signal_*`` HAL pins via ``setp`` (enables) or ``net``
 
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Any
+
+from modules.tools.dtos.digital_spindle_dto import SpindleDigitalPins
+from services.hardware_config_service import HardwareConfigService
 
 logger = logging.getLogger("backend.modules.tools.tools_loader")
 
-
-#: Project root = ``<repo>``. Computed relative to this file so the
-#: helper resolves correctly regardless of the calling cwd. The
-#: depth is ``parents[3]`` because this file now lives under
-#: ``backend/modules/tools/`` (originally it was under
-#: ``backend/services/`` where ``parents[2]`` was correct). The
-#: extra ``../`` walks back through ``modules/`` and ``backend/``
-#: to reach the repository root.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _resolve_active_path(active_path: Path | None) -> Path:
-    """Return the ``hardware.json`` path, defaulting to the active profile.
-
-    The helper exposes the ``active_path`` argument so tests can
-    point at a ``tmp_path`` without monkey-patching module-level
-    globals. ``None`` falls back to
-    ``<repo>/machine_config/active/hardware.json`` — the path the
-    compiler writes after a successful deploy.
-    """
-    if active_path is not None:
-        return Path(active_path)
-    return _PROJECT_ROOT / "machine_config" / "active" / "hardware.json"
-
-
-def load_active_tools(
-    active_path: Path | None = None,
-) -> List[dict]:
-    """Return the operator-facing ``tools[]`` array from ``hardware.json``.
-
-    Reads ``<active_path>/hardware.json``, parses the JSON, and
-    returns every entry of the top-level ``tools`` array as a
-    plain dict. The caller (the router) overlays the runtime
-    state — actual / target temperature for heating tools, actual
-    RPM for digital spindles — so this helper returns the raw
-    records unchanged.
-
-    Returns an empty list when:
-
-    * The file does not exist (typical in CI / dev before the
-      first ``deploy`` has run).
-    * The JSON is malformed (logged at WARNING).
-    * The ``tools`` key is missing or not a list.
-    * The list exists but every entry lacks an ``id`` field.
-
-    Order is preserved as written in ``hardware.json`` — callers
-    that want a deterministic order should sort the result
-    themselves. The ToolPanel chip row preserves source order so
-    the operator sees tools in the order the compiler emitted
-    them.
-    """
-    path = _resolve_active_path(active_path)
-    if not path.exists():
-        logger.debug("tools_loader: %s missing — returning []", path)
-        return []
-
-    try:
-        with path.open(encoding="utf-8") as fp:
-            payload = json.load(fp)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "tools_loader: failed to parse %s: %s — returning []",
-            path,
-            exc,
-        )
-        return []
-
-    if not isinstance(payload, dict):
-        return []
-
-    raw_tools = payload.get("tools")
-    if not isinstance(raw_tools, list):
-        return []
-
+def get_tools(active_path: Path | None = None,) -> List[dict]:
     out: List[dict] = []
-    for entry in raw_tools:
+    config_service = HardwareConfigService(active_path)
+    tools_list = config_service.get_tools()
+
+    for entry in tools_list:
         if not isinstance(entry, dict):
             continue
-        # ``id`` is the canonical machine handle. An entry without
-        # an ``id`` cannot be addressed by the operator or the
-        # frontend, so skip it — the strict v2 model would have
-        # already rejected it at compile time, but defensive
-        # parsing here keeps the loader robust to legacy /
-        # hand-written payloads.
         if not isinstance(entry.get("id"), str) or not entry["id"]:
             continue
         out.append(entry)
     return out
 
 
-__all__ = ["load_active_tools", "SpindleDigitalPins", "get_spindle_hal_pin_map"]
+__all__ = ["get_tools", "get_spindle_hal_pin_map"]
 
-
-# ---------------------------------------------------------------------- #
-# Spindle HAL pin map                                                     #
-# ---------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True, slots=True)
-class SpindleDigitalPins:
-    id: str
-    target_rpm: Optional[str] = None
-    actual_rpm: Optional[str] = None
-    is_connected: Optional[str] = None
-    error_count: Optional[str] = None
-    last_error: Optional[str] = None
-    spindle_at_speed: Optional[str] = None
 
 def get_spindle_hal_pin_map(spindle_id: str,active_path: Path | None = None) -> SpindleDigitalPins:
-    return get_spindle_hal_pin_maps(active_path).get(spindle_id)
-def get_spindle_hal_pin_maps(active_path: Path | None = None) -> Dict[str, SpindleDigitalPins]:
-    """Return ``{spindle_id: SpindleDigitalPins}`` for every digital spindle.
+    pin_maps = get_spindle_hal_pin_maps(active_path)
 
-    Reads ``<active_path>/hardware.json`` (defaulting to
-    ``<repo>/machine_config/active/hardware.json``), filters
-    ``tools[]`` for ``type == "spindle_digital"`` and builds one
-    :class:`SpindleDigitalPins` per entry. The map is keyed by the canonical
-    tool id (the same id the compiler emits and the runtime uses for
-    control commands), so callers can address a specific spindle by
-    id and receive every HAL signal name it knows about.
-
-    Failure modes (file missing, corrupt JSON, ``tools`` not a list,
-    no ``spindle_digital`` entries, an entry without a usable id)
-    return an empty dict. A missing / unparseable file is logged at
-    WARNING so the operator can see why the spindle card never
-    rendered.
-
-    Order is preserved as written in ``hardware.json`` — callers
-    that want a deterministic order should sort the result
-    themselves.
-    """
-    path = _resolve_active_path(active_path)
-    if not path.exists():
-        logger.debug("spindle_loader: %s missing — returning {}", path)
-        return {}
-
-    try:
-        with path.open(encoding="utf-8") as fp:
-            payload = json.load(fp)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "spindle_loader: failed to parse %s: %s — returning {}",
-            path,
-            exc,
+    if spindle_id not in pin_maps:
+        raise KeyError(
+            f"Spindle ID '{spindle_id}' not found in the active hardware configuration."
         )
-        return {}
 
-    if not isinstance(payload, dict):
-        return {}
+    return pin_maps[spindle_id]
 
-    raw_tools = payload.get("tools")
-    if not isinstance(raw_tools, list):
-        return {}
+def get_spindle_hal_pin_maps(active_path: Path | None = None) -> Dict[str, SpindleDigitalPins]:
+    config_service = HardwareConfigService(active_path)
+    tools_list = config_service.get_tools()
 
     out: Dict[str, SpindleDigitalPins] = {}
-    for entry in raw_tools:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("type") != "spindle_digital":
-            continue
-        tool_id = entry.get("id")
-        if not isinstance(tool_id, str) or not tool_id:
-            # No usable handle — the compiler would have rejected
-            # this at validation time, but defensive parsing here
-            # keeps the loader robust to legacy / hand-written
-            # payloads.
-            continue
-        out[tool_id] = SpindleDigitalPins(
-            id=tool_id,
-            spindle_at_speed=_as_optional_str(entry.get("signal_spindle_at_speed")),
-            target_rpm=_as_optional_str(entry.get("signal_target_rpm")),
-            actual_rpm=_as_optional_str(entry.get("signal_actual_out")),
-            is_connected=_as_optional_str(entry.get("signal_is_connected")),
-            error_count=_as_optional_str(entry.get("signal_error_count")),
-            last_error=_as_optional_str(entry.get("signal_last_error")),
-        )
+    for tool in tools_list:
+        if _is_digital_spindle(tool):
+            out[tool.get("id")] = SpindleDigitalPins.from_dict(tool)
     return out
 
+def _is_digital_spindle(tool: Any) -> bool:
+    if not isinstance(tool, dict):
+        return False
+    if tool.get("type") != "spindle_digital":
+        return False
+    tool_id = tool.get("id")
+    if not isinstance(tool_id, str) or not tool_id:
+        return False
+    return True
 
-def _as_optional_str(value: object) -> Optional[str]:
-    """Coerce ``value`` to ``Optional[str]`` for :class:`SpindleDigitalPins`.
-
-    Anything that is not a non-empty string becomes ``None`` so the
-    dataclass never stores a literal ``""`` placeholder that the
-    runtime would treat as a wired pin.
-    """
-    if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    return None

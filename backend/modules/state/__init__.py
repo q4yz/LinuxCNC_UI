@@ -11,7 +11,7 @@ This module split off from the historical ``axis`` (formerly
     backend/modules/state/
     ├── __init__.py        # this file
     ├── module.py          # StateModule + setup() + on_load/on_unload
-    ├── service.py         # StateService + MachineState facade
+    ├── tool_service.py         # StateService + MachineState facade
     └── router.py          # GET /state, POST /state, POST /mode, POST /mdi
 
 The ``/home`` endpoint lives in :mod:`backend.modules.axis.router`

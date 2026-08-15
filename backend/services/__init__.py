@@ -13,7 +13,7 @@ the actual filesystem work to one of the four services.
 
 The per-module service classes (``StateService``, ``AxisService``,
 ``ProgramService``, ``ToolsService``, ``TemperatureService``) live
-in their respective modules (``modules/<name>/service.py``) and
+in their respective modules (``modules/<name>/tool_service.py``) and
 must be imported directly from there — they are intentionally not
 re-exported from this package surface.
 """

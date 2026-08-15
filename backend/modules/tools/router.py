@@ -39,7 +39,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from modules.tools.service import get_tools_service
+from modules.tools.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.router")
 
@@ -391,7 +391,7 @@ def set_tool_target(
 )
 def get_spindle_state(tool_id: str) -> SpindleStateResponse:
     """Return the live spindle state for ``tool_id``."""
-    return SpindleStateResponse(**get_tools_service().get_spindle(tool_id))
+    return SpindleStateResponse(**get_tools_service().get_spindle_state(tool_id))
 
 
 __all__ = [

@@ -121,7 +121,7 @@ app.add_middleware(
 # ``/api/v1/modules/{id}``. ``axis`` exposes ``/home``;
 # ``machine_state`` exposes ``/state``, ``/mode``, ``/mdi``. Each
 # router calls into its own dedicated service singleton from the
-# matching ``modules/<name>/service.py`` module.
+# matching ``modules/<name>/tool_service.py`` module.
 app.include_router(files.router)
 app.include_router(system.router)
 app.include_router(base_thread.router)
