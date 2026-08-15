@@ -31,7 +31,7 @@ from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error, linuxcnc
-from hardware.connection import push_machine_error, read_error_history
+from hardware.connection import read_error_history
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.servo_thread")
@@ -288,16 +288,16 @@ async def telemetry_loop():
                 # channel drains into the WS layer live), so a real
                 # ``error_channel`` implementation never breaks the
                 # broadcast path.
-                push_machine_error(kind, text, timestamp)
-                error_payload = {
-                    "type": "error",
-                    "data": {
-                        "kind": kind,
-                        "text": text,
-                        "time": timestamp,
-                    }
-                }
-                await manager.broadcast(json.dumps(error_payload))
+                # push_machine_error(kind, text, timestamp)
+                # error_payload = {
+                #     "type": "error",
+                #     "data": {
+                #         "kind": kind,
+                #         "text": text,
+                #         "time": timestamp,
+                #     }
+                #}
+                #await manager.broadcast(json.dumps(error_payload))
                 # Mirror the error to the persistent console history
                 # so the operator can replay the session after the
                 # browser is closed.

@@ -6,28 +6,9 @@ from typing import Any, Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("linuxcnc_mock")
 
-
 # Module-level path resolution so tests can monkey-patch the
-# ``hardware.json`` location the seeders read from. Mirrors the
-# convention in :mod:`services.hardware_loader`.
+# ``hardware.json`` location the seeders read from.
 _PROJECT_ROOT = None
-
-# Lazy-import the temperature helper to break the circular load
-# chain. ``modules.temperature.hardware_loader`` reads the active
-# ``hardware.json``; importing it at module scope would deadlock the
-# hardware package initialisation when ``linuxcnc_mock`` is
-# triggered as a fallback by ``hardware.connection``.
-_load_active_heaters = None
-
-
-def _get_load_active_heaters():
-    global _load_active_heaters
-    if _load_active_heaters is None:
-        from modules.temperature.config_mapper import (
-            get_temperature_sensors as _lah,
-        )
-        _load_active_heaters = _lah
-    return _load_active_heaters
 
 
 def _get_project_root():
@@ -42,19 +23,13 @@ def _get_project_root():
 
 
 def _default_hardware_paths():
-    """Return the default ``hardware.json`` locations to probe.
-
-    Order matters: the active profile wins, falling back to the
-    ready-for-deploy copy if the active file is missing. Both
-    paths are resolved against :func:`_get_project_root` so a
-    monkeypatch on the module-level ``_PROJECT_ROOT`` flows
-    through.
-    """
+    """Return the default ``hardware.json`` locations to probe."""
     root = _get_project_root()
     return [
         root / "machine_config" / "active" / "hardware.json",
         root / "machine_config" / "ready_for_deploy" / "hardware.json",
     ]
+
 
 # --- LinuxCNC Constants ---
 STATE_ESTOP = 1
@@ -93,17 +68,10 @@ OPERATOR_ERROR = 2
 OPERATOR_TEXT = 3
 OPERATOR_DISPLAY = 4
 
+
 # --- Shared State ---
 def _load_hardware_payload():
-    """Read the active ``hardware.json`` once and return its dict, or ``None``.
-
-    Helper that consolidates the path-resolution + JSON-parsing
-    path so both seeders (``_seed_temperatures_from_hardware`` and
-    ``_seed_spindle_actual_from_hardware``) consume the same
-    payload instead of double-parsing the file. Returns ``None``
-    when the file is missing, malformed, or not a JSON object —
-    the seeders treat ``None`` as "nothing to seed".
-    """
+    """Read the active ``hardware.json`` once and return its dict."""
     import json
 
     for path in _default_hardware_paths():
@@ -122,21 +90,22 @@ def _load_hardware_payload():
 def _seed_temperatures_from_hardware():
     """Reset ``_machine_state.temperatures`` from the active ``hardware.json``.
 
-    Called once at module import. Tests that monkey-patch the
-    active directory after import can invoke this function to force
-    a re-read without re-importing the module. Each seeded entry
-    starts at ambient (25 °C) with target=0; the simulation loop
-    ramps ``actual`` toward ``target`` on every tick.
+    Automatically finds tools of type heater, heated_bed, or extruder
+    and seeds them so the dashboard temperature panel works out of the box.
     """
+    payload = _load_hardware_payload()
     with _machine_state.lock:
         _machine_state.temperatures = {}
-        for name in _get_load_active_heaters()():
-            _machine_state.temperatures[name] = {'actual': 25.0, 'target': 0.0}
+        if isinstance(payload, dict) and isinstance(payload.get("tools"), list):
+            for tool in payload["tools"]:
+                if isinstance(tool, dict) and tool.get("type") in ("heater", "heated_bed", "extruder"):
+                    sensor_name = tool.get("sensor") or tool.get("id")
+                    if sensor_name:
+                        _machine_state.temperatures[sensor_name] = {'actual': 25.0, 'target': 0.0}
+
+        # Legacy backward-compatibility for single-extruder callers
         legacy_extruder = next(
-            (
-                v for k, v in _machine_state.temperatures.items()
-                if k == 'extruder' or k.startswith('extruder')
-            ),
+            (v for k, v in _machine_state.temperatures.items() if k == 'extruder' or k.startswith('extruder')),
             None,
         )
         if legacy_extruder is not None:
@@ -148,19 +117,7 @@ def _seed_temperatures_from_hardware():
 
 
 def _seed_spindle_actual_from_hardware():
-    """Reset ``_machine_state.spindle_actual`` from the active ``hardware.json``.
-
-    Only ``spindle_digital`` tools contribute — analog spindles
-    have no RPM feedback path so they're absent from the runtime
-    dict. Each seeded entry carries the full operator-facing
-    telemetry shape (``actual``, ``is_connected``, ``error_count``)
-    so the ToolPanel's spindle card has every field rendered from
-    day one. Defaults: ``actual = 0``, ``is_connected = False``,
-    ``error_count = 0``. A future telemetry source (HAL pin /
-    RS-485 polling) is expected to overwrite these on every tick;
-    no simulation loop runs today so operators see the defaults
-    until telemetry lands.
-    """
+    """Reset ``_machine_state.spindle_actual`` from the active ``hardware.json``."""
     payload = _load_hardware_payload()
     with _machine_state.lock:
         _machine_state.spindle_actual = {}
@@ -170,9 +127,7 @@ def _seed_spindle_actual_from_hardware():
         if not isinstance(raw_tools, list):
             return
         for tool in raw_tools:
-            if not isinstance(tool, dict):
-                continue
-            if tool.get("type") != "spindle_digital":
+            if not isinstance(tool, dict) or tool.get("type") != "spindle_digital":
                 continue
             tool_id = tool.get("id")
             if isinstance(tool_id, str) and tool_id:
@@ -190,110 +145,48 @@ class SharedMachineState:
         self.task_mode = MODE_MANUAL
         self.position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.actual_position = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        self.state = 1  # 1 = Idle, 2 = Running
+        self.state = 1
         self.file = ""
         self.homed = [0, 0, 0]
         self.interp_state = INTERP_IDLE
         self.current_line = 0
         self.total_lines = 0
-        self.g5x_index = 1  # 1 = G54 (default)
+        self.g5x_index = 1
 
-        # Module-wide lock — declared early so any ``with self.lock``
-        # block during __init__ (and the post-init
-        # ``_seed_temperatures_from_hardware`` call) can use it
-        # without an ``AttributeError``. The earlier end-of-__init__
-        # position was unreachable once the error-history block was
-        # inserted.
         self.lock = threading.Lock()
-
-        # Temperature Simulation State (multi-sensor dictionary).
-        # The set of sensors is driven entirely by ``hardware.json`` in
-        # ``machine_config/active/`` — no hard-coded ``extruder/bed/cpu``
-        # fixtures. When the file is missing (typical in CI) the mock
-        # boots with an empty dict and the temperature panel renders
-        # the "No sensors reported yet" empty state. Each seeded entry
-        # starts at ambient with target=0; the simulation loop ramps the
-        # ``actual`` value toward ``target`` on every tick.
         self.temperatures: dict = {}
-        # Spindle actual-RPM state (per ``spindle_digital`` tool id).
-        # Mirrors the temperature dict: seeded from ``hardware.json``
-        # ``tools[]`` filtered on ``type == "spindle_digital"``. Each
-        # entry starts at ``0`` RPM; no simulation loop runs today
-        # (a future HAL pin / RS-485 polling source is expected).
         self.spindle_actual: dict = {}
-        # Backwards-compatible single-sensor fields (kept for older
-        # callers). They mirror the first ``extruder``-named sensor
-        # when one exists, otherwise fall back to safe defaults so a
-        # machine with no extruder does not crash legacy callers.
         self.target_temp = 0.0
         self.actual_temp = 25.0
 
-        # Program execution simulation state
         self.program_thread = None
         self.program_stop_event = threading.Event()
-
-        # Jog simulation state
         self.jogging_axis = None
         self.jogging_velocity = 0.0
         self.jog_thread = None
         self.jog_stop_event = threading.Event()
 
-        # Recent LinuxCNC error-channel history. Each entry is
-        # ``{kind, text, time}`` and the bounded queue is mirrored
-        # into ``full_state`` so a reload / reconnect re-renders the
-        # backlog in the operator console. ``_max_errors`` caps the
-        # size — old entries drop first so a single session that
-        # produces thousands of identical errors cannot blow up the
-        # wire payload.
         self.errors: list = []
         self._max_errors = 100
 
     def push_error(self, kind: int, text: str, time: str) -> None:
-        """Record a LinuxCNC error-channel event.
-
-        Stamps ``time`` if the caller did not provide one (the
-        broadcast site already formats the timestamp, so the
-        router passes ``time`` through directly).
-        """
         entry = {"kind": kind, "text": text, "time": time}
         with self.lock:
             self.errors.append(entry)
             if len(self.errors) > self._max_errors:
                 del self.errors[: len(self.errors) - self._max_errors]
 
+
 _machine_state = SharedMachineState()
 
 
 def is_program_loaded() -> bool:
-    """Return ``True`` iff a file has been opened via ``program_open``.
-
-    LinuxCNC's "loaded" state is implicit: ``stat.file`` is non-empty
-    while ``interp_state`` is ``INTERP_IDLE``. This helper is the
-    single source of truth for the ``/run`` endpoint's 409 guard and
-    for any future "is_loaded" WebSocket hint.
-
-    On real LinuxCNC the loaded-file pointer lives in the stat
-    channel exposed by :func:`hardware.connection.get_machine_stat`,
-    not in this module's in-memory ``_machine_state`` — which is
-    only ever updated by the *mock*'s ``command.program_open``. We
-    therefore query the live channel first and fall back to the
-    mock's local state when the channel is not yet connected (CI
-    without LinuxCNC, or first call before the lazy connect has
-    resolved). The mock's :class:`stat` instance is cached by the
-    connection layer, so we call :meth:`stat.poll` before reading
-    the snapshot — ``poll`` re-reads ``_machine_state`` and keeps
-    the cached instance's ``file`` attribute in sync.
-    """
     try:
         from .connection import get_machine_stat
         stat = get_machine_stat()
     except ImportError:
         stat = None
     if stat is not None:
-        # Refresh the cached snapshot so the predicate tracks the
-        # latest ``program_open`` call (mock and real drivers both
-        # expose ``poll``; real LinuxCNC's ``poll`` is a no-op for
-        # the read-only fields we care about).
         poll = getattr(stat, "poll", None)
         if callable(poll):
             poll()
@@ -302,221 +195,75 @@ def is_program_loaded() -> bool:
         return bool(_machine_state.file)
 
 
-# Seed the mock's sensor list from the active ``hardware.json`` at
-# import time. When the file is missing (typical in CI) the mock
-# starts with an empty dict. Tests that monkey-patch the active
-# directory can call ``reseed_from_hardware_json()`` (or the
-# private ``_seed_temperatures_from_hardware``) to force a re-read
-# without re-importing the module.
 def reseed_from_hardware_json():
-    """Re-read ``hardware.json`` and refresh the mock's sensor list.
-
-    Public hook so tests (and any future operator-facing "recompile"
-    endpoint) can refresh the mock state without re-importing the
-    module. Idempotent: calling it twice with no intervening deploy
-    yields the same sensor list. Reseeds both the temperature
-    sensor list AND the spindle actual-RPM dict so a re-deploy
-    that added a new spindle tool surfaces on the next poll.
-    """
     _seed_temperatures_from_hardware()
     _seed_spindle_actual_from_hardware()
 
 
-# ---------------------------------------------------------------------------
-# Public write helpers (consumed by ``hardware.connection``)
-# ---------------------------------------------------------------------------
-#
-# Production code calls these through :mod:`hardware.connection`
-# (``connection.mark_spindle_connected``,
-# ``connection.push_spindle_telemetry``,
-# ``connection.push_machine_error``). The connection layer is the
-# sole producer-side caller of these functions — feature code
-# stays mock-agnostic. The helpers take the shared lock internally
-# so concurrent producers never see a torn dict.
-
-
-def update_spindle_telemetry(
-    tool_id: str,
-    *,
-    actual: Optional[int] = None,
-    is_connected: Optional[bool] = None,
-    error_count: Optional[int] = None,
-) -> None:
-    """Apply the given fields to ``spindle_actual[tool_id]``.
-
-    Creates the entry with default zeros if missing; only the
-    fields explicitly passed are written. Used by both the
-    HAL-pin callback (per-tick telemetry) and any eager-update
-    path (e.g. ``set_spindle_speed`` flipping ``is_connected``
-    immediately for the dashboard).
-    """
+def update_spindle_telemetry(tool_id: str, *, actual: Optional[int] = None, is_connected: Optional[bool] = None,
+                             error_count: Optional[int] = None) -> None:
     if not isinstance(tool_id, str) or not tool_id:
         return
     with _machine_state.lock:
-        entry = _machine_state.spindle_actual.setdefault(
-            tool_id,
-            {"actual": 0, "is_connected": False, "error_count": 0},
-        )
-        if actual is not None:
-            entry["actual"] = actual
-        if is_connected is not None:
-            entry["is_connected"] = bool(is_connected)
-        if error_count is not None:
-            entry["error_count"] = error_count
-
-
-def update_spindle_connected(tool_id: str, is_connected: bool) -> None:
-    """Flip ``spindle_actual[tool_id]['is_connected']``.
-
-    Eager-update helper used by :class:`ToolsService.set_spindle_speed`
-    so the dashboard reflects the operator's ``M3`` / ``M5``
-    command before the next HAL poll tick refines ``actual``.
-    """
-    update_spindle_telemetry(tool_id, is_connected=bool(is_connected))
+        entry = _machine_state.spindle_actual.setdefault(tool_id,
+                                                         {"actual": 0, "is_connected": False, "error_count": 0})
+        if actual is not None: entry["actual"] = actual
+        if is_connected is not None: entry["is_connected"] = bool(is_connected)
+        if error_count is not None: entry["error_count"] = error_count
 
 
 def apply_spindle_pin(tool_id: str, pin_name: str, pin_value: Any) -> None:
-    """Translate one HAL pin read into spindle telemetry fields.
-
-    The HAL-pin subscription callback invokes this for every pin
-    change. The per-pin suffix decides which dashboard field gets
-    updated:
-
-    * ``rpm-out`` / ``rpm_out`` → ``actual`` (int RPM).
-    * ``at-speed`` / ``at_speed`` / ``on`` / ``forward`` /
-      ``reverse`` / ``istop`` / ``estop`` / ``vfd-enable`` /
-      ``vfd_enable`` set ``is_connected=True`` when truthy.
-    * ``istop`` / ``estop`` increment ``error_count`` when truthy
-      (the mock simulator returns ``False`` so this is a no-op on
-      dev hosts; on real hardware a true ``istop`` / ``estop``
-      halts the spindle and the count increments).
-    * ``on`` / ``vfd-enable`` / ``vfd_enable`` clear
-      ``is_connected`` when falsy (``M5`` drops the VFD).
-
-    All the field-mapping is mock-specific (real LinuxCNC reads
-    HAL pins directly and there is no in-process ``spindle_actual``
-    buffer to update), so production code reaches this only via
-    :func:`hardware.connection.apply_spindle_pin` which is a
-    no-op on real hardware.
-    """
     if not isinstance(tool_id, str) or not tool_id:
         return
     with _machine_state.lock:
-        entry = _machine_state.spindle_actual.setdefault(
-            tool_id,
-            {"actual": 0, "is_connected": False, "error_count": 0},
-        )
+        entry = _machine_state.spindle_actual.setdefault(tool_id,
+                                                         {"actual": 0, "is_connected": False, "error_count": 0})
         if pin_name.endswith(("rpm-out", "rpm_out")):
             entry["actual"] = int(pin_value)
-        connected_suffixes = (
-            "at-speed", "at_speed", "on", "forward", "reverse",
-            "istop", "estop", "vfd-enable", "vfd_enable",
-        )
-        if pin_name.endswith(connected_suffixes) and bool(pin_value):
+        if pin_name.endswith(("at-speed", "at_speed", "on", "forward", "reverse", "istop", "estop", "vfd-enable",
+                              "vfd_enable")) and bool(pin_value):
             entry["is_connected"] = True
         if pin_name.endswith(("istop", "estop")) and pin_value:
             entry["error_count"] = int(entry.get("error_count", 0)) + 1
-        if (
-            pin_name.endswith(("on", "vfd-enable", "vfd_enable"))
-            and not pin_value
-        ):
+        if pin_name.endswith(("on", "vfd-enable", "vfd_enable")) and not pin_value:
             entry["is_connected"] = False
 
 
 def record_error(kind: int, text: str, time: str) -> None:
-    """Append one entry to the bounded error history.
-
-    Convenience wrapper around :meth:`SharedMachineState.push_error`
-    so :mod:`hardware.connection` does not have to reach into the
-    private ``_machine_state`` attribute.
-    """
     _machine_state.push_error(int(kind), str(text), str(time))
 
 
 def push_mock_error(kind: int, text: str, time: str) -> None:
-    """Inject an error into the per-instance ``error_channel`` queue.
-
-    Test-only seeder so unit tests can stage the consume-once
-    error channel without touching ``_machine_state``. Production
-    code does not call this — the WS telemetry loop drains the
-    queue through :meth:`error_channel.poll`, which mirrors each
-    entry into the bounded history automatically.
-    """
     channel = error_channel()
     channel.errors.append((int(kind), str(text), str(time)))
 
 
-# ---------------------------------------------------------------------------
-# Test-only seeders
-# ---------------------------------------------------------------------------
-#
-# These helpers exist so unit tests can fixture mock state without
-# reaching into ``_machine_state``. They are the **only** seam tests
-# use to seed state. Production code never calls them.
-
-
 def seed_temperature(sensor_name: str, actual: float, target: float) -> None:
-    """Set ``temperatures[sensor_name]`` to ``(actual, target)``.
-
-    Creates the entry if missing. Tests use this to fixture
-    deterministic sensor readings for the snapshot endpoint.
-    """
     if not isinstance(sensor_name, str) or not sensor_name:
         return
     with _machine_state.lock:
-        _machine_state.temperatures[sensor_name] = {
-            "actual": float(actual),
-            "target": float(target),
-        }
+        _machine_state.temperatures[sensor_name] = {"actual": float(actual), "target": float(target)}
 
 
 def seed_spindle_actual(tool_id: str, **fields: object) -> None:
-    """Set ``spindle_actual[tool_id]`` from the given keyword fields.
-
-    Only the fields explicitly passed are written; the entry is
-    created with default zeros if missing. Tests use this to
-    fixture deterministic telemetry for the snapshot endpoint.
-    """
     if not isinstance(tool_id, str) or not tool_id:
         return
     with _machine_state.lock:
-        entry = _machine_state.spindle_actual.setdefault(
-            tool_id,
-            {"actual": 0, "is_connected": False, "error_count": 0},
-        )
+        entry = _machine_state.spindle_actual.setdefault(tool_id,
+                                                         {"actual": 0, "is_connected": False, "error_count": 0})
         for key, value in fields.items():
             entry[key] = value
 
 
 def set_mock_task_state(state: int) -> None:
-    """Force ``_machine_state.task_state`` to ``state``.
-
-    The mock ignores M-codes while the machine is in
-    ``STATE_ESTOP`` (which is the boot default). Tests that need
-    M-code dispatches to land call this helper to flip the state
-    to ``STATE_ON`` before exercising the dispatch path.
-    """
-    with _machine_state.lock:
-        _machine_state.task_state = int(state)
+    with _machine_state.lock: _machine_state.task_state = int(state)
 
 
 def set_mock_program_file(path: str) -> None:
-    """Set ``_machine_state.file`` directly.
-
-    Test-only seeder for race tests that need a "loaded" program
-    without exercising the public ``program_open`` path.
-    """
-    with _machine_state.lock:
-        _machine_state.file = str(path)
+    with _machine_state.lock: _machine_state.file = str(path)
 
 
 def reset_program_state() -> None:
-    """Reset program lifecycle fields to the "no program" baseline.
-
-    Clears ``file`` / ``current_line`` / ``total_lines`` and
-    parks the interpreter in ``INTERP_IDLE``. Used by every
-    program-module test to start from a deterministic baseline.
-    """
     with _machine_state.lock:
         _machine_state.file = ""
         _machine_state.current_line = 0
@@ -525,128 +272,78 @@ def reset_program_state() -> None:
 
 
 def reset_error_history() -> None:
-    """Clear the bounded ``errors`` list.
+    with _machine_state.lock: _machine_state.errors.clear()
 
-    Shared between tests so the previous session's history does
-    not leak into the next test's ``full_state`` assertions.
-    """
-    with _machine_state.lock:
-        _machine_state.errors.clear()
-
-
-# Boot-time seeding is deferred to ``reseed_from_hardware_json``
-# which the FastAPI lifespan in ``backend/main.py`` calls explicitly
-# on startup. The eager seed used to import the temperature
-# module's loader at module-load time, which created a circular
-# chain: ``hardware`` triggers ``linuxcnc_mock``, which re-imported
-# ``modules.temperature``, which re-imported ``hardware`` mid-init.
-# Deferring the seed breaks the cycle; the lifespan in ``main.py``
-# is the single production caller — tests call the same helper
-# explicitly after monkey-patching ``_PROJECT_ROOT``.
 
 def _jog_simulation_loop():
-    """Background thread to actually move coordinates during a continuous jog in the mock"""
     while not _machine_state.jog_stop_event.is_set():
         with _machine_state.lock:
             if _machine_state.jogging_axis is not None:
-                # Velocity is units/min. Update 10 times a sec (0.1s tick)
                 delta = (_machine_state.jogging_velocity / 60.0) * 0.1
                 _machine_state.position[_machine_state.jogging_axis] += delta
                 _machine_state.actual_position[_machine_state.jogging_axis] += delta
-
         time.sleep(0.1)
 
 
 def _program_simulation_loop():
-    """Background thread that advances ``current_line`` while a G-code program runs.
-
-    The loop is shared by ``AUTO_RUN`` and ``AUTO_RESUME``; the
-    ``program_stop_event`` short-circuits it on ``AUTO_PAUSE`` and
-    ``abort`` so callers can pause / resume without recreating the
-    thread.  When the program reaches its end the interpreter is
-    flipped back to ``INTERP_IDLE`` so the WebSocket telemetry loop
-    reflects the new state on the next 100 ms tick.
-    """
     while not _machine_state.program_stop_event.is_set():
         advance = False
         with _machine_state.lock:
-            if (
-                _machine_state.interp_state == INTERP_READING
-                and _machine_state.current_line < _machine_state.total_lines
-            ):
+            if _machine_state.interp_state == INTERP_READING and _machine_state.current_line < _machine_state.total_lines:
                 _machine_state.current_line += 1
                 if _machine_state.current_line >= _machine_state.total_lines:
                     _machine_state.interp_state = INTERP_IDLE
                 advance = True
-            elif (
-                _machine_state.interp_state == INTERP_READING
-                and _machine_state.current_line >= _machine_state.total_lines
-            ):
+            elif _machine_state.interp_state == INTERP_READING and _machine_state.current_line >= _machine_state.total_lines:
                 _machine_state.interp_state = INTERP_IDLE
         if not advance:
-            # Either we paused, the program finished, or the lock was
-            # contended; wait briefly before re-evaluating.
             time.sleep(0.1)
             continue
         time.sleep(0.1)
 
 
 def _start_program_simulation_if_needed() -> None:
-    """Spawn the program simulation thread if it is not already running."""
     with _machine_state.lock:
         thread = _machine_state.program_thread
-        if thread is not None and thread.is_alive():
-            return
+        if thread is not None and thread.is_alive(): return
         _machine_state.program_stop_event.clear()
-        _machine_state.program_thread = threading.Thread(
-            target=_program_simulation_loop,
-            daemon=True,
-            name="linuxcnc_mock-program-simulation",
-        )
+        _machine_state.program_thread = threading.Thread(target=_program_simulation_loop, daemon=True)
         _machine_state.program_thread.start()
-    logger.info("Mock: program simulation thread started")
 
 
 def _stop_program_simulation() -> None:
-    """Signal the program simulation thread to exit and clear the handle."""
     with _machine_state.lock:
         thread = _machine_state.program_thread
         _machine_state.program_stop_event.set()
         _machine_state.program_thread = None
     if thread is not None and thread.is_alive():
         thread.join(timeout=0.5)
-    logger.info("Mock: program simulation thread stopped")
 
 
 def _temp_simulation_loop():
-    """Background thread to simulate heater physics for all temperature sensors."""
     while True:
         with _machine_state.lock:
             ambient = 25.0
             for sensor_name, sensor_values in _machine_state.temperatures.items():
                 actual = sensor_values.get('actual', ambient)
-
                 if 'target' in sensor_values:
                     target = sensor_values.get('target', 0.0)
                     if target > actual:
                         sensor_values['actual'] = actual + min(1.0, target - actual)
                     elif target < actual and actual > ambient:
                         sensor_values['actual'] = actual - min(0.3, actual - max(ambient, target))
-
             extruder = _machine_state.temperatures.get('extruder')
             if extruder:
                 _machine_state.actual_temp = extruder.get('actual', _machine_state.actual_temp)
                 _machine_state.target_temp = extruder.get('target', _machine_state.target_temp)
-
         time.sleep(0.5)
 
-# --- Mock Stat Class ---
+
 class stat:
     def __init__(self):
         self._update_attrs()
 
     def _update_attrs(self):
-        """Syncs instance attributes with the shared state."""
         with _machine_state.lock:
             self.task_state = _machine_state.task_state
             self.estop = _machine_state.estop
@@ -660,32 +357,21 @@ class stat:
             self.current_line = _machine_state.current_line
             self.total_lines = _machine_state.total_lines
             self.g5x_index = _machine_state.g5x_index
-            # Expose multi-sensor temperatures as a dict for callers
-            # (shallow copy to avoid exposing internal lock-managed dict directly)
             self.temperatures = {k: dict(v) for k, v in _machine_state.temperatures.items()}
-            # Same shallow-copy treatment for the spindle actual-RPM
-            # dict. Keyed by ``spindle_digital`` tool id.
-            self.spindle_actual = {
-                k: dict(v) for k, v in _machine_state.spindle_actual.items()
-            }
-            # Bounded error history (shallow copy so callers can
-            # serialise the list without aliasing the live buffer).
+            self.spindle_actual = {k: dict(v) for k, v in _machine_state.spindle_actual.items()}
             self.errors = list(_machine_state.errors)
-            # Backwards-compatible single-sensor fields
             self.target_temp = _machine_state.target_temp
             self.actual_temp = _machine_state.actual_temp
 
     def poll(self):
-        """Simulates polling the machine state."""
         self._update_attrs()
 
-# --- Mock Command Class ---
+
 class command:
     def __init__(self):
         pass
 
     def wait_complete(self, timeout=None):
-        """Mocks the block for command completion."""
         return RCS_DONE
 
     def state(self, new_state):
@@ -693,44 +379,27 @@ class command:
             _machine_state.task_state = new_state
             if new_state == STATE_ESTOP:
                 _machine_state.estop = 1
-                logger.info("Command: ESTOP Triggered")
             elif new_state == STATE_ESTOP_RESET:
                 _machine_state.estop = 0
-                logger.info("Command: ESTOP Reset")
-            elif new_state == STATE_ON:
-                logger.info("Command: Machine ON")
-            elif new_state == STATE_OFF:
-                logger.info("Command: Machine OFF")
 
     def mode(self, new_mode):
         with _machine_state.lock:
             _machine_state.task_mode = new_mode
-            mode_str = {1: "MANUAL", 2: "AUTO", 3: "MDI"}.get(new_mode, "UNKNOWN")
-            logger.info(f"Command: Mode set to {mode_str}")
 
     def mdi(self, cmd):
         with _machine_state.lock:
-            if _machine_state.task_state != STATE_ON:
-                logger.warning(f"Ignored MDI (Machine not ON): {cmd}")
+            if _machine_state.task_state != STATE_ON or _machine_state.task_mode != MODE_MDI:
                 return
-            if _machine_state.task_mode != MODE_MDI:
-                logger.warning(f"Ignored MDI (Not in MDI mode): {cmd}")
-                return
-            
             logger.info(f"Command: Executing MDI -> {cmd}")
-            
-            # Mock WCS switching (G54 - G59.3)
             cmd_upper = cmd.upper()
-            wcs_map = {
-                "G54": 1, "G55": 2, "G56": 3, "G57": 4, "G58": 5,
-                "G59": 6, "G59.1": 7, "G59.2": 8, "G59.3": 9
-            }
+
+            # WCS Switching
+            wcs_map = {"G54": 1, "G55": 2, "G56": 3, "G57": 4, "G58": 5, "G59": 6, "G59.1": 7, "G59.2": 8, "G59.3": 9}
             if cmd_upper in wcs_map:
                 _machine_state.g5x_index = wcs_map[cmd_upper]
-                logger.info(f"Mock: Switched WCS to {cmd_upper} (Index: {_machine_state.g5x_index})")
                 return
 
-            # Extremely basic G0/G1 mock parsing for DRO updates
+            # DRO Coordinate Updates
             if cmd_upper.startswith("G0 ") or cmd_upper.startswith("G1 "):
                 parts = cmd_upper.split()
                 for part in parts:
@@ -739,29 +408,35 @@ class command:
                     if part.startswith("Z"): _machine_state.position[2] = float(part[1:])
                 _machine_state.actual_position = list(_machine_state.position)
 
+            # Spindle Simulation (M3/M4/M5)
+            if cmd_upper.startswith("M3") or cmd_upper.startswith("M4"):
+                parts = cmd_upper.split()
+                speed = next((int(float(p[1:])) for p in parts if p.startswith("S")), 1000)
+                for tool_id in _machine_state.spindle_actual:
+                    _machine_state.spindle_actual[tool_id]["is_connected"] = True
+                    _machine_state.spindle_actual[tool_id]["actual"] = speed
+            elif cmd_upper.startswith("M5"):
+                for tool_id in _machine_state.spindle_actual:
+                    _machine_state.spindle_actual[tool_id]["is_connected"] = False
+                    _machine_state.spindle_actual[tool_id]["actual"] = 0
+
     def abort(self):
-        # Stop the simulation thread *before* mutating shared state
-        # so the worker exits while holding the lock-free tail of
-        # its loop and cannot race the ``current_line`` reset.
         _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.state = 1
             _machine_state.interp_state = INTERP_IDLE
             _machine_state.current_line = 0
             _machine_state.total_lines = 0
-            logger.info("Command: Abort / Stop")
 
     def home(self, axis):
         with _machine_state.lock:
-            if axis >= 0 and axis < len(_machine_state.homed):
+            if 0 <= axis < len(_machine_state.homed):
                 _machine_state.homed[axis] = 1
-            logger.info(f"Command: Home Axis {axis}")
 
     def jog(self, jog_type, jjogmode, axis, velocity=0, distance=0):
         with _machine_state.lock:
-            # Mock incremental jog to actually move the DRO
             if jog_type == JOG_INCREMENT and distance != 0:
-                if axis >= 0 and axis < len(_machine_state.position):
+                if 0 <= axis < len(_machine_state.position):
                     _machine_state.position[axis] += distance
                     _machine_state.actual_position[axis] += distance
             elif jog_type == JOG_CONTINUOUS:
@@ -771,94 +446,47 @@ class command:
                 if _machine_state.jog_thread is None or not _machine_state.jog_thread.is_alive():
                     _machine_state.jog_thread = threading.Thread(target=_jog_simulation_loop, daemon=True)
                     _machine_state.jog_thread.start()
-                logger.info(f"Mock: JOG_CONTINUOUS started on Axis {axis} at Vel {velocity}")
             elif jog_type == JOG_STOP:
                 if _machine_state.jogging_axis == axis:
                     _machine_state.jog_stop_event.set()
                     _machine_state.jogging_axis = None
-                logger.info(f"Mock: JOG_STOP received for Axis {axis}")
-        logger.info(f"Command: Jog Axis {axis} (Type: {jog_type}, Vel: {velocity}, Dist: {distance})")
 
     def auto(self, auto_cmd, line=0):
-        # Run, pause, and resume all need to start or signal the
-        # simulation thread outside the lock so we capture the
-        # current view of state up front and then apply the
-        # transition.  ``_stop_program_simulation`` acquires the
-        # same non-reentrant ``_machine_state.lock`` internally, so
-        # it must never be called from inside a ``with lock:`` block
-        # (otherwise the handler deadlocks against itself).
-        start_thread = False
-        stop_thread = False
+        start_thread, stop_thread = False, False
         with _machine_state.lock:
             if auto_cmd == AUTO_RUN:
                 _machine_state.interp_state = INTERP_READING
-                _machine_state.state = 2  # 2 = Running
-                if line:
-                    _machine_state.current_line = line
-                if _machine_state.total_lines == 0:
-                    _machine_state.total_lines = 1000
+                _machine_state.state = 2
+                if line: _machine_state.current_line = line
+                if _machine_state.total_lines == 0: _machine_state.total_lines = 1000
                 start_thread = True
-                logger.info(
-                    f"Command: Auto Run from line {_machine_state.current_line} "
-                    f"(total={_machine_state.total_lines})"
-                )
             elif auto_cmd == AUTO_PAUSE:
                 _machine_state.interp_state = INTERP_PAUSED
                 _machine_state.state = 1
                 stop_thread = True
-                logger.info("Command: Auto Pause")
             elif auto_cmd == AUTO_RESUME:
                 _machine_state.interp_state = INTERP_READING
                 _machine_state.state = 2
                 start_thread = True
-                logger.info("Command: Auto Resume")
             elif auto_cmd == AUTO_STEP:
                 _machine_state.current_line += 1
-                logger.info("Command: Auto Step")
-        if stop_thread:
-            _stop_program_simulation()
-        if start_thread:
-            _start_program_simulation_if_needed()
+        if stop_thread: _stop_program_simulation()
+        if start_thread: _start_program_simulation_if_needed()
 
     def program_open(self, filepath):
-        # ``program_open`` may be called when a run is already in
-        # progress; abort the simulation thread first so the new
-        # file's line count is the authoritative one.
         _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.file = filepath
             _machine_state.current_line = 0
             _machine_state.total_lines = 1000
             _machine_state.interp_state = INTERP_IDLE
-            logger.info(
-                f"Command: Program Open -> {filepath} "
-                f"(total_lines={_machine_state.total_lines})"
-            )
 
     def program_unload(self):
-        """Explicitly clear the file pointer from the interpreter.
-
-        Without this, ``stopProgram`` only aborts the active move —
-        the file stays open in the firmware's memory and the
-        telemetry keeps reporting ``stat.file``. The operator's
-        "Unload" button needs a true reset, not just a stop.
-
-        The backend analogue on a real LinuxCNC driver is closing
-        the open task plan; on Klipper it maps to ``SDCARD_RESET_FILE``.
-        The mock clears ``_machine_state.file`` to ``""`` and resets
-        the line counters so ``is_program_loaded()`` returns
-        ``False`` on the next telemetry tick.
-        """
         _stop_program_simulation()
         with _machine_state.lock:
             _machine_state.file = ""
             _machine_state.current_line = 0
             _machine_state.total_lines = 0
-            # ``interp_state`` stays at whatever it was (IDLE if
-            # the program was loaded-but-not-running); the
-            # state-machine facade computes ``systemState`` from
-            # both ``file`` and ``interp_state``.
-            logger.info("Command: Program Unload -> cleared file pointer")
 
     def reset_interpreter(self):
         _stop_program_simulation()
@@ -866,50 +494,25 @@ class command:
             _machine_state.interp_state = INTERP_IDLE
             _machine_state.current_line = 0
             _machine_state.total_lines = 0
-            logger.info("Command: Reset Interpreter")
 
     def set_temperature(self, sensor_name, temp):
         with _machine_state.lock:
-            # Create sensor entry if missing
             if sensor_name not in _machine_state.temperatures:
                 _machine_state.temperatures[sensor_name] = {'actual': 25.0, 'target': float(temp)}
             else:
                 _machine_state.temperatures[sensor_name]['target'] = float(temp)
-
-            # Keep single-sensor compatibility fields in sync with 'extruder'
             extruder = _machine_state.temperatures.get('extruder')
             if extruder:
                 _machine_state.target_temp = extruder.get('target', _machine_state.target_temp)
                 _machine_state.actual_temp = extruder.get('actual', _machine_state.actual_temp)
-
-        # Ensure the dedicated temperature simulation loop is running
-        if not hasattr(_machine_state, 'temp_thread') or _machine_state.temp_thread is None or not _machine_state.temp_thread.is_alive():
+        if not hasattr(_machine_state,
+                       'temp_thread') or _machine_state.temp_thread is None or not _machine_state.temp_thread.is_alive():
             _machine_state.temp_thread = threading.Thread(target=_temp_simulation_loop, daemon=True)
             _machine_state.temp_thread.start()
 
-        logger.info(f"Command: Set Temperature Target for {sensor_name} to {temp}°C")
 
-# --- Mock Error Channel ---
 class error_channel:
-    """Drains queued errors one-per-poll and mirrors them into the bounded history.
-
-    The mock's bounded ``_machine_state.errors`` queue is what the
-    telemetry loop reads through :func:`hardware.connection.read_error_history`
-    on every ``full_state`` snapshot. The first time the live
-    error channel reports an error (``poll()`` returns a tuple),
-    we mirror it into the bounded history so a reconnect /
-    reload sees the same backlog the WS broadcast path already
-    announced. This is the only place in the mock that knows the
-    bounded history exists — production code reads it through the
-    unified :func:`hardware.connection.read_error_history` helper
-    and never touches ``_machine_state`` directly.
-    """
-
     def __init__(self):
-        # Per-instance queue so the test suite can inject entries
-        # via :func:`push_mock_error` without raceing on a shared
-        # module-level buffer. The bounded history lives on
-        # ``_machine_state.errors`` (mutated under ``_machine_state.lock``).
         self.errors = []
 
     def poll(self):

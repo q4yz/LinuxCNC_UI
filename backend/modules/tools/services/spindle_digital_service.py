@@ -8,6 +8,7 @@ state machine and MDI helpers have one clear home.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from exceptions.http import NotFoundError, BadRequestError, ConflictError
 
@@ -127,4 +128,13 @@ class SpindleDigitalService:
             return True
         return False
 
-__all__ = ["SpindleDigitalService"]
+_spindle_digital_service: Optional[SpindleDigitalService] = None
+
+def get_spindle_digital_service() -> SpindleDigitalService:
+    """Lazy module-level singleton (tool telemetry / dispatch facade)."""
+    global _spindle_digital_service
+    if _spindle_digital_service is None:
+        _spindle_digital_service = SpindleDigitalService()
+    return _spindle_digital_service
+
+__all__ = ["SpindleDigitalService", "get_spindle_digital_service"]

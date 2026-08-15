@@ -2,30 +2,24 @@
 
 The router is mounted by the registry under
 ``/api/v1/modules/tools``. It exposes the three endpoints that
-still drive the machine and operator commands:
+drive the machine and operator commands:
 
 * ``POST /tools/{id}/target`` — set the target temperature for a
-  heating tool (extruder / heated_bed). The router looks up the
-  tool's ``sensor`` reference and dispatches a ``set_temperature``
-  to the hardware layer.
+  heating tool (extruder / heated_bed).
 * ``POST /spindle`` — start / reverse / stop a spindle using the
   canonical ``M3 S{speed}`` / ``M4 S{speed}`` / ``M5`` codes.
 * ``POST /extruder`` — extrude or retract material on a 3D-printer
   extruder axis using relative (``G91``) ``G1 E{dist} F{speed}``
   moves, restoring absolute (``G90``) mode afterwards.
 
-The legacy ``GET /tools`` listing endpoint was superseded by the
-base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
-which now carries the tool list alongside progress and sensors in
-a single 1 Hz round-trip. The :func:`collect_tools` helper lives
-in :mod:`modules.tools.service` and is the single source of
-truth for the tool payload — this router no longer overlays
-runtime state directly.
+The router acts as a strict anti-corruption layer. It validates
+incoming HTTP payloads using Pydantic models, translates them into
+internal Domain DTOs via dedicated mappers, and delegates execution
+to the specialized service layer (:class:`SpindleDigitalService`,
+:class:`ExtruderService`, and :class:`HeaterService`).
 
-The router delegates every hardware-touching call to
-:func:`get_tools_service` in :mod:`modules.tools.service` — the
-router itself does not import ``hardware.*`` so the rule "no
-router is allowed to import any hardware file" stays enforced.
+The router itself does not import ``hardware.*`` so the rule "no
+router is allowed to import any hardware file" stays strictly enforced.
 
 The router intentionally has no ``prefix`` argument — the registry
 prefixes it when mounting.
@@ -34,254 +28,94 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from exceptions.http import BadRequestError
+from modules.tools.dtos.digital_spindle_dto import DirectionStateType
+from modules.tools.mapper.digital_spindle_mapper import SpindleDigitalMapper
+from modules.tools.mapper.extruder_mapper import ExtruderMapper
+from modules.tools.mapper.heater_mapper import HeaterMapper
+from modules.tools.services.extruder_service import get_extruder_service
+from modules.tools.services.heater_service import get_heater_service
+from modules.tools.services.spindle_digital_service import get_spindle_digital_service
 from modules.tools.services.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.router")
-
 
 # ---------------------------------------------------------------------- #
 # Pydantic request models                                                 #
 # ---------------------------------------------------------------------- #
 
+class SpindleDigitalCommand(BaseModel):
+    tool_id: str = Field(..., min_length=1)
+    action: str = Field(..., description="'forward', 'backward', or 'stop'.")
+    speed: int = Field(..., ge=0, le=200_000)
+    override: float = Field(default=1.0, ge=0.0, le=2.0)
+    master_override: int = Field(default=0, ge=0, le=200_000)
+    master_override_enable: bool = Field(default=False)
 
-class SpindleCommand(BaseModel):
-    """Request body for ``POST /spindle``.
 
-    The ``tool_id`` is accepted verbatim and looked up in the active
-    ``hardware.json`` ``tools[]`` list — spindles are now an
-    inventory (bare ``[spindle]`` → ``spindle_digital``, plus any
-    named ``[spindle NAME]`` → ``spindle_digital_NAME``). The
-    service raises ``404`` when the id is unknown.
-
-    The optional ``override`` field writes the relative
-    ``halui.spindle.override.scale`` pin before every M-code
-    dispatch. Defaults to ``1.0`` (the LinuxCNC native default) so
-    existing callers keep their behaviour. The range mirrors
-    LinuxCNC's documented ``[0.0, 2.0]`` band.
-
-    ``master_override_enable`` flips the dispatch into absolute-RPM
-    mode: when true, ``master_override`` is used instead of
-    ``speed`` and the ``override`` pin is left untouched.
-    """
-
-    tool_id: str = Field(
-        ...,
-        min_length=1,
-        description="Logical tool identifier (e.g., 'spindle_main').",
-    )
-    action: str = Field(
-        ...,
-        description="Spindle action: 'forward', 'backward', or 'stop'.",
-    )
-    speed: int = Field(
-        ...,
-        ge=0,
-        le=200_000,
-        description="Target RPM for 'forward' / 'backward'; ignored for 'stop' or when master_override_enable=True.",
-    )
-    override: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=2.0,
-        description=(
-            "Relative spindle override (0.0–2.0; 1.0 = 100 %). "
-            "Written to halui.spindle.override.scale before each "
-            "M-code dispatch when it differs from 1.0. Ignored "
-            "when master_override_enable is True."
-        ),
-    )
-    master_override: int = Field(
-        default=0,
-        ge=0,
-        le=200_000,
-        description=(
-            "Absolute target RPM used exclusively when "
-            "master_override_enable is True."
-        ),
-    )
-    master_override_enable: bool = Field(
-        default=False,
-        description=(
-            "If true, bypass the standard speed/override scaling "
-            "and dispatch the M-code at master_override RPM directly."
-        ),
-    )
+class HeaterCommand(BaseModel):
+    tool_id: str = Field(..., min_length=1)
+    target: float = Field(..., ge=0.0, le=400.0)
 
 
 class ExtruderCommand(BaseModel):
-    """Request body for ``POST /extruder``."""
-
-    tool_id: str = Field(
-        ...,
-        min_length=1,
-        description="Logical tool identifier (e.g., 'extruder_1').",
-    )
-    action: str = Field(
-        ...,
-        description="Extruder action: 'extrude' or 'retract'.",
-    )
-    distance: float = Field(
-        ...,
-        gt=0.0,
-        le=1000.0,
-        description="Absolute extrusion distance in mm (sign is applied by action).",
-    )
-    speed: int = Field(
-        ...,
-        gt=0,
-        le=10_000,
-        description="Feed rate in mm/min for the G1 move.",
-    )
+    tool_id: str = Field(..., min_length=1)
+    action: str = Field(..., description="'extrude' or 'retract'.")
+    distance: float = Field(..., gt=0.0, le=1000.0)
+    speed: int = Field(..., gt=0, le=10_000)
+    heater: HeaterCommand
 
 
 class ToolCommandResponse(BaseModel):
-    """Generic response shape for both endpoints."""
-
-    status: str = Field(
-        default="success",
-        description="Outcome reported by the hardware layer.",
-    )
-    command: str = Field(
-        ...,
-        description="The MDI string that was dispatched (or the M5 stop marker).",
-    )
-    tool_id: str = Field(
-        ...,
-        description="Echo of the tool id from the request body.",
-    )
+    status: str = Field(default="success")
+    command: str = Field(...)
+    tool_id: str = Field(...)
 
 
-# ---------------------------------------------------------------------- #
-# Tool target                                                             #
-# ---------------------------------------------------------------------- #
+class HeaterStateResponse(BaseModel):
+    status: str = Field(default="success")
+    tool_id: str = Field(...)
+    target: float = Field(...)
+    command: str = Field(...)
 
 
-class SetToolTargetRequest(BaseModel):
-    """Request body for ``POST /tools/{id}/target``.
-
-    The ``tool_id`` field is accepted but ``{id}`` from the URL is
-    canonical (same contract as the temperature module's
-    ``POST /sensors/{name}/target``). The target range mirrors
-    the temperature module's clamp (0–400 °C) since every heating
-    tool ends up dispatching ``set_temperature`` under the hood.
-    """
-
-    tool_id: str = Field(
-        ...,
-        min_length=1,
-        description="Logical tool identifier (e.g., 'heater_extruder').",
-    )
-    target: float = Field(
-        ...,
-        ge=0.0,
-        le=400.0,
-        description="Target temperature in Celsius (0–400 °C).",
+class SpindleDigitalStateResponse(BaseModel):
+    id: str = Field(...)
+    target_rpm: float = Field(0.0)
+    actual_rpm: float = Field(0.0)
+    is_connected: bool = Field(False)
+    error_count: int = Field(0)
+    last_error: str = Field("")
+    spindle_at_speed: bool = Field(False)
+    min_rpm: float = Field(0.0)
+    max_rpm: float = Field(24000.0)
+    # The frontend-friendly string representation of the direction
+    state: str = Field(
+        default="idle",
+        description="'forward', 'backward', or 'idle'."
     )
 
-
-class SetToolTargetResponse(BaseModel):
-    """Response body for ``POST /tools/{id}/target``."""
-
-    status: str = Field(
-        default="success",
-        description="Outcome reported by the hardware layer.",
-    )
-    tool_id: str = Field(
-        ...,
-        description="Echo of the tool id from the URL.",
-    )
-    target: float = Field(
-        ...,
-        description="Echo of the target value that was applied.",
-    )
-    sensor: str = Field(
-        ...,
-        description="Temperature sensor id the value was dispatched to.",
-    )
-
-
-class SpindlePinPayload(BaseModel):
-    """Per-pin HAL signal map for one digital spindle.
-
-    Mirrors :class:`backend.modules.tools.dtos.SpindleDigitalPins`
-    as a plain dict for JSON friendliness. ``None`` on any field
-    means the integrator did not wire that signal in
-    ``hardware.json`` — the dashboard renders an "n/a" cell for
-    those. ``min_rpm`` / ``max_rpm`` are the configuration clamps
-    (``StaticHalPin``) — exposed numerically for the dashboard's
-    slider bounds.
-    """
-
-    id: str
-    spindle_at_speed: Optional[str] = None
-    target_rpm: Optional[str] = None
-    actual_rpm: Optional[str] = None
-    is_connected: Optional[str] = None
-    error_count: Optional[str] = None
-    last_error: Optional[str] = None
-    min_rpm: float = 0.0
-    max_rpm: float = 24000.0
-
-
-class SpindleStateResponse(BaseModel):
-    """Response body for ``GET /spindle/{tool_id}``.
-
-    Returns the latest :class:`SpindleStateDTO` payload (live RPM,
-    VFD engagement, error count, alarm text, ``at_speed`` latch)
-    and the configuration clamps (``min_rpm`` / ``max_rpm``) the
-    dashboard renders on the slider. Used for debugging the
-    spindle pipeline from ``curl``; the dashboard's
-    :class:`SpindleCard` reads from the base-thread snapshot at 1 Hz
-    rather than polling this endpoint.
-    """
-
-    id: str = Field(..., description="Spindle tool id (e.g. 'spindle_digital').")
-    target_rpm: float = Field(
-        0.0, description="Last commanded RPM (operator's slider / input)."
-    )
-    actual_rpm: float = Field(
-        0.0, description="Live RPM feedback (rpm_out pin, or simulated value)."
-    )
-    is_connected: bool = Field(
-        False,
-        description="VFD engagement flag (on / forward / vfd_enable True).",
-    )
-    error_count: int = Field(
-        0, description="Cumulative istop / estop count from the VFD."
-    )
-    last_error: str = Field(
-        "", description="Last VFD alarm text (empty when no alarm is active)."
-    )
-    spindle_at_speed: bool = Field(
-        False,
-        description="True when the spindle is running and within 5 % of target.",
-    )
-    min_rpm: float = Field(
-        0.0, description="Lower clamp from hardware.json (dashboard slider bound)."
-    )
-    max_rpm: float = Field(
-        24000.0, description="Upper clamp from hardware.json (dashboard slider bound)."
-    )
+tool_service = get_tools_service()
+spindle_digital_service = get_spindle_digital_service()
+extruder_service = get_extruder_service()
+heater_service = get_heater_service()
 
 
 # ---------------------------------------------------------------------- #
 # Endpoints                                                               #
 # ---------------------------------------------------------------------- #
 
-
-# No ``prefix`` — the registry mounts this router under
-# ``/api/v1/modules/tools`` and tags it ``modules:tools``.
 router = APIRouter(tags=["modules:tools"])
 
-
-# Allowed action vocabulary. Centralised so the request validators
-# below share a single source of truth.
-_SPINDLE_ACTIONS = {"forward", "backward", "stop"}
+_SPINDLE_ACTIONS = {
+    "forward": DirectionStateType.FORWARD,
+    "backward": DirectionStateType.BACKWARD,
+    "stop": DirectionStateType.IDLE,
+}
 _EXTRUDER_ACTIONS = {"extrude", "retract"}
 
 
@@ -298,24 +132,14 @@ _EXTRUDER_ACTIONS = {"extrude", "retract"}
     ),
     operation_id="controlSpindle",
 )
-def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
+def control_spindle(cmd: SpindleDigitalCommand) -> ToolCommandResponse:
     """Handle a spindle command request."""
     if cmd.action not in _SPINDLE_ACTIONS:
-        from fastapi import HTTPException
+        raise BadRequestError(f"Invalid spindle action: {cmd.action!r}")
 
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid spindle action: {cmd.action!r}",
-        )
+    settings = SpindleDigitalMapper.from_command_to_settings_dto(cmd)
+    mdi = spindle_digital_service.set_spindle(settings)
 
-    mdi = get_tools_service().control_spindle(
-        cmd.tool_id,
-        cmd.action,
-        cmd.speed,
-        cmd.override,
-        cmd.master_override,
-        cmd.master_override_enable,
-    )
     return ToolCommandResponse(status="success", command=mdi, tool_id=cmd.tool_id)
 
 
@@ -337,16 +161,11 @@ def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
 def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
     """Handle an extruder command request."""
     if cmd.action not in _EXTRUDER_ACTIONS:
-        from fastapi import HTTPException
+        raise BadRequestError(f"Invalid extruder action: {cmd.action!r}")
 
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid extruder action: {cmd.action!r}",
-        )
+    settings = ExtruderMapper.from_command_to_settings_dto(cmd)
+    move = extruder_service.set_extruder(settings)
 
-    move = get_tools_service().control_extruder(
-        cmd.tool_id, cmd.action, cmd.distance, cmd.speed
-    )
     return ToolCommandResponse(status="success", command=move, tool_id=cmd.tool_id)
 
 
@@ -355,65 +174,37 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
 # ---------------------------------------------------------------------- #
 
 
-@router.post(
-    "/tools/{tool_id}/target",
-    response_model=SetToolTargetResponse,
-    summary="Set Tool Target Temperature",
-    description=(
-        "Set the target temperature for a heating tool "
-        "(extruder / heated_bed). The router delegates to "
-        ":class:`ToolsService.set_tool_target`, which looks up the "
-        "tool's ``sensor`` reference and dispatches "
-        "``set_temperature`` to the hardware layer."
-    ),
-    operation_id="setToolTarget",
-)
-def set_tool_target(
-    tool_id: str, req: SetToolTargetRequest
-) -> SetToolTargetResponse:
-    """Set the target temperature for ``tool_id``."""
-    if tool_id != req.tool_id:
-        logger.debug(
-            "tool_id in body (%r) differs from URL (%r); URL wins",
-            req.tool_id,
-            tool_id,
-        )
+@router.post("/tools/{tool_id}/target", response_model=HeaterStateResponse, operation_id="setToolTarget")
+def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterStateResponse:
+    """Set the target temperature for a heating tool."""
+    if tool_id != cmd.tool_id:
+        logger.debug("tool_id in body (%r) differs from URL (%r); URL wins", cmd.tool_id, tool_id)
 
-    sensor = get_tools_service().set_tool_target(tool_id, req.target)
-    return SetToolTargetResponse(
+    settings = HeaterMapper.from_command_to_settings_dto(cmd)
+
+    result = heater_service.set_heater(settings)
+
+    return HeaterStateResponse(
         status="success",
         tool_id=tool_id,
-        target=req.target,
-        sensor=sensor,
+        target=cmd.target,
+        command=result,
     )
 
 
-@router.get(
-    "/spindle/{tool_id}",
-    response_model=SpindleStateResponse,
-    summary="Get Spindle State",
-    description=(
-        "Read the live ``SpindleStateDTO`` payload for ``tool_id``: "
-        "live RPM (``target_rpm`` / ``actual_rpm``), VFD engagement "
-        "(``is_connected``), error history (``error_count`` / "
-        "``last_error``), ``at_speed`` latch, and the configuration "
-        "clamps (``min_rpm`` / ``max_rpm``). Useful for debugging "
-        "the spindle pipeline from ``curl``; the dashboard's "
-        ":class:`SpindleCard` reads from the 1 Hz base-thread "
-        "snapshot rather than polling this endpoint."
-    ),
-    operation_id="getSpindleState",
-)
-def get_spindle_state(tool_id: str) -> SpindleStateResponse:
+@router.get("/spindle/{tool_id}", response_model=SpindleDigitalStateResponse, operation_id="getSpindleState")
+def get_spindle_state(tool_id: str) -> SpindleDigitalStateResponse:
     """Return the live spindle state for ``tool_id``."""
-    return SpindleStateResponse(**get_tools_service().get_spindle_state(tool_id))
+    state_dto = spindle_digital_service.get_spindle(tool_id)
+    return SpindleDigitalMapper.to_state_response(state_dto)
 
 
 __all__ = [
     "router",
-    "SpindleCommand",
+    "SpindleDigitalCommand",
     "ExtruderCommand",
+    "HeaterCommand",
     "ToolCommandResponse",
-    "SetToolTargetRequest",
-    "SetToolTargetResponse",
+    "HeaterStateResponse",
+    "SpindleDigitalStateResponse",
 ]

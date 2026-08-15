@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from exceptions.http import BadRequestError, NotFoundError
 from modules.tools.config_mapper import get_heater
@@ -42,3 +43,14 @@ class HeaterService:
 
         pins.target_temperature.set_value(target)
         return f"target_temperature={target}"
+
+_heater_service: Optional[HeaterService] = None
+
+def get_heater_service() -> HeaterService:
+    """Lazy module-level singleton (tool telemetry / dispatch facade)."""
+    global _heater_service
+    if _heater_service is None:
+        _heater_service = HeaterService()
+    return _heater_service
+
+__all__ = ["HeaterService", "get_heater_service"]

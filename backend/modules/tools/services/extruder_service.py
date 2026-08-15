@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from exceptions.http import BadRequestError, NotFoundError
 
@@ -57,5 +58,13 @@ class ExtruderService:
 
         return ", ".join(actions_taken) if actions_taken else "no_action"
 
+_extruder_service: Optional[ExtruderService] = None
 
-__all__ = ["ExtruderService"]
+def get_extruder_service() -> ExtruderService:
+    """Lazy module-level singleton (tool telemetry / dispatch facade)."""
+    global _extruder_service
+    if _extruder_service is None:
+        _extruder_service = ExtruderService()
+    return _extruder_service
+
+__all__ = ["ExtruderService", "get_extruder_service"]
