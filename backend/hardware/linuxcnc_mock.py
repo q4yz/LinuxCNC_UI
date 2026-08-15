@@ -1,6 +1,7 @@
 import time
 import threading
 import logging
+from typing import Any, Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("linuxcnc_mock")
@@ -321,6 +322,218 @@ def reseed_from_hardware_json():
     _seed_spindle_actual_from_hardware()
 
 
+# ---------------------------------------------------------------------------
+# Public write helpers (consumed by ``hardware.connection``)
+# ---------------------------------------------------------------------------
+#
+# Production code calls these through :mod:`hardware.connection`
+# (``connection.mark_spindle_connected``,
+# ``connection.push_spindle_telemetry``,
+# ``connection.push_machine_error``). The connection layer is the
+# sole producer-side caller of these functions — feature code
+# stays mock-agnostic. The helpers take the shared lock internally
+# so concurrent producers never see a torn dict.
+
+
+def update_spindle_telemetry(
+    tool_id: str,
+    *,
+    actual: Optional[int] = None,
+    is_connected: Optional[bool] = None,
+    error_count: Optional[int] = None,
+) -> None:
+    """Apply the given fields to ``spindle_actual[tool_id]``.
+
+    Creates the entry with default zeros if missing; only the
+    fields explicitly passed are written. Used by both the
+    HAL-pin callback (per-tick telemetry) and any eager-update
+    path (e.g. ``set_spindle_speed`` flipping ``is_connected``
+    immediately for the dashboard).
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    with _machine_state.lock:
+        entry = _machine_state.spindle_actual.setdefault(
+            tool_id,
+            {"actual": 0, "is_connected": False, "error_count": 0},
+        )
+        if actual is not None:
+            entry["actual"] = actual
+        if is_connected is not None:
+            entry["is_connected"] = bool(is_connected)
+        if error_count is not None:
+            entry["error_count"] = error_count
+
+
+def update_spindle_connected(tool_id: str, is_connected: bool) -> None:
+    """Flip ``spindle_actual[tool_id]['is_connected']``.
+
+    Eager-update helper used by :class:`ToolsService.set_spindle_speed`
+    so the dashboard reflects the operator's ``M3`` / ``M5``
+    command before the next HAL poll tick refines ``actual``.
+    """
+    update_spindle_telemetry(tool_id, is_connected=bool(is_connected))
+
+
+def apply_spindle_pin(tool_id: str, pin_name: str, pin_value: Any) -> None:
+    """Translate one HAL pin read into spindle telemetry fields.
+
+    The HAL-pin subscription callback invokes this for every pin
+    change. The per-pin suffix decides which dashboard field gets
+    updated:
+
+    * ``rpm-out`` / ``rpm_out`` → ``actual`` (int RPM).
+    * ``at-speed`` / ``at_speed`` / ``on`` / ``forward`` /
+      ``reverse`` / ``istop`` / ``estop`` / ``vfd-enable`` /
+      ``vfd_enable`` set ``is_connected=True`` when truthy.
+    * ``istop`` / ``estop`` increment ``error_count`` when truthy
+      (the mock simulator returns ``False`` so this is a no-op on
+      dev hosts; on real hardware a true ``istop`` / ``estop``
+      halts the spindle and the count increments).
+    * ``on`` / ``vfd-enable`` / ``vfd_enable`` clear
+      ``is_connected`` when falsy (``M5`` drops the VFD).
+
+    All the field-mapping is mock-specific (real LinuxCNC reads
+    HAL pins directly and there is no in-process ``spindle_actual``
+    buffer to update), so production code reaches this only via
+    :func:`hardware.connection.apply_spindle_pin` which is a
+    no-op on real hardware.
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    with _machine_state.lock:
+        entry = _machine_state.spindle_actual.setdefault(
+            tool_id,
+            {"actual": 0, "is_connected": False, "error_count": 0},
+        )
+        if pin_name.endswith(("rpm-out", "rpm_out")):
+            entry["actual"] = int(pin_value)
+        connected_suffixes = (
+            "at-speed", "at_speed", "on", "forward", "reverse",
+            "istop", "estop", "vfd-enable", "vfd_enable",
+        )
+        if pin_name.endswith(connected_suffixes) and bool(pin_value):
+            entry["is_connected"] = True
+        if pin_name.endswith(("istop", "estop")) and pin_value:
+            entry["error_count"] = int(entry.get("error_count", 0)) + 1
+        if (
+            pin_name.endswith(("on", "vfd-enable", "vfd_enable"))
+            and not pin_value
+        ):
+            entry["is_connected"] = False
+
+
+def record_error(kind: int, text: str, time: str) -> None:
+    """Append one entry to the bounded error history.
+
+    Convenience wrapper around :meth:`SharedMachineState.push_error`
+    so :mod:`hardware.connection` does not have to reach into the
+    private ``_machine_state`` attribute.
+    """
+    _machine_state.push_error(int(kind), str(text), str(time))
+
+
+def push_mock_error(kind: int, text: str, time: str) -> None:
+    """Inject an error into the per-instance ``error_channel`` queue.
+
+    Test-only seeder so unit tests can stage the consume-once
+    error channel without touching ``_machine_state``. Production
+    code does not call this — the WS telemetry loop drains the
+    queue through :meth:`error_channel.poll`, which mirrors each
+    entry into the bounded history automatically.
+    """
+    channel = error_channel()
+    channel.errors.append((int(kind), str(text), str(time)))
+
+
+# ---------------------------------------------------------------------------
+# Test-only seeders
+# ---------------------------------------------------------------------------
+#
+# These helpers exist so unit tests can fixture mock state without
+# reaching into ``_machine_state``. They are the **only** seam tests
+# use to seed state. Production code never calls them.
+
+
+def seed_temperature(sensor_name: str, actual: float, target: float) -> None:
+    """Set ``temperatures[sensor_name]`` to ``(actual, target)``.
+
+    Creates the entry if missing. Tests use this to fixture
+    deterministic sensor readings for the snapshot endpoint.
+    """
+    if not isinstance(sensor_name, str) or not sensor_name:
+        return
+    with _machine_state.lock:
+        _machine_state.temperatures[sensor_name] = {
+            "actual": float(actual),
+            "target": float(target),
+        }
+
+
+def seed_spindle_actual(tool_id: str, **fields: object) -> None:
+    """Set ``spindle_actual[tool_id]`` from the given keyword fields.
+
+    Only the fields explicitly passed are written; the entry is
+    created with default zeros if missing. Tests use this to
+    fixture deterministic telemetry for the snapshot endpoint.
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    with _machine_state.lock:
+        entry = _machine_state.spindle_actual.setdefault(
+            tool_id,
+            {"actual": 0, "is_connected": False, "error_count": 0},
+        )
+        for key, value in fields.items():
+            entry[key] = value
+
+
+def set_mock_task_state(state: int) -> None:
+    """Force ``_machine_state.task_state`` to ``state``.
+
+    The mock ignores M-codes while the machine is in
+    ``STATE_ESTOP`` (which is the boot default). Tests that need
+    M-code dispatches to land call this helper to flip the state
+    to ``STATE_ON`` before exercising the dispatch path.
+    """
+    with _machine_state.lock:
+        _machine_state.task_state = int(state)
+
+
+def set_mock_program_file(path: str) -> None:
+    """Set ``_machine_state.file`` directly.
+
+    Test-only seeder for race tests that need a "loaded" program
+    without exercising the public ``program_open`` path.
+    """
+    with _machine_state.lock:
+        _machine_state.file = str(path)
+
+
+def reset_program_state() -> None:
+    """Reset program lifecycle fields to the "no program" baseline.
+
+    Clears ``file`` / ``current_line`` / ``total_lines`` and
+    parks the interpreter in ``INTERP_IDLE``. Used by every
+    program-module test to start from a deterministic baseline.
+    """
+    with _machine_state.lock:
+        _machine_state.file = ""
+        _machine_state.current_line = 0
+        _machine_state.total_lines = 0
+        _machine_state.interp_state = INTERP_IDLE
+
+
+def reset_error_history() -> None:
+    """Clear the bounded ``errors`` list.
+
+    Shared between tests so the previous session's history does
+    not leak into the next test's ``full_state`` assertions.
+    """
+    with _machine_state.lock:
+        _machine_state.errors.clear()
+
+
 # Boot-time seeding is deferred to ``reseed_from_hardware_json``
 # which the FastAPI lifespan in ``backend/main.py`` calls explicitly
 # on startup. The eager seed used to import the temperature
@@ -455,6 +668,9 @@ class stat:
             self.spindle_actual = {
                 k: dict(v) for k, v in _machine_state.spindle_actual.items()
             }
+            # Bounded error history (shallow copy so callers can
+            # serialise the list without aliasing the live buffer).
+            self.errors = list(_machine_state.errors)
             # Backwards-compatible single-sensor fields
             self.target_temp = _machine_state.target_temp
             self.actual_temp = _machine_state.actual_temp
@@ -675,10 +891,30 @@ class command:
 
 # --- Mock Error Channel ---
 class error_channel:
+    """Drains queued errors one-per-poll and mirrors them into the bounded history.
+
+    The mock's bounded ``_machine_state.errors`` queue is what the
+    telemetry loop reads through :func:`hardware.connection.read_error_history`
+    on every ``full_state`` snapshot. The first time the live
+    error channel reports an error (``poll()`` returns a tuple),
+    we mirror it into the bounded history so a reconnect /
+    reload sees the same backlog the WS broadcast path already
+    announced. This is the only place in the mock that knows the
+    bounded history exists — production code reads it through the
+    unified :func:`hardware.connection.read_error_history` helper
+    and never touches ``_machine_state`` directly.
+    """
+
     def __init__(self):
+        # Per-instance queue so the test suite can inject entries
+        # via :func:`push_mock_error` without raceing on a shared
+        # module-level buffer. The bounded history lives on
+        # ``_machine_state.errors`` (mutated under ``_machine_state.lock``).
         self.errors = []
 
     def poll(self):
         if self.errors:
-            return self.errors.pop(0)
+            kind, text, time = self.errors.pop(0)
+            _machine_state.push_error(kind, text, time)
+            return kind, text
         return None

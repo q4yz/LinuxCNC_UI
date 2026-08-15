@@ -24,7 +24,8 @@ round-trip. Tool reads now go through
 :func:`modules.tools.service.collect_tools`.
 
 All hardware access goes through :func:`hardware.execute_sync_cmd`
-so the module stays compatible with :mod:`hardware.linuxcnc_mock`.
+so the module stays compatible with the unified
+:mod:`hardware.connection` surface (real LinuxCNC + in-memory mock).
 The module is fire-and-forget for MDI commands — there is no
 event-bus publication.
 """

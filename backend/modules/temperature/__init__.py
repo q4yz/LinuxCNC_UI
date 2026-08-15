@@ -20,7 +20,10 @@ round-trip. Sensor reads now go through
 
 Mock simulation (``_temp_simulation_loop``) deliberately stays in
 :mod:`hardware.linuxcnc_mock` per the audit's recommendation: the
-simulation is process-wide, not module-scoped.
+simulation is process-wide, not module-scoped. Production code
+reads the simulated sensors through :func:`hardware.connection.read_temperature`
+(or :meth:`TemperatureService.collect_sensors`) and never imports
+the mock directly.
 """
 
 from .module import setup

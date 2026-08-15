@@ -23,10 +23,11 @@ Spindle HAL pin subscriptions
 
 ``on_load`` wires each ``spindle_digital`` tool's HAL pins into the
 shared :class:`hardware.hal_subscription_manager.HalSubscriptionManager`
-so the per-tick ``read_pin`` callback populates
-``hardware.linuxcnc_mock._machine_state.spindle_actual``. The
-base-thread snapshot then carries ``actual_rpm`` / ``is_connected``
-/ ``error_count`` to the dashboard's :class:`SpindleCard` without
+so the per-tick callback routes every pin read through
+:func:`hardware.connection.apply_spindle_pin`. The unified helper
+populates the mock's per-tool telemetry dict; the base-thread
+snapshot then carries ``actual_rpm`` / ``is_connected`` /
+``error_count`` to the dashboard's :class:`SpindleCard` without
 any frontend changes.
 
 The HAL module is required to be importable (real hardware path);
@@ -108,20 +109,16 @@ def _make_spindle_callback(tool_id: str, pin_name: str) -> Callable[[Any], None]
 
     The callback reads the pin value via the mock simulator (when
     ``USE_MOCK`` is true) or via the live HAL module (real
-    hardware), normalises the per-pin value into the spindle
-    telemetry shape (``actual`` / ``is_connected`` / ``error_count``),
-    and writes ``_machine_state.spindle_actual[tool_id]`` so the
-    base-thread snapshot picks it up on the next 1 Hz tick.
-
-    Crucially this callback does **not** call
-    :func:`read_spindle_telemetry` from :mod:`modules.tools.service`:
-    that function reads the dict the callback writes, so a callback
-    that delegates to it is a circular dependency. The callback
-    computes the telemetry directly from the simulator so each tick
-    is independent.
+    hardware), then routes the value through the unified
+    :func:`hardware.connection.apply_spindle_pin` helper. The
+    helper owns the per-pin field-mapping logic (``rpm_out`` →
+    ``actual``, ``on`` / ``vfd_enable`` → ``is_connected``,
+    ``istop`` / ``estop`` → ``error_count`` delta) so the callback
+    stays a thin orchestrator. On real hardware the helper is a
+    no-op — the live VFD status arrives via HAL pins directly and
+    there is no in-process telemetry buffer to update.
     """
-    from hardware import linuxcnc_mock
-    from hardware.connection import HAS_HAL, USE_MOCK, hal
+    from hardware.connection import HAS_HAL, USE_MOCK, apply_spindle_pin, hal
     from hardware.spindle_pin_simulator import read_spindle_pin
 
     def _on_pin_change(_pin_value: Any) -> None:
@@ -137,45 +134,7 @@ def _make_spindle_callback(tool_id: str, pin_name: str) -> Callable[[Any], None]
                 actual = hal.get_value(pin_name)
             else:
                 actual = read_spindle_pin(pin_name, tool_id)
-
-            # Compute the three telemetry fields from the simulator.
-            # The simulator returns the right value per pin; we
-            # maintain the same dict shape regardless of which pin
-            # fired the callback (the dashboard reads ``actual``,
-            # ``is_connected``, ``error_count`` — and the simulator
-            # produces all three on every read).
-            new_actual = int(actual) if pin_name.endswith(("rpm-out", "rpm_out")) else None
-            new_is_connected = bool(actual) if pin_name.endswith(
-                ("at-speed", "at_speed", "on", "forward", "reverse", "istop", "estop", "vfd-enable", "vfd_enable")
-            ) else None
-
-            with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
-                entry = linuxcnc_mock._machine_state.spindle_actual.setdefault(  # noqa: SLF001
-                    tool_id,
-                    {"actual": 0, "is_connected": False, "error_count": 0},
-                )
-                # ``rpm_out`` is the canonical "actual RPM" pin —
-                # write its value into ``actual``.
-                if new_actual is not None:
-                    entry["actual"] = new_actual
-                # ``istop`` and ``estop`` increment ``error_count``
-                # when they go high. The mock simulator returns
-                # ``False`` so this is a no-op on dev hosts; on real
-                # hardware a true ``istop`` / ``estop`` halts the
-                # spindle and the count increments.
-                if pin_name.endswith(("istop", "estop")) and actual:
-                    entry["error_count"] = int(entry.get("error_count", 0)) + 1
-                # ``on`` / ``forward`` / ``reverse`` / ``vfd_enable``
-                # drive ``is_connected``: any of them True means the
-                # VFD is engaged. ``at-speed`` True means the spindle
-                # has reached target — also drives ``is_connected``.
-                if new_is_connected is True:
-                    entry["is_connected"] = True
-                # If ``on`` drops to False (M5 stop), the VFD is
-                # disengaged. ``at-speed`` False while the spindle
-                # is commanded idle also clears the flag.
-                if pin_name.endswith(("on", "vfd-enable", "vfd_enable")) and not actual:
-                    entry["is_connected"] = False
+            apply_spindle_pin(tool_id, pin_name, actual)
         except Exception:  # noqa: BLE001 - pin callback must never crash the loop
             logger.exception(
                 "spindle HAL callback failed for tool %s pin %s",
@@ -198,15 +157,15 @@ def _subscribe_spindle_pins() -> int:
     number of registered callbacks per pin.
     """
     from hardware import hal_manager
-    from .config_mapper import get_spindle_hal_pin_map
+    from .config_mapper import get_spindle_hal_pin_maps
 
-    pins_map = get_spindle_hal_pin_map()
+    pins_map = get_spindle_hal_pin_maps()
     count = 0
     for tool_id, pins in pins_map.items():
         seen_pins: set[str] = set()
         for field_name in (
-            "at_speed", "forward", "reverse", "on", "pwm",
-            "rpm_out", "istop", "estop", "vfd_enable",
+            "spindle_at_speed", "target_rpm", "actual_rpm",
+            "is_connected", "error_count", "last_error",
         ):
             pin_name = getattr(pins, field_name, None)
             if not pin_name or pin_name in seen_pins:

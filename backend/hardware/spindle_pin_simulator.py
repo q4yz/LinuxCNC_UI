@@ -70,7 +70,7 @@ def _is_pin(pin_name: str, suffix: str) -> bool:
 def read_spindle_pin(pin_name: str, spindle_id: str) -> Any:
     """Return a mock-mode spindle HAL pin value.
 
-    Pin names mirror the :class:`backend.modules.tools.config_mapper.SpindlePins`
+    Pin names mirror the :class:`backend.modules.tools.config_mapper.SpindleDigitalPins`
     fields. Unknown pins return ``0`` (a safe numeric default) so
     a misconfigured ``hardware.json`` cannot crash the dashboard.
 

@@ -296,15 +296,18 @@ class Tool(BaseModel):
     # The HAL signal aliases the vfdmod driver expects. Populated
     # fields are wired live in the compiled ``machine.hal``; empty
     # fields fall back to ``# TODO`` placeholders so the operator
-    # sees exactly which hooks still need manual configuration.
-    signal_at_speed: str | None = None
-    signal_forward: str | None = None
-    signal_reverse: str | None = None
-    signal_on: str | None = None
-    signal_pwm: str | None = None
-    signal_istop: str | None = None
-    signal_estop: str | None = None
-    signal_vfd_enable: str | None = None
+    # sees exactly which hooks still need manual configuration. Keys
+    # are named after the runtime field they populate on
+    # :class:`backend.modules.tools.config_mapper.SpindleDigitalPins`
+    # (target_rpm, actual_out, is_connected, error_count, last_error,
+    # spindle_at_speed) rather than the underlying LinuxCNC HAL pin
+    # suffix.
+    signal_spindle_at_speed: str | None = None
+    signal_target_rpm: str | None = None
+    signal_actual_out: str | None = None
+    signal_is_connected: str | None = None
+    signal_error_count: str | None = None
+    signal_last_error: str | None = None
 
     # ---- Heating (extruder + heated_bed) --------------------------- #
     # ``sensor`` resolves into ``temperature_sensors[].id``;

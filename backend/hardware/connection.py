@@ -19,7 +19,11 @@ This file only owns:
   * the public dispatch helpers (``execute_sync_cmd``,
     ``execute_gcode``);
   * the legacy :class:`Connection` object wrapper kept around
-    because historical routers imported it.
+    because historical routers imported it;
+  * the **mock-transparent** read/write helpers that production
+    code uses to interact with telemetry buffers without knowing
+    whether the underlying driver is the real LinuxCNC binding or
+    the in-memory mock.
 
 The ``Connection`` class, ``default_mapper``, ``hal_manager``, and
 ``machine_service`` re-exports below are kept for backward
@@ -31,7 +35,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -313,6 +317,167 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Mock-transparent telemetry helpers
+# ---------------------------------------------------------------------------
+#
+# These helpers give production code a single read/write surface
+# that works regardless of whether the underlying driver is the
+# real ``linuxcnc`` binding or the in-memory mock. On real hardware
+# the fields are absent (real LinuxCNC doesn't carry an in-process
+# RPM telemetry buffer or bounded error history) so the helpers
+# degrade to ``None`` / ``[]`` / no-ops — callers stay mock-agnostic.
+#
+# The mock implements the same surface through ``stat`` (read
+# snapshots) and dedicated ``update_*`` / ``push_error`` helpers.
+# Production code never imports :mod:`hardware.linuxcnc_mock`
+# directly.
+
+
+def read_temperature(sensor_id: str) -> Optional[Dict[str, float]]:
+    """Return ``{actual, target}`` for ``sensor_id`` or ``None``.
+
+    Reads from the live ``stat`` channel so the same call works on
+    real LinuxCNC and the mock. The mock's :class:`stat` mirrors
+    its in-process sensor dict on every ``poll()``; real LinuxCNC
+    exposes the same dict via ``stat.temperatures``. ``None`` is
+    returned for unknown sensors / non-string ids / offline channel.
+    """
+    if not isinstance(sensor_id, str) or not sensor_id:
+        return None
+    stat = get_machine_stat()
+    if stat is None:
+        return None
+    poll = getattr(stat, "poll", None)
+    if callable(poll):
+        poll()
+    sensors = getattr(stat, "temperatures", None) or {}
+    reading = sensors.get(sensor_id)
+    if not reading:
+        return None
+    return {
+        "actual": float(reading.get("actual", 0.0)),
+        "target": float(reading.get("target", 0.0)),
+    }
+
+
+
+def read_error_history() -> list:
+    """Return a shallow list copy of the bounded error history.
+
+    The mock tracks a bounded ``errors`` queue in :class:`stat` so a
+    reload / reconnect re-hydrates the operator console with the
+    recent session history. Real LinuxCNC has no equivalent buffer
+    (its NML error channel drains into the WS layer live), so this
+    returns ``[]`` on a real driver.
+    """
+    stat = get_machine_stat()
+    if stat is None:
+        return []
+    poll = getattr(stat, "poll", None)
+    if callable(poll):
+        poll()
+    return list(getattr(stat, "errors", []) or [])
+
+
+def read_hal_pin(pin_name: str) -> Optional[object]:
+    """Read the current live value of a LinuxCNC HAL pin or signal."""
+    if hal is None:
+        return None
+
+    try:
+        # hal.get_value reads pins, signals, and parameters dynamically.
+        return hal.get_value(pin_name)
+    except Exception as e:
+        # Logged as debug so it doesn't spam the console if the VFD
+        # component isn't loaded yet during boot.
+        logger.debug("Failed to read HAL pin '%s': %s", pin_name, e)
+        return None
+
+
+def mark_spindle_connected(tool_id: str, is_connected: bool) -> None:
+    """Flip the spindle's ``is_connected`` flag immediately.
+
+    On the mock this eagerly updates ``stat.spindle_actual[tool_id]``
+    so the dashboard's SpindleCard reflects the operator's command
+    before the next HAL poll tick (the simulator refines ``actual``
+    on the following iteration). On real hardware this is a no-op —
+    real LinuxCNC doesn't carry an in-process ``is_connected`` flag;
+    the VFD status comes from HAL pins directly.
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    if not USE_MOCK:
+        return
+    from . import linuxcnc_mock  # local import keeps mock off the hot path on real hw
+
+    linuxcnc_mock.update_spindle_connected(tool_id, bool(is_connected))
+
+
+def push_machine_error(kind: int, text: str, time: str) -> None:
+    """Record a LinuxCNC error-channel event into the bounded history.
+
+    On the mock this calls :meth:`linuxcnc_mock.error_channel.poll`
+    which appends to the bounded ``errors`` queue. Real LinuxCNC
+    doesn't carry an in-process history (its error channel is
+    consume-once), so the helper is a no-op there.
+    """
+    if not USE_MOCK:
+        return
+    from . import linuxcnc_mock  # local import keeps mock off the hot path on real hw
+
+    linuxcnc_mock.record_error(kind, text, time)
+
+
+def push_spindle_telemetry(
+    tool_id: str,
+    *,
+    actual: Optional[int] = None,
+    is_connected: Optional[bool] = None,
+    error_count: Optional[int] = None,
+) -> None:
+    """Apply the given fields to ``stat.spindle_actual[tool_id]``.
+
+    Used by the HAL-pin subscription callback (per-tick telemetry)
+    and any future writer. On the mock this updates
+    ``_machine_state.spindle_actual`` under its lock and is mirrored
+    into ``stat.spindle_actual`` on the next ``poll()``. On real
+    hardware this is a no-op — the live VFD status arrives via HAL
+    pins directly and there is no in-process buffer to update.
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    if not USE_MOCK:
+        return
+    from . import linuxcnc_mock  # local import keeps mock off the hot path on real hw
+
+    linuxcnc_mock.update_spindle_telemetry(
+        tool_id,
+        actual=actual,
+        is_connected=is_connected,
+        error_count=error_count,
+    )
+
+
+def apply_spindle_pin(tool_id: str, pin_name: str, pin_value: Any) -> None:
+    """Translate one HAL pin read into spindle telemetry fields.
+
+    Used by the per-tick HAL subscription callback. The mock owns
+    the per-pin field mapping (``rpm_out`` → ``actual``, ``on`` /
+    ``vfd_enable`` → ``is_connected``, ``istop`` / ``estop`` →
+    ``error_count`` delta). On real hardware this is a no-op —
+    the live VFD status arrives via HAL pins directly and there is
+    no in-process ``spindle_actual`` buffer to update.
+    """
+    if not isinstance(tool_id, str) or not tool_id:
+        return
+    if not USE_MOCK:
+        return
+    from . import linuxcnc_mock  # local import keeps mock off the hot path on real hw
+
+    linuxcnc_mock.apply_spindle_pin(tool_id, pin_name, pin_value)
+
+
+# ---------------------------------------------------------------------------
 # Connection facade object (legacy compatibility)
 # ---------------------------------------------------------------------------
 
@@ -384,6 +549,13 @@ __all__ = [
     "is_linuxcnc_connected",
     "execute_sync_cmd",
     "execute_gcode",
+    "read_temperature",
+    "read_spindle_telemetry",
+    "read_error_history",
+    "mark_spindle_connected",
+    "push_machine_error",
+    "push_spindle_telemetry",
+    "apply_spindle_pin",
     "Connection",
     "connection",
     "DeviceConfigMapper",

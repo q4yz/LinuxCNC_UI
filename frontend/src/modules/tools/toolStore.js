@@ -100,16 +100,41 @@ export const useToolStore = defineStore(STORE_ID, () => {
    * routed to the console store via ``describeError`` so the
    * operator sees the same envelope shape as every other module.
    *
+   * ``masterOverride`` and ``masterOverrideEnable`` enable the
+   * backend's master-override bypass: when ``masterOverrideEnable``
+   * is true, the dispatch uses ``masterOverride`` RPM directly and
+   * the ``override`` pin is left untouched. The default values
+   * (``0`` / ``false``) preserve the legacy behaviour for callers
+   * that don't know about the bypass (notably AnalogSpindleCard).
+   *
+   * ``override`` is the relative override factor (0.0–2.0; 1.0 =
+   * 100%) written to ``halui.spindle.override.scale`` before
+   * every M-code dispatch. Ignored when ``masterOverrideEnable``
+   * is true. Defaults to ``1.0`` (the LinuxCNC native default).
+   *
    * @param {string} toolId
    * @param {"forward"|"backward"|"stop"} action
    * @param {number} speed
+   * @param {number} [masterOverride=0] Absolute RPM applied when masterOverrideEnable is true.
+   * @param {boolean} [masterOverrideEnable=false] Bypass speed/override scaling and force masterOverride RPM.
+   * @param {number} [override=1.0] Relative override factor (0.0–2.0; ignored when masterOverrideEnable is true).
    */
-  async function sendSpindleCommand(toolId, action, speed) {
+  async function sendSpindleCommand(
+    toolId,
+    action,
+    speed,
+    masterOverride = 0,
+    masterOverrideEnable = false,
+    override = 1.0,
+  ) {
     try {
       await ModulesToolsService.controlSpindle({
         tool_id: toolId,
         action,
         speed,
+        master_override: masterOverride,
+        master_override_enable: masterOverrideEnable,
+        override,
       });
     } catch (err) {
       useConsoleStore().error(

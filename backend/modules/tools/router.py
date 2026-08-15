@@ -63,6 +63,10 @@ class SpindleCommand(BaseModel):
     dispatch. Defaults to ``1.0`` (the LinuxCNC native default) so
     existing callers keep their behaviour. The range mirrors
     LinuxCNC's documented ``[0.0, 2.0]`` band.
+
+    ``master_override_enable`` flips the dispatch into absolute-RPM
+    mode: when true, ``master_override`` is used instead of
+    ``speed`` and the ``override`` pin is left untouched.
     """
 
     tool_id: str = Field(
@@ -78,7 +82,7 @@ class SpindleCommand(BaseModel):
         ...,
         ge=0,
         le=200_000,
-        description="Target RPM for 'forward' / 'backward'; ignored for 'stop'.",
+        description="Target RPM for 'forward' / 'backward'; ignored for 'stop' or when master_override_enable=True.",
     )
     override: float = Field(
         default=1.0,
@@ -87,7 +91,24 @@ class SpindleCommand(BaseModel):
         description=(
             "Relative spindle override (0.0–2.0; 1.0 = 100 %). "
             "Written to halui.spindle.override.scale before each "
-            "M-code dispatch when it differs from 1.0."
+            "M-code dispatch when it differs from 1.0. Ignored "
+            "when master_override_enable is True."
+        ),
+    )
+    master_override: int = Field(
+        default=0,
+        ge=0,
+        le=200_000,
+        description=(
+            "Absolute target RPM used exclusively when "
+            "master_override_enable is True."
+        ),
+    )
+    master_override_enable: bool = Field(
+        default=False,
+        description=(
+            "If true, bypass the standard speed/override scaling "
+            "and dispatch the M-code at master_override RPM directly."
         ),
     )
 
@@ -187,7 +208,7 @@ class SetToolTargetResponse(BaseModel):
 class SpindlePinPayload(BaseModel):
     """Per-pin HAL signal map for one digital spindle.
 
-    Mirrors :class:`backend.modules.tools.config_mapper.SpindlePins`
+    Mirrors :class:`backend.modules.tools.config_mapper.SpindleDigitalPins`
     as a plain dict for JSON friendliness. ``None`` on any field
     means the integrator did not wire that signal in
     ``hardware.json`` — the dashboard renders an "n/a" cell for
@@ -195,15 +216,12 @@ class SpindlePinPayload(BaseModel):
     """
 
     id: str
-    at_speed: Optional[str] = None
-    forward: Optional[str] = None
-    reverse: Optional[str] = None
-    on: Optional[str] = None
-    pwm: Optional[str] = None
-    rpm_out: Optional[str] = None
-    istop: Optional[str] = None
-    estop: Optional[str] = None
-    vfd_enable: Optional[str] = None
+    spindle_at_speed: Optional[str] = None
+    target_rpm: Optional[str] = None
+    actual_rpm: Optional[str] = None
+    is_connected: Optional[str] = None
+    error_count: Optional[str] = None
+    last_error: Optional[str] = None
 
 
 class SpindleStateResponse(BaseModel):
@@ -276,7 +294,12 @@ def control_spindle(cmd: SpindleCommand) -> ToolCommandResponse:
         )
 
     mdi = get_tools_service().control_spindle(
-        cmd.tool_id, cmd.action, cmd.speed, cmd.override
+        cmd.tool_id,
+        cmd.action,
+        cmd.speed,
+        cmd.override,
+        cmd.master_override,
+        cmd.master_override_enable,
     )
     return ToolCommandResponse(status="success", command=mdi, tool_id=cmd.tool_id)
 
@@ -356,7 +379,7 @@ def set_tool_target(
     summary="Get Spindle State",
     description=(
         "Read the live state + HAL pin map for ``tool_id``. Returns "
-        "the canonical ``SpindlePins`` record (as a plain dict), "
+        "the canonical ``SpindleDigitalPins`` record (as a plain dict), "
         "the live telemetry snapshot (``actual`` / ``is_connected`` "
         "/ ``error_count``), and the current service-tracked state "
         "(``idle`` / ``forward`` / ``reverse``). Useful for "

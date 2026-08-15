@@ -1,5 +1,5 @@
 <script setup>
-import {ref, computed} from "vue";
+import {computed, onBeforeUnmount, ref, watch} from "vue";
 import {useToolStore} from "../toolStore.js";
 
 const props = defineProps({
@@ -10,8 +10,21 @@ const toolStore = useToolStore();
 
 // Local working state
 const speedPercentage = ref(100);
-const manualOverride = ref(false);
-const manualSpeed = ref(props.tool.min_rpm ?? 0);
+const masterOverride = ref(false);
+const masterOverrideSpeed = ref(props.tool.min_rpm ?? 0);
+
+// Tracks the operator's last button press so the slider-drag
+// debounce can fire the right action ("forward" / "reverse" /
+// "idle"). Mirrors the backend ``_spindle_state[tool_id]`` value
+// but is kept locally because the base-thread snapshot does not
+// surface the service-tracked state. Single source of truth for
+// the card's "is the spindle running?" guard.
+const runningState = ref("idle");
+
+// Debounce handle for the slider-drag dispatch. Cleared on every
+// tick and on unmount so a navigated-away card never fires a stale
+// POST.
+let postTimer = null;
 
 // Computed bounds and values
 const minRpm = computed(() => props.tool.min_rpm ?? 0);
@@ -42,18 +55,26 @@ const gaugeCoverHeight = computed(() => {
   return `${100 - pct}%`;
 });
 
-// Issue commands to the spindle
+// Issue commands to the spindle on button click
 function handleSpindle(action) {
   if (action === "stop") {
-    toolStore.sendSpindleCommand(props.tool.id, "stop", 0);
+    runningState.value = "idle";
+    toolStore.sendSpindleCommand(
+      props.tool.id,
+      "stop",
+      0,
+      masterOverrideSpeed.value,
+      false,
+      1.0,
+    );
     return;
   }
 
   // Determine the speed based on override modes
   let speedToSet = props.tool.set_speed ?? 0;
 
-  if (manualOverride.value) {
-    speedToSet = manualSpeed.value;
+  if (masterOverride.value) {
+    speedToSet = masterOverrideSpeed.value;
   } else {
     // Apply automatic percentage correction to programmed speed
     speedToSet = Math.round(speedToSet * (speedPercentage.value / 100));
@@ -62,8 +83,58 @@ function handleSpindle(action) {
   // Cap to min/max safety boundaries
   speedToSet = Math.min(maxRpm.value, Math.max(minRpm.value, speedToSet));
 
-  toolStore.sendSpindleCommand(props.tool.id, action, speedToSet);
+  runningState.value = action;  // "forward" or "reverse"
+  toolStore.sendSpindleCommand(
+    props.tool.id,
+    action,
+    speedToSet,
+    masterOverrideSpeed.value,
+    masterOverride.value,
+    masterOverride.value ? 1.0 : speedPercentage.value / 100,
+  );
 }
+
+// Debounced slider-drag dispatch. When the operator drags either
+// slider, the watcher fires on every tick; the timer resets until
+// the operator has been idle for 1 second, then a single coherent
+// POST is sent — the same shape as a Forward/Reverse button press,
+// just driven by the slider's final value instead of the button
+// click. The dispatch is suppressed when the spindle is idle (per
+// the "only when running" rule); the local ref still updates so
+// the next Forward press picks up the new value.
+watch([masterOverrideSpeed, speedPercentage], () => {
+  if (runningState.value === "idle") return;
+  if (postTimer) clearTimeout(postTimer);
+  postTimer = setTimeout(() => {
+    postTimer = null;
+    const action = runningState.value;
+    if (masterOverride.value) {
+      // RPM slider drag: master_override bypass, override pin left alone.
+      toolStore.sendSpindleCommand(
+        props.tool.id,
+        action,
+        0,
+        masterOverrideSpeed.value,
+        true,
+        1.0,
+      );
+    } else {
+      // Percentage slider drag: relative override scale.
+      toolStore.sendSpindleCommand(
+        props.tool.id,
+        action,
+        0,
+        0,
+        false,
+        speedPercentage.value / 100,
+      );
+    }
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  if (postTimer) clearTimeout(postTimer);
+});
 </script>
 
 <template>
@@ -96,29 +167,29 @@ function handleSpindle(action) {
         </span>
       </div>
 
-      <!-- Manual Override Section -->
+      <!-- Master Override Section -->
       <div class="bg-gray-800/60 p-4 rounded-md border border-gray-700 flex flex-col gap-3 transition-colors"
-           :class="manualOverride ? 'border-blue-500/50' : ''">
+           :class="masterOverride ? 'border-blue-500/50' : ''">
         <div class="flex items-center gap-3">
           <input
-              id="manual-override"
-              v-model="manualOverride"
+              id="master-override"
+              v-model="masterOverride"
               type="checkbox"
               class="w-5 h-5 accent-blue-500 cursor-pointer rounded bg-gray-900 border-gray-600"
           >
-          <label for="manual-override" class="text-sm font-semibold text-white cursor-pointer select-none">
-            Manual Override Mode
+          <label for="master-override" class="text-sm font-semibold text-white cursor-pointer select-none">
+            Master Override Mode
           </label>
         </div>
 
-        <div class="flex flex-col gap-2" :class="{ 'opacity-40  grayscale': !manualOverride }">
+        <div class="flex flex-col gap-2" :class="{ 'opacity-40  grayscale': !masterOverride }">
           <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
             <span>{{ minRpm }}</span>
-            <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ manualSpeed }} RPM</span>
+            <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ masterOverrideSpeed }} RPM</span>
             <span>{{ maxRpm }}</span>
           </div>
           <input
-              v-model.number="manualSpeed"
+              v-model.number="masterOverrideSpeed"
               type="range"
               :min="minRpm"
               :max="maxRpm"

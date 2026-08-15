@@ -24,7 +24,7 @@ already validates every entry's shape and resolves the
 so this loader intentionally performs no further validation —
 it is a pure read.
 
-The :class:`SpindlePins` dataclass and :func:`get_spindle_hal_pin_map`
+The :class:`SpindleDigitalPins` dataclass and :func:`get_spindle_hal_pin_map`
 helper expose the HAL signal aliases every digital spindle declares.
 The runtime service addresses spindles by canonical id (``spindle_digital``
 for the bare form, ``spindle_digital_test`` for ``[spindle test]``, ...)
@@ -132,7 +132,7 @@ def load_active_tools(
     return out
 
 
-__all__ = ["load_active_tools", "SpindlePins", "get_spindle_hal_pin_map"]
+__all__ = ["load_active_tools", "SpindleDigitalPins", "get_spindle_hal_pin_map"]
 
 
 # ---------------------------------------------------------------------- #
@@ -141,73 +141,24 @@ __all__ = ["load_active_tools", "SpindlePins", "get_spindle_hal_pin_map"]
 
 
 @dataclass(frozen=True, slots=True)
-class SpindlePins:
-    """The HAL signal aliases for one digital spindle.
-
-    Field names mirror the ``signal_*`` keys emitted by
-    :func:`backend.modules.machineconfig.compilers.hardware_json_generator._tool_payload_from_spindle_digital`
-    on each ``tools[]`` entry of type ``spindle_digital`` — keeping
-    the runtime vocabulary aligned with what the compiler already
-    produces.
-
-    Every field is optional; a ``None`` value means "not wired" and
-    the runtime service skips it. The dataclass is frozen so the
-    helper can safely share a single record across threads without
-    defensive copying.
-
-    Attributes
-    ----------
-    id:
-        Canonical hardware.json id (``spindle_digital`` for the
-        bare form, ``spindle_digital_test`` for ``[spindle test]``).
-    at_speed:
-        pyvcp signal that turns on when the spindle is at-speed.
-    forward:
-        HAL pin that latches the forward direction (write ``1`` to
-        start spinning forward when ``on`` is also ``1``).
-    reverse:
-        HAL pin that latches the reverse direction (write ``1`` to
-        start spinning backward when ``on`` is also ``1``).
-    on:
-        Master enable — written ``1`` to energise the spindle,
-        ``0`` to drop it. Forward/reverse only take effect while
-        ``on`` is asserted.
-    pwm:
-        pyvcp signal mirroring the current PWM / target frequency.
-    rpm_out:
-        pyvcp signal mirroring the live RPM feedback.
-    istop:
-        pyvcp signal that turns on when the VFD reported an
-        immediate-stop event.
-    estop:
-        pyvcp signal that turns on when the VFD reported an error
-        (last-error string).
-    vfd_enable:
-        HAL pin that arms the VFD for accepting commands (separate
-        from the per-direction enables).
-    """
-
+class SpindleDigitalPins:
     id: str
-    at_speed:  Optional[str] = None
-    forward:   Optional[str] = None
-    reverse:   Optional[str] = None
-    on:        Optional[str] = None
-    pwm:       Optional[str] = None
-    rpm_out:   Optional[str] = None
-    istop:     Optional[str] = None
-    estop:     Optional[str] = None
-    vfd_enable: Optional[str] = None
+    target_rpm: Optional[str] = None
+    actual_rpm: Optional[str] = None
+    is_connected: Optional[str] = None
+    error_count: Optional[str] = None
+    last_error: Optional[str] = None
+    spindle_at_speed: Optional[str] = None
 
-
-def get_spindle_hal_pin_map(
-    active_path: Path | None = None,
-) -> Dict[str, SpindlePins]:
-    """Return ``{spindle_id: SpindlePins}`` for every digital spindle.
+def get_spindle_hal_pin_map(spindle_id: str,active_path: Path | None = None) -> SpindleDigitalPins:
+    return get_spindle_hal_pin_maps(active_path).get(spindle_id)
+def get_spindle_hal_pin_maps(active_path: Path | None = None) -> Dict[str, SpindleDigitalPins]:
+    """Return ``{spindle_id: SpindleDigitalPins}`` for every digital spindle.
 
     Reads ``<active_path>/hardware.json`` (defaulting to
     ``<repo>/machine_config/active/hardware.json``), filters
     ``tools[]`` for ``type == "spindle_digital"`` and builds one
-    :class:`SpindlePins` per entry. The map is keyed by the canonical
+    :class:`SpindleDigitalPins` per entry. The map is keyed by the canonical
     tool id (the same id the compiler emits and the runtime uses for
     control commands), so callers can address a specific spindle by
     id and receive every HAL signal name it knows about.
@@ -245,7 +196,7 @@ def get_spindle_hal_pin_map(
     if not isinstance(raw_tools, list):
         return {}
 
-    out: Dict[str, SpindlePins] = {}
+    out: Dict[str, SpindleDigitalPins] = {}
     for entry in raw_tools:
         if not isinstance(entry, dict):
             continue
@@ -258,23 +209,20 @@ def get_spindle_hal_pin_map(
             # keeps the loader robust to legacy / hand-written
             # payloads.
             continue
-        out[tool_id] = SpindlePins(
+        out[tool_id] = SpindleDigitalPins(
             id=tool_id,
-            at_speed=_as_optional_str(entry.get("signal_at_speed")),
-            forward=_as_optional_str(entry.get("signal_forward")),
-            reverse=_as_optional_str(entry.get("signal_reverse")),
-            on=_as_optional_str(entry.get("signal_on")),
-            pwm=_as_optional_str(entry.get("signal_pwm")),
-            rpm_out=_as_optional_str(entry.get("signal_rpm_out")),
-            istop=_as_optional_str(entry.get("signal_istop")),
-            estop=_as_optional_str(entry.get("signal_estop")),
-            vfd_enable=_as_optional_str(entry.get("signal_vfd_enable")),
+            spindle_at_speed=_as_optional_str(entry.get("signal_spindle_at_speed")),
+            target_rpm=_as_optional_str(entry.get("signal_target_rpm")),
+            actual_rpm=_as_optional_str(entry.get("signal_actual_out")),
+            is_connected=_as_optional_str(entry.get("signal_is_connected")),
+            error_count=_as_optional_str(entry.get("signal_error_count")),
+            last_error=_as_optional_str(entry.get("signal_last_error")),
         )
     return out
 
 
 def _as_optional_str(value: object) -> Optional[str]:
-    """Coerce ``value`` to ``Optional[str]`` for :class:`SpindlePins`.
+    """Coerce ``value`` to ``Optional[str]`` for :class:`SpindleDigitalPins`.
 
     Anything that is not a non-empty string becomes ``None`` so the
     dataclass never stores a literal ``""`` placeholder that the

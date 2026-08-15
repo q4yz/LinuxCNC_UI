@@ -161,6 +161,14 @@ test("toolStore never hand-rolls HTTP — every call goes through ModulesToolsSe
   assert.match(text, /ModulesToolsService\.controlSpindle\s*\(/);
   assert.match(text, /ModulesToolsService\.controlExtruder\s*\(/);
   assert.match(text, /ModulesToolsService\.setToolTarget\s*\(/);
+  // The spindle command forwards both bypass fields to the
+  // backend (master_override + master_override_enable). Without
+  // this the operator's master-override selection is silently
+  // dropped on the wire. The store also forwards ``override`` so
+  // the auto-feed % slider can drive the relative override scale.
+  assert.match(text, /master_override\s*:/);
+  assert.match(text, /master_override_enable\s*:/);
+  assert.match(text, /override\s*,/);
   // Errors flow through the canonical describeError helper
   // (``core/error-format.js``) so the console store sees the
   // same envelope shape as every other module.
@@ -222,6 +230,38 @@ test("SpindleCard.vue renders digital-spindle controls", () => {
   // The runtime overlay fields are surfaced as a status row.
   assert.match(text, /is_connected/);
   assert.match(text, /error_count/);
+  // The master-override bypass UI is present. The label was
+  // renamed from "Manual Override Mode" to "Master Override Mode"
+  // when the backend gained the ``master_override`` /
+  // ``master_override_enable`` fields — both the visible label and
+  // the local ref names must reflect the new naming.
+  assert.match(
+    text,
+    /Master Override Mode/,
+    "SpindleCard must surface the Master Override Mode label",
+  );
+  assert.match(text, /masterOverride/);
+  assert.match(text, /masterOverrideSpeed/);
+  assert.doesNotMatch(
+    text,
+    /manualOverride|manualSpeed|Manual Override/,
+    "SpindleCard must not regress to the old manual-override naming",
+  );
+  // Slider-drag debounce dispatch: the watcher fires on every
+  // tick, the timer resets, and a single POST is sent after 1 s
+  // of idle. The "only when running" guard uses a local
+  // ``runningState`` ref so the dispatch is suppressed while the
+  // spindle is idle.
+  assert.match(
+    text,
+    /setTimeout\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?\}\s*,\s*1000\s*\)/,
+    "SpindleCard must debounce slider drags with a 1 s setTimeout",
+  );
+  assert.match(
+    text,
+    /runningState/,
+    "SpindleCard must track runningState for the only-when-running guard",
+  );
   // The input does NOT ``v-model`` directly onto ``props.tool`` —
   // the base-thread snapshot replaces the tool record every 1 s,
   // which would wipe the operator's typed value within a second.

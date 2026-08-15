@@ -10,7 +10,9 @@ The lifecycle mirrors LinuxCNC's canonical two-step flow:
 1. ``POST /load {filename}`` calls ``command.program_open(path)``
    which sets ``stat.file`` while leaving ``interp_state`` at
    ``INTERP_IDLE``. The "loaded" state is implicit (file is set,
-   interpreter is idle) — see :func:`hardware.linuxcnc_mock.is_program_loaded`.
+   interpreter is idle) — see :func:`hardware.linuxcnc_mock.is_program_loaded`
+   for the predicate and ``hardware.connection.get_machine_stat``
+   for the canonical read surface.
 
    On real LinuxCNC ``program_open`` is asynchronous: the call
    returns immediately but the interpreter needs a few NML ticks

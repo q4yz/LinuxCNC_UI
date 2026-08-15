@@ -1,4 +1,4 @@
-"""Temperature module service — :class:`TemperatureService` + :func:`read_temperature`.
+"""Temperature module service — :class:`TemperatureService`.
 
 This is the canonical home for the temperature-sensor telemetry
 collector that used to live as a module-level helper in
@@ -8,8 +8,14 @@ router. The base-thread snapshot router (``routers/base_thread.py``)
 imports :func:`get_temperature_service` (or ``collect_sensors``
 directly) from this module; the temperature router imports
 :func:`set_target`; the tools module's tool-telemetry overlay
-imports :func:`read_temperature` to decorate heating tools with
+uses :func:`collect_sensors` to decorate heating tools with
 their runtime ``actual`` / ``target`` readings.
+
+The historical single-sensor :func:`read_temperature` helper was
+removed when feature code stopped importing the mock directly:
+:meth:`TemperatureService.collect_sensors` is the single source of
+truth and is mock-agnostic (it reads through the unified
+``hardware.connection`` stat-channel surface).
 """
 from __future__ import annotations
 
@@ -18,34 +24,9 @@ from typing import Dict, Optional
 
 from fastapi import HTTPException
 from hardware import connection
-from hardware import linuxcnc_mock
 from hardware.connection import execute_sync_cmd
 
 logger = logging.getLogger("backend.modules.temperature.service")
-
-
-def read_temperature(sensor_id: str) -> Optional[Dict[str, float]]:
-    """Return the live temperature reading for ``sensor_id``.
-
-    Reads the mock's ``_machine_state.temperatures`` dict under its
-    lock so concurrent operators reading the snapshot never see a
-    torn dict. Returns ``None`` when the sensor has not been seeded
-    yet (e.g. a test boot without a ``hardware.json`` that names it).
-
-    The :mod:`modules.tools.service` overlay uses this helper to
-    decorate heating tools (``extruder`` / ``heated_bed``) with their
-    runtime readings.
-    """
-    if not isinstance(sensor_id, str) or not sensor_id:
-        return None
-    with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
-        reading = linuxcnc_mock._machine_state.temperatures.get(sensor_id)
-    if not reading:
-        return None
-    return {
-        "actual": reading.get("actual", 0.0),
-        "target": reading.get("target", 0.0),
-    }
 
 
 class TemperatureService:
@@ -123,5 +104,4 @@ __all__ = [
     "TemperatureService",
     "get_temperature_service",
     "collect_sensors",
-    "read_temperature",
 ]

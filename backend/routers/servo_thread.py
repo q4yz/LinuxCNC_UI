@@ -31,7 +31,7 @@ from datetime import datetime
 from typing import List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error, linuxcnc
-from hardware import linuxcnc_mock
+from hardware.connection import push_machine_error, read_error_history
 from services.console_logger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.routers.servo_thread")
@@ -178,7 +178,9 @@ def get_current_state() -> dict:
         # entries, oldest dropped first). ``telemetry_loop`` keeps
         # this fresh on every poll so a reload / reconnect sees the
         # operator's last session's errors in the console panel.
-        "errors": list(linuxcnc_mock._machine_state.errors),
+        # Routed through the unified ``hardware.connection.read_error_history``
+        # so this router stays mock-agnostic.
+        "errors": read_error_history(),
     }
 
 
@@ -281,13 +283,12 @@ async def telemetry_loop():
                 # Mirror into the bounded error history so the
                 # operator sees the backlog after a reconnect /
                 # page reload — ``full_state`` carries ``errors``
-                # populated by ``push_error``. ``hasattr`` guards
-                # the mock-only method so a real ``error_channel``
-                # implementation never breaks the broadcast path.
-                if hasattr(linuxcnc_mock._machine_state, "push_error"):
-                    linuxcnc_mock._machine_state.push_error(
-                        kind, text, timestamp
-                    )
+                # populated by ``push_machine_error``. The unified
+                # helper is a no-op on real LinuxCNC (its error
+                # channel drains into the WS layer live), so a real
+                # ``error_channel`` implementation never breaks the
+                # broadcast path.
+                push_machine_error(kind, text, timestamp)
                 error_payload = {
                     "type": "error",
                     "data": {

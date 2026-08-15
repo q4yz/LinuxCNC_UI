@@ -174,14 +174,14 @@ def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch
 
     # The legacy ``GET /sensors`` endpoint is gone; the canonical
     # surface for the live sensor dict is the base-thread snapshot.
-    # Read the mock directly to confirm the dispatch landed — the
-    # mock's ``set_temperature`` keys the entry on the same name
-    # the router received (here ``heater_bed``).
-    from hardware import linuxcnc_mock as _mock
+    # Read through the unified ``hardware.connection.read_temperature``
+    # helper to confirm the dispatch landed — the mock's
+    # ``set_temperature`` keys the entry on the same name the
+    # router received (here ``heater_bed``).
+    from hardware.connection import read_temperature
 
-    with _mock._machine_state.lock:  # noqa: SLF001
-        reading = _mock._machine_state.temperatures.get("heater_bed", {})
-    assert reading.get("target") == 60.0
+    reading = read_temperature("heater_bed")
+    assert reading is not None and reading["target"] == 60.0
 
 
 def test_set_target_validates_range(tmp_data_root, clean_env):

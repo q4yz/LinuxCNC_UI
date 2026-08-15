@@ -253,6 +253,14 @@ def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, An
     bare ``[spindle]`` form, ``spindle_digital_test`` for
     ``[spindle test]``, ...). Each instance gets its own tool
     record so the runtime can address them independently.
+
+    The ``signal_*`` key names mirror the
+    :class:`backend.modules.tools.config_mapper.SpindleDigitalPins`
+    fields (``target_rpm``, ``actual_out``, ``is_connected``,
+    ``error_count``, ``last_error``, ``spindle_at_speed``). Fields
+    with no source on the underlying ``[spindle]`` model
+    (``actual_out``, ``error_count``) are emitted as ``None`` so the
+    operator can wire them by hand.
     """
     return {
         "id": spindle_id,
@@ -260,14 +268,12 @@ def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, An
         "type": "spindle_digital",
         "min_rpm": spindle.min_rpm,
         "max_rpm": spindle.max_rpm,
-        "signal_at_speed": spindle.at_speed1_signal,
-        "signal_forward": None,
-        "signal_reverse": None,
-        "signal_on": spindle.is_connected_signal,
-        "signal_pwm": spindle.target_frequency_signal,
-        "signal_istop": None,
-        "signal_estop": spindle.last_error_signal,
-        "signal_vfd_enable": None,
+        "signal_spindle_at_speed": spindle.at_speed1_signal,
+        "signal_target_rpm": spindle.target_frequency_signal,
+        "signal_actual_out": None,
+        "signal_is_connected": spindle.is_connected_signal,
+        "signal_error_count": None,
+        "signal_last_error": spindle.last_error_signal,
     }
 
 

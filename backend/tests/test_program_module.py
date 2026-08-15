@@ -42,13 +42,7 @@ def _reset_mock_program_state() -> None:
     """
     from hardware import linuxcnc_mock
 
-    with linuxcnc_mock._machine_state.lock:
-        linuxcnc_mock._machine_state.file = ""
-        linuxcnc_mock._machine_state.current_line = 0
-        linuxcnc_mock._machine_state.total_lines = 0
-        linuxcnc_mock._machine_state.interp_state = (
-            linuxcnc_mock.INTERP_IDLE
-        )
+    linuxcnc_mock.reset_program_state()
 
 
 def _isolated_program_root(
@@ -82,15 +76,25 @@ def _program_app(tmp_data_root) -> tuple[FastAPI, ModuleRegistry]:
 
 def _state_snapshot() -> dict:
     """Read the mock's program lifecycle fields under the lock."""
-    from hardware import linuxcnc_mock
+    from hardware import connection
 
-    with linuxcnc_mock._machine_state.lock:
+    stat = connection.get_machine_stat()
+    if stat is not None:
+        poll = getattr(stat, "poll", None)
+        if callable(poll):
+            poll()
         return {
-            "file": linuxcnc_mock._machine_state.file,
-            "current_line": linuxcnc_mock._machine_state.current_line,
-            "total_lines": linuxcnc_mock._machine_state.total_lines,
-            "interp_state": linuxcnc_mock._machine_state.interp_state,
+            "file": stat.file,
+            "current_line": stat.current_line,
+            "total_lines": stat.total_lines,
+            "interp_state": stat.interp_state,
         }
+    return {
+        "file": "",
+        "current_line": 0,
+        "total_lines": 0,
+        "interp_state": 0,
+    }
 
 
 # ---------------------------------------------------------------------- #
@@ -384,7 +388,7 @@ class TestLoadThenStartRoundTrip:
         self, tmp_data_root, clean_env, monkeypatch
     ):
         """``is_program_loaded`` must read from the live stat
-        channel. We assert this by setting ``_machine_state.file``
+        channel. We assert this by setting the mock's program file
         directly (bypassing ``program_open``) and confirming the
         predicate returns True without any further setup — meaning
         the live stat channel's cached snapshot was refreshed by
@@ -404,12 +408,12 @@ class TestLoadThenStartRoundTrip:
 
         # Mutate the mock state behind the predicate's back so the
         # test asserts the predicate reads the live snapshot rather
-        # than the stale cached value. We do this by resetting the
-        # mock's ``_machine_state.file`` to a fresh value and
-        # checking ``is_program_loaded`` picks it up after a poll.
+        # than the stale cached value. We do this by setting the
+        # mock's program file to a fresh value via the test-only
+        # seeder and checking ``is_program_loaded`` picks it up
+        # after a poll.
         target = tmp_data_root / "test.gcode"
-        with linuxcnc_mock._machine_state.lock:
-            linuxcnc_mock._machine_state.file = str(target)
+        linuxcnc_mock.set_mock_program_file(str(target))
 
         stat = _stat_ch.get()
         stat.poll()

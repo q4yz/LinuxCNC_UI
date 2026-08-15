@@ -37,11 +37,7 @@ def _reset_mock_program_state() -> None:
     """Reset the mock's program lifecycle fields to the "no program" baseline."""
     from hardware import linuxcnc_mock
 
-    with linuxcnc_mock._machine_state.lock:
-        linuxcnc_mock._machine_state.file = ""
-        linuxcnc_mock._machine_state.current_line = 0
-        linuxcnc_mock._machine_state.total_lines = 0
-        linuxcnc_mock._machine_state.interp_state = linuxcnc_mock.INTERP_IDLE
+    linuxcnc_mock.reset_program_state()
 
 
 def _reset_line_count_cache() -> None:
@@ -186,11 +182,7 @@ def test_snapshot_mirrors_individual_endpoints(
 
     # Inject the sensor reading we want to assert on. The mock
     # re-seeded the dict empty above, so the only key is ours.
-    with linuxcnc_mock._machine_state.lock:
-        linuxcnc_mock._machine_state.temperatures["extruder"] = {
-            "actual": 195.4,
-            "target": 200.0,
-        }
+    linuxcnc_mock.seed_temperature("extruder", actual=195.4, target=200.0)
 
     # Load the program via the public router so the cache is
     # populated.
@@ -350,12 +342,12 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
 
     # Inject non-default telemetry so the assertion proves the
     # read-through path, not the default-zero fallback.
-    with linuxcnc_mock._machine_state.lock:
-        linuxcnc_mock._machine_state.spindle_actual["spindle_digital"] = {
-            "actual": 11800,
-            "is_connected": True,
-            "error_count": 3,
-        }
+    linuxcnc_mock.seed_spindle_actual(
+        "spindle_digital",
+        actual=11800,
+        is_connected=True,
+        error_count=3,
+    )
 
     app, _ = _base_thread_app(tmp_data_root)
     client = TestClient(app)

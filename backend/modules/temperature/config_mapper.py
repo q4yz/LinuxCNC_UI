@@ -8,10 +8,10 @@ temperature simulator) are both seeded from the active
 
 This is the canonical home for :func:`load_active_heaters`. The
 helper lives next to the temperature module because both consumers
-(temperature module + linuxcnc_mock) are siblings of this file —
-a ``backend.services.hardware_loader`` would create a top-level
-import cycle between the temperature module and the hardware /
-services layers. The previous :mod:`backend.services.hardware_loader`
+(temperature module + the mock hardware layer) are siblings of
+this file — a ``backend.services.hardware_loader`` would create a
+top-level import cycle between the temperature module and the
+hardware / services layers. The previous :mod:`backend.services.hardware_loader`
 was removed; the public surface is now ``from
 modules.temperature.hardware_loader import load_active_heaters``.
 

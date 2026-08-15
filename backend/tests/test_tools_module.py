@@ -339,8 +339,10 @@ def test_set_tool_target_dispatches_set_temperature(
         "sensor": "extruder",
     }
     # The mock's sensor dict now reflects the new target.
-    with linuxcnc_mock._machine_state.lock:
-        assert linuxcnc_mock._machine_state.temperatures["extruder"]["target"] == 195.0
+    from hardware.connection import read_temperature
+
+    reading = read_temperature("extruder")
+    assert reading is not None and reading["target"] == 195.0
 
 
 def test_set_tool_target_rejects_unknown_tool(
@@ -569,8 +571,7 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     # The mock ignores M-codes while the machine is in STATE_ESTOP
     # (which is the boot default). Flip it to STATE_ON so the
     # ``M3 S12000`` dispatch lands.
-    with linuxcnc_mock._machine_state.lock:  # noqa: SLF001
-        linuxcnc_mock._machine_state.task_state = linuxcnc_mock.STATE_ON  # noqa: SLF001
+    linuxcnc_mock.set_mock_task_state(linuxcnc_mock.STATE_ON)
 
     # Seed a hardware.json with one ``spindle_digital`` so the
     # spindle loader has something to enumerate. ``_resolve_active_path``
@@ -586,11 +587,12 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
                     {
                         "type": "spindle_digital",
                         "id": "spindle_digital",
-                        "signal_at_speed": "spindle.0.at-speed",
-                        "signal_forward": "spindle.0.forward",
-                        "signal_reverse": "spindle.0.reverse",
-                        "signal_on": "spindle.0.on",
-                        "signal_rpm_out": "spindle.0.rpm-out",
+                        "signal_spindle_at_speed": "spindle.0.at-speed",
+                        "signal_target_rpm": "spindle.0.target-rpm",
+                        "signal_actual_out": "spindle.0.rpm-out",
+                        "signal_is_connected": "spindle.0.on",
+                        "signal_error_count": "spindle.0.error-count",
+                        "signal_last_error": "spindle.0.last-error",
                     }
                 ]
             }
@@ -691,11 +693,12 @@ def test_on_load_subscribes_spindle_pins(tmp_data_root, clean_env, monkeypatch):
                     {
                         "type": "spindle_digital",
                         "id": "spindle_digital",
-                        "signal_at_speed": "spindle.0.at-speed",
-                        "signal_forward": "spindle.0.forward",
-                        "signal_reverse": "spindle.0.reverse",
-                        "signal_on": "spindle.0.on",
-                        "signal_rpm_out": "spindle.0.rpm-out",
+                        "signal_spindle_at_speed": "spindle.0.at-speed",
+                        "signal_target_rpm": "spindle.0.target-rpm",
+                        "signal_actual_out": "spindle.0.rpm-out",
+                        "signal_is_connected": "spindle.0.on",
+                        "signal_error_count": "spindle.0.error-count",
+                        "signal_last_error": "spindle.0.last-error",
                     }
                 ]
             }
