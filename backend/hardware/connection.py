@@ -34,7 +34,7 @@ try:
     logger.info("Successfully imported real linuxcnc module.")
     USE_MOCK = False
 except ImportError:
-    from . import linuxcnc_mock as linuxcnc  # type: ignore[no-redef]
+    from .mock import mock_system as linuxcnc  # type: ignore[no-redef]
     logger.warning("Could not import real linuxcnc. Falling back to linuxcnc_mock.")
     USE_MOCK = True
 

@@ -12,18 +12,14 @@ class HeaterMapper:
     @classmethod
     def from_dict_to_HeaterPins(cls, data: Dict[str, Any]) -> HeaterPins:
         tool_id = str(data["id"])
+        suffix = tool_id.replace("heater", "")
 
         fan_val = data.get("fan")
 
-        # Mapping actual temperature to the 'sensor' key from your JSON payload,
-        # and generating a default target_temperature pin if not explicitly provided.
-        actual_temp_val = data.get("sensor", f"{tool_id}_actual")
-        target_temp_val = data.get("target_temperature", f"{tool_id}_target")
-
         return HeaterPins(
             id=tool_id,
-            target_temperature=DynamicHalPin(str(target_temp_val)),
-            actual_temperature=DynamicHalPin(str(actual_temp_val)),
+            target_temperature=DynamicHalPin(f"target-temperature{suffix}"),
+            actual_temperature=DynamicHalPin(f"actual-temperature{suffix}"),
             fan=DynamicHalPin(str(fan_val)) if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),
