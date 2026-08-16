@@ -1,6 +1,5 @@
 from typing import Any, Optional, Union
 
-
 class OptionalMappers:
 
     @classmethod

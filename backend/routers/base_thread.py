@@ -18,12 +18,6 @@ The web UI mirrors that split:
   payload so the browser only needs **one** HTTP request per second
   regardless of how many panels are mounted.
 
-The endpoint is intentionally flat: every slow stream lands as a
-top-level field on the response so adding a new stream in the
-future only touches the Pydantic model, the generated TS type, and
-the snapshot handler below. No version field — unknown top-level
-keys are ignored by the frontend.
-
 Concurrency: the snapshot reads from ``linuxcnc.stat`` exactly
 once per request, so it cannot race against the WebSocket
 telemetry loop beyond what NML already coordinates.
@@ -32,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -42,23 +36,25 @@ from modules.program.service import (
     ProgramProgressResponse,
     get_program_lifecycle_service,
 )
-from modules.temperature.service import collect_sensors
-from modules.tools.config_mapper import get_tools
+
+from modules.temperature.factory.temperature_response_factory import TemperatureResponseFactory
+
+from modules.temperature.models.temperature_models import TemperatureStateResponse
+from modules.temperature.services.temperature_service import get_temperature_service
+from modules.tools.factory.tool_response_factory import ToolResponseFactory, ToolStateResponseModel
+
+from modules.tools.models.heater_models import HeaterStateResponse
+from modules.tools.services.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.routers.base_thread")
 
 router = APIRouter(prefix="/api/v1/base-thread", tags=["Base Thread"])
 
+tool_service = get_tools_service()
+
 
 class BaseThreadSnapshotResponse(BaseModel):
-    """Flat snapshot of every slow stream the dashboard polls at 1 Hz.
-
-    New streams are added by introducing a new top-level field here
-    AND in the generated TypeScript model. The frontend
-    ``baseThread`` store consumes the response via ``storeToRefs``
-    and exposes each field as its own reactive ref, so adding a
-    stream does not require touching any consumer module.
-    """
+    """Flat snapshot of every slow stream the dashboard polls at 1 Hz."""
 
     progress: ProgramProgressResponse = Field(
         ...,
@@ -67,19 +63,17 @@ class BaseThreadSnapshotResponse(BaseModel):
             "from ``linuxcnc.stat`` plus the cached ``total_lines``."
         ),
     )
-    sensors: Dict[str, Dict[str, float]] = Field(
+    sensors: Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]] = Field(
         default_factory=dict,
         description=(
-            "Temperature sensors keyed by name; each entry has "
-            "``actual`` / ``target``."
+            "Temperature sensors keyed by ID. Tool heaters include target/min/max, "
+            "while standalone sensors only report actual temperatures."
         ),
     )
-    tools: List[dict] = Field(
+    tools: List[ToolStateResponseModel] = Field(
         default_factory=list,
         description=(
-            "Operator-facing tool list with runtime state overlaid "
-            "(``actual`` / ``target`` for heating tools, "
-            "``actual_rpm`` for digital spindles)."
+            "Operator-facing tool list with runtime state overlaid."
         ),
     )
     timestamp: str = Field(
@@ -94,7 +88,34 @@ class BaseThreadSnapshotResponse(BaseModel):
 def _read_progress() -> ProgramProgressResponse:
     return get_program_lifecycle_service().progress_program()
 
+# ---------------------------------------------------------------------- #
+# Tools overlay                                                          #
+# ---------------------------------------------------------------------- #
 
+def _tools_snapshot() -> List[ToolStateResponseModel]:
+    """Build the operator-facing tool list via the OOP factories."""
+    out = []
+
+    states = tool_service.get_states()
+
+    for state in states:
+        response_model = ToolResponseFactory.create(state)
+        if response_model is not None:
+            out.append(response_model)
+
+    return out
+
+
+def _sensors_snapshot() -> Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]]:
+    """Build the sensors dictionary using the strongly typed response models."""
+    out = {}
+
+    for state in get_temperature_service().get_states():
+        response_model = TemperatureResponseFactory.create(state)
+        if response_model is not None:
+            out[response_model.tool_id] = response_model
+
+    return out
 
 @router.get(
     "/snapshot",
@@ -112,21 +133,11 @@ def _read_progress() -> ProgramProgressResponse:
     operation_id="getBaseThreadSnapshot",
 )
 def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
-    """Assemble the 1 Hz dashboard snapshot in one shot.
-
-    The handler never raises — a missing NML stat channel returns
-    the safe-zeroed payload so the operator's UI shows "LinuxCNC
-    not running" rather than a 5xx. Every sub-collector is
-    None-safe for the same reason.
-    """
+    """Assemble the 1 Hz dashboard snapshot in one shot."""
 
     progress = _read_progress()
-    sensors = collect_sensors()
-    tools = get_tools()
-
-
-
-
+    sensors = _sensors_snapshot()
+    tools = _tools_snapshot()
 
     timestamp = (
         datetime.now(timezone.utc)

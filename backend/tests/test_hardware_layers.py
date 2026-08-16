@@ -1,21 +1,15 @@
-"""Tests for the new hardware-layer abstractions.
+"""Tests for the hardware-layer abstractions.
 
-The previous round added :class:`backend.modules.machine.service.MachineService`
-for command dispatch (state codes, mode codes). This round adds
-a *different* :class:`MachineService` in
-:mod:`backend.hardware.connection` for config-driven hardware
-abstraction (``.cfg`` parsing + HAL pin subscription + G-code
-helpers). The two ``MachineService`` classes coexist:
-
-  * ``backend.hardware.connection.MachineService`` — Layer 2 of
-    the hardware abstraction (this round).
-  * ``backend.modules.machine.service.MachineService`` — the
-    machine-module's command-dispatch facade (previous round).
-
-Both names are exported from their respective modules; an
-``from hardware import MachineService`` is the hardware-layer one,
-and an ``from modules.machine.service import MachineService`` is the
-command-dispatch one.
+The OOP refactor split the historical monolithic machine module
+into :mod:`modules.axis`, :mod:`modules.state` and
+:mod:`modules.program`; the old ``backend.modules.machine.service``
+entry point no longer exists. Command-dispatch for axis motion now
+lives on :class:`modules.axis.service.AxisService`, machine-task
+state on :class:`modules.state.service.StateService`, and program
+lifecycle on :class:`modules.program.service.ProgramService`. The
+hardware-layer :class:`services.machine_service.MachineService`
+remains the single gateway to the NML command channel that all of
+them dispatch through.
 
 This suite covers:
 

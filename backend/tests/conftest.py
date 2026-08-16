@@ -21,18 +21,13 @@ def tmp_data_root(tmp_path: Path) -> Path:
 def clean_env(monkeypatch):
     """Strip ``MODULES_ENABLED`` so tests get the default behaviour.
 
-    Also resets the :class:`ToolsService` singleton's in-memory
-    spindle state machine so state does not leak between tests. The
-    state machine rejects mid-spin direction reversals with a 409;
-    without this reset a test that ran ``forward`` would leave the
-    spindle in ``forward`` and break a subsequent ``backward`` test.
+    The spindle direction-conflict check in
+    :class:`SpindleDigitalService` is now derived from HAL pin reads
+    (``pins.spindle_forward.get_value()`` / ``pins.spindle_reverse.get_value()``)
+    rather than a singleton attribute, so per-test reset of the
+    service is no longer required. The mock's per-tool telemetry
+    buffer (held by :data:`hardware.linuxcnc_mock._machine_state`)
+    is reseeded on process start and survives across tests
+    intentionally — it is process-global state for the mock driver.
     """
     monkeypatch.delenv("MODULES_ENABLED", raising=False)
-    try:
-        from modules.tools.services.tool_service import get_tools_service
-        svc = get_tools_service()
-        svc._spindle_state.clear()
-    except Exception:
-        # Service may not be importable in every test context; the
-        # reset is best-effort.
-        pass

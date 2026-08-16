@@ -1,14 +1,16 @@
 """Tests for the ``POST /home`` endpoint on the axis module.
 
-Pins the contract after the ``/home`` endpoint moved from
-``backend.services.machine_service::machine_control_router`` to
-``backend.modules.axis.router``. The endpoint must:
+Pins the contract for the axis module's homing facade after the
+backend OOP refactor split the old monolithic machine module into
+``modules/axis/``, ``modules/state/`` and ``modules/program/``. The
+endpoint must:
 
 * be reachable at ``POST /api/v1/modules/axis/home`` when mounted
   by the registry,
-* delegate to :meth:`AxisService.home_axis` so the
+* delegate to :meth:`AxisService.home_single_axes` so the
   facade's ``MODE_MANUAL`` pre-switch + axis dispatch happens
-  exactly as it did before the move,
+  in one place (single-axis homing; ``axis == -1`` is forwarded to
+  :meth:`AxisService.home_all_axes` inside the facade),
 * keep the ``homeAxis`` operation_id so the regenerated OpenAPI
   client keeps ``ModulesAxisService.homeAxis`` on the frontend.
 """
@@ -36,7 +38,7 @@ def _axis_app(tmp_data_root, clean_env):
 def test_axis_home_endpoint_dispatches_to_facade(
     tmp_data_root, clean_env
 ):
-    """``POST /home`` calls ``AxisService.home_axis``.
+    """``POST /home`` calls ``AxisService.home_single_axes``.
 
     We patch the facade method so the test runs hermetically
     without a live NML channel; the dispatch path is the contract
@@ -48,7 +50,7 @@ def test_axis_home_endpoint_dispatches_to_facade(
     client = TestClient(app)
 
     with patch(
-        "modules.axis.service.AxisService.home_axis"
+        "modules.axis.service.AxisService.home_single_axes"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
@@ -66,13 +68,15 @@ def test_axis_home_endpoint_accepts_negative_axis(
     """``axis == -1`` (home all) is forwarded verbatim to the facade.
 
     The router does not interpret the sentinel — it only translates
-    the HTTP edge; the facade decides what ``-1`` means.
+    the HTTP edge; the facade decides what ``-1`` means
+    (:meth:`AxisService.home_single_axes` delegates to
+    :meth:`AxisService.home_all_axes` internally).
     """
     app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
     with patch(
-        "modules.axis.service.AxisService.home_axis"
+        "modules.axis.service.AxisService.home_single_axes"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",

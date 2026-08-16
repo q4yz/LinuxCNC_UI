@@ -48,7 +48,8 @@ from typing import List
 from fastapi import APIRouter, Body, Path, Query, Response
 from pydantic import BaseModel, Field
 
-from services import get_mcode_service, raise_bad_request, raise_not_found
+from exceptions import BadRequestError, NotFoundError
+from services import get_mcode_service
 from services.domain_file_services import FileMetadata
 
 from .storage import (
@@ -176,7 +177,7 @@ def _validate_kind(kind: str) -> str:
         HTTPException: ``400`` when the kind is unknown.
     """
     if kind not in VALID_KINDS:
-        raise_bad_request(
+        raise BadRequestError(
             f"unknown macro kind: {kind!r}; expected one of {VALID_KINDS}",
         )
     return kind
@@ -189,7 +190,7 @@ def _validate_mcode_name(name: str) -> str:
         HTTPException: ``400`` for an out-of-range name.
     """
     if not _MCODE_RE.match(name):
-        raise_bad_request(
+        raise BadRequestError(
             f"invalid M-code name: {name!r} "
             "(must match ^M1\\d{2}$ — i.e. M100..M199)"
         )
@@ -311,9 +312,9 @@ def read_macro(
         try:
             target = service.safe_join(name)
         except ValueError as exc:
-            raise_bad_request(str(exc))
+            raise BadRequestError(str(exc))
         if not target.exists():
-            raise_not_found(f"M-code not found: {name}")
+            raise NotFoundError(f"M-code not found: {name}")
         return Response(content=target.read_text(encoding="utf-8"), media_type="text/plain")
 
     try:
@@ -322,11 +323,11 @@ def read_macro(
         # Storage raises ``InvalidMacroNameError`` for path-traversal
         # attempts (``..`` etc.) so treat them as not-found at the HTTP
         # boundary — they carry no useful payload for the operator.
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     except InvalidMacroKindError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     except MacroNotFoundError as exc:
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     return Response(content=content, media_type="text/plain")
 
 
@@ -365,7 +366,7 @@ def write_macro(
         try:
             service.write_file(name, content)
         except ValueError as exc:
-            raise_bad_request(str(exc))
+            raise BadRequestError(str(exc))
         # :meth:`FileService.write_file` returns ``None`` for
         # parity with the stdlib ``Path.write_text`` family; size
         # is computed via :meth:`safe_join` + ``stat``.
@@ -375,9 +376,9 @@ def write_macro(
     try:
         size = _macro_storage.write(name, content, kind=kind)
     except InvalidMacroNameError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     except InvalidMacroKindError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     return MacroWriteResponse(name=name, kind=kind, size=size)
 
 
@@ -411,20 +412,20 @@ def delete_macro(
         try:
             target = service.safe_join(name)
         except ValueError as exc:
-            raise_bad_request(str(exc))
+            raise BadRequestError(str(exc))
         if not target.exists():
-            raise_not_found(f"M-code not found: {name}")
+            raise NotFoundError(f"M-code not found: {name}")
         target.unlink()
         return Response(status_code=204)
 
     try:
         _macro_storage.delete(name, kind=kind)
     except InvalidMacroNameError as exc:
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     except InvalidMacroKindError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     except MacroNotFoundError as exc:
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     return Response(status_code=204)
 
 
@@ -480,9 +481,9 @@ def read_macro_content(
         try:
             target = service.safe_join(name)
         except ValueError as exc:
-            raise_bad_request(str(exc))
+            raise BadRequestError(str(exc))
         if not target.exists():
-            raise_not_found(f"M-code not found: {name}")
+            raise NotFoundError(f"M-code not found: {name}")
         text = target.read_text(encoding="utf-8")
         return MacroContentResponse(
             name=name,
@@ -494,11 +495,11 @@ def read_macro_content(
     try:
         text = _macro_storage.read(name, kind=kind)
     except InvalidMacroNameError as exc:
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     except InvalidMacroKindError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     except MacroNotFoundError as exc:
-        raise_not_found(str(exc))
+        raise NotFoundError(str(exc))
     return MacroContentResponse(
         name=name,
         kind=kind,
@@ -543,7 +544,7 @@ def write_macro_content(
         try:
             service.write_file(name, safe_content)
         except ValueError as exc:
-            raise_bad_request(str(exc))
+            raise BadRequestError(str(exc))
         target = service.safe_join(name)
         size = target.stat().st_size if target.exists() else 0
         return MacroContentResponse(
@@ -556,9 +557,9 @@ def write_macro_content(
     try:
         size = _macro_storage.write(name, safe_content, kind=kind)
     except InvalidMacroNameError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     except InvalidMacroKindError as exc:
-        raise_bad_request(str(exc))
+        raise BadRequestError(str(exc))
     return MacroContentResponse(
         name=name,
         kind=kind,

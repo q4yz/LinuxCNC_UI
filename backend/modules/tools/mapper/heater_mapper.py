@@ -3,8 +3,10 @@ from typing import Dict, Any, TYPE_CHECKING
 from dtos.HalPin import DynamicHalPin, StaticHalPin, UnconnectedHalPin
 from modules.tools.dtos.heater_dto import HeaterStateDTO, HeaterPins, HeaterSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
+from modules.tools.models.heater_models import HeaterStateResponse
+
 if TYPE_CHECKING:
-    from modules.tools.router import HeaterCommand, HeaterStateResponse
+    from modules.tools.router import HeaterCommand, HeaterCommandStateResponse
 
 
 class HeaterMapper:
@@ -43,5 +45,15 @@ class HeaterMapper:
             id=cmd.tool_id,
             target_temperature=cmd.target,
             enable=(cmd.target > 0.0)
+        )
+
+    @classmethod
+    def to_response(cls, dto: HeaterStateDTO) -> HeaterStateResponse:
+        return HeaterStateResponse(
+            tool_id=dto.id,
+            target=dto.target_temperature,
+            actual=dto.actual_temperature,
+            min_temp=dto.min_temp,
+            max_temp=dto.max_temp,
         )
 

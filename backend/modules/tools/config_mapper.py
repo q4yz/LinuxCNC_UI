@@ -31,17 +31,20 @@ def get_tool_type(tool_type: ToolType) -> List[Dict[str, Any]]:
     target_type = tool_type.value if isinstance(tool_type, ToolType) else tool_type
     return [tool for tool in get_tools()if tool.get("type") == target_type]
 
-def get_digital_spindle(tool_id: str):
+def get_digital_spindle(tool_id: str)-> Dict[str, Any]:
     return _get_tool(tool_id, get_tool_type(ToolType.SPINDLE_DIGITAL))
 
-def get_analog_spindle(tool_id: str):
+def get_analog_spindle(tool_id: str)-> Dict[str, Any]:
     return _get_tool(tool_id, get_tool_type(ToolType.SPINDLE_ANALOG))
 
-def get_extruder(tool_id: str):
+def get_extruder(tool_id: str)-> Dict[str, Any]:
     return _get_tool(tool_id, get_tool_type(ToolType.EXTRUDER))
 
-def get_heater(tool_id: str):
+def get_heater(tool_id: str) -> Dict[str, Any]:
     return _get_tool(tool_id, get_tool_type(ToolType.HEATED_BED))
+
+def get_all_heater()-> List[Dict[str, Any]]:
+    return get_tool_type(ToolType.EXTRUDER) + get_tool_type(ToolType.HEATED_BED)
 
 def _get_tool(tool_id: str, list: List[Dict[str, Any]]) -> Dict[str, Any]:
     for tool in list:

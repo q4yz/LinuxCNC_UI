@@ -72,7 +72,7 @@ class SpindleDigitalMapper():
         )
 
     @classmethod
-    def to_state_response(cls, dto: SpindleDigitalStateDTO) -> "SpindleDigitalStateResponse":
+    def to_response(cls, dto: SpindleDigitalStateDTO) -> "SpindleDigitalStateResponse":
         """Translates the internal State DTO to the HTTP Response Model."""
 
         # Consolidate hardware booleans into the UI string

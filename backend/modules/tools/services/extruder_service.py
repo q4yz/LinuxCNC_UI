@@ -44,8 +44,13 @@ class ExtruderService:
 
         actions_taken = []
 
-        heater_result = heater_service.set_heater(dto.heater)
-        actions_taken.append(heater_result)
+        # ``dto.heater`` is ``None`` when the caller chose
+        # ``heater_action="noop"`` — the move runs without touching
+        # the heater. ``set_heater`` still raises on out-of-range
+        # targets so the validation surface stays unchanged.
+        if dto.heater is not None:
+            heater_result = heater_service.set_heater(dto.heater)
+            actions_taken.append(heater_result)
 
         # 2. Extrusion Handling (Relative Distance)
         distance = float(dto.relative_distance)

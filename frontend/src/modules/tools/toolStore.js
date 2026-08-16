@@ -148,18 +148,37 @@ export const useToolStore = defineStore(STORE_ID, () => {
    * signed distance from its logarithmic slider so the store
    * stays free of UI magic numbers.
    *
+   * The backend's ``ExtruderCommand`` now carries a nested
+   * ``heater: HeaterCommand`` (mandatory for OpenAPI uniformity)
+   * plus a ``heater_action: 'set' | 'noop'`` discriminator. This
+   * store reads the current target straight off the tool row in
+   * the shared base-thread snapshot — the snapshot's runtime
+   * overlay already keeps ``tool.target`` populated for heating
+   * tools — and forwards it. When the heater is off
+   * (``target === 0``) the dispatch uses ``heater_action="noop"``
+   * so the extrude / retract does not implicitly re-enable the
+   * heater as a side effect. The ``target`` is sourced from the
+   * same snapshot the tool cards render — no extra round-trip.
+   *
    * @param {string} toolId
    * @param {"extrude"|"retract"} action
    * @param {number} distance Positive mm (sign applied server-side).
    * @param {number} speed Feed rate in mm/min.
    */
   async function sendExtruderCommand(toolId, action, distance, speed) {
+    const tool = (baseThread.tools || []).find((t) => t.id === toolId);
+    const currentTarget =
+      tool && typeof tool.target === "number" ? tool.target : 0;
+    const heaterAction = currentTarget > 0 ? "set" : "noop";
+
     try {
       await ModulesToolsService.controlExtruder({
         tool_id: toolId,
         action,
         distance,
         speed,
+        heater: { tool_id: toolId, target: currentTarget },
+        heater_action: heaterAction,
       });
       useConsoleStore().info(
         `${action} ${distance}mm at ${speed}mm/min`,

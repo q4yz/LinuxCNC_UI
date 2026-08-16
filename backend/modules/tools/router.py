@@ -28,6 +28,7 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -37,6 +38,10 @@ from modules.tools.dtos.digital_spindle_dto import DirectionStateType
 from modules.tools.mapper.digital_spindle_mapper import SpindleDigitalMapper
 from modules.tools.mapper.extruder_mapper import ExtruderMapper
 from modules.tools.mapper.heater_mapper import HeaterMapper
+from modules.tools.models.extruder_models import ExtruderCommand
+from modules.tools.models.heater_models import HeaterCommand, HeaterCommandStateResponse
+from modules.tools.models.spindel_digital_models import SpindleDigitalCommand, SpindleDigitalStateResponse
+from modules.tools.models.tool_models import ToolCommandResponse
 from modules.tools.services.extruder_service import get_extruder_service
 from modules.tools.services.heater_service import get_heater_service
 from modules.tools.services.spindle_digital_service import get_spindle_digital_service
@@ -44,60 +49,8 @@ from modules.tools.services.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.router")
 
-# ---------------------------------------------------------------------- #
-# Pydantic request models                                                 #
-# ---------------------------------------------------------------------- #
-
-class SpindleDigitalCommand(BaseModel):
-    tool_id: str = Field(..., min_length=1)
-    action: str = Field(..., description="'forward', 'backward', or 'stop'.")
-    speed: int = Field(..., ge=0, le=200_000)
-    override: float = Field(default=1.0, ge=0.0, le=2.0)
-    master_override: int = Field(default=0, ge=0, le=200_000)
-    master_override_enable: bool = Field(default=False)
 
 
-class HeaterCommand(BaseModel):
-    tool_id: str = Field(..., min_length=1)
-    target: float = Field(..., ge=0.0, le=400.0)
-
-
-class ExtruderCommand(BaseModel):
-    tool_id: str = Field(..., min_length=1)
-    action: str = Field(..., description="'extrude' or 'retract'.")
-    distance: float = Field(..., gt=0.0, le=1000.0)
-    speed: int = Field(..., gt=0, le=10_000)
-    heater: HeaterCommand
-
-
-class ToolCommandResponse(BaseModel):
-    status: str = Field(default="success")
-    command: str = Field(...)
-    tool_id: str = Field(...)
-
-
-class HeaterStateResponse(BaseModel):
-    status: str = Field(default="success")
-    tool_id: str = Field(...)
-    target: float = Field(...)
-    command: str = Field(...)
-
-
-class SpindleDigitalStateResponse(BaseModel):
-    id: str = Field(...)
-    target_rpm: float = Field(0.0)
-    actual_rpm: float = Field(0.0)
-    is_connected: bool = Field(False)
-    error_count: int = Field(0)
-    last_error: str = Field("")
-    spindle_at_speed: bool = Field(False)
-    min_rpm: float = Field(0.0)
-    max_rpm: float = Field(24000.0)
-    # The frontend-friendly string representation of the direction
-    state: str = Field(
-        default="idle",
-        description="'forward', 'backward', or 'idle'."
-    )
 
 tool_service = get_tools_service()
 spindle_digital_service = get_spindle_digital_service()
@@ -174,8 +127,8 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
 # ---------------------------------------------------------------------- #
 
 
-@router.post("/tools/{tool_id}/target", response_model=HeaterStateResponse, operation_id="setToolTarget")
-def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterStateResponse:
+@router.post("/tools/{tool_id}/target", response_model=HeaterCommandStateResponse, operation_id="setToolTarget")
+def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateResponse:
     """Set the target temperature for a heating tool."""
     if tool_id != cmd.tool_id:
         logger.debug("tool_id in body (%r) differs from URL (%r); URL wins", cmd.tool_id, tool_id)
@@ -184,7 +137,7 @@ def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterStateResponse:
 
     result = heater_service.set_heater(settings)
 
-    return HeaterStateResponse(
+    return HeaterCommandStateResponse(
         status="success",
         tool_id=tool_id,
         target=cmd.target,
@@ -205,6 +158,6 @@ __all__ = [
     "ExtruderCommand",
     "HeaterCommand",
     "ToolCommandResponse",
-    "HeaterStateResponse",
+    "HeaterCommandStateResponse",
     "SpindleDigitalStateResponse",
 ]

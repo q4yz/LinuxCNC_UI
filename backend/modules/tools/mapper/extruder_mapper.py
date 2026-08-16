@@ -6,6 +6,8 @@ from modules.tools.dtos.heater_dto import HeaterSettingsDTO
 
 from modules.tools.mapper.heater_mapper import HeaterMapper  # Adjust import path
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
+from modules.tools.models.extruder_models import ExtruderStateResponse
+
 if TYPE_CHECKING:
     from modules.tools.router import ExtruderCommand
 
@@ -37,10 +39,29 @@ class ExtruderMapper:
 
         distance = cmd.distance if cmd.action.lower() == "extrude" else -cmd.distance
 
-        heater_dto = HeaterMapper.from_command_to_settings_dto(cmd.heater)
+        # ``heater_action`` controls whether the heater gets
+        # dispatched at all. ``"set"`` keeps the legacy behaviour
+        # (the move also asserts the heater target). ``"noop"``
+        # leaves the heater alone so an extrude/retract does not
+        # implicitly toggle the heater back on. The field is
+        # non-nullable so a misconfigured caller is caught by
+        # Pydantic validation before the service layer runs.
+        heater_dto = (
+            HeaterMapper.from_command_to_settings_dto(cmd.heater)
+            if cmd.heater_action == "set"
+            else None
+        )
 
         return ExtruderSettingsDTO(
             id=cmd.tool_id,
             heater=heater_dto,
             relative_distance=distance
+        )
+
+    @classmethod
+    def to_response(cls, dto) -> ExtruderStateResponse:
+        return ExtruderStateResponse(
+            id=dto.id,
+            heater=HeaterMapper.to_response(dto.heater),
+            position=getattr(dto, "position", 0.0)
         )

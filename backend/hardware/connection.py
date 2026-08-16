@@ -290,6 +290,7 @@ from .hal_subscription_manager import (  # noqa: E402,F401
     HalSubscriptionManager,
     hal_manager,
 )
+from .linuxcnc_mock import apply_spindle_pin  # noqa: E402,F401
 
 __all__ = [
     "USE_MOCK",
@@ -309,4 +310,5 @@ __all__ = [
     "DeviceConfigMapper",
     "HalSubscriptionManager",
     "hal_manager",
+    "apply_spindle_pin",
 ]

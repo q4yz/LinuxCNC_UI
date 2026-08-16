@@ -1,7 +1,8 @@
 """Tests for the jog safety watchdog.
 
-The watchdog is the safety-critical component migrated into
-``modules/machine/jog_watchdog.py`` per issue #38. The two tests
+The watchdog is the safety-critical component that lives under
+``modules/axis/jog_watchdog.py`` after the OOP refactor moved jog
+handling out of the old monolithic machine module. The two tests
 below cover the two failure modes:
 
 * **test_jog_watchdog_halts_axis_within_600ms** — start a
@@ -19,11 +20,12 @@ Implementation strategy
 
 The watchdog's ``_loop`` calls ``execute_sync_cmd("jog", ...)``
 to halt a runaway axis. We monkey-patch the function reference in
-the watchdog module (``backend.modules.machine.jog``) so each
-test can spy on the call. We do **not** need to mock the
-hardware layer — the ``hardware.execute_sync_cmd`` is reached
-through a function attribute lookup at call time, so swapping the
-``hardware.jog`` reference takes effect immediately.
+the watchdog module (``backend.modules.axis.jog_service`` /
+``backend.modules.axis.jog_watchdog``) so each test can spy on the
+call. We do **not** need to mock the hardware layer — the
+``hardware.execute_sync_cmd`` is reached through a function
+attribute lookup at call time, so swapping the reference takes
+effect immediately.
 """
 from __future__ import annotations
 

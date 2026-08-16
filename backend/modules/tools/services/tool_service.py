@@ -13,6 +13,7 @@ from modules.tools.constants import (
     M4_BACKWARD,
     M5_STOP,
 )
+from modules.tools.dtos import SpindleDigitalStateDTO, SpindleAnalogStateDTO, HeaterStateDTO, ExtruderStateDTO
 from modules.tools.dtos.digital_spindle_dto import SpindleDigitalStateDTO
 from modules.tools.factory.tool_state_factory import ToolStateFactory
 from modules.tools.factory.tool_halpin_factory import ToolHalPinFactory
@@ -29,7 +30,7 @@ class ToolsService:
                 out.append(pin_map)
         return out
 
-    def get_states(self) -> List[Dict[str, Any]]:
+    def get_states(self) -> list[SpindleDigitalStateDTO | SpindleAnalogStateDTO | HeaterStateDTO | ExtruderStateDTO]:
         return [ToolStateFactory.create(halpin) for halpin in self.get_halpins()]
 
 _tools_service: Optional[ToolsService] = None

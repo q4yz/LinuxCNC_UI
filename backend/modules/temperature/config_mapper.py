@@ -46,23 +46,24 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 from services.hardware_config_service import HardwareConfigService
 
 logger = logging.getLogger("backend.modules.temperature.hardware_loader")
 
-def get_temperature_sensors(active_path: Path | None = None) -> List[str]:
+def get_temperature_sensors(active_path: Path | None = None) -> List[Dict[str, Any]]:
     config_service = HardwareConfigService(active_path)
     raw_sensors = config_service.get_temperature_sensors()
 
-    names: List[str] = []
+    out: List[Dict[str, Any]] = []
     for entry in raw_sensors:
-        if isinstance(entry, dict):
-            name = entry.get("id")
-            if isinstance(name, str) and name:
-                names.append(name)
-    return names
+        if not isinstance(entry, dict):
+            continue
+        if not isinstance(entry.get("id"), str) or not entry["id"]:
+            continue
+        out.append(entry)
+    return out
 
 
 __all__ = ["get_temperature_sensors"]
