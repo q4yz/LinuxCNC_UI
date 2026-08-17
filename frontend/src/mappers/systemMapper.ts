@@ -1,6 +1,6 @@
 // System version mapper.
 
-import { SystemVersion } from "../entities/system/SystemVersion";
+import { SystemVersion } from "../entities/system";
 
 /**
  * @param {object|null|undefined} wire

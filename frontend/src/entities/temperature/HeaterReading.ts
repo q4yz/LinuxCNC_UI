@@ -1,3 +1,7 @@
+import { EntityId } from "../common/EntityId";
+import { Temperature } from "../common/Temperature";
+import { TemperatureUnit } from "../common/Unit";
+
 export interface HeaterReadingParams {
   id: string | EntityId;
   actualCelsius: number;

@@ -4,10 +4,10 @@
 // temperature module's display unit toggle (the frontend converts
 // °C ↔ K at the edge) and the chart Y-axis label.
 
-export const TemperatureUnit = Object.freeze({
-  CELSIUS: "celsius",
-  KELVIN: "kelvin",
-});
+export enum TemperatureUnit {
+  CELSIUS = "C",
+  KELVIN = "K",
+}
 
 export const TEMPERATURE_UNITS = Object.freeze(
   Object.values(TemperatureUnit),

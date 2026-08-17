@@ -1,35 +1,34 @@
-<script setup>
-import {computed, onBeforeUnmount, ref, watch} from "vue";
-import {useToolStore} from "../toolStore";
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useToolStore } from "../toolStore";
+import type { SpindleState } from "../../entities/tools/SpindleState";
 
-const props = defineProps({
-  tool: {type: Object, required: true},
-});
+const props = defineProps<{
+  tool: SpindleState;
+}>();
 
 const toolStore = useToolStore();
 
 // Local working state
-const speedPercentage = ref(100);
-const masterOverride = ref(false);
-const masterOverrideSpeed = ref(props.tool.min_rpm ?? 0);
+const speedPercentage = ref<number>(100);
+const masterOverride = ref<boolean>(false);
+const masterOverrideSpeed = ref<number>(props.tool.minRpm ?? 0);
+
+type SpindleRunningState = "idle" | "forward" | "backward" | "stop";
 
 // Tracks the operator's last button press so the slider-drag
-// debounce can fire the right action ("forward" / "reverse" /
-// "idle"). Mirrors the backend ``_spindle_state[tool_id]`` value
-// but is kept locally because the base-thread snapshot does not
-// surface the service-tracked state. Single source of truth for
+// debounce can fire the right action. Single source of truth for
 // the card's "is the spindle running?" guard.
-const runningState = ref("idle");
+const runningState = ref<SpindleRunningState>("idle");
 
 // Debounce handle for the slider-drag dispatch. Cleared on every
-// tick and on unmount so a navigated-away card never fires a stale
-// POST.
-let postTimer = null;
+// tick and on unmount so a navigated-away card never fires a stale POST.
+let postTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Computed bounds and values
-const minRpm = computed(() => props.tool.min_rpm ?? 0);
-const maxRpm = computed(() => props.tool.max_rpm ?? 24000);
-const actualRpm = computed(() => props.tool.actual_rpm ?? 0);
+// Computed bounds and values matching the strict SpindleState fields
+const minRpm = computed(() => props.tool.minRpm ?? 0);
+const maxRpm = computed(() => props.tool.maxRpm ?? 24000);
+const actualRpm = computed(() => props.tool.actualRpm ?? 0);
 
 // Calculate the percentage of the minimum RPM relative to max for the gradient stops
 const minPercent = computed(() => {
@@ -38,7 +37,7 @@ const minPercent = computed(() => {
 });
 
 // Dynamic gradient background for the RPM gauge
-// Red below min_rpm, Orange in the middle, Green near the top (last 20%)
+// Red below minRpm, Orange in the middle, Green near the top (last 20%)
 const gaugeGradient = computed(() => {
   return {
     background: `linear-gradient(to top,
@@ -56,7 +55,7 @@ const gaugeCoverHeight = computed(() => {
 });
 
 // Issue commands to the spindle on button click
-function handleSpindle(action) {
+function handleSpindle(action: SpindleRunningState) {
   if (action === "stop") {
     runningState.value = "idle";
     toolStore.sendSpindleCommand(
@@ -71,7 +70,7 @@ function handleSpindle(action) {
   }
 
   // Determine the speed based on override modes
-  let speedToSet = props.tool.set_speed ?? 0;
+  let speedToSet = props.tool.setSpeed ?? 0;
 
   if (masterOverride.value) {
     speedToSet = masterOverrideSpeed.value;
@@ -83,10 +82,11 @@ function handleSpindle(action) {
   // Cap to min/max safety boundaries
   speedToSet = Math.min(maxRpm.value, Math.max(minRpm.value, speedToSet));
 
-  runningState.value = action;  // "forward" or "reverse"
+  runningState.value = action;
+
   toolStore.sendSpindleCommand(
     props.tool.id,
-    action,
+    action as "forward" | "backward",
     speedToSet,
     masterOverrideSpeed.value,
     masterOverride.value,
@@ -94,25 +94,20 @@ function handleSpindle(action) {
   );
 }
 
-// Debounced slider-drag dispatch. When the operator drags either
-// slider, the watcher fires on every tick; the timer resets until
-// the operator has been idle for 1 second, then a single coherent
-// POST is sent — the same shape as a Forward/Reverse button press,
-// just driven by the slider's final value instead of the button
-// click. The dispatch is suppressed when the spindle is idle (per
-// the "only when running" rule); the local ref still updates so
-// the next Forward press picks up the new value.
+// Debounced slider-drag dispatch.
 watch([masterOverrideSpeed, speedPercentage], () => {
-  if (runningState.value === "idle") return;
+  if (runningState.value === "idle" || runningState.value === "stop") return;
+
   if (postTimer) clearTimeout(postTimer);
   postTimer = setTimeout(() => {
     postTimer = null;
     const action = runningState.value;
+
     if (masterOverride.value) {
       // RPM slider drag: master_override bypass, override pin left alone.
       toolStore.sendSpindleCommand(
         props.tool.id,
-        action,
+        action as "forward" | "backward",
         0,
         masterOverrideSpeed.value,
         true,
@@ -122,7 +117,7 @@ watch([masterOverrideSpeed, speedPercentage], () => {
       // Percentage slider drag: relative override scale.
       toolStore.sendSpindleCommand(
         props.tool.id,
-        action,
+        action as "forward" | "backward",
         0,
         0,
         false,
@@ -140,7 +135,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full">
 
-    <!-- LEFT COLUMN: Controls (flex-1 makes it maximize space) -->
+    <!-- LEFT COLUMN: Controls -->
     <div class="flex-1 flex flex-col gap-4">
 
       <!-- Auto Feed/Speed Section -->
@@ -182,7 +177,7 @@ onBeforeUnmount(() => {
           </label>
         </div>
 
-        <div class="flex flex-col gap-2" :class="{ 'opacity-40  grayscale': !masterOverride }">
+        <div class="flex flex-col gap-2" :class="{ 'opacity-40 grayscale': !masterOverride }">
           <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
             <span>{{ minRpm }}</span>
             <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ masterOverrideSpeed }} RPM</span>
@@ -230,17 +225,17 @@ onBeforeUnmount(() => {
           <span class="text-gray-400">Connected:</span>
           <div
               class="w-2.5 h-2.5 rounded-full"
-              :class="tool.is_connected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
+              :class="tool.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
           ></div>
-          <span :class="tool.is_connected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
-              {{ tool.is_connected ? "YES" : "NO" }}
+          <span :class="tool.isConnected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
+              {{ tool.isConnected ? "YES" : "NO" }}
             </span>
         </div>
 
         <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800">
           <span class="text-gray-400">Errors:</span>
-          <span :class="tool.error_count > 0 ? 'text-red-400' : 'text-amber-400'" class="font-bold text-sm">
-              {{ tool.error_count ?? 0 }}
+          <span :class="tool.errorCount > 0 ? 'text-red-400' : 'text-amber-400'" class="font-bold text-sm">
+              {{ tool.errorCount }}
             </span>
         </div>
       </div>
@@ -272,8 +267,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-
-
 /* Base customizer for range thumb (horizontal) to match dashboard aesthetic */
 input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb {
   -webkit-appearance: none;

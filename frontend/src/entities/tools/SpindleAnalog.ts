@@ -1,7 +1,7 @@
 export class SpindleAnalog {
   /** Stable discriminator for v-if dispatch in tool cards. */
   static readonly type = "spindle_analog" as const;
-
+  readonly type = SpindleAnalog.type;
   readonly id: string;
   readonly minV: number;
   readonly maxV: number;

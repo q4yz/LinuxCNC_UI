@@ -1,4 +1,5 @@
-import { HeaterReading, SensorReading } from "./Reading";
+import { HeaterReading } from "./HeaterReading";
+import { SensorReading } from "./SensorReading";
 
 export type AnyReading = HeaterReading | SensorReading;
 

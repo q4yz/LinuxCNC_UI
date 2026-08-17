@@ -12,7 +12,7 @@ class MockComponent:
         """Set a pin value. Return True if this component handled it."""
         return False
 
-    def execute_gcode(self, gcode: str) -> bool:
+    def execute_mdi(self, gcode: str) -> bool:
         """Parse G-code (like M3, G1 E). Return True if handled."""
         return False
 

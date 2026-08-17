@@ -6,22 +6,22 @@ class CommandMock:
     """Mimics the linuxcnc.command() object."""
 
     def __init__(self, state_mock, hal_mock):
-        self._state = state_mock
+        self._state_mock = state_mock
         self._hal_mock = hal_mock
 
     def state(self, new_state):
         """Mimics sending a state command (like turning the machine on)."""
-        if new_state == self._state.STATE_ESTOP:
-            self._state.trigger_estop()
-        elif new_state == self._state.STATE_ESTOP_RESET:
-            self._state.reset_estop()
-        elif new_state == self._state.STATE_ON:
-            self._state.turn_on()
-        elif new_state == self._state.STATE_OFF:
-            self._state.turn_off()
+        if new_state == self._state_mock.STATE_ESTOP:
+            self._state_mock.trigger_estop()
+        elif new_state == self._state_mock.STATE_ESTOP_RESET:
+            self._state_mock.reset_estop()
+        elif new_state == self._state_mock.STATE_ON:
+            self._state_mock.turn_on()
+        elif new_state == self._state_mock.STATE_OFF:
+            self._state_mock.turn_off()
 
     def abort(self):
-        self._state.reset_program_state()
+        self._state_mock.reset_program_state()
 
     def jog(self, command: int, joint_flag: bool, joint_or_axis: int, velocity: float = 0.0, distance: float = 0.0):
         """Mimics linuxcnc.command().jog()
@@ -39,7 +39,7 @@ class CommandMock:
         )
 
         # Route the command directly to the Trajectory Planner (The Brain)
-        self._state.jog_axis(command, joint_or_axis, velocity, distance)
+        self._state_mock.jog_axis(command, joint_or_axis, velocity, distance)
 
         return 1
 
@@ -60,7 +60,7 @@ class CommandMock:
 
         logger.debug(f"Mock mode called with args: {args}. Setting mode to: {target_mode}")
 
-        self._state.set_task_mode(target_mode)
+        self._state_mock.set_task_mode(target_mode)
 
         return 1
 
@@ -90,6 +90,23 @@ class CommandMock:
         # Example: self._state.hal_mock.set_p(args[0], args[1])
 
         return 1
+
+    def mdi(self, string: str):
+        """Mimics linuxcnc.command().mdi()
+
+        Sends an MDI (Manual Data Input) command string to be executed
+        by the interpreter (e.g., 'G0 X0 Y0' or 'M3 S1000').
+        """
+        logger.debug("Mock mdi called with string: %s", string)
+
+
+        success = self._hal_mock.execute_mdi(string) or self._state_mock.execute_mdi(string)
+
+        if not success:
+            pass
+            #raise ValueError("Mock mdi failed")
+
+        return "success"
 
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!
 

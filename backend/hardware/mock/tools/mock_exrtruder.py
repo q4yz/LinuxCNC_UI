@@ -30,7 +30,7 @@ class MockExtruder(MockComponent):
         # Tick the hidden heater's physics loop so it ramps up/down
         self._heater.update(hal, nml, delta_time)
 
-    def execute_gcode(self, gcode: str) -> bool:
+    def execute_mdi(self, gcode: str) -> bool:
         """Parses G1 E... and handles G90/G91 modal states."""
         cmd = gcode.upper()
         parts = cmd.split()

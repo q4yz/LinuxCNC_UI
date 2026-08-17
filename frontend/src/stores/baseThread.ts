@@ -9,14 +9,15 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, computed } from "vue";
 
-import { BaseThreadService } from "../../facades/BaseThreadService";
+import { BaseThreadService } from "../facades/baseThreadFacade";
 
 // Entity imports for state typing and re-exporting
 import { ReadingSet } from "../entities/temperature/ReadingSet";
 import { ToolList } from "../entities/tools/ToolList";
 import { ProgramProgress } from "../entities/progress/ProgramProgress";
-import { HeaterReading, SensorReading } from "../entities/temperature/Reading";
-import { SpindleState } from "../entities/tools/SpindleState";
+import { HeaterReading } from "../entities/temperature/HeaterReading";
+import { SensorReading } from "../entities/temperature/SensorReading";
+import { SpindleDigital as SpindleState } from "../entities/tools/SpindleDigital";
 import { Extruder } from "../entities/tools/Extruder";
 
 // 1 Hz is the documented contract.

@@ -47,7 +47,7 @@ class MockSpindleDigital(MockComponent):
             return True
         return False
 
-    def execute_gcode(self, gcode: str) -> bool:
+    def execute_mdi(self, gcode: str) -> bool:
         """Parse SpindleDigital M-codes and set the internal target states."""
         cmd = gcode.upper()
 

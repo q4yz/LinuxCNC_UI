@@ -1,4 +1,4 @@
-import { Snapshot } from "../entities/base/Snapshot";
+import { Snapshot } from "../entities/baseThread/Snapshot";
 import { toProgramProgress } from "./progressMapper";
 import { toReadingSet } from "./temperatureMapper";
 import { toToolList } from "./toolsMapper";

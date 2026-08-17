@@ -1,17 +1,20 @@
-
-
-
-
 import type {
-  SpindleDigitalStateResponse,
-  HeaterStateResponse,
-  ExtruderStateResponse,
-  SpindleDigitalCommand,
   ExtruderCommand,
+  ExtruderStateResponse,
   HeaterCommand,
+  HeaterStateResponse,
+  SpindleDigitalCommand,
+  SpindleDigitalStateResponse,
 } from "../../generated/api";
-import {SpindleDigitalControlRequest} from "../entities/tools/SpindleDigital";
-import {HeaterControlRequest} from "../entities/tools/Heater";
+import {
+  SpindleDigital as SpindleState,
+  SpindleDigitalControlRequest,
+  type SpindleDirection
+} from "../entities/tools/SpindleDigital";
+import {HeaterControlRequest, HeaterState} from "../entities/tools/Heater";
+import {Extruder, ExtruderControlRequest} from "../entities/tools/Extruder";
+import {SpindleAnalog as SpindleAnalogState} from "../entities/tools/SpindleAnalog";
+import {ToolItem, ToolList} from "../entities/tools/ToolList";
 
 // Analog fallback if your backend ever adds an analog type
 export interface AnalogSpindleWire {
@@ -123,19 +126,13 @@ export function toSpindleCommand(params: SpindleDigitalControlRequest): SpindleD
 }
 
 export function toExtruderCommand(params: ExtruderControlRequest): ExtruderCommand {
-  const cmd: ExtruderCommand = {
+  return {
     tool_id: params.toolId,
     action: params.action,
     distance: params.distance,
     speed: params.speed,
     heater_action: params.heaterAction ?? "noop",
   };
-  
-  if (params.heaterTarget !== undefined) {
-    cmd.heater = { tool_id: params.toolId, target: params.heaterTarget };
-  }
-  
-  return cmd;
 }
 
 export function toHeaterCommand(params: HeaterControlRequest): HeaterCommand {

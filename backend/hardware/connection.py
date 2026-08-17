@@ -190,10 +190,7 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
     """Dispatch ``cmd_name`` to the LinuxCNC command channel."""
     cmd = _cmd_ch.get()
     if cmd is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
-        )
+        raise HTTPException(status_code=503, detail="LinuxCNC is not running. Start LinuxCNC and retry.",)
     try:
         func = getattr(cmd, cmd_name)
         func(*args)
@@ -209,9 +206,7 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
         else:
             return {"status": "success"}
     except AttributeError:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Command '{cmd_name}' not implemented in hardware interface.",
+        raise HTTPException( status_code=500, detail=f"Command '{cmd_name}' not implemented in hardware interface.",
         )
     except HTTPException:
         raise

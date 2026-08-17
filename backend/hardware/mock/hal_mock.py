@@ -77,4 +77,9 @@ class HalMock:
             for component in self._components:
                 component.update(hal=self, nml=self.nml, delta_time=delta_time)
 
+    def execute_mdi(self, cmd: str):
+        with self.lock:
+            for component in self._components:
+                component.execute_mdi(cmd)
+
 

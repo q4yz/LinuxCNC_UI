@@ -1,6 +1,5 @@
-// Alias the generated client to avoid naming collisions with our UI-facing service
 import { BaseThreadService as ApiBaseThreadService } from "../../generated/api/services/BaseThreadService";
-import { Snapshot } from "../entities/base/Snapshot";
+import { Snapshot } from "../entities/baseThread/Snapshot";
 import { toSnapshot } from "../mappers/baseThreadMapper";
 
 export class BaseThreadService {

@@ -1,10 +1,9 @@
-import { HeaterReading, SensorReading } from "../entities/temperature/Reading";
+import { HeaterReading } from "../entities/temperature";
+import { SensorReading } from "../entities/temperature";
 import { ReadingSet, type AnyReading } from "../entities/temperature/ReadingSet";
+import {HeaterStateResponse, TemperatureStateResponse} from "../../generated/api";
 
-import type {
-  HeaterStateResponse,
-  TemperatureStateResponse,
-} from "../../generated/api";
+
 
 // The union of valid temperature wire shapes
 export type AnyTemperatureWire = HeaterStateResponse | TemperatureStateResponse;

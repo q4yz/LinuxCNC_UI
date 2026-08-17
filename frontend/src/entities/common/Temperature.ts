@@ -6,7 +6,7 @@
 // the class is not frozen to keep the getter ergonomic, but never
 // mutate ``_celsius`` from outside.
 
-import { TemperatureUnit } from "./Unit";
+import { TemperatureUnit, isTemperatureUnit } from "./Unit";
 
 const KELVIN_OFFSET = 273.15;
 

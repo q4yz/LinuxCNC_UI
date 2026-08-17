@@ -236,3 +236,6 @@ class StateMachineMock:
             #     else:
             #         self.interp_state = self.INTERP_IDLE
             #         logger.info(f"Program finished execution: '{self.file}'")
+
+    def execute_mdi(self, cmd: str):
+        pass

@@ -1,7 +1,12 @@
 
 
+import { SpindleDigital as SpindleState } from "./SpindleDigital";
+import { SpindleAnalog as SpindleAnalogState } from "./SpindleAnalog";
+import { Extruder } from "./Extruder";
+import { HeaterState } from "./Heater";
+
 export type AnySpindle = SpindleState | SpindleAnalogState;
-export type ToolItem = AnySpindle | Extruder | HeaterState;
+export type ToolItem = (AnySpindle | Extruder | HeaterState) & { type: string , id: string };
 
 export class ToolList {
   private readonly _byId: Map<string, ToolItem> = new Map();

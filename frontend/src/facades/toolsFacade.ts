@@ -83,10 +83,7 @@ export class ToolsService {
   static async setTarget(request: HeaterControlRequest): Promise<CommandResult> {
     const cmd = toHeaterCommand(request);
     try {
-      const response = await ModulesToolsService.setToolTarget({
-        toolId: request.toolId,
-        requestBody: cmd,
-      });
+      const response = await ModulesToolsService.setToolTarget(request.toolId, cmd,);
       return CommandResult.success({
         commandId: response && (response as any).tool_id ? (response as any).tool_id : request.toolId,
         message: response && (response as any).command ? (response as any).command : "ok",
@@ -99,3 +96,60 @@ export class ToolsService {
     }
   }
 }
+
+/**
+ * Legacy positional-API wrapper.
+ *
+ * `toolStore.ts` (and other pre-OOP call sites) still calls the
+ * facade with positional arguments. `ToolsService` takes request
+ * objects now, so this wrapper adapts the old call sites to the
+ * new static API without duplicating dispatch logic.
+ */
+export const toolsFacade = {
+  async controlSpindle(
+    toolId: string,
+    action: string,
+    speed: number,
+    masterOverride: number = 0,
+    masterOverrideEnable: boolean = false,
+    override: number = 1.0,
+  ): Promise<CommandResult> {
+    return ToolsService.controlSpindle(
+      new SpindleDigitalControlRequest({
+        toolId,
+        action,
+        speed,
+        masterOverride,
+        masterOverrideEnable,
+        override,
+      }),
+    );
+  },
+
+  async controlExtruder(
+    toolId: string,
+    action: string,
+    distance: number,
+    speed: number,
+    heaterTarget?: number,
+    heaterAction: string = "noop",
+  ): Promise<CommandResult> {
+    return ToolsService.controlExtruder(
+      new ExtruderControlRequest({
+        toolId,
+        action,
+        distance,
+        speed,
+        heater:
+          heaterTarget !== undefined
+            ? { tool_id: toolId, target: heaterTarget }
+            : null,
+        heaterAction,
+      }),
+    );
+  },
+
+  async setTarget(toolId: string, target: number): Promise<CommandResult> {
+    return ToolsService.setTarget(new HeaterControlRequest({ toolId, target }));
+  },
+};

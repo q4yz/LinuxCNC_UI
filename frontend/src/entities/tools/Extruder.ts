@@ -1,8 +1,9 @@
+import type { HeaterCommand, ExtruderCommand } from "../../../generated/api";
 import { HeaterState } from "./Heater";
 
 export class Extruder {
   static readonly type = "extruder" as const;
-
+  readonly type = Extruder.type;
   readonly id: string;
   readonly position: number;
   readonly heater: HeaterState | null;
@@ -28,6 +29,7 @@ export type ExtruderAction = "extrude" | "retract";
 export type HeaterAction = "set" | "noop";
 
 export class ExtruderControlRequest {
+  static readonly type = "extruder" as const;
   readonly toolId: string;
   readonly action: ExtruderAction;
   readonly distance: number;

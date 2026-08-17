@@ -1,52 +1,33 @@
-// Tools module Pinia store. Consumes the operator-facing tool
-// list from the shared base-thread snapshot
-// (``stores/baseThread.js``) — the base-thread store owns the 1 Hz
-// REST round-trip so the dashboard only issues one HTTP request
-// per second for every slow stream (program progress, temperature
-// sensors, tool list).
-//
-// All write actions (spindle / extruder / tool-target) go through
-// the ``toolsFacade``; the store never hand-rolls ``fetch`` calls
-// and never imports the generated OpenAPI client. Errors are
-// routed through ``describeError`` so the console store sees the
-// same envelope shape as every other module.
+import {ToolsService} from "../../facades/toolsFacade";
+import {useConsoleStore} from "../../stores/console";
+import {Extruder} from "../../entities/tools";
+import {ExtruderControlRequest} from "../../entities/tools/Extruder";
+import {SpindleDigitalControlRequest} from "../../entities/tools/SpindleDigital";
+import {HeaterControlRequest} from "../../entities/tools/Heater";
+import {computed, onScopeDispose, ref, watch} from "vue";
+import {defineStore, storeToRefs} from "pinia";
+import {manifest} from "./index";
+import useBaseThreadStore from "../../stores/baseThread";
 
-import { defineStore, storeToRefs } from "pinia";
-import { computed, onScopeDispose, ref, watch } from "vue";
-
-import { describeError } from "../../core/error-format";
-import { useBaseThreadStore } from "../../stores/baseThread";
-import { useConsoleStore } from "../../stores/console";
-import { toolsFacade } from "../../facades/toolsFacade";
-import manifest from "./manifest";
-
-// ``module_`` prefix prevents collisions with legacy top-level
-// stores.
 const STORE_ID = `module_${manifest.id}`;
 
 export const useToolStore = defineStore(STORE_ID, () => {
   // --- selection state (store-owned) ------------------------------ //
-  const selectedToolId = ref(/** @type {string | null} */ (null));
-
-  let stopToolsWatch = null;
+  const selectedToolId = ref<string | null>(null);
 
   // --- base-thread consumer -------------------------------------- //
   const baseThread = useBaseThreadStore();
-  // Legacy ``tools`` array (kept for the migration window) AND
-  // the typed ``toolList: ToolList``. Consumers migrate one at a
-  // time.
+
+  // Expose legacy `tools` for the migration window, but use 
+  // the typed `toolList` for all new logic.
   const { tools, toolList } = storeToRefs(baseThread);
 
   const selectedTool = computed(() => {
-    if (!selectedToolId.value) return null;
-    if (toolList.value && typeof toolList.value.get === "function") {
-      return toolList.value.get(selectedToolId.value) || null;
-    }
-    const list = baseThread.tools || [];
-    return list.find((t) => t.id === selectedToolId.value) || null;
+    if (!selectedToolId.value || !toolList.value) return null;
+    return toolList.value.get(selectedToolId.value) || null;
   });
 
-  function setSelectedToolId(id) {
+  function setSelectedToolId(id: string) {
     selectedToolId.value = id;
   }
 
@@ -54,61 +35,71 @@ export const useToolStore = defineStore(STORE_ID, () => {
     await baseThread.refresh();
   }
 
-  // --- actions (all via toolsFacade) ------------------------------- //
+  // --- actions (all via ToolsService) ------------------------------ //
 
   /**
    * Send a spindle command.
+   * (Signature kept flat to prevent breaking legacy UI components)
    */
   async function sendSpindleCommand(
-    toolId,
-    action,
-    speed,
-    masterOverride = 0,
-    masterOverrideEnable = false,
-    override = 1.0,
+      toolId: string,
+      action: "forward" | "backward" | "stop",
+      speed: number,
+      masterOverride = 0,
+      masterOverrideEnable = false,
+      override = 1.0,
   ) {
-    const result = await toolsFacade.controlSpindle(
+    const request: SpindleDigitalControlRequest = {
       toolId,
       action,
       speed,
       masterOverride,
       masterOverrideEnable,
       override,
-    );
-    if (result.failed) {
-      useConsoleStore().error(
-        `Spindle command failed: ${describeError(result.failureReason)}`,
-      );
+    };
+
+    const result = await ToolsService.controlSpindle(request);
+
+    if (!result.success) {
+      useConsoleStore().error(`Spindle command failed: ${result.message}`);
     }
     return result;
   }
 
   /**
    * Send an extrude / retract command. Reads the current target
-   * off the snapshot to avoid an extra round-trip.
+   * off the strictly typed snapshot to avoid an extra round-trip.
    */
-  async function sendExtruderCommand(toolId, action, distance, speed) {
-    const tool = (baseThread.tools || []).find((t) => t.id === toolId);
-    const currentTarget =
-      tool && typeof tool.target === "number" ? tool.target : 0;
+  async function sendExtruderCommand(
+      toolId: string,
+      action: "extrude" | "retract",
+      distance: number,
+      speed: number
+  ) {
+    const tool = toolList.value?.get(toolId);
+
+    // Safely extract the target using our domain classes! No more guessing wire shapes.
+    const currentTarget: number = (tool instanceof Extruder && tool.heater)
+        ? tool.heater.targetCelsius
+        : 0;
+
     const heaterAction = currentTarget > 0 ? "set" : "noop";
 
-    const result = await toolsFacade.controlExtruder(
+    const request: ExtruderControlRequest = {
       toolId,
       action,
       distance,
       speed,
-      currentTarget,
+      heater: new HeaterControlRequest({toolId : toolId, target : currentTarget}),
       heaterAction,
-    );
-    if (result.failed) {
-      useConsoleStore().error(
-        `Extruder command failed: ${describeError(result.failureReason)}`,
-      );
+    };
+
+    const result = await ToolsService.controlExtruder(request);
+
+    if (!result.success) {
+      useConsoleStore().error(`Extruder command failed: ${result.message}`);
     } else {
-      useConsoleStore().info(
-        `${action} ${distance}mm at ${speed}mm/min`,
-      );
+      useConsoleStore().info(`${action} ${distance}mm at ${speed}mm/min`);
     }
     return result;
   }
@@ -116,32 +107,30 @@ export const useToolStore = defineStore(STORE_ID, () => {
   /**
    * Set the target temperature for a heating tool.
    */
-  async function sendToolTarget(toolId, target) {
-    const result = await toolsFacade.setTarget(toolId, target);
-    if (result.failed) {
-      useConsoleStore().error(
-        `Tool target failed: ${describeError(result.failureReason)}`,
-      );
+  async function sendToolTarget(toolId: string, target: number) {
+    const request: HeaterControlRequest = new HeaterControlRequest( {toolId, target} );
+    const result = await ToolsService.setTarget(request);
+
+    if (!result.success) {
+      useConsoleStore().error(`Tool target failed: ${result.message}`);
     }
     return result;
   }
 
   // Auto-pick the first tool when none is selected.
-  stopToolsWatch = watch(
-    () => baseThread.tools,
-    (next) => {
-      if (!selectedToolId.value && Array.isArray(next) && next.length > 0) {
-        selectedToolId.value = next[0].id;
-      }
-    },
-    { immediate: true, deep: true },
+  // Watching `ids()` is much faster and safer than deep-watching an array of objects.
+  const stopToolsWatch = watch(
+      () => toolList.value?.ids(),
+      (ids) => {
+        if (!selectedToolId.value && ids && ids.length > 0) {
+          selectedToolId.value = ids[0];
+        }
+      },
+      { immediate: true }
   );
 
   onScopeDispose(() => {
-    if (stopToolsWatch) {
-      stopToolsWatch();
-      stopToolsWatch = null;
-    }
+    stopToolsWatch();
   });
 
   // Public surface.
@@ -159,7 +148,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
 });
 
 /**
- * Convenience wrapper around ``storeToRefs`` so callers can
+ * Convenience wrapper around `storeToRefs` so callers can
  * destructure the reactive state without losing reactivity.
  */
 export function useToolRefs() {

@@ -7,7 +7,7 @@
 // origin on import. Side-effecting the import once from the app entry-point is
 // sufficient; service classes read `OpenAPI` lazily at request time.
 
-import { OpenAPI } from '../../generated/api/core/OpenAPI';
+import { OpenAPI } from '../../generated/api';
 
 const configuredBase = (() => {
   if (typeof window === 'undefined') {

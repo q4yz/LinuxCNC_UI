@@ -3,7 +3,7 @@ import {ExtruderControlRequest} from "./Extruder";
 export class HeaterState {
   /** Stable discriminator for v-if dispatch in tool cards. */
   static readonly type = "heater" as const;
-
+  readonly type = HeaterState.type;
   readonly id: string;
   readonly targetCelsius: number;
   readonly actualCelsius: number;
