@@ -23,8 +23,11 @@ class ExtruderSettingsDTO:
     ``heater`` is optional: ``None`` means the caller chose
     ``heater_action="noop"`` and the dispatch must skip the heater
     target write. A non-None value drives the heater to the new
-    target before the move.
+    target before the move. ``speed`` (feed-rate, mm/minute) is
+    embedded in the G-code string the service dispatches so the
+    caller doesn't have to drive a second pin.
     """
     id: str
     heater: Optional[HeaterSettingsDTO]
     relative_distance: float = 0.0
+    speed: int = 0

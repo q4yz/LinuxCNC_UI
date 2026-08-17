@@ -1,11 +1,15 @@
-"""Tests for ``backend.modules.temperature.hardware_loader``."""
+"""Tests for the hardware config loader.
 
+The loader lives in :mod:`services.hardware_config_service` and is
+re-exported through :mod:`modules.temperature.config_mapper` as
+:func:`get_temperature_sensors`. The helper resolves the canonical
+``machine_config/active/hardware.json`` path (overridable via
+``active_path``) and returns a list of normalised sensor dicts.
+"""
 from __future__ import annotations
 
 import json
 from pathlib import Path
-
-import pytest
 
 from modules.temperature.config_mapper import get_temperature_sensors
 
@@ -15,11 +19,11 @@ from modules.temperature.config_mapper import get_temperature_sensors
 # ---------------------------------------------------------------------- #
 
 
-def _write_hardware_json(active_dir: Path, payload: dict) -> Path:
-    """Write a ``hardware.json`` into the active dir and return its path."""
-    target = active_dir / "hardware.json"
-    target.write_text(json.dumps(payload), encoding="utf-8")
-    return target
+def _write_hardware_json(path: Path, payload: dict) -> Path:
+    """Write a ``hardware.json`` at ``path`` and return the file path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def _v2_payload() -> dict:
@@ -92,19 +96,19 @@ class TestV2Model:
     def test_returns_temperature_sensor_ids(
         self, tmp_path: Path
     ) -> None:
-        """Two sensors in v2 produce two ids in declaration order."""
-        _write_hardware_json(tmp_path, _v2_payload())
+        """Two sensors in v2 produce two entries in declaration order."""
+        path = _write_hardware_json(tmp_path / "hardware.json", _v2_payload())
 
-        names = get_heaters(active_dir=tmp_path)
+        sensors = get_temperature_sensors(active_path=path)
 
-        assert names == ["extruder", "bed"]
+        assert [s["id"] for s in sensors] == ["extruder", "bed"]
 
     def test_source_order_is_preserved(
         self, tmp_path: Path
     ) -> None:
         """Order in the returned list matches the source order."""
-        _write_hardware_json(
-            tmp_path,
+        path = _write_hardware_json(
+            tmp_path / "hardware.json",
             {
                 "version": "2.0",
                 "temperature_sensors": [
@@ -115,19 +119,16 @@ class TestV2Model:
             },
         )
 
-        assert get_heaters(active_dir=tmp_path) == [
-            "first",
-            "second",
-            "third",
-        ]
+        sensors = get_temperature_sensors(active_path=path)
+        assert [s["id"] for s in sensors] == ["first", "second", "third"]
 
     def test_empty_sensors_list_returns_empty(self, tmp_path: Path) -> None:
         """A v2 payload with an empty ``temperature_sensors`` list returns []."""
-        _write_hardware_json(
-            tmp_path,
+        path = _write_hardware_json(
+            tmp_path / "hardware.json",
             {"version": "2.0", "temperature_sensors": []},
         )
-        assert get_heaters(active_dir=tmp_path) == []
+        assert get_temperature_sensors(active_path=path) == []
 
     def test_no_temperature_sensors_key_returns_empty(
         self, tmp_path: Path
@@ -138,34 +139,34 @@ class TestV2Model:
         v1 key is gone. The runtime sees "no sensors" and renders the
         empty state, which is the correct UX.
         """
-        _write_hardware_json(
-            tmp_path,
+        path = _write_hardware_json(
+            tmp_path / "hardware.json",
             {
                 "version": "2.0",
-                # Note: no ``temperature_sensors`` key — v1 leftover.
                 "heaters": [
                     {"id": "heater_extruder", "heater_pin": "PE3"},
                 ],
             },
         )
-        assert get_heaters(active_dir=tmp_path) == []
+        assert get_temperature_sensors(active_path=path) == []
 
     def test_ignores_entries_without_id(
         self, tmp_path: Path
     ) -> None:
         """Sensor entries without an ``id`` field are skipped."""
-        _write_hardware_json(
-            tmp_path,
+        path = _write_hardware_json(
+            tmp_path / "hardware.json",
             {
                 "version": "2.0",
                 "temperature_sensors": [
-                    {"pin": "PA0"},  # no id — skipped
+                    {"pin": "PA0"},
                     {"id": "valid", "pin": "PA1"},
-                    {"id": "", "pin": "PA2"},  # empty string — skipped
+                    {"id": "", "pin": "PA2"},
                 ],
             },
         )
-        assert get_heaters(active_dir=tmp_path) == ["valid"]
+        sensors = get_temperature_sensors(active_path=path)
+        assert [s["id"] for s in sensors] == ["valid"]
 
 
 # ---------------------------------------------------------------------- #
@@ -176,55 +177,59 @@ class TestV2Model:
 class TestFailureModes:
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         """No ``hardware.json`` at the expected path returns ``[]``."""
-        assert get_heaters(active_dir=tmp_path) == []
+        missing = tmp_path / "hardware.json"
+        assert get_temperature_sensors(active_path=missing) == []
 
     def test_malformed_json_returns_empty(self, tmp_path: Path) -> None:
-        """Corrupt JSON returns ``[]`` and logs at WARNING (not raised)."""
-        target = tmp_path / "hardware.json"
-        target.write_text("this is not valid json {", encoding="utf-8")
-
-        assert get_heaters(active_dir=tmp_path) == []
+        """Corrupt JSON returns ``[]`` (defensive, no exception)."""
+        path = tmp_path / "hardware.json"
+        path.write_text("this is not valid json {", encoding="utf-8")
+        assert get_temperature_sensors(active_path=path) == []
 
     def test_non_dict_root_returns_empty(self, tmp_path: Path) -> None:
         """A hardware.json whose root is not an object returns ``[]``."""
-        _write_hardware_json(tmp_path, ["not", "a", "dict"])
-        assert get_heaters(active_dir=tmp_path) == []
+        path = _write_hardware_json(tmp_path / "hardware.json", ["not", "a", "dict"])
+        assert get_temperature_sensors(active_path=path) == []
 
     def test_non_list_temperature_sensors_returns_empty(
         self, tmp_path: Path
     ) -> None:
         """``temperature_sensors`` not a list returns ``[]`` (defensive)."""
-        _write_hardware_json(
-            tmp_path,
+        path = _write_hardware_json(
+            tmp_path / "hardware.json",
             {"version": "2.0", "temperature_sensors": "not a list"},
         )
-        assert get_heaters(active_dir=tmp_path) == []
+        assert get_temperature_sensors(active_path=path) == []
 
-    def test_hardware_json_with_standalone_fan_round_trips(
-        self, tmp_path: Path
-    ) -> None:
-        """A ``[fan]``-derived Fan record survives the loader round-trip."""
-        _write_hardware_json(
-            tmp_path,
-            {
-                "version": "2.0",
-                "machine": "fan-test",
-                "source": "KlipperToLinuxCNCCompiler",
-                "kinematics": "cartesian",
-                "hal_type": "remora",
-                "axes": [],
-                "steppers": [],
-                "drivers": [],
-                "endstops": [],
-                "heaters": [],
-                "temperature_sensors": [],
-                "fans": [
-                    {"id": "fan_part_cooling", "pin": "PA8", "max_power": 0.5}
-                ],
-            },
-        )
-        # Loader doesn't currently read ``fans`` — this is purely a
-        # model+validator round-trip smoke test so the file shape is
-        # pinned.
-        data = json.loads((tmp_path / "hardware.json").read_text())
-        assert data["fans"][0]["id"] == "fan_part_cooling"
+
+# ---------------------------------------------------------------------- #
+# Fan fixture round-trip                                                    #
+# ---------------------------------------------------------------------- #
+
+
+def test_hardware_json_with_standalone_fan_round_trips(tmp_path: Path) -> None:
+    """A ``[fan]``-derived Fan record survives the loader round-trip."""
+    path = _write_hardware_json(
+        tmp_path / "hardware.json",
+        {
+            "version": "2.0",
+            "machine": "fan-test",
+            "source": "KlipperToLinuxCNCCompiler",
+            "kinematics": "cartesian",
+            "hal_type": "remora",
+            "axes": [],
+            "steppers": [],
+            "drivers": [],
+            "endstops": [],
+            "heaters": [],
+            "temperature_sensors": [],
+            "fans": [
+                {"id": "fan_part_cooling", "pin": "PA8", "max_power": 0.5}
+            ],
+        },
+    )
+    # Loader doesn't currently read ``fans`` — this is purely a
+    # model+validator round-trip smoke test so the file shape is
+    # pinned.
+    data = json.loads(path.read_text())
+    assert data["fans"][0]["id"] == "fan_part_cooling"

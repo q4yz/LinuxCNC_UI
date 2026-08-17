@@ -1,31 +1,15 @@
-"""Integration tests for the temperature module's HTTP router.
+"""Tests for the temperature module's HTTP tombstone router.
 
-These tests mount the temperature router on a dummy FastAPI app and
-exercise the HTTP layer with ``fastapi.testclient.TestClient``. The
-external hardware layer is mocked via ``unittest.mock.patch`` so the
-tests do not depend on the real ``linuxcnc`` binary or the
-``linuxcnc_mock`` singleton state.
-
-Coverage (issue #43 § 3):
-
-* ``POST /sensors/{name}/target`` — happy-path invocation of
-  ``execute_sync_cmd("set_temperature", 0, name, req.target)``,
-  response echoes the applied target.
-* URL-vs-body precedence — ``{name}`` in the URL wins over
-  ``sensor_name`` in the JSON body.
-* Error handling — empty/invalid URL name → ``400``; raised
-  ``Exception`` from ``execute_sync_cmd`` → ``500``.
-
-The historical ``GET /sensors`` listing endpoint was superseded
-by the base-thread snapshot
-(``GET /api/v1/base-thread/snapshot``), which is now the only
-public surface for the sensor dict. The legacy GET tests moved
-to ``test_base_thread_snapshot.py``.
+The router at :mod:`modules.temperature.router` is a 410 Gone tombstone
+that intercepts legacy requests from older frontends and points them
+at the canonical ``/tools/{id}/target`` endpoint. The live dispatch
+itself lives on the tools module (covered in ``test_tools_module.py``)
+and the temperature module's ``HTTPException(410)`` is the only
+public surface this file pins.
 """
-
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -34,8 +18,8 @@ from fastapi.testclient import TestClient
 
 def _build_router_app() -> FastAPI:
     """Build a fresh FastAPI app with only the temperature router
-    mounted (no module registry). Keeps the surface small so
-    each test can mock the hardware layer in isolation.
+    mounted (no module registry). Keeps the surface small so each
+    test exercises the tombstone in isolation.
     """
     from modules.temperature.router import router as temperature_router
 
@@ -44,249 +28,22 @@ def _build_router_app() -> FastAPI:
     return app
 
 
-# ---------------------------------------------------------------------------
-# POST /sensors/{name}/target — happy path
-# ---------------------------------------------------------------------------
-
-
-def test_set_target_success_path_calls_execute_sync_cmd_with_exact_args():
-    """``POST /sensors/{name}/target`` must call
-    ``execute_sync_cmd`` with exactly ``"set_temperature", 0, name,
-    req.target`` and return a ``SetTargetResponse`` echoing the
-    applied target (issue #43 § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        return_value={"status": "success"},
-    ) as exec_cmd:
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/extruder/target",
-            json={"sensor_name": "extruder", "target": 210.0},
-        )
-
-    assert resp.status_code == 200
-    # The command must be forwarded verbatim: the exact positional
-    # arguments the router is required to pass.
-    exec_cmd.assert_called_once_with("set_temperature", 0, "extruder", 210.0)
-    body = resp.json()
-    assert body == {
-        "status": "success",
-        "sensor_name": "extruder",
-        "target": 210.0,
-    }
-
-
-def test_set_target_accepts_boundary_targets():
-    """Targets at the documented inclusive boundaries (0.0 and 400.0)
-    must be accepted.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        return_value={"status": "success"},
-    ) as exec_cmd:
-        for value in (0.0, 400.0):
-            resp = client.post(
-                "/api/v1/modules/temperature/sensors/bed/target",
-                json={"sensor_name": "bed", "target": value},
-            )
-            assert resp.status_code == 200
-            assert resp.json()["target"] == value
-
-    # Two calls, one per boundary.
-    assert exec_cmd.call_count == 2
-
-
-def test_set_target_rejects_out_of_range_target_payload():
-    """Pydantic must reject targets outside ``[0.0, 400.0]`` with a
-    ``422`` validation error before the hardware layer is touched.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-    ) as exec_cmd:
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/extruder/target",
-            json={"sensor_name": "extruder", "target": 401.0},
-        )
-
-    assert resp.status_code == 422
-    # The hardware layer must not have been invoked.
-    exec_cmd.assert_not_called()
-
-
-def test_set_target_default_status_when_hardware_omits_it():
-    """If the hardware layer returns a dict without a ``status`` key,
-    the router must default to ``"success"`` so the response always
-    carries a string.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        return_value={},  # no status key
-    ):
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/bed/target",
-            json={"sensor_name": "bed", "target": 50.0},
-        )
-
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "success"
-
 
 # ---------------------------------------------------------------------------
-# POST /sensors/{name}/target — URL-vs-body precedence
+# Direct invocation — bypass the HTTP client to pin the behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_set_target_url_param_takes_precedence_over_body():
-    """When the URL ``{name}`` differs from the ``sensor_name`` in
-    the JSON body, the URL must win (issue #43 § 3). The router
-    communicates the canonical name to the hardware layer.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        return_value={"status": "success"},
-    ) as exec_cmd:
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/bed/target",
-            json={"sensor_name": "extruder", "target": 65.0},
-        )
-
-    assert resp.status_code == 200
-    # The hardware command must use the URL name, not the body name.
-    exec_cmd.assert_called_once_with("set_temperature", 0, "bed", 65.0)
-    # The response must echo the URL name as the canonical sensor.
-    body = resp.json()
-    assert body["sensor_name"] == "bed"
-    assert body["target"] == 65.0
-
-
-def test_set_target_url_and_body_match_succeeds():
-    """When the URL and body agree, the behaviour is unchanged —
-    the hardware command is invoked once with the agreed name.
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        return_value={"status": "success"},
-    ) as exec_cmd:
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/cpu/target",
-            json={"sensor_name": "cpu", "target": 30.0},
-        )
-
-    assert resp.status_code == 200
-    exec_cmd.assert_called_once_with("set_temperature", 0, "cpu", 30.0)
-    assert resp.json()["sensor_name"] == "cpu"
-
-
-# ---------------------------------------------------------------------------
-# POST /sensors/{name}/target — error handling
-# ---------------------------------------------------------------------------
-
-
-def test_set_target_url_name_cannot_be_empty():
-    """An empty URL ``{name}`` must yield ``400 Bad Request`` and
-    must not invoke the hardware layer (issue #43 § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    # The pattern ``/sensors//target`` collapses to ``/sensors/target``
-    # in the HTTP path, so we drive the endpoint directly to exercise
-    # the empty-string branch in the router.
-    from modules.temperature.router import set_target as set_target_fn
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-    ) as exec_cmd:
-        with pytest.raises(Exception) as excinfo:
-            set_target_fn(name="", req=MagicMock(sensor_name="bed", target=60.0))
-
-    # The router raises ``HTTPException`` which propagates as a
-    # ``HTTPException`` instance.
-    from fastapi import HTTPException
-
-    assert isinstance(excinfo.value, HTTPException)
-    assert excinfo.value.status_code == 400
-    # And the hardware must not have been invoked.
-    exec_cmd.assert_not_called()
-
-
-def test_set_target_url_name_must_be_a_string():
-    """A non-string ``name`` (e.g. ``None``) must yield ``400 Bad
-    Request`` without invoking the hardware layer (issue #43 § 3).
+def test_set_target_direct_invocation_raises_410():
+    """Driving the route function directly must raise ``HTTPException``
+    with status code ``410`` — pinning the tombstone without going
+    through the FastAPI test client keeps the contract surface tiny.
     """
     from fastapi import HTTPException
 
     from modules.temperature.router import set_target as set_target_fn
 
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-    ) as exec_cmd:
-        with pytest.raises(HTTPException) as excinfo:
-            set_target_fn(name=None, req=MagicMock(sensor_name="bed", target=60.0))
+    with pytest.raises(HTTPException) as excinfo:
+        set_target_fn(name="extruder", req=MagicMock(sensor_name="extruder", target=210.0))
 
-    assert excinfo.value.status_code == 400
-    exec_cmd.assert_not_called()
-
-
-def test_set_target_http_exception_passes_through():
-    """An ``HTTPException`` raised by ``execute_sync_cmd`` (e.g.
-    400 from a hardware-layer validation) must propagate unchanged
-    so callers can surface the actionable error message.
-    """
-    from fastapi import HTTPException
-
-    app = _build_router_app()
-    client = TestClient(app)
-
-    boom = HTTPException(status_code=400, detail="Command execution error")
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        side_effect=boom,
-    ):
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/bed/target",
-            json={"sensor_name": "bed", "target": 60.0},
-        )
-
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Command execution error"
-
-
-def test_set_target_generic_exception_returns_500():
-    """Any non-``HTTPException`` raised by ``execute_sync_cmd`` must
-    be caught and surfaced as a ``500`` with the original message
-    in the detail (issue #43 § 3).
-    """
-    app = _build_router_app()
-    client = TestClient(app)
-
-    with patch(
-        "modules.temperature.service.execute_sync_cmd",
-        side_effect=RuntimeError("hardware went away"),
-    ):
-        resp = client.post(
-            "/api/v1/modules/temperature/sensors/bed/target",
-            json={"sensor_name": "bed", "target": 60.0},
-        )
-
-    assert resp.status_code == 500
-    assert "hardware went away" in resp.json()["detail"]
-
+    assert excinfo.value.status_code == 410

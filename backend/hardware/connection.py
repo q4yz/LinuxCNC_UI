@@ -20,32 +20,40 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
 
-logger = logging.getLogger("backend.hardware.connection")
+from tests.non_repeating_logger import NonRepeatingLogger
+
+logger = NonRepeatingLogger("backend.hardware.connection")
 
 # ---------------------------------------------------------------------------
 # Module selection: real linuxcnc/hal vs. mock fallback
 # ---------------------------------------------------------------------------
 try:
-    import linuxcnc  # noqa: F401 - the canonical import path
+    import linuxcnc  # noqa: F401
+
     logger.info("Successfully imported real linuxcnc module.")
     USE_MOCK = False
 except ImportError:
-    from .mock import mock_system as linuxcnc  # type: ignore[no-redef]
-    logger.warning("Could not import real linuxcnc. Falling back to linuxcnc_mock.")
+    # CHANGE IS HERE: We don't alias the whole file anymore.
+    # We import the specific facade exposed by the orchestrator!
+    from hardware.mock.linuxcnc_mock import linuxcnc  # type: ignore
+
+    logger.warning("Could not import real linuxcnc. Falling back to mock facade.")
     USE_MOCK = True
 
 try:
     import hal
+
     HAS_HAL = True
 except ImportError:
-    hal = None
+    # CHANGE IS HERE: Import the hal facade from the orchestrator
+    from hardware.mock.linuxcnc_mock import hal  # type: ignore[no-redef]
+
     HAS_HAL = False
     logger.warning("HAL module unavailable; HAL pin polling will run in mock mode.")
-
 
 # ---------------------------------------------------------------------------
 # Lazy channel wrapper (Layer 0: Low-Level Connection)
@@ -216,30 +224,7 @@ def ensure_mdi_mode() -> None:
     mode_mdi = getattr(linuxcnc, "MODE_MDI", 3)
     execute_sync_cmd("mode", 5, mode_mdi)
 
-# ---------------------------------------------------------------------------
-# Telemetry read helpers
-# ---------------------------------------------------------------------------
-#
-# These helpers read strictly from the standard APIs (`stat` and `hal`).
-# They have no idea if they are talking to a mock or real hardware!
 
-def read_temperature(sensor_id: str) -> Optional[Dict[str, float]]:
-    if not isinstance(sensor_id, str) or not sensor_id:
-        return None
-    stat = get_machine_stat()
-    if stat is None:
-        return None
-    poll = getattr(stat, "poll", None)
-    if callable(poll):
-        poll()
-    sensors = getattr(stat, "temperatures", None) or {}
-    reading = sensors.get(sensor_id)
-    if not reading:
-        return None
-    return {
-        "actual": float(reading.get("actual", 0.0)),
-        "target": float(reading.get("target", 0.0)),
-    }
 
 def read_error_history() -> list:
     stat = get_machine_stat()
@@ -290,7 +275,6 @@ from .hal_subscription_manager import (  # noqa: E402,F401
     HalSubscriptionManager,
     hal_manager,
 )
-from .linuxcnc_mock import apply_spindle_pin  # noqa: E402,F401
 
 __all__ = [
     "USE_MOCK",
@@ -303,12 +287,10 @@ __all__ = [
     "is_linuxcnc_connected",
     "execute_sync_cmd",
     "execute_gcode",
-    "read_temperature",
     "read_error_history",
     "Connection",
     "connection",
     "DeviceConfigMapper",
     "HalSubscriptionManager",
     "hal_manager",
-    "apply_spindle_pin",
 ]

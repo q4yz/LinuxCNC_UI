@@ -24,10 +24,14 @@ class HeaterService:
 
     def set_heater(self, dto : HeaterSettingsDTO) -> str:
 
-        pins: HeaterPins =HeaterMapper.from_dict_to_HeaterPins(get_heater(dto.id))
-
         if not isinstance(dto, HeaterSettingsDTO):
             raise BadRequestError("Heater settings must be a HeaterSettingsDTO")
+
+        try:
+            pins: HeaterPins = HeaterMapper.from_dict_to_HeaterPins(get_heater(dto.id))
+        except KeyError as exc:
+            raise NotFoundError(str(exc))
+
         if not isinstance(pins, HeaterPins):
             raise BadRequestError("Heater pins must be a HeaterPins record")
 

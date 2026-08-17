@@ -42,26 +42,30 @@ class ExtruderService:
         except KeyError as exc:
             raise NotFoundError(str(exc))
 
-        actions_taken = []
-
         # ``dto.heater`` is ``None`` when the caller chose
         # ``heater_action="noop"`` — the move runs without touching
         # the heater. ``set_heater`` still raises on out-of-range
         # targets so the validation surface stays unchanged.
         if dto.heater is not None:
-            heater_result = heater_service.set_heater(dto.heater)
-            actions_taken.append(heater_result)
+            heater_service.set_heater(dto.heater)
 
         # 2. Extrusion Handling (Relative Distance)
         distance = float(dto.relative_distance)
-        if distance != 0.0:
-            machine_service.ensure_mdi_mode()
-            # G91 (Relative), Extrude, G90 (Absolute)
-            mdi_command = f"G91 G1 A{distance} G90"
-            machine_service.dispatch_mdi(mdi_command)
-            actions_taken.append(f"extruded={distance}")
+        if distance == 0.0:
+            return "no_action"
 
-        return ", ".join(actions_taken) if actions_taken else "no_action"
+        machine_service.ensure_mdi_mode()
+        # G91 (Relative), Extrude, G90 (Absolute) — the canonical
+        # LinuxCNC/Klipper-style G-code string the dashboard's
+        # ``ExtruderCard`` and ``ActivePrintWidget`` echo to
+        # the operator verbatim. The ``G91`` / ``G90`` framing is
+        # applied to ``machine_service`` via the channel's MDI
+        # queue; the dispatched ``G1`` is what the dashboard shows.
+        machine_service.dispatch_mdi("G91")
+        mdi_command = f"G1 E{distance} F{dto.speed}"
+        machine_service.dispatch_mdi(mdi_command)
+        machine_service.dispatch_mdi("G90")
+        return mdi_command
 
 _extruder_service: Optional[ExtruderService] = None
 

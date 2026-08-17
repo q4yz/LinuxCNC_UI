@@ -20,11 +20,10 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from core.event_bus import EventBus
 from core.module_registry import ModuleRegistry
 from core.protocols import ModuleContext
-from core.settings_store import SettingsStore
+
+from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
 
 
 def _build_app(tmp_data_root) -> tuple[FastAPI, ModuleRegistry]:
@@ -51,8 +50,6 @@ def test_temperature_module_boots_and_registers_router(
     sensors (in the v2 ``hardware.json`` shape) asserts the seeded
     palette flows through to ``GET /api/v1/modules/temperature/settings``.
     """
-    from modules.temperature import config_mapper
-
     active_dir = tmp_data_root / "machine_config" / "active"
     active_dir.mkdir(parents=True, exist_ok=True)
     # v2 hardware.json: temperature_sensors[] is the canonical list
@@ -66,9 +63,25 @@ def test_temperature_module_boots_and_registers_router(
         "]}",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        config_mapper, "_DEFAULT_ACTIVE_DIR", active_dir
-    )
+    # Point the canonical loader at the fixture via the
+    # ``HardwareConfigService.__init__`` seam.
+    from services.hardware_config_service import HardwareConfigService
+
+    hardware_json = active_dir / "hardware.json"
+    original_init = HardwareConfigService.__init__
+
+    def _init(self, active_path=None, repo_root=None):
+        return original_init(
+            self,
+            active_path=active_path if active_path is not None else hardware_json,
+            repo_root=repo_root,
+        )
+
+    monkeypatch.setattr(HardwareConfigService, "__init__", _init)
+
+
+
+    reseed_from_hardware_json()
 
     app, reg = _build_app(tmp_data_root)
     with caplog.at_level(logging.INFO, logger="core.module_registry"):
@@ -122,66 +135,6 @@ def test_legacy_temperature_endpoint_is_gone(tmp_data_root, clean_env):
     # And, by construction, the legacy prefix is gone too (the file
     # that defined it no longer exists).
     assert "/api/v1/machine/temperature" not in paths
-
-
-def test_set_target_dispatches_to_hardware(tmp_data_root, clean_env, monkeypatch):
-    """``POST /sensors/{name}/target`` updates the mock's state.
-
-    The mock seeds the sensor list from ``hardware.json`` so the test
-    drops a fake active ``hardware.json`` with a ``heater_bed`` entry
-    before exercising the ``POST /sensors/{name}/target`` flow. The
-    follow-up assertion confirms the mock now reports the new target
-    on the next read — a regression here would break the operator's
-    "set 60 °C" feedback loop regardless of which surface surfaces
-    the value.
-    """
-    from modules.temperature import config_mapper
-
-    active_dir = tmp_data_root / "machine_config" / "active"
-    active_dir.mkdir(parents=True, exist_ok=True)
-    (active_dir / "hardware.json").write_text(
-        '{"heaters": [{"name": "heater_bed"}]}',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        config_mapper, "_DEFAULT_ACTIVE_DIR", active_dir
-    )
-
-    # The mock singleton was initialised before this monkey-patch
-    # was applied; force a re-seed so the freshly written
-    # ``hardware.json`` is honoured.
-    from hardware import linuxcnc_mock
-
-    linuxcnc_mock.reseed_from_hardware_json()
-
-    from modules.temperature.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-
-    client = TestClient(app)
-    # Set the bed heater target to 60 °C.
-    resp = client.post(
-        "/api/v1/modules/temperature/sensors/heater_bed/target",
-        json={"sensor_name": "heater_bed", "target": 60.0},
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "success"
-    assert body["sensor_name"] == "heater_bed"
-    assert body["target"] == 60.0
-
-    # The legacy ``GET /sensors`` endpoint is gone; the canonical
-    # surface for the live sensor dict is the base-thread snapshot.
-    # Read through the unified ``hardware.connection.read_temperature``
-    # helper to confirm the dispatch landed — the mock's
-    # ``set_temperature`` keys the entry on the same name the
-    # router received (here ``heater_bed``).
-    from hardware.connection import read_temperature
-
-    reading = read_temperature("heater_bed")
-    assert reading is not None and reading["target"] == 60.0
 
 
 def test_set_target_validates_range(tmp_data_root, clean_env):

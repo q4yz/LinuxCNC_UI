@@ -1,0 +1,36 @@
+from hardware.mock.command_mock import CommandMock
+
+
+class LinuxcncModuleFacade:
+    """A drop-in replacement for the real 'linuxcnc' Python module."""
+
+    def __init__(self, state_mock):
+        self._state = state_mock
+
+        # Expose the NML constants directly on the module so things like
+        # `if stat.task_state == linuxcnc.STATE_ESTOP:` work natively!
+        self.STATE_ESTOP = state_mock.STATE_ESTOP
+        self.STATE_ESTOP_RESET = state_mock.STATE_ESTOP_RESET
+        self.STATE_OFF = state_mock.STATE_OFF
+        self.STATE_ON = state_mock.STATE_ON
+
+        self.INTERP_IDLE = state_mock.INTERP_IDLE
+        self.INTERP_READING = state_mock.INTERP_READING
+        self.INTERP_PAUSED = state_mock.INTERP_PAUSED
+        self.INTERP_WAITING = state_mock.INTERP_WAITING
+
+    def stat(self):
+        """Mimics linuxcnc.stat().
+        Because our StateMachineMock already has .poll(), .estop, .task_state, etc.,
+        we can just return it directly!
+        """
+        return self._state
+
+    def command(self):
+        """Mimics linuxcnc.command()."""
+        return CommandMock(self._state)
+
+    def error_channel(self):
+        """Mimics linuxcnc.error_channel()."""
+        # If your app reads LinuxCNC errors, you can wrap self._state.errors here
+        pass

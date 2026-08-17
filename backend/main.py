@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.module_registry import registry
+from hardware.mock.linuxcnc_mock import mock_system
+from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
 from services.console_logger import get_console_logger
 
 
@@ -46,9 +48,8 @@ async def lifespan(app: FastAPI):
     # hardware -> temperature -> hardware circular import. This
     # lifespan is the single canonical production caller — see
     # the matching note in ``hardware/linuxcnc_mock.py``.
-    from hardware import linuxcnc_mock
 
-    linuxcnc_mock.reseed_from_hardware_json()
+    reseed_from_hardware_json()
 
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(servo_thread.telemetry_loop())

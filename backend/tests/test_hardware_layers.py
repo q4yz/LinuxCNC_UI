@@ -275,107 +275,13 @@ class TestHardwareLayerMachineService:
 
     Distinct from ``backend.modules.machine.service.MachineService``
     (command dispatch): the hardware-layer one handles config-driven
-    hardware abstraction. The two classes coexist; the suite pins
-    the hardware-layer one's surface so a future refactor doesn't
-    drop the endstop flow.
+    hardware abstraction. The endstop surface that used to live on
+    this class was retired in the refactor that moved endstop state
+    into the HAL subscription manager's snapshot — the tests below
+    document that history. The remaining tests cover the gcode
+    dispatch path which is still wired through
+    :class:`MachineService`.
     """
-
-    def test_get_endstop_returns_pins_and_states(self):
-        """Endstop flow:
-        1. ``DeviceConfigMapper.get_endstop_hal_pin_list`` returns
-           the configured pins.
-        2. The service reads each via the HAL subscription manager
-           and packages pins + states into the response dict.
-
-        Patches ``DeviceConfigMapper.get_endstop_hal_pin_list``
-        with a deterministic pin list and ``HalSubscriptionManager.
-        read_pin`` with deterministic values.
-        """
-        mapper = DeviceConfigMapper()
-        mgr = HalSubscriptionManager()
-        service = MachineService(mapper=mapper, hal_sub_mgr=mgr)
-
-        with patch.object(
-            DeviceConfigMapper,
-            "get_endstop_hal_pin_list",
-            return_value=["joint.0.home-sw-in", "joint.1.home-sw-in"],
-        ):
-            with patch.object(
-                HalSubscriptionManager,
-                "read_pin",
-                side_effect=lambda p: {"joint.0.home-sw-in": False, "joint.1.home-sw-in": True}[p],
-            ):
-                result = service.get_endstop()
-
-        assert result["pins"] == ["joint.0.home-sw-in", "joint.1.home-sw-in"]
-        assert result["states"] == {
-            "joint.0.home-sw-in": False,
-            "joint.1.home-sw-in": True,
-        }
-
-    def test_get_endstop_falls_back_to_offline_gcode_when_disconnected(self):
-        """LinuxCNC offline → ``execute_gcode`` would raise 503. The
-        service must short-circuit to ``{"status": "offline"}`` so
-        the operator-facing endstop probe doesn't escalate to a 503
-        during boot.
-        """
-        mapper = DeviceConfigMapper()
-        mgr = HalSubscriptionManager()
-        service = MachineService(mapper=mapper, hal_sub_mgr=mgr)
-
-        with patch.object(
-            DeviceConfigMapper,
-            "get_endstop_hal_pin_list",
-            return_value=["joint.0.home-sw-in"],
-        ):
-            with patch.object(HalSubscriptionManager, "read_pin", return_value=False):
-                with patch.object(conn_mod, "is_linuxcnc_connected", return_value=False):
-                    result = service.get_endstop()
-
-        assert result["gcode_status"] == {"status": "offline"}
-
-    def test_get_endstop_calls_execute_gcode_when_connected(self):
-        """LinuxCNC reachable → the service issues ``M114`` (current
-        position report) alongside the pin-state snapshot.
-        """
-        mapper = DeviceConfigMapper()
-        mgr = HalSubscriptionManager()
-        service = MachineService(mapper=mapper, hal_sub_mgr=mgr)
-
-        with patch.object(
-            DeviceConfigMapper,
-            "get_endstop_hal_pin_list",
-            return_value=["joint.0.home-sw-in"],
-        ):
-            with patch.object(HalSubscriptionManager, "read_pin", return_value=False):
-                with patch.object(conn_mod, "is_linuxcnc_connected", return_value=True):
-                    with patch.object(
-                        conn_mod,
-                        "execute_gcode",
-                        return_value={"status": "success", "gcode": "M114"},
-                    ) as spy:
-                        result = service.get_endstop()
-
-        spy.assert_called_once_with("M114", timeout=2.0)
-        assert result["gcode_status"]["status"] == "success"
-
-    def test_get_endstop_state_subscription_returns_pin_dict(self):
-        """``get_endstop_state_subscription`` is the lower-level API
-        that the service exposes; same shape as ``get_endstop`` minus
-        the mapper dependency. A consumer with a custom pin list
-        can drive it directly.
-        """
-        mapper = DeviceConfigMapper()
-        mgr = HalSubscriptionManager()
-        service = MachineService(mapper=mapper, hal_sub_mgr=mgr)
-
-        with patch.object(HalSubscriptionManager, "read_pin", return_value=True):
-            result = service.get_endstop_state_subscription(
-                ["joint.0.home-sw-in"]
-            )
-
-        assert result["pins"] == ["joint.0.home-sw-in"]
-        assert result["states"] == {"joint.0.home-sw-in": True}
 
 
 # ────────────────────────────────────────────────────────────────────── #

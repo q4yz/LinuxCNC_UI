@@ -1,14 +1,13 @@
 from typing import Optional, Any
-from hardware.mock.mock_component import MockComponent
-
+from hardware.mock.tools.mock_component import MockComponent
 
 class MockSpindleDigital(MockComponent):
     def __init__(self, tool_id: str):
-        self.tool_id = tool_id
+        self.id = tool_id
 
-        # State variables matching SpindleDigitalPins
-        self.target_rpm = 0.0
+        # Internal State is owned EXCLUSIVELY by this component!
         self.actual_rpm = 0.0
+        self.target_rpm = 0.0
         self.is_connected = False
         self.error_count = 0
         self.last_error = ""
@@ -18,7 +17,7 @@ class MockSpindleDigital(MockComponent):
         self.override = 1.0
 
         # Calculate the suffix exactly as the ConfigMapper does
-        suffix = self.tool_id.replace("spindle_digital", "")
+        suffix = self.id.replace("spindle_digital", "")
 
         # Exact dictionary mapping of HAL pin strings to internal state attributes
         self._pin_map = {
@@ -76,7 +75,7 @@ class MockSpindleDigital(MockComponent):
 
         return False
 
-    def update(self, delta_time: float) -> None:
+    def update(self, hal, nml, delta_time: float) -> None:
         """Simulate VFD physics: Spooling up and down."""
         # Ramp RPM up or down by 5000 RPM per second
         ramp_rate = 5000.0 * delta_time

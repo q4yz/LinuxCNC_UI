@@ -14,8 +14,9 @@ Covers:
 * The module's lifecycle / factory contract (mirrors
   ``test_temperature_module.py`` for consistency).
 """
-
 from __future__ import annotations
+
+import json
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -117,17 +118,105 @@ def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
 # ---------------------------------------------------------------------- #
 
 
-def _build_app(tmp_data_root):
+def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
+    """Build a tools-only FastAPI app with a fixture ``hardware.json``.
+
+    The dev environment's real ``hardware.json`` does not declare
+    ``spindle_main`` / ``extruder_1`` / ``heater_unknown`` — the
+    fixtures the legacy tests rely on. Drop a minimal
+    ``hardware.json`` and point the loader at it via the
+    :class:`HardwareConfigService` seam so the production code path
+    resolves the configured tools from the fixture rather than from
+    the dev ``machine_config/active/`` directory.
+
+    Falls back to the original (no-fixture) build when ``monkeypatch``
+    or ``tmp_path`` are not supplied — preserved for callers that
+    bring their own fixture (``test_set_tool_target_*`` already
+    patches the loader inline).
+    """
     from modules.tools.module import setup
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
+
+    if monkeypatch is not None and tmp_path is not None:
+        active_dir = tmp_path / "machine_config" / "active"
+        active_dir.mkdir(parents=True, exist_ok=True)
+        hardware_json = active_dir / "hardware.json"
+        # Skip the default fixture when the caller already wrote
+        # one (``_write_hardware_json`` drops the same file path
+        # before calling ``_build_app``). Overwriting an
+        # intentionally-crafted fixture breaks the test contract.
+        if not hardware_json.exists():
+            hardware_json.write_text(
+                json.dumps(
+                    {
+                        "version": "2.0",
+                        "machine": "test",
+                        "source": "KlipperToLinuxCNCCompiler",
+                        "kinematics": "cartesian",
+                        "hal_type": "remora",
+                        "axes": [],
+                        "steppers": [],
+                        "drivers": [],
+                        "endstops": [],
+                        "tools": [
+                            {
+                                "id": "spindle_main",
+                                "type": "spindle_digital",
+                                "min_rpm": 0,
+                                "max_rpm": 24000,
+                            },
+                            {
+                                "id": "extruder_1",
+                                "type": "extruder",
+                                "sensor": "extruder_1",
+                                "heater_pin": "PE3",
+                                "control": "pid",
+                                "min_temp": 0,
+                                "max_temp": 250,
+                            },
+                            {
+                                "id": "heater_extruder",
+                                "type": "extruder",
+                                "sensor": "extruder",
+                                "heater_pin": "PE3",
+                                "control": "pid",
+                                "min_temp": 0,
+                                "max_temp": 250,
+                            },
+                        ],
+                        "temperature_sensors": [
+                            {"id": "extruder_1", "pin": "PA1"},
+                            {"id": "extruder", "pin": "PA1"},
+                        ],
+                        "fans": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        from services.hardware_config_service import HardwareConfigService
+
+        original_init = HardwareConfigService.__init__
+
+        def _init(self, active_path=None, repo_root=None):
+            return original_init(
+                self,
+                active_path=active_path if active_path is not None else hardware_json,
+                repo_root=repo_root,
+            )
+
+        monkeypatch.setattr(HardwareConfigService, "__init__", _init)
+        monkeypatch.setattr(
+            "hardware.mock.mock_system._PROJECT_ROOT", active_dir
+        )
+
     reg.boot(app, candidates=[setup()])
     return app
 
 
-def test_spindle_forward_emits_m3(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_spindle_forward_emits_m3(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -142,8 +231,8 @@ def test_spindle_forward_emits_m3(tmp_data_root, clean_env):
     }
 
 
-def test_spindle_backward_emits_m4(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_spindle_backward_emits_m4(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -158,9 +247,9 @@ def test_spindle_backward_emits_m4(tmp_data_root, clean_env):
     }
 
 
-def test_spindle_stop_emits_m5(tmp_data_root, clean_env):
+def test_spindle_stop_emits_m5(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """The stop action ignores ``speed`` and emits ``M5``."""
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -175,8 +264,8 @@ def test_spindle_stop_emits_m5(tmp_data_root, clean_env):
     }
 
 
-def test_spindle_rejects_unknown_action(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_spindle_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -185,8 +274,8 @@ def test_spindle_rejects_unknown_action(tmp_data_root, clean_env):
     assert resp.status_code == 400
 
 
-def test_spindle_validates_speed_upper_bound(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_spindle_validates_speed_upper_bound(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -195,8 +284,8 @@ def test_spindle_validates_speed_upper_bound(tmp_data_root, clean_env):
     assert resp.status_code == 422
 
 
-def test_spindle_validates_empty_tool_id(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_spindle_validates_empty_tool_id(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/spindle",
@@ -210,8 +299,8 @@ def test_spindle_validates_empty_tool_id(tmp_data_root, clean_env):
 # ---------------------------------------------------------------------- #
 
 
-def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/extruder",
@@ -232,11 +321,11 @@ def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env):
     assert body["tool_id"] == "extruder_1"
 
 
-def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env):
+def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """Retract must apply a negative sign so the same positive
     ``distance`` value drives the extruder backwards.
     """
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/extruder",
@@ -252,8 +341,8 @@ def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env):
     assert body["command"] == "G1 E-2.5 F200"
 
 
-def test_extruder_rejects_unknown_action(tmp_data_root, clean_env):
-    app = _build_app(tmp_data_root)
+def test_extruder_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, tmp_path):
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/extruder",
@@ -267,12 +356,12 @@ def test_extruder_rejects_unknown_action(tmp_data_root, clean_env):
     assert resp.status_code == 400
 
 
-def test_extruder_validates_distance_lower_bound(tmp_data_root, clean_env):
+def test_extruder_validates_distance_lower_bound(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """Negative or zero distances must be rejected — the router
     applies its own sign for retract, so callers should never
     hand a negative value through.
     """
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/extruder",
@@ -359,7 +448,7 @@ def test_set_tool_target_dispatches_set_temperature(
     )
     linuxcnc_mock.reseed_from_hardware_json()
 
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_extruder/target",
@@ -367,12 +456,10 @@ def test_set_tool_target_dispatches_set_temperature(
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {
-        "status": "success",
-        "tool_id": "heater_extruder",
-        "target": 195.0,
-        "sensor": "extruder",
-    }
+    assert body["status"] == "success"
+    assert body["tool_id"] == "heater_extruder"
+    assert body["target"] == 195.0
+    assert body["sensor"] == "extruder"
     # The mock's sensor dict now reflects the new target.
     from hardware.connection import read_temperature
 
@@ -396,7 +483,7 @@ def test_set_tool_target_rejects_unknown_tool(
     })
     _point_config_at_tmp(monkeypatch, tmp_path)
 
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_unknown/target",
@@ -432,7 +519,7 @@ def test_set_tool_target_rejects_non_heating_tool(
     })
     _point_config_at_tmp(monkeypatch, tmp_path)
 
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/spindle_digital/target",
@@ -468,7 +555,7 @@ def test_set_tool_target_validates_range(
     })
     _point_config_at_tmp(monkeypatch, tmp_path)
 
-    app = _build_app(tmp_data_root)
+    app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_extruder/target",

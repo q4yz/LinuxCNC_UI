@@ -60,14 +60,20 @@ class HardwareConfigService:
             return Path(self.active_path)
         if self.repo_root is not None:
             return Path(self.repo_root) / "machine_config" / "active" / "hardware.json"
-        return Path("machine_config/active/hardware.json")
+
+        # FIX: Make the fallback path absolute, resolving relative to this file!
+        # .parents[0] = services/
+        # .parents[1] = backend/
+        # .parents[2] = LinuxCNC_UI/ (Project Root)
+        project_root = Path(__file__).resolve().parents[2]
+        return project_root / "machine_config" / "active" / "hardware.json"
 
     def load_payload(self) -> Dict[str, Any]:
         """Load and parse the active ``hardware.json`` file safely."""
         path = self._resolve_active_path()
 
         if not path.exists():
-            logger.debug("HardwareConfigService: %s missing — returning {}", path)
+            logger.info("HardwareConfigService: %s missing — returning {}", path)
             return {}
 
         try:

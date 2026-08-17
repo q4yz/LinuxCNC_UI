@@ -127,7 +127,7 @@ def _import_setup(module_name: str):
 
 
 def test_snapshot_returns_safe_zeroed_payload_when_offline(
-    tmp_data_root, clean_env, monkeypatch
+    tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """When the NML status channel is offline the endpoint must
     return a 200 with the safe-zeroed payload — not raise.
@@ -135,11 +135,25 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     The dashboard's empty-state UI handles the no-data case, but
     only when the response body parses successfully. A 5xx would
     blank the widget.
+
+    The test points the hardware config at an empty directory so
+    the active ``hardware.json`` declared by the dev environment
+    (the real ``machine_config/active/hardware.json``) does not
+    leak into the offline payload — the contract the test pins is
+    the *offline* surface, not the operator's real machine.
     """
     _reset_mock_program_state()
     _reset_line_count_cache()
 
     from services.line_count_cache import unregister_all
+
+    empty = tmp_path / "empty_active"
+    empty.mkdir()
+    _point_hardware_config_at(monkeypatch, empty)
+    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
+    from hardware import linuxcnc_mock
+
+    linuxcnc_mock.reseed_from_hardware_json()
 
     monkeypatch.setattr(
         connection_mod, "get_machine_stat", lambda: None
@@ -165,6 +179,7 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     # We only assert the field is a list; the contents depend on
     # the dev environment's ``hardware.json``.
     assert isinstance(body["tools"], list)
+    assert body["tools"] == []
     assert "timestamp" in body
     unregister_all()
 
@@ -175,7 +190,7 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
 
 
 def test_snapshot_mirrors_individual_endpoints(
-    tmp_data_root, clean_env, monkeypatch, tmp_path
+        tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """End-to-end: load a file, run, and assert the snapshot
     surfaces ``progress.total_lines`` from the cache, ``current_line``
@@ -185,28 +200,42 @@ def test_snapshot_mirrors_individual_endpoints(
     _reset_line_count_cache()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
-    # The tools loader reads the active ``hardware.json`` on import.
-    # Patch it to a directory with no tools so the test sees a clean
-    # baseline (the dev environment's real ``hardware.json`` is
-    # ignored). The mock's sensor list is reseeded against the same
-    # empty path so the only sensor is the one we inject below.
-    empty = tmp_path / "empty_active"
-    empty.mkdir()
-    _point_hardware_config_at(monkeypatch, empty)
-    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
-    from hardware import linuxcnc_mock
+    active_root = _write_v2_hardware_json(tmp_path, {
+        "version": "2.0",
+        "machine": "test",
+        "source": "KlipperToLinuxCNCCompiler",
+        "kinematics": "cartesian",
+        "hal_type": "remora",
+        "axes": [],
+        "steppers": [],
+        "drivers": [],
+        "endstops": [],
+        "tools": [],
+        # Defined as a standalone sensor
+        "temperature_sensors": [
+            {"id": "extruder"},
+        ],
+        "fans": [],
+    })
+    _point_hardware_config_at(monkeypatch, active_root)
 
-    linuxcnc_mock.reseed_from_hardware_json()
+    # 1. Point the monkeypatch at the unified mock system
+    monkeypatch.setattr("hardware.mock.mock_system._PROJECT_ROOT", active_root)
+    from hardware.mock import mock_system
+
+    # 2. Reseed the unified mock
+    mock_system.reseed_from_hardware_json()
 
     app, _ = _base_thread_app(tmp_data_root)
     client = TestClient(app)
 
-    # Inject the sensor reading we want to assert on. The mock
-    # re-seeded the dict empty above, so the only key is ours.
-    linuxcnc_mock.seed_temperature("extruder", actual=195.4, target=200.0)
+    # 3. Seed the temperature in the unified mock.
+    # (We can drop 'target' here since standalone sensors don't use it)
+    # 3. Seed the temperature in the unified mock.
+    # (Pass a dummy target=0.0 to satisfy the Python function signature.
+    # The new DDD factory will safely strip it from the final JSON.)
+    mock_system.seed_temperature("extruder", actual=195.4, target=0.0)
 
-    # Load the program via the public router so the cache is
-    # populated.
     assert client.post(
         "/api/v1/modules/program/load",
         json={"filename": "test.gcode"},
@@ -219,25 +248,16 @@ def test_snapshot_mirrors_individual_endpoints(
     assert resp.status_code == 200
     body = resp.json()
 
-    # Progress block — total_lines comes from the cache, current
-    # line advanced while the interpreter was reading.
     assert body["progress"]["total_lines"] == 3
     assert body["progress"]["current_line"] > 0
     assert body["progress"]["interp_state"] == 2  # INTERP_READING
     assert body["progress"]["file"].endswith("test.gcode")
 
-    # Sensors block — the snapshot is now the canonical surface for
-    # the sensor dict (the legacy ``GET /sensors`` endpoint was
-    # removed in favour of this snapshot). Assert the inline shape
-    # directly so a regression that breaks either the snapshot or
-    # the underlying ``_collect_sensors`` helper surfaces here.
+    # 4. Assert only on the fields the Domain Model allows for a standalone sensor
     assert body["sensors"]["extruder"]["actual"] == pytest.approx(195.4)
-    assert body["sensors"]["extruder"]["target"] == pytest.approx(200.0)
+    # The 'target' assertion is DELETED because standalone sensors do not have targets.
+    assert body["sensors"]["extruder"]["tool_id"] == "extruder"
 
-    # Tools block — the snapshot is now the canonical surface for
-    # the tool list. Empty because the test root has no
-    # ``hardware.json``, but the field must be present and
-    # serialise as a JSON array.
     assert isinstance(body["tools"], list)
     assert body["tools"] == []
 

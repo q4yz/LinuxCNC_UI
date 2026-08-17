@@ -41,7 +41,16 @@ def get_extruder(tool_id: str)-> Dict[str, Any]:
     return _get_tool(tool_id, get_tool_type(ToolType.EXTRUDER))
 
 def get_heater(tool_id: str) -> Dict[str, Any]:
-    return _get_tool(tool_id, get_tool_type(ToolType.HEATED_BED))
+    """Look up a heating tool by id.
+
+    Returns the matching ``extruder`` or ``heated_bed`` entry — both
+    are operator-facing heating surfaces and the canonical
+    ``HeaterMapper`` treats them identically.
+    """
+    try:
+        return _get_tool(tool_id, get_tool_type(ToolType.HEATED_BED))
+    except KeyError:
+        return _get_tool(tool_id, get_tool_type(ToolType.EXTRUDER))
 
 def get_all_heater()-> List[Dict[str, Any]]:
     return get_tool_type(ToolType.EXTRUDER) + get_tool_type(ToolType.HEATED_BED)

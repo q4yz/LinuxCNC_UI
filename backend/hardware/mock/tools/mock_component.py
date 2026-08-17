@@ -16,6 +16,7 @@ class MockComponent:
         """Parse G-code (like M3, G1 E). Return True if handled."""
         return False
 
-    def update(self, delta_time: float) -> None:
+    def update(self, hal, nml, delta_time: float) -> None:
         """Simulate physics for this tick (e.g., heating up, accelerating)."""
         pass
+

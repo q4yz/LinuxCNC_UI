@@ -25,6 +25,7 @@ telemetry loop beyond what NML already coordinates.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Union
 
@@ -45,8 +46,9 @@ from modules.tools.factory.tool_response_factory import ToolResponseFactory, Too
 
 from modules.tools.models.heater_models import HeaterStateResponse
 from modules.tools.services.tool_service import get_tools_service
+from tests.non_repeating_logger import NonRepeatingLogger
 
-logger = logging.getLogger("backend.routers.base_thread")
+logger = NonRepeatingLogger("backend.routers.base_thread")
 
 router = APIRouter(prefix="/api/v1/base-thread", tags=["Base Thread"])
 
@@ -56,8 +58,7 @@ tool_service = get_tools_service()
 class BaseThreadSnapshotResponse(BaseModel):
     """Flat snapshot of every slow stream the dashboard polls at 1 Hz."""
 
-    progress: ProgramProgressResponse = Field(
-        ...,
+    progress: ProgramProgressResponse = Field(...,
         description=(
             "Active program progress: ``current_line`` / ``motion_line`` "
             "from ``linuxcnc.stat`` plus the cached ``total_lines``."
@@ -86,7 +87,15 @@ class BaseThreadSnapshotResponse(BaseModel):
 
 
 def _read_progress() -> ProgramProgressResponse:
-    return get_program_lifecycle_service().progress_program()
+    progress = get_program_lifecycle_service().progress_program()
+    logger.debug(
+        "base_thread.snapshot: progress built file=%r current=%d total=%d interp=%d",
+        progress.file,
+        progress.current_line,
+        progress.total_lines,
+        progress.interp_state,
+    )
+    return progress
 
 # ---------------------------------------------------------------------- #
 # Tools overlay                                                          #
@@ -94,27 +103,56 @@ def _read_progress() -> ProgramProgressResponse:
 
 def _tools_snapshot() -> List[ToolStateResponseModel]:
     """Build the operator-facing tool list via the OOP factories."""
-    out = []
+    logger.info("base_thread.snapshot: building tools overlay")
+    out: List[ToolStateResponseModel] = []
 
     states = tool_service.get_states()
+    logger.debug(
+        "base_thread.snapshot: tools service returned %d state(s)", len(states)
+    )
 
     for state in states:
         response_model = ToolResponseFactory.create(state)
         if response_model is not None:
             out.append(response_model)
 
+    if not out:
+        logger.warning(
+            "base_thread.snapshot: tools overlay is empty — check hardware.json "
+            "tools[] and the spindle pin subscriptions"
+        )
+    else:
+        logger.debug(
+            "base_thread.snapshot: tools overlay built ids=%s",
+            [getattr(t, "id", "?") for t in out],
+        )
     return out
 
 
 def _sensors_snapshot() -> Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]]:
     """Build the sensors dictionary using the strongly typed response models."""
-    out = {}
+    logger.info("base_thread.snapshot: building sensors overlay")
+    out: Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]] = {}
 
-    for state in get_temperature_service().get_states():
+    states = get_temperature_service().get_states()
+    logger.debug(
+        "base_thread.snapshot: temperature service returned %d state(s)", len(states)
+    )
+
+    for state in states:
         response_model = TemperatureResponseFactory.create(state)
         if response_model is not None:
             out[response_model.tool_id] = response_model
 
+    if not out:
+        logger.warning(
+            "base_thread.snapshot: sensors overlay is empty — check hardware.json "
+            "temperature_sensors[] / tools[] heater declarations"
+        )
+    else:
+        logger.debug(
+            "base_thread.snapshot: sensors overlay built ids=%s", sorted(out.keys())
+        )
     return out
 
 @router.get(
@@ -134,6 +172,8 @@ def _sensors_snapshot() -> Dict[str, Union[HeaterStateResponse, TemperatureState
 )
 def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
     """Assemble the 1 Hz dashboard snapshot in one shot."""
+    started = time.monotonic()
+    logger.info("base_thread.snapshot: assembling dashboard payload")
 
     progress = _read_progress()
     sensors = _sensors_snapshot()
@@ -143,6 +183,14 @@ def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
         datetime.now(timezone.utc)
         .isoformat(timespec="microseconds")
         .replace("+00:00", "Z")
+    )
+
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    logger.info(
+        "base_thread.snapshot: assembled sensors=%d tools=%d in %.1fms",
+        len(sensors),
+        len(tools),
+        elapsed_ms,
     )
 
     return BaseThreadSnapshotResponse(

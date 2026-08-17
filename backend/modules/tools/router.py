@@ -33,7 +33,7 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from exceptions.http import BadRequestError
+from exceptions.http import BadRequestError, NotFoundError
 from modules.tools.dtos.digital_spindle_dto import DirectionStateType
 from modules.tools.mapper.digital_spindle_mapper import SpindleDigitalMapper
 from modules.tools.mapper.extruder_mapper import ExtruderMapper

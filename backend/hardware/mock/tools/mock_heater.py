@@ -1,17 +1,16 @@
 from typing import Optional, Any
-from hardware.mock.mock_component import MockComponent
-
+from hardware.mock.tools.mock_component import MockComponent
 
 class MockHeater(MockComponent):
     def __init__(self, tool_id: str):
-        self.tool_id = tool_id
+        self.id = tool_id
 
         # Internal State
         self.actual = 25.0
         self.target = 0.0
 
-        # Calculate the suffix exactly as the ConfigMapper does
-        suffix = self.tool_id.replace("heater", "")
+        # Calculate the suffix exactly as the ConfigMapper expects
+        suffix = self.id.replace("heater", "")
 
         # Exact dictionary mapping of HAL pin strings to internal state attributes
         self._pin_map = {
@@ -20,22 +19,20 @@ class MockHeater(MockComponent):
         }
 
     def read_pin(self, pin_name: str) -> Optional[Any]:
-        """Strictly look up the pin name in the dictionary."""
         if pin_name in self._pin_map:
             attr_name = self._pin_map[pin_name]
             return getattr(self, attr_name)
         return None
 
     def set_pin(self, pin_name: str, value: Any) -> bool:
-        """Allow setting pins directly."""
         if pin_name in self._pin_map:
             attr_name = self._pin_map[pin_name]
             setattr(self, attr_name, float(value))
             return True
         return False
 
-    def update(self, delta_time: float) -> None:
-        """Simulate heating up and cooling down."""
+    def update(self, hal, nml, delta_time: float) -> None:
+        """Simulate active heating up and cooling down."""
         ambient = 25.0
 
         if self.target > self.actual:

@@ -1,11 +1,10 @@
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any
 
 from dtos.HalPin import DynamicHalPin, StaticHalPin
 from modules.tools.dtos import SpindleDigitalPins, SpindleDigitalStateDTO
 from modules.tools.dtos.digital_spindle_dto import DirectionStateType, SpindleDigitalSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
-if TYPE_CHECKING:
-    from modules.tools.router import SpindleDigitalCommand, SpindleDigitalStateResponse
+from modules.tools.models.spindel_digital_models import SpindleDigitalCommand, SpindleDigitalStateResponse
 
 
 class SpindleDigitalMapper():

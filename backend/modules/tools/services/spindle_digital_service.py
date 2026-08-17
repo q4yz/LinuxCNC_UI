@@ -111,7 +111,14 @@ class SpindleDigitalService:
 
         if current_state in (MachineState.IDLE, MachineState.LOADED):
             return self._manual_mode_rpm(dto)
-        return 0
+
+        # Off-mode fallback — surface the operator's commanded speed
+        # so a backend that hasn't seen the machine power up yet
+        # still emits a useful ``M3 S{n}`` string instead of
+        # silently dropping to ``M3 S0``. The LinuxCNC task mode is
+        # untouched until :func:`ensure_mdi_mode` succeeds; the
+        # mock driver accepts the dispatch either way.
+        return dto.speed
 
     def _manual_mode_rpm(self, dto) -> int:
         return dto.master_override

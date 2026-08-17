@@ -119,7 +119,7 @@ def _make_spindle_callback(tool_id: str, pin_name: str) -> Callable[[Any], None]
     there is no in-process telemetry buffer to update.
     """
     from hardware.connection import HAS_HAL, USE_MOCK, apply_spindle_pin, hal
-    from hardware.spindle_pin_simulator import read_spindle_pin
+    from hardware.mock.spindle_pin_simulator import read_spindle_pin
 
     def _on_pin_change(_pin_value: Any) -> None:
         try:

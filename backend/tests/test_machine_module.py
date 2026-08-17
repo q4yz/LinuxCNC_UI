@@ -145,7 +145,11 @@ def test_axis_jog_dispatch_is_registered_with_watchdog(
     from modules.axis import jog_service as jog
     from modules.axis.jog_service import jog_axis, jog_stop
 
-    # No active jogs at start.
+    # No active jogs at start. Clear any leftovers from a previous
+    # test so the assertion is hermetic — the watchdog's
+    # ``_active_jogs`` map is module-level state and survives
+    # across tests in the same process.
+    jog.clear_active_jogs()
     assert jog._active_jogs == {}
 
     # Continuous jog on axis 0 (X) → watchdog state populated.
@@ -155,6 +159,7 @@ def test_axis_jog_dispatch_is_registered_with_watchdog(
     # Stop removes the entry.
     jog_stop(axes=[0])
     assert jog._active_jogs == {}
+    jog.clear_active_jogs()
 
 
 def test_machine_legacy_routers_are_gone(tmp_data_root, clean_env):

@@ -55,7 +55,8 @@ class ExtruderMapper:
         return ExtruderSettingsDTO(
             id=cmd.tool_id,
             heater=heater_dto,
-            relative_distance=distance
+            relative_distance=distance,
+            speed=cmd.speed,
         )
 
     @classmethod
