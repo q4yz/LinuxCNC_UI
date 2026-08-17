@@ -114,7 +114,7 @@ function updateWcs(event) {
               title="Home X Axis"
             >🏠</button>
             <button
-              @click="openSetPosition(0, 'X', droX)"
+              @click="openSetPosition(0, 'X', 0)"
               :disabled="!isMachineOn"
               class="px-2 py-1 rounded text-xs font-bold bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="Set X Position"
@@ -140,7 +140,7 @@ function updateWcs(event) {
               title="Set Y Position"
             >SET</button>
           </div>
-          <span class="text-gray-100">{{ 0 }}</span>
+          <span class="text-gray-100">{{ droY }}</span>
         </div>
         
         <!-- Z Axis Row -->

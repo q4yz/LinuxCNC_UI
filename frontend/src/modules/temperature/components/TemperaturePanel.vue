@@ -1,4 +1,15 @@
 <script setup>
+// Temperature panel — chart + per-row controls for every
+// controllable heater and every read-only sensor.
+//
+// Reads from the temperature store's ``sensors`` projection (the
+// legacy chart-friendly shape ``{ id: { actual, target? } }``
+// derived from the entity surface in
+// ``modules/temperature/store.js``). The setter action
+// (``store.setTarget``) routes through ``temperatureFacade`` which
+// dispatches the canonical tools heater endpoint — the historical
+// ``POST /temperature/sensors/{name}/target`` is gone.
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../store.js'
@@ -34,19 +45,15 @@ const {
 const inputTemps = ref({})
 
 async function postTarget(name, target) {
-  const res = await fetch(
-    `/api/v1/modules/temperature/sensors/${encodeURIComponent(name)}/target`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sensor_name: name, target }),
-    },
-  )
-  if (!res.ok) {
-    const detail = await res.text().catch(() => res.statusText)
-    throw new Error(`set target failed: ${res.status} ${detail}`)
+  // Routes through ``temperatureFacade.setTarget`` →
+  // ``ModulesToolsService.setToolTarget``. Never calls the
+  // deprecated ``/temperature/sensors/{name}/target`` endpoint
+  // (which returns ``410 Gone``).
+  const result = await store.setTarget(name, target)
+  if (result && result.failed) {
+    throw new Error(result.failureReason || 'set target failed')
   }
-  return res.json()
+  return result
 }
 
 const setTemp = async (name) => {
@@ -90,15 +97,8 @@ function roundTo(value, decimals) {
 
 const WINDOW_SECONDS = 30
 
-/**
- * Build the ECharts options object. Single source of truth for the
- * chart's rendering pipeline so unit / visibility / colour toggles
- * recompute together.
- */
 const chartOptions = computed(() => {
   const now = currentTime.value
-  // Render the chart 1 s in the past so the line has time to draw
-  // smoothly toward the newest data point.
   const renderTime = now - 1000
 
   const legendData = []
@@ -121,9 +121,7 @@ const chartOptions = computed(() => {
       if (Number.isFinite(raw.target)) targetSamples.push({ ts: point.timestamp, val: raw.target })
     }
 
-    // Build the Actual curve: lock historical points in place, then
-    // smoothstep-interpolate between the last locked point and the
-    // first future point so the line keeps moving between samples.
+    // Build the Actual curve.
     const actualData = []
     let lastActualPt = null
 
@@ -144,7 +142,6 @@ const chartOptions = computed(() => {
       }
     }
 
-    // If the network is delayed, hold the last known value flat.
     if (actualData.length > 0 && actualData[actualData.length - 1][0] < renderTime) {
       actualData.push([renderTime, actualData[actualData.length - 1][1]])
     }
@@ -160,8 +157,8 @@ const chartOptions = computed(() => {
       smooth: true,
     })
 
-    // Target curve: step interpolation, only renders if the sensor
-    // exposes a target value.
+    // Target curve: step interpolation, only renders if the row
+    // is a controllable heater (legacy ``target`` key present).
     if (temps[sensorName].target !== undefined) {
       const targetData = []
       for (let i = 0; i < targetSamples.length; i++) {
@@ -217,10 +214,9 @@ const chartOptions = computed(() => {
     xAxis: {
       type: 'time',
       boundaryGap: false,
-      // Use renderTime to lock the right edge of the chart to our delay buffer
       min: renderTime - (WINDOW_SECONDS - 1) * 1000,
       max: renderTime,
-      minInterval: 10000, // Forces the axis to only draw labels at whole 1-second intervals
+      minInterval: 10000,
       axisLabel: {
         color: '#9CA3AF',
         formatter: (value) => {
@@ -283,7 +279,7 @@ const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
 
     </div>
 
-    <!-- Sensor Rows -->
+    <!-- Reading Rows -->
     <div class="p-3 sm:p-4 bg-gray-700/20 border-b border-gray-600 flex flex-col space-y-2">
       <div
         v-for="(data, name) in sensors"
@@ -315,7 +311,7 @@ const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
         <!-- Right Side: Target Controls & Visibility -->
         <div class="flex items-center space-x-2 sm:space-x-4">
 
-          <!-- Target Controls -->
+          <!-- Target Controls (heaters only — `target` is the discriminator) -->
           <div v-if="data.target !== undefined" class="flex items-center space-x-2 sm:space-x-3 pr-2 sm:pr-4 border-r border-gray-700">
 
             <!-- Current Target Display (Hides on mobile/sm screens) -->
@@ -328,21 +324,23 @@ const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
 
             <!-- Input & Buttons -->
             <div class="flex items-center space-x-1 sm:space-x-2">
-              <!-- Always visible, slightly narrower on tiny screens -->
               <input
                 v-model="inputTemps[name]"
                 type="number"
+                :min="data.min_temp"
+                :max="data.max_temp"
+                :title="data.min_temp !== undefined && data.max_temp !== undefined
+                  ? `range ${data.min_temp}–${data.max_temp} °C`
+                  : undefined"
                 class="w-12 sm:w-16 bg-gray-900 border border-gray-600 rounded px-1 sm:px-2 py-1 text-gray-100 font-mono text-xs text-right focus:outline-none focus:border-blue-500"
                 @keyup.enter="setTemp(name)"
               >
-              <!-- Always visible -->
               <button
                 @click="setTemp(name)"
                 class="px-2 sm:px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition-colors"
               >
                 Set
               </button>
-              <!-- Individual Off Button (Hides on screens smaller than lg) -->
               <button
                 @click="turnOff(name)"
                 class="hidden lg:block px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded text-xs font-semibold transition-colors"
@@ -361,7 +359,7 @@ const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
             class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded border border-gray-600 hover:border-gray-400 bg-gray-900/50 flex items-center shrink-0"
           >
             <span v-if="visibleSensors[name] !== false">👁</span>
-            <span v-else>🚫</span>
+            <span v-else>�</span>
           </button>
 
         </div>
@@ -382,7 +380,6 @@ const fmtTemp = (v) => store.displayTemp(v).toFixed(2)
   min-height: 250px;
 }
 
-/* Hide standard HTML number input arrows for a cleaner look */
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button {
   -webkit-appearance: none;

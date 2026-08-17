@@ -1,7 +1,6 @@
 // Base-thread snapshot store.
 //
-// Mirrors the LinuxCNC runtime split: the 10 Hz ``/ws/telemetry``
-// stream is the "servo thread" (time-critical position / state /
+// Mirrors the LinuxCNC runtime split: the 10 Hz ``/ws/telemetry``// stream is the "servo thread" (time-critical position / state /
 // errors), and this store is the "base thread" — a single 1 Hz
 // REST round-trip that bundles every slow stream the dashboard
 // cares about (program progress, temperature sensors, tool list)
@@ -12,15 +11,11 @@
 //   * three polls → one poll. The browser issues one HTTP request
 //     per second regardless of how many panels are mounted.
 //   * single source of truth — consumers destructure the ref they
-//     need (``progress`` / ``sensors`` / ``tools``) and reactivity
+//     need (``progress`` / ``readings`` / ``tools``) and reactivity
 //     is preserved via ``storeToRefs``.
 //   * trivial to extend — adding a new slow stream is one new
 //     top-level field on the backend response, one new ref here,
 //     and one new consumer. No new endpoint, no new timer.
-//
-// The store exposes a manual ``refresh()`` action so a future
-// "force update" button (or a settings PUT) can trigger an
-// out-of-band poll without waiting for the next interval.
 //
 // ───────────────────────────────────────────────────────────────────
 // USAGE
@@ -36,21 +31,22 @@
 //   // any consumer module
 //   import { useBaseThreadStore } from '../../stores/baseThread.js'
 //   const baseThread = useBaseThreadStore()
-//   const { progress, sensors, tools } = storeToRefs(baseThread)
+//   const { progress, readings, tools } = storeToRefs(baseThread)
 //
 //   // out-of-band refresh (e.g. after a settings PUT)
 //   await baseThread.refresh()
 //
-// Adding a new slow stream (e.g. ``fans``):
+// ───────────────────────────────────────────────────────────────────
+// STATE LAYERS
+// ───────────────────────────────────────────────────────────────────
 //
-//   1. Add a top-level field to the backend
-//      ``BaseThreadSnapshotResponse`` Pydantic model in
-//      ``backend/routers/base_thread.py`` and populate it in
-//      ``get_base_thread_snapshot()``.
-//   2. ``npm run generate-api`` to regenerate the TypeScript client.
-//   3. Add a ref to ``state`` here and a defensive write inside
-//      ``refresh()`` (mirror the ``sensors`` / ``tools`` block).
-//   4. Update consumers — no new timer, no new endpoint.
+// The store exposes both the **raw wire shape** (legacy ``sensors``
+// dict, ``tools`` array) and the **typed entity surface**
+// (``readings: ReadingSet``, ``toolList: ToolList``, ``progress``).
+// Migrating consumers to the entity surface is the goal of the
+// anti-corruption layer (see ``frontend/src/entities`` and
+// ``frontend/src/facades``); the legacy surface stays until every
+// consumer has moved.
 //
 // ───────────────────────────────────────────────────────────────────
 // GOTCHAS (see ``.agent/context/LESSONS_LEARNED.md`` § 2.5)
@@ -70,8 +66,26 @@
 //   carry temperature sensors, tool list, or program progress —
 //   those moved to this base-thread snapshot. Do not add them back
 //   to ``/ws/telemetry``.
+
 import { defineStore } from "pinia";
+
 import { BaseThreadService } from "../../generated/api/index.ts";
+import { ReadingSet } from "../entities/temperature/ReadingSet.js";
+import { ToolList } from "../entities/tools/ToolList.js";
+import { ProgramProgress } from "../entities/progress/ProgramProgress.js";
+import { HeaterReading, SensorReading } from "../entities/temperature/Reading.js";
+import { SpindleState, ExtruderState } from "../entities/tools/index.js";
+import {
+  toReading,
+  toReadingSet,
+} from "../mappers/temperatureMapper.js";
+import { toProgramProgress } from "../mappers/progressMapper.js";
+import {
+  toToolList,
+  toSpindleState,
+  toExtruderState,
+  toHeaterReading,
+} from "../mappers/toolsMapper.js";
 
 // 1 Hz is the documented contract — the temperature chart rolls
 // a 30 s window at 1 s ticks, the progress bar advances at most
@@ -81,36 +95,59 @@ import { BaseThreadService } from "../../generated/api/index.ts";
 const POLL_INTERVAL_MS = 1_000;
 
 const DEFAULT_PROGRESS = Object.freeze({
-  current_line: 0,
-  motion_line: 0,
-  total_lines: 0,
+  currentLine: 0,
+  motionLine: 0,
+  totalLines: 0,
   file: "",
-  // Mirror backend's INTERP_IDLE so the widget can render the
-  // "no program" branch even before the first response lands.
-  interp_state: 1,
+  interpState: 1,
 });
+
+const EMPTY_READINGS = new ReadingSet([]);
+const EMPTY_TOOLS = new ToolList([]);
 
 export const useBaseThreadStore = defineStore("baseThread", {
   state: () => ({
-    /** @type {{ current_line: number, motion_line: number, total_lines: number, file: string, interp_state: number }} */
-    progress: { ...DEFAULT_PROGRESS },
-    /** @type {Record<string, { actual: number, target: number }>} */
+    /** @type {ProgramProgress} */
+    progress: new ProgramProgress({ ...DEFAULT_PROGRESS }),
+
+    /**
+     * Legacy wire shape — preserved during the migration window
+     * so existing consumers keep working. Keys are tool_ids
+     * (``HeaterStateResponse.tool_id`` / ``TemperatureStateResponse.tool_id``).
+     * @type {Record<string, object>}
+     */
     sensors: {},
-    /** @type {Array<Record<string, any>>} */
+
+    /**
+     * Typed entity surface — replaces the legacy ``sensors`` dict
+     * once consumers migrate.
+     * @type {ReadingSet}
+     */
+    readings: EMPTY_READINGS,
+
+    /**
+     * Legacy wire shape — preserved during the migration window.
+     * @type {Array<Record<string, any>>}
+     */
     tools: [],
+
+    /**
+     * Typed entity surface — replaces ``tools`` once consumers migrate.
+     * @type {ToolList}
+     */
+    toolList: EMPTY_TOOLS,
+
     /** @type {string|null} */
     timestamp: null,
+
     /** 'disconnected' | 'connecting' | 'connected' | 'error' */
     connectionStatus: "disconnected",
   }),
   getters: {
     /** Convenience getter for components that only need the bar fraction. */
     progressFraction(state) {
-      const total = Number(state.progress.total_lines);
-      const current = Number(state.progress.current_line);
-      if (!Number.isFinite(total) || total <= 0) return 0;
-      if (!Number.isFinite(current) || current < 0) return 0;
-      return Math.min(100, (current / total) * 100);
+      const fraction = state.progress.fraction;
+      return Number.isFinite(fraction) ? fraction : 0;
     },
   },
   actions: {
@@ -133,35 +170,46 @@ export const useBaseThreadStore = defineStore("baseThread", {
         // Progress: only overwrite when the backend sent a valid
         // object so a half-built snapshot cannot blank the bar.
         if (snapshot.progress && typeof snapshot.progress === "object") {
-          const p = snapshot.progress;
-          this.progress = {
-            current_line: Number(p.current_line) || 0,
-            motion_line: Number(p.motion_line) || 0,
-            total_lines: Number(p.total_lines) || 0,
-            file: typeof p.file === "string" ? p.file : "",
-            interp_state: Number(p.interp_state) || 1,
-          };
+          this.progress = toProgramProgress(snapshot.progress);
         }
 
         if (snapshot.sensors && typeof snapshot.sensors === "object") {
+          // ── Legacy shape (kept for the migration window) ──
           // Coerce each entry to a plain ``{actual, target}`` so
-          // consumers can rely on the shape regardless of how the
-          // backend serialised it.
+          // the few remaining raw-shape consumers can rely on the
+          // keys regardless of which backend response model
+          // produced the row.
           const next = {};
           for (const [name, reading] of Object.entries(snapshot.sensors)) {
             if (!reading || typeof reading !== "object") continue;
+            const hasHeaterFields =
+              reading.target !== undefined && reading.target !== null;
             next[name] = {
+              tool_id:
+                typeof reading.tool_id === "string" ? reading.tool_id : name,
               actual: Number(reading.actual) || 0,
-              target: Number(reading.target) || 0,
+              ...(hasHeaterFields && {
+                target: Number(reading.target) || 0,
+                min_temp: Number(reading.min_temp) || 0,
+                max_temp: Number(reading.max_temp) || 0,
+              }),
             };
           }
           this.sensors = next;
+
+          // ── Typed entity surface ──
+          // The discriminator (target present vs absent) lives
+          // entirely in the mapper; entity consumers never branch
+          // on it.
+          this.readings = toReadingSet(snapshot.sensors);
         }
 
         if (Array.isArray(snapshot.tools)) {
-          // Shallow-clone each tool so the store never mutates the
-          // upstream payload in place.
+          // ── Legacy shape (shallow-cloned) ──
           this.tools = snapshot.tools.map((tool) => ({ ...tool }));
+
+          // ── Typed entity surface ──
+          this.toolList = toToolList(snapshot.tools);
         }
 
         this.timestamp =
@@ -216,3 +264,16 @@ export const useBaseThreadStore = defineStore("baseThread", {
 });
 
 export default useBaseThreadStore;
+
+// Re-export the entity factories so consumers that build synthetic
+// readings (tests, dev tooling) don't have to reach into the
+// entity module directly.
+export {
+  HeaterReading,
+  SensorReading,
+  ReadingSet,
+  SpindleState,
+  ExtruderState,
+  ToolList,
+  ProgramProgress,
+};

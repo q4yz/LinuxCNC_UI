@@ -2,23 +2,22 @@ import logging
 import threading
 import time
 
-
 from hardware.mock.factory.mock_tool_factory import MockToolFactory
 from hardware.mock.hal_mock import HalMock
 from hardware.mock.hal_module_facade import HalModuleFacade
 from hardware.mock.linuxcnc_module_facade import LinuxcncModuleFacade
 from hardware.mock.state_machine_mock import StateMachineMock
 
-
 logger = logging.getLogger("backend.hardware.mock")
+
 
 class LinuxCNCMock:
     def __init__(self):
 
-        self.internal_state = StateMachineMock()
-        self.internal_hal = HalMock(nml_state=self.internal_state)
-        self.hal = HalModuleFacade(internal_hal=self.internal_hal)
-        self.linuxcnc = LinuxcncModuleFacade(state_mock=self.internal_state)
+        self.internal_state: StateMachineMock = StateMachineMock()
+        self.internal_hal: HalMock = HalMock(nml_state=self.internal_state)
+        self.hal: HalModuleFacade = HalModuleFacade(internal_hal=self.internal_hal)
+        self.linuxcnc: LinuxcncModuleFacade = LinuxcncModuleFacade(state_mock=self.internal_state,hal_mock=self.internal_hal)
 
         self._running = False
         self._thread = None
@@ -51,9 +50,6 @@ class LinuxCNCMock:
             if mock_component:
                 self.internal_hal.register_component(mock_component)
                 logger.debug("Registered mock component for %s", tool_record.get("id"))
-
-
-
 
 
 mock_system = LinuxCNCMock()

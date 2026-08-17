@@ -30,7 +30,7 @@ import { storeToRefs } from "pinia";
 import { useMachineStore, SystemState } from "../stores/stateFacade.js";
 import { useBaseThreadStore } from "../stores/baseThread.js";
 import {useConsoleStore} from "../stores/console.js";
-import {ModulesProgramService, ProgramFilesService} from "../../generated/api/index.ts";
+import { progressFacade } from "../facades/progressFacade.js";
 
 const store = useMachineStore();
 const baseThread = useBaseThreadStore();
@@ -52,17 +52,12 @@ async function fetchFiles() {
   isLoadingList.value = true
   loadError.value = null
   try {
-    const listing = await ProgramFilesService.listFiles()
+    const listing = await progressFacade.listProgramFiles()
     files.value = Array.isArray(listing) ? listing : []
   } catch (err) {
-    // ``ProgramFilesService.listFiles`` returns 404 when the
-    // upload root is empty or missing; treat that as "no files"
-    // rather than a hard error — the empty-state UI covers it.
-    const status = err?.status ?? err?.response?.status
-    if (status !== 404) {
-      consoleStore.error(`[ActivePrintWidget] Failed to load file list: ${err?.body?.detail || err?.message || 'unknown error'}`)
-      loadError.value = err?.body?.detail || err?.message || 'unknown error'
-    }
+    const detail = err?.body?.detail || err?.message || 'unknown error'
+    consoleStore.error(`[ActivePrintWidget] Failed to load file list: ${detail}`)
+    loadError.value = detail
     files.value = []
   } finally {
     isLoadingList.value = false
@@ -125,10 +120,14 @@ const isLoading = ref(false);
 
 // Pretty-print the progress as a one-decimal percentage so the bar
 // label does not dance between ``33.3333%`` and ``33.3334%`` on
-// every telemetry tick. The fraction comes straight from the
-// base-thread store's getter — the store owns the divide-by-zero
+// every telemetry tick. The fraction comes straight off the
+// ``ProgramProgress`` entity — the entity owns the divide-by-zero
 // guard + clamp so this component stays a pure renderer.
-const progressFraction = computed(() => baseThread.progressFraction);
+const progressFraction = computed(() =>
+  progress.value && typeof progress.value.fraction === "number"
+    ? progress.value.fraction
+    : 0,
+);
 const progressPercent = computed(() => progressFraction.value.toFixed(1));
 
 // Cap the recent-files list to the five newest G-code / NGC
@@ -190,17 +189,16 @@ async function loadFile(filename) {
     // "Loaded" branch renders a dedicated Start button. The
     // operator must press Start explicitly so the two-step
     // lifecycle is visible (matches LinuxCNC's CLI semantics).
-    await ModulesProgramService.loadProgram({ filename });
-    consoleStore.success(`Loaded ${filename}. Press Start to begin.`);
-    // Refresh the file list so the just-loaded file's mtime
-    // reflects in the Standby view's ordering.
-    await fetchFiles();
-  } catch (err) {
-    // The generated client throws ApiError on failure, which includes useful data.
-    consoleStore.error(
-      `[ActivePrintWidget] Failed to load: ${err.body?.detail || err.message}`,
-      { popup: true, title: "Load failed" },
-    );
+    const result = await progressFacade.loadProgram(filename);
+    if (result.ok) {
+      consoleStore.success(`Loaded ${filename}. Press Start to begin.`);
+      await fetchFiles();
+    } else {
+      consoleStore.error(
+        `[ActivePrintWidget] Failed to load: ${result.failureReason}`,
+        { popup: true, title: "Load failed" },
+      );
+    }
   } finally {
     isLoading.value = false;
   }
@@ -215,34 +213,17 @@ async function startLoadedProgram() {
     return;
   }
   consoleStore.debug("[ActivePrintWidget] Requesting start...");
-  try {
-    await ModulesProgramService.runProgram();
-  } catch (err) {
-    consoleStore.error(`[ActivePrintWidget] Failed to start: ${err.body?.detail || err.message}`);
+  const result = await progressFacade.runProgram();
+  if (result.failed) {
+    consoleStore.error(`[ActivePrintWidget] Failed to start: ${result.failureReason}`);
   }
 }
 
 async function unloadProgram() {
-  // Dedicated ``POST /unload`` endpoint. The previous workaround
-  // (``stopProgram``) only aborted the active move — the file
-  // pointer stayed open in the firmware's memory, so the
-  // state-machine facade kept reporting ``SystemState.LOADED`` and
-  // the runtime highlight stayed stuck. The new endpoint clears
-  // the file pointer so the next telemetry tick reports
-  // ``stat.file == ""`` and the state-machine drops to pure Idle.
   consoleStore.debug("[ActivePrintWidget] Unloading program...");
-  try {
-    // The generated client picks up the new endpoint after a
-    // ``npm run generate-api`` pass.
-    await ModulesProgramService.unloadProgram();
-    // No need to refresh the file list or nudge any local state —
-    // the next WebSocket tick will surface ``stat.file == ""`` and the
-    // computed ``systemState`` will return to Idle automatically.
-    // The Load buttons across the file list re-enable because the
-    // highlight is keyed on ``isLoadedFile(filename)`` which is now
-    // false for every row.
-  } catch (err) {
-    consoleStore.error(`[ActivePrintWidget] Failed to unload: ${err.body?.detail || err.message}`);
+  const result = await progressFacade.unloadProgram();
+  if (result.failed) {
+    consoleStore.error(`[ActivePrintWidget] Failed to unload: ${result.failureReason}`);
   }
 }
 
@@ -254,10 +235,9 @@ async function pausePrint() {
   }
 
   consoleStore.debug("[ActivePrintWidget] Requesting pause...");
-  try {
-    await ModulesProgramService.pauseProgram();
-  } catch (err) {
-    consoleStore.error(`[ActivePrintWidget] Failed to pause: ${err.body?.detail || err.message}`);
+  const result = await progressFacade.pauseProgram();
+  if (result.failed) {
+    consoleStore.error(`[ActivePrintWidget] Failed to pause: ${result.failureReason}`);
   }
 }
 
@@ -269,10 +249,9 @@ async function resumePrint() {
   }
 
   consoleStore.debug("[ActivePrintWidget] Requesting resume...");
-  try {
-    await ModulesProgramService.resumeProgram();
-  } catch (err) {
-    consoleStore.error(`[ActivePrintWidget] Failed to resume: ${err.body?.detail || err.message}`);
+  const result = await progressFacade.resumeProgram();
+  if (result.failed) {
+    consoleStore.error(`[ActivePrintWidget] Failed to resume: ${result.failureReason}`);
   }
 }
 
@@ -284,10 +263,9 @@ async function stopPrint() {
   }
 
   consoleStore.debug("[ActivePrintWidget] Requesting abort/stop...");
-  try {
-    await ModulesProgramService.stopProgram();
-  } catch (err) {
-    consoleStore.error(`[ActivePrintWidget] Failed to stop print: ${err.body?.detail || err.message}`);
+  const result = await progressFacade.stopProgram();
+  if (result.failed) {
+    consoleStore.error(`[ActivePrintWidget] Failed to stop print: ${result.failureReason}`);
   }
 }
 </script>

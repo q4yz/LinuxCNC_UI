@@ -244,12 +244,14 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   // The widget defines one handler per action; every handler
   // emits a debug log via the console store (not a raw
   // ``console.log``) so the operator sees the request in the
-  // panel. The handlers also delegate to the generated program
-  // service (``runProgram`` / ``pauseProgram`` / ``resumeProgram``
-  // / ``stopProgram``). The two-step lifecycle is reflected here:
-  // ``loadFile`` calls ``loadProgram`` (the "load" step) and the
-  // ``Loaded`` branch adds a dedicated ``startLoadedProgram``
-  // handler that calls ``runProgram``.
+  // panel. After the anti-corruption-layer refactor the handlers
+  // delegate to ``progressFacade`` (``loadProgram`` /
+  // ``runProgram`` / ``pauseProgram`` / ``resumeProgram`` /
+  // ``stopProgram``); the generated client is the facade's
+  // concern, not the widget's. The two-step lifecycle is reflected
+  // here: ``loadFile`` calls ``loadProgram`` (the "load" step)
+  // and the ``Loaded`` branch adds a dedicated
+  // ``startLoadedProgram`` handler that calls ``runProgram``.
   for (const handler of [
     "loadFile",
     "startLoadedProgram",
@@ -267,7 +269,7 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
     "resumeProgram",
     "stopProgram",
   ]) {
-    assert.match(text, new RegExp(`ModulesProgramService\\.${serviceCall}\\b`));
+    assert.match(text, new RegExp(`progressFacade\\.${serviceCall}\\b`));
   }
   // The widget must host three top-level lifecycle branches
   // (Standby / Loaded / Active). The file list is now always

@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):
 
     reseed_from_hardware_json()
 
+    mock_system.start_simulation()
+
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(servo_thread.telemetry_loop())
 

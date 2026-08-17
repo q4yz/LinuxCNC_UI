@@ -4,8 +4,9 @@ from hardware.mock.command_mock import CommandMock
 class LinuxcncModuleFacade:
     """A drop-in replacement for the real 'linuxcnc' Python module."""
 
-    def __init__(self, state_mock):
+    def __init__(self, state_mock, hal_mock):
         self._state = state_mock
+        self._hal_mock = hal_mock
 
         # Expose the NML constants directly on the module so things like
         # `if stat.task_state == linuxcnc.STATE_ESTOP:` work natively!
@@ -28,7 +29,7 @@ class LinuxcncModuleFacade:
 
     def command(self):
         """Mimics linuxcnc.command()."""
-        return CommandMock(self._state)
+        return CommandMock(self._state, self._hal_mock)
 
     def error_channel(self):
         """Mimics linuxcnc.error_channel()."""

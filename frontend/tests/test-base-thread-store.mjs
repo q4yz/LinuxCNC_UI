@@ -61,10 +61,18 @@ test("store exposes individual refs per snapshot stream", () => {
   // via ``storeToRefs`` without losing reactivity. Adding a new
   // stream means adding one new ref + one watcher on the consumer
   // side — no schema migration required.
+  //
+  // After the anti-corruption-layer refactor ``progress`` is an
+  // entity instance (``ProgramProgress``), not a plain object
+  // literal — the entity owns the math.
   const text = readStore();
-  assert.match(text, /\bprogress:\s*\{/);
+  assert.match(text, /\bprogress:\s*new\s+ProgramProgress\b/);
   assert.match(text, /\bsensors:\s*\{/);
   assert.match(text, /\btools:\s*\[\s*\]/);
+  // And the typed entity surface lives alongside the legacy
+  // arrays during the migration window.
+  assert.match(text, /\breadings:\s*EMPTY_READINGS\b/);
+  assert.match(text, /\btoolList:\s*EMPTY_TOOLS\b/);
 });
 
 test("start schedules a single setInterval; stop clears it", () => {
@@ -112,21 +120,24 @@ test("start is idempotent — re-entry while running is a no-op", () => {
 });
 
 test("progressFraction getter collapses on zero / missing totals and clamps at 100", () => {
-  // Mirrors the facade's ``printProgress`` contract: missing /
-  // zero / negative totals collapse to 0, the bar never exceeds
-  // 100. Lives on the base-thread store so consumers can read
-  // it via ``storeToRefs`` without re-implementing the math.
+  // Mirrors the ``ProgramProgress.fraction`` getter contract:
+  // missing / zero / negative totals collapse to 0, the bar never
+  // exceeds 100. The getter delegates to the entity so the math
+  // lives in exactly one place.
   const text = readStore();
   assert.match(text, /progressFraction\s*\(\s*state\s*\)\s*\{/);
+  // Delegates to ``ProgramProgress.fraction`` rather than
+  // re-implementing the math inline.
   assert.match(
     text,
-    /total\s*<=\s*0/,
-    "progressFraction must collapse to 0 when total_lines is 0",
+    /state\.progress\.fraction|\.fraction\b/,
+    "progressFraction must read from ProgramProgress.fraction",
   );
+  // Defensive: guards against NaN/Infinity leaking through.
   assert.match(
     text,
-    /Math\.min\(\s*100/,
-    "progressFraction must clamp at 100%",
+    /Number\.isFinite/,
+    "progressFraction must defensively guard against non-finite fractions",
   );
 });
 

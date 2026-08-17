@@ -1,12 +1,19 @@
-// Temperature module Pinia store. Owns the sensor dict, the rolling
-// 30 s chart history, the unit toggle, the per-sensor visibility /
-// colour maps. Reads sensors from the shared base-thread snapshot
-// (``stores/baseThread.js``) so the dashboard only issues one
-// HTTP request per second for every slow stream. The historical
-// ``state.temperatures`` event-bus topic from the WebSocket is
-// gone — the WebSocket now only carries the time-critical fields.
-// See ``.agent/STATE.md`` § 2 (store id), § 3 (event bus), § 9
-// (active modules table).
+// Temperature module Pinia store. Owns the sensor / heater set, the
+// rolling 30 s chart history, the unit toggle, and the per-entry
+// visibility / colour maps.
+//
+// The store now consumes the **typed entity surface** from the
+// base-thread store (``baseThread.readings: ReadingSet``) instead
+// of the raw ``sensors`` dict. Wire-shape knowledge lives in the
+// ``temperatureMapper`` — this store never branches on
+// ``reading.target !== undefined`` to discriminate sensors from
+// heaters; ``reading.isControllable`` carries the discriminator.
+//
+// Writes go through ``temperatureFacade.setTarget`` so the
+// legacy ``POST /temperature/sensors/{name}/target`` endpoint is
+// never called — that endpoint returns ``410 Gone``. The facade
+// routes through the live ``POST /tools/tools/{tool_id}/target``
+// endpoint instead.
 
 import { defineStore, storeToRefs } from "pinia";
 import { onScopeDispose, ref, watch } from "vue";
@@ -14,6 +21,8 @@ import { onScopeDispose, ref, watch } from "vue";
 import manifest from "./manifest.js";
 import { createModuleSettings } from "../../core/modules/settings.js";
 import { useBaseThreadStore } from "../../stores/baseThread.js";
+import { temperatureFacade } from "../../facades/temperatureFacade.js";
+import { TemperatureUnit } from "../../entities/common/Unit.js";
 
 // Chart is locked to a fixed 30 s window of 1 s ticks. The
 // ``history_window_seconds`` / ``history_poll_interval_ms`` knobs
@@ -75,11 +84,34 @@ function roundTo(value, decimals) {
   return Math.round(value * factor) / factor;
 }
 
+/**
+ * Project a ``ReadingSet`` to the legacy chart-friendly shape
+ * ``{ id: { actual, target? } }``. Kept only for the chart's
+ * rolling-history buffer (which clones the projection per tick).
+ * New consumers should reach for ``readings`` + entity getters.
+ */
+function readingsToChartShape(readings) {
+  const out = {};
+  readings.forEach((r) => {
+    out[r.id] = {
+      actual: r.actualCelsius,
+      ...(r.isControllable && { target: r.targetCelsius }),
+    };
+  });
+  return out;
+}
+
 export const useTemperatureStore = defineStore(
   STORE_ID,
   () => {
     // --- reactive state ------------------------------------------- //
+    /**
+     * Live readings mirror (legacy shape — kept for the chart's
+     * history buffer). The entity surface is ``readings`` below.
+     * @type {import("vue").Ref<Record<string, {actual:number,target?:number}>>}
+     */
     const sensors = ref({});
+    /** @type {import("vue").Ref<Array<{timestamp:number,time:string,sensors:object}>>} */
     const history = ref([]);
     // Locked to 30 s — chart shape is no longer configurable.
     const windowMs = ref(WINDOW_SECONDS * 1000);
@@ -87,7 +119,7 @@ export const useTemperatureStore = defineStore(
     // Display unit. Backed by ``settings.unit``; flips the
     // chart Y-axis and the control-box labels without touching the
     // raw value.
-    const unit = ref("celsius");
+    const unit = ref(TemperatureUnit.CELSIUS);
     // Per-sensor chart-visibility toggle. Defaults to true on first
     // sighting.
     const visibleSensors = ref({});
@@ -101,39 +133,26 @@ export const useTemperatureStore = defineStore(
     // Tracks whether the store has been started by ``onLoad`` so
     // hot-reloads / double-mounts don't accumulate intervals.
     let running = false;
-    // Stop handle for the base-thread sensors watcher — set when
-    // ``start`` mounts it and cleared by ``onScopeDispose``.
-    let stopSensorWatch = null;
 
     // --- helpers -------------------------------------------------- //
 
-    function seedVisibility() {
+    function seedVisibility(readings) {
       const next = {};
-      for (const name of Object.keys(sensors.value || {})) {
-        if (typeof visibleSensors.value[name] === "boolean") {
-          next[name] = visibleSensors.value[name];
+      readings.forEach((r) => {
+        if (typeof visibleSensors.value[r.id] === "boolean") {
+          next[r.id] = visibleSensors.value[r.id];
         } else {
-          next[name] = true;
+          next[r.id] = true;
         }
-      }
+      });
       visibleSensors.value = next;
     }
 
     function applySettings(settings) {
       if (!settings || typeof settings !== "object") return;
-      // Only overwrite ``unit`` when the backend has something to
-      // say about it; otherwise keep the in-memory state so the UI
-      // doesn't flicker between renders.
-      if (settings.unit === "celsius" || settings.unit === "kelvin") {
+      if (settings.unit === TemperatureUnit.CELSIUS || settings.unit === TemperatureUnit.KELVIN) {
         unit.value = settings.unit;
       }
-      // Deep-merge ``sensor_colors`` so a partial payload doesn't
-      // wipe the rest of the palette. We start from the existing
-      // ``sensorColors.value`` so the backend's seeded colours
-      // (which arrive on the first ``refreshSettings`` call) are
-      // preserved on every subsequent merge. ``DEFAULT_SENSOR_COLORS``
-      // is intentionally empty — overlaying it first would discard
-      // the seeds and leave the operator with the purple fallback.
       if (settings.sensor_colors && typeof settings.sensor_colors === "object") {
         const next = { ...sensorColors.value };
         for (const [name, hex] of Object.entries(settings.sensor_colors)) {
@@ -154,18 +173,16 @@ export const useTemperatureStore = defineStore(
      */
     function displayTemp(celsius) {
       if (!Number.isFinite(celsius)) return 0;
-      const value = unit.value === "kelvin" ? celsius + 273.15 : celsius;
+      const value = unit.value === TemperatureUnit.KELVIN ? celsius + 273.15 : celsius;
       return roundTo(value, 2);
     }
 
     /**
      * Toggle the display unit. Persists via the backend so the next
      * page reload picks up the same choice.
-     *
-     * @param {"celsius"|"kelvin"} nextUnit
      */
     async function setUnit(nextUnit) {
-      if (nextUnit !== "celsius" && nextUnit !== "kelvin") return;
+      if (nextUnit !== TemperatureUnit.CELSIUS && nextUnit !== TemperatureUnit.KELVIN) return;
       if (unit.value === nextUnit) return;
       unit.value = nextUnit;
       try {
@@ -176,10 +193,7 @@ export const useTemperatureStore = defineStore(
     }
 
     /**
-     * Flip the chart visibility for a single sensor. The control-box
-     * row stays rendered so operators can still set the target.
-     *
-     * @param {string} name
+     * Flip the chart visibility for a single reading.
      */
     function toggleSensorVisibility(name) {
       const current = visibleSensors.value[name];
@@ -190,12 +204,9 @@ export const useTemperatureStore = defineStore(
     }
 
     /**
-     * Update a sensor's chart + control-box colour. Persists via
+     * Update a reading's chart + control-box colour. Persists via
      * ``PUT /settings/sensor_colors`` so the choice survives a
      * reload.
-     *
-     * @param {string} name
-     * @param {string} hex
      */
     async function setSensorColor(name, hex) {
       if (!name || typeof name !== "string") return;
@@ -211,17 +222,17 @@ export const useTemperatureStore = defineStore(
       }
     }
 
-    /**
-     * Return the colour for ``name`` — defaults to the legacy
-     * purple when the backend introduces a sensor the palette
-     * doesn't know about.
-     *
-     * @param {string} name
-     */
+    /** Return the colour for ``name``; defaults to the purple sentinel. */
     function colorFor(name) {
       return sensorColors.value[name] || FALLBACK_COLOR;
     }
 
+    /**
+     * Snapshot the current readings into the rolling history
+     * buffer. Stores both the legacy ``{id: {actual, target?}}``
+     * shape (for the chart) and the entity surface (future
+     * consumers).
+     */
     function snapshot() {
       const now = Date.now();
       const date = new Date(now);
@@ -231,7 +242,7 @@ export const useTemperatureStore = defineStore(
         date.getSeconds(),
       )}.${cents.toString().padStart(2, "0")}`;
       // Deep-clone the frozen payload so the rolling buffer keeps
-      // independent copies. See ``.agent/STATE.md`` § 3.
+      // independent copies.
       history.value.push({
         timestamp: now,
         time: label,
@@ -244,15 +255,6 @@ export const useTemperatureStore = defineStore(
     function start() {
       if (running) return;
       running = true;
-      // Sensor reads come from the shared base-thread snapshot
-      // (``stores/baseThread.js``), started at app boot. We no
-      // longer schedule a ``refreshSensors`` interval here — one
-      // HTTP request per second covers every slow stream. The
-      // history snapshot still ticks at 1 s so the chart's 30 s
-      // rolling window keeps advancing even when no new sensors
-      // arrive (the base-thread store fires ``refresh`` every
-      // second regardless, but the chart needs its own clock so
-      // empty frames still age out).
       snapshot();
       pollHandle = setInterval(snapshot, pollMs.value);
     }
@@ -266,28 +268,24 @@ export const useTemperatureStore = defineStore(
     }
 
     /**
-     * Called by the watcher below when the base-thread snapshot
-     * publishes a new ``sensors`` dict. Also exposed publicly so
-     * tests / future code can ingest a synthetic payload without
+     * Ingest a fresh ``ReadingSet`` from the base-thread store.
+     * Replaces the legacy ``payload.sensors`` ingest path. Public
+     * so tests / synthetic payloads can drive the store without
      * waiting for the next tick.
-     *
-     * @param {*} payload
      */
-    function ingest(payload) {
-      if (!payload) return;
-      let next = payload;
-      if (payload.sensors && typeof payload.sensors === "object") {
-        next = payload.sensors;
-      } else if (
-        payload.temperatures &&
-        typeof payload.temperatures === "object"
-      ) {
-        next = payload.temperatures;
-      }
-      if (next && typeof next === "object") {
-        sensors.value = clone(next);
-        seedVisibility();
-      }
+    function ingest(readings) {
+      if (!readings || typeof readings.forEach !== "function") return;
+      sensors.value = readingsToChartShape(readings);
+      seedVisibility(readings);
+    }
+
+    /**
+     * Set the target temperature for a heater. Routes through the
+     * facade so the legacy 410 endpoint is never called.
+     */
+    async function setTarget(toolId, target) {
+      const result = await temperatureFacade.setTarget(toolId, target);
+      return result;
     }
 
     /**
@@ -307,52 +305,33 @@ export const useTemperatureStore = defineStore(
     /**
      * Force an out-of-band base-thread refresh. Replaces the old
      * direct ``GET /sensors`` poll — the snapshot endpoint is the
-     * canonical source now, so a "refresh sensors" action is just
-     * a snapshot refresh. Kept on the public action surface so any
-     * future "refresh now" button keeps working.
+     * canonical source now.
      */
     async function refreshSensors() {
       await useBaseThreadStore().refresh();
     }
 
-    // Subscribe to the base-thread store's ``sensors`` ref. The
-    // base-thread store fires every second; we deep-clone before
-    // storing so a downstream mutation cannot leak back into the
-    // base-thread store. The watcher is ``deep: true`` so the
-    // top-level reassignment inside the baseThread store's
-    // ``refresh()`` action reliably fires across module boundaries
-    // — Pinia's OPTIONS-API proxy does not always rebroadcast a
-    // shallow reassignment to consumers in sibling modules.
-    // The payload is a tiny dict (a handful of sensor readings)
-    // so the deep-traversal cost is negligible.
+    // --- base-thread consumer -------------------------------------- //
     const baseThread = useBaseThreadStore();
-    // Pull the current value synchronously so the panel renders
-    // populated sensors on the first frame, even if the dashboard
-    // mounts before the first 1 Hz tick has landed.
-    ingest(baseThread.sensors);
-    stopSensorWatch = watch(
-      () => baseThread.sensors,
+    // Pull the current entity state synchronously so the panel
+    // renders populated sensors on the first frame.
+    ingest(baseThread.readings);
+    const stopReadingsWatch = watch(
+      () => baseThread.readings,
       (next) => {
-        if (next && typeof next === "object") {
+        if (next && typeof next.forEach === "function") {
           ingest(next);
         }
       },
       { immediate: true, deep: true },
     );
 
-    // Read settings once at boot. The user changes ``unit`` /
-    // ``sensor_colors`` from the Settings UI, which calls
-    // ``refreshSettings`` explicitly after a successful PUT.
     refreshSettings();
 
-    // Auto-stop when the pinia scope goes away (component unmount,
-    // app teardown) so the polling interval cannot leak across
-    // navigation. See ``.agent/STATE.md`` § 10.
     onScopeDispose(() => {
       stop();
-      if (stopSensorWatch) {
-        stopSensorWatch();
-        stopSensorWatch = null;
+      if (stopReadingsWatch) {
+        stopReadingsWatch();
       }
     });
 
@@ -376,6 +355,7 @@ export const useTemperatureStore = defineStore(
       toggleSensorVisibility,
       setSensorColor,
       colorFor,
+      setTarget,
     };
   },
 );

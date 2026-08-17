@@ -1,7 +1,11 @@
 import datetime
+import logging
 import threading
 from typing import List
 
+from hardware.mock.axis_mock import MockAxis
+
+logger = logging.getLogger(__name__)
 
 class StateMachineMock:
     """The 'Brain' of the LinuxCNC simulation.
@@ -27,6 +31,7 @@ class StateMachineMock:
 
         # NML variables read by StateService and ProgramService
         self.task_state: int = self.STATE_ESTOP
+        self.task_mode: int = self.MODE_MANUAL
         self.estop: int = 1
         self.interp_state: int = self.INTERP_IDLE
         self.file: str = ""
@@ -35,9 +40,22 @@ class StateMachineMock:
         self.homed: List[int] = [0, 0, 0]  # X, Y, Z flags
         self.motion_mode: int = 3  # Default to TRAJ_MODE_TELEOP
 
+        # Explicitly initialize positions so they can be safely mutated
+        self.actual_position = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self.position = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+        # The State Machine owns the physical axes (Trajectory Planner simulation)
+        self.axes = {
+            0: MockAxis(0),  # X
+            1: MockAxis(1),  # Y
+            2: MockAxis(2)   # Z
+        }
+
         # Diagnostics
         self.errors: List[dict] = []
         self._max_errors: int = 100
+
+        logger.debug("StateMachineMock initialized.")
 
     def poll(self):
         """Mock for linuxcnc.stat.poll().
@@ -57,21 +75,26 @@ class StateMachineMock:
             self.estop = 1
             self.task_state = self.STATE_ESTOP
             self.interp_state = self.INTERP_IDLE
+            logger.warning("E-STOP triggered.")
 
     def reset_estop(self):
         with self.lock:
             self.estop = 0
             self.task_state = self.STATE_ESTOP_RESET
+            logger.info("E-STOP reset.")
 
     def turn_on(self):
         with self.lock:
             if self.estop == 1:
+                logger.error("Attempted to turn on machine while in E-STOP.")
                 raise RuntimeError("Cannot turn on machine while in E-STOP.")
             self.task_state = self.STATE_ON
+            logger.info("Machine turned ON.")
 
     def turn_off(self):
         with self.lock:
             self.task_state = self.STATE_OFF
+            logger.info("Machine turned OFF.")
 
     def __getattr__(self, name):
         """
@@ -84,8 +107,6 @@ class StateMachineMock:
             "task_state": 4,  # linuxcnc.STATE_ON
             "estop": 0,  # Not in E-Stop
             "interp_state": 1,  # linuxcnc.INTERP_IDLE
-            "position": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "actual_position": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "g5x_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "g92_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "tool_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
@@ -101,8 +122,26 @@ class StateMachineMock:
         }
 
         # If it's not in our defaults, just return 0 to be safe
-        return defaults.get(name, 0)
+        val = defaults.get(name, 0)
+        logger.debug(f"__getattr__ fallback accessed for property: '{name}', returning: {val}")
+        return val
 
+    # -----------------------------------------------------------------------
+    # Motion & Jogging
+    # -----------------------------------------------------------------------
+
+    def jog_axis(self, command: int, joint_or_axis: int, velocity: float, distance: float = 0.0):
+        """Routes a jog command to the specific axis."""
+        with self.lock:
+            axis = self.axes.get(joint_or_axis)
+            if axis:
+                axis.jog(command, velocity, distance)
+
+    def set_task_mode(self, new_mode: int):
+        with self.lock:
+            self.task_mode = new_mode
+            mode_names = {1: "MANUAL", 2: "AUTO", 3: "MDI"}
+            logger.info(f"Machine mode changed to: {mode_names.get(new_mode, new_mode)}")
     # -----------------------------------------------------------------------
     # Program Lifecycle
     # -----------------------------------------------------------------------
@@ -113,6 +152,7 @@ class StateMachineMock:
             self.current_line = 0
             self.total_lines = total_lines
             self.interp_state = self.INTERP_IDLE
+            logger.info(f"Loaded file: '{filepath}' with {total_lines} lines.")
 
     def reset_program_state(self):
         with self.lock:
@@ -120,6 +160,7 @@ class StateMachineMock:
             self.current_line = 0
             self.total_lines = 0
             self.interp_state = self.INTERP_IDLE
+            logger.debug("Program state reset.")
 
     # -----------------------------------------------------------------------
     # Error Management
@@ -141,31 +182,57 @@ class StateMachineMock:
             self.errors.append(error_dict)
             if len(self.errors) > self._max_errors:
                 self.errors.pop(0)
+            logger.error(f"Hardware Error [Kind {kind}]: {text}")
 
     def clear_errors(self):
         with self.lock:
             self.errors.clear()
+            logger.info("Error history cleared.")
 
     # -----------------------------------------------------------------------
     # The Heartbeat Tick
     # -----------------------------------------------------------------------
 
-    def update(self, hal_mock):
+    def update(self, hal_mock, delta_time: float = 0.1):
         """Evaluates system-wide rules based on the HAL's physical state.
 
         Called every 100ms by the main LinuxCNCMock background thread.
         This is where the Brain checks the Muscle.
         """
         with self.lock:
-            # Example: If a HAL limit switch pin triggers, force an E-STOP
-            if hal_mock.get_pin("limit-switch-x-max") is True:
-                if self.estop == 0:
-                    self.push_error("Joint 0 on limit switch error")
-                    self.trigger_estop()
+            # 1. Tick all axes forward in time
+            for axis in self.axes.values():
+                axis.update(delta_time)
 
-            # Example: Simulate program progression if running
-            if self.interp_state in (self.INTERP_READING, self.INTERP_WAITING):
-                if self.current_line < self.total_lines:
-                    self.current_line += 1
-                else:
-                    self.interp_state = self.INTERP_IDLE
+            # 2. Sync the mathematical positions to the NML buffer (UI reads this)
+            self.actual_position = (
+                self.axes[0].current_position,
+                self.axes[1].current_position,
+                self.axes[2].current_position,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            )
+            self.position = self.actual_position
+
+            # 3. Write back to HAL so virtual pins reflect the physical state
+            # hal_mock.set_p("joint.0.motor-pos-fb", self.axes[0].current_position)
+            # hal_mock.set_p("joint.1.motor-pos-fb", self.axes[1].current_position)
+            # hal_mock.set_p("joint.2.motor-pos-fb", self.axes[2].current_position)
+            #
+            # # 4. Check limit switches
+            # # Using get_p ensures compatibility with the new HalModuleFacade
+            # if hal_mock.get_p("limit-switch-x-max") is True:
+            #     if self.estop == 0:
+            #         logger.warning("HAL trigger: limit-switch-x-max activated. Forcing E-STOP.")
+            #         self.push_error("Joint 0 on limit switch error")
+            #         self.trigger_estop()
+            #
+            # # 5. Simulate program progression if running
+            # if self.interp_state in (self.INTERP_READING, self.INTERP_WAITING):
+            #     if self.current_line < self.total_lines:
+            #         self.current_line += 1
+            #         # Avoid spamming the log on every single line increment
+            #         if self.current_line % 100 == 0:
+            #             logger.debug(f"Program progression: line {self.current_line}/{self.total_lines}")
+            #     else:
+            #         self.interp_state = self.INTERP_IDLE
+            #         logger.info(f"Program finished execution: '{self.file}'")

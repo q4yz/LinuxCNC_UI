@@ -138,10 +138,15 @@ test("toolStore consumes the base-thread snapshot — no own polling", () => {
   );
 });
 
-test("toolStore never hand-rolls HTTP — every call goes through ModulesToolsService", () => {
+test("toolStore never hand-rolls HTTP — every call goes through the toolsFacade", () => {
   // See ``.agent/context/LESSONS_LEARNED.md`` § 2.7. The tripwire
   // pattern matches the temperature module's hand-rolled
   // ``fetch`` in TemperaturePanel.vue (a separate cleanup pass).
+  //
+  // After the anti-corruption layer refactor the store does NOT
+  // import the generated ``ModulesToolsService`` directly — it
+  // routes every write through ``toolsFacade`` so wire-shape
+  // knowledge stays in the mapper.
   const text = read(storePath);
   // No raw fetch / postJson / XMLHttpRequest in the store. Allow
   // ``useBaseThreadStore`` (which itself uses the generated
@@ -150,25 +155,17 @@ test("toolStore never hand-rolls HTTP — every call goes through ModulesToolsSe
   assert.doesNotMatch(text, /\bpostJson\s*\(/);
   assert.doesNotMatch(text, /XMLHttpRequest/);
   // And no hand-rolled URL strings — the generated client owns
-  // those. ``http://`` is a reasonable proxy for "URL literal".
+  // those.
   assert.doesNotMatch(text, /\/api\/v1\/modules\/tools\//);
-  // The store imports ``ModulesToolsService`` and routes every
-  // write action through it.
+  // The store imports ``toolsFacade`` and routes every write
+  // action through it.
   assert.match(
     text,
-    /import\s+\{[^}]*ModulesToolsService[^}]*\}\s+from\s+["'][^"']*generated\/api\/services\/ModulesToolsService/,
+    /import\s+\{[^}]*toolsFacade[^}]*\}\s+from\s+["'][^"']*facades\/toolsFacade/,
   );
-  assert.match(text, /ModulesToolsService\.controlSpindle\s*\(/);
-  assert.match(text, /ModulesToolsService\.controlExtruder\s*\(/);
-  assert.match(text, /ModulesToolsService\.setToolTarget\s*\(/);
-  // The spindle command forwards both bypass fields to the
-  // backend (master_override + master_override_enable). Without
-  // this the operator's master-override selection is silently
-  // dropped on the wire. The store also forwards ``override`` so
-  // the auto-feed % slider can drive the relative override scale.
-  assert.match(text, /master_override\s*:/);
-  assert.match(text, /master_override_enable\s*:/);
-  assert.match(text, /override\s*,/);
+  assert.match(text, /toolsFacade\.controlSpindle\s*\(/);
+  assert.match(text, /toolsFacade\.controlExtruder\s*\(/);
+  assert.match(text, /toolsFacade\.setTarget\s*\(/);
   // Errors flow through the canonical describeError helper
   // (``core/error-format.js``) so the console store sees the
   // same envelope shape as every other module.
@@ -176,7 +173,7 @@ test("toolStore never hand-rolls HTTP — every call goes through ModulesToolsSe
     text,
     /import\s+\{[^}]*describeError[^}]*\}\s+from\s+["'][^"']*core\/error-format/,
   );
-  assert.match(text, /describeError\s*\(\s*err\s*\)/);
+  assert.match(text, /describeError\s*\(/);
 });
 
 test("toolStore exposes selection state for the panel header", () => {

@@ -13,7 +13,6 @@ class HalMock:
 
     def __init__(self, nml_state):
         self.lock = threading.Lock()
-        self.pins: Dict[str, Any] = {}
         self._components: List[Any] = []
         self.nml = nml_state
 
@@ -43,14 +42,30 @@ class HalMock:
             self._components.append(component)
 
     def set_pin(self, name: str, value: Any):
-        """Write a value to a HAL pin."""
+        """Write a value to a HAL pin and notify owning components."""
         with self.lock:
-            self.pins[name] = value
+            handled_by_component = False
+            for component in self._components:
+                if component.set_pin(name, value):
+                    handled_by_component = True
+
+        if handled_by_component:
+            logger.debug(f"Halpin '{name}' set to '{value}' (Handled by component)")
+        else:
+            logger.debug(f"Halpin '{name}' set to '{value}' (Saved to central dict)")
 
     def get_pin(self, name: str, default: Any = 0.0) -> Any:
-        """Read a value from a HAL pin, returning a safe default if missing."""
+        """Read a value from a HAL pin, asking components first."""
         with self.lock:
-            return self.pins.get(name, default)
+            # 1. Give components the chance to provide dynamic live values
+            # (e.g., a simulated temperature reading that is fluctuating)
+            for component in self._components:
+                val = component.read_pin(name)
+                if val is not None:
+                    return val
+
+            logger.debug(f"Pin '{name}' not found, returning default: {default}")
+            return default
 
     def update(self, delta_time: float = 0.1):
         """The internal hardware tick.

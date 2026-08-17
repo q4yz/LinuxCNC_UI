@@ -17,7 +17,7 @@ treating real hardware and the local simulator identically.
 """
 from __future__ import annotations
 
-import logging
+
 import threading
 import time
 from typing import Any, Callable, Optional
