@@ -15,7 +15,7 @@
 
 import { ref, watch } from "vue";
 
-import { useToolStore } from "../toolStore.js";
+import { useToolStore } from "../toolStore";
 import HeaterControls from "./HeaterControls.vue";
 
 const props = defineProps({

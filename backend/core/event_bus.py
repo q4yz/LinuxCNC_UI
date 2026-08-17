@@ -2,7 +2,7 @@
 Asynchronous publish/subscribe EventBus for inter-module communication.
 
 This module provides a lightweight event bus that lets backend modules
-(e.g. Temperature, VFD, Spindle) communicate without importing each
+(e.g. Temperature, VFD, SpindleDigital) communicate without importing each
 other directly. Modules publish events to topics and subscribe to topics
 of interest. Subscribers are async callables invoked concurrently.
 

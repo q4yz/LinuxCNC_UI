@@ -30,8 +30,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const editorPath = resolve(repoRoot, "frontend/src/stores/editor.js");
-const helperPath = resolve(repoRoot, "frontend/src/helpers/openInEditor.js");
+const editorPath = resolve(repoRoot, "frontend/src/stores/editor.ts");
+const helperPath = resolve(repoRoot, "frontend/src/helpers/openInEditor.ts");
 const editorViewPath = resolve(repoRoot, "frontend/src/views/EditorView.vue");
 
 function readText(path) {
@@ -269,7 +269,7 @@ test("EditorView still embeds Editor.vue but never calls its own copy", () => {
 
 test("legacy /config/:filename and /programs/:filename routes are gone", () => {
   const routerText = readText(
-    resolve(repoRoot, "frontend/src/router/index.js"),
+    resolve(repoRoot, "frontend/src/router/index.ts"),
   )
   assert.doesNotMatch(
     routerText,

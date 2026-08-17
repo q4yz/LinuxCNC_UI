@@ -194,7 +194,7 @@ test("App.vue restructures the shell into a column so the header sits above the 
 
 test("EStopHeader imports the State Facade for the high-resolution machine state", () => {
   const text = readText(headerPath);
-  // The facade lives at ``frontend/src/stores/stateFacade.js``;
+  // The facade lives at ``frontend/src/stores/stateFacade.ts``;
   // the import must use that path so Pinia can wire the facade
   // singleton that the machine module's WebSocket handler updates.
   assert.match(

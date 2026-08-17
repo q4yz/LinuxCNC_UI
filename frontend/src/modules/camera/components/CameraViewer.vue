@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { storeToRefs } from "pinia";
 
-import { useCameraStore } from "../cameraStore.js";
+import { useCameraStore } from "../cameraStore";
 
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.

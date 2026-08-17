@@ -14,13 +14,13 @@
 
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine.js'
+import { useMachineStore } from '../stores/machine'
 // Direct facade import for the high-resolution ``systemState``
 // getter. The machine store (``stores/machine.js``) only exposes
 // the coarser ``machineStateText`` (ESTOP/OFF/ON/READY); the facade
 // is the canonical source for the 8-state vocabulary per
 // ``.agent/STATE.md`` § 6.
-import { useMachineStore as useFacadeStore } from '../stores/stateFacade.js'
+import { useMachineStore as useFacadeStore } from '../stores/stateFacade'
 
 const store = useMachineStore()
 const facade = useFacadeStore()
@@ -64,7 +64,7 @@ const stateBadgeClass = computed(() => {
 // the same state when only axis positions change).
 watch(systemState, async (next, prev) => {
   if (next === prev) return
-  const { useConsoleStore } = await import('../stores/console.js')
+  const { useConsoleStore } = await import('../stores/console')
   const consoleStore = useConsoleStore()
   const text = prev === undefined
     ? `Machine state: ${next}`

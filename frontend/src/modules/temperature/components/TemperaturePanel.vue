@@ -12,7 +12,7 @@
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useTemperatureStore } from '../store.js'
+import { useTemperatureStore } from '../store'
 
 const store = useTemperatureStore()
 

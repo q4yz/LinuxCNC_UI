@@ -27,7 +27,7 @@ switch may be referenced by multiple axes.
 The ``tools`` list is the operator-facing view: every ``[extruder]``,
 ``[heater_bed]``, ``[heater_generic]``, ``[spindle]``, and
 ``[spindle_analog]`` becomes one Tool entry with the appropriate
-``type`` discriminator. Spindle tools expose their HAL hooks
+``type`` discriminator. SpindleDigital tools expose their HAL hooks
 (signal aliases for the digital path, ``pwm_pin`` / ``enable_pin``
 for the analog path); extruder / heated_bed tools expose their
 heater fields plus references into the separate ``temperature_sensors``
@@ -179,7 +179,7 @@ def _friendly_tool_name(tool_id: str, tool_type: str) -> str:
     """
     # Strip the ``heater_`` prefix that the canonical id carries so
     # the operator sees ``bed`` rather than ``heater_bed`` on the
-    # chip. Spindle tools get a parenthetical so two spindles on
+    # chip. SpindleDigital tools get a parenthetical so two spindles on
     # one machine are visually distinguishable.
     bare = tool_id
     if bare.startswith("heater_"):

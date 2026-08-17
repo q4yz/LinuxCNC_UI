@@ -284,15 +284,15 @@ class Tool(BaseModel):
     name: str | None = None
     type: ToolType
 
-    # ---- Spindle shared (digital + analog) ------------------------ #
+    # ---- SpindleDigital shared (digital + analog) ------------------------ #
     min_rpm: float | None = None
     max_rpm: float | None = None
 
-    # ---- Spindle analog only --------------------------------------- #
+    # ---- SpindleDigital analog only --------------------------------------- #
     pwm_pin: str | None = None
     enable_pin: str | None = None
 
-    # ---- Spindle digital only -------------------------------------- #
+    # ---- SpindleDigital digital only -------------------------------------- #
     # The HAL signal aliases the vfdmod driver expects. Populated
     # fields are wired live in the compiled ``machine.hal``; empty
     # fields fall back to ``# TODO`` placeholders so the operator

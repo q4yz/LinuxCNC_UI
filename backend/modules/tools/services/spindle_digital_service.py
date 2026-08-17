@@ -1,4 +1,4 @@
-"""Spindle service — :class:`SpindleDigitalService` (MDI dispatch + state machine).
+"""SpindleDigital service — :class:`SpindleDigitalService` (MDI dispatch + state machine).
 
 The spindle dispatch logic used to live on :class:`ToolsService` directly;
 the OO refactor split it into this dedicated service so the per-spindle
@@ -41,7 +41,7 @@ class SpindleDigitalService:
 
     def get_spindle(self, tool_id: str) -> SpindleDigitalStateDTO:
         if not isinstance(tool_id, str) or not tool_id:
-            raise BadRequestError("Spindle tool_id must be a non-empty string")
+            raise BadRequestError("SpindleDigital tool_id must be a non-empty string")
 
         try:
             return SpindleDigitalMapper.to_state_dto(SpindleDigitalMapper.from_dict_to_SpindleDigitalPins(get_digital_spindle(tool_id)))
@@ -56,14 +56,14 @@ class SpindleDigitalService:
         pins: SpindleDigitalPins = SpindleDigitalMapper.from_dict_to_SpindleDigitalPins(get_digital_spindle(dto.id))
 
         if not isinstance(dto, SpindleDigitalSettingsDTO):
-            raise BadRequestError("Spindle settings must be a SpindleSettingsDTO")
+            raise BadRequestError("SpindleDigital settings must be a SpindleSettingsDTO")
         if not isinstance(pins, SpindleDigitalPins):
-            raise BadRequestError("Spindle pins must be a SpindleDigitalPins record")
+            raise BadRequestError("SpindleDigital pins must be a SpindleDigitalPins record")
 
 
         if self._check_for_direction_conflict(pins, dto):
             raise ConflictError(
-                f"Spindle {pins.id!r} is already spinning; "
+                f"SpindleDigital {pins.id!r} is already spinning; "
                 "stop it before reversing."
             )
 
@@ -74,7 +74,7 @@ class SpindleDigitalService:
         if dto.state == DirectionStateType.IDLE:
             return self._stop()
 
-        raise BadRequestError("Spindle settings must be a included")
+        raise BadRequestError("SpindleDigital settings must be a included")
 
     def _forward(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO):
         machine_service.ensure_mdi_mode()

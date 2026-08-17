@@ -32,6 +32,7 @@ class ExtruderCommand(BaseModel):
 
 class ExtruderStateResponse(BaseModel):
     """Extruder response containing a fully composed heater state."""
+    type: str = "extruder"
     id: str = Field(...)
     heater: HeaterStateResponse = Field(..., description="The embedded heater state.")
     position: float = Field(0.0)

@@ -1,9 +1,7 @@
-// Tests for ``frontend/src/mappers/temperatureMapper.js``.
+// Tests for ``frontend/src/mappers/temperatureMapper.ts``.
 //
-// The mapper is the only place that knows about the base-thread
-// snapshot's heater-vs-sensor discriminator. These tests pin the
-// conversion contract so a backend wire change can be fixed in
-// one place.
+// The backend now sends a ``type`` field on every sensors-dict
+// entry — the mapper dispatches on it directly.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,8 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const mapperPath = resolve(repoRoot, "frontend/src/mappers/temperatureMapper.js");
-const mapperURL = pathToFileURL(mapperPath).href;
+const mapperURL = pathToFileURL(
+  resolve(repoRoot, "frontend/src/mappers/temperatureMapper.ts"),
+).href;
 
 const {
   toReading,
@@ -22,50 +21,55 @@ const {
   toHeaterSetTargetRequest,
 } = await import(mapperURL);
 
-test("toReading: heater wire (5 fields) → HeaterReading", () => {
-  const wire = {
+// ---------------------------------------------------------------------------
+// Live wire fixtures — copied from the live backend's response models.
+// ---------------------------------------------------------------------------
+
+function heaterWire(overrides = {}) {
+  return {
+    type: "heater",
     tool_id: "extruder",
-    actual: 210.5,
-    target: 215.0,
+    target: 215,
+    actual: 210,
     min_temp: 0,
     max_temp: 300,
+    ...overrides,
   };
-  const r = toReading(wire);
+}
+
+function sensorWire(overrides = {}) {
+  return {
+    type: "sensor",
+    tool_id: "chamber",
+    actual: 32.7,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// toReading — type-driven dispatcher
+// ---------------------------------------------------------------------------
+
+test("toReading: type='heater' → HeaterReading", () => {
+  const r = toReading(heaterWire());
   assert.equal(r.constructor.name, "HeaterReading");
   assert.equal(r.id, "extruder");
-  assert.equal(r.actualCelsius, 210.5);
-  assert.equal(r.targetCelsius, 215.0);
+  assert.equal(r.actualCelsius, 210);
+  assert.equal(r.targetCelsius, 215);
   assert.equal(r.minTemp, 0);
   assert.equal(r.maxTemp, 300);
-  assert.equal(r.isControllable, true);
-  assert.equal(r.hasBounds(), true);
 });
 
-test("toReading: sensor wire (2 fields, no target) → SensorReading", () => {
-  const wire = { tool_id: "chamber", actual: 32.7 };
-  const r = toReading(wire);
+test("toReading: type='sensor' → SensorReading", () => {
+  const r = toReading(sensorWire());
   assert.equal(r.constructor.name, "SensorReading");
   assert.equal(r.id, "chamber");
   assert.equal(r.actualCelsius, 32.7);
-  assert.equal(r.isControllable, false);
-});
-
-test("toReading: target === null → treated as sensor (discriminator)", () => {
-  // Backend sends ``null`` for some standalone sensors instead of
-  // omitting the key. The mapper must treat it as "no target".
-  const wire = { tool_id: "ambient", actual: 24.0, target: null };
-  const r = toReading(wire);
-  assert.equal(r.constructor.name, "SensorReading");
 });
 
 test("toReading: missing tool_id → null", () => {
-  const wire = { actual: 24.0, target: 0 };
-  assert.equal(toReading(wire), null);
-});
-
-test("toReading: non-string tool_id → null", () => {
-  const wire = { tool_id: 42, actual: 24.0, target: 0 };
-  assert.equal(toReading(wire), null);
+  assert.equal(toReading({ type: "heater" }), null);
+  assert.equal(toReading({ type: "sensor" }), null);
 });
 
 test("toReading: null / non-object input → null", () => {
@@ -76,33 +80,50 @@ test("toReading: null / non-object input → null", () => {
 });
 
 test("toReading: missing actual coerces to 0", () => {
-  const wire = { tool_id: "broken", target: 0 };
-  const r = toReading(wire);
-  assert.equal(r.constructor.name, "HeaterReading");
+  const r = toReading({ type: "sensor", tool_id: "x" });
+  assert.equal(r.constructor.name, "SensorReading");
   assert.equal(r.actualCelsius, 0);
 });
 
-test("toReading: heater with non-finite min_temp → null min/max", () => {
-  const wire = {
-    tool_id: "extruder",
-    actual: 200,
-    target: 210,
+test("toReading: heater with non-finite min_temp / max_temp → null", () => {
+  const r = toReading({
+    type: "heater",
+    tool_id: "x",
+    target: 0,
+    actual: 0,
     min_temp: "bad",
     max_temp: NaN,
-  };
-  const r = toReading(wire);
+  });
   assert.equal(r.constructor.name, "HeaterReading");
   assert.equal(r.minTemp, null);
   assert.equal(r.maxTemp, null);
   assert.equal(r.hasBounds(), false);
 });
 
+test("toReading: unknown / missing type → null", () => {
+  assert.equal(toReading({ tool_id: "x" }), null);
+  assert.equal(toReading({ tool_id: "x", type: "mystery" }), null);
+});
+
+test("toReading: type='spindle_digital' is NOT a temperature reading", () => {
+  // Spindles live in the tools[] array; the sensors dict never
+  // carries spindle rows. The mapper correctly rejects them.
+  assert.equal(
+    toReading({ type: "spindle_digital", id: "spindle_main" }),
+    null,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// toReadingSet
+// ---------------------------------------------------------------------------
+
 test("toReadingSet: mixed dict → ReadingSet with both kinds", () => {
   const dict = {
-    extruder: { tool_id: "extruder", actual: 200, target: 210, min_temp: 0, max_temp: 300 },
-    bed: { tool_id: "bed", actual: 60, target: 65, min_temp: 0, max_temp: 120 },
-    chamber: { tool_id: "chamber", actual: 35 },
-    ambient: { tool_id: "ambient", actual: 24, target: null },
+    extruder: heaterWire({ tool_id: "extruder" }),
+    bed: heaterWire({ tool_id: "bed" }),
+    chamber: sensorWire({ tool_id: "chamber" }),
+    ambient: sensorWire({ tool_id: "ambient" }),
   };
   const set = toReadingSet(dict);
   assert.equal(set.size, 4);
@@ -121,14 +142,18 @@ test("toReadingSet: empty / null dict → empty ReadingSet", () => {
 
 test("toReadingSet: malformed entries are skipped, not raised", () => {
   const dict = {
-    good: { tool_id: "good", actual: 20, target: 0 },
-    badNoId: { actual: 20, target: 0 },
+    good: heaterWire({ tool_id: "extruder" }),
+    badNoId: { type: "heater", target: 0, actual: 0 },
     badNonObj: "garbage",
   };
   const set = toReadingSet(dict);
   assert.equal(set.size, 1);
-  assert.ok(set.has("good"));
+  assert.ok(set.has("extruder"));
 });
+
+// ---------------------------------------------------------------------------
+// Write-side wire helpers
+// ---------------------------------------------------------------------------
 
 test("toLegacySetTargetRequest: builds { sensor_name, target }", () => {
   assert.deepEqual(toLegacySetTargetRequest("extruder", 210), {

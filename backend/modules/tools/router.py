@@ -75,7 +75,7 @@ _EXTRUDER_ACTIONS = {"extrude", "retract"}
 @router.post(
     "/spindle",
     response_model=ToolCommandResponse,
-    summary="Control Spindle",
+    summary="Control SpindleDigital",
     description=(
         "Start, reverse, or stop the spindle via the canonical "
         "LinuxCNC M-codes: ``M3 S{speed}`` (forward), "

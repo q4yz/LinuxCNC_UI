@@ -23,9 +23,9 @@ const editorVuePath = resolve(repoRoot, "frontend/src/components/Editor.vue");
 const editorViewPath = resolve(repoRoot, "frontend/src/views/EditorView.vue");
 const guardPath = resolve(
   repoRoot,
-  "frontend/src/router/guards/unsavedChangesGuard.js",
+  "frontend/src/router/guards/unsavedChangesGuard.ts",
 );
-const storePath = resolve(repoRoot, "frontend/src/stores/editor.js");
+const storePath = resolve(repoRoot, "frontend/src/stores/editor.ts");
 
 function readText(path) {
   return readFileSync(path, "utf-8");

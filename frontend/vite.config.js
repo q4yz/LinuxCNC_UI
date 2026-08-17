@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [vue(),tailwindcss(),],
   resolve: {
     alias: {
-      '@codemirror/lang-ini': fileURLToPath(new URL('./src/utils/codemirror-lang-ini.js', import.meta.url)),
+      '@codemirror/lang-ini': fileURLToPath(new URL('./src/utils/codemirror-lang-ini.ts', import.meta.url)),
     },
   },
   server: {

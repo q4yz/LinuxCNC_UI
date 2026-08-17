@@ -18,7 +18,7 @@ small so the canonical four settings endpoints expose a non-empty
 payload from first boot; new knobs land as new keys on
 :class:`ToolsSettings` without breaking the contract.
 
-Spindle HAL pin subscriptions
+SpindleDigital HAL pin subscriptions
 -----------------------------
 
 ``on_load`` wires each ``spindle_digital`` tool's HAL pins into the

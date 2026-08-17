@@ -2,7 +2,7 @@
 import { storeToRefs } from "pinia";
 
 import ModalConfirm from "./ModalConfirm.vue";
-import { useConfirmStore } from "../core/confirm.js";
+import { useConfirmStore } from "../core/confirm";
 
 const store = useConfirmStore();
 const { active } = storeToRefs(store);

@@ -1,4 +1,4 @@
-// Tests for ``frontend/src/core/error-format.js`` — the single
+// Tests for ``frontend/src/core/error-format.ts`` — the single
 // source of truth that translates the generated OpenAPI client's
 // error shapes into one operator-readable string.
 //
@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const helperPath = resolve(repoRoot, "frontend/src/core/error-format.js");
+const helperPath = resolve(repoRoot, "frontend/src/core/error-format.ts");
 const helperFileURL = pathToFileURL(helperPath).href;
 const source = readFileSync(helperPath, "utf-8");
 

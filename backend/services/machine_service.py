@@ -1,7 +1,7 @@
 """Machine Command Service — hardware-layer G-code and MDI facade.
 
 This module provides the central :class:`MachineService` used by
-higher-level modules (Spindle, Axes, Program, etc.) to dispatch
+higher-level modules (SpindleDigital, Axes, Program, etc.) to dispatch
 commands to the LinuxCNC hardware layer.
 
 By routing all execution through this service, API consumers can

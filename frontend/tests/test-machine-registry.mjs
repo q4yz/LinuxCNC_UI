@@ -23,16 +23,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
 const manifestUrl = pathToFileURL(
-  resolve(repoRoot, "frontend/src/modules/machine/manifest.js"),
+  resolve(repoRoot, "frontend/src/modules/machine/manifest.ts"),
 ).href;
 
 const storePath = resolve(
   repoRoot,
-  "frontend/src/stores/machine.js",
+  "frontend/src/stores/machine.ts",
 );
 const storeReexportPath = resolve(
   repoRoot,
-  "frontend/src/modules/machine/store.js",
+  "frontend/src/modules/machine/store.ts",
 );
 
 const componentsDir = resolve(
@@ -113,7 +113,7 @@ test("machine manifest matches the store id", async () => {
   // CI time.
   const fs = await import("node:fs/promises");
   const manifestText = await fs.readFile(
-    resolve(repoRoot, "frontend/src/modules/machine/manifest.js"),
+    resolve(repoRoot, "frontend/src/modules/machine/manifest.ts"),
     "utf-8",
   );
   const storeText = await fs.readFile(storePath, "utf-8");

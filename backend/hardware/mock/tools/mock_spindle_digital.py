@@ -48,7 +48,7 @@ class MockSpindleDigital(MockComponent):
         return False
 
     def execute_gcode(self, gcode: str) -> bool:
-        """Parse Spindle M-codes and set the internal target states."""
+        """Parse SpindleDigital M-codes and set the internal target states."""
         cmd = gcode.upper()
 
         if cmd.startswith("M3") or cmd.startswith("M4"):
@@ -85,7 +85,7 @@ class MockSpindleDigital(MockComponent):
         elif self.actual_rpm > self.target_rpm:
             self.actual_rpm = max(self.target_rpm, self.actual_rpm - ramp_rate)
 
-        # Spindle-at-speed is True when running and within 5% of target RPM
+        # SpindleDigital-at-speed is True when running and within 5% of target RPM
         if self.target_rpm > 0 and abs(self.actual_rpm - self.target_rpm) <= (self.target_rpm * 0.05):
             self.spindle_at_speed = True
         else:

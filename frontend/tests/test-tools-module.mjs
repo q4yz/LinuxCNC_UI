@@ -44,9 +44,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
 const toolsDir = resolve(repoRoot, "frontend/src/modules/tools");
-const manifestPath = resolve(toolsDir, "manifest.js");
-const indexPath = resolve(toolsDir, "index.js");
-const storePath = resolve(toolsDir, "toolStore.js");
+const manifestPath = resolve(toolsDir, "manifest.ts");
+const indexPath = resolve(toolsDir, "index.ts");
+const storePath = resolve(toolsDir, "toolStore.ts");
 const panelPath = resolve(toolsDir, "components/ToolPanel.vue");
 const dashboardPath = resolve(repoRoot, "frontend/src/views/DashboardView.vue");
 const componentsDir = resolve(toolsDir, "components");
@@ -187,16 +187,22 @@ test("toolStore exposes selection state for the panel header", () => {
 
 test("ToolPanel.vue renders chip header + single-card body", () => {
   const text = read(panelPath);
-  // Header chip row iterates over the tools list.
-  assert.match(text, /v-for="tool in tools"/);
+  // Header chip row iterates over the typed entity surface.
+  assert.match(text, /v-for="tool in toolList\.all\(\)"/);
+  // Empty-state placeholder when no entities yet.
+  assert.match(text, /toolList\.size\s*>\s*0/);
   // Active chip is highlighted; the chip click drives the
   // selection ref.
   assert.match(text, /setSelectedToolId/);
-  // Body renders ONE card, dispatched by the selected tool's type.
-  assert.match(text, /selectedTool\.type === 'spindle_analog'/);
-  assert.match(text, /selectedTool\.type === 'spindle_digital'/);
-  assert.match(text, /selectedTool\.type === 'extruder'/);
-  assert.match(text, /selectedTool\.type === 'heated_bed'/);
+  // Body renders ONE card, dispatched by the selected tool's
+  // ``static type`` (compared against the class constant so a
+  // string-typo in the dispatch chain is caught at import time).
+  // Both spindle variants are in the chain so the analog card can
+  // come back without a panel rewrite.
+  assert.match(text, /selectedTool\.type === SpindleAnalog\.type/);
+  assert.match(text, /selectedTool\.type === SpindleDigital\.type/);
+  assert.match(text, /selectedTool\.type === Extruder\.type/);
+  assert.match(text, /selectedTool\.type === HeaterReading\.type/);
   // Empty-state placeholder when the backend has not reported any
   // tools yet.
   assert.match(text, /No tools configured yet/);
@@ -221,12 +227,13 @@ test("SpindleCard.vue renders digital-spindle controls", () => {
   );
   assert.match(text, /Reverse/);
   assert.match(text, /stop/i);
-  // min_rpm / max_rpm helper text appears when present.
-  assert.match(text, /min_rpm/);
-  assert.match(text, /max_rpm/);
+  // Entity getters (camelCase) replace the legacy snake_case wire
+  // shape.
+  assert.match(text, /minRpm/);
+  assert.match(text, /maxRpm/);
   // The runtime overlay fields are surfaced as a status row.
-  assert.match(text, /is_connected/);
-  assert.match(text, /error_count/);
+  assert.match(text, /isConnected/);
+  assert.match(text, /errorCount/);
   // The master-override bypass UI is present. The label was
   // renamed from "Manual Override Mode" to "Master Override Mode"
   // when the backend gained the ``master_override`` /
@@ -254,11 +261,23 @@ test("SpindleCard.vue renders digital-spindle controls", () => {
     /setTimeout\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?\}\s*,\s*1000\s*\)/,
     "SpindleCard must debounce slider drags with a 1 s setTimeout",
   );
+  // The "only-when-running" guard now reads from the entity
+  // (``tool.isRunning``) so the card stays in sync with the
+  // backend's telemetry — no local ``runningState`` ref to drift.
   assert.match(
     text,
-    /runningState/,
-    "SpindleCard must track runningState for the only-when-running guard",
+    /tool\.isRunning/,
+    "SpindleCard must read tool.isRunning from the entity for the only-when-running guard",
   );
+  // The dispatched action comes from the entity's direction so
+  // the slider watcher follows whichever direction the operator
+  // last chose (Forward / Reverse).
+  assert.match(text, /tool\.direction/);
+  // The local ``masterOverrideSpeed`` ref is re-seeded on chip
+  // switch so the slider doesn't stay at the previous spindle's
+  // min_rpm when the operator clicks a different chip.
+  assert.match(text, /watch\s*\(\s*\(\s*\)\s*=>\s*props\.tool\?\.id/);
+  assert.match(text, /masterOverrideSpeed\.value\s*=\s*props\.tool\.minRpm/);
   // The input does NOT ``v-model`` directly onto ``props.tool`` —
   // the base-thread snapshot replaces the tool record every 1 s,
   // which would wipe the operator's typed value within a second.
@@ -293,21 +312,38 @@ test("HeaterControls.vue renders the shared heat block", () => {
   assert.match(text, /Actual Temp/);
   assert.match(text, /Target Temp/);
   assert.match(text, /Set Temp/);
-  assert.match(text, /min_temp/);
-  assert.match(text, /max_temp/);
+  // The card displays temperatures via the entity's unit-aware
+  // formatters so the °C / K toggle in the temperature module
+  // stays consistent.
+  assert.match(text, /tool\.formatActual\(unit\)/);
+  assert.match(text, /tool\.formatTarget\(unit\)/);
+  // The range hint and bounds check come from the entity, not
+  // from a local computed that duplicates the logic.
+  assert.match(text, /tool\.boundsLabel\(unit\)/);
+  assert.match(text, /tool\.hasBounds\(\)/);
+  // The Set button dispatches via the entity's clamp helper so
+  // the hardware bounds live in exactly one place.
+  assert.match(text, /tool\.clampCelsius\(/);
+  // The local ``inputTemp`` ref is re-seeded on chip switch so
+  // switching tools doesn't carry the previous heater's target.
+  assert.match(text, /watch\s*\(\s*\(\s*\)\s*=>\s*props\.tool\?\.id/);
 });
 
 test("HeatedBedCard.vue is a thin wrapper around HeaterControls", () => {
   const text = read(resolve(componentsDir, "HeatedBedCard.vue"));
   assert.match(text, /import HeaterControls/);
+  // The bed card forwards its own entity (``tool`` IS the
+  // heater) to ``HeaterControls``.
   assert.match(text, /<HeaterControls :tool="tool"/);
 });
 
 test("ExtruderCard.vue composes heat + motion in one card", () => {
   const text = read(resolve(componentsDir, "ExtruderCard.vue"));
-  // Heat block via the shared component.
+  // Heat block via the shared component — the extruder card
+  // forwards the nested heater entity (``tool.heater``), not the
+  // outer ``Extruder``.
   assert.match(text, /import HeaterControls/);
-  assert.match(text, /<HeaterControls :tool="tool"/);
+  assert.match(text, /<HeaterControls :tool="tool\.heater"/);
   // Motion block — speed + retract/extrude + distance slider.
   assert.match(text, /Speed \(mm\/min\)/);
   assert.match(text, /Retract/);

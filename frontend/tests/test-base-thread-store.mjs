@@ -30,7 +30,7 @@ const repoRoot = resolve(here, "../..");
 
 const storePath = resolve(
   repoRoot,
-  "frontend/src/stores/baseThread.js",
+  "frontend/src/stores/baseThread.ts",
 );
 
 function readStore() {
@@ -40,7 +40,7 @@ function readStore() {
 test("baseThread.js exists and is non-empty", () => {
   assert.ok(
     readFileSync(storePath, "utf-8").length > 0,
-    "expected frontend/src/stores/baseThread.js to exist",
+    "expected frontend/src/stores/baseThread.ts to exist",
   );
 });
 

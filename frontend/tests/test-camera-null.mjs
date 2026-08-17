@@ -51,7 +51,7 @@ const newCameraPanel = resolve(
 );
 const cameraIndex = resolve(
   repoRoot,
-  "frontend/src/modules/camera/index.js",
+  "frontend/src/modules/camera/index.ts",
 );
 const cameraViewer = resolve(
   repoRoot,
@@ -173,7 +173,7 @@ test("CameraStore persists preferences via the module settings client", () => {
   // re-introduce the per-browser persistence problem.
   const cameraStorePath = resolve(
     repoRoot,
-    "frontend/src/modules/camera/cameraStore.js",
+    "frontend/src/modules/camera/cameraStore.ts",
   );
   const text = readFileSync(cameraStorePath, "utf-8");
   assert.match(

@@ -7,7 +7,7 @@
 // (ModuleContext.settings gives a typed settings client).
 
 import { storeToRefs } from 'pinia'
-import { useTemperatureStore } from '../store.js'
+import { useTemperatureStore } from '../store'
 
 const store = useTemperatureStore()
 const { sensors, unit, sensorColors } = storeToRefs(store)

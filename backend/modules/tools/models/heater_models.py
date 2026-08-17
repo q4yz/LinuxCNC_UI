@@ -9,6 +9,7 @@ class HeaterCommandStateResponse(BaseModel):
 
 
 class HeaterStateResponse(BaseModel):
+    type: str = "heater"
     tool_id: str = Field(...)
     target: float = Field(...)
     actual: float = Field(...)

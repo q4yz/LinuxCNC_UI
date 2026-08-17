@@ -40,7 +40,7 @@ test("defineStore('camera', ...) fails the lint", () => {
   const dir = mkdtempSync(join(tmpdir(), "lint-"));
   try {
     writeFileSync(
-      join(dir, "index.js"),
+      join(dir, "index.ts"),
       "import { defineStore } from 'pinia';\n" +
         "export const s = defineStore('camera', { state: () => ({}) });\n",
     );
@@ -60,7 +60,7 @@ test("defineStore('module_camera', ...) passes the lint", () => {
   const dir = mkdtempSync(join(tmpdir(), "lint-"));
   try {
     writeFileSync(
-      join(dir, "index.js"),
+      join(dir, "index.ts"),
       "import { defineStore } from 'pinia';\n" +
         "export const s = defineStore('module_camera', { state: () => ({}) });\n",
     );

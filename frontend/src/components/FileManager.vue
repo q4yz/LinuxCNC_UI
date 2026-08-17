@@ -12,8 +12,8 @@ import {
   ProgramFilesService,
 } from '../../generated/api/index.ts'
 import { useConsoleStore } from '../stores/console'
-import { openInEditor } from '../helpers/openInEditor.js'
-import { describeErrorOr } from '../core/error-format.js'
+import { openInEditor } from '../helpers/openInEditor'
+import { describeErrorOr } from '../core/error-format'
 import { ApiError } from '../../generated/api/core/ApiError'
 
 const consoleStore = useConsoleStore()

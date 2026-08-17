@@ -1,4 +1,4 @@
-// Tests for ``frontend/src/mappers/progressMapper.js``.
+// Tests for ``frontend/src/mappers/progressMapper.ts``.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,12 +8,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const mapperURL = pathToFileURL(
-  resolve(repoRoot, "frontend/src/mappers/progressMapper.js"),
+  resolve(repoRoot, "frontend/src/mappers/progressMapper.ts"),
 ).href;
 
 const { toProgramProgress } = await import(mapperURL);
 const { ProgramProgress } = await import(
-  pathToFileURL(resolve(repoRoot, "frontend/src/entities/progress/ProgramProgress.js")).href
+  pathToFileURL(resolve(repoRoot, "frontend/src/entities/progress/ProgramProgress.ts")).href
 );
 
 test("toProgramProgress: builds ProgramProgress from wire", () => {

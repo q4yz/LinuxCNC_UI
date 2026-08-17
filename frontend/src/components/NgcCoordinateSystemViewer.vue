@@ -32,8 +32,8 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { useMachineStore } from '../stores/machine.js'
-import { useMachineConfigStore } from '../modules/machineconfig/store.js'
+import { useMachineStore } from '../stores/machine'
+import { useMachineConfigStore } from '../modules/machineconfig/store'
 import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
 
 const store = useMachineStore()

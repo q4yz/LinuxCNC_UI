@@ -21,8 +21,8 @@ import ProfilesExplorer from './ProfilesExplorer.vue'
 import ActivePanel from './ActivePanel.vue'
 import MacroManagerPanel from '../../macros/components/MacroManagerPanel.vue'
 import McodeManagerPanel from '../../macros/components/McodeManagerPanel.vue'
-import { useMachineConfigStore } from '../store.js'
-import { openInEditor } from '../../../helpers/openInEditor.js'
+import { useMachineConfigStore } from '../store'
+import { openInEditor } from '../../../helpers/openInEditor'
 
 const machineConfigStore = useMachineConfigStore()
 

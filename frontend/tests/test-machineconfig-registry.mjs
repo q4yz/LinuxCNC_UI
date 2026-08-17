@@ -29,19 +29,19 @@ const repoRoot = resolve(here, "../..");
 
 const manifestPath = resolve(
   repoRoot,
-  "frontend/src/modules/machineconfig/manifest.js",
+  "frontend/src/modules/machineconfig/manifest.ts",
 );
 const storePath = resolve(
   repoRoot,
-  "frontend/src/modules/machineconfig/store.js",
+  "frontend/src/modules/machineconfig/store.ts",
 );
 const indexPath = resolve(
   repoRoot,
-  "frontend/src/modules/machineconfig/index.js",
+  "frontend/src/modules/machineconfig/index.ts",
 );
 const apiPath = resolve(
   repoRoot,
-  "frontend/src/modules/machineconfig/services/api.js",
+  "frontend/src/modules/machineconfig/services/api.ts",
 );
 const viewPath = resolve(
   repoRoot,

@@ -10,7 +10,7 @@
 
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineConfigStore } from "../store.js";
+import { useMachineConfigStore } from "../store";
 
 const store = useMachineConfigStore();
 const { compilers, selectedCompilerId, selectedCompiler, selectedProfilePath, isBusy } =

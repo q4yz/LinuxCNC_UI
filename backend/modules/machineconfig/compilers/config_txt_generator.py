@@ -670,7 +670,7 @@ def build_config_txt(graph: MachineConfigGraph, machine_name: str) -> dict[str, 
             modules.append(pwm)
             sp_index += 1
 
-    # 5. Spindle PWM (if configured)
+    # 5. SpindleDigital PWM (if configured)
     if graph.spindle_analog and graph.spindle_analog.pwm_pin:
         spindle_pwm_pin = _pin_owned_by(
             graph.spindle_analog.pwm_pin,
@@ -681,7 +681,7 @@ def build_config_txt(graph: MachineConfigGraph, machine_name: str) -> dict[str, 
         if spindle_pwm_pin is not None:
             pwm = _pwm_module(
                 "spindle_pwm",
-                "Spindle PWM",
+                "SpindleDigital PWM",
                 sp_index,
                 spindle_pwm_pin,
             )

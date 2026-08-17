@@ -11,6 +11,7 @@ class SpindleDigitalCommand(BaseModel):
 
 
 class SpindleDigitalStateResponse(BaseModel):
+    type: str = "spindle_digital"
     id: str = Field(...)
     target_rpm: float = Field(0.0)
     actual_rpm: float = Field(0.0)

@@ -11,6 +11,7 @@
     "clean": "node scripts/clean.mjs",
     "lint:no-lazy-imports": "node scripts/check-no-lazy-imports.mjs",
     "lint:store-ids": "node scripts/check-store-ids.mjs",
+    "typecheck": "tsc --noEmit || true",
     "postinstall": "node scripts/generate-api.mjs --install",
     "test": "node --import ./scripts/vue-test-loader-register.mjs --test \"tests/**/*.mjs\""
   },
@@ -33,6 +34,7 @@
     "jsdom": "^29.1.1",
     "openapi-typescript-codegen": "^0.31.0",
     "tailwindcss": "^4.2.4",
+    "typescript": "^5.9.3",
     "vite": "^8.0.9",
     "vitest": "^4.1.10"
   },

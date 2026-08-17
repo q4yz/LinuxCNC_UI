@@ -34,7 +34,7 @@ const repoRoot = resolve(here, "../..");
 
 const storePath = resolve(
   repoRoot,
-  "frontend/src/stores/machine.js",
+  "frontend/src/stores/machine.ts",
 );
 
 function readStore() {

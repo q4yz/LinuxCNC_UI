@@ -133,7 +133,7 @@ max_rpm: 24000
 
 
 # ---------------------------------------------------------------------- #
-# Spindle sections (analog + digital)                                     #
+# SpindleDigital sections (analog + digital)                                     #
 # ---------------------------------------------------------------------- #
 
 
@@ -209,7 +209,7 @@ target_rpm_signal: TargetRpm
 
 @pytest.mark.parametrize(
     "header",
-    ["[spindle]", "[SPINDLE]", "[Spindle]"],
+    ["[spindle]", "[SPINDLE]", "[SpindleDigital]"],
 )
 def test_spindle_section_header_is_case_insensitive(header: str) -> None:
     """Section header matching mirrors the vfdmod / Klipper

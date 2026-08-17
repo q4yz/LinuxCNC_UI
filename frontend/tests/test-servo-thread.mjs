@@ -32,11 +32,11 @@ const repoRoot = resolve(here, "../..");
 
 const servoPath = resolve(
   repoRoot,
-  "frontend/src/stores/servoThread.js",
+  "frontend/src/stores/servoThread.ts",
 );
 const modulePath = resolve(
   repoRoot,
-  "frontend/src/stores/machine.js",
+  "frontend/src/stores/machine.ts",
 );
 
 function readServo() {
@@ -51,7 +51,7 @@ test("servo-thread store file lives at stores/servoThread.js", () => {
   // The whole suite is moot if the file is missing.
   assert.ok(
     readFileSync(servoPath, "utf-8").length > 0,
-    "expected frontend/src/stores/servoThread.js to exist",
+    "expected frontend/src/stores/servoThread.ts to exist",
   );
 });
 

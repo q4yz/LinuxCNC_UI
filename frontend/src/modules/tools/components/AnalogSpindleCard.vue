@@ -14,7 +14,7 @@
 
 import { computed, ref, watch } from "vue";
 
-import { useToolStore } from "../toolStore.js";
+import { useToolStore } from "../toolStore";
 
 const props = defineProps({
   tool: { type: Object, required: true },

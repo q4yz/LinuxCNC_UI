@@ -1,8 +1,8 @@
 <script setup>
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineConfigStore } from "../store.js";
-import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
+import { useMachineConfigStore } from "../store";
+import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();

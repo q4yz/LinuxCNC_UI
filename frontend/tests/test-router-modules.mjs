@@ -26,9 +26,9 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const routerPath = resolve(repoRoot, "frontend/src/router/index.js");
-const mainPath = resolve(repoRoot, "frontend/src/main.js");
-const registryPath = resolve(repoRoot, "frontend/src/core/modules/registry.js");
+const routerPath = resolve(repoRoot, "frontend/src/router/index.ts");
+const mainPath = resolve(repoRoot, "frontend/src/main.ts");
+const registryPath = resolve(repoRoot, "frontend/src/core/modules/registry.ts");
 
 function read(p) {
   return readFileSync(p, "utf-8");

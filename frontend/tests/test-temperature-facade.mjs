@@ -1,4 +1,4 @@
-// Structural tests for ``frontend/src/facades/temperatureFacade.js``.
+// Structural tests for ``frontend/src/facades/temperatureFacade.ts``.
 //
 // Behavioural coverage of the wire-shape translation lives in
 // ``test-temperature-mapper.mjs``. This file pins the facade's
@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const facadePath = resolve(repoRoot, "frontend/src/facades/temperatureFacade.js");
+const facadePath = resolve(repoRoot, "frontend/src/facades/temperatureFacade.ts");
 const source = readFileSync(facadePath, "utf-8");
 const generatedPath = resolve(
   repoRoot,

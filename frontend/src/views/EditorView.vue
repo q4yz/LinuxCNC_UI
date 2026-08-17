@@ -26,20 +26,20 @@
 import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { useConfirm, ModalButtonStyle } from '../core/confirm.js';
+import { useConfirm, ModalButtonStyle } from '../core/confirm';
 import {
   useUnsavedChangesGuard,
   UNSAVED_PROMPT,
-} from '../router/guards/unsavedChangesGuard.js';
+} from '../router/guards/unsavedChangesGuard';
 
 import Editor from '../components/Editor.vue';
 import {
   useEditorStore,
   EDITOR_SOURCES,
   sourceLabel,
-} from '../stores/editor.js';
-import { openInEditor } from '../helpers/openInEditor.js';
-import {useConsoleStore} from "../stores/console.js";
+} from '../stores/editor';
+import { openInEditor } from '../helpers/openInEditor';
+import {useConsoleStore} from "../stores/console";
 
 const editorStore = useEditorStore();
 const consoleStore = useConsoleStore()

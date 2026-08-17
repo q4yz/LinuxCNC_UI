@@ -454,7 +454,7 @@ class HalGenerator:
             )
         return "\n".join(blocks) + ("\n" if blocks else "")
 
-    # ----- Spindle digital block (vfdmod <-> pyvcp hooks) ----------- #
+    # ----- SpindleDigital digital block (vfdmod <-> pyvcp hooks) ----------- #
 
     def _build_spindle_digital_block(self) -> str:
         """Emit one vfdmod <-> pyvcp wiring block per digital spindle.

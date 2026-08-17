@@ -659,7 +659,7 @@ def test_get_router_returns_apirouter(tmp_data_root, clean_env):
 
 
 # ────────────────────────────────────────────────────────────────────── #
-# Spindle telemetry pipeline                                               #
+# SpindleDigital telemetry pipeline                                               #
 # ────────────────────────────────────────────────────────────────────── #
 
 

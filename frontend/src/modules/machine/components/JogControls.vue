@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../store.js'
+import { useMachineStore } from '../store'
 
 const MAX_JOG_SPEED = 3.602
 

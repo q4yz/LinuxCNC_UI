@@ -16,9 +16,9 @@ import { computed } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { ini } from '../utils/codemirror-lang-ini.js'
-import { hal } from '../utils/codemirror-lang-hal.js'
-import { gcode } from '../utils/codemirror-lang-gcode.js'
+import { ini } from '../utils/codemirror-lang-ini'
+import { hal } from '../utils/codemirror-lang-hal'
+import { gcode } from '../utils/codemirror-lang-gcode'
 
 const props = defineProps({
   filename: { type: String, required: true },

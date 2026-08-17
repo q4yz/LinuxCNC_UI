@@ -10,8 +10,8 @@
 
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineConfigStore } from "../store.js";
-import { openInEditor } from "../../../helpers/openInEditor.js";
+import { useMachineConfigStore } from "../store";
+import { openInEditor } from "../../../helpers/openInEditor";
 
 const store = useMachineConfigStore();
 const { activeListing, activeContents, activeTotalSize, isBusy } = storeToRefs(store);

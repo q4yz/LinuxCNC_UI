@@ -141,7 +141,7 @@ def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
     if isinstance(tools, list):
         # Canonical name order — match the compiler's sorted iteration.
         # Filter to the heating subset: tools with a ``heater_pin``
-        # and a heating ``type``. Spindle / laser entries lack both
+        # and a heating ``type``. SpindleDigital / laser entries lack both
         # and don't claim an SP channel.
         sorted_heating_tools = sorted(
             (

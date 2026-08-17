@@ -7,7 +7,7 @@
 
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineConfigStore } from "../store.js";
+import { useMachineConfigStore } from "../store";
 
 const store = useMachineConfigStore();
 const { confirmFlash, stagedFiles, lastDeploySummary, isBusy } = storeToRefs(store);

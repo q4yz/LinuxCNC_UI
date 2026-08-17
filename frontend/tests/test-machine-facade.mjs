@@ -30,7 +30,7 @@ const repoRoot = resolve(here, "../..");
 
 const facadePath = resolve(
   repoRoot,
-  "frontend/src/stores/stateFacade.js",
+  "frontend/src/stores/stateFacade.ts",
 );
 
 function readFacade() {
@@ -41,7 +41,7 @@ test("facade file exists", () => {
   // The whole rest of the suite is moot if the file is missing.
   assert.ok(
     readFileSync(facadePath, "utf-8").length > 0,
-    "expected frontend/src/stores/stateFacade.js to exist",
+    "expected frontend/src/stores/stateFacade.ts to exist",
   );
 });
 
@@ -177,7 +177,7 @@ test("servo-thread store forwards telemetry to the facade on every WS message", 
   // facade directly.
   const servoPath = resolve(
     repoRoot,
-    "frontend/src/stores/servoThread.js",
+    "frontend/src/stores/servoThread.ts",
   );
   const text = readFileSync(servoPath, "utf-8");
   // Import the facade from the servo-thread store.
@@ -220,7 +220,7 @@ test("machine store no longer owns the WebSocket transport", () => {
   // and break the runtime split.
   const modulePath = resolve(
     repoRoot,
-    "frontend/src/stores/machine.js",
+    "frontend/src/stores/machine.ts",
   );
   const text = readFileSync(modulePath, "utf-8");
   assert.doesNotMatch(

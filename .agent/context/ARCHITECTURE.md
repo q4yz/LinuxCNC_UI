@@ -44,7 +44,7 @@ backend/
 │   ├── machineconfig/          # Profiles editor + compilers + deploy
 │   ├── program/                # Lifecycle: run / pause / resume / stop
 │   ├── temperature/            # Sensor polling + charting
-│   └── tools/                  # Spindle + extruder MDI
+│   └── tools/                  # SpindleDigital + extruder MDI
 ├── routers/                    # Legacy flat routers (websocket, files, system)
 ├── services/                   # Cross-module service objects (hal_compiler, etc.)
 └── tests/                      # pytest: 240+ tests for module contracts + watchdogs

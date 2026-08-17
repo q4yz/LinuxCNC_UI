@@ -1,2140 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
-    "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
-<head>
-<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />
-<meta name="generator" content="AsciiDoc 10.2.1" />
-<title>The LinuxCNC Python module</title>
-<link rel="stylesheet" href="..//asciidoc.css" type="text/css" />
-
-
-<link rel="stylesheet" href="..//linuxcnc.css" type="text/css" />
-<script type="text/javascript" src="..//asciidoc.js"></script>
-<script type="text/javascript">
-/*<![CDATA[*/
-asciidoc.install(2);
-/*]]>*/
-</script>
-</head>
-<body class="book">
-<div id="header">
-<h1>The LinuxCNC Python module</h1>
-<div id="toc">
-  <div id="toctitle">Table of Contents</div>
-  <noscript><p><b>JavaScript must be enabled in your browser to display the table of contents.</b></p></noscript>
-</div>
-</div>
-<div id="content">
-<div id="preamble">
-<div class="sectionbody">
-<div class="paragraph" id="cha:python-interface"><p>This documentation describes the <code>linuxcnc</code> python module, which provides
-a Python API for talking to LinuxCNC.</p></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_introduction">1. Introduction</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>User interfaces control LinuxCNC activity by sending
-NML messages to the LinuxCNC task controller, and monitor results by
-observing the LinuxCNC status structure, as well as the error reporting channel.</p></div>
-<div class="paragraph"><p>Programmatic access to NML is through a C++ API; however, the most
-important parts of the NML interface to LinuxCNC are also available to
-Python programs through the <code>linuxcnc</code> module.</p></div>
-<div class="paragraph"><p>Beyond the NML interface to the command, status and error channels,
-the <code>linuxcnc</code> module also contains:</p></div>
-<div class="ulist"><ul>
-<li>
-<p>
-support for reading values from INI files
-</p>
-</li>
-</ul></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_usage_patterns_for_the_linuxcnc_nml_interface">2. Usage Patterns for the LinuxCNC NML interface</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>The general pattern for <code>linuxcnc</code> usage is roughly like this:</p></div>
-<div class="ulist"><ul>
-<li>
-<p>
-import the <code>linuxcnc</code> module
-</p>
-</li>
-<li>
-<p>
-establish connections to the command, status and error NML channels as needed
-</p>
-</li>
-<li>
-<p>
-poll the status channel, either periodically or as needed
-</p>
-</li>
-<li>
-<p>
-before sending a command, determine from status whether it is in
-  fact OK to do so (for instance, there is no point in sending a <em>Run</em>
-  command if task is in the ESTOP state, or the interpreter is not idle)
-</p>
-</li>
-<li>
-<p>
-send the command by using one of the <code>linuxcnc</code> command channel methods
-</p>
-</li>
-</ul></div>
-<div class="paragraph"><p>To retrieve messages from the error channel, poll the error channel
-periodically, and process any messages retrieved.</p></div>
-<div class="ulist"><ul>
-<li>
-<p>
-poll the status channel, either periodically or as needed
-</p>
-</li>
-<li>
-<p>
-print any error message and explore the exception code
-</p>
-</li>
-</ul></div>
-<div class="paragraph"><p><code>linuxcnc</code> also defines the <code>error</code> Python exception type to support error reporting.</p></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_reading_linuxcnc_status">3. Reading LinuxCNC status</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>Here is a Python fragment to explore the contents of the
-<code>linuxcnc.stat</code> object which contains some 80+ values (run while
-linuxcnc is running for typical values):</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> sys
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-<span style="font-weight: bold"><span style="color: #0000FF">try</span></span><span style="color: #990000">:</span>
-    s <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># create a connection to the status channel</span></span>
-    s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># get current values</span></span>
-<span style="font-weight: bold"><span style="color: #0000FF">except</span></span> linuxcnc<span style="color: #990000">.</span>error<span style="color: #990000">,</span> detail<span style="color: #990000">:</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"error"</span><span style="color: #990000">,</span> detail<span style="color: #990000">)</span>
-    sys<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">exit</span></span><span style="color: #990000">(</span><span style="color: #993399">1</span><span style="color: #990000">)</span>
-<span style="font-weight: bold"><span style="color: #0000FF">for</span></span> x <span style="font-weight: bold"><span style="color: #0000FF">in</span></span> <span style="font-weight: bold"><span style="color: #000000">dir</span></span><span style="color: #990000">(</span>s<span style="color: #990000">):</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">if</span></span> <span style="font-weight: bold"><span style="color: #0000FF">not</span></span> x<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">startswith</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"_"</span><span style="color: #990000">):</span>
-        <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>x<span style="color: #990000">,</span> <span style="font-weight: bold"><span style="color: #000000">getattr</span></span><span style="color: #990000">(</span>s<span style="color: #990000">,</span>x<span style="color: #990000">))</span></tt></pre></div></div>
-<div class="paragraph"><p>Linuxcnc uses the default compiled-in path to the NML configuration
-file unless overridden, see <a href="python-interface.html#python:reading-ini-values">Reading INI file values</a> for an example.</p></div>
-<div class="sect2">
-<h3 id="_linuxcnc_stat_attributes">3.1. linuxcnc.stat attributes</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<strong>acceleration</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  default acceleration, reflects the INI entry [TRAJ]DEFAULT_ACCELERATION.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>active_queue</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  number of motions blending.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>actual_position</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  current trajectory position, (x y z a b c u v w) in machine units.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>adaptive_feed_enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  status of adaptive feedrate override (0/1).
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>ain</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  current value of the analog input pins.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>angular_units</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-machine angular units per deg, reflects [TRAJ]ANGULAR_UNITS INI value.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>aout</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  current value of the analog output pins.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>axes</strong>
-</dt>
-<dd>
-<p>
-Removed since version 2.9
-  use axis_mask.bit_count() to get the number of axes configured
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>axis</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of dicts)</em> -
-  reflecting current axis values. See
-  <a href="python-interface.html#sec:the-axis-dictionary">The axis dictionary</a>.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>axis_mask</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  mask of axis available as defined by [TRAJ]COORDINATES in the INI
-  file. Returns the sum of the axes X=1, Y=2, Z=4, A=8, B=16, C=32, U=64,
-  V=128, W=256.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>block_delete</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  block delete current status.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>call_level</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em>` -
-  current subroutine depth. - 0 If not in a subroutine, Depth if not otherwise specified
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>command</strong>
-</dt>
-<dd>
-<p>
-<em>(returns string)</em> -
-  currently executing command.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>current_line</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  currently executing line.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>current_vel</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current velocity in user units per second.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>cycle_time</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  thread period
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>debug</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  debug flag from the INI file.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>delay_left</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  remaining time on dwell (G4) command, seconds.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>din</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of integers)</em> -
-  current value of the digital input pins.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>distance_to_go</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  remaining distance of current move, as reported by trajectory planner.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>dout</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of integers)</em> -
-  current value of the digital output pins.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>dtg</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  remaining distance of current move for each axis, as reported by trajectory planner.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>echo_serial_number</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  The serial number of the last completed command sent by a UI
-  to task. All commands carry a serial number. Once the command
-  has been executed, its serial number is reflected in
-  <code>echo_serial_number</code>.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  trajectory planner enabled flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>estop</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  Returns either STATE_ESTOP or not.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>exec_state</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  task execution state. One of EXEC_ERROR, EXEC_DONE,
-  EXEC_WAITING_FOR_MOTION, EXEC_WAITING_FOR_MOTION_QUEUE,
-  EXEC_WAITING_FOR_IO, EXEC_WAITING_FOR_MOTION_AND_IO,
-  EXEC_WAITING_FOR_DELAY, EXEC_WAITING_FOR_SYSTEM_CMD,
-  EXEC_WAITING_FOR_SPINDLE_ORIENTED.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>feed_hold_enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  enable flag for feed hold.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>feed_override_enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  enable flag for feed override.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>feedrate</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current feedrate override, 1.0 = 100%.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>file</strong>
-</dt>
-<dd>
-<p>
-<em>(returns string)</em> -
-  currently loaded G-code filename with path.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>flood</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  Flood status, either FLOOD_OFF or FLOOD_ON.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>g5x_index</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  currently active coordinate system, G54=1, G55=2 etc.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>g5x_offset</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  offset of the currently active coordinate system.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>g92_offset</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  pose of the current g92 offset.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>gcodes</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of integers)</em> -
-  Active G-codes for each modal group.<br />
- The integer values reflect the nominal G-code numbers multiplied by 10. (Examples: 10 = <em>G1</em>, 430 = <em>G43</em>, 923 = <em>G92.3</em>)
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>homed</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of integers)</em> -
-  currently homed joints, 0 = not homed, 1 = homed.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>id</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  currently executing motion id.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>ini_filename</strong>
-</dt>
-<dd>
-<p>
-<em>(returns string)</em> -
-  path to the INI file passed to linuxcnc.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>inpos</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  machine-in-position flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>input_timeout</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  flag for M66 timer in progress.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>interp_state</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current state of RS274NGC interpreter. One of
-  INTERP_IDLE, INTERP_READING, INTERP_PAUSED, INTERP_WAITING.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>interpreter_errcode</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current RS274NGC interpreter return code. One of
-  INTERP_OK, INTERP_EXIT, INTERP_EXECUTE_FINISH, INTERP_ENDFILE,
-  INTERP_FILE_NOT_OPEN, INTERP_ERROR.
-  see src/emc/nml_intf/interp_return.hh
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>joint</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of dicts)</em> -
-  reflecting current joint values. See
-  <a href="python-interface.html#sec:the-joint-dictionary">The joint dictionary</a>.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>joint_actual_position</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  actual joint positions.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>joint_position</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  Desired joint positions.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>joints</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  number of joints. Reflects [KINS]JOINTS INI value.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>kinematics_type</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  The type of kinematics. One of:
-</p>
-<div class="ulist"><ul>
-<li>
-<p>
-KINEMATICS_IDENTITY
-</p>
-</li>
-<li>
-<p>
-KINEMATICS_FORWARD_ONLY
-</p>
-</li>
-<li>
-<p>
-KINEMATICS_INVERSE_ONLY
-</p>
-</li>
-<li>
-<p>
-KINEMATICS_BOTH
-</p>
-</li>
-</ul></div>
-</dd>
-<dt class="hdlist1">
-<strong>limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of integers)</em> -
-  axis limit masks. minHardLimit=1,
-  maxHardLimit=2, minSoftLimit=4, maxSoftLimit=8.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>linear_units</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  machine linear units per mm, reflects [TRAJ]LINEAR_UNITS INI value.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>lube</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  <em>lube on</em> flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>lube_level</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  reflects <em>iocontrol.0.lube_level</em>.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_acceleration</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  maximum  acceleration. Reflects [TRAJ]MAX_ACCELERATION.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_velocity</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  maximum  velocity. Reflects the current maximum velocity. If not modified by halui.max-velocity or similar it should reflect [TRAJ]MAX_VELOCITY.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>mcodes</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of 10 integers)</em> -
-  currently active M-codes.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>mist</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  Mist status, either MIST_OFF or MIST_ON
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>motion_line</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  source line number motion is currently executing. Relation
-  to <code>id</code> unclear.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>motion_mode</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  This is the mode of the Motion controller.  One of TRAJ_MODE_COORD,
-  TRAJ_MODE_FREE, TRAJ_MODE_TELEOP.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>motion_type</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  The type of the currently executing motion.  One of:
-</p>
-<div class="ulist"><ul>
-<li>
-<p>
-MOTION_TYPE_TRAVERSE
-</p>
-</li>
-<li>
-<p>
-MOTION_TYPE_FEED
-</p>
-</li>
-<li>
-<p>
-MOTION_TYPE_ARC
-</p>
-</li>
-<li>
-<p>
-MOTION_TYPE_TOOLCHANGE
-</p>
-</li>
-<li>
-<p>
-MOTION_TYPE_PROBING
-</p>
-</li>
-<li>
-<p>
-MOTION_TYPE_INDEXROTARY
-</p>
-</li>
-<li>
-<p>
-Or 0 if no motion is currently taking place.
-</p>
-</li>
-</ul></div>
-</dd>
-<dt class="hdlist1">
-<strong>optional_stop</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  option stop flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>paused</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  <code>motion paused</code> flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>pocket_prepped</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  A Tx command completed, and this pocket is prepared. -1 if no
-  prepared pocket.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>poll()</strong>
-</dt>
-<dd>
-<p>
--<em>(built-in function)</em>
-  method to update current status attributes.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>position</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  trajectory position.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>probe_tripped</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  flag, True if probe has tripped (latch)
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>probe_val</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  reflects value of the <code>motion.probe-input</code> pin.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>probed_position</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  position where probe tripped.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>probing</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  flag, True if a probe operation is in progress.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>program_units</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  one of CANON_UNITS_INCHES=1, CANON_UNITS_MM=2, CANON_UNITS_CM=3
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>queue</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current size of the trajectory planner queue.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>queue_full</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  the trajectory planner queue is full.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>rapidrate</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  rapid override scale.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>read_line</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  line the RS274NGC interpreter is currently reading.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>rotation_xy</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current XY rotation angle around Z axis.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>settings</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  current interpreter settings. settings[0] =
-  sequence number, settings[1] = feed rate, settings[2] = speed,
-  settings[3] = <code>G64 P</code> blend tolerance,
-  settings[4] = <code>G64 Q</code> naive CAM tolerance.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>spindle</strong>
-</dt>
-<dd>
-<p>
-' (returns tuple of dicts) ' -
-  returns the current spindle status,
-  see <a href="python-interface.html#sec:the-spindle-dictionary">The spindle dictionary</a>
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>spindles</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  number of spindles. Reflects [TRAJ]SPINDLES INI value.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>state</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current command execution status. One of RCS_DONE,
-  RCS_EXEC, RCS_ERROR.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>task_mode</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current task mode. one of MODE_MDI, MODE_AUTO,
-  MODE_MANUAL.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>task_paused</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  task paused flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>task_state</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current task state. one of STATE_ESTOP,
-  STATE_ESTOP_RESET, STATE_ON, STATE_OFF.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>tool_in_spindle</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  current tool number.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>tool_from_pocket</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  pocket number for the currently loaded tool (0 if no tool loaded).
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>tool_offset</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of floats)</em> -
-  offset values of the current tool.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>tool_table</strong>
-</dt>
-<dd>
-<p>
-<em>(returns tuple of tool_results)</em> -
-  list of tool entries. Each entry is a sequence of the following fields:
-  id, xoffset, yoffset, zoffset, aoffset, boffset, coffset, uoffset, voffset,
-  woffset, diameter, frontangle, backangle, orientation. The id and orientation
-  are integers and the rest are floats.
-</p>
-</dd>
-</dl></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-s <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>
-s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>
-<span style="font-style: italic"><span style="color: #9A1900"># to find the loaded tool information it is in tool table index 0</span></span>
-<span style="font-weight: bold"><span style="color: #0000FF">if</span></span> s<span style="color: #990000">.</span>tool_table<span style="color: #990000">[</span><span style="color: #993399">0</span><span style="color: #990000">].</span>id <span style="color: #990000">!=</span> <span style="color: #993399">0</span><span style="color: #990000">:</span> <span style="font-style: italic"><span style="color: #9A1900"># a tool is loaded</span></span>
-    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>s<span style="color: #990000">.</span>tool_table<span style="color: #990000">[</span><span style="color: #993399">0</span><span style="color: #990000">].</span>zoffset<span style="color: #990000">)</span>
-<span style="font-weight: bold"><span style="color: #0000FF">else</span></span><span style="color: #990000">:</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"No tool loaded."</span><span style="color: #990000">)</span></tt></pre></div></div>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<strong>velocity</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  This property is defined, but it does not have a useful interpretation.
-</p>
-</dd>
-</dl></div>
-</div>
-<div class="sect2">
-<h3 id="sec:the-axis-dictionary">3.2. The <code>axis</code> dictionary</h3>
-<div class="paragraph"><p>The axis configuration and status values are available through a list
-of per-axis dictionaries. Here&#8217;s an example how to access an attribute
-of a particular axis:
-Note that many properties that were formerly in the <code>axis</code> dictionary are
-now in the <code>joint</code> dictionary, because on nontrivial kinematics machines
-these items (such as backlash) are not the properties of an axis.</p></div>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<strong>max_position_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  maximum limit (soft limit) for axis motion, in machine units.configuration
-  parameter, reflects [JOINT_n]MAX_LIMIT.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>min_position_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  minimum limit (soft limit) for axis motion, in machine units.configuration
-  parameter, reflects [JOINT_n]MIN_LIMIT.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>velocity</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current velocity.
-</p>
-</dd>
-</dl></div>
-</div>
-<div class="sect2">
-<h3 id="sec:the-joint-dictionary">3.3. The <code>joint</code> dictionary</h3>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-s <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>
-s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>
-<span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"Joint 1 homed: "</span><span style="color: #990000">,</span> s<span style="color: #990000">.</span>joint<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">][</span><span style="color: #FF0000">"homed"</span><span style="color: #990000">])</span></tt></pre></div></div>
-<div class="paragraph"><p>For each joint, the following dictionary keys are available:</p></div>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<strong>backlash</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  Backlash in machine units. configuration parameter, reflects [JOINT_n]BACKLASH.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means enabled.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>fault</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means axis amp fault.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>ferror_current</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current following error.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>ferror_highmark</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  magnitude of max following error.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>homed</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means has been homed.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>homing</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means homing in progress.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>inpos</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means in position.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>input</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current input position.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>jointType</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  type of axis configuration parameter, reflects
-  [JOINT_n]TYPE. LINEAR=1, ANGULAR=2. See <a href="ini-config.html#sub:ini:sec:axis-letter">Joint   INI configuration</a> for details.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_ferror</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  maximum following error. configuration
-  parameter, reflects [JOINT_n]FERROR.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_hard_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means max hard limit exceeded.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_position_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  maximum limit (soft limit) for joint motion, in machine units. configuration
-  parameter, reflects [JOINT_n]MAX_LIMIT.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>max_soft_limit</strong>
-</dt>
-<dd>
-<p>
-  non-zero means <code>max_position_limit</code> was exceeded, int
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>min_ferror</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  configuration parameter, reflects [JOINT_n]MIN_FERROR.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>min_hard_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means min hard limit exceeded.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>min_position_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  minimum limit (soft limit) for joint motion, in machine units. configuration
-  parameter, reflects [JOINT_n]MIN_LIMIT.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>min_soft_limit</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means <code>min_position_limit</code> was exceeded.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>output</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  commanded output position.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>override_limits</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  non-zero means limits are overridden.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>units</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  joint units per mm, or per degree for angular joints.<br />
-  (joint units are the same as machine units, unless set otherwise
-  by the configuration parameter [JOINT_n]UNITS)
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>velocity</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  current velocity.
-</p>
-</dd>
-</dl></div>
-</div>
-<div class="sect2">
-<h3 id="sec:the-spindle-dictionary">3.4. The <code>spindle</code> dictionary</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<strong>brake</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  value of the spindle brake flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>direction</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  rotational direction of the spindle. forward=1, reverse=-1.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  value of the spindle enabled flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>homed</strong>
-</dt>
-<dd>
-<p>
-(not currently implemented)
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>increasing</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em> -
-  unclear.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>orient_fault</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em>
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>orient_state</strong>
-</dt>
-<dd>
-<p>
-<em>(returns integer)</em>
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>override</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  spindle speed override scale.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>override_enabled</strong>
-</dt>
-<dd>
-<p>
-<em>(returns boolean)</em> -
-  value of the spindle override enabled flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<strong>speed</strong>
-</dt>
-<dd>
-<p>
-<em>(returns float)</em> -
-  spindle speed value, rpm, &gt; 0: clockwise, &lt; 0: counterclockwise.<br />
-  With G96 active this reflects the maximum speed set by the optional G96 <em>D</em>-word or, if the <em>D</em>-word was missing, the default values +/-1e30
-</p>
-</dd>
-</dl></div>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_preparing_to_send_commands">4. Preparing to send commands</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>Some commands can always be sent, regardless of mode and state; for
-instance, the <code>linuxcnc.command.abort()</code> method can always be called.</p></div>
-<div class="paragraph"><p>Other commands may be sent only in appropriate state, and those tests
-can be a bit tricky. For instance, an MDI command can be sent only if:</p></div>
-<div class="ulist"><ul>
-<li>
-<p>
-ESTOP has not been triggered, and
-</p>
-</li>
-<li>
-<p>
-the machine is turned on and
-</p>
-</li>
-<li>
-<p>
-the axes are homed and
-</p>
-</li>
-<li>
-<p>
-the interpreter is not running and
-</p>
-</li>
-<li>
-<p>
-the mode is set to <code>MDI mode</code>
-</p>
-</li>
-</ul></div>
-<div class="paragraph"><p>so an appropriate test before sending an MDI command through
-<code>linuxcnc.command.mdi()</code> could be:</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-s <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>
-c <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span>
-
-<span style="font-weight: bold"><span style="color: #0000FF">def</span></span> <span style="font-weight: bold"><span style="color: #000000">ok_for_mdi</span></span><span style="color: #990000">():</span>
-    s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">return</span></span> <span style="font-weight: bold"><span style="color: #0000FF">not</span></span> s<span style="color: #990000">.</span>estop <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> s<span style="color: #990000">.</span>enabled <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> <span style="color: #990000">(</span>s<span style="color: #990000">.</span>homed<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">count</span></span><span style="color: #990000">(</span><span style="color: #993399">1</span><span style="color: #990000">)</span> <span style="color: #990000">==</span> s<span style="color: #990000">.</span>joints<span style="color: #990000">)</span> <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> <span style="color: #990000">(</span>s<span style="color: #990000">.</span>interp_state <span style="color: #990000">==</span> linuxcnc<span style="color: #990000">.</span>INTERP_IDLE<span style="color: #990000">)</span>
-
-<span style="font-weight: bold"><span style="color: #0000FF">if</span></span> <span style="font-weight: bold"><span style="color: #000000">ok_for_mdi</span></span><span style="color: #990000">():</span>
-    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MDI<span style="color: #990000">)</span>
-    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">wait_complete</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># wait until mode switch executed</span></span>
-    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mdi</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"G0 X10 Y20 Z30"</span><span style="color: #990000">)</span></tt></pre></div></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_sending_commands_through_code_linuxcnc_command_code">5. Sending commands through <code>linuxcnc.command</code></h2>
-<div class="sectionbody">
-<div class="paragraph"><p>Before sending a command, initialize a command channel like so:</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-c <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Usage examples for some of the commands listed below:</span></span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">abort</span></span><span style="color: #990000">()</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_RUN<span style="color: #990000">,</span> program_start_line<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_STEP<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_PAUSE<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_RESUME<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">brake</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>BRAKE_ENGAGE<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">brake</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>BRAKE_RELEASE<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">flood</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>FLOOD_ON<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">flood</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>FLOOD_OFF<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">home</span></span><span style="color: #990000">(</span><span style="color: #993399">2</span><span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_STOP<span style="color: #990000">,</span>        jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_CONTINUOUS<span style="color: #990000">,</span>  jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">,</span> velocity<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_INCREMENT<span style="color: #990000">,</span>   jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">,</span> velocity<span style="color: #990000">,</span> increment<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">load_tool_table</span></span><span style="color: #990000">()</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">maxvel</span></span><span style="color: #990000">(</span><span style="color: #993399">200.0</span><span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mdi</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"G0 X10 Y20 Z30"</span><span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mist</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MIST_ON<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mist</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MIST_OFF<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MDI<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_AUTO<span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MANUAL<span style="color: #990000">)</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">override_limits</span></span><span style="color: #990000">()</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">program_open</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"foo.ngc"</span><span style="color: #990000">)</span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">reset_interpreter</span></span><span style="color: #990000">()</span>
-
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">tool_offset</span></span><span style="color: #990000">(</span>toolno<span style="color: #990000">,</span> z_offset<span style="color: #990000">,</span>  x_offset<span style="color: #990000">,</span> diameter<span style="color: #990000">,</span> frontangle<span style="color: #990000">,</span> backangle<span style="color: #990000">,</span> orientation<span style="color: #990000">)</span></tt></pre></div></div>
-<div class="sect2">
-<h3 id="_code_linuxcnc_command_code_attributes">5.1. <code>linuxcnc.command</code> attributes</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>serial</code>
-</dt>
-<dd>
-<p>
-  the current command serial number
-</p>
-</dd>
-</dl></div>
-</div>
-<div class="sect2">
-<h3 id="_code_linuxcnc_command_code_methods">5.2. <code>linuxcnc.command</code> methods:</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>abort()</code>
-</dt>
-<dd>
-<p>
-  send EMC_TASK_ABORT message.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>auto(int[, int])</code>
-</dt>
-<dd>
-<p>
-  run, step, pause or resume a program.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>brake(int)</code>
-</dt>
-<dd>
-<p>
-  engage or release spindle brake.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>debug(int)</code>
-</dt>
-<dd>
-<p>
-  set debug level via EMC_SET_DEBUG message.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>display_msg(string)</code>
-</dt>
-<dd>
-<p>
-  sends a operator display message to the screen. (max 254 characters)
-</p>
-</dd>
-<dt class="hdlist1">
-<code>error_msg(string)</code>
-</dt>
-<dd>
-<p>
-  sends a operator error message to the screen. (max 254 characters)
-</p>
-</dd>
-<dt class="hdlist1">
-<code>feedrate(float)</code>
-</dt>
-<dd>
-<p>
-  set the feedrate override, 1.0 = 100%.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>flood(int)</code>
-</dt>
-<dd>
-<p>
-  turn on/off flooding.
-</p>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-Syntax
-</dt>
-<dd>
-<p>
-    flood(command)<br />
-    flood(linuxcnc.FLOOD_ON)<br />
-    flood(linuxcnc.FLOOD_OFF)
-</p>
-</dd>
-<dt class="hdlist1">
-Constants
-</dt>
-<dd>
-<p>
-    FLOOD_ON<br />
-    FLOOD_OFF
-</p>
-</dd>
-</dl></div>
-</dd>
-<dt class="hdlist1">
-<code>home(int)</code>
-</dt>
-<dd>
-<p>
-    home a given joint.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>jog(command-constant, bool, int[, float[, float]])</code>
-</dt>
-<dd>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-Syntax
-</dt>
-<dd>
-<p>
-      jog(command,                 jjogmode, joint_num_or_axis_index, velocity[, distance])<br />
-      jog(linuxcnc.JOG_STOP,       jjogmode, joint_num_or_axis_index)<br />
-      jog(linuxcnc.JOG_CONTINUOUS, jjogmode, joint_num_or_axis_index, velocity)<br />
-      jog(linuxcnc.JOG_INCREMENT,  jjogmode, joint_num_or_axis_index, velocity, distance)
-</p>
-</dd>
-<dt class="hdlist1">
-Command Constants
-</dt>
-<dd>
-<p>
-      linuxcnc.JOG_STOP<br />
-      linuxcnc.JOG_CONTINUOUS<br />
-      linuxcnc.JOG_INCREMENT
-</p>
-</dd>
-<dt class="hdlist1">
-jjogmode
-</dt>
-<dd>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-True
-</dt>
-<dd>
-<p>
-request individual joint jog (requires teleop_enable(0))
-</p>
-</dd>
-<dt class="hdlist1">
-False
-</dt>
-<dd>
-<p>
-request axis Cartesian coordinate jog (requires teleop_enable(1))
-</p>
-</dd>
-</dl></div>
-</dd>
-<dt class="hdlist1">
-joint_num_or_axis_index
-</dt>
-<dd>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-For joint jog (jjogmode=1)
-</dt>
-<dd>
-<p>
-joint_number
-</p>
-</dd>
-<dt class="hdlist1">
-For axis Cartesian coordinate jog (jjogmode=0)
-</dt>
-<dd>
-<p>
-        zero-based index of the axis coordinate with respect to
-        the known coordinate letters XYZABCUVW
-        (x=&gt;0,y=&gt;1,z=&gt;2,a=&gt;3,b=&gt;4,c=&gt;5,u=&gt;6,v=&gt;7,w=&gt;8)
-</p>
-</dd>
-</dl></div>
-</dd>
-</dl></div>
-</dd>
-<dt class="hdlist1">
-<code>load_tool_table()</code>
-</dt>
-<dd>
-<p>
-  reload the tool table.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>maxvel(float)</code>
-</dt>
-<dd>
-<p>
-  set maximum velocity
-</p>
-</dd>
-<dt class="hdlist1">
-<code>mdi(string)</code>
-</dt>
-<dd>
-<p>
-  send an MDI command. Maximum 254 chars.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>mist(int)</code>
-</dt>
-<dd>
-<p>
-turn on/off mist.<br />
-</p>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-Syntax
-</dt>
-<dd>
-<p>
-      mist(command)<br />
-      mist(linuxcnc.MIST_ON)<br />
-      mist(linuxcnc.MIST_OFF)<br />
-</p>
-</dd>
-<dt class="hdlist1">
-Constants
-</dt>
-<dd>
-<p>
-      MIST_ON<br />
-      MIST_OFF
-</p>
-</dd>
-</dl></div>
-</dd>
-<dt class="hdlist1">
-<code>mode(int)</code>
-</dt>
-<dd>
-<p>
-  set mode (MODE_MDI, MODE_MANUAL, MODE_AUTO).
-</p>
-</dd>
-<dt class="hdlist1">
-<code>override_limits()</code>
-</dt>
-<dd>
-<p>
-  set the override axis limits flag.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>program_open(string)</code>
-</dt>
-<dd>
-<p>
-  open an NGC file.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>rapidrate()</code>
-</dt>
-<dd>
-<p>
-  set rapid override factor
-</p>
-</dd>
-<dt class="hdlist1">
-<code>reset_interpreter()</code>
-</dt>
-<dd>
-<p>
-  reset the RS274NGC interpreter
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_adaptive_feed(int)</code>
-</dt>
-<dd>
-<p>
-  set adaptive feed flag
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_analog_output(int, float)</code>
-</dt>
-<dd>
-<p>
-  set analog output pin to value
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_block_delete(int)</code>
-</dt>
-<dd>
-<p>
-  set block delete flag
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_digital_output(int, int)</code>
-</dt>
-<dd>
-<p>
-  set digital output pin to value
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_feed_hold(int)</code>
-</dt>
-<dd>
-<p>
-  set feed hold on/off
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_feed_override(int)</code>
-</dt>
-<dd>
-<p>
-  set feed override on/off
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_max_limit(int, float)</code>
-</dt>
-<dd>
-<p>
-  set max position limit for a given axis
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_min_limit()</code>
-</dt>
-<dd>
-<p>
-  set min position limit for a given axis
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_optional_stop(int)</code>
-</dt>
-<dd>
-<p>
-  set optional stop on/off
-</p>
-</dd>
-<dt class="hdlist1">
-<code>set_spindle_override(int [, int])</code>
-</dt>
-<dd>
-<p>
-  set spindle override enabled. Defaults to spindle 0.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>spindle(direction: int, speed: float=0, spindle: int=0, wait_for_speed: int=0)</code>
-</dt>
-<dd>
-<div class="ulist"><ul>
-<li>
-<p>
-Direction: [SPINDLE_FORWARD, SPINDLE_REVERSE, SPINDLE_OFF, SPINDLE_INCREASE,
-      SPINDLE_DECREASE, or SPINDLE_CONSTANT]
-</p>
-</li>
-<li>
-<p>
-Speed: Speed in RPM, defaults to 0.
-</p>
-</li>
-<li>
-<p>
-Spindle: Spindle number to command defaults to 0.
-</p>
-</li>
-<li>
-<p>
-Wait_for_speed: if 1 motion will wait for speed before continuing, defaults to not.
-</p>
-</li>
-</ul></div>
-</dd>
-</dl></div>
-<div class="admonitionblock">
-<table><tr>
-<td class="icon">
-<div class="title">Warning</div>
-</td>
-<td class="content">MDI commands will ignore this. "S1000" after this will turn the spindle off.</td>
-</tr></table>
-</div>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>text_msg(string)</code>
-</dt>
-<dd>
-<p>
-  sends a operator text message to the screen. (max 254 characters)
-</p>
-</dd>
-</dl></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-c <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Increase speed of spindle 0 by 100rpm. Spindle must be on first.</span></span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">spindle</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>INCREASE<span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Increase speed of spindle 2 by 100rpm. Spindle must be on first.</span></span>
-c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">spindle</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_INCREASE<span style="color: #990000">,</span> <span style="color: #993399">2</span><span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Set speed of spindle 0 to 1024 rpm.</span></span>
-c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_FORWARD<span style="color: #990000">,</span> <span style="color: #993399">1024</span><span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Set speed of spindle 1 to -666 rpm.</span></span>
-c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_REVERSE<span style="color: #990000">,</span> <span style="color: #993399">666</span><span style="color: #990000">,</span> <span style="color: #993399">1</span><span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Stop spindle 0.</span></span>
-c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_OFF<span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># Stop spindle 0 explicitly.</span></span>
-c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_OFF<span style="color: #990000">,</span> <span style="color: #993399">0</span><span style="color: #990000">)</span></tt></pre></div></div>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>spindleoverride(float [, int])</code>
-</dt>
-<dd>
-<p>
-  Set spindle override factor. Defaults to spindle 0.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>state(int)</code>
-</dt>
-<dd>
-<p>
-  Set the machine state. Machine state should be STATE_ESTOP, STATE_ESTOP_RESET, STATE_ON, or STATE_OFF.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>task_plan_sync()</code>
-</dt>
-<dd>
-<p>
-  On completion of this call, the VAR file on disk is updated with
-  live values from the interpreter.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>teleop_enable(int)</code>
-</dt>
-<dd>
-<p>
-  Enable/disable teleop mode (disable for joint jogging).
-</p>
-</dd>
-<dt class="hdlist1">
-<code>tool_offset(int, float, float, float, float, float, int)</code>
-</dt>
-<dd>
-<p>
-  Set the tool offset. See usage example above.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>traj_mode(int)</code>
-</dt>
-<dd>
-<p>
-  Set trajectory mode. Mode is one of MODE_FREE, MODE_COORD, or
-  MODE_TELEOP.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>unhome(int)</code>
-</dt>
-<dd>
-<p>
-  Unhome a given joint.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>wait_complete([float])</code>
-</dt>
-<dd>
-<p>
-  Wait for completion of the last command sent. If timeout in
-  seconds not specified, default is 5 seconds. Return -1 if
-  timed out, return RCS_DONE or RCS_ERROR according to command
-  execution status.
-</p>
-</dd>
-</dl></div>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_reading_the_error_channel">6. Reading the error channel</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>To handle error messages, connect to the error channel and
-periodically poll() it.</p></div>
-<div class="paragraph"><p>Note that the NML channel for error messages has a queue (other than
-the command and status channels), which means
-that the first consumer of an error message deletes that message from
-the queue; whether your another error message consumer (e.g. Axis)
-will <em>see</em> the message is dependent on timing. It is recommended to have just
-one error channel reader task in a setup.</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-e <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">error_channel</span></span><span style="color: #990000">()</span>
-
-error <span style="color: #990000">=</span> e<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>
-
-<span style="font-weight: bold"><span style="color: #0000FF">if</span></span> error<span style="color: #990000">:</span>
-    kind<span style="color: #990000">,</span> text <span style="color: #990000">=</span> error
-    <span style="font-weight: bold"><span style="color: #0000FF">if</span></span> kind <span style="font-weight: bold"><span style="color: #0000FF">in</span></span> <span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>NML_ERROR<span style="color: #990000">,</span> linuxcnc<span style="color: #990000">.</span>OPERATOR_ERROR<span style="color: #990000">):</span>
-        typus <span style="color: #990000">=</span> <span style="color: #FF0000">"error"</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">else</span></span><span style="color: #990000">:</span>
-        typus <span style="color: #990000">=</span> <span style="color: #FF0000">"info"</span>
-    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>typus<span style="color: #990000">,</span> text<span style="color: #990000">)</span></tt></pre></div></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="python:reading-ini-values">7. Reading INI file values</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>Here&#8217;s an example for reading values from an INI file through the
-<code>linuxcnc.ini</code> object:</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># run as:</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># python3 ini-example.py ~/emc2-dev/configs/sim/axis/axis_mm.ini</span></span>
-
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> sys
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-
-inifile <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">ini</span></span><span style="color: #990000">(</span>sys<span style="color: #990000">.</span>argv<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">])</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># inifile.find() returns None if the key wasn't found - the</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># following idiom is useful for setting a default value:</span></span>
-
-machine_name <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">find</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"EMC"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"MACHINE"</span><span style="color: #990000">)</span> <span style="font-weight: bold"><span style="color: #0000FF">or</span></span> <span style="color: #FF0000">"unknown"</span>
-<span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"machine name: "</span><span style="color: #990000">,</span> machine_name<span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># inifile.findall() returns a list of matches, or an empty list</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># if the key wasn't found:</span></span>
-
-extensions <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">findall</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"FILTER"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"PROGRAM_EXTENSION"</span><span style="color: #990000">)</span>
-<span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"extensions: "</span><span style="color: #990000">,</span> extensions<span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># override default NML file by INI parameter if given</span></span>
-nmlfile <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">find</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"EMC"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"NML_FILE"</span><span style="color: #990000">)</span>
-<span style="font-weight: bold"><span style="color: #0000FF">if</span></span> nmlfile<span style="color: #990000">:</span>
-    linuxcnc<span style="color: #990000">.</span>nmlfile <span style="color: #990000">=</span> os<span style="color: #990000">.</span>path<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">join</span></span><span style="color: #990000">(</span>os<span style="color: #990000">.</span>path<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">dirname</span></span><span style="color: #990000">(</span>sys<span style="color: #990000">.</span>argv<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">]),</span> nmlfile<span style="color: #990000">)</span></tt></pre></div></div>
-<div class="paragraph"><p>Or for the same INI file as LinuxCNC:</p></div>
-<div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.9
-by Lorenzo Bettini
-http://www.lorenzobettini.it
-http://www.gnu.org/software/src-highlite -->
-<pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># run as:</span></span>
-<span style="font-style: italic"><span style="color: #9A1900"># python3 ini-example2.py</span></span>
-
-<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc
-
-stat <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>
-stat<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>
-
-inifile <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">ini</span></span><span style="color: #990000">(</span>stat<span style="color: #990000">.</span>ini_filename<span style="color: #990000">)</span>
-
-<span style="font-style: italic"><span style="color: #9A1900"># See example above for usage of 'inifile' object</span></span></tt></pre></div></div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_the_code_linuxcnc_positionlogger_code_type">8. The <code>linuxcnc.positionlogger</code> type</h2>
-<div class="sectionbody">
-<div class="paragraph"><p>Some usage hints can be gleaned from
-<code>src/emc/usr_intf/gremlin/gremlin.py</code>.</p></div>
-<div class="sect2">
-<h3 id="_members">8.1. members</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>npts</code>
-</dt>
-<dd>
-<p>
-    number of points.
-</p>
-</dd>
-</dl></div>
-</div>
-<div class="sect2">
-<h3 id="_methods">8.2. methods</h3>
-<div class="dlist"><dl>
-<dt class="hdlist1">
-<code>start(float)</code>
-</dt>
-<dd>
-<p>
-  start the position logger and run every ARG seconds
-</p>
-</dd>
-<dt class="hdlist1">
-<code>clear()</code>
-</dt>
-<dd>
-<p>
-  clear the position logger
-</p>
-</dd>
-<dt class="hdlist1">
-<code>stop()</code>
-</dt>
-<dd>
-<p>
-  stop the position logger
-</p>
-</dd>
-<dt class="hdlist1">
-<code>call()</code>
-</dt>
-<dd>
-<p>
-  Plot the backplot now.
-</p>
-</dd>
-<dt class="hdlist1">
-<code>last([int])</code>
-</dt>
-<dd>
-<p>
-  Return the most recent point on the plot or None
-</p>
-</dd>
-</dl></div>
-</div>
-</div>
-</div>
-</div>
-<div id="footnotes"><hr /></div>
-<div id="footer">
-<div id="footer-text">
-Last updated
- 2025-12-15 07:42:37 MST
-</div>
-</div>
-</body>
-</html>
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"    "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en"><head><meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" /><meta name="generator" content="AsciiDoc 10.2.1" /><title>The LinuxCNC Python module</title><link rel="stylesheet" href="..//asciidoc.css" type="text/css" /><link rel="stylesheet" href="..//linuxcnc.css" type="text/css" /><script type="text/javascript" src="..//asciidoc.js"></script><script type="text/javascript">/*<![CDATA[*/asciidoc.install(2);/*]]>*/</script></head><body class="book"><div id="header"><h1>The LinuxCNC Python module</h1><div id="toc">  <div id="toctitle">Table of Contents</div>  <noscript><p><b>JavaScript must be enabled in your browser to display the table of contents.</b></p></noscript></div></div><div id="content"><div id="preamble"><div class="sectionbody"><div class="paragraph" id="cha:python-interface"><p>This documentation describes the <code>linuxcnc</code> python module, which providesa Python API for talking to LinuxCNC.</p></div></div></div><div class="sect1"><h2 id="_introduction">1. Introduction</h2><div class="sectionbody"><div class="paragraph"><p>User interfaces control LinuxCNC activity by sendingNML messages to the LinuxCNC task controller, and monitor results byobserving the LinuxCNC status structure, as well as the error reporting channel.</p></div><div class="paragraph"><p>Programmatic access to NML is through a C++ API; however, the mostimportant parts of the NML interface to LinuxCNC are also available toPython programs through the <code>linuxcnc</code> module.</p></div><div class="paragraph"><p>Beyond the NML interface to the command, status and error channels,the <code>linuxcnc</code> module also contains:</p></div><div class="ulist"><ul><li><p>support for reading values from INI files</p></li></ul></div></div></div><div class="sect1"><h2 id="_usage_patterns_for_the_linuxcnc_nml_interface">2. Usage Patterns for the LinuxCNC NML interface</h2><div class="sectionbody"><div class="paragraph"><p>The general pattern for <code>linuxcnc</code> usage is roughly like this:</p></div><div class="ulist"><ul><li><p>import the <code>linuxcnc</code> module</p></li><li><p>establish connections to the command, status and error NML channels as needed</p></li><li><p>poll the status channel, either periodically or as needed</p></li><li><p>before sending a command, determine from status whether it is in  fact OK to do so (for instance, there is no point in sending a <em>Run</em>  command if task is in the ESTOP state, or the interpreter is not idle)</p></li><li><p>send the command by using one of the <code>linuxcnc</code> command channel methods</p></li></ul></div><div class="paragraph"><p>To retrieve messages from the error channel, poll the error channelperiodically, and process any messages retrieved.</p></div><div class="ulist"><ul><li><p>poll the status channel, either periodically or as needed</p></li><li><p>print any error message and explore the exception code</p></li></ul></div><div class="paragraph"><p><code>linuxcnc</code> also defines the <code>error</code> Python exception type to support error reporting.</p></div></div></div><div class="sect1"><h2 id="_reading_linuxcnc_status">3. Reading LinuxCNC status</h2><div class="sectionbody"><div class="paragraph"><p>Here is a Python fragment to explore the contents of the<code>linuxcnc.stat</code> object which contains some 80+ values (run whilelinuxcnc is running for typical values):</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> sys<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnc<span style="font-weight: bold"><span style="color: #0000FF">try</span></span><span style="color: #990000">:</span>    s <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># create a connection to the status channel</span></span>    s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># get current values</span></span><span style="font-weight: bold"><span style="color: #0000FF">except</span></span> linuxcnc<span style="color: #990000">.</span>error<span style="color: #990000">,</span> detail<span style="color: #990000">:</span>    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"error"</span><span style="color: #990000">,</span> detail<span style="color: #990000">)</span>    sys<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">exit</span></span><span style="color: #990000">(</span><span style="color: #993399">1</span><span style="color: #990000">)</span><span style="font-weight: bold"><span style="color: #0000FF">for</span></span> x <span style="font-weight: bold"><span style="color: #0000FF">in</span></span> <span style="font-weight: bold"><span style="color: #000000">dir</span></span><span style="color: #990000">(</span>s<span style="color: #990000">):</span>    <span style="font-weight: bold"><span style="color: #0000FF">if</span></span> <span style="font-weight: bold"><span style="color: #0000FF">not</span></span> x<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">startswith</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"_"</span><span style="color: #990000">):</span>        <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>x<span style="color: #990000">,</span> <span style="font-weight: bold"><span style="color: #000000">getattr</span></span><span style="color: #990000">(</span>s<span style="color: #990000">,</span>x<span style="color: #990000">))</span></tt></pre></div></div><div class="paragraph"><p>Linuxcnc uses the default compiled-in path to the NML configurationfile unless overridden, see <a href="python-interface.html#python:reading-ini-values">Reading INI file values</a> for an example.</p></div><div class="sect2"><h3 id="_linuxcnc_stat_attributes">3.1. linuxcnc.stat attributes</h3><div class="dlist"><dl><dt class="hdlist1"><strong>acceleration</strong></dt><dd><p><em>(returns float)</em> -  default acceleration, reflects the INI entry [TRAJ]DEFAULT_ACCELERATION.</p></dd><dt class="hdlist1"><strong>active_queue</strong></dt><dd><p><em>(returns integer)</em> -  number of motions blending.</p></dd><dt class="hdlist1"><strong>actual_position</strong></dt><dd><p><em>(returns tuple of floats)</em> -  current trajectory position, (x y z a b c u v w) in machine units.</p></dd><dt class="hdlist1"><strong>adaptive_feed_enabled</strong></dt><dd><p><em>(returns boolean)</em> -  status of adaptive feedrate override (0/1).</p></dd><dt class="hdlist1"><strong>ain</strong></dt><dd><p><em>(returns tuple of floats)</em> -  current value of the analog input pins.</p></dd><dt class="hdlist1"><strong>angular_units</strong></dt><dd><p><em>(returns float)</em> -machine angular units per deg, reflects [TRAJ]ANGULAR_UNITS INI value.</p></dd><dt class="hdlist1"><strong>aout</strong></dt><dd><p><em>(returns tuple of floats)</em> -  current value of the analog output pins.</p></dd><dt class="hdlist1"><strong>axes</strong></dt><dd><p>Removed since version 2.9  use axis_mask.bit_count() to get the number of axes configured</p></dd><dt class="hdlist1"><strong>axis</strong></dt><dd><p><em>(returns tuple of dicts)</em> -  reflecting current axis values. See  <a href="python-interface.html#sec:the-axis-dictionary">The axis dictionary</a>.</p></dd><dt class="hdlist1"><strong>axis_mask</strong></dt><dd><p><em>(returns integer)</em> -  mask of axis available as defined by [TRAJ]COORDINATES in the INI  file. Returns the sum of the axes X=1, Y=2, Z=4, A=8, B=16, C=32, U=64,  V=128, W=256.</p></dd><dt class="hdlist1"><strong>block_delete</strong></dt><dd><p><em>(returns boolean)</em> -  block delete current status.</p></dd><dt class="hdlist1"><strong>call_level</strong></dt><dd><p><em>(returns integer)</em>` -  current subroutine depth. - 0 If not in a subroutine, Depth if not otherwise specified</p></dd><dt class="hdlist1"><strong>command</strong></dt><dd><p><em>(returns string)</em> -  currently executing command.</p></dd><dt class="hdlist1"><strong>current_line</strong></dt><dd><p><em>(returns integer)</em> -  currently executing line.</p></dd><dt class="hdlist1"><strong>current_vel</strong></dt><dd><p><em>(returns float)</em> -  current velocity in user units per second.</p></dd><dt class="hdlist1"><strong>cycle_time</strong></dt><dd><p><em>(returns float)</em> -  thread period</p></dd><dt class="hdlist1"><strong>debug</strong></dt><dd><p><em>(returns integer)</em> -  debug flag from the INI file.</p></dd><dt class="hdlist1"><strong>delay_left</strong></dt><dd><p><em>(returns float)</em> -  remaining time on dwell (G4) command, seconds.</p></dd><dt class="hdlist1"><strong>din</strong></dt><dd><p><em>(returns tuple of integers)</em> -  current value of the digital input pins.</p></dd><dt class="hdlist1"><strong>distance_to_go</strong></dt><dd><p><em>(returns float)</em> -  remaining distance of current move, as reported by trajectory planner.</p></dd><dt class="hdlist1"><strong>dout</strong></dt><dd><p><em>(returns tuple of integers)</em> -  current value of the digital output pins.</p></dd><dt class="hdlist1"><strong>dtg</strong></dt><dd><p><em>(returns tuple of floats)</em> -  remaining distance of current move for each axis, as reported by trajectory planner.</p></dd><dt class="hdlist1"><strong>echo_serial_number</strong></dt><dd><p><em>(returns integer)</em> -  The serial number of the last completed command sent by a UI  to task. All commands carry a serial number. Once the command  has been executed, its serial number is reflected in  <code>echo_serial_number</code>.</p></dd><dt class="hdlist1"><strong>enabled</strong></dt><dd><p><em>(returns boolean)</em> -  trajectory planner enabled flag.</p></dd><dt class="hdlist1"><strong>estop</strong></dt><dd><p><em>(returns integer)</em> -  Returns either STATE_ESTOP or not.</p></dd><dt class="hdlist1"><strong>exec_state</strong></dt><dd><p><em>(returns integer)</em> -  task execution state. One of EXEC_ERROR, EXEC_DONE,  EXEC_WAITING_FOR_MOTION, EXEC_WAITING_FOR_MOTION_QUEUE,  EXEC_WAITING_FOR_IO, EXEC_WAITING_FOR_MOTION_AND_IO,  EXEC_WAITING_FOR_DELAY, EXEC_WAITING_FOR_SYSTEM_CMD,  EXEC_WAITING_FOR_SPINDLE_ORIENTED.</p></dd><dt class="hdlist1"><strong>feed_hold_enabled</strong></dt><dd><p><em>(returns boolean)</em> -  enable flag for feed hold.</p></dd><dt class="hdlist1"><strong>feed_override_enabled</strong></dt><dd><p><em>(returns boolean)</em> -  enable flag for feed override.</p></dd><dt class="hdlist1"><strong>feedrate</strong></dt><dd><p><em>(returns float)</em> -  current feedrate override, 1.0 = 100%.</p></dd><dt class="hdlist1"><strong>file</strong></dt><dd><p><em>(returns string)</em> -  currently loaded G-code filename with path.</p></dd><dt class="hdlist1"><strong>flood</strong></dt><dd><p><em>(returns integer)</em> -  Flood status, either FLOOD_OFF or FLOOD_ON.</p></dd><dt class="hdlist1"><strong>g5x_index</strong></dt><dd><p><em>(returns integer)</em> -  currently active coordinate system, G54=1, G55=2 etc.</p></dd><dt class="hdlist1"><strong>g5x_offset</strong></dt><dd><p><em>(returns tuple of floats)</em> -  offset of the currently active coordinate system.</p></dd><dt class="hdlist1"><strong>g92_offset</strong></dt><dd><p><em>(returns tuple of floats)</em> -  pose of the current g92 offset.</p></dd><dt class="hdlist1"><strong>gcodes</strong></dt><dd><p><em>(returns tuple of integers)</em> -  Active G-codes for each modal group.<br /> The integer values reflect the nominal G-code numbers multiplied by 10. (Examples: 10 = <em>G1</em>, 430 = <em>G43</em>, 923 = <em>G92.3</em>)</p></dd><dt class="hdlist1"><strong>homed</strong></dt><dd><p><em>(returns tuple of integers)</em> -  currently homed joints, 0 = not homed, 1 = homed.</p></dd><dt class="hdlist1"><strong>id</strong></dt><dd><p><em>(returns integer)</em> -  currently executing motion id.</p></dd><dt class="hdlist1"><strong>ini_filename</strong></dt><dd><p><em>(returns string)</em> -  path to the INI file passed to linuxcnc.</p></dd><dt class="hdlist1"><strong>inpos</strong></dt><dd><p><em>(returns boolean)</em> -  machine-in-position flag.</p></dd><dt class="hdlist1"><strong>input_timeout</strong></dt><dd><p><em>(returns boolean)</em> -  flag for M66 timer in progress.</p></dd><dt class="hdlist1"><strong>interp_state</strong></dt><dd><p><em>(returns integer)</em> -  current state of RS274NGC interpreter. One of  INTERP_IDLE, INTERP_READING, INTERP_PAUSED, INTERP_WAITING.</p></dd><dt class="hdlist1"><strong>interpreter_errcode</strong></dt><dd><p><em>(returns integer)</em> -  current RS274NGC interpreter return code. One of  INTERP_OK, INTERP_EXIT, INTERP_EXECUTE_FINISH, INTERP_ENDFILE,  INTERP_FILE_NOT_OPEN, INTERP_ERROR.  see src/emc/nml_intf/interp_return.hh</p></dd><dt class="hdlist1"><strong>joint</strong></dt><dd><p><em>(returns tuple of dicts)</em> -  reflecting current joint values. See  <a href="python-interface.html#sec:the-joint-dictionary">The joint dictionary</a>.</p></dd><dt class="hdlist1"><strong>joint_actual_position</strong></dt><dd><p><em>(returns tuple of floats)</em> -  actual joint positions.</p></dd><dt class="hdlist1"><strong>joint_position</strong></dt><dd><p><em>(returns tuple of floats)</em> -  Desired joint positions.</p></dd><dt class="hdlist1"><strong>joints</strong></dt><dd><p><em>(returns integer)</em> -  number of joints. Reflects [KINS]JOINTS INI value.</p></dd><dt class="hdlist1"><strong>kinematics_type</strong></dt><dd><p><em>(returns integer)</em> -  The type of kinematics. One of:</p><div class="ulist"><ul><li><p>KINEMATICS_IDENTITY</p></li><li><p>KINEMATICS_FORWARD_ONLY</p></li><li><p>KINEMATICS_INVERSE_ONLY</p></li><li><p>KINEMATICS_BOTH</p></li></ul></div></dd><dt class="hdlist1"><strong>limit</strong></dt><dd><p><em>(returns tuple of integers)</em> -  axis limit masks. minHardLimit=1,  maxHardLimit=2, minSoftLimit=4, maxSoftLimit=8.</p></dd><dt class="hdlist1"><strong>linear_units</strong></dt><dd><p><em>(returns float)</em> -  machine linear units per mm, reflects [TRAJ]LINEAR_UNITS INI value.</p></dd><dt class="hdlist1"><strong>lube</strong></dt><dd><p><em>(returns integer)</em> -  <em>lube on</em> flag.</p></dd><dt class="hdlist1"><strong>lube_level</strong></dt><dd><p><em>(returns integer)</em> -  reflects <em>iocontrol.0.lube_level</em>.</p></dd><dt class="hdlist1"><strong>max_acceleration</strong></dt><dd><p><em>(returns float)</em> -  maximum  acceleration. Reflects [TRAJ]MAX_ACCELERATION.</p></dd><dt class="hdlist1"><strong>max_velocity</strong></dt><dd><p><em>(returns float)</em> -  maximum  velocity. Reflects the current maximum velocity. If not modified by halui.max-velocity or similar it should reflect [TRAJ]MAX_VELOCITY.</p></dd><dt class="hdlist1"><strong>mcodes</strong></dt><dd><p><em>(returns tuple of 10 integers)</em> -  currently active M-codes.</p></dd><dt class="hdlist1"><strong>mist</strong></dt><dd><p><em>(returns integer)</em> -  Mist status, either MIST_OFF or MIST_ON</p></dd><dt class="hdlist1"><strong>motion_line</strong></dt><dd><p><em>(returns integer)</em> -  source line number motion is currently executing. Relation  to <code>id</code> unclear.</p></dd><dt class="hdlist1"><strong>motion_mode</strong></dt><dd><p><em>(returns integer)</em> -  This is the mode of the Motion controller.  One of TRAJ_MODE_COORD,  TRAJ_MODE_FREE, TRAJ_MODE_TELEOP.</p></dd><dt class="hdlist1"><strong>motion_type</strong></dt><dd><p><em>(returns integer)</em> -  The type of the currently executing motion.  One of:</p><div class="ulist"><ul><li><p>MOTION_TYPE_TRAVERSE</p></li><li><p>MOTION_TYPE_FEED</p></li><li><p>MOTION_TYPE_ARC</p></li><li><p>MOTION_TYPE_TOOLCHANGE</p></li><li><p>MOTION_TYPE_PROBING</p></li><li><p>MOTION_TYPE_INDEXROTARY</p></li><li><p>Or 0 if no motion is currently taking place.</p></li></ul></div></dd><dt class="hdlist1"><strong>optional_stop</strong></dt><dd><p><em>(returns integer)</em> -  option stop flag.</p></dd><dt class="hdlist1"><strong>paused</strong></dt><dd><p><em>(returns boolean)</em> -  <code>motion paused</code> flag.</p></dd><dt class="hdlist1"><strong>pocket_prepped</strong></dt><dd><p><em>(returns integer)</em> -  A Tx command completed, and this pocket is prepared. -1 if no  prepared pocket.</p></dd><dt class="hdlist1"><strong>poll()</strong></dt><dd><p>-<em>(built-in function)</em>  method to update current status attributes.</p></dd><dt class="hdlist1"><strong>position</strong></dt><dd><p><em>(returns tuple of floats)</em> -  trajectory position.</p></dd><dt class="hdlist1"><strong>probe_tripped</strong></dt><dd><p><em>(returns boolean)</em> -  flag, True if probe has tripped (latch)</p></dd><dt class="hdlist1"><strong>probe_val</strong></dt><dd><p><em>(returns integer)</em> -  reflects value of the <code>motion.probe-input</code> pin.</p></dd><dt class="hdlist1"><strong>probed_position</strong></dt><dd><p><em>(returns tuple of floats)</em> -  position where probe tripped.</p></dd><dt class="hdlist1"><strong>probing</strong></dt><dd><p><em>(returns boolean)</em> -  flag, True if a probe operation is in progress.</p></dd><dt class="hdlist1"><strong>program_units</strong></dt><dd><p><em>(returns integer)</em> -  one of CANON_UNITS_INCHES=1, CANON_UNITS_MM=2, CANON_UNITS_CM=3</p></dd><dt class="hdlist1"><strong>queue</strong></dt><dd><p><em>(returns integer)</em> -  current size of the trajectory planner queue.</p></dd><dt class="hdlist1"><strong>queue_full</strong></dt><dd><p><em>(returns boolean)</em> -  the trajectory planner queue is full.</p></dd><dt class="hdlist1"><strong>rapidrate</strong></dt><dd><p><em>(returns float)</em> -  rapid override scale.</p></dd><dt class="hdlist1"><strong>read_line</strong></dt><dd><p><em>(returns integer)</em> -  line the RS274NGC interpreter is currently reading.</p></dd><dt class="hdlist1"><strong>rotation_xy</strong></dt><dd><p><em>(returns float)</em> -  current XY rotation angle around Z axis.</p></dd><dt class="hdlist1"><strong>settings</strong></dt><dd><p><em>(returns tuple of floats)</em> -  current interpreter settings. settings[0] =  sequence number, settings[1] = feed rate, settings[2] = speed,  settings[3] = <code>G64 P</code> blend tolerance,  settings[4] = <code>G64 Q</code> naive CAM tolerance.</p></dd><dt class="hdlist1"><strong>spindle</strong></dt><dd><p>' (returns tuple of dicts) ' -  returns the current spindle status,  see <a href="python-interface.html#sec:the-spindle-dictionary">The spindle dictionary</a></p></dd><dt class="hdlist1"><strong>spindles</strong></dt><dd><p><em>(returns integer)</em> -  number of spindles. Reflects [TRAJ]SPINDLES INI value.</p></dd><dt class="hdlist1"><strong>state</strong></dt><dd><p><em>(returns integer)</em> -  current command execution status. One of RCS_DONE,  RCS_EXEC, RCS_ERROR.</p></dd><dt class="hdlist1"><strong>task_mode</strong></dt><dd><p><em>(returns integer)</em> -  current task mode. one of MODE_MDI, MODE_AUTO,  MODE_MANUAL.</p></dd><dt class="hdlist1"><strong>task_paused</strong></dt><dd><p><em>(returns integer)</em> -  task paused flag.</p></dd><dt class="hdlist1"><strong>task_state</strong></dt><dd><p><em>(returns integer)</em> -  current task state. one of STATE_ESTOP,  STATE_ESTOP_RESET, STATE_ON, STATE_OFF.</p></dd><dt class="hdlist1"><strong>tool_in_spindle</strong></dt><dd><p><em>(returns integer)</em> -  current tool number.</p></dd><dt class="hdlist1"><strong>tool_from_pocket</strong></dt><dd><p><em>(returns integer)</em> -  pocket number for the currently loaded tool (0 if no tool loaded).</p></dd><dt class="hdlist1"><strong>tool_offset</strong></dt><dd><p><em>(returns tuple of floats)</em> -  offset values of the current tool.</p></dd><dt class="hdlist1"><strong>tool_table</strong></dt><dd><p><em>(returns tuple of tool_results)</em> -  list of tool entries. Each entry is a sequence of the following fields:  id, xoffset, yoffset, zoffset, aoffset, boffset, coffset, uoffset, voffset,  woffset, diameter, frontangle, backangle, orientation. The id and orientation  are integers and the rest are floats.</p></dd></dl></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncs <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span><span style="font-style: italic"><span style="color: #9A1900"># to find the loaded tool information it is in tool table index 0</span></span><span style="font-weight: bold"><span style="color: #0000FF">if</span></span> s<span style="color: #990000">.</span>tool_table<span style="color: #990000">[</span><span style="color: #993399">0</span><span style="color: #990000">].</span>id <span style="color: #990000">!=</span> <span style="color: #993399">0</span><span style="color: #990000">:</span> <span style="font-style: italic"><span style="color: #9A1900"># a tool is loaded</span></span>    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>s<span style="color: #990000">.</span>tool_table<span style="color: #990000">[</span><span style="color: #993399">0</span><span style="color: #990000">].</span>zoffset<span style="color: #990000">)</span><span style="font-weight: bold"><span style="color: #0000FF">else</span></span><span style="color: #990000">:</span>    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"No tool loaded."</span><span style="color: #990000">)</span></tt></pre></div></div><div class="dlist"><dl><dt class="hdlist1"><strong>velocity</strong></dt><dd><p><em>(returns float)</em> -  This property is defined, but it does not have a useful interpretation.</p></dd></dl></div></div><div class="sect2"><h3 id="sec:the-axis-dictionary">3.2. The <code>axis</code> dictionary</h3><div class="paragraph"><p>The axis configuration and status values are available through a listof per-axis dictionaries. Here&#8217;s an example how to access an attributeof a particular axis:Note that many properties that were formerly in the <code>axis</code> dictionary arenow in the <code>joint</code> dictionary, because on nontrivial kinematics machinesthese items (such as backlash) are not the properties of an axis.</p></div><div class="dlist"><dl><dt class="hdlist1"><strong>max_position_limit</strong></dt><dd><p><em>(returns float)</em> -  maximum limit (soft limit) for axis motion, in machine units.configuration  parameter, reflects [JOINT_n]MAX_LIMIT.</p></dd><dt class="hdlist1"><strong>min_position_limit</strong></dt><dd><p><em>(returns float)</em> -  minimum limit (soft limit) for axis motion, in machine units.configuration  parameter, reflects [JOINT_n]MIN_LIMIT.</p></dd><dt class="hdlist1"><strong>velocity</strong></dt><dd><p><em>(returns float)</em> -  current velocity.</p></dd></dl></div></div><div class="sect2"><h3 id="sec:the-joint-dictionary">3.3. The <code>joint</code> dictionary</h3><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncs <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span><span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"Joint 1 homed: "</span><span style="color: #990000">,</span> s<span style="color: #990000">.</span>joint<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">][</span><span style="color: #FF0000">"homed"</span><span style="color: #990000">])</span></tt></pre></div></div><div class="paragraph"><p>For each joint, the following dictionary keys are available:</p></div><div class="dlist"><dl><dt class="hdlist1"><strong>backlash</strong></dt><dd><p><em>(returns float)</em> -  Backlash in machine units. configuration parameter, reflects [JOINT_n]BACKLASH.</p></dd><dt class="hdlist1"><strong>enabled</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means enabled.</p></dd><dt class="hdlist1"><strong>fault</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means axis amp fault.</p></dd><dt class="hdlist1"><strong>ferror_current</strong></dt><dd><p><em>(returns float)</em> -  current following error.</p></dd><dt class="hdlist1"><strong>ferror_highmark</strong></dt><dd><p><em>(returns float)</em> -  magnitude of max following error.</p></dd><dt class="hdlist1"><strong>homed</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means has been homed.</p></dd><dt class="hdlist1"><strong>homing</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means homing in progress.</p></dd><dt class="hdlist1"><strong>inpos</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means in position.</p></dd><dt class="hdlist1"><strong>input</strong></dt><dd><p><em>(returns float)</em> -  current input position.</p></dd><dt class="hdlist1"><strong>jointType</strong></dt><dd><p><em>(returns integer)</em> -  type of axis configuration parameter, reflects  [JOINT_n]TYPE. LINEAR=1, ANGULAR=2. See <a href="ini-config.html#sub:ini:sec:axis-letter">Joint   INI configuration</a> for details.</p></dd><dt class="hdlist1"><strong>max_ferror</strong></dt><dd><p><em>(returns float)</em> -  maximum following error. configuration  parameter, reflects [JOINT_n]FERROR.</p></dd><dt class="hdlist1"><strong>max_hard_limit</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means max hard limit exceeded.</p></dd><dt class="hdlist1"><strong>max_position_limit</strong></dt><dd><p><em>(returns float)</em> -  maximum limit (soft limit) for joint motion, in machine units. configuration  parameter, reflects [JOINT_n]MAX_LIMIT.</p></dd><dt class="hdlist1"><strong>max_soft_limit</strong></dt><dd><p>  non-zero means <code>max_position_limit</code> was exceeded, int</p></dd><dt class="hdlist1"><strong>min_ferror</strong></dt><dd><p><em>(returns float)</em> -  configuration parameter, reflects [JOINT_n]MIN_FERROR.</p></dd><dt class="hdlist1"><strong>min_hard_limit</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means min hard limit exceeded.</p></dd><dt class="hdlist1"><strong>min_position_limit</strong></dt><dd><p><em>(returns float)</em> -  minimum limit (soft limit) for joint motion, in machine units. configuration  parameter, reflects [JOINT_n]MIN_LIMIT.</p></dd><dt class="hdlist1"><strong>min_soft_limit</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means <code>min_position_limit</code> was exceeded.</p></dd><dt class="hdlist1"><strong>output</strong></dt><dd><p><em>(returns float)</em> -  commanded output position.</p></dd><dt class="hdlist1"><strong>override_limits</strong></dt><dd><p><em>(returns integer)</em> -  non-zero means limits are overridden.</p></dd><dt class="hdlist1"><strong>units</strong></dt><dd><p><em>(returns float)</em> -  joint units per mm, or per degree for angular joints.<br />  (joint units are the same as machine units, unless set otherwise  by the configuration parameter [JOINT_n]UNITS)</p></dd><dt class="hdlist1"><strong>velocity</strong></dt><dd><p><em>(returns float)</em> -  current velocity.</p></dd></dl></div></div><div class="sect2"><h3 id="sec:the-spindle-dictionary">3.4. The <code>spindle</code> dictionary</h3><div class="dlist"><dl><dt class="hdlist1"><strong>brake</strong></dt><dd><p><em>(returns integer)</em> -  value of the spindle brake flag.</p></dd><dt class="hdlist1"><strong>direction</strong></dt><dd><p><em>(returns integer)</em> -  rotational direction of the spindle. forward=1, reverse=-1.</p></dd><dt class="hdlist1"><strong>enabled</strong></dt><dd><p><em>(returns integer)</em> -  value of the spindle enabled flag.</p></dd><dt class="hdlist1"><strong>homed</strong></dt><dd><p>(not currently implemented)</p></dd><dt class="hdlist1"><strong>increasing</strong></dt><dd><p><em>(returns integer)</em> -  unclear.</p></dd><dt class="hdlist1"><strong>orient_fault</strong></dt><dd><p><em>(returns integer)</em></p></dd><dt class="hdlist1"><strong>orient_state</strong></dt><dd><p><em>(returns integer)</em></p></dd><dt class="hdlist1"><strong>override</strong></dt><dd><p><em>(returns float)</em> -  spindle speed override scale.</p></dd><dt class="hdlist1"><strong>override_enabled</strong></dt><dd><p><em>(returns boolean)</em> -  value of the spindle override enabled flag.</p></dd><dt class="hdlist1"><strong>speed</strong></dt><dd><p><em>(returns float)</em> -  spindle speed value, rpm, &gt; 0: clockwise, &lt; 0: counterclockwise.<br />  With G96 active this reflects the maximum speed set by the optional G96 <em>D</em>-word or, if the <em>D</em>-word was missing, the default values +/-1e30</p></dd></dl></div></div></div></div><div class="sect1"><h2 id="_preparing_to_send_commands">4. Preparing to send commands</h2><div class="sectionbody"><div class="paragraph"><p>Some commands can always be sent, regardless of mode and state; forinstance, the <code>linuxcnc.command.abort()</code> method can always be called.</p></div><div class="paragraph"><p>Other commands may be sent only in appropriate state, and those testscan be a bit tricky. For instance, an MDI command can be sent only if:</p></div><div class="ulist"><ul><li><p>ESTOP has not been triggered, and</p></li><li><p>the machine is turned on and</p></li><li><p>the axes are homed and</p></li><li><p>the interpreter is not running and</p></li><li><p>the mode is set to <code>MDI mode</code></p></li></ul></div><div class="paragraph"><p>so an appropriate test before sending an MDI command through<code>linuxcnc.command.mdi()</code> could be:</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncs <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>c <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span><span style="font-weight: bold"><span style="color: #0000FF">def</span></span> <span style="font-weight: bold"><span style="color: #000000">ok_for_mdi</span></span><span style="color: #990000">():</span>    s<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>    <span style="font-weight: bold"><span style="color: #0000FF">return</span></span> <span style="font-weight: bold"><span style="color: #0000FF">not</span></span> s<span style="color: #990000">.</span>estop <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> s<span style="color: #990000">.</span>enabled <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> <span style="color: #990000">(</span>s<span style="color: #990000">.</span>homed<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">count</span></span><span style="color: #990000">(</span><span style="color: #993399">1</span><span style="color: #990000">)</span> <span style="color: #990000">==</span> s<span style="color: #990000">.</span>joints<span style="color: #990000">)</span> <span style="font-weight: bold"><span style="color: #0000FF">and</span></span> <span style="color: #990000">(</span>s<span style="color: #990000">.</span>interp_state <span style="color: #990000">==</span> linuxcnc<span style="color: #990000">.</span>INTERP_IDLE<span style="color: #990000">)</span><span style="font-weight: bold"><span style="color: #0000FF">if</span></span> <span style="font-weight: bold"><span style="color: #000000">ok_for_mdi</span></span><span style="color: #990000">():</span>    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MDI<span style="color: #990000">)</span>    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">wait_complete</span></span><span style="color: #990000">()</span> <span style="font-style: italic"><span style="color: #9A1900"># wait until mode switch executed</span></span>    c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mdi</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"G0 X10 Y20 Z30"</span><span style="color: #990000">)</span></tt></pre></div></div></div></div><div class="sect1"><h2 id="_sending_commands_through_code_linuxcnc_command_code">5. Sending commands through <code>linuxcnc.command</code></h2><div class="sectionbody"><div class="paragraph"><p>Before sending a command, initialize a command channel like so:</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncc <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span><span style="font-style: italic"><span style="color: #9A1900"># Usage examples for some of the commands listed below:</span></span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">abort</span></span><span style="color: #990000">()</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_RUN<span style="color: #990000">,</span> program_start_line<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_STEP<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_PAUSE<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">auto</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>AUTO_RESUME<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">brake</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>BRAKE_ENGAGE<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">brake</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>BRAKE_RELEASE<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">flood</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>FLOOD_ON<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">flood</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>FLOOD_OFF<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">home</span></span><span style="color: #990000">(</span><span style="color: #993399">2</span><span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_STOP<span style="color: #990000">,</span>        jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_CONTINUOUS<span style="color: #990000">,</span>  jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">,</span> velocity<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">jog</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>JOG_INCREMENT<span style="color: #990000">,</span>   jjogmode<span style="color: #990000">,</span> joint_num_or_axis_index<span style="color: #990000">,</span> velocity<span style="color: #990000">,</span> increment<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">load_tool_table</span></span><span style="color: #990000">()</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">maxvel</span></span><span style="color: #990000">(</span><span style="color: #993399">200.0</span><span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mdi</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"G0 X10 Y20 Z30"</span><span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mist</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MIST_ON<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mist</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MIST_OFF<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MDI<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_AUTO<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">mode</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>MODE_MANUAL<span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">override_limits</span></span><span style="color: #990000">()</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">program_open</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"foo.ngc"</span><span style="color: #990000">)</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">reset_interpreter</span></span><span style="color: #990000">()</span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">tool_offset</span></span><span style="color: #990000">(</span>toolno<span style="color: #990000">,</span> z_offset<span style="color: #990000">,</span>  x_offset<span style="color: #990000">,</span> diameter<span style="color: #990000">,</span> frontangle<span style="color: #990000">,</span> backangle<span style="color: #990000">,</span> orientation<span style="color: #990000">)</span></tt></pre></div></div><div class="sect2"><h3 id="_code_linuxcnc_command_code_attributes">5.1. <code>linuxcnc.command</code> attributes</h3><div class="dlist"><dl><dt class="hdlist1"><code>serial</code></dt><dd><p>  the current command serial number</p></dd></dl></div></div><div class="sect2"><h3 id="_code_linuxcnc_command_code_methods">5.2. <code>linuxcnc.command</code> methods:</h3><div class="dlist"><dl><dt class="hdlist1"><code>abort()</code></dt><dd><p>  send EMC_TASK_ABORT message.</p></dd><dt class="hdlist1"><code>auto(int[, int])</code></dt><dd><p>  run, step, pause or resume a program.</p></dd><dt class="hdlist1"><code>brake(int)</code></dt><dd><p>  engage or release spindle brake.</p></dd><dt class="hdlist1"><code>debug(int)</code></dt><dd><p>  set debug level via EMC_SET_DEBUG message.</p></dd><dt class="hdlist1"><code>display_msg(string)</code></dt><dd><p>  sends a operator display message to the screen. (max 254 characters)</p></dd><dt class="hdlist1"><code>error_msg(string)</code></dt><dd><p>  sends a operator error message to the screen. (max 254 characters)</p></dd><dt class="hdlist1"><code>feedrate(float)</code></dt><dd><p>  set the feedrate override, 1.0 = 100%.</p></dd><dt class="hdlist1"><code>flood(int)</code></dt><dd><p>  turn on/off flooding.</p><div class="dlist"><dl><dt class="hdlist1">Syntax</dt><dd><p>    flood(command)<br />    flood(linuxcnc.FLOOD_ON)<br />    flood(linuxcnc.FLOOD_OFF)</p></dd><dt class="hdlist1">Constants</dt><dd><p>    FLOOD_ON<br />    FLOOD_OFF</p></dd></dl></div></dd><dt class="hdlist1"><code>home(int)</code></dt><dd><p>    home a given joint.</p></dd><dt class="hdlist1"><code>jog(command-constant, bool, int[, float[, float]])</code></dt><dd><div class="dlist"><dl><dt class="hdlist1">Syntax</dt><dd><p>      jog(command,                 jjogmode, joint_num_or_axis_index, velocity[, distance])<br />      jog(linuxcnc.JOG_STOP,       jjogmode, joint_num_or_axis_index)<br />      jog(linuxcnc.JOG_CONTINUOUS, jjogmode, joint_num_or_axis_index, velocity)<br />      jog(linuxcnc.JOG_INCREMENT,  jjogmode, joint_num_or_axis_index, velocity, distance)</p></dd><dt class="hdlist1">Command Constants</dt><dd><p>      linuxcnc.JOG_STOP<br />      linuxcnc.JOG_CONTINUOUS<br />      linuxcnc.JOG_INCREMENT</p></dd><dt class="hdlist1">jjogmode</dt><dd><div class="dlist"><dl><dt class="hdlist1">True</dt><dd><p>request individual joint jog (requires teleop_enable(0))</p></dd><dt class="hdlist1">False</dt><dd><p>request axis Cartesian coordinate jog (requires teleop_enable(1))</p></dd></dl></div></dd><dt class="hdlist1">joint_num_or_axis_index</dt><dd><div class="dlist"><dl><dt class="hdlist1">For joint jog (jjogmode=1)</dt><dd><p>joint_number</p></dd><dt class="hdlist1">For axis Cartesian coordinate jog (jjogmode=0)</dt><dd><p>        zero-based index of the axis coordinate with respect to        the known coordinate letters XYZABCUVW        (x=&gt;0,y=&gt;1,z=&gt;2,a=&gt;3,b=&gt;4,c=&gt;5,u=&gt;6,v=&gt;7,w=&gt;8)</p></dd></dl></div></dd></dl></div></dd><dt class="hdlist1"><code>load_tool_table()</code></dt><dd><p>  reload the tool table.</p></dd><dt class="hdlist1"><code>maxvel(float)</code></dt><dd><p>  set maximum velocity</p></dd><dt class="hdlist1"><code>mdi(string)</code></dt><dd><p>  send an MDI command. Maximum 254 chars.</p></dd><dt class="hdlist1"><code>mist(int)</code></dt><dd><p>turn on/off mist.<br /></p><div class="dlist"><dl><dt class="hdlist1">Syntax</dt><dd><p>      mist(command)<br />      mist(linuxcnc.MIST_ON)<br />      mist(linuxcnc.MIST_OFF)<br /></p></dd><dt class="hdlist1">Constants</dt><dd><p>      MIST_ON<br />      MIST_OFF</p></dd></dl></div></dd><dt class="hdlist1"><code>mode(int)</code></dt><dd><p>  set mode (MODE_MDI, MODE_MANUAL, MODE_AUTO).</p></dd><dt class="hdlist1"><code>override_limits()</code></dt><dd><p>  set the override axis limits flag.</p></dd><dt class="hdlist1"><code>program_open(string)</code></dt><dd><p>  open an NGC file.</p></dd><dt class="hdlist1"><code>rapidrate()</code></dt><dd><p>  set rapid override factor</p></dd><dt class="hdlist1"><code>reset_interpreter()</code></dt><dd><p>  reset the RS274NGC interpreter</p></dd><dt class="hdlist1"><code>set_adaptive_feed(int)</code></dt><dd><p>  set adaptive feed flag</p></dd><dt class="hdlist1"><code>set_analog_output(int, float)</code></dt><dd><p>  set analog output pin to value</p></dd><dt class="hdlist1"><code>set_block_delete(int)</code></dt><dd><p>  set block delete flag</p></dd><dt class="hdlist1"><code>set_digital_output(int, int)</code></dt><dd><p>  set digital output pin to value</p></dd><dt class="hdlist1"><code>set_feed_hold(int)</code></dt><dd><p>  set feed hold on/off</p></dd><dt class="hdlist1"><code>set_feed_override(int)</code></dt><dd><p>  set feed override on/off</p></dd><dt class="hdlist1"><code>set_max_limit(int, float)</code></dt><dd><p>  set max position limit for a given axis</p></dd><dt class="hdlist1"><code>set_min_limit()</code></dt><dd><p>  set min position limit for a given axis</p></dd><dt class="hdlist1"><code>set_optional_stop(int)</code></dt><dd><p>  set optional stop on/off</p></dd><dt class="hdlist1"><code>set_spindle_override(int [, int])</code></dt><dd><p>  set spindle override enabled. Defaults to spindle 0.</p></dd><dt class="hdlist1"><code>spindle(direction: int, speed: float=0, spindle: int=0, wait_for_speed: int=0)</code></dt><dd><div class="ulist"><ul><li><p>Direction: [SPINDLE_FORWARD, SPINDLE_REVERSE, SPINDLE_OFF, SPINDLE_INCREASE,      SPINDLE_DECREASE, or SPINDLE_CONSTANT]</p></li><li><p>Speed: Speed in RPM, defaults to 0.</p></li><li><p>SpindleDigital: SpindleDigital number to command defaults to 0.</p></li><li><p>Wait_for_speed: if 1 motion will wait for speed before continuing, defaults to not.</p></li></ul></div></dd></dl></div><div class="admonitionblock"><table><tr><td class="icon"><div class="title">Warning</div></td><td class="content">MDI commands will ignore this. "S1000" after this will turn the spindle off.</td></tr></table></div><div class="dlist"><dl><dt class="hdlist1"><code>text_msg(string)</code></dt><dd><p>  sends a operator text message to the screen. (max 254 characters)</p></dd></dl></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncc <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">command</span></span><span style="color: #990000">()</span><span style="font-style: italic"><span style="color: #9A1900"># Increase speed of spindle 0 by 100rpm. SpindleDigital must be on first.</span></span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">spindle</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>INCREASE<span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># Increase speed of spindle 2 by 100rpm. SpindleDigital must be on first.</span></span>c<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">spindle</span></span><span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_INCREASE<span style="color: #990000">,</span> <span style="color: #993399">2</span><span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># Set speed of spindle 0 to 1024 rpm.</span></span>c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_FORWARD<span style="color: #990000">,</span> <span style="color: #993399">1024</span><span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># Set speed of spindle 1 to -666 rpm.</span></span>c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_REVERSE<span style="color: #990000">,</span> <span style="color: #993399">666</span><span style="color: #990000">,</span> <span style="color: #993399">1</span><span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># Stop spindle 0.</span></span>c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_OFF<span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># Stop spindle 0 explicitly.</span></span>c<span style="color: #990000">.</span>spindle<span style="color: #990000">.(</span>linuxcnc<span style="color: #990000">.</span>SPINDLE_OFF<span style="color: #990000">,</span> <span style="color: #993399">0</span><span style="color: #990000">)</span></tt></pre></div></div><div class="dlist"><dl><dt class="hdlist1"><code>spindleoverride(float [, int])</code></dt><dd><p>  Set spindle override factor. Defaults to spindle 0.</p></dd><dt class="hdlist1"><code>state(int)</code></dt><dd><p>  Set the machine state. Machine state should be STATE_ESTOP, STATE_ESTOP_RESET, STATE_ON, or STATE_OFF.</p></dd><dt class="hdlist1"><code>task_plan_sync()</code></dt><dd><p>  On completion of this call, the VAR file on disk is updated with  live values from the interpreter.</p></dd><dt class="hdlist1"><code>teleop_enable(int)</code></dt><dd><p>  Enable/disable teleop mode (disable for joint jogging).</p></dd><dt class="hdlist1"><code>tool_offset(int, float, float, float, float, float, int)</code></dt><dd><p>  Set the tool offset. See usage example above.</p></dd><dt class="hdlist1"><code>traj_mode(int)</code></dt><dd><p>  Set trajectory mode. Mode is one of MODE_FREE, MODE_COORD, or  MODE_TELEOP.</p></dd><dt class="hdlist1"><code>unhome(int)</code></dt><dd><p>  Unhome a given joint.</p></dd><dt class="hdlist1"><code>wait_complete([float])</code></dt><dd><p>  Wait for completion of the last command sent. If timeout in  seconds not specified, default is 5 seconds. Return -1 if  timed out, return RCS_DONE or RCS_ERROR according to command  execution status.</p></dd></dl></div></div></div></div><div class="sect1"><h2 id="_reading_the_error_channel">6. Reading the error channel</h2><div class="sectionbody"><div class="paragraph"><p>To handle error messages, connect to the error channel andperiodically poll() it.</p></div><div class="paragraph"><p>Note that the NML channel for error messages has a queue (other thanthe command and status channels), which meansthat the first consumer of an error message deletes that message fromthe queue; whether your another error message consumer (e.g. Axis)will <em>see</em> the message is dependent on timing. It is recommended to have justone error channel reader task in a setup.</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcnce <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">error_channel</span></span><span style="color: #990000">()</span>error <span style="color: #990000">=</span> e<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span><span style="font-weight: bold"><span style="color: #0000FF">if</span></span> error<span style="color: #990000">:</span>    kind<span style="color: #990000">,</span> text <span style="color: #990000">=</span> error    <span style="font-weight: bold"><span style="color: #0000FF">if</span></span> kind <span style="font-weight: bold"><span style="color: #0000FF">in</span></span> <span style="color: #990000">(</span>linuxcnc<span style="color: #990000">.</span>NML_ERROR<span style="color: #990000">,</span> linuxcnc<span style="color: #990000">.</span>OPERATOR_ERROR<span style="color: #990000">):</span>        typus <span style="color: #990000">=</span> <span style="color: #FF0000">"error"</span>    <span style="font-weight: bold"><span style="color: #0000FF">else</span></span><span style="color: #990000">:</span>        typus <span style="color: #990000">=</span> <span style="color: #FF0000">"info"</span>    <span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span>typus<span style="color: #990000">,</span> text<span style="color: #990000">)</span></tt></pre></div></div></div></div><div class="sect1"><h2 id="python:reading-ini-values">7. Reading INI file values</h2><div class="sectionbody"><div class="paragraph"><p>Here&#8217;s an example for reading values from an INI file through the<code>linuxcnc.ini</code> object:</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-style: italic"><span style="color: #9A1900"># run as:</span></span><span style="font-style: italic"><span style="color: #9A1900"># python3 ini-example.py ~/emc2-dev/configs/sim/axis/axis_mm.ini</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> sys<span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncinifile <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">ini</span></span><span style="color: #990000">(</span>sys<span style="color: #990000">.</span>argv<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">])</span><span style="font-style: italic"><span style="color: #9A1900"># inifile.find() returns None if the key wasn't found - the</span></span><span style="font-style: italic"><span style="color: #9A1900"># following idiom is useful for setting a default value:</span></span>machine_name <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">find</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"EMC"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"MACHINE"</span><span style="color: #990000">)</span> <span style="font-weight: bold"><span style="color: #0000FF">or</span></span> <span style="color: #FF0000">"unknown"</span><span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"machine name: "</span><span style="color: #990000">,</span> machine_name<span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># inifile.findall() returns a list of matches, or an empty list</span></span><span style="font-style: italic"><span style="color: #9A1900"># if the key wasn't found:</span></span>extensions <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">findall</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"FILTER"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"PROGRAM_EXTENSION"</span><span style="color: #990000">)</span><span style="font-weight: bold"><span style="color: #0000FF">print</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"extensions: "</span><span style="color: #990000">,</span> extensions<span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># override default NML file by INI parameter if given</span></span>nmlfile <span style="color: #990000">=</span> inifile<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">find</span></span><span style="color: #990000">(</span><span style="color: #FF0000">"EMC"</span><span style="color: #990000">,</span> <span style="color: #FF0000">"NML_FILE"</span><span style="color: #990000">)</span><span style="font-weight: bold"><span style="color: #0000FF">if</span></span> nmlfile<span style="color: #990000">:</span>    linuxcnc<span style="color: #990000">.</span>nmlfile <span style="color: #990000">=</span> os<span style="color: #990000">.</span>path<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">join</span></span><span style="color: #990000">(</span>os<span style="color: #990000">.</span>path<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">dirname</span></span><span style="color: #990000">(</span>sys<span style="color: #990000">.</span>argv<span style="color: #990000">[</span><span style="color: #993399">1</span><span style="color: #990000">]),</span> nmlfile<span style="color: #990000">)</span></tt></pre></div></div><div class="paragraph"><p>Or for the same INI file as LinuxCNC:</p></div><div class="listingblock"><div class="content"><!-- Generator: GNU source-highlight 3.1.9by Lorenzo Bettinihttp://www.lorenzobettini.ithttp://www.gnu.org/software/src-highlite --><pre><tt><span style="font-style: italic"><span style="color: #9A1900">#!/usr/bin/env python3</span></span><span style="font-style: italic"><span style="color: #9A1900"># -*- coding: utf-8 -*-</span></span><span style="font-style: italic"><span style="color: #9A1900"># run as:</span></span><span style="font-style: italic"><span style="color: #9A1900"># python3 ini-example2.py</span></span><span style="font-weight: bold"><span style="color: #000080">import</span></span> linuxcncstat <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">stat</span></span><span style="color: #990000">()</span>stat<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">poll</span></span><span style="color: #990000">()</span>inifile <span style="color: #990000">=</span> linuxcnc<span style="color: #990000">.</span><span style="font-weight: bold"><span style="color: #000000">ini</span></span><span style="color: #990000">(</span>stat<span style="color: #990000">.</span>ini_filename<span style="color: #990000">)</span><span style="font-style: italic"><span style="color: #9A1900"># See example above for usage of 'inifile' object</span></span></tt></pre></div></div></div></div><div class="sect1"><h2 id="_the_code_linuxcnc_positionlogger_code_type">8. The <code>linuxcnc.positionlogger</code> type</h2><div class="sectionbody"><div class="paragraph"><p>Some usage hints can be gleaned from<code>src/emc/usr_intf/gremlin/gremlin.py</code>.</p></div><div class="sect2"><h3 id="_members">8.1. members</h3><div class="dlist"><dl><dt class="hdlist1"><code>npts</code></dt><dd><p>    number of points.</p></dd></dl></div></div><div class="sect2"><h3 id="_methods">8.2. methods</h3><div class="dlist"><dl><dt class="hdlist1"><code>start(float)</code></dt><dd><p>  start the position logger and run every ARG seconds</p></dd><dt class="hdlist1"><code>clear()</code></dt><dd><p>  clear the position logger</p></dd><dt class="hdlist1"><code>stop()</code></dt><dd><p>  stop the position logger</p></dd><dt class="hdlist1"><code>call()</code></dt><dd><p>  Plot the backplot now.</p></dd><dt class="hdlist1"><code>last([int])</code></dt><dd><p>  Return the most recent point on the plot or None</p></dd></dl></div></div></div></div></div><div id="footnotes"><hr /></div><div id="footer"><div id="footer-text">Last updated 2025-12-15 07:42:37 MST</div></div></body></html>

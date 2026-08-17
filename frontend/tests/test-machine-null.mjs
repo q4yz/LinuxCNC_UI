@@ -56,19 +56,19 @@ const newJogControls = resolve(
 );
 const newStore = resolve(
   repoRoot,
-  "frontend/src/stores/machine.js",
+  "frontend/src/stores/machine.ts",
 );
 const moduleStoreReexport = resolve(
   repoRoot,
-  "frontend/src/modules/machine/store.js",
+  "frontend/src/modules/machine/store.ts",
 );
 const legacyMachineApi = resolve(
   repoRoot,
-  "frontend/src/services/machineApi.js",
+  "frontend/src/services/machineApi.ts",
 );
 const removedShim = resolve(
   repoRoot,
-  "frontend/src/stores/machineStoreShim.js",
+  "frontend/src/stores/machineStoreShim.ts",
 );
 
 test("DashboardView statically imports the machine module panels", () => {
@@ -245,7 +245,7 @@ test("machine module uses the module-scoped URL prefixes", () => {
   const axisText = existsSync(axisSvc)
     ? readFileSync(axisSvc, "utf-8")
     : readFileSync(
-        resolve(repoRoot, "frontend/src/modules/machine/store.js"),
+        resolve(repoRoot, "frontend/src/modules/machine/store.ts"),
         "utf-8",
       );
   const stateText = existsSync(stateSvc)

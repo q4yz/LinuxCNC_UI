@@ -19,7 +19,7 @@ const buttonPath = resolve(repoRoot, "frontend/src/ui/Button.vue");
 const iconPath = resolve(repoRoot, "frontend/src/ui/Icon.vue");
 const drawerPath = resolve(repoRoot, "frontend/src/ui/Drawer.vue");
 const confirmPath = resolve(repoRoot, "frontend/src/ui/Confirm.vue");
-const indexPath = resolve(repoRoot, "frontend/src/ui/index.js");
+const indexPath = resolve(repoRoot, "frontend/src/ui/index.ts");
 
 function read(path) {
   return readFileSync(path, "utf-8");

@@ -33,11 +33,11 @@ const repoRoot = resolve(here, "../..");
 
 const manifestPath = resolve(
   repoRoot,
-  "frontend/src/modules/macros/manifest.js",
+  "frontend/src/modules/macros/manifest.ts",
 );
-const storePath = resolve(repoRoot, "frontend/src/modules/macros/store.js");
-const indexPath = resolve(repoRoot, "frontend/src/modules/macros/index.js");
-const parserPath = resolve(repoRoot, "frontend/src/modules/macros/parser.js");
+const storePath = resolve(repoRoot, "frontend/src/modules/macros/store.ts");
+const indexPath = resolve(repoRoot, "frontend/src/modules/macros/index.ts");
+const parserPath = resolve(repoRoot, "frontend/src/modules/macros/parser.ts");
 
 const dashboardPath = resolve(
   repoRoot,
@@ -53,7 +53,7 @@ const machineConfigViewPath = resolve(
 );
 const editorStorePath = resolve(
   repoRoot,
-  "frontend/src/stores/editor.js",
+  "frontend/src/stores/editor.ts",
 );
 
 const componentsDir = resolve(

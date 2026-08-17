@@ -27,8 +27,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const consoleStorePath = resolve(repoRoot, "frontend/src/stores/console.js");
-const gcodesPath = resolve(repoRoot, "frontend/src/config/gcodes.js");
+const consoleStorePath = resolve(repoRoot, "frontend/src/stores/console.ts");
+const gcodesPath = resolve(repoRoot, "frontend/src/config/gcodes.ts");
 const consolePanelPath = resolve(
   repoRoot,
   "frontend/src/components/ConsolePanel.vue",
@@ -318,7 +318,7 @@ test("ConsolePanel imports the autocomplete helper locally", () => {
 // The companion ``vite build`` step in CI validates the dynamic
 // regressions (Pinia boot, reactive state).
 
-const toastStorePath = resolve(repoRoot, "frontend/src/core/toast.js");
+const toastStorePath = resolve(repoRoot, "frontend/src/core/toast.ts");
 const toastContainerPath = resolve(
   repoRoot,
   "frontend/src/components/ToastContainer.vue",

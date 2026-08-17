@@ -17,8 +17,8 @@
 import { computed, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 
-import { useMacrosStore, MACRO_KIND } from "../store.js";
-import { openInEditor } from "../../../helpers/openInEditor.js";
+import { useMacrosStore, MACRO_KIND } from "../store";
+import { openInEditor } from "../../../helpers/openInEditor";
 
 const store = useMacrosStore();
 const { isBusy, mcodeFiles } = storeToRefs(store);

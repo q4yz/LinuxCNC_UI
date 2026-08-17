@@ -13,7 +13,7 @@ import {
   TOAST_TYPE_STYLES,
   TOAST_TYPES,
   useToastStore,
-} from "../core/toast.js";
+} from "../core/toast";
 
 const toastStore = useToastStore();
 

@@ -2,10 +2,10 @@
 import { onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 
-import { createModuleSettings } from "../../../core/modules/settings.js";
-import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
-import { useCameraStore } from "../cameraStore.js";
-import manifest from "../manifest.js";
+import { createModuleSettings } from "../../../core/modules/settings";
+import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
+import { useCameraStore } from "../cameraStore";
+import manifest from "../manifest";
 
 const store = useCameraStore();
 const {

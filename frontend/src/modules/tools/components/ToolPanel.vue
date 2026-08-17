@@ -19,7 +19,7 @@ import AnalogSpindleCard from "./AnalogSpindleCard.vue";
 import ExtruderCard from "./ExtruderCard.vue";
 import HeatedBedCard from "./HeatedBedCard.vue";
 import SpindleCard from "./SpindleCard.vue";
-import { useToolStore } from "../toolStore.js";
+import { useToolStore } from "../toolStore";
 
 const toolStore = useToolStore();
 const { tools, selectedToolId, selectedTool } = storeToRefs(toolStore);

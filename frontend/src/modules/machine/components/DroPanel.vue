@@ -1,8 +1,8 @@
 <script setup>
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../store.js'
-import { WORK_COORDINATE_SYSTEMS } from '../../../config/gcodes.js'
+import { useMachineStore } from '../store'
+import { WORK_COORDINATE_SYSTEMS } from '../../../config/gcodes'
 
 const store = useMachineStore()
 const { droX, droY, droZ, isEstop, isMachineOn, machineStateText, status } = storeToRefs(store)

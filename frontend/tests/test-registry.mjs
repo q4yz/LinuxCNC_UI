@@ -3,7 +3,7 @@
 // Run with: node --test frontend/tests/test-registry.mjs
 //
 // These tests cover the discovery + mounting contract that
-// ``frontend/src/core/modules/registry.js`` provides:
+// ``frontend/src/core/modules/registry.ts`` provides:
 //
 //   * When ``frontend/src/modules/`` is empty, ``boot()`` returns
 //     cleanly and the registry reports ``mounted=[]``.
@@ -25,7 +25,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
 const cameraModuleUrl = pathToFileURL(
-  resolve(repoRoot, "frontend/src/modules/camera/index.js"),
+  resolve(repoRoot, "frontend/src/modules/camera/index.ts"),
 ).href;
 
 test("camera module exports the expected shape", async () => {

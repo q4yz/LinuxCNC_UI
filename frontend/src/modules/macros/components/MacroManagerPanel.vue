@@ -26,10 +26,10 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 
-import { useMacrosStore, MACRO_KIND } from "../store.js";
-import { ModalButtonStyle, useConfirm } from "../../../core/confirm.js";
-import { validateMacroKindName } from "../parser.js";
-import { openInEditor } from "../../../helpers/openInEditor.js";
+import { useMacrosStore, MACRO_KIND } from "../store";
+import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
+import { validateMacroKindName } from "../parser";
+import { openInEditor } from "../../../helpers/openInEditor";
 
 const store = useMacrosStore();
 const { macroFiles, ngcFiles, contents, isBusy } = storeToRefs(store);

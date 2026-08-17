@@ -27,10 +27,10 @@
 
 import { computed, ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
-import { useMachineStore, SystemState } from "../stores/stateFacade.js";
-import { useBaseThreadStore } from "../stores/baseThread.js";
-import {useConsoleStore} from "../stores/console.js";
-import { progressFacade } from "../facades/progressFacade.js";
+import { useMachineStore, SystemState } from "../stores/stateFacade";
+import { useBaseThreadStore } from "../stores/baseThread";
+import {useConsoleStore} from "../stores/console";
+import { progressFacade } from "../facades/progressFacade";
 
 const store = useMachineStore();
 const baseThread = useBaseThreadStore();
