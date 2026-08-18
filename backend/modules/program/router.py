@@ -143,7 +143,14 @@ def stop_program():
     operation_id="unloadProgram",
 )
 def unload_program():
-    get_program_lifecycle_service().unload_program()
+    service = get_program_service()
+    target = service.safe_join("EmptyProgram.ngc")
+
+    try:
+        get_program_lifecycle_service().load_program(str(target))
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+
     clear_line_count_cache()
     return StatusResponse(status="success")
 
