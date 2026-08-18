@@ -108,6 +108,11 @@ class CommandMock:
 
         return "success"
 
+    def program_open(self, string: str):
+        """Mimics linuxcnc.command().program_open()"""
+        self._state_mock.load_file(string)
+        return 1
+
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!
 
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!

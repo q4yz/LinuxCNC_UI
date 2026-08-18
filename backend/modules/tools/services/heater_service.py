@@ -5,8 +5,11 @@ from exceptions.http import BadRequestError, NotFoundError
 from modules.tools.config_mapper import get_heater
 from modules.tools.dtos.heater_dto import HeaterSettingsDTO, HeaterStateDTO, HeaterPins
 from modules.tools.mapper.heater_mapper import HeaterMapper
+from modules.tools.services.tool_service import get_tools_service
 
 logger = logging.getLogger("backend.modules.tools.heater_service")
+
+tool_service = get_tools_service()
 
 class HeaterService:
 
@@ -15,7 +18,7 @@ class HeaterService:
             raise BadRequestError("Heater tool_id must be a non-empty string")
 
         try:
-            return HeaterMapper.to_state_dto(HeaterMapper.from_dict_to_HeaterPins(get_heater(tool_id)))
+            return tool_service.get_state(tool_id, HeaterStateDTO)
         except KeyError as exc:
             raise NotFoundError(str(exc))
         except Exception as exc:
@@ -28,7 +31,7 @@ class HeaterService:
             raise BadRequestError("Heater settings must be a HeaterSettingsDTO")
 
         try:
-            pins: HeaterPins = HeaterMapper.from_dict_to_HeaterPins(get_heater(dto.id))
+            pins: HeaterPins = tool_service.get_halpin(dto.id, HeaterPins)
         except KeyError as exc:
             raise NotFoundError(str(exc))
 

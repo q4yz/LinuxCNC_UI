@@ -10,7 +10,16 @@ from modules.tools.mapper.heater_mapper import HeaterMapper
 
 
 class TemperatureService:
+
+
+    def __init__(self):
+        self._halpins_cache = None
+
     def get_halpins(self) -> list:
+
+
+        if self._halpins_cache is not None:
+            return self._halpins_cache
 
         out = []
         used_sensor_ids = set()
@@ -35,7 +44,8 @@ class TemperatureService:
             if pin_map is not None:
                 out.append(pin_map)
 
-        return out
+        self._halpins_cache = out
+        return self._halpins_cache
 
 
     def get_states(self) -> list[HeaterStateDTO | SensorStateDto ]:

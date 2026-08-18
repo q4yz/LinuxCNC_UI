@@ -172,7 +172,7 @@ class ProgramFileService(FileService):
 
     def list_program_files(self) -> List[FileMetadata]:
         """Return only the G-code files, with metadata for the loader."""
-        return self.list_files()
+        return [file for file in self.list_files() if file.name != "EmptyProgram.ngc"]
 
 
 # ---------------------------------------------------------------------- #

@@ -27,12 +27,14 @@ from modules.tools.dtos.digital_spindle_dto import (
     SpindleDigitalStateDTO, DirectionStateType,
 )
 from modules.tools.mapper.digital_spindle_mapper import SpindleDigitalMapper
+from modules.tools.services.tool_service import ToolsService, get_tools_service
 from services.machine_service import get_machine_service, MachineService
 
 logger = logging.getLogger("backend.modules.tools.spindle_service")
 
 machine_service: MachineService = get_machine_service()
 state_service: StateService = get_state_service()
+tool_service: ToolsService = get_tools_service()
 
 
 
@@ -44,7 +46,7 @@ class SpindleDigitalService:
             raise BadRequestError("SpindleDigital tool_id must be a non-empty string")
 
         try:
-            return SpindleDigitalMapper.to_state_dto(SpindleDigitalMapper.from_dict_to_SpindleDigitalPins(get_digital_spindle(tool_id)))
+            return tool_service.get_state(tool_id, SpindleDigitalStateDTO)
         except KeyError as exc:
             raise NotFoundError(str(exc))
         except Exception as exc:
@@ -53,7 +55,7 @@ class SpindleDigitalService:
 
     def set_spindle(self, dto: SpindleDigitalSettingsDTO, ):
 
-        pins: SpindleDigitalPins = SpindleDigitalMapper.from_dict_to_SpindleDigitalPins(get_digital_spindle(dto.id))
+        pins: SpindleDigitalPins = tool_service.get_halpin(dto.id, SpindleDigitalPins)
 
         if not isinstance(dto, SpindleDigitalSettingsDTO):
             raise BadRequestError("SpindleDigital settings must be a SpindleSettingsDTO")

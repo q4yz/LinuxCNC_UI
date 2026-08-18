@@ -9,11 +9,12 @@ from modules.tools.dtos.extruder_dto import ExtruderSettingsDTO, ExtruderStateDT
 from modules.tools.dtos.heater_dto import HeaterSettingsDTO
 from modules.tools.mapper.extruder_mapper import ExtruderMapper
 from modules.tools.services.heater_service import HeaterService
+from modules.tools.services.tool_service import get_tools_service
 from services.machine_service import get_machine_service
 
 logger = logging.getLogger("backend.modules.tools.extruder_service")
 machine_service = get_machine_service()
-
+tool_service = get_tools_service()
 heater_service = HeaterService()
 
 class ExtruderService:
@@ -24,9 +25,7 @@ class ExtruderService:
             raise BadRequestError("Extruder tool_id must be a non-empty string")
 
         try:
-            raw_extruder = get_extruder(tool_id)
-            pins = ExtruderMapper.from_dict_to_ExtruderPins(raw_extruder)
-            return ExtruderMapper.to_state_dto(pins)
+            return tool_service.get_state(tool_id, ExtruderStateDTO)
         except KeyError as exc:
             raise NotFoundError(str(exc))
         except Exception as exc:
@@ -37,8 +36,7 @@ class ExtruderService:
             raise BadRequestError("Extruder settings must be an ExtruderSettingsDTO")
 
         try:
-            raw_extruder = get_extruder(dto.id)
-            pins: ExtruderPins = ExtruderMapper.from_dict_to_ExtruderPins(raw_extruder)
+            tool_service.get_halpin(dto.id, ExtruderPins)
         except KeyError as exc:
             raise NotFoundError(str(exc))
 

@@ -130,7 +130,7 @@ class ProgramService:
         self._await_load(file_path)
 
     def unload_program(self) -> None:
-        execute_sync_cmd("program_open", self.LOAD_TIMEOUT_S, "")
+        execute_sync_cmd("program_open", self.LOAD_TIMEOUT_S, "EmptyProgram.ngc")
 
     def start_program(self, line_number: int = 0) -> None:
         if not self._is_program_loaded():
