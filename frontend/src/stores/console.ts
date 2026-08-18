@@ -119,22 +119,22 @@ export const useConsoleStore = defineStore('console', {
         })
     },
 
-    error(text, opts) {
+    error(text, opts = undefined) {
       this._addMessage(text, 'error')
       this._emitToast('error', text, opts)
     },
 
-    info(text, opts) {
+    info(text, opts = undefined) {
       this._addMessage(text, 'info')
       this._emitToast('info', text, opts)
     },
 
-    debug(text, opts) {
+    debug(text, opts = undefined) {
       this._addMessage(text, 'debug')
       this._emitToast('debug', text, opts)
     },
 
-    warning(text, opts) {
+    warning(text, opts = undefined) {
       this._addMessage(text, 'warning')
       this._emitToast('warning', text, opts)
     },
@@ -143,7 +143,7 @@ export const useConsoleStore = defineStore('console', {
       this._addMessage(text, 'command')
     },
 
-    success(text, opts) {
+    success(text, opts = undefined) {
       this._addMessage(text, 'success')
       this._emitToast('success', text, opts)
     },

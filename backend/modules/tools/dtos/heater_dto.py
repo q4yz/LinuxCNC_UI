@@ -5,8 +5,8 @@ from dtos.HalPin import HalPin, UnconnectedHalPin
 @dataclass(frozen=True, slots=True)
 class HeaterPins:
     id: str
-    target_temperature: HalPin = UnconnectedHalPin()
-    actual_temperature: HalPin = UnconnectedHalPin()
+    target_temperature: HalPin[float] = UnconnectedHalPin()
+    actual_temperature: HalPin[float] = UnconnectedHalPin()
     fan: HalPin = UnconnectedHalPin()
     min_temp: HalPin = UnconnectedHalPin()
     max_temp: HalPin = UnconnectedHalPin()

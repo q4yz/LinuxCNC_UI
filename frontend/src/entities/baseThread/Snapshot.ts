@@ -6,8 +6,6 @@ export interface SnapshotParams {
   progress?: ProgramProgress;
   readings?: ReadingSet;
   toolList?: ToolList;
-  legacySensors?: Record<string, any>;
-  legacyTools?: Record<string, any>[];
   timestamp?: string | null;
 }
 

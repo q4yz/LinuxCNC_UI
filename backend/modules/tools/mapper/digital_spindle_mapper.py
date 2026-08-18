@@ -50,15 +50,12 @@ class SpindleDigitalMapper():
     def from_command_to_settings_dto(cls, cmd: "SpindleDigitalCommand") -> SpindleDigitalSettingsDTO:
         """Translates the HTTP command payload into the strict internal domain DTO."""
 
-        # Safely map the string action to the Domain Enum
         action_map = {
             "forward": DirectionStateType.FORWARD,
             "backward": DirectionStateType.BACKWARD,
             "stop": DirectionStateType.IDLE,
         }
 
-        # Fallback to IDLE just in case, though Pydantic validation
-        # in the router should prevent invalid strings from reaching here.
         mapped_state = action_map.get(cmd.action.lower(), DirectionStateType.IDLE)
 
         return SpindleDigitalSettingsDTO(

@@ -1,95 +1,71 @@
-<script setup>
+<script setup lang="ts">
 // ActivePrintWidget — dashboard widget driven by the State Facade
-// (``stores/stateFacade.js``). Three visual states:
+// (`stores/stateFacade.js`). Three visual states:
 //
 //   * Standby — Idle / PowerOff / Estop / Offline / Updating /
-//     Failure. Shows the five newest G-code files via the facade's
-//     ``recentFiles`` getter with a Print button each. Clicking
-//     Print calls ``loadProgram`` (the "load" step).
-//   * Loaded — A program is open in the interpreter (``stat.file``
-//     set, ``interp_state`` is ``INTERP_IDLE``) but the run has
+//     Failure. Shows the five newest G-code files. Clicking
+//     Print calls `loadProgram` (the "load" step).
+//   * Loaded — A program is open in the interpreter but the run has
 //     not started. Renders the loaded filename and a dedicated
-//     Start button that calls ``runProgram``.
+//     Start button that calls `runProgram`.
 //   * Active — Running / Paused. Shows the loaded filename, the
 //     progress bar, and Pause/Resume/Stop buttons.
-//
-// The widget mirrors LinuxCNC's two-step "load then start" lifecycle;
-// the state facade's ``SystemState.LOADED`` member is the trigger
-// for the middle branch.
-//
-// File list source-of-truth: ``ProgramFilesService.listFiles()``,
-// the same endpoint the Files view and the editor use. The widget
-// refreshes the list on mount and after every successful load. The
-// ``recentFiles`` getter on the facade is the historical fallback
-// (still returned for backward-compatibility consumers) but the
-// widget itself reads from the live endpoint so the operator sees
-// what's actually in the program root at load time.
 
-import { computed, ref, onMounted } from "vue";
-import { storeToRefs } from "pinia";
-import { useMachineStore, SystemState } from "../stores/stateFacade";
-import { useBaseThreadStore } from "../stores/baseThread";
+import {computed, ref, onMounted} from "vue";
+import {storeToRefs} from "pinia";
+import {useMachineStore, SystemState} from "../stores/stateFacade";
+import {useBaseThreadStore} from "../stores/baseThread";
 import {useConsoleStore} from "../stores/console";
-import { progressFacade } from "../facades/progressFacade";
+import {progressFacade} from "../facades/progressFacade";
+import {ProgramFile} from "../entities/progress";
+
 
 const store = useMachineStore();
 const baseThread = useBaseThreadStore();
-const consoleStore = useConsoleStore()
-const { systemState, status } = storeToRefs(store);
-const { progress } = storeToRefs(baseThread);
+const consoleStore = useConsoleStore();
+const {systemState, status} = storeToRefs(store);
+const {progress} = storeToRefs(baseThread);
 
 // --- File list state -----------------------------------------------------
 //
-// ``files`` is the canonical list of programs on the active
+// `files` is the canonical list of programs on the active
 // backend root. Refreshed on mount and after every successful load.
-// ``loadError`` carries the last fetch error so the operator
-// sees *why* the list is empty (vs. just "no files yet").
-const files = ref([])
-const isLoadingList = ref(false)
-const loadError = ref(null)
+const files = ref<ProgramFile[]>([]);
+const isLoadingList = ref<boolean>(false);
+const loadError = ref<string | null>(null);
 
 async function fetchFiles() {
-  isLoadingList.value = true
-  loadError.value = null
+  isLoadingList.value = true;
+  loadError.value = null;
   try {
-    const listing = await progressFacade.listProgramFiles()
-    files.value = Array.isArray(listing) ? listing : []
-  } catch (err) {
-    const detail = err?.body?.detail || err?.message || 'unknown error'
-    consoleStore.error(`[ActivePrintWidget] Failed to load file list: ${detail}`)
-    loadError.value = detail
-    files.value = []
+    const listing = await progressFacade.listProgramFiles();
+    files.value = Array.isArray(listing) ? listing : [];
+  } catch (err: any) {
+    const detail = err?.body?.detail || err?.message || "unknown error";
+    consoleStore.error(`[ActivePrintWidget] Failed to load file list: ${detail}`);
+    loadError.value = detail;
+    files.value = [];
   } finally {
-    isLoadingList.value = false
+    isLoadingList.value = false;
   }
 }
 
 onMounted(() => {
-  fetchFiles()
-})
+  fetchFiles();
+});
 
 // --- Lifecycle state -----------------------------------------------------
-//
-// True only for the two active enum members; everything else
-// renders the Standby view.
 const isActive = computed(
-  () =>
-    systemState.value === SystemState.RUNNING ||
-    systemState.value === SystemState.PAUSED,
+    () =>
+        systemState.value === SystemState.RUNNING ||
+        systemState.value === SystemState.PAUSED,
 );
 const isLoaded = computed(() => systemState.value === SystemState.LOADED);
 const isPaused = computed(() => systemState.value === SystemState.PAUSED);
 const isRunning = computed(() => systemState.value === SystemState.RUNNING);
 
 // --- Loaded-file lookup --------------------------------------------------
-//
-// The state facade exposes ``status.file`` as the basename of the
-// loaded program. The file list's ``file.filename`` uses the same
-// canonical form (the value the user's Klipper config declared).
-// A filename match is the canonical way to know which row in the
-// list is the active program. ``isLoadedFile`` returns true when
-// the row's filename matches the interpreter's loaded file.
-const isLoadedFile = (filename) => {
+const isLoadedFile = (filename: string | undefined): boolean => {
   const loaded = status.value?.file;
 
   if (systemState.value === SystemState.IDLE) {
@@ -101,81 +77,50 @@ const isLoadedFile = (filename) => {
   }
 
   // Extract just the file name, ignoring any leading directories or slashes.
-  // Example: "gcodes/my_file.gcode" becomes "my_file.gcode"
-  const loadedBase = loaded.split('/').pop().split('\\').pop();
-  const targetBase = filename.split('/').pop().split('\\').pop();
+  const loadedBase = loaded.split('/').pop()?.split('\\').pop();
+  const targetBase = filename.split('/').pop()?.split('\\').pop();
 
   return loadedBase === targetBase;
-}
+};
 
 // --- Print-in-flight state ----------------------------------------------
-//
-// ``isLoading`` is True between the operator clicking Print and
-// the ``loadProgram`` round-trip resolving. The Standby-view
-// Print buttons bind ``:disabled="isLoading"`` so a fast
-// double-click cannot fire two concurrent loads. The flag
-// resets in the ``finally`` block so a failed load still
-// re-enables the buttons.
-const isLoading = ref(false);
+const isLoading = ref<boolean>(false);
 
-// Pretty-print the progress as a one-decimal percentage so the bar
-// label does not dance between ``33.3333%`` and ``33.3334%`` on
-// every telemetry tick. The fraction comes straight off the
-// ``ProgramProgress`` entity — the entity owns the divide-by-zero
-// guard + clamp so this component stays a pure renderer.
 const progressFraction = computed(() =>
-  progress.value && typeof progress.value.fraction === "number"
-    ? progress.value.fraction
-    : 0,
+    progress.value && typeof progress.value.fraction === "number"
+        ? progress.value.fraction
+        : 0,
 );
 const progressPercent = computed(() => progressFraction.value.toFixed(1));
 
-// Cap the recent-files list to the five newest G-code / NGC
-// entries. ``files`` is the ``FileInfo`` shape returned by
-// ``ProgramFilesService.listFiles()``.
+// Cap the recent-files list to the five newest G-code / NGC entries.
 const PRINTABLE_EXTENSIONS = [".gcode", ".ngc"];
 
-const printableFiles = computed(() => {
+const printableFiles = computed<ProgramFile[]>(() => {
   if (!Array.isArray(files.value)) return [];
   return files.value
-    .filter((entry) => {
-      if (!entry || typeof entry.filename !== "string") return false;
-      const lowered = entry.filename.toLowerCase();
-      return PRINTABLE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
-    })
-    .slice()
-    .sort((a, b) => {
-      const aTime = Date.parse(a.modified || "") || 0;
-      const bTime = Date.parse(b.modified || "") || 0;
-      return bTime - aTime;
-    })
-    .slice(0, 5);
+      .filter((entry) => {
+        if (!entry || typeof entry.name !== "string") return false;
+        const lowered = entry.name.toLowerCase();
+        return PRINTABLE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
+      })
+      .slice()
+      .sort((a, b) => {
+        const aTime = Date.parse(a.modified || "") || 0;
+        const bTime = Date.parse(b.modified || "") || 0;
+        return bTime - aTime;
+      })
+      .slice(0, 5);
 });
 
-
-
-async function loadFile(filename) {
+async function loadFile(filename: string) {
   if (!filename) return;
 
-  // Guard against a double-click while the first load is still in
-  // flight. The button is also bound ``:disabled="isLoading"`` so
-  // the operator can't double-click, but this is a belt-and-braces
-  // guard for keyboard / programmatic invocation.
   if (isLoading.value) return;
 
-  // Guard: refuse to load only when the interpreter is actively
-  // moving. ``LOADED`` is allowed — the backend's ``program_open``
-  // replaces the existing file pointer, so loading a new file
-  // while one is loaded is a single-click override (the operator
-  // does not need to click Unload first). ``RUNNING`` and ``PAUSED``
-  // are rejected because replacing the active program mid-move
-  // would leave the interpreter pointing at a file the operator
-  // did not request. ``ESTOP`` / ``OFFLINE`` / ``UPDATING`` /
-  // ``FAILURE`` are also rejected because the backend isn't in a
-  // state to accept a load.
   if (
-    systemState.value === SystemState.RUNNING ||
-    systemState.value === SystemState.PAUSED
+      systemState.value === SystemState.RUNNING ||
+      systemState.value === SystemState.PAUSED
   ) {
     consoleStore.error(`[ActivePrintWidget] Cannot load. Machine is currently: ${systemState.value}`);
     return;
@@ -184,19 +129,14 @@ async function loadFile(filename) {
   isLoading.value = true;
   consoleStore.debug(`[ActivePrintWidget] Loading program: ${filename}`);
   try {
-    // Step 1: load. The widget's reactive state transitions to
-    // SystemState.LOADED on the next telemetry tick and the new
-    // "Loaded" branch renders a dedicated Start button. The
-    // operator must press Start explicitly so the two-step
-    // lifecycle is visible (matches LinuxCNC's CLI semantics).
     const result = await progressFacade.loadProgram(filename);
     if (result.ok) {
       consoleStore.success(`Loaded ${filename}. Press Start to begin.`);
       await fetchFiles();
     } else {
       consoleStore.error(
-        `[ActivePrintWidget] Failed to load: ${result.failureReason}`,
-        { popup: true, title: "Load failed" },
+          `[ActivePrintWidget] Failed to load: ${result.failureReason}`,
+          {popup: true, title: "Load failed"},
       );
     }
   } finally {
@@ -205,9 +145,6 @@ async function loadFile(filename) {
 }
 
 async function startLoadedProgram() {
-  // Guard: only start from the LOADED branch. Reaching this handler
-  // from any other state is a programming error in the parent
-  // component (the button is only rendered on LOADED).
   if (systemState.value !== SystemState.LOADED) {
     consoleStore.error(`[ActivePrintWidget] Ignored start: Machine is ${systemState.value}, not Loaded.`);
     return;
@@ -228,7 +165,6 @@ async function unloadProgram() {
 }
 
 async function pausePrint() {
-  // Guard: Only allow pause if the machine is actively moving/running
   if (systemState.value !== SystemState.RUNNING) {
     consoleStore.error("[ActivePrintWidget] Ignored pause request: Machine is not running.");
     return;
@@ -242,7 +178,6 @@ async function pausePrint() {
 }
 
 async function resumePrint() {
-  // Guard: Only allow resume if the machine is actually paused
   if (systemState.value !== SystemState.PAUSED) {
     consoleStore.error("[ActivePrintWidget] Ignored resume request: Machine is not paused.");
     return;
@@ -256,7 +191,6 @@ async function resumePrint() {
 }
 
 async function stopPrint() {
-  // Guard: Stop is only valid if a program is active (running or paused)
   if (systemState.value !== SystemState.RUNNING && systemState.value !== SystemState.PAUSED) {
     consoleStore.error("[ActivePrintWidget] Ignored stop request: No active program to stop.");
     return;
@@ -272,29 +206,18 @@ async function stopPrint() {
 
 <template>
   <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl flex flex-col">
-    <!-- Top-bar: Start button. Always visible across all branches so
-         the operator has a single, stable affordance for the
-         "kick off the run" action. Enabled only when the interpreter
-         is in the LOADED state (a program is open and idle); disabled
-         otherwise. The right upper corner is intentionally empty
-         because the global EStop button covers this area. -->
+    <!-- Top-bar: Start button. -->
     <div class="p-4 border-b border-gray-700">
       <button
-        type="button"
-        :disabled="!isLoaded"
-        @click="startLoadedProgram"
-        class="w-full px-4 py-3 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded font-semibold text-base transition-colors shadow"
-      >Start</button>
+          type="button"
+          :disabled="!isLoaded"
+          @click="startLoadedProgram"
+          class="w-full px-4 py-3 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded font-semibold text-base transition-colors shadow"
+      >Start
+      </button>
     </div>
 
-    <!-- File list: always visible across all branches. The loaded
-         file is highlighted with a blue background, a soft ring,
-         and a bold blue filename. Its button swaps from the blue
-         "Load" affordance to a red "Unload" affordance and calls
-         ``unloadProgram``. The right upper corner is intentionally
-         empty (EStop covers this area; the Standby/Loaded headers
-         that used to live there are gone — the file list is the
-         primary UI now). -->
+    <!-- File list -->
     <div class="p-4 border-b border-gray-700">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center mb-3">
         <span class="mr-2">📂</span> Programs
@@ -307,28 +230,28 @@ async function stopPrint() {
 
       <ul v-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
         <li
-          v-for="file in printableFiles"
-          :key="file.filename"
-          class="flex items-center justify-between py-2 gap-3 rounded px-2"
-          :class="isLoadedFile(file.filename) ? 'bg-blue-900/40 ring-1 ring-blue-500/40' : ''"
+            v-for="file in printableFiles"
+            :key="file.name"
+            class="flex items-center justify-between py-2 gap-3 rounded px-2"
+            :class="isLoadedFile(file.name) ? 'bg-blue-900/40 ring-1 ring-blue-500/40' : ''"
         >
           <span
-            class="text-sm font-mono truncate"
-            :class="isLoadedFile(file.filename) ? 'text-blue-300 font-semibold' : 'text-gray-200'"
-            :title="file.filename"
+              class="text-sm font-mono truncate"
+              :class="isLoadedFile(file.name) ? 'text-blue-300 font-semibold' : 'text-gray-200'"
+              :title="file.name"
           >
-            {{ file.filename }}
+            {{ file.name }}
           </span>
           <button
-            type="button"
-            :class="isLoadedFile(file.filename)
+              type="button"
+              :class="isLoadedFile(file.name)
               ? 'shrink-0 px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold transition-colors'
               : 'shrink-0 px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-wait text-white rounded text-xs font-semibold transition-colors'"
-            :disabled="isLoading || (systemState === SystemState.RUNNING || systemState === SystemState.PAUSED)"
-            @click="isLoadedFile(file.filename) ? unloadProgram() : loadFile(file.filename)"
+              :disabled="isLoading || (systemState === SystemState.RUNNING || systemState === SystemState.PAUSED)"
+              @click="isLoadedFile(file.name) ? unloadProgram() : loadFile(file.name)"
           >
-            <span v-if="isLoading && !isLoadedFile(file.filename)">Loading…</span>
-            <span v-else-if="isLoadedFile(file.filename)">Unload</span>
+            <span v-if="isLoading && !isLoadedFile(file.name)">Loading…</span>
+            <span v-else-if="isLoadedFile(file.name)">Unload</span>
             <span v-else>Load</span>
           </button>
         </li>
@@ -345,25 +268,20 @@ async function stopPrint() {
       </div>
     </div>
 
-    <!-- Standby hint: shown when the machine is idle and no program
-         is loaded. The file list above is the primary UI; this
-         section is just a one-line context hint. -->
+    <!-- Standby hint -->
     <div
-      v-if="!isActive && !isLoaded"
-      class="p-4 flex flex-col space-y-2"
+        v-if="!isActive && !isLoaded"
+        class="p-4 flex flex-col space-y-2"
     >
       <p class="text-xs text-gray-500 text-center">
         Load a program to start a job.
       </p>
     </div>
 
-    <!-- Loaded hint: shown when a program is loaded but the run
-         hasn't started. The file list above already shows the loaded
-         file highlighted with an Unload button; this section just
-         confirms the firmware state. -->
+    <!-- Loaded hint -->
     <div
-      v-else-if="isLoaded"
-      class="p-4 flex flex-col space-y-2"
+        v-else-if="isLoaded"
+        class="p-4 flex flex-col space-y-2"
     >
       <p class="text-xs text-gray-500 text-center">
         Press <span class="font-semibold text-blue-300">Start</span> above
@@ -371,20 +289,13 @@ async function stopPrint() {
       </p>
     </div>
 
-    <!-- Active view: the interpreter is reading a program (or paused
-         mid-program). The Start button at the top is disabled —
-         the program is already running. The body shows the loaded
-         filename, the progress bar, and the Pause/Resume + Stop
-         buttons. The file list above still shows the loaded file
-         highlighted. -->
+    <!-- Active view -->
     <div v-else class="p-4 flex flex-col space-y-4">
       <div class="flex items-center">
         <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
           <span class="mr-2">🖨️</span>
           {{ isPaused ? "Paused" : "Printing" }}
         </h2>
-        <!-- Right upper corner intentionally empty: the global
-             EStop button covers this area. -->
       </div>
 
       <div class="text-sm text-gray-200 font-mono truncate" :title="status.file">
@@ -398,41 +309,37 @@ async function stopPrint() {
         </div>
         <div class="w-full h-3 bg-gray-900 rounded overflow-hidden border border-gray-700">
           <div
-            class="h-full transition-all duration-300"
-            :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
-            :style="{ width: `${progressFraction}%` }"
+              class="h-full transition-all duration-300"
+              :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
+              :style="{ width: `${progressFraction}%` }"
           ></div>
         </div>
         <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono">
-          <span>Line {{ progress.current_line }}</span>
-          <span>of {{ progress.total_lines || "?" }}</span>
+          <span>Line {{ progress.currentLine }}</span>
+          <span>of {{ progress.totalLines || "?" }}</span>
         </div>
       </div>
 
       <div class="flex items-center gap-2 pt-2">
         <button
-          type="button"
-          class="flex-1 px-3 py-2 rounded font-semibold text-sm transition-colors"
-          :class="isPaused
+            type="button"
+            class="flex-1 px-3 py-2 rounded font-semibold text-sm transition-colors"
+            :class="isPaused
             ? 'bg-green-600 hover:bg-green-500 text-white'
             : 'bg-yellow-600 hover:bg-yellow-500 text-white'"
-          @click="isPaused ? resumePrint() : pausePrint()"
+            @click="isPaused ? resumePrint() : pausePrint()"
         >
           {{ isPaused ? "Resume" : "Pause" }}
         </button>
         <button
-          type="button"
-          class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-semibold text-sm transition-colors"
-          @click="stopPrint"
+            type="button"
+            class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-semibold text-sm transition-colors"
+            @click="stopPrint"
         >
           Stop / Cancel
         </button>
       </div>
 
-      <!-- Defensive: the raw ``status.file`` can be empty during the
-           first telemetry tick. ``isRunning`` is also exported from
-           the script block so it is available even if a future
-           refactor drops ``isPaused``. -->
       <span v-if="!isRunning && !isPaused" class="text-xs text-gray-500 italic">
         Program loaded but not yet running.
       </span>

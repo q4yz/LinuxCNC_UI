@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../store'
 import {HeaterControlRequest} from "../../../entities/tools/Heater";
+import {TemperatureUnit} from "../../../entities";
 
 
 const store = useTemperatureStore()
@@ -101,7 +102,7 @@ const chartOptions = computed(() => {
   Object.keys(temps).forEach((sensorName) => {
     if (visibility[sensorName] === false) return
     const color = store.colorFor(sensorName)
-    const round = (v: number) => roundTo(unit.value === 'kelvin' ? v + 273.15 : v, 2)
+    const round = (v: number) => roundTo(TemperatureUnit.KELVIN ? v + 273.15 : v, 2)
 
     const actualSamples: { ts: number; val: number }[] = []
     const targetSamples: { ts: number; val: number }[] = []
@@ -178,11 +179,11 @@ const chartOptions = computed(() => {
     }
   })
 
-  const unitLabel = unit.value === 'kelvin' ? 'K' : '°C'
+  const unitLabel = TemperatureUnit.KELVIN ? 'K' : '°C'
   const axisFormatter = (value: any) => {
     const num = Number(value)
     if (!Number.isFinite(num)) return ''
-    const v = unit.value === 'kelvin' ? num + 273.15 : num
+    const v = TemperatureUnit.KELVIN ? num + 273.15 : num
     return `${roundTo(v, 2).toFixed(2)} ${unitLabel}`
   }
 
@@ -191,7 +192,7 @@ const chartOptions = computed(() => {
     tooltip: {
       trigger: 'axis',
       valueFormatter: (value: any) =>
-          `${roundTo(unit.value === 'kelvin' ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
+          `${roundTo(TemperatureUnit.KELVIN ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
     },
     legend: {
       data: legendData,
@@ -295,7 +296,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
               class="font-mono text-base sm:text-lg font-bold whitespace-nowrap min-w-[60px] sm:min-w-[80px]"
               :class="data.target !== undefined ? 'text-blue-400' : 'text-green-400'"
           >
-            {{ fmtTemp(data.actual) }}{{ unit === 'kelvin' ? 'K' : '°C' }}
+            {{ fmtTemp(data.actual) }}{{ unit === TemperatureUnit.KELVIN ? 'K' : '°C' }}
           </span>
         </div>
 
@@ -309,7 +310,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
             <div class="hidden md:flex flex-col items-end justify-center mr-2">
               <span class="text-gray-500 text-[10px] uppercase tracking-wider -mb-1">Target</span>
               <span class="font-mono text-sm text-red-400 font-bold">
-                {{ fmtTemp(data.target) }}{{ unit === 'kelvin' ? 'K' : '°C' }}
+                {{ fmtTemp(data.target) }}{{ TemperatureUnit.KELVIN ? 'K' : '°C' }}
               </span>
             </div>
 
