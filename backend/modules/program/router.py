@@ -93,7 +93,6 @@ class LoadProgramRequest(BaseModel):
 def load_program(payload: LoadProgramRequest):
     service = get_program_service()
 
-    # 1. Validation (Router responsibility)
     try:
         target = service.safe_join(payload.filename)
     except ValueError as exc:
@@ -102,13 +101,11 @@ def load_program(payload: LoadProgramRequest):
     if not target.exists():
         raise HTTPException(status_code=404, detail="G-code file not found.")
 
-    # 2. Hardware Execution (Service responsibility)
     try:
         get_program_lifecycle_service().load_program(str(target))
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc))
 
-    # 3. Cache Line Count (Application State responsibility)
     register_line_count(str(target), count_lines(str(target)))
     return StatusResponse(status="success")
 
