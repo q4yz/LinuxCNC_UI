@@ -129,7 +129,7 @@ class StateService:
         """
         logger.info("Running MDI: %s", command)
         execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_MDI", 3))
-        execute_sync_cmd("mdi", 0, command)
+        execute_sync_cmd("mdi", 1, command)
 
     def turn_machine_on(self) -> None:
         """Powers on the machine. Fails if ESTOP is active."""
