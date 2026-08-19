@@ -8,6 +8,7 @@
 
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../store'
+import {TemperatureUnit} from "../../../entities/index.ts";
 
 const store = useTemperatureStore()
 const { sensors, unit, sensorColors } = storeToRefs(store)
@@ -53,8 +54,8 @@ function onColorChange(name, event) {
           @change="(e) => store.setUnit(e.target.value)"
           class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500"
         >
-          <option value="celsius">Celsius (°C)</option>
-          <option value="kelvin">Kelvin (K)</option>
+          <option :value="TemperatureUnit.CELSIUS">°C</option>
+          <option :value="TemperatureUnit.KELVIN">K</option>
         </select>
         <span class="text-xs text-gray-500">
           Persists via

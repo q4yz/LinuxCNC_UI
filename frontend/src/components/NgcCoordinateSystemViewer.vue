@@ -231,8 +231,8 @@ const setupWatchers = () => {
 
   watch(
       () => [
-        store.status.g5x_offset?.slice(0, 3),
-        store.status.g92_offset?.slice(0, 3),
+        store.status.g5xOffset?.slice(0, 3),
+        store.status.g92Offset?.slice(0, 3),
       ],
       async () => {
         if (lastLoadedFilename) {
@@ -515,8 +515,8 @@ const replaceToolpathMesh = (segments: number[]) => {
 
   let dx = 0, dy = 0, dz = 0
   if (props.applyWorkingOffset) {
-    const g5x = store.status.g5x_offset || []
-    const g92 = store.status.g92_offset || []
+    const g5x = store.status.g5xOffset || []
+    const g92 = store.status.g92Offset || []
     dx = (Number(g5x[0]) || 0) + (Number(g92[0]) || 0)
     dy = (Number(g5x[1]) || 0) + (Number(g92[1]) || 0)
     dz = (Number(g5x[2]) || 0) + (Number(g92[2]) || 0)
@@ -586,10 +586,10 @@ const animate = () => {
           <template v-if="toolpathMeta.moves > 0">
             · N moves {{ toolpathMeta.moves }}
           </template>
-          <template v-if="props.applyWorkingOffset && (store.status.g5x_offset || store.status.g92_offset)">
+          <template v-if="props.applyWorkingOffset && (store.status.g5xOffset || store.status.g92Offset)">
             · offset
-            G5x ({{ formatOffset(store.status.g5x_offset) }})
-            + G92 ({{ formatOffset(store.status.g92_offset) }})
+            G5x ({{ formatOffset(store.status.g5xOffset) }})
+            + G92 ({{ formatOffset(store.status.g92Offset) }})
           </template>
         </div>
       </div>

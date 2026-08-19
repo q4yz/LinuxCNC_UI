@@ -34,6 +34,10 @@ const servoPath = resolve(
   repoRoot,
   "frontend/src/stores/servoThread.ts",
 );
+const facadePath = resolve(
+  repoRoot,
+  "frontend/src/facades/servoThreadFacade.ts",
+);
 const modulePath = resolve(
   repoRoot,
   "frontend/src/stores/machine.ts",
@@ -41,6 +45,10 @@ const modulePath = resolve(
 
 function readServo() {
   return readFileSync(servoPath, "utf-8");
+}
+
+function readFacade() {
+  return readFileSync(facadePath, "utf-8");
 }
 
 function readModule() {
@@ -136,6 +144,123 @@ test("servo-thread store exposes a send() action for inbound WS commands", () =>
   assert.match(text, /socket\.readyState\s*!==\s*WebSocket\.OPEN/);
   // Public surface returns the action.
   assert.match(text, /\bsend\s*,/);
+});
+
+test("servo-thread store exposes applyDelta that routes through status.value.patch", () => {
+  // Regression guard for the silent-bug where the facade called
+  // ``store.status.patch(envelope.data)`` directly. Pinia returns
+  // a ``Ref<ClassInstance>`` from setup stores and the property
+  // writes only flow through Vue's reactive ``Proxy`` when the
+  // store's own action is the caller. The fix pins this contract:
+  // ``applyDelta`` MUST delegate to ``status.value.patch(...)``
+  // (not ``Object.assign`` or ``store.status.patch``).
+  const text = readServo();
+  assert.match(
+    text,
+    /const\s+applyDelta\s*=\s*\(\s*delta\s*:\s*ServoThreadStateResponse\s*\)\s*:\s*void\s*=>/,
+    "applyDelta must be typed (ServoThreadStateResponse) => void",
+  );
+  assert.match(
+    text,
+    /applyDelta[\s\S]*?status\.value\.patch\(\s*delta\s*\)/,
+    "applyDelta must call status.value.patch(delta) so reactivity fires",
+  );
+  assert.doesNotMatch(
+    text,
+    /applyDelta[\s\S]*?Object\.assign/,
+    "applyDelta must NOT use Object.assign — bypasses the entity patch",
+  );
+});
+
+test("facade routes delta frames through store.applyDelta (not store.status.patch)", () => {
+  // The original breakage: ``case 'delta': store.status.patch(data)``.
+  // That call returned the wrong reactive surface and the UI never
+  // re-rendered. Pin the fix so a regression is caught at CI.
+  const text = readFacade();
+  assert.match(
+    text,
+    /case\s*['"]delta['"][\s\S]*?store\.applyDelta\(\s*envelope\.data\s*\)/,
+    "the 'delta' branch must call store.applyDelta(envelope.data)",
+  );
+  assert.doesNotMatch(
+    text,
+    /store\.status\.patch\s*\(\s*envelope\.data\s*\)/,
+    "the facade must NOT call store.status.patch directly",
+  );
+});
+
+test("servo-thread store mirrors state into the State Facade on every frame", () => {
+  // The State Facade (``stores/stateFacade.ts``) is the consumer
+  // surface for widgets that read the high-resolution state
+  // vocabulary (``systemState``, ``printProgress``,
+  // ``isEstopActive``). After the TS migration the bridge was
+  // severed — the facade was frozen on ``DEFAULT_RAW_STATUS`` and
+  // ``EStopHeader``'s state badge was stuck on ``ESTOP``.
+  // ``setFullState`` and ``applyDelta`` must each mirror the
+  // new state to the facade so widgets that read from
+  // ``stateFacade`` stay current.
+  const text = readServo();
+  assert.match(
+    text,
+    /mirrorToFacade\s*\(\s*\)\s*:\s*void/,
+    "the store must define mirrorToFacade()",
+  );
+  assert.match(
+    text,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\/stateFacade["']/,
+    "the store must import the facade's useMachineStore",
+  );
+  assert.match(
+    text,
+    /useFacadeStore\s*\(\s*\)/,
+    "the store must call useFacadeStore() inside mirrorToFacade",
+  );
+  // Both ingress paths must mirror.
+  const setFullBlock = text.match(
+    /setFullState[\s\S]*?return\s*\{[\s\S]*?\}\s*\)\s*;?/,
+  );
+  assert.ok(setFullBlock, "setFullState must exist");
+  assert.match(
+    setFullBlock[0],
+    /mirrorToFacade\s*\(\s*\)/,
+    "setFullState must call mirrorToFacade()",
+  );
+  const applyDeltaBlock = text.match(
+    /applyDelta[\s\S]*?return\s*\{[\s\S]*?\}\s*\)\s*;?/,
+  );
+  assert.ok(applyDeltaBlock, "applyDelta must exist");
+  assert.match(
+    applyDeltaBlock[0],
+    /mirrorToFacade\s*\(\s*\)/,
+    "applyDelta must call mirrorToFacade()",
+  );
+});
+
+test("DebugPanel reads telemetry from useServoThreadStore, not useMachineStore", () => {
+  // ``stores/machine.ts`` only exposes ``defaultJogVelocity`` /
+  // ``keepaliveIntervalMs`` as state after the migration —
+  // ``status`` is a computed. Reading ``store.$state`` here was
+  // the reason the panel showed only those two fields.
+  const debugPath = resolve(
+    repoRoot,
+    "frontend/src/components/DebugPanel.vue",
+  );
+  const text = readFileSync(debugPath, "utf-8");
+  assert.match(
+    text,
+    /from\s*["']\.\.\/stores\/servoThread["']/,
+    "DebugPanel must import from stores/servoThread",
+  );
+  assert.doesNotMatch(
+    text,
+    /from\s*["']\.\.\/stores\/machine["']/,
+    "DebugPanel must NOT import from stores/machine (status moved out of $state)",
+  );
+  assert.doesNotMatch(
+    text,
+    /store\.\$state/,
+    "DebugPanel must NOT read store.$state (no longer carries telemetry)",
+  );
 });
 
 test("machine store does NOT instantiate its own WebSocket", () => {

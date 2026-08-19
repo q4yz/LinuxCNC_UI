@@ -1,19 +1,49 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useMachineStore } from '../stores/machine'
+import { useServoThreadStore } from '../stores/servoThread'
 
-const store = useMachineStore()
+// The raw telemetry payload lives in ``useServoThreadStore`` after
+// the servo/base-thread split — ``stores/machine.ts`` no longer
+// owns ``status`` as state, it composes it via a ``computed`` so
+// ``store.$state`` only contains the module-private settings
+// (``defaultJogVelocity`` / ``keepaliveIntervalMs``). Reading the
+// wrong store here was the reason the panel showed only those two
+// fields and nothing from the live telemetry.
+const servo = useServoThreadStore()
 const throttledState = ref({})
 let intervalId = null
 
+function snapshot() {
+  const s = servo.status
+  throttledState.value = {
+    connectionStatus: servo.connectionStatus,
+    status: {
+      task_state: s.taskState,
+      estop: s.estop,
+      task_mode: s.taskMode,
+      position: s.position,
+      actual_position: s.actualPosition,
+      relative_position: s.relativePosition,
+      state: s.state,
+      file: s.file,
+      homed: s.homed,
+      interp_state: s.interpState,
+      g5x_index: s.g5xIndex,
+      g5x_offset: s.g5xOffset,
+      g92_offset: s.g92Offset,
+      current_line: s.currentLine,
+      total_lines: s.totalLines,
+      errors: s.errors,
+    },
+  }
+}
+
 onMounted(() => {
   // Take an initial snapshot immediately
-  throttledState.value = JSON.parse(JSON.stringify(store.$state))
-  
+  snapshot()
+
   // Update snapshot every 3000ms
-  intervalId = setInterval(() => {
-    throttledState.value = JSON.parse(JSON.stringify(store.$state))
-  }, 3000)
+  intervalId = setInterval(snapshot, 3000)
 })
 
 onUnmounted(() => {

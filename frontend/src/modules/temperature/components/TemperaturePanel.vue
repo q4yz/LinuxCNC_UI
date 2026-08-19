@@ -102,7 +102,7 @@ const chartOptions = computed(() => {
   Object.keys(temps).forEach((sensorName) => {
     if (visibility[sensorName] === false) return
     const color = store.colorFor(sensorName)
-    const round = (v: number) => roundTo(TemperatureUnit.KELVIN ? v + 273.15 : v, 2)
+    const round = (v: number) => roundTo( store.unit === TemperatureUnit.KELVIN ? v + 273.15 : v, 2)
 
     const actualSamples: { ts: number; val: number }[] = []
     const targetSamples: { ts: number; val: number }[] = []
@@ -179,11 +179,11 @@ const chartOptions = computed(() => {
     }
   })
 
-  const unitLabel = TemperatureUnit.KELVIN ? 'K' : '°C'
+  const unitLabel =  store.unit === TemperatureUnit.KELVIN ? 'K' : '°C'
   const axisFormatter = (value: any) => {
     const num = Number(value)
     if (!Number.isFinite(num)) return ''
-    const v = TemperatureUnit.KELVIN ? num + 273.15 : num
+    const v =  store.unit ===TemperatureUnit.KELVIN ? num + 273.15 : num
     return `${roundTo(v, 2).toFixed(2)} ${unitLabel}`
   }
 
@@ -192,7 +192,7 @@ const chartOptions = computed(() => {
     tooltip: {
       trigger: 'axis',
       valueFormatter: (value: any) =>
-          `${roundTo(TemperatureUnit.KELVIN ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
+          `${roundTo(store.unit === TemperatureUnit.KELVIN ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
     },
     legend: {
       data: legendData,
@@ -252,8 +252,8 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
             @change="(e) => store.setUnit((e.target as HTMLSelectElement).value as any)"
             class="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-100 font-mono text-xs focus:outline-none focus:border-blue-500"
         >
-          <option value="celsius">°C</option>
-          <option value="kelvin">K</option>
+          <option :value="TemperatureUnit.CELSIUS">°C</option>
+          <option :value="TemperatureUnit.KELVIN">K</option>
         </select>
       </div>
 
@@ -310,7 +310,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
             <div class="hidden md:flex flex-col items-end justify-center mr-2">
               <span class="text-gray-500 text-[10px] uppercase tracking-wider -mb-1">Target</span>
               <span class="font-mono text-sm text-red-400 font-bold">
-                {{ fmtTemp(data.target) }}{{ TemperatureUnit.KELVIN ? 'K' : '°C' }}
+                {{ fmtTemp(data.target) }}{{unit === TemperatureUnit.KELVIN ? 'K' : '°C' }}
               </span>
             </div>
 

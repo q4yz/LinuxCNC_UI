@@ -33,5 +33,13 @@ class LinuxcncModuleFacade:
 
     def error_channel(self):
         """Mimics linuxcnc.error_channel()."""
-        # If your app reads LinuxCNC errors, you can wrap self._state.errors here
-        pass
+        error_ch = self._state
+        class _ErrorChannel:
+            def poll(self):
+                return None  # no pending error this tick
+
+            @property
+            def errors(self):
+                return list(getattr(error_ch, "errors", []) or [])
+
+        return _ErrorChannel()

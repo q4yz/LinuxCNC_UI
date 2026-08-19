@@ -14,7 +14,7 @@ from modules.tools.constants import (
     M5_STOP,
 )
 from modules.tools.dtos import SpindleDigitalStateDTO, SpindleAnalogStateDTO, HeaterStateDTO, ExtruderStateDTO
-from modules.tools.dtos.digital_spindle_dto import SpindleDigitalStateDTO
+from modules.tools.factory.tool_pin_type_factory import ToolPinTypeFactory
 from modules.tools.factory.tool_state_factory import ToolStateFactory
 from modules.tools.factory.tool_halpin_factory import ToolHalPinFactory
 
@@ -50,9 +50,9 @@ class ToolsService:
         """
         for pin_map in self.get_halpins():
             if getattr(pin_map, "id", None) == tool_id:
-                # Type guard: ensure the user didn't ask for a Spindle but pass a Heater ID
-                if isinstance(pin_map, expected_type):
-                    return pin_map
+                extracted_pin = ToolPinTypeFactory.create(pin_map, expected_type)
+                if isinstance(extracted_pin, expected_type):
+                    return extracted_pin
 
                 logger.warning(
                     "Tool ID '%s' found, but it is a %s, not a %s.",

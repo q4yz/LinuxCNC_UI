@@ -6,7 +6,13 @@ import { useMachineStore } from '../store'
 const MAX_JOG_SPEED = 3.602
 
 const machineStore = useMachineStore()
-const { jogIntervals, defaultJogVelocity } = storeToRefs(machineStore)
+const { defaultJogVelocity } = storeToRefs(machineStore)
+
+// Locally tracked axes that currently have an active continuous jog.
+// The keep-alive timers themselves live inside ``servoThreadService``;
+// we only need to know *which* axes are moving so we can stop them
+// when the panel loses focus / unmounts.
+const activeJogAxes = ref(new Set())
 
 const sliderPos = ref(2)
 const sliderTouched = ref(false)
@@ -72,15 +78,19 @@ const handleFocusOut = (event) => {
 
 const startJog = async (axis, direction) => {
   const velocity = direction * jogSpeed.value
+  activeJogAxes.value.add(axis)
   await machineStore.jogContinuous(axis, velocity)
 }
 
 const stopJog = async (axis) => {
+  activeJogAxes.value.delete(axis)
   await machineStore.jogStop(axis)
 }
 
 const stopAllJogging = async () => {
-  const axes = Object.keys(jogIntervals.value).map(Number)
+  // Snapshot the keys first — ``jogStop`` mutates the set.
+  const axes = Array.from(activeJogAxes.value)
+  activeJogAxes.value.clear()
   for (const axis of axes) {
     await machineStore.jogStop(axis)
   }
