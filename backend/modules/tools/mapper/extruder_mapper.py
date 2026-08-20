@@ -1,6 +1,6 @@
 from typing import Dict, Any, TYPE_CHECKING
 
-from dtos.HalPin import DynamicHalPin
+from dtos.HalPin import ReadWriteDynamicHalPin, HalDataType
 from modules.tools.dtos.extruder_dto import ExtruderPins, ExtruderStateDTO, ExtruderSettingsDTO
 from modules.tools.dtos.heater_dto import HeaterSettingsDTO
 
@@ -23,7 +23,7 @@ class ExtruderMapper:
         return ExtruderPins(
             id=tool_id,
             heater=HeaterMapper.from_dict_to_HeaterPins(data),
-            position=DynamicHalPin(str(position_val)),
+            position=ReadWriteDynamicHalPin(str(position_val), HalDataType.FLOAT),
         )
 
     @classmethod

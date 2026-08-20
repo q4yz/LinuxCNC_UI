@@ -30,9 +30,13 @@ __all__ = [
     "DeviceConfigMapper",
     "HalSubscriptionManager",
     "hal_manager",
+    "hal",
+    "linuxcnc"
     # Note: ``MachineService`` / ``machine_service`` / ``default_mapper``
     # were removed from the ``hardware`` re-export surface to break
     # the circular import between ``backend.services.machine_service`` and
     # ``hardware.connection``. They live in
     # :mod:`backend.services.machine_service` — import from there.
 ]
+
+from .mock.linuxcnc_mock import hal

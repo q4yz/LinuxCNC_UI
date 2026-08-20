@@ -1,6 +1,6 @@
 from typing import Dict, Any, TYPE_CHECKING
 
-from dtos.HalPin import DynamicHalPin, StaticHalPin, UnconnectedHalPin
+from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, UnconnectedHalPin, HalDataType
 from modules.tools.dtos.heater_dto import HeaterStateDTO, HeaterPins, HeaterSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
 from modules.tools.models.heater_models import HeaterStateResponse
@@ -20,9 +20,9 @@ class HeaterMapper:
 
         return HeaterPins(
             id=tool_id,
-            target_temperature=DynamicHalPin(f"target-temperature{suffix}"),
-            actual_temperature=DynamicHalPin(f"actual-temperature{suffix}"),
-            fan=DynamicHalPin(str(fan_val)) if fan_val else UnconnectedHalPin(),
+            target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT),
+            actual_temperature=ReadWriteDynamicHalPin(f"actual-temperature{suffix}", HalDataType.FLOAT),
+            fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT) if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),
         )

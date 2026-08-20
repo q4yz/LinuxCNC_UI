@@ -1,4 +1,4 @@
-from hardware.mock.command_mock import CommandMock
+from hardware.mock.facade.command_mock import CommandMock
 
 
 class LinuxcncModuleFacade:

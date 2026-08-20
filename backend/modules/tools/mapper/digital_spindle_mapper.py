@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from dtos.HalPin import DynamicHalPin, StaticHalPin
+from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, ReadOnlyDynamicHalPin, HalDataType
 from modules.tools.dtos import SpindleDigitalPins, SpindleDigitalStateDTO
 from modules.tools.dtos.digital_spindle_dto import DirectionStateType, SpindleDigitalSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
@@ -16,17 +16,17 @@ class SpindleDigitalMapper():
 
         return SpindleDigitalPins(
             id=tool_id,
-            spindle_at_speed=DynamicHalPin(f"spindle-at-speed{suffix}"),
-            target_rpm=DynamicHalPin(f"TargetRpm{suffix}"),
-            actual_rpm=DynamicHalPin(f"rpm-out{suffix}"),
-            is_connected=DynamicHalPin(f"is-connected{suffix}"),
-            error_count=DynamicHalPin(f"error-count{suffix}"),
-            last_error=DynamicHalPin(f"last-error{suffix}"),
+            spindle_at_speed=ReadOnlyDynamicHalPin(f"spindle-at-speed{suffix}", HalDataType.BIT),
+            target_rpm=ReadOnlyDynamicHalPin(f"TargetRpm{suffix}",HalDataType.FLOAT),
+            actual_rpm=ReadOnlyDynamicHalPin(f"rpm-out{suffix}", HalDataType.FLOAT),
+            is_connected=ReadOnlyDynamicHalPin(f"is-connected{suffix}", HalDataType.BIT),
+            error_count=ReadOnlyDynamicHalPin(f"error-count{suffix}", HalDataType.S32),
+            last_error=ReadOnlyDynamicHalPin(f"last-error{suffix}", HalDataType.S32),
             min_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_rpm"), int) or 0),
             max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
-            spindle_forward=DynamicHalPin(f"spindle-forward{suffix}"),
-            spindle_reverse=DynamicHalPin(f"spindle-reverse{suffix}"),
-            override=DynamicHalPin(f"override{suffix}"),
+            spindle_forward=ReadOnlyDynamicHalPin(f"spindle-forward{suffix}", HalDataType.BIT),
+            spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT),
+            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.FLOAT),
         )
 
     @classmethod

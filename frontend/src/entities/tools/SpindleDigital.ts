@@ -61,7 +61,7 @@ export class SpindleDigitalControlRequest {
         this.action = data.action;
         this.speed = data.speed;
         this.override = data.override ?? 1.0;
-        this.masterOverride = data.masterOverride ?? 0;
-        this.masterOverrideEnable = data.masterOverrideEnable ?? false;
+        this.masterOverride = data.master_override ?? 0;
+        this.masterOverrideEnable = data.master_override_enable ?? false;
     }
 }

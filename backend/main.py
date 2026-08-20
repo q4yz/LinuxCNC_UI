@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.module_registry import registry
+from dtos.HalPin import HalPin
+from hardware import HAS_HAL
 from hardware.mock.linuxcnc_mock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
+from modules.tools.services.tool_service import get_tools_service
 from services.console_logger import get_console_logger
 
 
@@ -24,6 +27,8 @@ from routers import base_thread, servo_thread, files, system
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.main")
 
+tool_service = get_tools_service()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -39,6 +44,10 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting LinuxCNC background tasks...")
 
+    tool_service.preload_hal_pins()
+
+    HalPin.initialize_component()
+
     # Seed the mock hardware layer's sensor + spindle dicts from the
     # active ``hardware.json`` so the base-thread snapshot's
     # ``sensors`` and ``tools`` blocks are populated on the very
@@ -49,9 +58,9 @@ async def lifespan(app: FastAPI):
     # lifespan is the single canonical production caller — see
     # the matching note in ``hardware/linuxcnc_mock.py``.
 
-    reseed_from_hardware_json()
-
-    mock_system.start_simulation()
+    if not HAS_HAL:
+        reseed_from_hardware_json()
+        mock_system.start_simulation()
 
     # Start the continuous WebSocket publisher
     task_telemetry = asyncio.create_task(servo_thread.telemetry_loop())

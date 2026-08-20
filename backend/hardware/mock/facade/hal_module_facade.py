@@ -1,5 +1,6 @@
 from typing import Any
 
+from hardware.mock.facade.MockHalComponent import MockComponent
 from hardware.mock.hal_mock import HalMock
 
 
@@ -10,6 +11,15 @@ class HalModuleFacade:
     hardware.connection). When the application calls hal.get_value(),
     it secretly reads from our internal HalMock simulation.
     """
+
+    HAL_IN: int = 1
+    HAL_OUT: int = 2
+    HAL_IO: int = 3
+
+    HAL_BIT: int = 1
+    HAL_FLOAT: int = 2
+    HAL_S32: int = 3
+    HAL_U32: int = 4
 
     def __init__(self, internal_hal: HalMock):
         self._internal_hal = internal_hal
@@ -28,8 +38,8 @@ class HalModuleFacade:
 
     def component(self, name: str):
         """Mimics hal.component('name') if your app creates userspace components."""
-        # You can expand this if your backend actually creates HAL components
-        pass
+        return MockComponent(name, self._internal_hal)
+
 
     @property
     def pins(self):

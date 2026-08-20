@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from dtos.HalPin import DynamicHalPin, StaticHalPin
+from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, HalDataType
 from modules.tools.dtos import SpindleAnalogPins  # Adjust import path as needed
 from modules.tools.dtos.analog_spindle_dto import SpindleAnalogStateDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
@@ -15,8 +15,8 @@ class SpindleAnalogMapper():
 
         return SpindleAnalogPins(
             id=tool_id,
-            analog_out=DynamicHalPin(f"analog-out{suffix}"),
-            target_rpm=DynamicHalPin(f"TargetRpm{suffix}"),
+            analog_out=ReadWriteDynamicHalPin(f"analog-out{suffix}", HalDataType.FLOAT),
+            target_rpm=ReadWriteDynamicHalPin(f"TargetRpm{suffix}", HalDataType.FLOAT),
             min_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_rpm"), int) or 0),
             max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
         )

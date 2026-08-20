@@ -4,8 +4,8 @@ import time
 
 from hardware.mock.factory.mock_tool_factory import MockToolFactory
 from hardware.mock.hal_mock import HalMock
-from hardware.mock.hal_module_facade import HalModuleFacade
-from hardware.mock.linuxcnc_module_facade import LinuxcncModuleFacade
+from hardware.mock.facade.hal_module_facade import HalModuleFacade
+from hardware.mock.facade.linuxcnc_module_facade import LinuxcncModuleFacade
 from hardware.mock.state_machine_mock import StateMachineMock
 
 logger = logging.getLogger("backend.hardware.mock")

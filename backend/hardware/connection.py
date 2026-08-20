@@ -17,7 +17,7 @@ treating real hardware and the local simulator identically.
 """
 from __future__ import annotations
 
-
+import sys
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -52,6 +52,7 @@ except ImportError:
     # CHANGE IS HERE: Import the hal facade from the orchestrator
     from hardware.mock.linuxcnc_mock import hal  # type: ignore[no-redef]
 
+    #sys.modules["hal"] = hal
     HAS_HAL = False
     logger.warning("HAL module unavailable; HAL pin polling will run in mock mode.")
 

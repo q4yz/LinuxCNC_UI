@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
+
 import { useToolStore } from "../toolStore";
-import type { SpindleState } from "../../entities/tools/SpindleState";
+import { SpindleDigital } from "../../../entities/tools";
+import { SystemState, useMachineStore } from "../../../stores/stateFacade";
 
 const props = defineProps<{
-  tool: SpindleState;
+  tool: SpindleDigital;
 }>();
 
 const toolStore = useToolStore();
+
+// Read the machine's current state from the canonical facade store
+// (sibling widgets such as ActivePrintWidget / EStopHeader follow
+// the same pattern; the parent does not have to thread it through).
+const { systemState } = storeToRefs(useMachineStore());
 
 // Local working state
 const speedPercentage = ref<number>(100);
@@ -16,28 +24,45 @@ const masterOverrideSpeed = ref<number>(props.tool.minRpm ?? 0);
 
 type SpindleRunningState = "idle" | "forward" | "backward" | "stop";
 
-// Tracks the operator's last button press so the slider-drag
-// debounce can fire the right action. Single source of truth for
-// the card's "is the spindle running?" guard.
 const runningState = ref<SpindleRunningState>("idle");
-
-// Debounce handle for the slider-drag dispatch. Cleared on every
-// tick and on unmount so a navigated-away card never fires a stale POST.
 let postTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Computed bounds and values matching the strict SpindleState fields
+// --- State Logic ---
+
+// Disabled: Machine is off, estopped, offline, or updating.
+const isDisabled = computed(() => {
+  return [
+    SystemState.OFFLINE,
+    SystemState.POWER_OFF,
+    SystemState.ESTOP,
+    SystemState.UPDATING
+  ].includes(systemState.value);
+});
+
+// Manual Only: Machine is idle, loaded, or in failure.
+// We hide the percentage slider and force Master Override (Manual Control) on.
+const isManualOnly = computed(() => {
+  return [
+    SystemState.IDLE,
+    SystemState.LOADED,
+    SystemState.FAILURE
+  ].includes(systemState.value);
+});
+
+// The effective master override state (forced to true if in Manual Only mode)
+const isEffectiveMasterOverride = computed(() => isManualOnly.value || masterOverride.value);
+
+// --- RPM Logic ---
+
 const minRpm = computed(() => props.tool.minRpm ?? 0);
 const maxRpm = computed(() => props.tool.maxRpm ?? 24000);
 const actualRpm = computed(() => props.tool.actualRpm ?? 0);
 
-// Calculate the percentage of the minimum RPM relative to max for the gradient stops
 const minPercent = computed(() => {
   if (!maxRpm.value) return 0;
   return (minRpm.value / maxRpm.value) * 100;
 });
 
-// Dynamic gradient background for the RPM gauge
-// Red below minRpm, Orange in the middle, Green near the top (last 20%)
 const gaugeGradient = computed(() => {
   return {
     background: `linear-gradient(to top,
@@ -47,35 +72,36 @@ const gaugeGradient = computed(() => {
   };
 });
 
-// The height of the "mask" that hides the upper portion of the gradient gauge
 const gaugeCoverHeight = computed(() => {
   if (!maxRpm.value) return '100%';
   const pct = Math.min(100, Math.max(0, (actualRpm.value / maxRpm.value) * 100));
   return `${100 - pct}%`;
 });
 
-// Issue commands to the spindle on button click
+// --- Actions ---
+
 function handleSpindle(action: SpindleRunningState) {
+  if (isDisabled.value) return; // Guard against disabled state
+
   if (action === "stop") {
     runningState.value = "idle";
     toolStore.sendSpindleCommand(
-      props.tool.id,
-      "stop",
-      0,
-      masterOverrideSpeed.value,
-      false,
-      1.0,
+        props.tool.id,
+        "stop",
+        0,
+        masterOverrideSpeed.value,
+        false,
+        1.0,
     );
     return;
   }
 
-  // Determine the speed based on override modes
-  let speedToSet = props.tool.setSpeed ?? 0;
+  // Determine the speed based on effective override mode
+  let speedToSet = props.tool.actualRpm ?? 0;
 
-  if (masterOverride.value) {
+  if (isEffectiveMasterOverride.value) {
     speedToSet = masterOverrideSpeed.value;
   } else {
-    // Apply automatic percentage correction to programmed speed
     speedToSet = Math.round(speedToSet * (speedPercentage.value / 100));
   }
 
@@ -85,43 +111,42 @@ function handleSpindle(action: SpindleRunningState) {
   runningState.value = action;
 
   toolStore.sendSpindleCommand(
-    props.tool.id,
-    action as "forward" | "backward",
-    speedToSet,
-    masterOverrideSpeed.value,
-    masterOverride.value,
-    masterOverride.value ? 1.0 : speedPercentage.value / 100,
+      props.tool.id,
+      action as "forward" | "backward",
+      speedToSet,
+      masterOverrideSpeed.value,
+      isEffectiveMasterOverride.value,
+      isEffectiveMasterOverride.value ? 1.0 : speedPercentage.value / 100,
   );
 }
 
 // Debounced slider-drag dispatch.
 watch([masterOverrideSpeed, speedPercentage], () => {
   if (runningState.value === "idle" || runningState.value === "stop") return;
+  if (isDisabled.value) return;
 
   if (postTimer) clearTimeout(postTimer);
   postTimer = setTimeout(() => {
     postTimer = null;
     const action = runningState.value;
 
-    if (masterOverride.value) {
-      // RPM slider drag: master_override bypass, override pin left alone.
+    if (isEffectiveMasterOverride.value) {
       toolStore.sendSpindleCommand(
-        props.tool.id,
-        action as "forward" | "backward",
-        0,
-        masterOverrideSpeed.value,
-        true,
-        1.0,
+          props.tool.id,
+          action as "forward" | "backward",
+          0,
+          masterOverrideSpeed.value,
+          true,
+          1.0,
       );
     } else {
-      // Percentage slider drag: relative override scale.
       toolStore.sendSpindleCommand(
-        props.tool.id,
-        action as "forward" | "backward",
-        0,
-        0,
-        false,
-        speedPercentage.value / 100,
+          props.tool.id,
+          action as "forward" | "backward",
+          0,
+          0,
+          false,
+          speedPercentage.value / 100,
       );
     }
   }, 1000);
@@ -133,90 +158,105 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full">
+  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full transition-opacity"
+       :class="{ 'opacity-60': isDisabled }">
 
     <!-- LEFT COLUMN: Controls -->
     <div class="flex-1 flex flex-col gap-4">
 
-      <!-- Auto Feed/Speed Section -->
-      <div class="flex flex-col gap-2 bg-gray-800/40 p-4 rounded-md border border-gray-700/50">
-        <!-- Header row with title and percentage -->
-        <div class="flex justify-between items-center">
-          <span class="text-sm font-semibold text-gray-300">Auto Feed/Speed</span>
-          <span class="text-xl font-mono text-blue-400 font-bold">{{ speedPercentage }}%</span>
-        </div>
+      <!-- Controls Wrapper (Disables pointer events if machine is offline/estopped) -->
+      <div class="flex-1 flex flex-col gap-4" :class="{ 'pointer-events-none': isDisabled }">
 
-        <!-- Horizontal Slider -->
-        <input
-            v-model.number="speedPercentage"
-            type="range"
-            min="10"
-            max="200"
-            step="1"
-            class="w-full h-2.5 bg-gray-700 rounded-lg appearance-none outline-none accent-blue-500 cursor-pointer my-1"
-        >
-
-        <!-- Description -->
-        <span class="text-[11px] text-gray-500 leading-tight">
-          Scales the programmed machine speed dynamically.
-        </span>
-      </div>
-
-      <!-- Master Override Section -->
-      <div class="bg-gray-800/60 p-4 rounded-md border border-gray-700 flex flex-col gap-3 transition-colors"
-           :class="masterOverride ? 'border-blue-500/50' : ''">
-        <div class="flex items-center gap-3">
-          <input
-              id="master-override"
-              v-model="masterOverride"
-              type="checkbox"
-              class="w-5 h-5 accent-blue-500 cursor-pointer rounded bg-gray-900 border-gray-600"
-          >
-          <label for="master-override" class="text-sm font-semibold text-white cursor-pointer select-none">
-            Master Override Mode
-          </label>
-        </div>
-
-        <div class="flex flex-col gap-2" :class="{ 'opacity-40 grayscale': !masterOverride }">
-          <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
-            <span>{{ minRpm }}</span>
-            <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ masterOverrideSpeed }} RPM</span>
-            <span>{{ maxRpm }}</span>
+        <!-- Auto Feed/Speed Section (Hidden in Manual Only mode) -->
+        <div v-if="!isManualOnly" class="flex flex-col gap-2 bg-gray-800/40 p-4 rounded-md border border-gray-700/50">
+          <div class="flex justify-between items-center">
+            <span class="text-sm font-semibold text-gray-300">Auto Feed/Speed</span>
+            <span class="text-xl font-mono text-blue-400 font-bold">{{ speedPercentage }}%</span>
           </div>
-          <input
-              v-model.number="masterOverrideSpeed"
-              type="range"
-              :min="minRpm"
-              :max="maxRpm"
-              step="100"
-              class="w-full h-2.5 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-blue-500"
-          >
-        </div>
-      </div>
 
-      <!-- Action Buttons -->
-      <div class="grid grid-cols-3 gap-3">
-        <button
-            type="button"
-            class="py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded font-bold shadow-md transition-colors"
-            @click="handleSpindle('backward')"
-        >
-          Reverse
-        </button>
-        <button
-            type="button"
-            class="py-2.5 bg-red-600 hover:bg-red-500 text-white rounded font-bold shadow-md transition-colors tracking-widest"
-            @click="handleSpindle('stop')"
-        >
-          STOP
-        </button>
-        <button
-            type="button"
-            class="py-2.5 bg-green-600 hover:bg-green-500 text-white rounded font-bold shadow-md transition-colors"
-            @click="handleSpindle('forward')"
-        >
-          Forward
-        </button>
+          <input
+              v-model.number="speedPercentage"
+              type="range"
+              min="10"
+              max="200"
+              step="1"
+              class="w-full h-2.5 bg-gray-700 rounded-lg appearance-none outline-none accent-blue-500 cursor-pointer my-1"
+          >
+
+          <span class="text-[11px] text-gray-500 leading-tight">
+            Scales the programmed machine speed dynamically.
+          </span>
+        </div>
+
+        <!-- Master Override / Manual Control Section -->
+        <div class="bg-gray-800/60 p-4 rounded-md border flex flex-col gap-3 transition-colors"
+             :class="isEffectiveMasterOverride ? 'border-blue-500/50' : 'border-gray-700'">
+
+          <div class="flex items-center gap-3">
+            <!-- Normal Mode Checkbox -->
+            <template v-if="!isManualOnly">
+              <input
+                  id="master-override"
+                  v-model="masterOverride"
+                  type="checkbox"
+                  class="w-5 h-5 accent-blue-500 cursor-pointer rounded bg-gray-900 border-gray-600"
+              >
+              <label for="master-override" class="text-sm font-semibold text-white cursor-pointer select-none">
+                Master Override Mode
+              </label>
+            </template>
+            <!-- Manual Mode Label -->
+            <template v-else>
+              <span class="text-sm font-semibold text-white select-none">
+                Manual Control
+              </span>
+            </template>
+          </div>
+
+          <div class="flex flex-col gap-2" :class="{ 'opacity-40 grayscale': !isEffectiveMasterOverride }">
+            <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
+              <span>{{ minRpm }}</span>
+              <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ masterOverrideSpeed }} RPM</span>
+              <span>{{ maxRpm }}</span>
+            </div>
+            <input
+                v-model.number="masterOverrideSpeed"
+                type="range"
+                :min="minRpm"
+                :max="maxRpm"
+                step="100"
+                class="w-full h-2.5 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            >
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="grid grid-cols-3 gap-3">
+          <button
+              type="button"
+              class="py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="isDisabled"
+              @click="handleSpindle('backward')"
+          >
+            Reverse
+          </button>
+          <button
+              type="button"
+              class="py-2.5 bg-red-600 hover:bg-red-500 text-white rounded font-bold shadow-md transition-colors tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="isDisabled"
+              @click="handleSpindle('stop')"
+          >
+            STOP
+          </button>
+          <button
+              type="button"
+              class="py-2.5 bg-green-600 hover:bg-green-500 text-white rounded font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              :disabled="isDisabled"
+              @click="handleSpindle('forward')"
+          >
+            Forward
+          </button>
+        </div>
       </div>
 
       <!-- Status Indicators -->
