@@ -74,35 +74,48 @@ class SpindleDigitalService:
         if dto.state == DirectionStateType.BACKWARD:
             return self._reverse(pins, dto)
         if dto.state == DirectionStateType.IDLE:
-            return self._stop()
+            return self._stop(pins)
 
         raise BadRequestError("SpindleDigital settings must be a included")
 
     def _forward(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO):
+        mdi = "set speed"
         machine_service.ensure_mdi_mode()
-        target_rpm = self._calculate_rpm(dto)
-        if target_rpm == -1 :
+        current_state = state_service.get_state()
+
+        pins.absolute_master_override.set_value(dto.master_override)
+        pins.absolute_master_override_enable.set_value(dto.master_override_enable)
+
+        if current_state in (MachineState.RUNNING, MachineState.PAUSED):
             pins.override.set_value(dto.override)
-            return f"override={dto.override}"
-        mdi = M3_FORWARD.format(speed=target_rpm)
-        machine_service.dispatch_mdi(mdi)
+        else:
+            pins.override.set_value(1)
+            mdi = M3_FORWARD.format(speed=dto.master_override)
+            machine_service.dispatch_mdi(mdi)
         return mdi
 
     def _reverse(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO):
+        mdi = "set speed"
         machine_service.ensure_mdi_mode()
-        target_rpm = self._calculate_rpm(dto)
-        if target_rpm == -1 :
+        current_state = state_service.get_state()
+
+        pins.absolute_master_override.set_value(dto.master_override)
+        pins.absolute_master_override_enable.set_value(dto.master_override_enable)
+
+        if current_state in (MachineState.RUNNING, MachineState.PAUSED):
             pins.override.set_value(dto.override)
-            return f"override={dto.override}"
-        mdi = M4_BACKWARD.format(speed=target_rpm)
-        machine_service.dispatch_mdi(mdi)
+        else:
+            pins.override.set_value(1)
+            mdi = M4_BACKWARD.format(speed=dto.master_override)
+            machine_service.dispatch_mdi(mdi)
         return mdi
 
 
-    def _stop(self):
+    def _stop(self, pins: SpindleDigitalPins):
         machine_service.ensure_mdi_mode()
         mdi = M5_STOP
         machine_service.dispatch_mdi(mdi)
+        pins.absolute_master_override.set_value(False)
         return mdi
 
     def _calculate_rpm(self, dto: SpindleDigitalSettingsDTO) -> int:

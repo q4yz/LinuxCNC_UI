@@ -20,7 +20,10 @@ class SpindleDigitalPins:
     max_rpm: HalPin = UnconnectedHalPin()
     spindle_forward : HalPin = UnconnectedHalPin()
     spindle_reverse : HalPin = UnconnectedHalPin()
+    absolute_master_override_enable: HalPin = UnconnectedHalPin()
+    absolute_master_override: HalPin = UnconnectedHalPin()
     override: HalPin = UnconnectedHalPin()
+
 
 @dataclass(frozen=True, slots=True)
 class SpindleDigitalStateDTO:
@@ -35,6 +38,8 @@ class SpindleDigitalStateDTO:
     max_rpm: float = 0.0
     spindle_forward: bool = False
     spindle_reverse: bool = False
+    absolute_master_override_enable: bool = False
+    absolute_master_override: float =  0.0
     override: float = 0.0
 
 

@@ -42,11 +42,7 @@ async def lifespan(app: FastAPI):
     dev boxes and breaks the Linux boot path. Profile parsing is now
     per-request inside the ``machineconfig`` module router.
     """
-    logger.info("Starting LinuxCNC background tasks...")
 
-    tool_service.preload_hal_pins()
-
-    HalPin.initialize_component()
 
     # Seed the mock hardware layer's sensor + spindle dicts from the
     # active ``hardware.json`` so the base-thread snapshot's
@@ -146,5 +142,10 @@ def read_root():
 
 if __name__ == "__main__":
     import uvicorn
-    # Run the server on all interfaces, port 8000
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    logger.info("Starting LinuxCNC background tasks...")
+
+    tool_service.preload_hal_pins()
+    HalPin.initialize_component()
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

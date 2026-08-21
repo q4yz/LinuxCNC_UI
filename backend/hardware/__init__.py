@@ -13,6 +13,7 @@ from .connection import (
     hal_manager,
     is_linuxcnc_connected,
     linuxcnc,
+    hal
 )
 
 __all__ = [
@@ -39,4 +40,6 @@ __all__ = [
     # :mod:`backend.services.machine_service` — import from there.
 ]
 
-from .mock.linuxcnc_mock import hal
+
+
+

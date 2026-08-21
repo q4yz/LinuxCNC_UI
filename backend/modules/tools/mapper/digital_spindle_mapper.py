@@ -26,6 +26,8 @@ class SpindleDigitalMapper():
             max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
             spindle_forward=ReadOnlyDynamicHalPin(f"spindle-forward{suffix}", HalDataType.BIT),
             spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT),
+            absolute_master_override_enable=ReadWriteDynamicHalPin(f"absolute-master-override-enable{suffix}", HalDataType.BIT),
+            absolute_master_override=ReadWriteDynamicHalPin(f"absolute-master-override{suffix}", HalDataType.FLOAT),
             override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.FLOAT),
         )
 
@@ -43,6 +45,8 @@ class SpindleDigitalMapper():
             max_rpm=OptionalMappers.as_float(halpin.max_rpm.get_value()),
             spindle_forward=OptionalMappers.as_bool(halpin.spindle_forward.get_value()),
             spindle_reverse=OptionalMappers.as_bool(halpin.spindle_reverse.get_value()),
+            absolute_master_override_enable = OptionalMappers.as_bool(halpin.absolute_master_override_enable.get_value()),
+            absolute_master_override = OptionalMappers.as_float(halpin.absolute_master_override.get_value()),
             override=OptionalMappers.as_bool(halpin.override.get_value()),
         )
 
