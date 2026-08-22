@@ -6,7 +6,7 @@
 //
 //   1. A wireframe "limits box" in the X/Y plane drawn from the
 //      machine limits declared in the active `hardware.json`
-//      (`axes[].steppers[].position_min` / `position_max`).
+//      (`axes[].position_max`).
 //
 //   2. The currently loaded G-code / NGC program's toolpath, fetched
 //      from `/api/v1/programs/content/{filename}`.
@@ -34,14 +34,15 @@ interface ToolpathMeta {
 }
 
 // Typing the loosely parsed hardware.json payload
-interface HardwareJsonStepper {
+interface HardwareJsonAxis {
   id?: string
-  position_min?: string | number
   position_max?: string | number
+  position_min?: string | number
+  position_endstop?: string | number
 }
 
 interface HardwareJsonPayload {
-  steppers?: HardwareJsonStepper[]
+  axes?: HardwareJsonAxis[]
   [key: string]: any
 }
 
@@ -283,24 +284,20 @@ const loadMachineLimits = async () => {
 const _extractLimitsFromHardwareJson = (payload: HardwareJsonPayload): MachineLimits | null => {
   if (!payload || typeof payload !== 'object') return null
 
-  const steppers = Array.isArray(payload.steppers) ? payload.steppers : []
-  if (!steppers.length) return null
+  const axes = Array.isArray(payload.axes) ? payload.axes : []
+  if (!axes.length) return null
 
   const perAxis = new Map<string, { min: number; max: number }>()
 
-  for (const stepper of steppers) {
-    if (!stepper || typeof stepper !== 'object') continue
-    const id = typeof stepper.id === 'string' ? stepper.id : ''
-    const letter = _axisLetterFromStepperId(id)
-    if (!letter) continue
+  for (const axis of axes) {
+    if (!axis || typeof axis !== 'object') continue
+    const letter = typeof axis.id === 'string' ? axis.id.toLowerCase() : ''
+    if (letter !== 'x' && letter !== 'y') continue
 
-    const posMin = _coerceNumber(stepper.position_min, 0)
-    const posMax = _coerceNumber(stepper.position_max, 200)
+    const posMin = _coerceNumber(axis.position_min, 0)
+    const posMax = _coerceNumber(axis.position_max, 200)
 
-    const entry = perAxis.get(letter) || { min: posMin, max: posMax }
-    entry.min = Math.min(entry.min, posMin)
-    entry.max = Math.max(entry.max, posMax)
-    perAxis.set(letter, entry)
+    perAxis.set(letter, { min: posMin, max: posMax })
   }
 
   if (!perAxis.has('x') || !perAxis.has('y')) return null
@@ -311,12 +308,6 @@ const _extractLimitsFromHardwareJson = (payload: HardwareJsonPayload): MachineLi
   if (x.max <= x.min || y.max <= y.min) return null
 
   return { xMin: x.min, xMax: x.max, yMin: y.min, yMax: y.max }
-}
-
-const _axisLetterFromStepperId = (id: string): string | null => {
-  if (!id) return null
-  const m = /^stepper_([a-z])(?:\d.*)?$/.exec(id)
-  return m ? m[1] : null
 }
 
 const _coerceNumber = (value: any, fallback: number): number => {

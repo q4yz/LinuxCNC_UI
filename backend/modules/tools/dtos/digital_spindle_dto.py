@@ -1,6 +1,8 @@
 ﻿from dataclasses import dataclass
 from enum import Enum
-from dtos.HalPin import HalPin, UnconnectedHalPin
+from dtos.HalPin import HalPin
+from dtos.UnconnectedHalPin import UnconnectedHalPin
+
 
 class DirectionStateType(str, Enum):
     IDLE = "idle"

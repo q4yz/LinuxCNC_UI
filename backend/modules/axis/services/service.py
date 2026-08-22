@@ -12,10 +12,12 @@ business logic does not need to follow that split.
 from __future__ import annotations
 
 import logging
-import warnings
-from typing import Optional
+from typing import Optional, List
 
-from hardware.connection import execute_gcode, execute_sync_cmd, linuxcnc
+from hardware.connection import  execute_sync_cmd, linuxcnc
+from modules.axis.dtos.axis_dtos import AxisStateDTO
+from modules.axis.mapper.axis_mapper import AxisMapper
+from services.hardware_config_service import HardwareConfigService
 
 logger = logging.getLogger("backend.modules.axis.service")
 
@@ -30,6 +32,40 @@ class AxisService:
     Cartesian axes (X, Y, Z); a non-``-1`` value homes a single
     axis.
     """
+    def __init__(self) -> None:
+        self._state_cache = None
+
+    def preload_hal_pins(self) -> None:
+        """
+        Forces the factory to build the DTOs.
+        This queues the pins in HalPin._pending_pins.
+        Must be called at startup BEFORE HalPin.initialize_component()
+        """
+
+        if self._state_cache is not None:
+            return
+
+        config_service = HardwareConfigService()
+        axes_list = config_service.get_axes()
+
+
+
+        out = []
+        for tool in axes_list:  # Assuming get_tools() reads your JSON config
+            out.append(AxisMapper.from_dict_to_dto(tool))
+
+        self._state_cache = out
+        logging.info("Preloaded %d axes.", len(out))
+
+
+    def get_axis(self) -> List[AxisStateDTO]:
+
+        if self._state_cache is None:
+            self.preload_hal_pins()
+
+        return self._state_cache
+
+
 
     def home_all_axes(self) -> None:
         """Home all axes according to the INI file's HOME_SEQUENCE.

@@ -14,9 +14,8 @@ from exceptions.http import NotFoundError, BadRequestError, ConflictError
 
 from modules.state.service import StateService, get_state_service, MachineState
 
-from modules.tools.config_mapper import get_digital_spindle
+
 from modules.tools.constants import (
-    DEFAULT_SPINDLE_OVERRIDE_PIN,
     M3_FORWARD,
     M4_BACKWARD,
     M5_STOP,
@@ -26,7 +25,6 @@ from modules.tools.dtos.digital_spindle_dto import (
     SpindleDigitalSettingsDTO,
     SpindleDigitalStateDTO, DirectionStateType,
 )
-from modules.tools.mapper.digital_spindle_mapper import SpindleDigitalMapper
 from modules.tools.services.tool_service import ToolsService, get_tools_service
 from services.machine_service import get_machine_service, MachineService
 
@@ -120,30 +118,6 @@ class SpindleDigitalService:
         pins.absolute_master_override_enable.set_value(False)
         return mdi
 
-    def _calculate_rpm(self, dto: SpindleDigitalSettingsDTO) -> int:
-        current_state = state_service.get_state()
-
-        if current_state in (MachineState.RUNNING, MachineState.PAUSED):
-            return self._running_mode_rpm(dto)
-
-        if current_state in (MachineState.IDLE, MachineState.LOADED):
-            return self._manual_mode_rpm(dto)
-
-        # Off-mode fallback — surface the operator's commanded speed
-        # so a backend that hasn't seen the machine power up yet
-        # still emits a useful ``M3 S{n}`` string instead of
-        # silently dropping to ``M3 S0``. The LinuxCNC task mode is
-        # untouched until :func:`ensure_mdi_mode` succeeds; the
-        # mock driver accepts the dispatch either way.
-        return dto.speed
-
-    def _manual_mode_rpm(self, dto) -> int:
-        return dto.master_override
-
-    def _running_mode_rpm(self, dto) -> int:
-        if dto.master_override_enable:
-            return dto.master_override
-        return -1
 
     def _check_for_direction_conflict(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO, ):
         if dto.state == DirectionStateType.FORWARD and pins.spindle_reverse.get_value():

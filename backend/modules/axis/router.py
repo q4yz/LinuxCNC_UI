@@ -30,7 +30,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from modules.axis.service import get_axis_service
+from modules.axis.services.service import get_axis_service
 
 
 router = APIRouter()

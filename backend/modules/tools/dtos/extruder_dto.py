@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
-from dtos.HalPin import HalPin, UnconnectedHalPin
+from dtos.HalPin import HalPin
+from dtos.UnconnectedHalPin import UnconnectedHalPin
 from modules.tools.dtos.heater_dto import HeaterPins, HeaterStateDTO, HeaterSettingsDTO
 
 
@@ -8,7 +9,7 @@ from modules.tools.dtos.heater_dto import HeaterPins, HeaterStateDTO, HeaterSett
 class ExtruderPins:
     id: str
     heater: HeaterPins
-    position: HalPin = UnconnectedHalPin()
+    position: HalPin[float] = UnconnectedHalPin()
 
 @dataclass(frozen=True, slots=True)
 class ExtruderStateDTO:

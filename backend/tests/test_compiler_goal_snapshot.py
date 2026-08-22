@@ -153,17 +153,30 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
     assert endstop_ids == {"endstop_x_min", "endstop_y_min", "endstop_z_min"}
     for record in endstops:
         assert set(record.keys()) == {"id", "pin"}
-    # Each Cartesian axis references its endstop by id and carries
-    # its ``pos``; the extruder (A) has neither.
-    axes_by_letter = {a["id"]: a for a in payload["axes"]}
-    assert axes_by_letter["x"]["endstop"] == "endstop_x_min"
-    assert axes_by_letter["y"]["endstop"] == "endstop_y_min"
-    assert axes_by_letter["z"]["endstop"] == "endstop_z_min"
-    assert axes_by_letter["a"].get("endstop") is None
-    assert axes_by_letter["a"].get("endstop_pin") is None
-    assert axes_by_letter["x"].get("pos") == 0.0
-    assert axes_by_letter["y"].get("pos") == 0.0
-    assert axes_by_letter["z"].get("pos") == 0.0
-    # The old ``endstops`` array on each axis is gone.
-    for axis in payload["axes"]:
-        assert "endstops" not in axis
+        # Each Cartesian axis references its endstop by id and carries
+        # its ``position_endstop``; the extruder (A) has neither.
+        axes_by_letter = {a["id"]: a for a in payload["axes"]}
+        assert axes_by_letter["x"]["endstop"] == "endstop_x_min"
+        assert axes_by_letter["y"]["endstop"] == "endstop_y_min"
+        assert axes_by_letter["z"]["endstop"] == "endstop_z_min"
+        assert axes_by_letter["a"].get("endstop") is None
+        assert axes_by_letter["a"].get("endstop_pin") is None
+        assert axes_by_letter["x"].get("position_endstop") == 0.0
+        assert axes_by_letter["x"].get("position_max") == 200.0
+        # The old ``endstops`` array on each axis is gone.
+        for axis in payload["axes"]:
+            assert "endstops" not in axis
+        # The old ``pos`` field on each axis is gone (renamed to
+        # ``position_endstop``).
+        for axis in payload["axes"]:
+            assert "pos" not in axis
+        # ``joint_number`` is canonical (X=0, Y=1, Z=2, then
+        # extruders). The Ender-3 goal has one extruder.
+        joints_by_id = {j["id"]: j for j in payload["joints"]}
+        assert joints_by_id["stepper_x"]["joint_number"] == 0
+        assert joints_by_id["stepper_y"]["joint_number"] == 1
+        assert joints_by_id["stepper_z"]["joint_number"] == 2
+        assert "heater_extruder" in joints_by_id
+        assert joints_by_id["heater_extruder"]["joint_number"] == 3
+        # The extruder joint is wired into the ``a`` axis.
+        assert "heater_extruder" in axes_by_letter["a"]["joints"]

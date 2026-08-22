@@ -14,7 +14,7 @@ export type AnyTemperatureWire = HeaterStateResponse | TemperatureStateResponse;
  */
 export function toReading(wire: AnyTemperatureWire | Record<string, any> | null | undefined): AnyReading | null {
   if (!wire || typeof wire !== "object") return null;
-  if (typeof wire.tool_id !== "string" || wire.tool_id.length === 0) return null;
+  if (typeof wire.id !== "string" || wire.id.length === 0) return null;
 
   // 1. Primary path: Use the explicit type discriminator
   if ("type" in wire) {
@@ -40,7 +40,7 @@ export function toReading(wire: AnyTemperatureWire | Record<string, any> | null 
 
 function toHeaterReading(wire: HeaterStateResponse | Record<string, any>): HeaterReading {
   return new HeaterReading({
-    id: wire.tool_id,
+    id: wire.id,
     actualCelsius: Number(wire.actual) || 0,
     targetCelsius: Number(wire.target) || 0,
     minTemp: Number.isFinite(Number(wire.min_temp)) ? Number(wire.min_temp) : null,
@@ -50,7 +50,7 @@ function toHeaterReading(wire: HeaterStateResponse | Record<string, any>): Heate
 
 function toSensorReading(wire: TemperatureStateResponse | Record<string, any>): SensorReading {
   return new SensorReading({
-    id: wire.tool_id,
+    id: wire.id,
     actualCelsius: Number(wire.actual) || 0,
   });
 }
@@ -84,6 +84,6 @@ export function toLegacySetTargetRequest(sensorName: string, target: number): Re
  * Build the wire payload for the tools heater setter (the live
  * endpoint). New code should prefer this over the legacy one.
  */
-export function toHeaterSetTargetRequest(toolId: string, target: number): { tool_id: string; target: number } {
-  return { tool_id: toolId, target };
+export function toHeaterSetTargetRequest(toolId: string, target: number): { id: string; target: number } {
+  return { id: toolId, target };
 }

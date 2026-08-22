@@ -1,6 +1,7 @@
 from typing import Dict, Any
 
-from dtos.HalPin import ReadWriteDynamicHalPin
+from dtos.HalPin import HalDataType
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from modules.temperature.dtos.temperature_dto import SensorPin, SensorStateDto
 from modules.temperature.models.temperature_models import TemperatureStateResponse
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
@@ -21,7 +22,7 @@ class TemperatureSensorMapper:
 
         return SensorPin(
             id=sensor_id,
-            actual_temperature=ReadWriteDynamicHalPin(pin_name)
+            actual_temperature=ReadWriteDynamicHalPin[float](pin_name, HalDataType.FLOAT)
         )
 
     @classmethod
@@ -35,5 +36,5 @@ class TemperatureSensorMapper:
     @classmethod
     def to_response(cls, dto: SensorStateDto) -> TemperatureStateResponse:
         """Reads the HAL pins and translates them into the runtime State DTO."""
-        return TemperatureStateResponse(tool_id = dto.id,
+        return TemperatureStateResponse(id = dto.id,
             actual = dto.actual_temperature)

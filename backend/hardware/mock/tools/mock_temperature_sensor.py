@@ -12,7 +12,7 @@ class MockSensor(MockComponent):
         self.actual = 25.0
 
         self._pin_map = {
-            f"actual-temperature-{self.id}": "actual",
+            f"webgui.actual-temperature-{self.id}": "actual",
         }
 
     def read_pin(self, pin_name: str) -> Optional[Any]:

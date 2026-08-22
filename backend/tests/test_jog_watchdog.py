@@ -45,8 +45,8 @@ def _install_watchdog_test_environment(monkeypatch, tmp_path):
     via a local import inside :func:`_loop`. The fixture cleans the
     map before each test so a previous run cannot leak.
     """
-    from modules.axis import jog_service as jog
-    from modules.axis import jog_watchdog
+    from modules.axis.services import jog_service as jog
+    from modules.axis.services import jog_watchdog
     import importlib
 
     # Re-import the watch-dog module so each test gets a fresh task
@@ -65,7 +65,7 @@ def _seed_active_jog(axis: int, timeout_ms: int) -> float:
 
     Returns the ``time.time()`` value used so the test can compare.
     """
-    from modules.axis import jog_service as jog
+    from modules.axis.services import jog_service as jog
 
     # Subtracting a generous offset pushes the stamp well past the
     # 500 ms watchdog window. We bypass ``now - t > timeout`` to a
@@ -80,8 +80,7 @@ def test_watchdog_halts_expired_axis_within_one_loop():
     """The watchdog force-stops any axis whose keep-alive is
     older than the configured timeout.
     """
-    from modules.axis import jog_service as jog
-    from modules.axis import jog_watchdog
+    from modules.axis.services import jog_service as jog
 
     timeout_ms = 500
     # Seed an axis as already stale so the next _loop iteration
@@ -117,7 +116,7 @@ def test_watchdog_halts_expired_axis_within_one_loop():
 
 def test_watchdog_skips_fresh_axes():
     """A keep-alive stamp inside the timeout window is left alone."""
-    from modules.axis import jog_service as jog
+    from modules.axis.services import jog_service as jog
 
     timeout_ms = 500
     fresh = time.time()
@@ -147,7 +146,7 @@ def test_keepalive_refresh_blocks_force_stop():
     """Pinging every loop period keeps the axis in the active
     set and never gets force-stopped.
     """
-    from modules.axis import jog_service as jog
+    from modules.axis.services import jog_service as jog
 
     timeout_ms = 500
 
@@ -183,7 +182,7 @@ def test_keepalive_refresh_blocks_force_stop():
 
 def test_stop_watchdog_is_idempotent():
     """Calling ``stop_watchdog`` twice in a row is a no-op."""
-    from modules.axis import jog_watchdog
+    from modules.axis.services import jog_watchdog
 
     # First call is a no-op because no task has been started.
     jog_watchdog.stop_watchdog()
@@ -195,7 +194,7 @@ def test_clear_active_jogs_drops_every_entry():
     """``clear_active_jogs`` (used by ``stop_watchdog``) empties
     the map so the next boot does not resume a stale jog.
     """
-    from modules.axis import jog_service as jog
+    from modules.axis.services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs[0] = time.time()
@@ -208,7 +207,7 @@ def test_read_timeout_ms_clamps_out_of_range_values():
     """``_read_timeout_ms`` accepts only values in the configured
     bounds (``ge=100``, ``le=5000`` per ``MachineSettings``).
     """
-    from modules.axis import jog_watchdog
+    from modules.axis.services import jog_watchdog
 
     class Good:
         def read_key(self, k):

@@ -18,7 +18,7 @@ from typing import List, Tuple
 
 import pytest
 
-from modules.axis import jog_service
+from modules.axis.services import jog_service
 
 
 class _RecordingStat:

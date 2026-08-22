@@ -126,14 +126,113 @@ def test_hardware_json_basic() -> None:
     assert payload["machine"] == "test_machine"
     assert payload["kinematics"] == "cartesian"
     assert payload["hal_type"] == "remora"
-    assert len(payload["steppers"]) == 3
-    # The v2 shape keys steppers by id (derived from the section name),
+    assert len(payload["joints"]) == 3
+    # The v2 shape keys joints by id (derived from the section name),
     # not by axis letter. The axis letter is recoverable from the
-    # axes list, not stored on the stepper itself.
-    assert payload["steppers"][0]["id"] == "stepper_x"
-    assert payload["steppers"][0]["rotation_distance"] == 40.0
-    assert payload["steppers"][2]["id"] == "stepper_z"
-    assert payload["steppers"][2]["rotation_distance"] == 8.0
+    # axes list, not stored on the joint itself.
+    assert payload["joints"][0]["id"] == "stepper_x"
+    assert payload["joints"][0]["rotation_distance"] == 40.0
+    assert payload["joints"][2]["id"] == "stepper_z"
+    assert payload["joints"][2]["rotation_distance"] == 8.0
+    # Motion-envelope fields now live on the axis, not the joint.
+    assert payload["joints"][0].get("position_max") is None
+    assert payload["joints"][0].get("position_endstop") is None
+    assert len(payload["axes"]) == 3
+    assert payload["axes"][0]["position_max"] == 300.0
+    assert payload["axes"][0]["position_endstop"] == 0.0
+    # ``joint_number`` is canonical: all X first, then Y, then Z.
+    assert payload["joints"][0]["joint_number"] == 0  # stepper_x
+    assert payload["joints"][1]["joint_number"] == 1  # stepper_y
+    assert payload["joints"][2]["joint_number"] == 2  # stepper_z
+
+
+def test_hardware_json_joint_numbers_are_canonical() -> None:
+    """Source-declaration order must not affect ``joint_number``.
+
+    The runtime maps the number to ``remora.joint.{N}.*`` so a
+    scrambled Klipper config still produces X=0 / Y=1 / Z=2 on
+    the wire.
+    """
+    graph = _graph(
+        steppers={
+            "z": _stepper("z", rotation_distance=8.0),
+            "x": _stepper("x"),
+            "y": _stepper("y"),
+        },
+    )
+    payload = build_hardware_json(graph, "test")
+
+    by_id = {j["id"]: j for j in payload["joints"]}
+    assert by_id["stepper_x"]["joint_number"] == 0
+    assert by_id["stepper_y"]["joint_number"] == 1
+    assert by_id["stepper_z"]["joint_number"] == 2
+
+
+def test_hardware_json_extruder_appears_in_joints_with_canonical_number() -> None:
+    """An ``[extruder]`` section becomes a synthetic joint record
+    with the next canonical number — the wire ``joints[]`` is a
+    complete enumeration (X, Y, Z, then extruders).
+    """
+    from modules.machineconfig.parser import MachineConfigParser
+
+    config = """
+[stepper_x]
+step_pin: PF13
+dir_pin: PF12
+enable_pin: !PF14
+microsteps: 16
+rotation_distance: 40.0
+
+[stepper_y]
+step_pin: PG0
+dir_pin: PG1
+enable_pin: !PF15
+microsteps: 16
+rotation_distance: 40.0
+
+[stepper_z]
+step_pin: PG2
+dir_pin: PG3
+enable_pin: !PF16
+microsteps: 16
+rotation_distance: 8.0
+
+[extruder]
+step_pin: PC13
+dir_pin: PF0
+enable_pin: !PF1
+microsteps: 16
+rotation_distance: 33.5
+heater_pin: PE3
+sensor_pin: PA1
+sensor_type: Generic 3950
+control: watermark
+min_temp: 0
+max_temp: 250
+"""
+    graph = MachineConfigParser().parse_string(config)
+    payload = build_hardware_json(graph, "test")
+
+    by_id = {j["id"]: j for j in payload["joints"]}
+    assert by_id["stepper_x"]["joint_number"] == 0
+    assert by_id["stepper_y"]["joint_number"] == 1
+    assert by_id["stepper_z"]["joint_number"] == 2
+    # The extruder synthesises a joint record carrying its pin /
+    # scaling fields, with the next canonical number.
+    assert "heater_extruder" in by_id
+    extruder_joint = by_id["heater_extruder"]
+    assert extruder_joint["joint_number"] == 3
+    assert extruder_joint["step_pin"] == "PC13"
+    assert extruder_joint["dir_pin"] == "PF0"
+    assert extruder_joint["enable_pin"] == "!PF1"
+    assert extruder_joint["microsteps"] == 16
+    assert extruder_joint["rotation_distance"] == 33.5
+    assert extruder_joint.get("driver") is None
+    # The extruder joint id is wired into the ``a`` axis so the
+    # axis-to-joint graph matches the LinuxCNC-side AxisBuilder
+    # output.
+    a_axis = next(a for a in payload["axes"] if a["id"] == "a")
+    assert "heater_extruder" in a_axis["joints"]
 
 
 def test_hardware_json_includes_pins() -> None:
@@ -144,9 +243,9 @@ def test_hardware_json_includes_pins() -> None:
     )
     payload = build_hardware_json(graph, "test")
 
-    assert payload["steppers"][0]["step_pin"] == "PF13"
-    assert payload["steppers"][0]["dir_pin"] == "PF12"
-    assert payload["steppers"][0]["enable_pin"] == "!PF14"
+    assert payload["joints"][0]["step_pin"] == "PF13"
+    assert payload["joints"][0]["dir_pin"] == "PF12"
+    assert payload["joints"][0]["enable_pin"] == "!PF14"
 
 
 # --------------------------------------------------------------------- #

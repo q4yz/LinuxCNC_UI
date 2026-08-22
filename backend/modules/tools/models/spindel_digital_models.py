@@ -21,7 +21,7 @@ class SpindleDigitalStateResponse(BaseModel):
     spindle_at_speed: bool = Field(False)
     min_rpm: float = Field(0.0)
     max_rpm: float = Field(24000.0)
-    # The frontend-friendly string representation of the direction
+    master_override_enable: bool = Field(False)
     state: str = Field(
         default="idle",
         description="'forward', 'backward', or 'idle'."

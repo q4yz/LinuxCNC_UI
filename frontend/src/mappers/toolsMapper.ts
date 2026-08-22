@@ -59,14 +59,20 @@ export function toToolState(wire: AnyToolWire | Record<string, any> | null | und
   }
 }
 
-export function toToolList(arr: AnyToolWire[] | null | undefined): ToolList {
-  if (!Array.isArray(arr)) return new ToolList([]);
+export function toToolList(dict: Record<string, AnyToolWire> | null | undefined): ToolList {
+  // Check if dict is null, undefined, or somehow not an object
+  if (!dict || typeof dict !== 'object') {
+    return new ToolList([]);
+  }
 
   const tools: ToolItem[] = [];
-  for (const wire of arr) {
+
+  // Object.values() extracts the array of tools from the dictionary
+  for (const wire of Object.values(dict)) {
     const t = toToolState(wire);
     if (t) tools.push(t);
   }
+
   return new ToolList(tools);
 }
 
@@ -104,7 +110,7 @@ export function toExtruderState(wire: ExtruderStateResponse): Extruder {
 
 export function toHeaterState(wire: HeaterStateResponse): HeaterState {
   return new HeaterState({
-    id: wire.tool_id || "unknown_heater",
+    id: wire.id || "unknown_heater",
     actualCelsius: Number(wire.actual) || 0,
     targetCelsius: Number(wire.target) || 0,
     minTemp: Number.isFinite(Number(wire.min_temp)) ? Number(wire.min_temp) : 0,
@@ -136,5 +142,5 @@ export function toExtruderCommand(params: ExtruderControlRequest): ExtruderComma
 }
 
 export function toHeaterCommand(params: HeaterControlRequest): HeaterCommand {
-  return { tool_id: params.toolId, target: params.target };
+  return { id: params.toolId, target: params.target };
 }

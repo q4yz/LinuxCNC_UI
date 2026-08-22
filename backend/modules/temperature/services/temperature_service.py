@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from modules.temperature.config_mapper import get_temperature_sensors
@@ -15,11 +16,14 @@ class TemperatureService:
     def __init__(self):
         self._halpins_cache = None
 
-    def get_halpins(self) -> list:
-
-
+    def preload_hal_pins(self) -> None:
+        """
+        Forces the factory to build the DTOs.
+        This queues the pins in HalPin._pending_pins.
+        Must be called at startup BEFORE HalPin.initialize_component()
+        """
         if self._halpins_cache is not None:
-            return self._halpins_cache
+            return
 
         out = []
         used_sensor_ids = set()
@@ -45,10 +49,17 @@ class TemperatureService:
                 out.append(pin_map)
 
         self._halpins_cache = out
+        logging.info("Preloaded %d temperature HAL pin mappings.", len(out))
+
+    def get_halpins(self) -> list:
+        """Returns the pre-built DTOs for your API routes."""
+        if self._halpins_cache is None:
+            logging.warning("get_halpins() called before preload! Forcing late initialization.")
+            self.preload_hal_pins()
+
         return self._halpins_cache
 
-
-    def get_states(self) -> list[HeaterStateDTO | SensorStateDto ]:
+    def get_states(self) -> list[HeaterStateDTO | SensorStateDto]:
         return [TemperatureStateFactory.create(halpin) for halpin in self.get_halpins()]
 
 

@@ -32,7 +32,9 @@ from typing import Dict, List, Union
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-
+from modules.axis.mapper.axis_mapper import AxisMapper
+from modules.axis.models.axis_model import AxisStateResponse
+from modules.axis.services.service import get_axis_service
 from modules.program.service import (
     ProgramProgressResponse,
     get_program_lifecycle_service,
@@ -53,6 +55,7 @@ logger = NonRepeatingLogger("backend.routers.base_thread")
 router = APIRouter(prefix="/api/v1/base-thread", tags=["Base Thread"])
 
 tool_service = get_tools_service()
+axes_Service = get_axis_service()
 
 
 class BaseThreadSnapshotResponse(BaseModel):
@@ -71,8 +74,8 @@ class BaseThreadSnapshotResponse(BaseModel):
             "while standalone sensors only report actual temperatures."
         ),
     )
-    tools: List[ToolStateResponseModel] = Field(
-        default_factory=list,
+    tools: Dict[str,ToolStateResponseModel] = Field(
+        default_factory=dict,
         description=(
             "Operator-facing tool list with runtime state overlaid."
         ),
@@ -83,6 +86,12 @@ class BaseThreadSnapshotResponse(BaseModel):
             "ISO-8601 timestamp the snapshot was assembled (UTC). "
             "Lets the frontend detect a stalled / paused poll."
         ),
+    )
+    axis: Dict[str,AxisStateResponse] = Field(
+        default_factory=dict,
+        description=(
+            "Static axis information"
+        )
     )
 
 
@@ -101,10 +110,10 @@ def _read_progress() -> ProgramProgressResponse:
 # Tools overlay                                                          #
 # ---------------------------------------------------------------------- #
 
-def _tools_snapshot() -> List[ToolStateResponseModel]:
+def _tools_snapshot() -> Dict[str,ToolStateResponseModel]:
     """Build the operator-facing tool list via the OOP factories."""
     logger.info("base_thread.snapshot: building tools overlay")
-    out: List[ToolStateResponseModel] = []
+    out: Dict[str,ToolStateResponseModel] = {}
 
     states = tool_service.get_states()
     logger.debug(
@@ -112,9 +121,10 @@ def _tools_snapshot() -> List[ToolStateResponseModel]:
     )
 
     for state in states:
-        response_model = ToolResponseFactory.create(state)
+        response_model: ToolStateResponseModel  = ToolResponseFactory.create(state)
         if response_model is not None:
-            out.append(response_model)
+            out[response_model.id] = response_model
+
 
     if not out:
         logger.warning(
@@ -142,7 +152,7 @@ def _sensors_snapshot() -> Dict[str, Union[HeaterStateResponse, TemperatureState
     for state in states:
         response_model = TemperatureResponseFactory.create(state)
         if response_model is not None:
-            out[response_model.tool_id] = response_model
+            out[response_model.id] = response_model
 
     if not out:
         logger.warning(
@@ -154,6 +164,16 @@ def _sensors_snapshot() -> Dict[str, Union[HeaterStateResponse, TemperatureState
             "base_thread.snapshot: sensors overlay built ids=%s", sorted(out.keys())
         )
     return out
+
+
+def _axis_state() -> Dict[str,AxisStateResponse]:
+    out = {}
+    for axis in axes_Service.get_axis():
+        response = AxisMapper.from_dto_to_response(axis)
+        out[response.id] = response
+
+    return out
+
 
 @router.get(
     "/snapshot",
@@ -178,6 +198,7 @@ def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
     progress = _read_progress()
     sensors = _sensors_snapshot()
     tools = _tools_snapshot()
+    axis = _axis_state()
 
     timestamp = (
         datetime.now(timezone.utc)
@@ -198,6 +219,7 @@ def get_base_thread_snapshot() -> BaseThreadSnapshotResponse:
         sensors=sensors,
         tools=tools,
         timestamp=timestamp,
+        axis = axis,
     )
 
 

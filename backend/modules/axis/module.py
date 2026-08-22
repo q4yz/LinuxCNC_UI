@@ -46,7 +46,7 @@ from core.protocols import (
     SidebarEntry,
 )
 
-from . import jog_watchdog
+from .services import jog_watchdog
 from .router import router as axis_router
 from .settings import MachineSettings
 

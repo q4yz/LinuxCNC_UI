@@ -50,7 +50,7 @@ function spindleWireDigital(overrides = {}) {
 function heaterWire(overrides = {}) {
   return {
     type: "heater",
-    tool_id: "extruder",
+    id: "extruder",
     target: 215,
     actual: 210,
     min_temp: 0,
@@ -66,7 +66,7 @@ function extruderWire(overrides = {}) {
     position: 12.5,
     heater: {
       type: "heater",
-      tool_id: "extruder_main",
+      id: "extruder_main",
       target: 215,
       actual: 210,
       min_temp: 0,
@@ -138,7 +138,7 @@ test("toExtruderState: missing heater object → null heater", () => {
   assert.equal(e.heater, null);
 });
 
-test("toExtruderState: nested heater with no tool_id falls back to outer id", () => {
+test("toExtruderState: nested heater with no id falls back to outer id", () => {
   const e = toExtruderState({
     type: "extruder",
     id: "extruder_main",
@@ -177,7 +177,7 @@ test("toHeaterReading: type='heated_bed' (legacy alias) → HeaterReading", () =
 test("toHeaterReading: non-finite min/max → null", () => {
   const h = toHeaterReading({
     type: "heater",
-    tool_id: "x",
+    id: "x",
     target: 0,
     actual: 0,
     min_temp: "bad",
@@ -226,7 +226,7 @@ test("toToolState: unknown / missing type → null", () => {
   assert.equal(toToolState(null), null);
 });
 
-test("toToolState: missing id / tool_id → null", () => {
+test("toToolState: missing id → null", () => {
   assert.equal(toToolState({ type: "spindle_digital" }), null);
   assert.equal(toToolState({ type: "heater" }), null);
   assert.equal(toToolState({ type: "extruder" }), null);
@@ -235,9 +235,9 @@ test("toToolState: missing id / tool_id → null", () => {
 test("toToolState: heterogeneous live tools[] array dispatches correctly", () => {
   const arr = [
     spindleWireDigital({ id: "spindle_main", type: "spindle_digital" }),
-    heaterWire({ tool_id: "extruder", type: "heater" }),
+    heaterWire({ id: "extruder", type: "heater" }),
     extruderWire({ id: "extruder_main", type: "extruder" }),
-    heaterWire({ tool_id: "bed", type: "heater" }),
+    heaterWire({ id: "bed", type: "heater" }),
   ];
   const out = arr.map(toToolState).filter((t) => t !== null);
   assert.equal(out.length, 4);
@@ -262,7 +262,7 @@ test("toToolState: heterogeneous live tools[] array dispatches correctly", () =>
 test("toToolList: heterogeneous live-wire array → ToolList", () => {
   const list = toToolList([
     spindleWireDigital({ id: "spindle_main" }),
-    heaterWire({ tool_id: "extruder" }),
+    heaterWire({ id: "extruder" }),
     extruderWire({ id: "extruder_main" }),
     { type: "mystery", id: "x" },
     null,
@@ -320,7 +320,7 @@ test("toExtruderCommand: defaults heater_action to set", () => {
       action: "extrude",
       distance: 5,
       speed: 300,
-      heater: { tool_id: "e", target: 200 },
+      heater: { id: "e", target: 200 },
       heater_action: "set",
     },
   );
@@ -328,7 +328,7 @@ test("toExtruderCommand: defaults heater_action to set", () => {
 
 test("toHeaterCommand: minimal shape", () => {
   assert.deepEqual(toHeaterCommand({ toolId: "h", target: 210 }), {
-    tool_id: "h",
+    id: "h",
     target: 210,
   });
 });

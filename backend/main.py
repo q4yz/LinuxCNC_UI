@@ -9,6 +9,7 @@ from dtos.HalPin import HalPin
 from hardware import HAS_HAL
 from hardware.mock.linuxcnc_mock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
+from modules.temperature.services.temperature_service import get_temperature_service
 from modules.tools.services.tool_service import get_tools_service
 from services.console_logger import get_console_logger
 
@@ -28,6 +29,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.main")
 
 tool_service = get_tools_service()
+sensor_service = get_temperature_service()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,6 +57,10 @@ async def lifespan(app: FastAPI):
     # the matching note in ``hardware/linuxcnc_mock.py``.
 
     if not HAS_HAL:
+        tool_service.preload_hal_pins()
+        sensor_service.preload_hal_pins()
+        HalPin.initialize_component()
+
         reseed_from_hardware_json()
         mock_system.start_simulation()
 
@@ -146,6 +152,8 @@ if __name__ == "__main__":
     logger.info("Starting LinuxCNC background tasks...")
 
     tool_service.preload_hal_pins()
+    sensor_service.preload_hal_pins()
     HalPin.initialize_component()
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    #uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

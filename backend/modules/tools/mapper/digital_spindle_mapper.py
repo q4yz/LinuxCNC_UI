@@ -1,13 +1,16 @@
 from typing import Dict, Any
 
-from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, ReadOnlyDynamicHalPin, HalDataType
+from dtos.HalPin import HalDataType
+from dtos.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.StaticHalPin import StaticHalPin
 from modules.tools.dtos import SpindleDigitalPins, SpindleDigitalStateDTO
 from modules.tools.dtos.digital_spindle_dto import DirectionStateType, SpindleDigitalSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
 from modules.tools.models.spindel_digital_models import SpindleDigitalCommand, SpindleDigitalStateResponse
 
 
-class SpindleDigitalMapper():
+class SpindleDigitalMapper:
 
     @classmethod
     def from_dict_to_SpindleDigitalPins(cls, data: Dict[str, Any]) -> SpindleDigitalPins:
@@ -16,7 +19,7 @@ class SpindleDigitalMapper():
 
         return SpindleDigitalPins(
             id=tool_id,
-            spindle_at_speed=ReadOnlyDynamicHalPin(f"spindle-at-speed{suffix}", HalDataType.BIT),
+            spindle_at_speed=ReadOnlyDynamicHalPin[bool](f"spindle-at-speed{suffix}", HalDataType.BIT),
             target_rpm=ReadOnlyDynamicHalPin(f"TargetRpm{suffix}",HalDataType.FLOAT),
             actual_rpm=ReadOnlyDynamicHalPin(f"rpm-out{suffix}", HalDataType.FLOAT),
             is_connected=ReadOnlyDynamicHalPin(f"is-connected{suffix}", HalDataType.BIT),
@@ -93,5 +96,6 @@ class SpindleDigitalMapper():
             spindle_at_speed=dto.spindle_at_speed,
             min_rpm=dto.min_rpm,
             max_rpm=dto.max_rpm,
-            state=state_str
+            state=state_str,
+            master_override_enable=dto.absolute_master_override_enable
         )

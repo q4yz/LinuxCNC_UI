@@ -44,7 +44,7 @@ export class HeaterControlRequest {
   /** Serializes the entity to the backend wire JSON shape. */
   toWire(): Record<string, unknown> {
     return {
-      tool_id: this.toolId,
+      id: this.toolId,
       target: this.target,
     };
   }

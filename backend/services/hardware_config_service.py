@@ -106,6 +106,13 @@ class HardwareConfigService:
             return raw_axes
         return []
 
+    def get_joints(self) -> List[Dict[str, Any]]:
+        payload = self.load_payload()
+        raw_axes = payload.get("joints")
+        if isinstance(raw_axes, list):
+            return raw_axes
+        return []
+
     def get_temperature_sensors(self) -> List[Dict[str, Any]]:
         """Return the raw ``temperature_sensors[]`` array from the active payload."""
         payload = self.load_payload()

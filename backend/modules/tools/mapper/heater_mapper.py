@@ -1,6 +1,9 @@
 from typing import Dict, Any, TYPE_CHECKING
 
-from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, UnconnectedHalPin, HalDataType
+from dtos.HalPin import  HalDataType
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.StaticHalPin import StaticHalPin
+from dtos.UnconnectedHalPin import UnconnectedHalPin
 from modules.tools.dtos.heater_dto import HeaterStateDTO, HeaterPins, HeaterSettingsDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
 from modules.tools.models.heater_models import HeaterStateResponse
@@ -15,7 +18,7 @@ class HeaterMapper:
     def from_dict_to_HeaterPins(cls, data: Dict[str, Any]) -> HeaterPins:
         tool_id = str(data["id"])
         suffix = tool_id.replace("heater", "")
-
+        print(suffix)
         fan_val = data.get("fan")
 
         return HeaterPins(
@@ -42,7 +45,7 @@ class HeaterMapper:
     def from_command_to_settings_dto(cls, cmd: "HeaterCommand") -> HeaterSettingsDTO:
         """Translates the HTTP heater command into the internal domain DTO."""
         return HeaterSettingsDTO(
-            id=cmd.tool_id,
+            id=cmd.id,
             target_temperature=cmd.target,
             enable=(cmd.target > 0.0)
         )
@@ -50,7 +53,7 @@ class HeaterMapper:
     @classmethod
     def to_response(cls, dto: HeaterStateDTO) -> HeaterStateResponse:
         return HeaterStateResponse(
-            tool_id=dto.id,
+            id=dto.id,
             target=dto.target_temperature,
             actual=dto.actual_temperature,
             min_temp=dto.min_temp,

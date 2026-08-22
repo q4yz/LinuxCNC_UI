@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
-from dtos.servo_thread_state import ServoThreadStateDTO
-from models.servo_thread import ServoThreadStateResponse
+from dtos.ServoThreadState import ServoThreadStateDTO
+from models.ServoThreadStateResponse import ServoThreadStateResponse
 
 
 class ServoThreadStateMapper:

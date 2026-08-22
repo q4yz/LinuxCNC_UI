@@ -1,5 +1,7 @@
 ﻿from dataclasses import dataclass
-from dtos.HalPin import HalPin, UnconnectedHalPin
+from dtos.HalPin import HalPin
+from dtos.UnconnectedHalPin import UnconnectedHalPin
+
 
 @dataclass(frozen=True, slots=True)
 class SpindleAnalogPins:

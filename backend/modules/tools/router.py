@@ -130,8 +130,8 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
 @router.post("/tools/{tool_id}/target", response_model=HeaterCommandStateResponse, operation_id="setToolTarget")
 def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateResponse:
     """Set the target temperature for a heating tool."""
-    if tool_id != cmd.tool_id:
-        logger.debug("tool_id in body (%r) differs from URL (%r); URL wins", cmd.tool_id, tool_id)
+    if tool_id != cmd.id:
+        logger.debug("tool_id in body (%r) differs from URL (%r); URL wins", cmd.id, tool_id)
 
     settings = HeaterMapper.from_command_to_settings_dto(cmd)
 
@@ -139,7 +139,7 @@ def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateRespo
 
     return HeaterCommandStateResponse(
         status="success",
-        tool_id=tool_id,
+        id=tool_id,
         target=cmd.target,
         command=result,
     )

@@ -55,7 +55,7 @@ HARDWARE_MCU_CONNECTION_TYPES = frozenset(
 
 
 class Axis(BaseModel):
-    """A kinematic axis. Owns the steppers that drive it plus an
+    """A kinematic axis. Owns the joints that drive it plus an
     optional endstop switch.
 
     An axis is wired to a switch via exactly one of two fields:
@@ -70,19 +70,25 @@ class Axis(BaseModel):
       converts this form into a top-level ``Endstop`` entity plus
       an ``endstop`` reference before emitting.
 
-    ``pos`` carries the axis position at which the switch fires
-    (Klipper's ``position_endstop``); the runtime uses it during
-    homing. Both forms are mutually exclusive — the model rejects
-    a payload that sets both.
+    ``position_endstop`` carries the axis position at which the
+    switch fires (Klipper's ``position_endstop``); the runtime
+    uses it during homing. ``position_max`` carries the axis
+    travel limit (Klipper's ``position_max``). Both fields are
+    axis-level because they describe motion in the axis
+    coordinate frame, not per-motor scaling; multiple joints on
+    one axis share the same values. ``endstop`` and ``endstop_pin``
+    remain mutually exclusive — the model rejects a payload that
+    sets both.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    steppers: list[str]
+    joints: list[str]
     endstop: str | None = None
     endstop_pin: str | None = None
-    pos: float | None = None
+    position_max: float | None = None
+    position_endstop: float | None = None
 
     @model_validator(mode="after")
     def _validate_endstop_exclusive(self) -> "Axis":
@@ -104,20 +110,35 @@ class Stepper(BaseModel):
     consumer can trust every field name, but doesn't reject
     partial configs (a separate ticket will surface the missing
     fields as a runtime error).
+
+    Motion-envelope fields (``position_min``, ``position_max``,
+    ``position_endstop``) live on :class:`Axis` — they describe
+    travel in the axis coordinate frame, not per-motor scaling —
+    so this record only carries the per-motor scaling/identity:
+    ``joint_number`` (the LinuxCNC ``[JOINT_N]`` index), the
+    driver reference, the three pin fields, ``microsteps``,
+    ``rotation_distance``, and the optional ``homing_speed``.
+
+    ``joint_number`` mirrors the LinuxCNC-side ``Joint.joint_number``
+    (the index in the per-axis ``joints`` list, then across
+    canonical axis letters X / Y / Z / A / ...). The number is
+    stable across re-orderings of the source Klipper config — the
+    generator walks the canonical axis letter order, not the
+    source-declaration order — so the runtime can map a wire
+    ``joint_number`` to a Remora stepgen channel
+    (``remora.joint.{N}.scale`` etc.) deterministically.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    joint_number: int = Field(ge=0)
     driver: str | None = None
     step_pin: str | None = None
     dir_pin: str | None = None
     enable_pin: str | None = None
     microsteps: int | None = None
     rotation_distance: float | None = None
-    position_min: float | None = None
-    position_max: float | None = None
-    position_endstop: float | None = None
     homing_speed: float | None = None
 
 
@@ -143,9 +164,10 @@ class Endstop(BaseModel):
     Mirrors the Klipper source: just an id and a pin. The schema
     deliberately strips the previous ``type``, ``pos``, and
     ``stepper`` back-reference fields — the axis that hosts the
-    switch already carries its position (``Axis.pos``) and the
-    behavioural tag is implicit from context (switches referenced
-    by an axis are part of that axis's homing sequence).
+    switch already carries its position (``Axis.position_endstop``)
+    and the behavioural tag is implicit from context (switches
+    referenced by an axis are part of that axis's homing
+    sequence).
 
     One ``Endstop`` can be referenced by multiple axes; the
     cross-reference validator walks every ``Axis.endstop`` to
@@ -353,7 +375,7 @@ class HardwareJson(BaseModel):
     hal_type: str
 
     axes: list[Axis] = Field(default_factory=list)
-    steppers: list[Stepper] = Field(default_factory=list)
+    joints: list[Stepper] = Field(default_factory=list)
     drivers: list[Driver] = Field(default_factory=list)
     endstops: list[Endstop] = Field(default_factory=list)
     # ``tools`` replaces the old ``heaters`` list. The cross-reference
@@ -383,7 +405,7 @@ class HardwareJson(BaseModel):
         # IDs are unique within each top-level list.
         for list_attr in (
             "axes",
-            "steppers",
+            "joints",
             "drivers",
             "endstops",
             "tools",
@@ -393,7 +415,7 @@ class HardwareJson(BaseModel):
             self._check_unique_ids(list_attr, errors)
 
         # Reference lookup tables — ``{id: index}`` for fast checks.
-        steppers_idx = {s.id: i for i, s in enumerate(self.steppers)}
+        joints_idx = {j.id: i for i, j in enumerate(self.joints)}
         drivers_idx = {d.id: i for i, d in enumerate(self.drivers)}
         sensors_idx = {
             s.id: i for i, s in enumerate(self.temperature_sensors)
@@ -401,7 +423,7 @@ class HardwareJson(BaseModel):
         fans_idx = {f.id: i for i, f in enumerate(self.fans)}
         endstops_idx = {e.id: i for i, e in enumerate(self.endstops)}
 
-        # Every axis.steppers[i] must exist in steppers[]; every
+        # Every axis.joints[i] must exist in joints[]; every
         # ``axis.endstop`` must resolve into the top-level
         # ``endstops[]`` list. ``axis.endstop_pin`` is a free-form
         # pin string and does NOT require a matching record (it
@@ -409,11 +431,11 @@ class HardwareJson(BaseModel):
         # ``endstop`` and ``endstop_pin`` lives on
         # :meth:`Axis._validate_endstop_exclusive`.
         for axis in self.axes:
-            for stepper_id in axis.steppers:
-                if stepper_id not in steppers_idx:
+            for joint_id in axis.joints:
+                if joint_id not in joints_idx:
                     errors.append(
-                        f"Axis '{axis.id}' references unknown stepper "
-                        f"'{stepper_id}'."
+                        f"Axis '{axis.id}' references unknown joint "
+                        f"'{joint_id}'."
                     )
             if axis.endstop is not None and axis.endstop not in endstops_idx:
                 errors.append(
@@ -421,13 +443,35 @@ class HardwareJson(BaseModel):
                     f"'{axis.endstop}'."
                 )
 
-        # Every stepper.driver must exist in drivers[].
-        for stepper in self.steppers:
-            if stepper.driver not in drivers_idx:
+        # Every joint.driver must exist in drivers[]. Synthesised
+        # extruder joints have ``driver: None`` because the extruder
+        # lives on the same driver chips as the Cartesian steppers
+        # and the ``drivers[]`` list only enumerates motor-driver
+        # chips — the extruder's stepgen is wired from
+        # ``joint.step_pin`` directly.
+        for joint in self.joints:
+            if joint.driver is None:
+                continue
+            if joint.driver not in drivers_idx:
                 errors.append(
-                    f"Stepper '{stepper.id}' references unknown driver "
-                    f"'{stepper.driver}'."
+                    f"Joint '{joint.id}' references unknown driver "
+                    f"'{joint.driver}'."
                 )
+
+        # ``joint_number`` must be unique across the ``joints`` list —
+        # the runtime maps the number to a Remora stepgen channel
+        # (``remora.joint.{N}.*``), so two joints sharing a number
+        # would collide at runtime.
+        seen_joint_numbers: dict[int, str] = {}
+        for joint in self.joints:
+            other = seen_joint_numbers.get(joint.joint_number)
+            if other is not None:
+                errors.append(
+                    f"Duplicate joint_number '{joint.joint_number}' "
+                    f"on joints '{other}' and '{joint.id}'."
+                )
+            else:
+                seen_joint_numbers[joint.joint_number] = joint.id
 
         # Every tool.sensor must exist in temperature_sensors[].
         # A pressure sensor is not a temperature sensor even if the

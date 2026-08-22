@@ -714,11 +714,20 @@ max_temp: 130
     # own axis instead of staying under the heaters list only.
     assert [a["id"] for a in payload["axes"]] == ["x", "y", "z", "a"]
 
-    # Three steppers, ids derived from the section name.
-    stepper_ids = [s["id"] for s in payload["steppers"]]
-    assert stepper_ids == ["stepper_x", "stepper_y", "stepper_z"]
+    # Three joints from the Klipper stepper sections plus the
+    # synthesised extruder joint (canonical numbering: X, Y, Z,
+    # then extruders).
+    joint_ids = [s["id"] for s in payload["joints"]]
+    assert joint_ids == [
+        "stepper_x",
+        "stepper_y",
+        "stepper_z",
+        "heater_extruder",
+    ]
+    assert [s["joint_number"] for s in payload["joints"]] == [0, 1, 2, 3]
 
-    # Three drivers, one per stepper.
+    # Three drivers, one per Cartesian stepper. The synthesised
+    # extruder joint has no driver (drivers[] is motor-driver only).
     assert [d["id"] for d in payload["drivers"]] == [
         "driver_stepper_x",
         "driver_stepper_y",
@@ -736,19 +745,28 @@ max_temp: 130
         assert set(record.keys()) == {"id", "pin"}
 
     # Each Cartesian axis references its endstop by id and carries
-    # its ``pos``; the extruder (A) axis is endstop-less.
+    # its ``position_endstop``; the extruder (A) axis is endstop-less.
     axes_by_letter = {a["id"]: a for a in payload["axes"]}
     assert axes_by_letter["x"]["endstop"] == "endstop_x_min"
     assert axes_by_letter["y"]["endstop"] == "endstop_y_min"
     assert axes_by_letter["z"]["endstop"] == "endstop_z_min"
     assert axes_by_letter["a"].get("endstop") is None
     assert axes_by_letter["a"].get("endstop_pin") is None
-    assert axes_by_letter["x"]["pos"] == 0.0
-    assert axes_by_letter["y"]["pos"] == 0.0
-    assert axes_by_letter["z"]["pos"] == 0.0
+    # The extruder (A) axis owns the synthesised extruder joint.
+    assert axes_by_letter["a"]["joints"] == ["heater_extruder"]
+    assert axes_by_letter["x"]["position_endstop"] == 0.0
+    assert axes_by_letter["y"]["position_endstop"] == 0.0
+    assert axes_by_letter["z"]["position_endstop"] == 0.0
+    assert axes_by_letter["x"]["position_max"] == 300.0
+    assert axes_by_letter["y"]["position_max"] == 300.0
+    assert axes_by_letter["z"]["position_max"] == 300.0
     # The old ``endstops`` array on each axis is gone.
     for axis in payload["axes"]:
         assert "endstops" not in axis
+    # The old ``pos`` field on each axis is gone (renamed to
+    # ``position_endstop``).
+    for axis in payload["axes"]:
+        assert "pos" not in axis
 
     # Two tools (extruder + heated_bed), two temperature sensors.
     assert [t["id"] for t in payload["tools"]] == ["heater_extruder", "heater_bed"]

@@ -36,11 +36,12 @@ def _minimal_payload() -> dict:
         "kinematics": "cartesian",
         "hal_type": "remora",
         "axes": [
-            {"id": "x", "steppers": ["stepper_x"]},
+            {"id": "x", "joints": ["stepper_x"]},
         ],
-        "steppers": [
+        "joints": [
             {
                 "id": "stepper_x",
+                "joint_number": 0,
                 "driver": "driver_x",
                 "step_pin": "PF13",
                 "dir_pin": "PF12",
@@ -86,7 +87,7 @@ class TestRootValidation:
         assert model.temperature_sensors == []
         assert model.fans == []
         assert model.endstops == []
-        assert model.axes == [Axis(id="x", steppers=["stepper_x"])]
+        assert model.axes == [Axis(id="x", joints=["stepper_x"])]
 
     def test_to_dict_omits_none_values(self) -> None:
         """The serialised payload drops None values to keep the JSON lean."""
@@ -106,13 +107,13 @@ class TestRootValidation:
 class TestIdUniqueness:
     def test_duplicate_axis_id_rejected(self) -> None:
         payload = _minimal_payload()
-        payload["axes"].append({"id": "x", "steppers": []})
+        payload["axes"].append({"id": "x", "joints": []})
         with pytest.raises(ValueError, match="Duplicate id 'x'"):
             model_validate(payload)
 
-    def test_duplicate_stepper_id_rejected(self) -> None:
+    def test_duplicate_joint_id_rejected(self) -> None:
         payload = _minimal_payload()
-        payload["steppers"].append(dict(payload["steppers"][0]))
+        payload["joints"].append(dict(payload["joints"][0]))
         with pytest.raises(ValueError, match="Duplicate id 'stepper_x'"):
             model_validate(payload)
 
@@ -169,14 +170,14 @@ class TestIdUniqueness:
 class TestIdPattern:
     @pytest.mark.parametrize(
         "entity_key",
-        ["axes", "steppers", "drivers", "endstops", "tools", "temperature_sensors", "fans"],
+        ["axes", "joints", "drivers", "endstops", "tools", "temperature_sensors", "fans"],
     )
     def test_id_must_be_lowercase_snake(self, entity_key: str) -> None:
         payload = _minimal_payload()
         if entity_key == "axes":
-            payload["axes"].append({"id": "X", "steppers": []})
-        elif entity_key == "steppers":
-            payload["steppers"].append(dict(payload["steppers"][0], id="Stepper-X"))
+            payload["axes"].append({"id": "X", "joints": []})
+        elif entity_key == "joints":
+            payload["joints"].append(dict(payload["joints"][0], id="Stepper-X"))
         elif entity_key == "drivers":
             payload["drivers"].append({"id": "Driver-X", "type": "TMC2209"})
         elif entity_key == "endstops":
@@ -205,10 +206,10 @@ class TestIdPattern:
 
 
 class TestCrossReferences:
-    def test_axis_stepper_reference_must_resolve(self) -> None:
+    def test_axis_joint_reference_must_resolve(self) -> None:
         payload = _minimal_payload()
-        payload["axes"][0]["steppers"].append("unknown_stepper")
-        with pytest.raises(ValueError, match="references unknown stepper 'unknown_stepper'"):
+        payload["axes"][0]["joints"].append("unknown_joint")
+        with pytest.raises(ValueError, match="references unknown joint 'unknown_joint'"):
             model_validate(payload)
 
     def test_axis_endstop_reference_must_resolve(self) -> None:
@@ -228,9 +229,9 @@ class TestCrossReferences:
         assert model.axes[0].endstop_pin == "PG6"
         assert model.endstops == []
 
-    def test_stepper_driver_reference_must_resolve(self) -> None:
+    def test_joint_driver_reference_must_resolve(self) -> None:
         payload = _minimal_payload()
-        payload["steppers"][0]["driver"] = "unknown_driver"
+        payload["joints"][0]["driver"] = "unknown_driver"
         with pytest.raises(ValueError, match="references unknown driver 'unknown_driver'"):
             model_validate(payload)
 
@@ -361,7 +362,7 @@ class TestEndstopMultiAxis:
         payload = _minimal_payload()
         payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
         payload["axes"].append(
-            {"id": "z", "steppers": [], "endstop": "endstop_x_min"}
+            {"id": "z", "joints": [], "endstop": "endstop_x_min"}
         )
         model = model_validate(payload)
         endstop_refs = {a.endstop for a in model.axes if a.endstop}
@@ -369,23 +370,39 @@ class TestEndstopMultiAxis:
 
 
 # ---------------------------------------------------------------------- #
-# Axis.pos                                                                  #
+# Axis.position_endstop / Axis.position_max                                #
 # ---------------------------------------------------------------------- #
 
 
-class TestAxisPos:
-    def test_pos_optional(self) -> None:
+class TestAxisMotionFields:
+    def test_position_endstop_optional(self) -> None:
         payload = _minimal_payload()
         model = model_validate(payload)
-        assert model.axes[0].pos is None
+        assert model.axes[0].position_endstop is None
+        assert model.axes[0].position_max is None
 
-    def test_pos_stored_on_axis(self) -> None:
+    def test_position_endstop_stored_on_axis(self) -> None:
         payload = _minimal_payload()
         payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
         payload["axes"][0]["endstop"] = "endstop_x_min"
-        payload["axes"][0]["pos"] = 5.5
+        payload["axes"][0]["position_endstop"] = 5.5
         model = model_validate(payload)
-        assert model.axes[0].pos == 5.5
+        assert model.axes[0].position_endstop == 5.5
+
+    def test_position_max_stored_on_axis(self) -> None:
+        payload = _minimal_payload()
+        payload["axes"][0]["position_max"] = 250.0
+        model = model_validate(payload)
+        assert model.axes[0].position_max == 250.0
+
+    def test_motion_fields_not_on_joint(self) -> None:
+        """``position_max`` / ``position_endstop`` are forbidden on
+        the joint record — they belong on the axis.
+        """
+        payload = _minimal_payload()
+        payload["joints"][0]["position_max"] = 300.0
+        with pytest.raises(ValueError, match="position_max"):
+            model_validate(payload)
 
 
 # ---------------------------------------------------------------------- #
@@ -440,6 +457,45 @@ class TestEndstopShape:
 
 
 # ---------------------------------------------------------------------- #
+# joint_number                                                              #
+# ---------------------------------------------------------------------- #
+
+
+class TestJointNumber:
+    """``joint_number`` is the LinuxCNC ``[JOINT_N]`` index.
+
+    Required on every joint entry, must be non-negative, and must
+    be unique across the ``joints[]`` list (the runtime maps it
+    to a Remora stepgen channel ``remora.joint.{N}.*`` — two
+    joints sharing a number would collide).
+    """
+
+    def test_joint_number_required(self) -> None:
+        payload = _minimal_payload()
+        del payload["joints"][0]["joint_number"]
+        with pytest.raises(ValueError, match="joint_number"):
+            model_validate(payload)
+
+    def test_joint_number_must_be_non_negative(self) -> None:
+        payload = _minimal_payload()
+        payload["joints"][0]["joint_number"] = -1
+        with pytest.raises(ValueError, match="joint_number"):
+            model_validate(payload)
+
+    def test_duplicate_joint_number_rejected(self) -> None:
+        """Two joints sharing a ``joint_number`` collide on the
+        Remora stepgen channel; the cross-ref validator rejects
+        the payload."""
+        payload = _minimal_payload()
+        payload["axes"].append({"id": "y", "joints": ["stepper_y"]})
+        payload["joints"].append(
+            dict(payload["joints"][0], id="stepper_y", joint_number=0)
+        )
+        with pytest.raises(ValueError, match="Duplicate joint_number '0'"):
+            model_validate(payload)
+
+
+# ---------------------------------------------------------------------- #
 # Multi-error aggregation                                                  #
 # ---------------------------------------------------------------------- #
 
@@ -450,9 +506,9 @@ class TestErrorAggregation:
         consumer doesn't fix them one at a time.
         """
         payload = _minimal_payload()
-        payload["axes"].append({"id": "y", "steppers": ["stepper_x"]})
+        payload["axes"].append({"id": "y", "joints": ["stepper_x"]})
         payload["axes"][0]["endstop"] = "missing_endstop"
-        payload["steppers"].append(dict(payload["steppers"][0]))
+        payload["joints"].append(dict(payload["joints"][0]))
         with pytest.raises(ValueError) as exc_info:
             model_validate(payload)
         message = str(exc_info.value)

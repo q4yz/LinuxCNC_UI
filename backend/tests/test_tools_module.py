@@ -452,12 +452,12 @@ def test_set_tool_target_dispatches_set_temperature(
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_extruder/target",
-        json={"tool_id": "heater_extruder", "target": 195.0},
+        json={"id": "heater_extruder", "target": 195.0},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "success"
-    assert body["tool_id"] == "heater_extruder"
+    assert body["id"] == "heater_extruder"
     assert body["target"] == 195.0
     assert body["sensor"] == "extruder"
     # The mock's sensor dict now reflects the new target.
@@ -487,7 +487,7 @@ def test_set_tool_target_rejects_unknown_tool(
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_unknown/target",
-        json={"tool_id": "heater_unknown", "target": 100.0},
+        json={"id": "heater_unknown", "target": 100.0},
     )
     assert resp.status_code == 404
     assert "heater_unknown" in resp.json()["detail"]
@@ -523,7 +523,7 @@ def test_set_tool_target_rejects_non_heating_tool(
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/spindle_digital/target",
-        json={"tool_id": "spindle_digital", "target": 100.0},
+        json={"id": "spindle_digital", "target": 100.0},
     )
     assert resp.status_code == 400
     assert "spindle" in resp.json()["detail"].lower()
@@ -559,7 +559,7 @@ def test_set_tool_target_validates_range(
     client = TestClient(app)
     resp = client.post(
         "/api/v1/modules/tools/tools/heater_extruder/target",
-        json={"tool_id": "heater_extruder", "target": 999.0},
+        json={"id": "heater_extruder", "target": 999.0},
     )
     assert resp.status_code == 422
 

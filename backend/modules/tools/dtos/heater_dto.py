@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from dtos.HalPin import HalPin, UnconnectedHalPin
+from dtos.HalPin import HalPin
+from dtos.UnconnectedHalPin import UnconnectedHalPin
 
 
 @dataclass(frozen=True, slots=True)
@@ -7,9 +8,9 @@ class HeaterPins:
     id: str
     target_temperature: HalPin[float] = UnconnectedHalPin()
     actual_temperature: HalPin[float] = UnconnectedHalPin()
-    fan: HalPin = UnconnectedHalPin()
-    min_temp: HalPin = UnconnectedHalPin()
-    max_temp: HalPin = UnconnectedHalPin()
+    fan: HalPin[float] = UnconnectedHalPin()
+    min_temp: HalPin[float] = UnconnectedHalPin()
+    max_temp: HalPin[float] = UnconnectedHalPin()
 
 @dataclass(frozen=True, slots=True)
 class HeaterStateDTO:

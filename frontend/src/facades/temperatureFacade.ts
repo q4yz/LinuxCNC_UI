@@ -2,7 +2,7 @@ import {BaseThreadService} from "../../generated/api/services/BaseThreadService"
 import {ModulesToolsService} from "../../generated/api/services/ModulesToolsService";
 import {CommandResult} from "../entities/common/CommandResult";
 import {ReadingSet} from "../entities/temperature/ReadingSet";
-import {toReadingSet, toHeaterSetTargetRequest} from "../mappers/temperatureMapper";
+import {toReadingSet} from "../mappers/temperatureMapper";
 import {describeError} from "../core/error-format";
 
 // Adjust the import path based on where you saved the class
@@ -39,7 +39,7 @@ export class TemperatureService {
             const response = await ModulesToolsService.setToolTarget(request.toolId, cmd);
 
             return CommandResult.success({
-                commandId: response && (response as any).command_id ? (response as any).command_id : (response as any).tool_id ?? request.toolId,
+                commandId: response && (response as any).id ? (response as any).id : request.toolId,
                 message: response && (response as any).command ? (response as any).command : "ok",
             });
         } catch (err: unknown) {

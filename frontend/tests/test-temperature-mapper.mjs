@@ -28,7 +28,7 @@ const {
 function heaterWire(overrides = {}) {
   return {
     type: "heater",
-    tool_id: "extruder",
+    id: "extruder",
     target: 215,
     actual: 210,
     min_temp: 0,
@@ -40,7 +40,7 @@ function heaterWire(overrides = {}) {
 function sensorWire(overrides = {}) {
   return {
     type: "sensor",
-    tool_id: "chamber",
+    id: "chamber",
     actual: 32.7,
     ...overrides,
   };
@@ -67,7 +67,7 @@ test("toReading: type='sensor' → SensorReading", () => {
   assert.equal(r.actualCelsius, 32.7);
 });
 
-test("toReading: missing tool_id → null", () => {
+test("toReading: missing id → null", () => {
   assert.equal(toReading({ type: "heater" }), null);
   assert.equal(toReading({ type: "sensor" }), null);
 });
@@ -80,7 +80,7 @@ test("toReading: null / non-object input → null", () => {
 });
 
 test("toReading: missing actual coerces to 0", () => {
-  const r = toReading({ type: "sensor", tool_id: "x" });
+  const r = toReading({ type: "sensor", id: "x" });
   assert.equal(r.constructor.name, "SensorReading");
   assert.equal(r.actualCelsius, 0);
 });
@@ -88,7 +88,7 @@ test("toReading: missing actual coerces to 0", () => {
 test("toReading: heater with non-finite min_temp / max_temp → null", () => {
   const r = toReading({
     type: "heater",
-    tool_id: "x",
+    id: "x",
     target: 0,
     actual: 0,
     min_temp: "bad",
@@ -101,8 +101,8 @@ test("toReading: heater with non-finite min_temp / max_temp → null", () => {
 });
 
 test("toReading: unknown / missing type → null", () => {
-  assert.equal(toReading({ tool_id: "x" }), null);
-  assert.equal(toReading({ tool_id: "x", type: "mystery" }), null);
+  assert.equal(toReading({ id: "x" }), null);
+  assert.equal(toReading({ id: "x", type: "mystery" }), null);
 });
 
 test("toReading: type='spindle_digital' is NOT a temperature reading", () => {
@@ -120,10 +120,10 @@ test("toReading: type='spindle_digital' is NOT a temperature reading", () => {
 
 test("toReadingSet: mixed dict → ReadingSet with both kinds", () => {
   const dict = {
-    extruder: heaterWire({ tool_id: "extruder" }),
-    bed: heaterWire({ tool_id: "bed" }),
-    chamber: sensorWire({ tool_id: "chamber" }),
-    ambient: sensorWire({ tool_id: "ambient" }),
+    extruder: heaterWire({ id: "extruder" }),
+    bed: heaterWire({ id: "bed" }),
+    chamber: sensorWire({ id: "chamber" }),
+    ambient: sensorWire({ id: "ambient" }),
   };
   const set = toReadingSet(dict);
   assert.equal(set.size, 4);
@@ -142,7 +142,7 @@ test("toReadingSet: empty / null dict → empty ReadingSet", () => {
 
 test("toReadingSet: malformed entries are skipped, not raised", () => {
   const dict = {
-    good: heaterWire({ tool_id: "extruder" }),
+    good: heaterWire({ id: "extruder" }),
     badNoId: { type: "heater", target: 0, actual: 0 },
     badNonObj: "garbage",
   };
@@ -162,9 +162,9 @@ test("toLegacySetTargetRequest: builds { sensor_name, target }", () => {
   });
 });
 
-test("toHeaterSetTargetRequest: builds { tool_id, target }", () => {
+test("toHeaterSetTargetRequest: builds { id, target }", () => {
   assert.deepEqual(toHeaterSetTargetRequest("extruder", 210), {
-    tool_id: "extruder",
+    id: "extruder",
     target: 210,
   });
 });

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -142,8 +141,8 @@ def test_axis_jog_dispatch_is_registered_with_watchdog(
     pins the watchdog-side state contract that both transports
     share.
     """
-    from modules.axis import jog_service as jog
-    from modules.axis.jog_service import jog_axis, jog_stop
+    from modules.axis.services import jog_service as jog
+    from modules.axis.services.jog_service import jog_axis, jog_stop
 
     # No active jogs at start. Clear any leftovers from a previous
     # test so the assertion is hermetic — the watchdog's

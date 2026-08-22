@@ -1,7 +1,9 @@
 from typing import Dict, Any
 
-from dtos.HalPin import ReadWriteDynamicHalPin, StaticHalPin, HalDataType
-from modules.tools.dtos import SpindleAnalogPins  # Adjust import path as needed
+from dtos.HalPin import  HalDataType
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.StaticHalPin import StaticHalPin
+from modules.tools.dtos import SpindleAnalogPins
 from modules.tools.dtos.analog_spindle_dto import SpindleAnalogStateDTO
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
 

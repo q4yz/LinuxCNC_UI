@@ -21,15 +21,15 @@ class MockSpindleDigital(MockComponent):
 
         # Exact dictionary mapping of HAL pin strings to internal state attributes
         self._pin_map = {
-            f"rpm-out{suffix}": "actual_rpm",
-            f"TargetRpm{suffix}": "target_rpm",
-            f"spindle-forward{suffix}": "spindle_forward",
-            f"spindle-reverse{suffix}": "spindle_reverse",
-            f"spindle-at-speed{suffix}": "spindle_at_speed",
-            f"is-connected{suffix}": "is_connected",
-            f"error-count{suffix}": "error_count",
-            f"last-error{suffix}": "last_error",
-            f"override{suffix}": "override",
+            f"webgui.rpm-out{suffix}": "actual_rpm",
+            f"webgui.TargetRpm{suffix}": "target_rpm",
+            f"webgui.spindle-forward{suffix}": "spindle_forward",
+            f"webgui.spindle-reverse{suffix}": "spindle_reverse",
+            f"webgui.spindle-at-speed{suffix}": "spindle_at_speed",
+            f"webgui.is-connected{suffix}": "is_connected",
+            f"webgui.error-count{suffix}": "error_count",
+            f"webgui.last-error{suffix}": "last_error",
+            f"webgui.override{suffix}": "override",
         }
 
     def read_pin(self, pin_name: str) -> Optional[Any]:

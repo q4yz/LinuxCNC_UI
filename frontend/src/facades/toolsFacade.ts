@@ -85,7 +85,7 @@ export class ToolsService {
     try {
       const response = await ModulesToolsService.setToolTarget(request.toolId, cmd,);
       return CommandResult.success({
-        commandId: response && (response as any).tool_id ? (response as any).tool_id : request.toolId,
+        commandId: response && (response as any).id ? (response as any).id : request.toolId,
         message: response && (response as any).command ? (response as any).command : "ok",
       });
     } catch (err: unknown) {
@@ -142,7 +142,7 @@ export const toolsFacade = {
         speed,
         heater:
           heaterTarget !== undefined
-            ? { tool_id: toolId, target: heaterTarget }
+            ? { id: toolId, target: heaterTarget }
             : null,
         heaterAction,
       }),

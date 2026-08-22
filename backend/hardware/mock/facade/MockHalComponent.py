@@ -1,12 +1,14 @@
 import logging
 
+from hardware.mock.hal_mock import HalMock
+
 logger = logging.getLogger(__name__)
 
 
 class MockComponent:
     """Mocks a LinuxCNC HAL component so Windows development doesn't crash."""
 
-    def __init__(self, name: str, internal_hal):
+    def __init__(self, name: str, internal_hal: HalMock):
         self.internal_hal = internal_hal
         self.name = name
         self.is_ready = False
@@ -33,9 +35,9 @@ class MockComponent:
         """Allows writing to the pin like: comp['override'] = 5.0"""
         if pin_name not in self._pins:
             logger.warning("MOCK HAL: Writing to unassigned pin '%s'", pin_name)
-        self._pins[pin_name] = value
+        self.internal_hal.set_pin(f"{self.name}.{pin_name}", value)
         logger.info("MOCK HAL Write: %s.%s = %s", self.name, pin_name, value)
 
     def __getitem__(self, pin_name: str):
         """Allows reading from the pin like: val = comp['override']"""
-        return self._pins.get(pin_name, 0.0)
+        return self.internal_hal.get_pin(f"{self.name}.{pin_name}")

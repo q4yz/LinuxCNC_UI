@@ -14,11 +14,11 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from hardware import get_machine_stat, get_machine_error
 from hardware.connection import read_error_history
 from mapper.servo_thread_state_mapper import ServoThreadStateMapper
-from models.servo_thread import WSEnvelope, ServoThreadStateResponse
+from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
 from services.console_logger import LogLevel, get_console_logger
 
 # Import your externalized models and mapper
-from dtos.servo_thread_state import ServoThreadStateDTO
+from dtos.ServoThreadState import ServoThreadStateDTO
 
 
 logger = logging.getLogger("backend.routers.servo_thread")
@@ -140,7 +140,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
     mtype = msg.get("type")
 
     if mtype == "jog_keepalive":
-        from modules.axis.jog_service import jog_keepalive
+        from modules.axis.services.jog_service import jog_keepalive
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
@@ -149,7 +149,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
         return
 
     if mtype == "jog_axis":
-        from modules.axis.jog_service import jog_axis
+        from modules.axis.services.jog_service import jog_axis
         velocities = msg.get("velocities") or {}
         if not isinstance(velocities, dict):
             logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
@@ -165,7 +165,7 @@ async def _dispatch_inbound(websocket: WebSocket, msg: dict) -> None:
         return
 
     if mtype == "jog_stop":
-        from modules.axis.jog_service import jog_stop
+        from modules.axis.services.jog_service import jog_stop
         axes = msg.get("axes") or []
         if not isinstance(axes, list):
             logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))

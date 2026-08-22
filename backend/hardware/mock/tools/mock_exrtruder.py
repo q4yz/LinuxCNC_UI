@@ -16,7 +16,7 @@ class MockExtruder(MockComponent):
 
     def read_pin(self, pin_name: str) -> Optional[Any]:
         # 1. Check if it's an extruder-specific pin
-        if pin_name == f"{self.id}.position":
+        if pin_name == f"webgui.{self.id}.position":
             return self.position
 
         # 2. If not, ask the hidden heater (e.g. actual-temperature-extruder)

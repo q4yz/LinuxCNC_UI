@@ -25,7 +25,7 @@ class MockToolFactory:
             return MockExtruder(tool_id=tool_id)
 
         elif tool_type in ("heater", "heated_bed"):
-            return MockHeater(tool_id=tool_id)
+            return MockHeater(id=tool_id)
 
 
         elif tool_type in ("spindle", "spindle_digital"):

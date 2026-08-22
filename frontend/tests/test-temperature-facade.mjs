@@ -45,7 +45,7 @@ test("facade delegates fetchReadings to BaseThreadService.getBaseThreadSnapshot"
 
 test("facade delegates setTarget to ModulesToolsService.setToolTarget", () => {
   assert.match(source, /ModulesToolsService\.setToolTarget/);
-  assert.match(source, /toHeaterSetTargetRequest/);
+  assert.match(source, /toHeaterCommand/);
 });
 
 test("facade returns CommandResult, never throws", () => {

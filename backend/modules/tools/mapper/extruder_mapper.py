@@ -1,10 +1,11 @@
 from typing import Dict, Any, TYPE_CHECKING
 
-from dtos.HalPin import ReadWriteDynamicHalPin, HalDataType
+from dtos.HalPin import  HalDataType
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from modules.tools.dtos.extruder_dto import ExtruderPins, ExtruderStateDTO, ExtruderSettingsDTO
-from modules.tools.dtos.heater_dto import HeaterSettingsDTO
 
-from modules.tools.mapper.heater_mapper import HeaterMapper  # Adjust import path
+
+from modules.tools.mapper.heater_mapper import HeaterMapper
 from modules.tools.mapper.as_optional_mappers import OptionalMappers
 from modules.tools.models.extruder_models import ExtruderStateResponse
 

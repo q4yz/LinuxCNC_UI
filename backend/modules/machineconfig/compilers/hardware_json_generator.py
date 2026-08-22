@@ -330,24 +330,30 @@ def _standalone_fan_payload(fan_section: str, fan) -> dict[str, Any]:
 
 
 def _stepper_payload(stepper_section: str, stepper) -> dict[str, Any]:
-    """Build a stepper entry's payload dict.
+    """Build a joint entry's payload dict.
 
-    Derived fields (``scale``, ``joint_number``) are not stored —
-    they're computed at consumer time. The driver id is
+    Motion-envelope fields (``position_min``, ``position_max``,
+    ``position_endstop``) live on the owning ``Axis`` — not here.
+    The joint record carries only the per-motor identity and
+    scaling: the driver id, the three pin fields, ``microsteps``,
+    ``rotation_distance``, and the optional ``homing_speed``.
+
+    ``joint_number`` is filled in by ``build_hardware_json`` after
+    the joint_records list is assembled so the numbering can walk
+    the canonical axis order; it starts as ``None`` here and is
+    re-stamped before the payload is returned. The driver id is
     ``driver_<stepper_id>`` so a one-to-one relationship holds by
     default.
     """
     return {
         "id": _stepper_id(stepper_section),
+        "joint_number": None,
         "driver": _driver_id(None, stepper_section),
         "step_pin": stepper.step_pin,
         "dir_pin": stepper.dir_pin,
         "enable_pin": stepper.enable_pin,
         "microsteps": stepper.microsteps,
         "rotation_distance": _fmt_float(stepper.rotation_distance),
-        "position_min": _fmt_float(getattr(stepper, "position_min", None)),
-        "position_max": _fmt_float(stepper.position_max),
-        "position_endstop": _fmt_float(stepper.position_endstop),
         "homing_speed": _fmt_float(getattr(stepper, "homing_speed", None)),
     }
 
@@ -392,30 +398,33 @@ def _driver_payload(driver_id: str, stepper) -> dict[str, Any]:
 
 def _axis_payload(
     letter: str,
-    stepper_ids: list[str],
+    joint_ids: list[str],
     endstop_id: str | None,
-    pos: float | None,
+    position_max: float | None,
+    position_endstop: float | None,
 ) -> dict[str, Any]:
     """Build an axis entry.
 
-    The axis id is the lower-case letter of the canonical stepper it
+    The axis id is the lower-case letter of the canonical joint it
     owns. Multi-motor axes share the id so the axes list stays
-    unique; the underlying steppers are still listed individually.
+    unique; the underlying joints are still listed individually.
 
     ``endstop_id`` is a single string id referencing a top-level
     ``Endstop`` record (or ``None`` when the axis has no endstop);
-    one endstop record can be referenced by multiple axes. ``pos``
-    carries ``stepper.position_endstop`` (or the
-    ``[endstop_switch] position`` override) so the runtime can
+    one endstop record can be referenced by multiple axes.
+    ``position_endstop`` carries ``stepper.position_endstop`` (or
+    the ``[endstop_switch] position`` override) so the runtime can
     validate the homing sequence without re-reading the source
-    profile. Fields with ``None`` values are dropped during
-    serialisation.
+    profile. ``position_max`` carries the axis travel limit (from
+    the primary stepper's ``position_max``). Fields with ``None``
+    values are dropped during serialisation.
     """
     return {
         "id": _axis_id(None, letter),
-        "steppers": stepper_ids,
+        "joints": joint_ids,
         "endstop": endstop_id,
-        "pos": pos,
+        "position_max": position_max,
+        "position_endstop": position_endstop,
     }
 
 
@@ -446,38 +455,63 @@ def build_hardware_json(
     # below matches the consumer's expectations.
     letters_in_order = [axis.letter.lower() for axis in axes_letters]
 
-    # Stepper records — one per Klipper stepper section.
+    # Joint records — one per Klipper stepper section. Emitted under
+    # the ``joints`` top-level key on the wire (the legacy name was
+    # ``steppers``; the field was renamed to match LinuxCNC's joint
+    # vocabulary since the payload already mirrors the per-motor
+    # ``[JOINT_N]`` granularity).
     # ``graph.steppers`` is keyed by axis letter (``x``, ``y``, ``z``);
     # the section name lives on the Stepper object as
     # ``section_name``. The id is derived from the section name so
-    # naming stays consistent across the axes / steppers / drivers lists.
-    stepper_records: list[dict[str, Any]] = []
-    stepper_id_by_letter: dict[str, str] = {}
+    # naming stays consistent across the axes / joints / drivers lists.
+    joint_records: list[dict[str, Any]] = []
+    joint_id_by_letter: dict[str, str] = {}
     for letter, stepper in graph.steppers.items():
         payload = _stepper_payload(stepper.section_name, stepper)
-        stepper_records.append(payload)
-        stepper_id_by_letter[letter.lower()] = payload["id"]
+        joint_records.append(payload)
+        joint_id_by_letter[letter.lower()] = payload["id"]
 
-    # Driver records — one per stepper. When the parser learns
+    # Driver records — one per joint. When the parser learns
     # about other driver types we extend the lookup.
     driver_records: list[dict[str, Any]] = [
         _driver_payload(payload["driver"], stepper)
-        for payload, stepper in zip(stepper_records, graph.steppers.values())
+        for payload, stepper in zip(joint_records, graph.steppers.values())
     ]
 
     # Axis records — one per unique axis letter. Multi-motor axes
-    # share the letter; the underlying steppers are still listed
-    # individually. Each axis carries at most one endstop
-    # reference and one ``pos`` value. The per-axis ``endstop_id``
-    # and ``pos`` are populated by the two passes below; a
-    # separate ``[endstop_switch NAME]`` section takes precedence
-    # over the inline form (a Klipper config can override the
-    # inferred ``<AXIS>_MIN`` name).
+    # share the letter; the underlying joints are still listed
+    # individually. Each axis carries one ``endstop`` reference,
+    # one ``position_max``, and one ``position_endstop``. The
+    # ``position_max`` is lifted from the primary stepper of the
+    # letter; the endstop reference and ``position_endstop`` are
+    # populated by the two passes below; a separate
+    # ``[endstop_switch NAME]`` section takes precedence over the
+    # inline form (a Klipper config can override the inferred
+    # ``<AXIS>_MIN`` name).
     axis_state: dict[str, dict[str, Any]] = {
-        letter: {"endstop_id": None, "pos": None}
+        letter: {
+            "endstop_id": None,
+            "position_max": None,
+            "position_endstop": None,
+        }
         for letter in letters_in_order
     }
     endstop_records: list[dict[str, Any]] = []
+
+    # 0. ``position_max`` / ``position_endstop`` lift — take both
+    #    axis-coordinate values from the primary (first) stepper of
+    #    each axis letter. For multi-motor axes all joints share the
+    #    same axis-level motion envelope; the first is canonical.
+    #    ``None`` on axes whose primary stepper omits the fields.
+    #    ``position_endstop`` may be overridden later by an explicit
+    #    ``[endstop_switch] position:`` override (path 2 below).
+    for letter in letters_in_order:
+        stepper = graph.steppers.get(letter)
+        if stepper is not None:
+            axis_state[letter]["position_max"] = stepper.position_max
+            axis_state[letter]["position_endstop"] = (
+                stepper.position_endstop
+            )
 
     # 1. Inline endstops declared on ``[stepper_X]`` via
     #    ``endstop_pin: ...`` + optional ``position_endstop: ...``.
@@ -485,7 +519,7 @@ def build_hardware_json(
     #    LinuxCNC convention) when no explicit ``[endstop_switch]``
     #    section overrides it. Each switch becomes one top-level
     #    record; the owning axis gains an ``endstop`` reference and
-    #    a ``pos``.
+    #    a ``position_endstop``.
     inline_endstop_names: set[str] = set()
     for letter, stepper in graph.steppers.items():
         if stepper.endstop_pin is None:
@@ -501,7 +535,9 @@ def build_hardware_json(
             axis_state[letter.lower()]["endstop_id"] = _endstop_id(
                 endstop_section
             )
-            axis_state[letter.lower()]["pos"] = stepper.position_endstop
+            axis_state[letter.lower()]["position_endstop"] = (
+                stepper.position_endstop
+            )
 
     # 2. Separate ``[endstop_switch NAME]`` sections. These take
     #    precedence over the inline form (a Klipper config can
@@ -523,17 +559,18 @@ def build_hardware_json(
             # inherited), and finally to whatever path 1 already
             # recorded (None for axes with no inline endstop).
             if endstop.position is not None:
-                axis_state[axis_letter]["pos"] = endstop.position
-            elif axis_state[axis_letter]["pos"] is None:
-                axis_state[axis_letter]["pos"] = (
+                axis_state[axis_letter]["position_endstop"] = endstop.position
+            elif axis_state[axis_letter]["position_endstop"] is None:
+                axis_state[axis_letter]["position_endstop"] = (
                     endstop.stepper.position_endstop
                 )
 
-    # Now assemble the axis records with their endstop references.
+    # Now assemble the axis records with their endstop references
+    # and lifted motion-envelope fields.
     axes_records: list[dict[str, Any]] = []
     for letter in letters_in_order:
-        stepper_ids = [
-            stepper_id_by_letter[name]
+        joint_ids = [
+            joint_id_by_letter[name]
             for name, stepper in graph.steppers.items()
             if stepper.axis.lower() == letter
         ]
@@ -541,11 +578,33 @@ def build_hardware_json(
         axes_records.append(
             _axis_payload(
                 letter,
-                stepper_ids,
+                joint_ids,
                 state["endstop_id"],
-                state["pos"],
+                state["position_max"],
+                state["position_endstop"],
             )
         )
+
+    # Stamp ``joint_number`` on every joint record in canonical
+    # order: all X joints first, then Y, then Z, then A (extruders),
+    # in declaration order within each letter. The number mirrors
+    # the LinuxCNC-side ``Joint.joint_number`` so the runtime can map
+    # a wire ``joint_number`` to ``remora.joint.{N}.scale`` etc.
+    # deterministically regardless of the order the user wrote the
+    # Klipper stepper sections in.
+    joint_number = 0
+    for letter in letters_in_order:
+        for letter_key, stepper in graph.steppers.items():
+            if stepper.axis.lower() != letter:
+                continue
+            joint_id = joint_id_by_letter.get(letter_key)
+            if joint_id is None:
+                continue
+            for record in joint_records:
+                if record["id"] == joint_id:
+                    record["joint_number"] = joint_number
+                    joint_number += 1
+                    break
 
     # Tool records — one per Klipper heater-shaped section plus one
     # per spindle variant. The temperature_sensors[] and fans[]
@@ -569,6 +628,63 @@ def build_hardware_json(
         tool_records.append(
             _tool_payload_from_spindle_digital(spindle_id, spindle)
         )
+
+    # Synthesise one joint entry per extruder tool. The extruder
+    # lives under ``heaters`` on the Klipper side rather than as a
+    # ``[stepper_*]`` section, so it never appears in
+    # ``graph.steppers``; we add a synthetic joint record here so
+    # the wire ``joints[]`` is a complete enumeration (matches the
+    # LinuxCNC-side ``Joint`` list produced by ``AxisBuilder``).
+    # Each extruder joint carries the extruder's pins + scaling
+    # fields, exactly like a regular stepper, but has no driver
+    # (drivers[] is motor-driver only) and an id matching its
+    # ``tools[]`` entry.
+    from ..models import Extruder
+    extruder_joint_records: list[dict[str, Any]] = []
+    for tool in tool_records:
+        if tool.get("type") != "extruder":
+            continue
+        # Find the matching Extruder object on the graph by tool id.
+        extruder_obj = None
+        for section, h in graph.heaters.items():
+            if not isinstance(h, Extruder):
+                continue
+            if _heater_id(section) == tool["id"]:
+                extruder_obj = h
+                break
+        if extruder_obj is None:
+            # Shouldn't happen — an ``extruder``-typed tool always
+            # has a matching ``Extruder`` instance on the graph —
+            # but skipping is safer than crashing the compile.
+            continue
+        extruder_joint_records.append(
+            {
+                "id": tool["id"],
+                "joint_number": joint_number,
+                "driver": None,
+                "step_pin": getattr(extruder_obj, "step_pin", None),
+                "dir_pin": getattr(extruder_obj, "dir_pin", None),
+                "enable_pin": getattr(extruder_obj, "enable_pin", None),
+                "microsteps": getattr(extruder_obj, "microsteps", None),
+                "rotation_distance": _fmt_float(
+                    getattr(extruder_obj, "rotation_distance", None)
+                ),
+            }
+        )
+        joint_number += 1
+    joint_records.extend(extruder_joint_records)
+
+    # Now that all joint records (steppers + synthesised extruders)
+    # exist, fix up the per-axis ``joints[]`` lists. The earlier
+    # loop only knew about ``graph.steppers``; we need to append
+    # the extruder joint ids to the matching axis (letter ``a``)
+    # so the wire reflects the same one-axis-many-joints graph as
+    # the LinuxCNC-side ``AxisBuilder`` output.
+    if extruder_joint_records:
+        extruder_joint_ids = [r["id"] for r in extruder_joint_records]
+        for axis_record in axes_records:
+            if axis_record["id"] == "a":
+                axis_record["joints"].extend(extruder_joint_ids)
 
     # Standalone fan sections (``[fan]``, ``[fan_generic foo]``) become
     # their own ``fans`` records keyed by the canonical id. The id is
@@ -614,7 +730,7 @@ def build_hardware_json(
         "kinematics": graph.printer.kinematics if graph.printer else "cartesian",
         "hal_type": hal_type,
         "axes": axes_records,
-        "steppers": stepper_records,
+        "joints": joint_records,
         "drivers": driver_records,
         "endstops": endstop_records,
         "tools": tool_records,
@@ -627,10 +743,10 @@ def build_hardware_json(
     serialised = _model_to_dict(model)
 
     logger.info(
-        "hardware.json v2: %d axes, %d steppers, %d drivers, %d endstops, "
+        "hardware.json v2: %d axes, %d joints, %d drivers, %d endstops, "
         "%d tools, %d temperature_sensors, %d fans",
         len(axes_records),
-        len(stepper_records),
+        len(joint_records),
         len(driver_records),
         len(endstop_records),
         len(tool_records),
