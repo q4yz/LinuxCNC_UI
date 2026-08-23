@@ -65,7 +65,7 @@ def test_temperature_module_boots_and_registers_router(
     )
     # Point the canonical loader at the fixture via the
     # ``HardwareConfigService.__init__`` seam.
-    from services.hardware_config_service import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     hardware_json = active_dir / "hardware.json"
     original_init = HardwareConfigService.__init__

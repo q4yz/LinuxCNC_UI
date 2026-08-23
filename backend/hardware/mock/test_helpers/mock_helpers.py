@@ -3,9 +3,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from hardware.mock.linuxcnc_mock import hal, mock_system
-from hardware.mock.tools.mock_heater import MockHeater
-from hardware.mock.tools.mock_spindle_digital import MockSpindleDigital
+from hardware.mock.LinuxCNCMock import hal, mock_system
+from hardware.mock.tools.MockHeater import MockHeater
+from hardware.mock.tools.MockSpindleDigital import MockSpindleDigital
 
 
 

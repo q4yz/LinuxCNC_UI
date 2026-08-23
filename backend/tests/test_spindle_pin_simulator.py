@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from hardware.mock.linuxcnc_mock import mock_system, hal
+from hardware.mock.LinuxCNCMock import mock_system, hal
 from hardware.mock.test_helpers.mock_helpers import reset_simulator_state
-from hardware.mock.tools.mock_spindle_digital import MockSpindleDigital
+from hardware.mock.tools.MockSpindleDigital import MockSpindleDigital
 
 
 @pytest.fixture(autouse=True)

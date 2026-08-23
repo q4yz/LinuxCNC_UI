@@ -18,7 +18,7 @@ must be imported directly from there — they are intentionally not
 re-exported from this package surface.
 """
 
-from .file_service import FileMetadata, FileService
+from .FileService import FileMetadata, FileService
 from .domain_file_services import (
     ActiveFileService,
     ConfigFileService,

@@ -24,7 +24,7 @@ from core.protocols import (
     SidebarEntry,
 )
 
-from .router import router as _router
+from .ToolRouter import router as _router
 from .settings import ToolsSettings
 
 logger = logging.getLogger("backend.modules.tools")

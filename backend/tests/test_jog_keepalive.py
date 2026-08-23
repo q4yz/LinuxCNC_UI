@@ -59,7 +59,7 @@ def _ws_dispatch(msg: dict) -> None:
     so we drive it to completion via ``asyncio.run`` — the same
     pattern used in ``test_jog_watchdog.py``.
     """
-    from routers.servo_thread import _dispatch_inbound
+    from routers.ServoThreadRouter import _dispatch_inbound
     _run(_dispatch_inbound(None, msg))
 
 

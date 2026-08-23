@@ -10,7 +10,7 @@ re-hydrate the operator console after a reload / reconnect.
 from __future__ import annotations
 
 from hardware.connection import read_error_history
-from hardware.mock.linuxcnc_mock import mock_system
+from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import push_mock_error, reset_error_history
 
 
@@ -51,7 +51,7 @@ def test_get_current_state_includes_errors():
         text = "joint 2 on limit switch error",
         time = "2026-08-11T19:38:55.948363"
     )
-    from routers.servo_thread import get_current_state
+    from routers.ServoThreadRouter import get_current_state
 
     snap = get_current_state()
     assert "errors" in snap, "get_current_state must surface the bounded history"
@@ -72,7 +72,7 @@ def test_get_current_state_returns_a_copy_not_a_live_reference():
         time="2026-08-11T19:38:43.542555"
     )
 
-    from routers.servo_thread import get_current_state
+    from routers.ServoThreadRouter import get_current_state
 
     snap = get_current_state()
     snap["errors"].append(
@@ -88,7 +88,7 @@ def test_telemetry_loop_pushes_into_history_before_broadcast():
     bounded history is current at the next ``full_state`` snapshot.
     """
     reset_error_history()
-    from routers import servo_thread as ws_mod
+    from routers import ServoThreadRouter as ws_mod
     import asyncio
 
     captured = []

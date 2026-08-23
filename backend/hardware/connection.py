@@ -39,7 +39,7 @@ try:
 except ImportError:
     # CHANGE IS HERE: We don't alias the whole file anymore.
     # We import the specific facade exposed by the orchestrator!
-    from hardware.mock.linuxcnc_mock import linuxcnc  # type: ignore
+    from hardware.mock.LinuxCNCMock import linuxcnc  # type: ignore
 
     logger.warning("Could not import real linuxcnc. Falling back to mock facade.")
     USE_MOCK = True
@@ -50,7 +50,7 @@ try:
     HAS_HAL = True
 except ImportError:
     # CHANGE IS HERE: Import the hal facade from the orchestrator
-    from hardware.mock.linuxcnc_mock import hal  # type: ignore[no-redef]
+    from hardware.mock.LinuxCNCMock import hal  # type: ignore[no-redef]
 
     #sys.modules["hal"] = hal
     HAS_HAL = False
@@ -266,8 +266,8 @@ connection = Connection()
 # Re-exports for backward compatibility
 # ---------------------------------------------------------------------------
 
-from .device_config_mapper import DeviceConfigMapper  # noqa: E402,F401
-from .hal_subscription_manager import (  # noqa: E402,F401
+from .DeviceConfigMapper import DeviceConfigMapper  # noqa: E402,F401
+from .HalSubscriptionManager import (  # noqa: E402,F401
     HalSubscriptionManager,
     hal_manager,
 )

@@ -1,6 +1,6 @@
 import logging
 
-from hardware.mock.hal_mock import HalMock
+from hardware.mock.HalMock import HalMock
 
 logger = logging.getLogger(__name__)
 

@@ -44,7 +44,7 @@ from hardware.connection import (
 
     execute_gcode,
 )
-from services.machine_service import MachineService
+from services.MachineService import MachineService
 
 
 # ────────────────────────────────────────────────────────────────────── #

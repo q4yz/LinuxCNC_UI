@@ -1,0 +1,112 @@
+from typing import Dict, Any
+
+from core.field_masking import ResponseTier, include_base, include_static
+from dtos.HalPin import HalDataType
+from dtos.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
+from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.StaticHalPin import StaticHalPin
+from modules.tools.dtos import SpindleDigitalPins, SpindleDigitalStateDTO
+from modules.tools.dtos.SpindleDigitalDto import DirectionStateType, SpindleDigitalSettingsDTO
+from modules.tools.mapper.OptionalMappers import OptionalMappers
+from modules.tools.models.SpindleDigitalModels import SpindleDigitalCommand, SpindleDigitalStateResponse
+
+
+class SpindleDigitalMapper:
+
+    @classmethod
+    def from_dict_to_SpindleDigitalPins(cls, data: Dict[str, Any]) -> SpindleDigitalPins:
+        tool_id = str(data["id"])
+        suffix = tool_id.replace("spindle_digital", "")
+
+        return SpindleDigitalPins(
+            id=tool_id,
+            spindle_at_speed=ReadOnlyDynamicHalPin[bool](f"spindle-at-speed{suffix}", HalDataType.BIT),
+            target_rpm=ReadOnlyDynamicHalPin(f"TargetRpm{suffix}",HalDataType.FLOAT),
+            actual_rpm=ReadOnlyDynamicHalPin(f"rpm-out{suffix}", HalDataType.FLOAT),
+            is_connected=ReadOnlyDynamicHalPin(f"is-connected{suffix}", HalDataType.BIT),
+            error_count=ReadOnlyDynamicHalPin(f"error-count{suffix}", HalDataType.S32),
+            last_error=ReadOnlyDynamicHalPin(f"last-error{suffix}", HalDataType.S32),
+            min_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_rpm"), int) or 0),
+            max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
+            spindle_forward=ReadOnlyDynamicHalPin(f"spindle-forward{suffix}", HalDataType.BIT),
+            spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT),
+            absolute_master_override_enable=ReadWriteDynamicHalPin(f"absolute-master-override-enable{suffix}", HalDataType.BIT),
+            absolute_master_override=ReadWriteDynamicHalPin(f"absolute-master-override{suffix}", HalDataType.FLOAT),
+            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.FLOAT),
+        )
+
+    @classmethod
+    def to_state_dto(cls, halpin: SpindleDigitalPins) -> SpindleDigitalStateDTO:
+        return SpindleDigitalStateDTO(
+            id=halpin.id,
+            target_rpm=OptionalMappers.as_float(halpin.target_rpm.get_value()),
+            actual_rpm=OptionalMappers.as_float(halpin.actual_rpm.get_value()),
+            is_connected=OptionalMappers.as_bool(halpin.is_connected.get_value()),
+            error_count=OptionalMappers.as_int(halpin.error_count.get_value()),
+            last_error=OptionalMappers.as_str(halpin.last_error.get_value()),
+            spindle_at_speed=OptionalMappers.as_bool(halpin.spindle_at_speed.get_value()),
+            min_rpm=OptionalMappers.as_float(halpin.min_rpm.get_value()),
+            max_rpm=OptionalMappers.as_float(halpin.max_rpm.get_value()),
+            spindle_forward=OptionalMappers.as_bool(halpin.spindle_forward.get_value()),
+            spindle_reverse=OptionalMappers.as_bool(halpin.spindle_reverse.get_value()),
+            absolute_master_override_enable = OptionalMappers.as_bool(halpin.absolute_master_override_enable.get_value()),
+            absolute_master_override = OptionalMappers.as_float(halpin.absolute_master_override.get_value()),
+            override=OptionalMappers.as_bool(halpin.override.get_value()),
+        )
+
+    @classmethod
+    def from_command_to_settings_dto(cls, cmd: "SpindleDigitalCommand") -> SpindleDigitalSettingsDTO:
+        """Translates the HTTP command payload into the strict internal domain DTO."""
+
+        action_map = {
+            "forward": DirectionStateType.FORWARD,
+            "backward": DirectionStateType.BACKWARD,
+            "stop": DirectionStateType.IDLE,
+        }
+
+        mapped_state = action_map.get(cmd.action.lower(), DirectionStateType.IDLE)
+
+        return SpindleDigitalSettingsDTO(
+            id=cmd.tool_id,
+            speed=cmd.speed,
+            master_override=cmd.master_override,
+            override=cmd.override,
+            master_override_enable=cmd.master_override_enable,
+            state=mapped_state
+        )
+
+    @classmethod
+    def to_base_response(cls, dto: SpindleDigitalStateDTO) -> "SpindleDigitalStateResponse":
+        """Generates the 1Hz live payload."""
+        return cls.to_response(dto, ResponseTier.BASE)
+
+    @classmethod
+    def to_static_response(cls, dto: SpindleDigitalStateDTO) -> "SpindleDigitalStateResponse":
+        """Generates the static setup payload."""
+        return cls.to_response(dto, ResponseTier.STATIC)
+
+    @classmethod
+    def to_response(cls, dto: SpindleDigitalStateDTO, r : ResponseTier = ResponseTier.ALL) -> "SpindleDigitalStateResponse":
+        """Translates the internal State DTO to the HTTP Response Model."""
+
+        # Consolidate hardware booleans into the UI string
+        if dto.spindle_forward:
+            state_str = "forward"
+        elif dto.spindle_reverse:
+            state_str = "backward"
+        else:
+            state_str = "idle"
+
+        return SpindleDigitalStateResponse(
+            id=dto.id,
+            target_rpm= include_base(dto.target_rpm ,r),
+            actual_rpm=include_base(dto.actual_rpm,r),
+            is_connected=include_base(dto.is_connected,r),
+            error_count=include_base(dto.error_count,r),
+            last_error=include_base(dto.last_error,r),
+            spindle_at_speed=include_base(dto.spindle_at_speed,r),
+            min_rpm= include_static(dto.min_rpm, r),
+            max_rpm=include_static(dto.max_rpm, r),
+            state=include_base(state_str,r),
+            master_override_enable=include_base(dto.absolute_master_override_enable,r)
+        )

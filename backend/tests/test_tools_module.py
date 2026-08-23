@@ -45,7 +45,7 @@ def _point_config_at_tmp(monkeypatch, tmp_path):
     ``_PROJECT_ROOT``; the seam is now the
     :class:`HardwareConfigService` constructor's ``repo_root`` arg.
     """
-    from services.hardware_config_service import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     original_init = HardwareConfigService.__init__
 
@@ -95,7 +95,7 @@ def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
     endpoint was superseded by the base-thread snapshot.
     """
     from modules.tools.module import setup
-    from modules.tools.router import router as tools_router
+    from modules.tools.ToolRouter import router as tools_router
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
@@ -195,7 +195,7 @@ def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
                 ),
                 encoding="utf-8",
             )
-        from services.hardware_config_service import HardwareConfigService
+        from services.HardwareConfigService import HardwareConfigService
 
         original_init = HardwareConfigService.__init__
 

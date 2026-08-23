@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.module_registry import registry
 from dtos.HalPin import HalPin
 from hardware import HAS_HAL
-from hardware.mock.linuxcnc_mock import mock_system
+from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
-from modules.temperature.services.temperature_service import get_temperature_service
-from modules.tools.services.tool_service import get_tools_service
+from modules.temperature.services.TemperatureService import get_temperature_service
+from modules.tools.services.ToolsService import get_tools_service
+from services.ServoThreadService import ServoThreadService, get_servo_thread_service
 from services.console_logger import get_console_logger
 
 
@@ -22,7 +23,7 @@ from services.console_logger import get_console_logger
 # Issue #49 retired the legacy ``compiler`` router: the
 # machineconfig module's ``/compile`` and ``/deploy`` endpoints
 # supersede it and the frontend no longer references it.
-from routers import base_thread, servo_thread, files, system
+from routers import BaseThreadRouter, ServoThreadRouter, FilesRouter, SystemRouter
 
 # Configure global logging
 logging.basicConfig(level=logging.INFO)
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI):
         mock_system.start_simulation()
 
     # Start the continuous WebSocket publisher
-    task_telemetry = asyncio.create_task(servo_thread.telemetry_loop())
+    task_telemetry = asyncio.create_task(get_servo_thread_service().telemetry_loop())
 
     # Discover / load pluggable hardware modules. ``registry`` injects
     # the EventBus into each module and mounts any routers they expose
@@ -136,10 +137,10 @@ app.add_middleware(
 # ``machine_state`` exposes ``/state``, ``/mode``, ``/mdi``. Each
 # router calls into its own dedicated service singleton from the
 # matching ``modules/<name>/tool_service.py`` module.
-app.include_router(files.router)
-app.include_router(system.router)
-app.include_router(base_thread.router)
-app.include_router(servo_thread.router)
+app.include_router(FilesRouter.router)
+app.include_router(SystemRouter.router)
+app.include_router(BaseThreadRouter.router)
+app.include_router(ServoThreadRouter.router)
 
 @app.get("/")
 def read_root():

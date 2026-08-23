@@ -16,14 +16,14 @@ single-purpose module.
 
 from __future__ import annotations
 
-from modules.tools.dtos.analog_spindle_dto import SpindleAnalogPins, SpindleAnalogStateDTO
-from modules.tools.dtos.digital_spindle_dto import (
+from modules.tools.dtos.SpindleAnalogDto import SpindleAnalogPins, SpindleAnalogStateDTO
+from modules.tools.dtos.SpindleDigitalDto import (
     SpindleDigitalPins,
     SpindleDigitalSettingsDTO,
     SpindleDigitalStateDTO,
 )
-from modules.tools.dtos.extruder_dto import HeaterPins, ExtruderPins, ExtruderStateDTO
-from modules.tools.dtos.heater_dto import HeaterStateDTO
+from modules.tools.dtos.ExtruderDto import HeaterPins, ExtruderPins, ExtruderStateDTO
+from modules.tools.dtos.HeaterDto import HeaterStateDTO
 
 # Union of every concrete tool-pin record the factory can return.
 # Used as the return-type annotation of ``ToolHalPinFactory.create``.

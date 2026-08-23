@@ -32,7 +32,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from .file_service import FileMetadata, FileService
+from .FileService import FileMetadata, FileService
 
 logger = logging.getLogger("backend.services.domain_file_services")
 

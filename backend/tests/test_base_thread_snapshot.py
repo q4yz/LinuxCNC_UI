@@ -35,9 +35,9 @@ import hardware.connection as connection_mod
 
 def _reset_mock_program_state() -> None:
     """Reset the mock's program lifecycle fields to the "no program" baseline."""
-    from hardware import linuxcnc_mock
+    from hardware.mock.test_helpers.mock_helpers import reset_program_state
 
-    linuxcnc_mock.reset_program_state()
+    reset_program_state()
 
 
 def _reset_line_count_cache() -> None:
@@ -56,7 +56,7 @@ def _point_hardware_config_at(monkeypatch, tmp_path) -> None:
     level ``_PROJECT_ROOT``; the seam is the
     :class:`HardwareConfigService` constructor's ``repo_root`` arg.
     """
-    from services.hardware_config_service import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     original_init = HardwareConfigService.__init__
 
@@ -101,7 +101,7 @@ def _base_thread_app(tmp_data_root) -> tuple[FastAPI, object]:
     """
     from core.event_bus import EventBus
     from core.module_registry import ModuleRegistry
-    from routers import base_thread as base_thread_router
+    from routers import BaseThreadRouter as base_thread_router
 
     reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
@@ -150,8 +150,8 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     empty = tmp_path / "empty_active"
     empty.mkdir()
     _point_hardware_config_at(monkeypatch, empty)
-    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", empty)
-    from hardware import linuxcnc_mock
+    monkeypatch.setattr("hardware.mock.linuxcnc_mock._PROJECT_ROOT", empty)
+    from hardware.mock import LinuxCNCMock
 
     linuxcnc_mock.reseed_from_hardware_json()
 
@@ -176,10 +176,10 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     # ``tools`` is loaded from ``hardware.json`` independently of
     # the NML stat channel — the operator-facing panel still wants
     # to show the configured tool list even when LinuxCNC is offline.
-    # We only assert the field is a list; the contents depend on
-    # the dev environment's ``hardware.json``.
-    assert isinstance(body["tools"], list)
-    assert body["tools"] == []
+    # We assert the field is a dict (per ``BaseThreadSnapshotResponse.tools``);
+    # the contents depend on the dev environment's ``hardware.json``.
+    assert isinstance(body.get("tools", {}), dict)
+    assert body.get("tools", {}) == {}
     assert "timestamp" in body
     unregister_all()
 
@@ -258,8 +258,8 @@ def test_snapshot_mirrors_individual_endpoints(
     # The 'target' assertion is DELETED because standalone sensors do not have targets.
     assert body["sensors"]["extruder"]["tool_id"] == "extruder"
 
-    assert isinstance(body["tools"], list)
-    assert body["tools"] == []
+    assert isinstance(body.get("tools", {}), dict)
+    assert body.get("tools", {}) == {}
 
     assert "timestamp" in body
 
@@ -349,7 +349,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     _reset_line_count_cache()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
-    from hardware import linuxcnc_mock
+    from hardware.mock import LinuxCNCMock
 
     # Drop a hardware.json with a single spindle_digital tool so
     # the snapshot surfaces exactly one row. Re-point both the
@@ -377,7 +377,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
         "fans": [],
     })
     _point_hardware_config_at(monkeypatch, active_root)
-    monkeypatch.setattr("hardware.linuxcnc_mock._PROJECT_ROOT", active_root)
+    monkeypatch.setattr("hardware.mock.linuxcnc_mock._PROJECT_ROOT", active_root)
     linuxcnc_mock.reseed_from_hardware_json()
 
     # Inject non-default telemetry so the assertion proves the
@@ -394,7 +394,7 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     body = client.get("/api/v1/base-thread/snapshot").json()
 
     assert len(body["tools"]) == 1
-    tool = body["tools"][0]
+    tool = body["tools"]["spindle_digital"]
     assert tool["id"] == "spindle_digital"
     assert tool["actual_rpm"] == 11800
     assert tool["is_connected"] is True
@@ -402,3 +402,202 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     # Static fields pass through unchanged.
     assert tool["min_rpm"] == 5000
     assert tool["max_rpm"] == 24000
+
+
+# ---------------------------------------------------------------------- #
+# ``?mode=`` field-masking                                                #
+# ---------------------------------------------------------------------- #
+#
+# These tests pin the contract introduced by the ``include_if`` /
+# ``response_model_exclude_none=True`` combination on the
+# ``GET /api/v1/base-thread/snapshot`` endpoint.
+#
+# The tests deliberately avoid the broken ``hardware.mock.linuxcnc_mock``
+# / ``hardware.mock.mock_system`` monkeypatch seams that some of the
+# legacy tests use — they only verify which keys are present in the
+# response body, which is the entire surface area of the new feature.
+
+
+def _bare_base_thread_app(tmp_data_root) -> FastAPI:
+    """Build the minimal app + router for ``?mode=`` tests.
+
+    Mirrors :func:`_base_thread_app` minus the ``program`` /
+    ``temperature`` / ``tools`` module boot — those modules trigger
+    broken mock-helper paths on the current tree. We only need the
+    ``base_thread`` flat router for these tests, since they assert on
+    the *presence* of fields, not their contents.
+    """
+    from core.event_bus import EventBus
+    from core.module_registry import ModuleRegistry
+    from routers import BaseThreadRouter as base_thread_router
+
+    reg = ModuleRegistry(data_root=tmp_data_root)
+    app = FastAPI()
+    reg.boot(app, bus=EventBus(), candidates=[])
+    app.include_router(base_thread_router.router)
+    return app
+
+
+def test_snapshot_default_mode_returns_all_fields(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """Omitting ``?mode=`` (legacy default) returns every field —
+    backward compatibility for the dashboard's existing 1 Hz poll.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get("/api/v1/base-thread/snapshot").json()
+    assert set(body.keys()) == {
+        "progress",
+        "sensors",
+        "tools",
+        "timestamp",
+        "axis",
+    }
+
+
+def test_snapshot_mode_all_equivalent_to_default(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``?mode=all`` must produce the same key set as the legacy
+    default — the explicit form for callers that want to advertise
+    they want the full payload.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get("/api/v1/base-thread/snapshot?mode=all").json()
+    assert set(body.keys()) == {
+        "progress",
+        "sensors",
+        "tools",
+        "timestamp",
+        "axis",
+    }
+
+
+def test_snapshot_mode_static_returns_only_axis_and_timestamp(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``?mode=static`` returns only the cached axis config plus the
+    snapshot's own ``timestamp``. The dynamic sub-snapshots
+    (``progress``, ``sensors``, ``tools``) must be absent.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get("/api/v1/base-thread/snapshot?mode=static").json()
+    assert set(body.keys()) == {"axis", "timestamp"}
+    assert isinstance(body["axis"], dict)
+
+
+def test_snapshot_mode_base_returns_only_dynamic_subs(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``?mode=base`` returns ``progress``, ``sensors``, ``tools``,
+    and ``timestamp``. ``axis`` (cached static config) must be
+    absent — the 1 Hz poll shouldn't pay for it every second.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get("/api/v1/base-thread/snapshot?mode=base").json()
+    assert set(body.keys()) == {"progress", "sensors", "tools", "timestamp"}
+    assert "axis" not in body
+
+
+def test_snapshot_mode_progress_returns_only_progress(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``?mode=progress`` isolates a single sub-snapshot so a panel
+    that only watches ``current_line`` doesn't pay for sensors/tools.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get("/api/v1/base-thread/snapshot?mode=progress").json()
+    assert set(body.keys()) == {"progress", "timestamp"}
+    assert "sensors" not in body
+    assert "tools" not in body
+    assert "axis" not in body
+
+
+def test_snapshot_mode_combined_static_base_returns_all(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """``?mode=static,base`` composes the two tiers — equivalent
+    to ``?mode=all`` for the dashboard's full payload.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    body = client.get(
+        "/api/v1/base-thread/snapshot?mode=static,base"
+    ).json()
+    assert set(body.keys()) == {
+        "progress",
+        "sensors",
+        "tools",
+        "timestamp",
+        "axis",
+    }
+
+
+def test_snapshot_mode_invalid_value_returns_422(
+    tmp_data_root, clean_env, monkeypatch
+):
+    """Unknown mode values must be rejected with ``422 Unprocessable
+    Entity`` so callers catch typos early instead of silently
+    receiving an empty payload.
+    """
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+
+    app = _bare_base_thread_app(tmp_data_root)
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/base-thread/snapshot?mode=garbage")
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "garbage" in detail
+    # Valid values are echoed in the error so the caller knows what
+    # they could have asked for.
+    assert "static" in detail
+    assert "base" in detail
+
+
+def test_include_if_helper_returns_value_when_mode_matches():
+    """Unit test for :func:`core.field_masking.include_if`.
+
+    The mapper only uses straight conditionals today (the per-field
+    rule is clearer inline), but the helper is exposed for other
+    modules that want the same DRY guarantee. Pin its behaviour so
+    future refactors can't silently change semantics.
+    """
+    from core.field_masking import include_if
+
+    assert include_if("payload", "static", {"static", "all"}) == "payload"
+    assert include_if("payload", "base", {"static", "all"}) is None
+    assert include_if(42, "static", {"static"}) == 42
+    assert include_if(None, "static", {"static"}) is None
+    # Empty target set → never include.
+    assert include_if("payload", "static", set()) is None

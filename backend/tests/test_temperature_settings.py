@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from core.module_registry import ModuleRegistry
-from hardware.mock.linuxcnc_mock import mock_system
+from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_mock_from_json
 from modules.temperature.settings import TemperatureSettings
 from modules.temperature.module import setup
@@ -46,7 +46,7 @@ def _point_config_at(monkeypatch, active_dir):
     constructor's ``active_path`` arg (which expects the path to
     ``hardware.json`` itself, not its parent directory).
     """
-    from services.hardware_config_service import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     hardware_json = Path(active_dir) / "hardware.json"
     original_init = HardwareConfigService.__init__

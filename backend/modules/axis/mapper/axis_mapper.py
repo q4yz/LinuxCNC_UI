@@ -1,5 +1,6 @@
 from typing import Dict, Any
 
+from core.field_masking import ResponseTier, include_static
 from modules.axis.dtos.axis_dtos import AxisStateDTO
 from modules.axis.models.axis_model import AxisStateResponse
 
@@ -22,10 +23,10 @@ class AxisMapper:
         )
 
     @classmethod
-    def from_dto_to_response(cls, dto: AxisStateDTO) -> AxisStateResponse:
+    def to_response(cls, dto: AxisStateDTO, r : ResponseTier = ResponseTier.ALL) -> AxisStateResponse:
         return AxisStateResponse(
             id=dto.id,
-            joints=dto.joints,
-            min_limit=dto.min_limit,
-            max_limit=dto.max_limit
+            joints= include_static(dto.joints ,r) ,
+            min_limit=include_static(dto.min_limit,r),
+            max_limit=include_static(dto.max_limit,r)
         )
