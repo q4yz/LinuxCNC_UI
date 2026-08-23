@@ -384,6 +384,65 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   }
 
   /**
+   * Seed a default preference row for ``id`` if one does not already
+   * exist and persist the resulting map.
+   *
+   * Saving an IP camera URL through the Settings panel only writes
+   * ``ip_camera_url`` — without a matching ``preferences`` row the
+   * operator cannot rename / orient / hide the camera until they
+   * first toggle a checkbox. ``ensurePreference`` closes that gap
+   * so the URL is immediately editable and removable from the
+   * settings panel.
+   *
+   * The action is idempotent: a row that already exists is left
+   * untouched (custom name and orientation settings the operator
+   * may have set on a previous session survive a URL re-save).
+   * Empty / falsy ids are skipped so clearing the URL field does
+   * not seed an empty key.
+   *
+   * Persistence goes through ``writeKey("preferences", ...)`` —
+   * NOT through the ``writePreferences`` chain — because
+   * ``writeAll`` is a top-level replace that would wipe the
+   * ``ip_camera_url`` the caller just persisted. The backend's
+   * ``write_key`` does read+merge internally so sibling keys
+   * survive. The write is queued on the shared serialised chain
+   * so it never overlaps with an in-flight ``updatePreference``
+   * keystroke.
+   *
+   * @param {string} id
+   * @returns {Promise<boolean>} ``true`` when a row was seeded,
+   *   ``false`` when the call was a no-op (row already present or
+   *   ``id`` was empty).
+   */
+  async function ensurePreference(id) {
+    if (!id || typeof id !== "string") return false;
+    if (cameraPreferences.value[id]) return false;
+
+    cameraPreferences.value = {
+      ...cameraPreferences.value,
+      [id]: defaultPreference(),
+    };
+
+    const next = currentWrite
+      .catch(() => undefined)
+      .then(() =>
+        settings.writeKey(
+          "preferences",
+          serializePreferences(cameraPreferences.value),
+        ),
+      );
+    currentWrite = next.catch(() => undefined);
+    try {
+      await next;
+    } catch (writeError) {
+      // eslint-disable-next-line no-console
+      console.error("[camera] failed to persist seeded preference:", writeError);
+      throw writeError;
+    }
+    return true;
+  }
+
+  /**
    * Update one field of one camera's preferences. The in-memory ref
    * changes synchronously so the UI does not wait for the network;
    * the backend write fires immediately and is serialised through the
@@ -490,6 +549,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     hydratePreferences,
     cycleCamera,
     updatePreference,
+    ensurePreference,
     deleteIpCamera,
     awaitInFlightPreferenceWrite,
     refreshStreamMessage,

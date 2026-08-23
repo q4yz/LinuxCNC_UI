@@ -461,7 +461,7 @@ def test_set_tool_target_dispatches_set_temperature(
     assert body["target"] == 195.0
     assert body["sensor"] == "extruder"
     # The mock's sensor dict now reflects the new target.
-    from hardware.connection import read_temperature
+    from hardware.Connection import read_temperature
 
     reading = read_temperature("extruder")
     assert reading is not None and reading["target"] == 195.0

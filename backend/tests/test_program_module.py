@@ -395,7 +395,7 @@ class TestLoadThenStartRoundTrip:
         ``poll`` before the predicate read.
         """
         from hardware import linuxcnc_mock
-        from hardware.connection import _stat_ch
+        from hardware.Connection import _stat_ch
 
         _isolated_program_root(tmp_data_root, monkeypatch)
 

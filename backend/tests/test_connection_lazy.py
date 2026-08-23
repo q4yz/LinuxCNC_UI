@@ -13,7 +13,7 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from hardware.connection import (
+from hardware.Connection import (
     INITIAL_BACKOFF_S,
     _LazyChannel,
     _cmd_ch,

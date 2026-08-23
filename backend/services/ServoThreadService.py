@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import WebSocket
 
 from hardware import get_machine_stat, get_machine_error
-from hardware.connection import read_error_history
+from hardware.Connection import read_error_history
 from mapper.ServoThreadStateMapper import ServoThreadStateMapper
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
 from dtos.ServoThreadState import ServoThreadStateDTO

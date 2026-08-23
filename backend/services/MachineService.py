@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from hardware.connection import (
+from hardware.Connection import (
     DeviceConfigMapper,
     HalSubscriptionManager,
     execute_gcode,

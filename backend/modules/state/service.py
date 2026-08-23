@@ -19,7 +19,7 @@ from enum import Enum
 from typing import List, Optional
 
 from hardware import connection
-from hardware.connection import execute_sync_cmd, linuxcnc
+from hardware.Connection import execute_sync_cmd, linuxcnc
 
 logger = logging.getLogger("backend.modules.state.service")
 

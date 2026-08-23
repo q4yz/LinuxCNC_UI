@@ -25,7 +25,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import hardware.connection as connection_mod
+import hardware.Connection as connection_mod
 
 
 # ---------------------------------------------------------------------- #

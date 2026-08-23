@@ -365,6 +365,79 @@ test("CameraSettings.vue does not render an offline badge", () => {
   );
 });
 
+test("cameraStore exposes ensurePreference that seeds a default row for a new camera id", () => {
+  // Saving an IP camera URL through the Settings panel only writes
+  // ``ip_camera_url`` — without a matching preferences row the
+  // operator cannot rename / orient / hide the camera until they
+  // first toggle a checkbox. ``ensurePreference`` closes that gap
+  // so the URL is immediately editable from the settings panel.
+  const text = read(storePath);
+  assert.match(
+    text,
+    /function\s+ensurePreference\s*\(/,
+    "cameraStore must define an ensurePreference helper that seeds a default row",
+  );
+  assert.match(
+    text,
+    /ensurePreference[\s\S]*\}\s*;/m,
+    "ensurePreference must be returned from the setup function so the UI can call it",
+  );
+  // The helper must short-circuit on falsy ids so clearing the URL
+  // field does not seed an empty-key row.
+  assert.match(
+    text,
+    /!id\s*\|\|\s*typeof\s+id\s*!==\s*["']string["']/,
+    "ensurePreference must skip empty / non-string ids",
+  );
+  // The helper must skip ids that already have a preference row so
+  // re-saving the same URL preserves the operator's custom name and
+  // orientation settings from prior sessions.
+  assert.match(
+    text,
+    /cameraPreferences\.value\[id\]\s*\)\s*return\s+false/,
+    "ensurePreference must short-circuit when a row already exists for the id",
+  );
+  // The seed must persist via ``settings.writeKey("preferences", ...)``
+  // — NOT via a bare settings.writeAll or the writePreferences chain —
+  // because writeAll is a top-level replace that would wipe the
+  // ``ip_camera_url`` the caller just persisted. The backend's
+  // ``write_key`` does read+merge internally so sibling keys survive.
+  assert.match(
+    text,
+    /ensurePreference[\s\S]*?settings\.writeKey\s*\(\s*["']preferences["']/,
+    "ensurePreference must persist via settings.writeKey('preferences', ...) to preserve ip_camera_url",
+  );
+  // Scope the negative match to ``ensurePreference``'s body so the
+  // JSDoc that references the ``writePreferences`` chain by name
+  // does not trip the assertion. The actual dangerous pattern is a
+  // bare ``settings.writeAll`` call inside the helper — that wipes
+  // sibling keys (notably ``ip_camera_url``).
+  const bodyMatch = text.match(
+    /async\s+function\s+ensurePreference[\s\S]*?\n\s{0,3}\}/,
+  );
+  assert.ok(bodyMatch, "ensurePreference body must be findable");
+  assert.doesNotMatch(
+    bodyMatch[0],
+    /settings\.writeAll\s*\(/,
+    "ensurePreference must not call settings.writeAll (would wipe ip_camera_url)",
+  );
+});
+
+test("CameraSettings.vue calls ensurePreference from saveIpCameraUrl", () => {
+  // The UI action that saves an IP camera URL must also seed a
+  // default preference row so the new camera is immediately
+  // editable / removable from the settings panel.
+  const text = read(settingsPath);
+  // Pin that the helper is invoked inside the saveIpCameraUrl flow
+  // — a regression that drops the call would re-introduce the bug
+  // where the URL is saved but the preferences map has no row.
+  assert.match(
+    text,
+    /saveIpCameraUrl[\s\S]*?store\.ensurePreference\s*\(\s*normalizedUrl\s*\)/,
+    "saveIpCameraUrl must call store.ensurePreference(normalizedUrl) after writing the URL",
+  );
+});
+
 test("deleteIpCamera preserves the active ip_camera_url when removing a non-active row", () => {
   // Removing a stored-but-not-current IP-cam row must NOT wipe the
   // currently-configured URL. Hard-coding ``ip_camera_url: ""``

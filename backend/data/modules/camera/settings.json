@@ -1,5 +1,30 @@
 {
   "default_device_id": "",
-  "ip_camera_url": "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara",
-  "preferences": {}
+  "ip_camera_url": "http://test6.com",
+  "preferences": {
+    "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara": {
+      "custom_name": "",
+      "flip": false,
+      "hidden": false,
+      "mirror": true
+    },
+    "http://test.com": {
+      "custom_name": "",
+      "flip": false,
+      "hidden": false,
+      "mirror": true
+    },
+    "http://test5.com": {
+      "custom_name": "",
+      "flip": false,
+      "hidden": false,
+      "mirror": false
+    },
+    "http://test6.com": {
+      "custom_name": "",
+      "flip": false,
+      "hidden": false,
+      "mirror": false
+    }
+  }
 }

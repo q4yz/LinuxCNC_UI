@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, List
 
-from hardware.connection import  execute_sync_cmd, linuxcnc
+from hardware.Connection import  execute_sync_cmd, linuxcnc
 from modules.axis.dtos.axis_dtos import AxisStateDTO
 from modules.axis.mapper.axis_mapper import AxisMapper
 from services.HardwareConfigService import HardwareConfigService

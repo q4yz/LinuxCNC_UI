@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 from hardware import connection
-from hardware.connection import execute_sync_cmd, linuxcnc
+from hardware.Connection import execute_sync_cmd, linuxcnc
 from pydantic import BaseModel, Field
 
 from services.line_count_cache import lookup as lookup_line_count

@@ -1,4 +1,4 @@
-"""Pydantic models for the canonical ``hardware.json`` v2 shape.
+"""Pydantic models for the canonical ``hardware.json`` v2.1 shape.
 
 The ``hardware.json`` payload is the machine's hardware contract —
 emitted by the Klipper compiler, consumed by the runtime (the
@@ -8,11 +8,16 @@ the ``tools`` list, etc.).
 
 Versioning
 ----------
-The top-level model is pinned to ``version: "2.0"`` so the
-consumer can branch on the shape without guessing. The shape is
-flat with explicit ``id`` fields so every reference is a string
-handle — the cross-reference validator walks the graph in one
-pass and rejects any unresolved link.
+The top-level model is pinned to ``version: "2.1"`` so the
+consumer can branch on the shape without guessing. v2.1 replaced
+the per-axis ``id`` string handle with a ``joint_number`` integer
+(the LinuxCNC ``[JOINT_N]`` index of the axis's primary joint);
+the ``joints: list[str]`` cross-reference was replaced with
+``joint_numbers: list[int]``. See :class:`Axis` for the full
+rationale. The shape is otherwise flat with explicit ``id`` fields
+so every remaining reference is a string handle — the
+cross-reference validator walks the graph in one pass and rejects
+any unresolved link.
 
 Naming convention
 -----------------
@@ -31,6 +36,17 @@ top-level list — ``tool.sensor`` into ``temperature_sensors[].id``,
 ``tool.fan`` into ``fans[].id``. The parent list is the type
 discriminator; a spindle tool's ``pwm_pin`` does NOT resolve into
 ``fans`` even when a fan happens to share the pin.
+
+Axis identification in v2.1
+---------------------------
+The ``Axis`` record is identified by ``joint_number`` (the primary
+joint's ``[JOINT_N]`` index) and lists its constituent joints as
+``joint_numbers: list[int]``. The cross-reference validator walks
+this list against the top-level ``joints[]`` array by integer
+``joint_number``, not by string id. The string ``id`` field that
+v2.0 used for cross-referencing axes was removed because
+``joint_number`` is the runtime's canonical handle (mapped to a
+Remora stepgen channel ``remora.joint.{N}.*``).
 """
 
 from __future__ import annotations
@@ -79,12 +95,25 @@ class Axis(BaseModel):
     one axis share the same values. ``endstop`` and ``endstop_pin``
     remain mutually exclusive — the model rejects a payload that
     sets both.
+
+    Identification (v2.1)
+    ---------------------
+    An axis is identified by ``joint_number`` — the LinuxCNC
+    ``[JOINT_N]`` index of its primary (first-listed) joint. The
+    ``joint_numbers`` list carries every joint that drives the
+    axis; for a single-motor axis the two fields collapse to the
+    same single integer. The canonical-letter ``id`` field was
+    removed in v2.1 because the joint_number is the runtime's
+    canonical axis handle (the runtime maps it to a Remora stepgen
+    channel ``remora.joint.{N}.*``) and the letter is derivable
+    from the joint_number's ordinal position in the canonical
+    X / Y / Z / A / B / C axis order.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
-    joints: list[str]
+    joint_number: int = Field(ge=0)
+    joint_numbers: list[int] = Field(default_factory=list)
     endstop: str | None = None
     endstop_pin: str | None = None
     position_max: float | None = None
@@ -94,8 +123,26 @@ class Axis(BaseModel):
     def _validate_endstop_exclusive(self) -> "Axis":
         if self.endstop is not None and self.endstop_pin is not None:
             raise ValueError(
-                f"Axis '{self.id}' sets both 'endstop' and 'endstop_pin'; "
-                f"only one may be set."
+                f"Axis (joint_number={self.joint_number}) sets both "
+                f"'endstop' and 'endstop_pin'; only one may be set."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_primary_joint_in_list(self) -> "Axis":
+        """When ``joint_numbers`` is non-empty, the primary
+        ``joint_number`` must appear in the list — the axis must
+        own the joint it claims as its primary. An empty
+        ``joint_numbers`` list is allowed (axis with no joints at
+        all); the cross-ref validator walks the list and finds
+        nothing to resolve, which is the correct outcome.
+        """
+        if self.joint_numbers and self.joint_number not in self.joint_numbers:
+            raise ValueError(
+                f"Axis (joint_number={self.joint_number}) is not present "
+                f"in joint_numbers={self.joint_numbers}; the primary must "
+                f"be the first-listed joint (or any listed joint, for "
+                f"multi-motor axes)."
             )
         return self
 
@@ -368,7 +415,7 @@ class HardwareJson(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["2.0"] = "2.0"
+    version: Literal["2.1"] = "2.1"
     machine: str
     source: str
     kinematics: str
@@ -402,9 +449,11 @@ class HardwareJson(BaseModel):
         """
         errors: list[str] = []
 
-        # IDs are unique within each top-level list.
+        # IDs are unique within each top-level list. ``axes`` is no
+        # longer in this loop — v2.1 identifies axes by their
+        # ``joint_number`` (see :class:`Axis`). Uniqueness of the
+        # primary ``joint_number`` across axes is enforced below.
         for list_attr in (
-            "axes",
             "joints",
             "drivers",
             "endstops",
@@ -415,32 +464,36 @@ class HardwareJson(BaseModel):
             self._check_unique_ids(list_attr, errors)
 
         # Reference lookup tables — ``{id: index}`` for fast checks.
-        joints_idx = {j.id: i for i, j in enumerate(self.joints)}
+        # ``joint_numbers_idx`` is the integer-keyed counterpart used
+        # by the v2.1 axis cross-reference check below.
         drivers_idx = {d.id: i for i, d in enumerate(self.drivers)}
         sensors_idx = {
             s.id: i for i, s in enumerate(self.temperature_sensors)
         }
         fans_idx = {f.id: i for i, f in enumerate(self.fans)}
         endstops_idx = {e.id: i for i, e in enumerate(self.endstops)}
+        joint_numbers_idx = {
+            j.joint_number: j.id for j in self.joints
+        }
 
-        # Every axis.joints[i] must exist in joints[]; every
-        # ``axis.endstop`` must resolve into the top-level
-        # ``endstops[]`` list. ``axis.endstop_pin`` is a free-form
-        # pin string and does NOT require a matching record (it
-        # is the inline Klipper form). Mutual exclusion between
-        # ``endstop`` and ``endstop_pin`` lives on
+        # Every axis.joint_numbers[i] must exist in joints[] as a
+        # joint_number; every ``axis.endstop`` must resolve into the
+        # top-level ``endstops[]`` list. ``axis.endstop_pin`` is a
+        # free-form pin string and does NOT require a matching
+        # record (it is the inline Klipper form). Mutual exclusion
+        # between ``endstop`` and ``endstop_pin`` lives on
         # :meth:`Axis._validate_endstop_exclusive`.
         for axis in self.axes:
-            for joint_id in axis.joints:
-                if joint_id not in joints_idx:
+            for jn in axis.joint_numbers:
+                if jn not in joint_numbers_idx:
                     errors.append(
-                        f"Axis '{axis.id}' references unknown joint "
-                        f"'{joint_id}'."
+                        f"Axis (joint_number={axis.joint_number}) "
+                        f"references unknown joint_number '{jn}'."
                     )
             if axis.endstop is not None and axis.endstop not in endstops_idx:
                 errors.append(
-                    f"Axis '{axis.id}' references unknown endstop "
-                    f"'{axis.endstop}'."
+                    f"Axis (joint_number={axis.joint_number}) references "
+                    f"unknown endstop '{axis.endstop}'."
                 )
 
         # Every joint.driver must exist in drivers[]. Synthesised
@@ -473,6 +526,21 @@ class HardwareJson(BaseModel):
             else:
                 seen_joint_numbers[joint.joint_number] = joint.id
 
+        # v2.1: the primary ``joint_number`` must be unique across
+        # ``axes[]``. Two axes sharing a primary would either claim
+        # the same LinuxCNC ``[JOINT_N]`` block or collide on the
+        # Remora stepgen channel — both are unrecoverable at runtime.
+        seen_axis_primaries: dict[int, int] = {}
+        for i, axis in enumerate(self.axes):
+            other = seen_axis_primaries.get(axis.joint_number)
+            if other is not None:
+                errors.append(
+                    f"Duplicate primary joint_number '{axis.joint_number}' "
+                    f"on axes at indices {other} and {i}."
+                )
+            else:
+                seen_axis_primaries[axis.joint_number] = i
+
         # Every tool.sensor must exist in temperature_sensors[].
         # A pressure sensor is not a temperature sensor even if the
         # pin matches — the parent list is the type discriminator.
@@ -493,7 +561,7 @@ class HardwareJson(BaseModel):
             # Raise as a single ValueError so the consumer gets the
             # full list in one shot instead of fixing them one at a time.
             raise ValueError(
-                "hardware.json v2 reference validation failed:\n  - "
+                "hardware.json v2.1 reference validation failed:\n  - "
                 + "\n  - ".join(errors)
             )
         return self

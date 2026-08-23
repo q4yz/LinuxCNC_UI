@@ -122,7 +122,7 @@ def test_hardware_json_basic() -> None:
     )
     payload = build_hardware_json(graph, "test_machine")
 
-    assert payload["version"] == "2.0"
+    assert payload["version"] == "2.1"
     assert payload["machine"] == "test_machine"
     assert payload["kinematics"] == "cartesian"
     assert payload["hal_type"] == "remora"
@@ -138,6 +138,15 @@ def test_hardware_json_basic() -> None:
     assert payload["joints"][0].get("position_max") is None
     assert payload["joints"][0].get("position_endstop") is None
     assert len(payload["axes"]) == 3
+    # v2.1 axis shape: ``joint_number`` (primary) + ``joint_numbers``
+    # (list). No per-axis ``id`` string handle.
+    assert "id" not in payload["axes"][0]
+    assert payload["axes"][0]["joint_number"] == 0
+    assert payload["axes"][0]["joint_numbers"] == [0]
+    assert payload["axes"][1]["joint_number"] == 1
+    assert payload["axes"][1]["joint_numbers"] == [1]
+    assert payload["axes"][2]["joint_number"] == 2
+    assert payload["axes"][2]["joint_numbers"] == [2]
     assert payload["axes"][0]["position_max"] == 300.0
     assert payload["axes"][0]["position_endstop"] == 0.0
     # ``joint_number`` is canonical: all X first, then Y, then Z.
@@ -228,11 +237,13 @@ max_temp: 250
     assert extruder_joint["microsteps"] == 16
     assert extruder_joint["rotation_distance"] == 33.5
     assert extruder_joint.get("driver") is None
-    # The extruder joint id is wired into the ``a`` axis so the
+    # The extruder joint_number is wired into the ``a`` axis (the
+    # trailing axis with the largest primary joint_number) so the
     # axis-to-joint graph matches the LinuxCNC-side AxisBuilder
-    # output.
-    a_axis = next(a for a in payload["axes"] if a["id"] == "a")
-    assert "heater_extruder" in a_axis["joints"]
+    # output. v2.1 axes carry integer joint_numbers, not string ids.
+    a_axis = payload["axes"][-1]  # extruder axis is the trailing one
+    assert 3 in a_axis["joint_numbers"]
+    assert a_axis["joint_number"] == 3
 
 
 def test_hardware_json_includes_pins() -> None:

@@ -1,4 +1,4 @@
-from .connection import (
+from .Connection import (
     HAS_HAL,
     USE_MOCK,
     Connection,

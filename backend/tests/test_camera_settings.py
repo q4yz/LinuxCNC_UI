@@ -273,6 +273,93 @@ def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
     assert cfg.preferences["/dev/video0"].hidden is False
 
 
+def test_save_ip_camera_url_then_seed_preferences_round_trip(
+    tmp_data_root: Path,
+):
+    """Mimics the frontend ``saveIpCameraUrl`` flow.
+
+    The Settings panel first writes ``ip_camera_url`` via
+    ``PUT /settings/ip_camera_url`` and then asks the store to seed
+    a default preferences row via ``PUT /settings/preferences``
+    (a single-key upsert of the full preferences map — same wire
+    call ``ensurePreference`` makes via ``settings.writeKey``).
+    This test pins the storage-layer contract that the two-step
+    flow keeps both fields intact on disk — a regression here
+    would re-introduce the bug where the saved URL has no matching
+    ``preferences`` row, leaving the operator unable to rename /
+    orient / hide / remove the camera without first toggling a
+    checkbox.
+
+    Note: ``PUT /settings`` (write_all) is a top-level replace and
+    would wipe the just-persisted ``ip_camera_url`` because the
+    client cannot know about every sibling key the backend stores.
+    That is why ``ensurePreference`` deliberately uses the
+    per-key ``PUT /settings/preferences`` upsert — the backend's
+    ``write_key`` does read+merge internally so sibling keys
+    survive.
+    """
+    app = _build_app(tmp_data_root)
+    client = TestClient(app)
+
+    url = "http://test3.com"
+
+    # Step 1: write the URL via the single-key upsert endpoint.
+    resp = client.put(
+        "/api/v1/modules/camera/settings/ip_camera_url",
+        json=url,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ip_camera_url"] == url
+
+    # Step 2: seed a default preferences row for the URL via the
+    # single-key upsert endpoint — same wire call as the
+    # frontend's ``ensurePreference``. The backend's write_key
+    # does read+merge internally, so the previously-persisted
+    # ``ip_camera_url`` survives.
+    next_prefs = {
+        url: {
+            "custom_name": "",
+            "flip": False,
+            "mirror": False,
+            "hidden": False,
+        },
+    }
+    resp = client.put(
+        "/api/v1/modules/camera/settings/preferences",
+        json=next_prefs,
+    )
+    assert resp.status_code == 200
+    merged = resp.json()
+
+    # Both the URL and the seeded preferences row survive.
+    assert merged["ip_camera_url"] == url
+    assert url in merged["preferences"]
+    seeded = merged["preferences"][url]
+    assert seeded["custom_name"] == ""
+    assert seeded["flip"] is False
+    assert seeded["mirror"] is False
+    assert seeded["hidden"] is False
+
+    # The on-disk file matches so a fresh checkout keeps both fields.
+    on_disk = json.loads(
+        (tmp_data_root / "modules" / "camera" / "settings.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    assert on_disk["ip_camera_url"] == url
+    assert on_disk["preferences"][url]["custom_name"] == ""
+
+    # Re-seeding the same URL is a no-op at the storage layer: the
+    # second upsert preserves the seeded row (and the URL).
+    resp = client.put(
+        "/api/v1/modules/camera/settings/preferences",
+        json=next_prefs,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ip_camera_url"] == url
+    assert resp.json()["preferences"][url]["custom_name"] == ""
+
+
 def test_preferences_invalid_payload_is_dropped_at_consumer(tmp_data_root: Path):
     """A malformed ``preferences`` payload is dropped at the consumer.
 

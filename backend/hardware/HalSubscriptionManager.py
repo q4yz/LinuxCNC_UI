@@ -74,7 +74,7 @@ class HalSubscriptionManager:
         # still initialising when this module is first loaded, so a
         # top-level ``from .connection import HAS_HAL`` would loop
         # back into a partially initialised module and raise.
-        from .connection import HAS_HAL, USE_MOCK, hal
+        from .Connection import HAS_HAL, USE_MOCK, hal
 
         if HAS_HAL and hal is not None and not USE_MOCK:
             try:

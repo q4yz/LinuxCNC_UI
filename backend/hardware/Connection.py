@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from enum import IntEnum
 from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
@@ -37,8 +38,6 @@ try:
     logger.info("Successfully imported real linuxcnc module.")
     USE_MOCK = False
 except ImportError:
-    # CHANGE IS HERE: We don't alias the whole file anymore.
-    # We import the specific facade exposed by the orchestrator!
     from hardware.mock.LinuxCNCMock import linuxcnc  # type: ignore
 
     logger.warning("Could not import real linuxcnc. Falling back to mock facade.")
@@ -49,17 +48,38 @@ try:
 
     HAS_HAL = True
 except ImportError:
-    # CHANGE IS HERE: Import the hal facade from the orchestrator
     from hardware.mock.LinuxCNCMock import hal  # type: ignore[no-redef]
 
-    #sys.modules["hal"] = hal
     HAS_HAL = False
     logger.warning("HAL module unavailable; HAL pin polling will run in mock mode.")
+
+
+# ---------------------------------------------------------------------------
+# Domain Enums (Encapsulating LinuxCNC Constants)
+# ---------------------------------------------------------------------------
+class MachineState(IntEnum):
+    """Standard task states."""
+    ESTOP = getattr(linuxcnc, "STATE_ESTOP", 1)
+    ESTOP_RESET = getattr(linuxcnc, "STATE_ESTOP_RESET", 2)
+    OFF = getattr(linuxcnc, "STATE_OFF", 3)
+    ON = getattr(linuxcnc, "STATE_ON", 4)
+
+class MachineMode(IntEnum):
+    """Standard task modes."""
+    MANUAL = getattr(linuxcnc, "MODE_MANUAL", 1)
+    AUTO = getattr(linuxcnc, "MODE_AUTO", 2)
+    MDI = getattr(linuxcnc, "MODE_MDI", 3)
+
+class RcsStatus(IntEnum):
+    """Return status codes for NML commands."""
+    DONE = getattr(linuxcnc, "RCS_DONE", 1)
+    EXEC = getattr(linuxcnc, "RCS_EXEC", 2)
+    ERROR = getattr(linuxcnc, "RCS_ERROR", 3)
+
 
 # ---------------------------------------------------------------------------
 # Lazy channel wrapper (Layer 0: Low-Level Connection)
 # ---------------------------------------------------------------------------
-
 class _LazyChannel:
     """Connect to a LinuxCNC NML channel on first use; retry on failure."""
 
@@ -135,7 +155,6 @@ _error_ch = _LazyChannel("error_channel")
 # ---------------------------------------------------------------------------
 # Public Helper Functions (Layer 0)
 # ---------------------------------------------------------------------------
-
 def get_machine_stat():
     return _stat_ch.get()
 
@@ -166,16 +185,16 @@ def execute_gcode(gcode: str, timeout: float = 10.0) -> dict:
 
     try:
         stat.poll()
-        if stat.task_mode != linuxcnc.MODE_MDI:
-            cmd.mode(linuxcnc.MODE_MDI)
+        if stat.task_mode != MachineMode.MDI:
+            cmd.mode(MachineMode.MDI)
             cmd.wait_complete(1.0)
 
         cmd.mdi(gcode)
         ret = cmd.wait_complete(timeout)
 
-        if ret == getattr(linuxcnc, "RCS_DONE", 1):
+        if ret == RcsStatus.DONE:
             return {"status": "success", "gcode": gcode}
-        if ret == getattr(linuxcnc, "RCS_ERROR", 3):
+        if ret == RcsStatus.ERROR:
             raise HTTPException(
                 status_code=400, detail=f"G-code execution error: {gcode}"
             )
@@ -191,24 +210,23 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
     """Dispatch ``cmd_name`` to the LinuxCNC command channel."""
     cmd = _cmd_ch.get()
     if cmd is None:
-        raise HTTPException(status_code=503, detail="LinuxCNC is not running. Start LinuxCNC and retry.",)
+        raise HTTPException(status_code=503, detail="LinuxCNC is not running. Start LinuxCNC and retry.")
     try:
         func = getattr(cmd, cmd_name)
         func(*args)
 
         if cmd_timeout > 0:
             ret = cmd.wait_complete(cmd_timeout)
-            if ret == getattr(linuxcnc, "RCS_DONE", 1):
+            if ret == RcsStatus.DONE:
                 return {"status": "success"}
-            elif ret == getattr(linuxcnc, "RCS_ERROR", 3):
+            elif ret == RcsStatus.ERROR:
                 raise HTTPException(status_code=400, detail="Command execution error")
             else:
                 raise HTTPException(status_code=408, detail="Command timed out")
         else:
             return {"status": "success"}
     except AttributeError:
-        raise HTTPException( status_code=500, detail=f"Command '{cmd_name}' not implemented in hardware interface.",
-        )
+        raise HTTPException(status_code=500, detail=f"Command '{cmd_name}' not implemented in hardware interface.")
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -217,9 +235,7 @@ def execute_sync_cmd(cmd_name: str, cmd_timeout: float = 0, *args) -> dict:
 
 
 def ensure_mdi_mode() -> None:
-    mode_mdi = getattr(linuxcnc, "MODE_MDI", 3)
-    execute_sync_cmd("mode", 5, mode_mdi)
-
+    execute_sync_cmd("mode", 5, MachineMode.MDI)
 
 
 def read_error_history() -> list:
@@ -240,10 +256,10 @@ def read_hal_pin(pin_name: str) -> Optional[object]:
         logger.debug("Failed to read HAL pin '%s': %s", pin_name, e)
         return None
 
+
 # ---------------------------------------------------------------------------
 # Connection facade object (legacy compatibility)
 # ---------------------------------------------------------------------------
-
 class Connection:
     def get_machine_stat(self):
         return get_machine_stat()
@@ -265,18 +281,18 @@ connection = Connection()
 # ---------------------------------------------------------------------------
 # Re-exports for backward compatibility
 # ---------------------------------------------------------------------------
-
 from .DeviceConfigMapper import DeviceConfigMapper  # noqa: E402,F401
 from .HalSubscriptionManager import (  # noqa: E402,F401
     HalSubscriptionManager,
     hal_manager,
 )
 
+# NOTICE: 'linuxcnc' has been removed from this list!
 __all__ = [
     "USE_MOCK",
     "HAS_HAL",
-    "linuxcnc",
     "hal",
+    "linuxcnc",
     "get_machine_stat",
     "get_machine_cmd",
     "get_machine_error",
@@ -289,4 +305,7 @@ __all__ = [
     "DeviceConfigMapper",
     "HalSubscriptionManager",
     "hal_manager",
+    "MachineState",
+    "MachineMode",
+    "RcsStatus",
 ]

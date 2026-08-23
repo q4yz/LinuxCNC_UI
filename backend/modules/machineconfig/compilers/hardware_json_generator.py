@@ -9,11 +9,18 @@ without parsing the raw config again.
 
 Shape
 -----
-The payload is the ``hardware.json`` v2 model — see
+The payload is the ``hardware.json`` v2.1 model — see
 :mod:`backend.modules.machineconfig.models.hardware_json_models`.
 The model is flat with explicit ``id`` fields and string
 references; the cross-reference validator walks the graph in one
 pass to enforce every reference resolves into the right list.
+
+The one exception is ``Axis`` — v2.1 dropped the ``id`` string
+handle in favour of an integer ``joint_number`` (the LinuxCNC
+``[JOINT_N]`` index of the axis's primary joint) plus a
+``joint_numbers: list[int]`` for multi-motor axes. This aligns
+the wire shape with what the runtime ``AxisStateDTO`` /
+``AxisStateResponse`` already consume.
 
 IDs are auto-assigned from the Klipper section name. ``[stepper_x]``
 becomes ``id: "stepper_x"``; ``[heater_bed]`` becomes
@@ -55,16 +62,6 @@ logger = logging.getLogger("backend.modules.machineconfig.compilers.hardware_jso
 # ---------------------------------------------------------------------- #
 # ID derivation                                                           #
 # ---------------------------------------------------------------------- #
-
-
-def _axis_id(graph: MachineConfigGraph, letter: str) -> str:
-    """Canonical id for an axis entry.
-
-    The id is the lower-case axis letter from the stepper section
-    header (``[stepper_x]`` -> ``x``). Multi-motor axes that share
-    a letter keep the same id so the axes list stays unique.
-    """
-    return letter.lower()
 
 
 def _stepper_id(section_name: str) -> str:
@@ -398,16 +395,20 @@ def _driver_payload(driver_id: str, stepper) -> dict[str, Any]:
 
 def _axis_payload(
     letter: str,
-    joint_ids: list[str],
+    joint_numbers: list[int],
     endstop_id: str | None,
     position_max: float | None,
     position_endstop: float | None,
 ) -> dict[str, Any]:
     """Build an axis entry.
 
-    The axis id is the lower-case letter of the canonical joint it
-    owns. Multi-motor axes share the id so the axes list stays
-    unique; the underlying joints are still listed individually.
+    v2.1: the axis is identified by its primary ``joint_number``
+    (the LinuxCNC ``[JOINT_N]`` index of the axis's first-listed
+    joint). ``joint_numbers`` carries every joint that drives the
+    axis — for a single-motor axis the list and the primary are the
+    same single integer. The canonical-letter ``id`` field that v2.0
+    emitted was removed because ``joint_number`` is the runtime's
+    canonical axis handle (mapped to a Remora stepgen channel).
 
     ``endstop_id`` is a single string id referencing a top-level
     ``Endstop`` record (or ``None`` when the axis has no endstop);
@@ -418,10 +419,16 @@ def _axis_payload(
     profile. ``position_max`` carries the axis travel limit (from
     the primary stepper's ``position_max``). Fields with ``None``
     values are dropped during serialisation.
+
+    The ``letter`` parameter is kept for symmetry with the
+    upstream caller and is unused on the wire; the runtime
+    derives the canonical letter from the joint_number's ordinal
+    position in the X / Y / Z / A / B / C axis order.
     """
+    primary_joint_number = joint_numbers[0] if joint_numbers else 0
     return {
-        "id": _axis_id(None, letter),
-        "joints": joint_ids,
+        "joint_number": primary_joint_number,
+        "joint_numbers": joint_numbers,
         "endstop": endstop_id,
         "position_max": position_max,
         "position_endstop": position_endstop,
@@ -463,7 +470,7 @@ def build_hardware_json(
     # ``graph.steppers`` is keyed by axis letter (``x``, ``y``, ``z``);
     # the section name lives on the Stepper object as
     # ``section_name``. The id is derived from the section name so
-    # naming stays consistent across the axes / joints / drivers lists.
+    # naming stays consistent across the joints / drivers lists.
     joint_records: list[dict[str, Any]] = []
     joint_id_by_letter: dict[str, str] = {}
     for letter, stepper in graph.steppers.items():
@@ -565,33 +572,16 @@ def build_hardware_json(
                     endstop.stepper.position_endstop
                 )
 
-    # Now assemble the axis records with their endstop references
-    # and lifted motion-envelope fields.
-    axes_records: list[dict[str, Any]] = []
-    for letter in letters_in_order:
-        joint_ids = [
-            joint_id_by_letter[name]
-            for name, stepper in graph.steppers.items()
-            if stepper.axis.lower() == letter
-        ]
-        state = axis_state[letter]
-        axes_records.append(
-            _axis_payload(
-                letter,
-                joint_ids,
-                state["endstop_id"],
-                state["position_max"],
-                state["position_endstop"],
-            )
-        )
-
     # Stamp ``joint_number`` on every joint record in canonical
     # order: all X joints first, then Y, then Z, then A (extruders),
     # in declaration order within each letter. The number mirrors
     # the LinuxCNC-side ``Joint.joint_number`` so the runtime can map
     # a wire ``joint_number`` to ``remora.joint.{N}.scale`` etc.
     # deterministically regardless of the order the user wrote the
-    # Klipper stepper sections in.
+    # Klipper stepper sections in. v2.1: this must run BEFORE the
+    # axis-records assembly so each axis record can carry its
+    # primary ``joint_number`` and ``joint_numbers`` list.
+    joint_number_by_letter: dict[str, int] = {}
     joint_number = 0
     for letter in letters_in_order:
         for letter_key, stepper in graph.steppers.items():
@@ -603,8 +593,47 @@ def build_hardware_json(
             for record in joint_records:
                 if record["id"] == joint_id:
                     record["joint_number"] = joint_number
+                    joint_number_by_letter[letter_key] = joint_number
                     joint_number += 1
                     break
+
+    # Now assemble the axis records with their endstop references
+    # and lifted motion-envelope fields. v2.1: each axis record is
+    # keyed by its primary ``joint_number`` and lists every driving
+    # joint by integer ``joint_numbers`` (no string ids, no per-axis
+    # letter handle).
+    #
+    # Note: only stepper-derived letters become axes here. The
+    # extruder axis (``a``) is synthesised by ``AxisBuilder`` with
+    # an empty joint list and would collide with our primary
+    # ``joint_number=0`` default — we skip it and create the
+    # extruder axis explicitly below from the synthesised extruder
+    # joint records.
+    axes_records: list[dict[str, Any]] = []
+    for letter in letters_in_order:
+        joint_numbers = [
+            joint_number_by_letter[name]
+            for name, stepper in graph.steppers.items()
+            if stepper.axis.lower() == letter
+            and name in joint_number_by_letter
+        ]
+        # Skip letters whose only axis came from the extruder
+        # synthesis (AxisBuilder creates an empty ``a`` axis when
+        # an extruder exists; we don't want that empty axis on the
+        # wire because the extruder gets its own axis built from
+        # the synthesised joint records below).
+        if not joint_numbers:
+            continue
+        state = axis_state[letter]
+        axes_records.append(
+            _axis_payload(
+                letter,
+                joint_numbers,
+                state["endstop_id"],
+                state["position_max"],
+                state["position_endstop"],
+            )
+        )
 
     # Tool records — one per Klipper heater-shaped section plus one
     # per spindle variant. The temperature_sensors[] and fans[]
@@ -675,16 +704,24 @@ def build_hardware_json(
     joint_records.extend(extruder_joint_records)
 
     # Now that all joint records (steppers + synthesised extruders)
-    # exist, fix up the per-axis ``joints[]`` lists. The earlier
-    # loop only knew about ``graph.steppers``; we need to append
-    # the extruder joint ids to the matching axis (letter ``a``)
-    # so the wire reflects the same one-axis-many-joints graph as
-    # the LinuxCNC-side ``AxisBuilder`` output.
+    # exist, create the extruder axis (canonical letter ``a``) and
+    # append it to ``axes_records``. The earlier stepper-only loop
+    # skipped letters with no steppers — the synthesised extruder
+    # axis was deliberately excluded there because it would have
+    # an empty ``joint_numbers`` list and a default ``joint_number=0``
+    # that would collide with the X axis primary. We build it here
+    # from the freshly-stamped extruder joint numbers.
     if extruder_joint_records:
-        extruder_joint_ids = [r["id"] for r in extruder_joint_records]
-        for axis_record in axes_records:
-            if axis_record["id"] == "a":
-                axis_record["joints"].extend(extruder_joint_ids)
+        extruder_joint_numbers = [r["joint_number"] for r in extruder_joint_records]
+        axes_records.append(
+            _axis_payload(
+                "a",
+                extruder_joint_numbers,
+                None,
+                None,
+                None,
+            )
+        )
 
     # Standalone fan sections (``[fan]``, ``[fan_generic foo]``) become
     # their own ``fans`` records keyed by the canonical id. The id is
@@ -724,7 +761,7 @@ def build_hardware_json(
     # The cross-reference validator runs here and surfaces any
     # unresolved id as a single ValueError with the full list.
     payload = {
-        "version": "2.0",
+        "version": "2.1",
         "machine": machine_name,
         "source": "KlipperToLinuxCNCCompiler",
         "kinematics": graph.printer.kinematics if graph.printer else "cartesian",

@@ -9,7 +9,7 @@ re-hydrate the operator console after a reload / reconnect.
 
 from __future__ import annotations
 
-from hardware.connection import read_error_history
+from hardware.Connection import read_error_history
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import push_mock_error, reset_error_history
 

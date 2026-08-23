@@ -96,6 +96,11 @@ async function saveIpCameraUrl() {
       typeof payload.ip_camera_url === "string"
         ? payload.ip_camera_url
         : normalizedUrl;
+    // Seed a default preferences row for the new URL so the operator
+    // can immediately rename / orient / hide / remove the camera
+    // without first toggling a checkbox. ``ensurePreference`` is a
+    // no-op when a row already exists or when the URL was cleared.
+    await store.ensurePreference(normalizedUrl);
     saveMessage.value = "IP camera URL saved.";
     await store.fetchDevices();
   } catch (requestError) {

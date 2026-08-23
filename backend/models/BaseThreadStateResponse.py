@@ -35,7 +35,12 @@ class BaseThreadSnapshotResponse(BaseModel):
         None,
         description="ISO-8601 timestamp..."
     )
-    axis: Optional[Dict[str, 'AxisStateResponse']] = Field(
+    axis: Optional[Dict[int, 'AxisStateResponse']] = Field(
         default=None,
-        description="Static axis information"
+        description=(
+            "Static axis information keyed by primary joint_number "
+            "(LinuxCNC [JOINT_N] index). v2.1 replaces the v2.0 string "
+            "letter handle — the runtime maps joint_number to a Remora "
+            "stepgen channel directly."
+        )
     )

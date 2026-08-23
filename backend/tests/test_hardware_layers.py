@@ -38,7 +38,7 @@ import pytest
 # instance. ``importlib.import_module`` bypasses the package
 # __init__ re-export and gives us the submodule.
 conn_mod = importlib.import_module("hardware.connection")
-from hardware.connection import (
+from hardware.Connection import (
     DeviceConfigMapper,
     HalSubscriptionManager,
 
