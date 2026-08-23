@@ -13,12 +13,13 @@ who reverts to the ``teleop_flag`` naming (or inverts the values)
 will trip the test that the operator's live logs surfaced.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 from typing import List, Tuple
 
 import pytest
 
-from modules.axis.services import jog_service
+from services import jog_service
 
 
 class _RecordingStat:

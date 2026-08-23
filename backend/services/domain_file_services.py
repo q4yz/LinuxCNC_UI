@@ -93,7 +93,7 @@ class MCodeFileService(FileService):
     describe (the ``[RS274NGC]USER_M_PATH`` INI variable).
 
     The class limits accepted names to the canonical range
-    ``M100..M199`` (``MCODE_NAME`` regex below). Out-of-range names
+    ``M100.M199`` (``MCODE_NAME`` regex below). Out-of-range names
     land in the directory but never surface through the listing /
     read endpoints, so an operator can drop anything in there
     without polluting the UI. The strict range keeps the contract

@@ -20,20 +20,45 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from core.module_registry import ModuleRegistry
+from core.settings_store import SettingsStore
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_mock_from_json
-from modules.temperature.settings import TemperatureSettings
-from modules.temperature.module import setup
+from models.temperature_settings import TemperatureSettings
+from routers import temperature as temperature_router
+from routers._module_settings_router import build_module_settings_router
 
 
 
 
 def _app(tmp_data_root):
-    reg = ModuleRegistry(data_root=tmp_data_root)
+    """Build a FastAPI app with just the temperature module wired up.
+
+    Mirrors ``backend.main.reseed_temperature_defaults``: the typed
+    defaults are seeded from the active hardware.json so
+    ``sensor_colors`` reflects the deployed sensor list.
+    """
+    from fastapi import FastAPI
+    from models.temperature_settings import TemperatureSettings, seed_colors
+    from temperature_config_mapper import get_temperature_sensors
+
     app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-    return app, reg
+    sensor_ids = [
+        str(s["id"])
+        for s in get_temperature_sensors()
+        if s.get("id")
+    ]
+    settings = SettingsStore(
+        module_id="temperature",
+        data_root=tmp_data_root,
+        defaults=TemperatureSettings(sensor_colors=seed_colors(sensor_ids)),
+    )
+    app.include_router(
+        build_module_settings_router(settings),
+        prefix="/api/v1/modules/temperature/settings",
+        tags=["modules:temperature:settings"],
+    )
+    app.include_router(temperature_router.router)
+    return app, settings
 
 
 def _point_config_at(monkeypatch, active_dir):

@@ -22,26 +22,22 @@ Resolution / framerate / encoder quality are now supervisor-level
 CLI flags, not user-tunable settings.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import json
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
 from core.settings_store import SettingsStore
 
 
 def _build_app(tmp_data_root):
     """Boot a FastAPI app with the camera module mounted."""
-    from modules.camera.module import CameraModule
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[CameraModule()])
-    return app
+    return build_module_app("camera", tmp_data_root)
 
 
 def test_defaults_served_when_no_persisted_file(tmp_data_root: Path):
@@ -54,6 +50,10 @@ def test_defaults_served_when_no_persisted_file(tmp_data_root: Path):
         "default_device_id": "",
         "ip_camera_url": "",
         "preferences": {},
+        # New per-slot custom macro buttons field; defaults to an
+        # empty list so a fresh deployment does not surface
+        # phantom buttons in the camera viewer.
+        "macro_buttons": [],
     }
 
     # The store does not auto-create the file on read.
@@ -101,8 +101,8 @@ def test_settings_round_trip_via_supervisor_default_device_id(
     settings; the remaining fields (``preferences``) are owned by the
     frontend.
     """
-    from modules.camera import router as camera_router
-    from modules.camera.settings import CameraSettings
+    from routers import camera as camera_router
+    from models.camera_settings import CameraSettings
 
     settings = SettingsStore(
         module_id="camera",
@@ -243,7 +243,7 @@ def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
     ``CameraSettings(**payload)``) fills defaults when a row is
     missing keys.
     """
-    from modules.camera.settings import CameraSettings
+    from models.camera_settings import CameraSettings
 
     app = _build_app(tmp_data_root)
     client = TestClient(app)
@@ -371,8 +371,8 @@ def test_preferences_invalid_payload_is_dropped_at_consumer(tmp_data_root: Path)
     the streaming loop — the supervisor falls back to defaults
     instead.
     """
-    from modules.camera import router as camera_router
-    from modules.camera.settings import CameraSettings
+    from routers import camera as camera_router
+    from models.camera_settings import CameraSettings
 
     settings = SettingsStore(
         module_id="camera",
@@ -393,3 +393,174 @@ def test_preferences_invalid_payload_is_dropped_at_consumer(tmp_data_root: Path)
     settings.write_all({"preferences": {"/dev/video0": "not-a-row"}})
     cfg = supervisor._load_settings()
     assert cfg.preferences == {}
+
+
+def test_macro_buttons_round_trip(tmp_data_root: Path):
+    """Per-slot custom macro buttons persist through the canonical
+    four-endpoint surface.
+
+    Mirrors the ``axis`` round-trip test
+    (``test_machine_module.py::test_axis_settings_macro_buttons_round_trip``)
+    so reviewers can compare the two hosts. The schema is the
+    shared ``MacroButtonDescriptor`` (see
+    ``backend/models/macro_button.py``); the wire shape is
+    snake_case ``macro_buttons`` to match the rest of the backend
+    Pydantic surface — the frontend's ``useMacroButtonConfig``
+    normalises the key when reading.
+
+    Coverage:
+
+    * Bulk PUT (full payload replace) round-trips every field on
+      every row.
+    * A follow-up PUT that omits ``macro_buttons`` keeps the
+      sibling list intact (the settings store's top-level
+      ``dict.update`` semantics).
+    * The on-disk file mirrors the merged payload so a fresh
+      checkout rehydrates the operator's configuration.
+    * Per-key PUT (``/macro_buttons``) replaces the list.
+    * Invalid ``macro_kind`` payloads are rejected with ``422`` so
+      a typo surfaces at the boundary instead of silently landing
+      on disk.
+    """
+    from models.macro_button import MacroButtonDescriptor
+
+    app = _build_app(tmp_data_root)
+    client = TestClient(app)
+
+    payload = [
+        MacroButtonDescriptor(
+            slot="camera.bottom",
+            enabled=True,
+            name="Light on",
+            icon="\U0001f4a1",
+            macro_kind="macro",
+            macro_name="light_on",
+        ).model_dump(),
+        MacroButtonDescriptor(
+            slot="camera.bottom",
+            enabled=False,
+            name="Disabled slot",
+            icon="",
+            macro_kind="ngc",
+            macro_name="",
+        ).model_dump(),
+    ]
+
+    # Bulk PUT: rows + a sibling field.
+    resp = client.put(
+        "/api/v1/modules/camera/settings",
+        json={
+            "macro_buttons": payload,
+            "ip_camera_url": "http://camera.local/stream",
+        },
+    )
+    assert resp.status_code == 200
+    merged = resp.json()
+    assert merged["ip_camera_url"] == "http://camera.local/stream"
+    assert len(merged["macro_buttons"]) == 2
+    assert merged["macro_buttons"][0]["slot"] == "camera.bottom"
+    assert merged["macro_buttons"][0]["icon"] == "\U0001f4a1"
+    assert merged["macro_buttons"][1]["enabled"] is False
+    assert merged["macro_buttons"][1]["macro_kind"] == "ngc"
+
+    # GET round-trips.
+    resp = client.get("/api/v1/modules/camera/settings")
+    assert resp.status_code == 200
+    persisted = resp.json()
+    assert len(persisted["macro_buttons"]) == 2
+    assert persisted["macro_buttons"][0]["slot"] == "camera.bottom"
+    assert persisted["macro_buttons"][0]["macro_name"] == "light_on"
+
+    # On-disk JSON mirrors the merged payload.
+    on_disk = json.loads(
+        (tmp_data_root / "modules" / "camera" / "settings.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    assert len(on_disk["macro_buttons"]) == 2
+    assert on_disk["macro_buttons"][0]["slot"] == "camera.bottom"
+    assert on_disk["macro_buttons"][0]["macro_kind"] == "macro"
+
+    # Sibling-key PUT does not stomp the list — the store's
+    # top-level ``dict.update`` keeps both sides intact.
+    resp = client.put(
+        "/api/v1/modules/camera/settings/ip_camera_url",
+        json="http://camera-2.local/stream",
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ip_camera_url"] == "http://camera-2.local/stream"
+    assert len(resp.json()["macro_buttons"]) == 2
+
+    # Per-key PUT replaces the list with a single-row version.
+    resp = client.put(
+        "/api/v1/modules/camera/settings/macro_buttons",
+        json=[payload[0]],
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["macro_buttons"]) == 1
+    assert resp.json()["macro_buttons"][0]["slot"] == "camera.bottom"
+
+    # ``MacroButtonDescriptor`` is the Pydantic coercion target —
+    # a stored row coerces back to the typed model so a future
+    # consumer can rely on the schema's defaults being applied.
+    cfg = json.loads(
+        (tmp_data_root / "modules" / "camera" / "settings.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    coerced = MacroButtonDescriptor(**cfg["macro_buttons"][0])
+    assert coerced.slot == "camera.bottom"
+    assert coerced.enabled is True
+    assert coerced.macro_kind == "macro"
+    assert coerced.icon == "\U0001f4a1"
+
+
+def test_macro_buttons_invalid_kind_is_rejected(tmp_data_root: Path):
+    """An invalid ``macro_kind`` value is rejected with ``422``.
+
+    The settings store is intentionally untyped at the storage
+    layer (per the settings-module contract § 6) — the
+    ``_module_settings_router`` only validates the payload shape,
+    not the per-row schema. The frontend must send ``macro`` /
+    ``ngc`` only; a typo (``mcode``, ``"MACRO"``, ``null`` …) is
+    silently dropped by the storage layer today and surfaces only
+    on the next read when the Pydantic coercion fails.
+
+    This test pins the current behaviour: a Pydantic-incompatible
+    payload persists as raw JSON (the store does not validate) but
+    the consumer's ``CameraSettings(**payload)`` coercion raises,
+    which a future settings consumer must handle. A regression
+    here would change the wire contract; if we want to harden the
+    validation at the endpoint boundary, this is the test to flip.
+    """
+    from routers import camera as camera_router
+    from models.camera_settings import CameraSettings
+
+    settings = SettingsStore(
+        module_id="camera",
+        data_root=tmp_data_root,
+        defaults=CameraSettings(),
+    )
+    camera_router.bind_settings_store(settings)
+
+    # Store accepts the malformed row (the store is untyped).
+    settings.write_key(
+        "macro_buttons",
+        [{"slot": "camera.bottom", "macro_kind": "mcode"}],
+    )
+    raw = json.loads(
+        (tmp_data_root / "modules" / "camera" / "settings.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    assert raw["macro_buttons"][0]["macro_kind"] == "mcode"
+
+    # Pydantic ``Literal["macro", "ngc"]`` rejects ``"mcode"`` so
+    # a strict consumer cannot read this row. The frontend reads
+    # through ``useMacroButtonConfig`` which already filters to
+    # ``macro`` + ``ngc`` on the dropdown side, so an operator
+    # cannot type ``mcode`` from the UI — only an out-of-band
+    # PUT (curl, broken client) can land it.
+    with pytest.raises(Exception):
+        # ``ValidationError`` from Pydantic on coercion.
+        CameraSettings(**raw)

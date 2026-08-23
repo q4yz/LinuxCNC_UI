@@ -58,15 +58,17 @@ const macrosMounted = computed(() => registry.modules.has('macros'))
 
         <DroPanel v-if="machineMounted" />
 
-        <TemperaturePanel v-if="temperatureMounted" />
+        <JogControls v-if="machineMounted" />
 
         <ToolPanel v-if="toolsMounted" />
+
+        <TemperaturePanel v-if="temperatureMounted" />
 
         <MacroPanel v-if="macrosMounted" />
 
         <McodePanel v-if="macrosMounted" />
 
-        <JogControls v-if="machineMounted" />
+
       </div>
 
       <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->
@@ -77,9 +79,9 @@ const macrosMounted = computed(() => registry.modules.has('macros'))
              newest G-code files when idle) and the pause/stop controls,
              so the operator does not have to leave the dashboard while
              a print is running. -->
-        <ActivePrintWidget />
 
-        <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[400px] shrink-0">
+
+        <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[600px] shrink-0">
           <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
             <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
           </div>
@@ -87,6 +89,10 @@ const macrosMounted = computed(() => registry.modules.has('macros'))
             <NgcCoordinateSystemViewer />
           </div>
         </div>
+
+
+
+        <ActivePrintWidget />
 
         <div class="h-[300px]">
           <ConsolePanel />

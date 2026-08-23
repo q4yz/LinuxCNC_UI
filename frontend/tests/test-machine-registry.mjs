@@ -149,3 +149,95 @@ test("machine store composes the servo-thread transport instead of owning the We
     "machine store must not instantiate its own WebSocket",
   );
 });
+
+test("machine module exposes a MachineSettingsPanel for the Settings tab", async () => {
+  // After the per-module settings UI work, the machine module
+  // ships a ``settingsPanel`` Vue component so the operator can
+  // configure the per-axis DRO custom buttons from the
+  // Settings view. The panel is wired through ``index.js`` and
+  // is the registered ``settingsPanel`` on the module record.
+  const fs = await import("node:fs/promises");
+  const panelPath = resolve(
+    repoRoot,
+    "frontend/src/modules/machine/components/MachineSettingsPanel.vue",
+  );
+  const stat = await fs.stat(panelPath);
+  assert.ok(stat.isFile(), "MachineSettingsPanel.vue must exist");
+
+  const indexText = await fs.readFile(
+    resolve(repoRoot, "frontend/src/modules/machine/index.ts"),
+    "utf-8",
+  );
+  assert.match(
+    indexText,
+    /import\s+MachineSettingsPanel\s+from/,
+    "index.ts must statically import MachineSettingsPanel",
+  );
+  assert.match(
+    indexText,
+    /settingsPanel:\s*MachineSettingsPanel/,
+    "index.ts must wire MachineSettingsPanel into settingsPanel",
+  );
+});
+
+test("DroPanel hooks MacroButton into every axis row", async () => {
+  // The shared ``<MacroButton>`` primitive is rendered inline
+  // for each axis slot (``dro.x`` / ``dro.y`` / ``dro.z``). The
+  // position is between the home and SET buttons — matching the
+  // operator-facing placement decision.
+  const fs = await import("node:fs/promises");
+  const text = await fs.readFile(
+    resolve(repoRoot, "frontend/src/modules/machine/components/DroPanel.vue"),
+    "utf-8",
+  );
+  assert.match(
+    text,
+    /import\s*\{[^}]*\bMacroButton\b[^}]*\}\s*from\s*["'][^"']*\/ui["']/,
+    "DroPanel must import MacroButton from the shared ui barrel",
+  );
+  for (const slot of ["dro.x", "dro.y", "dro.z"]) {
+    assert.match(
+      text,
+      new RegExp(`buttonsBySlot\\[['"]${slot}['"]\\]`),
+      `DroPanel must look up the ${slot} slot from buttonsBySlot`,
+    );
+    // Escape the ``.`` in the slot id so it matches the literal
+    // dot inside ``buttonsBySlot['dro.x']`` rather than the regex
+    // any-char metacharacter.
+    const escaped = slot.replace(/\./g, "\\.");
+    assert.match(
+      text,
+      new RegExp(`<MacroButton[\\s\\S]{0,200}${escaped}`),
+      `DroPanel must render <MacroButton> with descriptor for ${slot}`,
+    );
+  }
+});
+
+test("MachineSettingsPanel does not deep-watch buttonConfig.buttons.value", async () => {
+  // Regression guard for the request-spam loop. The host must
+  // rely on the editor's ``update:modelValue`` emit alone;
+  // adding a ``watch(() => buttonConfig.buttons.value, ...,
+  // { deep: true })`` would re-fire ``persist`` on every nested
+  // change and produce ~100 PUTs per click. ``persist`` itself
+  // no longer mutates ``buttons.value`` (see the
+  // ``useMacroButtonConfig`` test) so this single-source-of-
+  // truth wiring is the only safe shape.
+  const fs = await import("node:fs/promises");
+  const text = await fs.readFile(
+    resolve(
+      repoRoot,
+      "frontend/src/modules/machine/components/MachineSettingsPanel.vue",
+    ),
+    "utf-8",
+  );
+  assert.doesNotMatch(
+    text,
+    /watch\(\s*\(\)\s*=>\s*buttonConfig\.buttons\.value/,
+    "MachineSettingsPanel must not watch buttonConfig.buttons.value (regression)",
+  );
+  assert.match(
+    text,
+    /@update:model-value="\(next\)\s*=>\s*buttonConfig\.persist\(next\)"/,
+    "MachineSettingsPanel must persist through the editor's update:modelValue emit",
+  );
+});

@@ -55,12 +55,27 @@ class ServoThreadService:
         self._last_broadcast_state = current_dto
         return envelope.model_dump_json(exclude_none=True)
 
+    def get_current_state(self) -> dict:
+        """Return the full ``full_state`` payload as a dict.
+
+        Used by tests + integration scripts that want the same
+        shape :func:`get_initial_state_json` produces — but already
+        parsed. Internally goes through the same mapper path so the
+        shape stays in lockstep with the WebSocket initial payload.
+        """
+        machine_stat = get_machine_stat()
+        current_dto = ServoThreadStateMapper.from_stat(machine_stat, read_error_history())
+        full_response = ServoThreadStateMapper.to_response(current_dto)
+        # Drop the ``model_dump(exclude_none=True)`` envelope here —
+        # the dict shape mirrors the WebSocket envelope ``data`` field.
+        return full_response.model_dump(exclude_none=True)
+
     async def dispatch_inbound(self, websocket: WebSocket, msg: dict) -> None:
         """Route a JSON command received over the telemetry socket."""
         mtype = msg.get("type")
 
         if mtype == "jog_keepalive":
-            from modules.axis.services.jog_service import jog_keepalive
+            from services.jog_service import jog_keepalive
             axes = msg.get("axes") or []
             if not isinstance(axes, list):
                 logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
@@ -69,7 +84,7 @@ class ServoThreadService:
             return
 
         if mtype == "jog_axis":
-            from modules.axis.services.jog_service import jog_axis
+            from services.jog_service import jog_axis
             velocities = msg.get("velocities") or {}
             if not isinstance(velocities, dict):
                 logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
@@ -85,7 +100,7 @@ class ServoThreadService:
             return
 
         if mtype == "jog_stop":
-            from modules.axis.services.jog_service import jog_stop
+            from services.jog_service import jog_stop
             axes = msg.get("axes") or []
             if not isinstance(axes, list):
                 logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))

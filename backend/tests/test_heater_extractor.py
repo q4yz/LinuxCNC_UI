@@ -1,20 +1,21 @@
 """Tests for the heater extractor and the canonical naming helper."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import pytest
 
-from modules.machineconfig.compilers.heater_extractor import (
+from services.machineconfig.heater_extractor import (
     HardwareHeater,
     HeaterExtractor,
     derive_heater_name,
 )
-from modules.machineconfig.models import (
+from models.machineconfig import (
     Extruder,
     Heater,
     MachineConfigGraph,
 )
-from modules.machineconfig.parser import MachineConfigParser
+from machineconfig_parser import MachineConfigParser
 
 
 # ---------------------------------------------------------------------- #

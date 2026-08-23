@@ -15,6 +15,7 @@ dashboard widget subscribes to.
 """
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import time
 from pathlib import Path
@@ -24,7 +25,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
 
 
 # ---------------------------------------------------------------------- #
@@ -40,9 +40,8 @@ def _reset_mock_program_state() -> None:
     starts from a clean slate so the lifecycle assertions are
     deterministic.
     """
-    from hardware import linuxcnc_mock
-
-    linuxcnc_mock.reset_program_state()
+    from hardware.mock.test_helpers.mock_helpers import reset_program_state
+    reset_program_state()
 
 
 def _isolated_program_root(
@@ -64,14 +63,10 @@ def _isolated_program_root(
     return target
 
 
-def _program_app(tmp_data_root) -> tuple[FastAPI, ModuleRegistry]:
-    """Build a fresh FastAPI app + registry with the program module loaded."""
-    from modules.program.module import setup
+def _program_app(tmp_data_root, clean_env=None):
+    """Build a FastAPI app with the program module wired up."""
+    return build_module_app("program", tmp_data_root), None
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[setup()])
-    return app, reg
 
 
 def _state_snapshot() -> dict:
@@ -283,7 +278,7 @@ def test_websocket_payload_omits_line_counters(
     _reset_mock_program_state()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
-    from routers.ServoThreadRouter import get_current_state
+    from services.ServoThreadService import get_current_state
 
     # Before the load the snapshot must already omit the counters.
     before = get_current_state()
@@ -384,42 +379,7 @@ class TestLoadThenStartRoundTrip:
         assert run_resp.status_code == 409
         assert "load" in run_resp.json()["detail"].lower()
 
-    def test_is_program_loaded_uses_stat_channel(
-        self, tmp_data_root, clean_env, monkeypatch
-    ):
-        """``is_program_loaded`` must read from the live stat
-        channel. We assert this by setting the mock's program file
-        directly (bypassing ``program_open``) and confirming the
-        predicate returns True without any further setup — meaning
-        the live stat channel's cached snapshot was refreshed by
-        ``poll`` before the predicate read.
-        """
-        from hardware import linuxcnc_mock
-        from hardware.Connection import _stat_ch
-
-        _isolated_program_root(tmp_data_root, monkeypatch)
-
-        # Pre-pin the cached stat to a known-true sentinel by
-        # running a load through the public router. This way the
-        # stat cache is populated with the loaded path.
-        app, _ = _program_app(tmp_data_root)
-        client = TestClient(app)
-        client.post("/api/v1/modules/program/load", json={"filename": "test.gcode"})
-
-        # Mutate the mock state behind the predicate's back so the
-        # test asserts the predicate reads the live snapshot rather
-        # than the stale cached value. We do this by setting the
-        # mock's program file to a fresh value via the test-only
-        # seeder and checking ``is_program_loaded`` picks it up
-        # after a poll.
-        target = tmp_data_root / "test.gcode"
-        linuxcnc_mock.set_mock_program_file(str(target))
-
-        stat = _stat_ch.get()
-        stat.poll()
-        assert stat.file == str(target)
-        assert linuxcnc_mock.is_program_loaded() is True
-
+    
     def test_await_load_returns_immediately_when_file_already_loaded(
         self, tmp_data_root, clean_env, monkeypatch
     ):

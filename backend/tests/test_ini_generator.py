@@ -1,19 +1,20 @@
 """Tests for the AxisBuilder / IniGenerator pipeline."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
-from modules.machineconfig.compilers.axis_builder import (
+from services.machineconfig.axis_builder import (
     AxisBuilder,
     AxisMappingPolicy,
     stepgen_scale,
 )
-from modules.machineconfig.compilers.ini_generator import (
+from services.machineconfig.ini_generator import (
     IniGenerator,
     TemplateError,
     build_ini_from_graph,
     render_string,
 )
-from modules.machineconfig.models import (
+from models.machineconfig import (
     Axis,
     IniConfig,
     Joint,
@@ -262,7 +263,7 @@ def test_renderer_handles_extra_motor_with_split_policy() -> None:
         },
     )
     # Re-build with split policy:
-    from modules.machineconfig.compilers.axis_builder import AxisBuilder
+    from services.machineconfig.axis_builder import AxisBuilder
 
     ini = IniConfig(
         printer=graph,
@@ -280,7 +281,7 @@ def test_renderer_handles_extra_motor_with_split_policy() -> None:
 def test_renderer_rejects_axis_without_joints() -> None:
     """Defensive: an axis with no joints is a programmer error."""
 
-    from modules.machineconfig.models import Axis, IniConfig
+    from models.machineconfig import Axis, IniConfig
 
     broken = IniConfig(
         printer=None,
@@ -315,7 +316,7 @@ def test_axis_section_name_format() -> None:
 
 def test_renderer_emits_pid_sections_for_each_heater() -> None:
     """One ``[BED]`` / ``[EXT0]`` section per heater with PID defaults."""
-    from modules.machineconfig.models import Extruder, Heater
+    from models.machineconfig import Extruder, Heater
 
     graph = MachineConfigGraph(printer=Printer())
     graph.steppers["x"] = Stepper(axis="x", step_pin="PF13")
@@ -349,7 +350,7 @@ def test_renderer_emits_pid_sections_for_each_heater() -> None:
 
 def test_renderer_pid_sp_max_is_clamped_for_bed() -> None:
     """``[BED]`` SPMAX is clamped at 80 even if max_temp is higher."""
-    from modules.machineconfig.models import Heater
+    from models.machineconfig import Heater
 
     graph = MachineConfigGraph(printer=Printer())
     graph.steppers["x"] = Stepper(axis="x", step_pin="PF13")
@@ -371,8 +372,8 @@ def test_renderer_pid_sp_max_is_clamped_for_bed() -> None:
 
 def test_renderer_uses_canonical_section_names() -> None:
     """``heater_bed`` -> ``[BED]``, ``extruder`` -> ``[EXT0]``."""
-    from modules.machineconfig.compilers.ini_generator import _heater_ini_section
-    from modules.machineconfig.models import Heater
+    from services.machineconfig.ini_generator import _heater_ini_section
+    from models.machineconfig import Heater
 
     assert _heater_ini_section("heater_bed") == "BED"
     assert _heater_ini_section("extruder") == "EXT0"

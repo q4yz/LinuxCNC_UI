@@ -4,16 +4,16 @@ from typing import Dict, Union
 from core.field_masking import ResponseTier
 from mapper.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
-from modules.axis.mapper.axis_mapper import AxisMapper
-from modules.axis.models.axis_model import AxisStateResponse
-from modules.axis.services.service import get_axis_service
-from modules.program.service import ProgramProgressResponse, get_program_lifecycle_service
-from modules.temperature.factory.TemperatureResponseFactory import TemperatureResponseFactory
-from modules.temperature.models.TemperatureResponse import TemperatureStateResponse
-from modules.temperature.services.TemperatureService import get_temperature_service
-from modules.tools.factory.ToolResponseFactory import ToolResponseFactory, ToolStateResponseModel
-from modules.tools.models.HeaterModels import HeaterStateResponse
-from modules.tools.services.ToolsService import get_tools_service
+from mappers.axis.axis_mapper import AxisMapper
+from models.axis_model import AxisStateResponse
+from services.AxisService import get_axis_service
+from services.ProgramService import ProgramProgressResponse, get_program_lifecycle_service
+from factories.temperature.TemperatureResponseFactory import TemperatureResponseFactory
+from models.temperature_response import TemperatureStateResponse
+from services.TemperatureService import get_temperature_service
+from factories.tools.ToolResponseFactory import ToolResponseFactory, ToolStateResponseModel
+from models.tools.HeaterModels import HeaterStateResponse
+from services.ToolsService import get_tools_service
 from tests.non_repeating_logger import NonRepeatingLogger
 
 logger = NonRepeatingLogger("backend.services.base_thread")

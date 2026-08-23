@@ -18,6 +18,7 @@ These tests pin the contract the dashboard depends on:
 """
 from __future__ import annotations
 
+import importlib
 import time
 from pathlib import Path
 
@@ -26,6 +27,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import hardware.Connection as connection_mod
+from hardware.mock.test_helpers.mock_helpers import (
+    reset_program_state,
+    reseed_from_hardware_json,
+    seed_spindle_actual,
+    seed_temperature,
+)
 
 
 # ---------------------------------------------------------------------- #
@@ -35,8 +42,6 @@ import hardware.Connection as connection_mod
 
 def _reset_mock_program_state() -> None:
     """Reset the mock's program lifecycle fields to the "no program" baseline."""
-    from hardware.mock.test_helpers.mock_helpers import reset_program_state
-
     reset_program_state()
 
 
@@ -99,18 +104,15 @@ def _base_thread_app(tmp_data_root) -> tuple[FastAPI, object]:
     registry, so we ``include_router`` it explicitly — mirroring
     what ``backend/main.py`` does at boot.
     """
-    from core.event_bus import EventBus
-    from core.module_registry import ModuleRegistry
     from routers import BaseThreadRouter as base_thread_router
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
-    candidates = []
     for module_name in ("program", "temperature", "tools"):
-        candidates.append(_import_setup(module_name))
-    reg.boot(app, bus=EventBus(), candidates=candidates)
+        app.include_router(
+            importlib.import_module(f"routers.{module_name}").router
+        )
     app.include_router(base_thread_router.router)
-    return app, reg
+    return app, None
 
 
 def _import_setup(module_name: str):
@@ -150,13 +152,10 @@ def test_snapshot_returns_safe_zeroed_payload_when_offline(
     empty = tmp_path / "empty_active"
     empty.mkdir()
     _point_hardware_config_at(monkeypatch, empty)
-    monkeypatch.setattr("hardware.mock.linuxcnc_mock._PROJECT_ROOT", empty)
-    from hardware.mock import LinuxCNCMock
-
-    linuxcnc_mock.reseed_from_hardware_json()
+    reseed_from_hardware_json(empty)
 
     monkeypatch.setattr(
-        connection_mod, "get_machine_stat", lambda: None
+        connection_mod, "get_machine_stat", lambda *a, **k: None
     )
 
     app, _ = _base_thread_app(tmp_data_root)
@@ -219,12 +218,8 @@ def test_snapshot_mirrors_individual_endpoints(
     })
     _point_hardware_config_at(monkeypatch, active_root)
 
-    # 1. Point the monkeypatch at the unified mock system
-    monkeypatch.setattr("hardware.mock.mock_system._PROJECT_ROOT", active_root)
-    from hardware.mock import mock_system
-
     # 2. Reseed the unified mock
-    mock_system.reseed_from_hardware_json()
+    reseed_from_hardware_json(active_root)
 
     app, _ = _base_thread_app(tmp_data_root)
     client = TestClient(app)
@@ -234,7 +229,7 @@ def test_snapshot_mirrors_individual_endpoints(
     # 3. Seed the temperature in the unified mock.
     # (Pass a dummy target=0.0 to satisfy the Python function signature.
     # The new DDD factory will safely strip it from the final JSON.)
-    mock_system.seed_temperature("extruder", actual=195.4, target=0.0)
+    seed_temperature("extruder", actual=195.4, target=0.0)
 
     assert client.post(
         "/api/v1/modules/program/load",
@@ -349,8 +344,6 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
     _reset_line_count_cache()
     _isolated_program_root(tmp_data_root, monkeypatch)
 
-    from hardware.mock import LinuxCNCMock
-
     # Drop a hardware.json with a single spindle_digital tool so
     # the snapshot surfaces exactly one row. Re-point both the
     # mock's seeder AND the tools loader at ``tmp_path`` so the
@@ -377,12 +370,11 @@ def test_snapshot_overlays_spindle_digital_runtime_state(
         "fans": [],
     })
     _point_hardware_config_at(monkeypatch, active_root)
-    monkeypatch.setattr("hardware.mock.linuxcnc_mock._PROJECT_ROOT", active_root)
-    linuxcnc_mock.reseed_from_hardware_json()
+    reseed_from_hardware_json(active_root)
 
     # Inject non-default telemetry so the assertion proves the
     # read-through path, not the default-zero fallback.
-    linuxcnc_mock.seed_spindle_actual(
+    seed_spindle_actual(
         "spindle_digital",
         actual=11800,
         is_connected=True,
@@ -427,13 +419,9 @@ def _bare_base_thread_app(tmp_data_root) -> FastAPI:
     ``base_thread`` flat router for these tests, since they assert on
     the *presence* of fields, not their contents.
     """
-    from core.event_bus import EventBus
-    from core.module_registry import ModuleRegistry
     from routers import BaseThreadRouter as base_thread_router
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
     app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[])
     app.include_router(base_thread_router.router)
     return app
 

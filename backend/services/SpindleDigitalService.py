@@ -1,0 +1,138 @@
+"""SpindleDigital service — :class:`SpindleDigitalService` (MDI dispatch + state machine).
+
+The spindle dispatch logic used to live on :class:`ToolsService` directly;
+the OO refactor split it into this dedicated service so the per-spindle
+state machine and MDI helpers have one clear home.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from exceptions.http import NotFoundError, BadRequestError, ConflictError
+
+from services.StateService import StateService, get_state_service, MachineState
+
+
+from tools_constants import (
+    M3_FORWARD,
+    M4_BACKWARD,
+    M5_STOP,
+)
+from dtos.tools.SpindleDigitalDto import (
+    SpindleDigitalPins,
+    SpindleDigitalSettingsDTO,
+    SpindleDigitalStateDTO, DirectionStateType,
+)
+from services.ToolsService import ToolsService, get_tools_service
+from services.MachineService import get_machine_service, MachineService
+
+logger = logging.getLogger("backend.tools_service")
+
+machine_service: MachineService = get_machine_service()
+state_service: StateService = get_state_service()
+tool_service: ToolsService = get_tools_service()
+
+
+
+class SpindleDigitalService:
+    """Single-spindle dispatch + state machine."""
+
+    def get_spindle(self, tool_id: str) -> SpindleDigitalStateDTO:
+        if not isinstance(tool_id, str) or not tool_id:
+            raise BadRequestError("SpindleDigital tool_id must be a non-empty string")
+
+        try:
+            return tool_service.get_state(tool_id, SpindleDigitalStateDTO)
+        except KeyError as exc:
+            raise NotFoundError(str(exc))
+        except Exception as exc:
+            raise BadRequestError(f"Failed to parse spindle {tool_id!r}: {exc}")
+
+
+    def set_spindle(self, dto: SpindleDigitalSettingsDTO, ):
+
+        pins: SpindleDigitalPins = tool_service.get_halpin(dto.id, SpindleDigitalPins)
+
+        if not isinstance(dto, SpindleDigitalSettingsDTO):
+            raise BadRequestError("SpindleDigital settings must be a SpindleSettingsDTO")
+        if not isinstance(pins, SpindleDigitalPins):
+            raise BadRequestError("SpindleDigital pins must be a SpindleDigitalPins record")
+
+
+        if self._check_for_direction_conflict(pins, dto):
+            raise ConflictError(
+                f"SpindleDigital {pins.id!r} is already spinning; "
+                "stop it before reversing."
+            )
+
+        if dto.state == DirectionStateType.FORWARD:
+            return self._forward(pins, dto)
+        if dto.state == DirectionStateType.BACKWARD:
+            return self._reverse(pins, dto)
+        if dto.state == DirectionStateType.IDLE:
+            return self._stop(pins)
+
+        raise BadRequestError("SpindleDigital settings must be a included")
+
+    def _forward(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO):
+        mdi = "set speed"
+
+        current_state = state_service.get_state()
+
+        pins.absolute_master_override.set_value(dto.master_override)
+        pins.absolute_master_override_enable.set_value(dto.master_override_enable)
+
+        if current_state in (MachineState.RUNNING, MachineState.PAUSED):
+            pins.override.set_value(dto.override)
+        else:
+            machine_service.ensure_mdi_mode()
+            pins.override.set_value(1)
+            mdi = M3_FORWARD.format(speed=dto.master_override)
+            machine_service.dispatch_mdi(mdi)
+        return mdi
+
+    def _reverse(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO):
+        mdi = "set speed"
+
+        current_state = state_service.get_state()
+
+        pins.absolute_master_override.set_value(dto.master_override)
+        pins.absolute_master_override_enable.set_value(dto.master_override_enable)
+
+        if current_state in (MachineState.RUNNING, MachineState.PAUSED):
+            pins.override.set_value(dto.override)
+        else:
+            machine_service.ensure_mdi_mode()
+            pins.override.set_value(1)
+            mdi = M4_BACKWARD.format(speed=dto.master_override)
+            machine_service.dispatch_mdi(mdi)
+        return mdi
+
+
+    def _stop(self, pins: SpindleDigitalPins):
+        machine_service.ensure_mdi_mode()
+        mdi = M5_STOP
+        machine_service.dispatch_mdi(mdi)
+        pins.absolute_master_override_enable.set_value(False)
+        return mdi
+
+
+    def _check_for_direction_conflict(self, pins: SpindleDigitalPins, dto: SpindleDigitalSettingsDTO, ):
+        if dto.state == DirectionStateType.FORWARD and pins.spindle_reverse.get_value():
+            return True
+        if dto.state == DirectionStateType.BACKWARD and pins.spindle_forward.get_value():
+            return True
+        return False
+
+_spindle_digital_service: Optional[SpindleDigitalService] = None
+
+def get_spindle_digital_service() -> SpindleDigitalService:
+    """Lazy module-level singleton (tool telemetry / dispatch facade)."""
+    global _spindle_digital_service
+    if _spindle_digital_service is None:
+        _spindle_digital_service = SpindleDigitalService()
+    return _spindle_digital_service
+
+__all__ = ["SpindleDigitalService", "get_spindle_digital_service"]

@@ -14,12 +14,27 @@ from hardware.mock.tools.MockSpindleDigital import MockSpindleDigital
 # ===========================================================================
 logger = logging.getLogger(__name__)
 
-def reseed_from_hardware_json() -> None:
-    project_root = Path(__file__).resolve().parents[4]
-    hw_path = project_root / "machine_config" / "active" / "hardware.json"
+def reseed_from_hardware_json(path: "Path | None" = None) -> None:
+    """Reseed the mock from the project's ``hardware.json``.
+
+    Accepts an optional ``path`` argument:
+
+    * ``None`` (default) — resolve against the project's
+      ``<repo>/machine_config/active/hardware.json``.
+    * A directory — look up ``hardware.json`` inside it.
+    * A file — use it directly.
+
+    Missing files are logged but never raise so a stale checkout
+    doesn't break tests that don't depend on the config.
+    """
+    if path is None:
+        project_root = Path(__file__).resolve().parents[4]
+        path = project_root / "machine_config" / "active" / "hardware.json"
+    elif path.is_dir():
+        path = path / "hardware.json"
 
     try:
-        reseed_mock_from_json(hw_path)
+        reseed_mock_from_json(path)
     except FileNotFoundError as e:
         logger.warning(str(e))
 
@@ -44,8 +59,19 @@ def seed_temperature(sensor_id: str, actual: float, target: float = 0.0) -> None
     hal.set_p(f"target-temperature{suffix}", target)
 
 
-def seed_spindle(spindle_id: str, actual_rpm: float, is_connected: bool = True) -> None:
-    """Instantly forces spindle telemetry into the HAL pins (bypassing slow spool-up)."""
+def seed_spindle(
+    spindle_id: str,
+    actual_rpm: float,
+    is_connected: bool = True,
+    error_count: int = 0,
+) -> None:
+    """Instantly forces spindle telemetry into the HAL pins (bypassing slow spool-up).
+
+    ``error_count`` is optional — defaults to ``0`` so the helper
+    matches the historical single-argument call shape. Tests that
+    want to exercise the error-channel broadcast pass a non-zero
+    value.
+    """
 
     mock_system.internal_hal.register_component(MockSpindleDigital(spindle_id))
     suffix = spindle_id.replace("spindle_digital", "")
@@ -53,6 +79,28 @@ def seed_spindle(spindle_id: str, actual_rpm: float, is_connected: bool = True) 
     hal.set_p(f"rpm-out{suffix}", actual_rpm)
     hal.set_p(f"spindle-at-speed{suffix}", actual_rpm > 0)
     hal.set_p(f"is-connected{suffix}", is_connected)
+    hal.set_p(f"error-count{suffix}", error_count)
+
+
+def seed_spindle_actual(
+    spindle_id: str,
+    actual: float,
+    is_connected: bool = True,
+    error_count: int = 0,
+) -> None:
+    """Legacy alias for :func:`seed_spindle` with the older kwarg name.
+
+    The pre-consolidation codebase called this helper from the
+    ``hardware.linuxcnc_mock`` module; the consolidation moved it
+    here. Tests still expecting the historical signature keep
+    working — ``actual`` is mapped to ``actual_rpm``.
+    """
+    seed_spindle(
+        spindle_id,
+        actual_rpm=actual,
+        is_connected=is_connected,
+        error_count=error_count,
+    )
 
 
 def force_hal_pin(pin_name: str, value: Any) -> None:

@@ -6,11 +6,13 @@
 import manifest from "./manifest";
 import DroPanel from "./components/DroPanel.vue";
 import JogControls from "./components/JogControls.vue";
+import MachineSettingsPanel from "./components/MachineSettingsPanel.vue";
 import {servoThreadService} from "../../facades/servoThreadFacade";
 
 export default {
   manifest,
   mainView: DroPanel,
+  settingsPanel: MachineSettingsPanel,
   onLoad(/* ctx */) {
     // Open the 10 Hz ``/ws/telemetry`` WebSocket on the servo
     // thread (idempotent — see the guard inside
@@ -25,6 +27,7 @@ export default {
   components: {
     DroPanel,
     JogControls,
+    MachineSettingsPanel,
   },
 };
 
@@ -32,4 +35,5 @@ export {
   manifest,
   DroPanel,
   JogControls,
+  MachineSettingsPanel,
 };

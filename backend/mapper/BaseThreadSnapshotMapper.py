@@ -16,11 +16,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
-from modules.axis.models.axis_model import AxisStateResponse
-from modules.program.service import ProgramProgressResponse
-from modules.temperature.models.TemperatureResponse import TemperatureStateResponse
-from modules.tools.factory.ToolResponseFactory import ToolStateResponseModel
-from modules.tools.models.HeaterModels import HeaterStateResponse
+from models.axis_model import AxisStateResponse
+from services.ProgramService import ProgramProgressResponse
+from models.temperature_response import TemperatureStateResponse
+from factories.tools.ToolResponseFactory import ToolStateResponseModel
+from models.tools.HeaterModels import HeaterStateResponse
 
 
 def _utc_timestamp() -> str:

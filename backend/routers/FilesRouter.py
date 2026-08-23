@@ -1,4 +1,4 @@
-﻿"""``/api/v1/programs`` HTTP surface.
+"""``/api/v1/programs`` HTTP surface.
 
 Thin wrapper around :class:`ProgramFileService` for the file-CRUD
 endpoints (``list``, ``upload``, ``delete``, ``content``). The

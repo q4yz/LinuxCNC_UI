@@ -20,6 +20,7 @@ installed, every test monkeypatches either
 ``_spawn_locked`` helper to install a stub ``Popen``.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import subprocess
 import sys
@@ -31,7 +32,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
 
 
 # ---------------------------------------------------------------------- #
@@ -96,7 +96,7 @@ def fake_ustreamer(monkeypatch):
     Also resets the module-level supervisor's internal state so each
     test starts clean.
     """
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     _FakeProc.reset()
 
@@ -119,7 +119,7 @@ def fake_ustreamer(monkeypatch):
 @pytest.fixture()
 def fake_no_ustreamer(monkeypatch):
     """Pretend ``ustreamer`` is not on PATH; ``spawn`` raises immediately."""
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     monkeypatch.setattr(router_module.shutil, "which", lambda _name: None)
     router_module._supervisor._cooldown_until.clear()
@@ -128,8 +128,8 @@ def fake_no_ustreamer(monkeypatch):
 @pytest.fixture()
 def fake_linux_with_devices(monkeypatch, tmp_path):
     """Pretend we are on Linux and ``/dev/video0`` exists."""
-    import modules.camera.detection as detection
-    import modules.camera.router as router_module
+    import services.camera_detection as detection
+    import routers.camera as router_module
 
     monkeypatch.setattr(detection.sys, "platform", "linux")
     # Always report the canonical ``/dev/video0`` path so the
@@ -163,7 +163,7 @@ def fake_linux_with_devices(monkeypatch, tmp_path):
 
 
 def test_spawn_creates_one_child_per_device_id(fake_ustreamer, fake_linux_with_devices):
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     info = _supervisor.spawn_or_reuse("/dev/video0")
     assert info["id"] == "/dev/video0"
@@ -179,7 +179,7 @@ def test_spawn_creates_one_child_per_device_id(fake_ustreamer, fake_linux_with_d
 
 
 def test_double_spawn_shares_child(fake_ustreamer, fake_linux_with_devices):
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     _supervisor.spawn_or_reuse("/dev/video0")
     before = len(_FakeProc.instances)
@@ -190,8 +190,8 @@ def test_double_spawn_shares_child(fake_ustreamer, fake_linux_with_devices):
 
 def test_spawn_arms_cooldown_on_popen_failure(monkeypatch, fake_linux_with_devices):
     """If ``Popen`` raises, the cooldown blocks the next request."""
-    import modules.camera.router as router_module
-    from modules.camera.router import _supervisor
+    import routers.camera as router_module
+    from routers.camera import _supervisor
 
     def _explode(*_args, **_kwargs):
         raise OSError("synthetic spawn failure")
@@ -208,7 +208,7 @@ def test_spawn_arms_cooldown_on_popen_failure(monkeypatch, fake_linux_with_devic
 
 
 def test_shutdown_terminates_every_child(fake_ustreamer, fake_linux_with_devices):
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     _supervisor.spawn_or_reuse("/dev/video0")
     proc = _FakeProc.instances[-1]
@@ -236,7 +236,7 @@ def test_spawn_returns_url_verbatim_for_http_source(
     credentials (``http://user:pass@host/path``) survive the
     round-trip without rewriting.
     """
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
     info = _supervisor.spawn_or_reuse(url)
@@ -253,7 +253,7 @@ def test_spawn_returns_url_verbatim_for_https_and_rtsp(
     fake_ustreamer, fake_linux_with_devices,
 ):
     """``https://`` and ``rtsp://`` URLs are also passthrough."""
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     for url in (
         "https://camera.example.com/stream",
@@ -271,7 +271,7 @@ def test_status_reports_running_for_ip_camera_default(
     is an IP camera URL — there is no supervisor-managed subprocess
     for those, but the operator's UI must not show a placeholder.
     """
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: url)
@@ -291,7 +291,7 @@ def test_diagnostic_skips_dependency_checks_for_ip_url(
     or platform-unsupported diagnostics — the 302 redirect does not
     touch any of those dependencies.
     """
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     url = "http://Nacht:kamara@10.0.0.58/videostream.cgi?rate=0"
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: url)
@@ -438,7 +438,7 @@ def test_stream_endpoint_proxies_usb_camera_url(
        200 OK with the upstream's MJPEG bytes and the upstream's
        exact ``Content-Type`` (boundary preserved verbatim).
     """
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     # Synthesize what ustreamer sends. The boundary parameter is
     # whatever ustreamer's ``-d`` flag selected; the test asserts the
@@ -509,7 +509,7 @@ def test_stream_endpoint_proxies_second_usb_camera(
     port 8081, etc. A future refactor that re-uses ports or allocates
     dynamically would trip this test.
     """
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     captured_urls: list[str] = []
 
@@ -538,7 +538,7 @@ def test_stream_endpoint_proxies_second_usb_camera(
 
 
 def test_shutdown_is_idempotent(fake_ustreamer):
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     # No children at all — must not raise.
     _supervisor.shutdown()
@@ -546,7 +546,7 @@ def test_shutdown_is_idempotent(fake_ustreamer):
 
 
 def test_spawn_rejects_empty_id():
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     with pytest.raises(RuntimeError, match="camera_id is required"):
         _supervisor.spawn_or_reuse("")
@@ -559,7 +559,7 @@ def test_spawn_rejects_empty_id():
 
 def test_status_message_reports_unsupported_platform(monkeypatch):
     """Non-Linux hosts get the platform-unsupported diagnostic."""
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     monkeypatch.setattr(router_module.sys, "platform", "win32")
     snap = router_module._supervisor.status()
@@ -572,7 +572,7 @@ def test_status_message_reports_ustreamer_not_installed(
     fake_no_ustreamer, monkeypatch, fake_linux_with_devices,
 ):
     """If ``ustreamer`` is missing, status says so clearly."""
-    from modules.camera.router import _supervisor
+    from routers.camera import _supervisor
 
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: "/dev/video0")
 
@@ -584,8 +584,8 @@ def test_status_message_reports_ustreamer_not_installed(
 
 def test_status_message_reports_no_devices(monkeypatch, fake_no_ustreamer):
     """Linux host with no ``/dev/video*`` and no IP camera → NO_DEVICES."""
-    import modules.camera.detection as detection
-    import modules.camera.router as router_module
+    import services.camera_detection as detection
+    import routers.camera as router_module
 
     monkeypatch.setattr(detection.sys, "platform", "linux")
     monkeypatch.setattr(detection, "_list_video_device_paths", lambda: [])
@@ -603,8 +603,8 @@ def test_status_message_reports_device_not_found(
     fake_ustreamer, fake_linux_with_devices, monkeypatch,
 ):
     """Configured ``default_device_id`` missing → DEVICE_NOT_FOUND."""
-    import modules.camera.router as router_module
-    from modules.camera.router import _supervisor
+    import routers.camera as router_module
+    from routers.camera import _supervisor
 
     monkeypatch.setattr(router_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: "/dev/video99")
@@ -620,8 +620,8 @@ def test_status_returns_running_url_when_child_alive(
     fake_ustreamer, fake_linux_with_devices, monkeypatch,
 ):
     """A live child → ``running=True`` with the redirect URL."""
-    import modules.camera.router as router_module
-    from modules.camera.router import _supervisor
+    import routers.camera as router_module
+    from routers.camera import _supervisor
 
     monkeypatch.setattr(router_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: "/dev/video0")
@@ -641,7 +641,7 @@ def test_status_reports_crashed_child_exit_code(
     fake_ustreamer, fake_linux_with_devices, monkeypatch,
 ):
     """A child that exits non-zero → message contains the exit code."""
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     monkeypatch.setattr(router_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(
@@ -666,11 +666,29 @@ def test_status_reports_crashed_child_exit_code(
 
 
 def _camera_app(tmp_data_root, clean_env) -> FastAPI:
-    from modules.camera.module import CameraModule
+    """Build a FastAPI app with the camera module wired up.
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[CameraModule()])
+    Wires the camera supervisor's settings store explicitly because
+    the registry no longer calls ``CameraModule.on_load`` (the
+    supervisor needs the per-module SettingsStore to read
+    ``default_device_id``).
+    """
+    from routers import camera as camera_router
+    from core.settings_store import SettingsStore
+
+    app = build_module_app("camera", tmp_data_root)
+    settings = SettingsStore(
+        module_id="camera",
+        data_root=tmp_data_root,
+        defaults=camera_router.__dict__.get("__defaults__", None)
+        if False
+        else None,
+    )
+    # Fall back to the canonical defaults class if None was passed.
+    if settings._defaults is None:
+        from models.camera_settings import CameraSettings
+        settings._defaults = CameraSettings()
+    camera_router.bind_settings_store(settings)
     return app
 
 
@@ -704,7 +722,7 @@ def test_stream_endpoint_proxies_usb_camera_via_default_device(
     frontend hits on first camera-viewer mount (no id, picks up
     the persisted default).
     """
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     monkeypatch_which = __import__("pytest").MonkeyPatch()
     monkeypatch_which.setattr(
@@ -769,7 +787,7 @@ def test_status_endpoint_returns_message_when_dependency_missing(
 def test_status_endpoint_omits_message_when_healthy(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):
-    import modules.camera.router as router_module
+    import routers.camera as router_module
 
     monkeypatch_which = __import__("pytest").MonkeyPatch()
     monkeypatch_which.setattr(

@@ -1,11 +1,32 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../store'
 import { WORK_COORDINATE_SYSTEMS } from '../../../config/gcodes'
+import { useMacroButtonConfig, MacroButton } from '../../../ui'
 
 const store = useMachineStore()
 const { droX, droY, droZ, isEstop, isMachineOn, machineStateText, status } = storeToRefs(store)
+
+// Custom macro buttons (one slot per axis row). The shared
+// ``useMacroButtonConfig`` composable reads from the per-module
+// ``SettingsStore``; ``buttonsBySlot`` is a slot id → descriptor
+// lookup. ``MacroButton`` renders nothing when the matching row
+// is missing, disabled, or empty.
+//
+// The settings moduleId is ``"axis"`` (not ``manifest.id`` of
+// ``"machine"``) to match the backend's ``_MODULE_DOMAINS[0]``
+// mount under that id; the write surface
+// (``MachineSettingsPanel.vue``) uses the same id so both ends
+// of the read/write pair share ``<data_root>/modules/axis/settings.json``.
+const buttonConfig = useMacroButtonConfig('axis')
+const { buttonsBySlot } = buttonConfig
+
+onMounted(() => {
+  // Fire-and-forget; the composable handles missing keys by
+  // defaulting to ``[]``.
+  buttonConfig.refresh()
+})
 
 // Set Position modal state
 const setPositionModal = ref({ visible: false, axis: null, axisName: '', value: '' })
@@ -131,6 +152,12 @@ function handleMaxSpeedChange() {
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home X Axis"
             >🏠</button>
+            <MacroButton
+                :descriptor="buttonsBySlot['dro.x']"
+                variant="secondary"
+                size="sm"
+                class="px-2 py-1 text-xs"
+            />
             <button
                 @click="openSetPosition(0, 'X', 0)"
                 :disabled="!isMachineOn"
@@ -153,6 +180,12 @@ function handleMaxSpeedChange() {
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home Y Axis"
             >🏠</button>
+            <MacroButton
+                :descriptor="buttonsBySlot['dro.y']"
+                variant="secondary"
+                size="sm"
+                class="px-2 py-1 text-xs"
+            />
             <button
                 @click="openSetPosition(1, 'Y', 0)"
                 :disabled="!isMachineOn"
@@ -175,6 +208,12 @@ function handleMaxSpeedChange() {
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home Z Axis"
             >🏠</button>
+            <MacroButton
+                :descriptor="buttonsBySlot['dro.z']"
+                variant="secondary"
+                size="sm"
+                class="px-2 py-1 text-xs"
+            />
             <button
                 @click="openSetPosition(2, 'Z', 0)"
                 :disabled="!isMachineOn"

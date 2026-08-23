@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useCameraStore } from "../cameraStore";
+import { useMacroButtonConfig, MacroButton } from "../../../ui";
 
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.
@@ -21,6 +22,13 @@ const {
   error,
   streamMessage,
 } = storeToRefs(store);
+
+// Operator-configurable macro button (slot ``camera.bottom``).
+// Renders alongside the existing "Switch Camera" button so the
+// operator can keep their muscle memory while adding one-off
+// shortcuts (e.g. a light-on macro).
+const buttonConfig = useMacroButtonConfig("camera");
+const { buttonsBySlot } = buttonConfig;
 
 const activeDevice = computed(() => {
   return devices.value.find((device) => device.id === activeCameraId.value) ?? null;
@@ -124,6 +132,10 @@ onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
   startStream();
+  // Fire-and-forget; ``useMacroButtonConfig`` handles missing
+  // keys by defaulting to ``[]`` so the button stays hidden
+  // until the operator configures one in the Settings panel.
+  buttonConfig.refresh();
 });
 
 // Clean up when leaving the page to free the USB hardware and
@@ -245,5 +257,13 @@ onBeforeUnmount(async () => {
     >
       Switch Camera
     </button>
+
+    <MacroButton
+      v-if="activeCameraId"
+      :descriptor="buttonsBySlot['camera.bottom']"
+      variant="secondary"
+      size="md"
+      class="absolute bottom-4 right-36 rounded-full shadow-lg"
+    />
   </section>
 </template>

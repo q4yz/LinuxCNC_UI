@@ -119,7 +119,7 @@ class FileService:
     def safe_join(self, *parts: str) -> Path:
         """Join ``parts`` onto the root and assert the result stays under it.
 
-        Mirrors ``backend.modules.machineconfig.filesystem.safe_join``
+        Mirrors ``machineconfig.filesystem.safe_join``
         so the contract is byte-for-byte identical for the existing
         call sites. The router still gets a :class:`ValueError` it
         can translate into HTTP 400.

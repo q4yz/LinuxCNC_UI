@@ -22,6 +22,7 @@ The proxy itself is exercised by the router-level test
 the proxy's unit-level contract.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import asyncio
 import base64
@@ -30,8 +31,8 @@ from typing import List, Optional
 import httpx
 import pytest
 
-from modules.camera import mjpeg_proxy
-from modules.camera.mjpeg_proxy import (
+from services import camera_mjpeg_proxy
+from services.camera_mjpeg_proxy import (
     MjpegProxy,
     MjpegProxyError,
     error_message_for_status,
@@ -197,7 +198,7 @@ def _drive_proxy_class(
     Returns ``(content_type_captured, list_of_bytes_yielded)``.
     """
     monkeypatch.setattr(
-        mjpeg_proxy.httpx,
+        camera_mjpeg_proxy.httpx,
         "AsyncClient",
         _make_fake_client_class(fake_client),
     )
@@ -348,7 +349,7 @@ def test_mjpeg_proxy_cleanup_closes_response_and_client(monkeypatch):
     fake_stream = _FakeStream(chunks=[b"x"])
     fake_client = _FakeAsyncClient(fake_stream)
     monkeypatch.setattr(
-        mjpeg_proxy.httpx,
+        camera_mjpeg_proxy.httpx,
         "AsyncClient",
         _make_fake_client_class(fake_client),
     )
@@ -369,7 +370,7 @@ def test_mjpeg_proxy_exit_is_idempotent(monkeypatch):
     fake_stream = _FakeStream(chunks=[b"x"])
     fake_client = _FakeAsyncClient(fake_stream)
     monkeypatch.setattr(
-        mjpeg_proxy.httpx,
+        camera_mjpeg_proxy.httpx,
         "AsyncClient",
         _make_fake_client_class(fake_client),
     )

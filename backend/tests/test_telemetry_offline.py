@@ -2,7 +2,7 @@
 WebSocket telemetry layer.
 
 The backend must boot and serve its telemetry endpoint even when
-the LinuxCNC daemon isn't reachable. ``hardware.connection`` wraps
+the LinuxCNC daemon isn't reachable. ``connection`` wraps
 the NML channels in :class:`_LazyChannel`, so the channel helpers
 return ``None`` until the daemon comes online. These tests pin the
 contract that:
@@ -39,6 +39,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import WebSocketDisconnect
 
+from hardware import connection
+
 
 async def _drive_one_tick():
     """Run :func:`telemetry_loop` until the first ``await asyncio.sleep(0.1)``.
@@ -47,8 +49,10 @@ async def _drive_one_tick():
     a no-op then cancel the wrapping task after one round so the
     real test only pays for one cycle.
     """
-    from routers import ServoThreadRouter as ws_mod
+    from services.ServoThreadService import ServoThreadService
+    from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
+    svc = ServoThreadService()
     real_sleep = asyncio.sleep
 
     async def fake_sleep(_seconds):
@@ -57,7 +61,7 @@ async def _drive_one_tick():
         await real_sleep(0)
 
     with patch.object(asyncio, "sleep", side_effect=fake_sleep):
-        task = asyncio.create_task(ws_mod.telemetry_loop())
+        task = asyncio.create_task(svc.telemetry_loop())
         # Let the loop cycle once.
         await real_sleep(0)
         task.cancel()
@@ -74,10 +78,10 @@ def test_get_current_state_returns_offline_snapshot_when_channels_offline():
     The operator-facing UI relies on this to render the red "Estop"
     badge rather than a stale frame when LinuxCNC is unreachable.
     """
-    from routers import ServoThreadRouter as ws_mod
-
-    with patch.object(ws_mod, "get_machine_stat", return_value=None):
-        snapshot = ws_mod.get_current_state()
+    from services.ServoThreadService import ServoThreadService
+    svc = ServoThreadService()
+    with patch.object(connection, "get_machine_stat", return_value=None):
+        snapshot = svc.get_current_state()
 
     assert snapshot["task_state"] == 1  # STATE_ESTOP
     assert snapshot["estop"] == 1
@@ -105,10 +109,11 @@ def test_telemetry_loop_survives_one_offline_tick():
     implementation re-fetches inside the body and skips the
     ``.poll()`` call when either channel is offline.
     """
-    from routers import ServoThreadRouter as ws_mod
+    from services.ServoThreadService import ServoThreadService
+    from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
-    with patch.object(ws_mod, "get_machine_stat", return_value=None), \
-         patch.object(ws_mod, "get_machine_error", return_value=None):
+    with patch.object(connection, "get_machine_stat", return_value=None), \
+         patch.object(connection, "get_machine_error", return_value=None):
         # Drive exactly one tick of the loop. If the bug is
         # present, an ``AttributeError`` is raised the moment
         # the loop body touches ``None.poll()`` and propagates
@@ -135,7 +140,8 @@ def test_telemetry_loop_survives_transient_poll_oserror(caplog):
     Without the local handler, the outer ``except Exception`` catches
     it and logs at ERROR every tick, spamming the operator log.
     """
-    from routers import ServoThreadRouter as ws_mod
+    from services.ServoThreadService import ServoThreadService
+    from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
     class _FlakyStat:
         """A ``stat`` channel whose first ``poll()`` raises OSError.
@@ -178,9 +184,9 @@ def test_telemetry_loop_survives_transient_poll_oserror(caplog):
     flaky = _FlakyStat()
     empty = _EmptyError()
 
-    with patch.object(ws_mod, "get_machine_stat", return_value=flaky), \
-         patch.object(ws_mod, "get_machine_error", return_value=empty), \
-         patch.object(ws_mod.manager, "active_connections", new=[]), \
+    with patch.object(connection, "get_machine_stat", return_value=flaky), \
+         patch.object(connection, "get_machine_error", return_value=empty), \
+         patch.object(svc, "active_connections", new=[]), \
          caplog.at_level("DEBUG", logger="backend.routers.servo_thread"):
         # Drive three ticks: first one hits the OSError, the next two
         # succeed. If the bug is present, the loop dies on tick 1
@@ -192,7 +198,7 @@ def test_telemetry_loop_survives_transient_poll_oserror(caplog):
                 await real_sleep(0)
 
             with patch.object(asyncio, "sleep", side_effect=fake_sleep):
-                task = asyncio.create_task(ws_mod.telemetry_loop())
+                task = asyncio.create_task(svc.telemetry_loop())
                 # Yield enough times for ~3 ticks.
                 for _ in range(3):
                     await real_sleep(0)
@@ -224,7 +230,8 @@ def test_telemetry_loop_survives_transient_poll_oserror(caplog):
 
 def test_telemetry_loop_survives_transient_error_channel_poll_oserror(caplog):
     """A single transient ``error_channel.poll()`` OSError must not crash."""
-    from routers import ServoThreadRouter as ws_mod
+    from services.ServoThreadService import ServoThreadService
+    from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
     class _HealthyStat:
         def poll(self):
@@ -261,9 +268,9 @@ def test_telemetry_loop_survives_transient_error_channel_poll_oserror(caplog):
     healthy = _HealthyStat()
     flaky = _FlakyError()
 
-    with patch.object(ws_mod, "get_machine_stat", return_value=healthy), \
-         patch.object(ws_mod, "get_machine_error", return_value=flaky), \
-         patch.object(ws_mod.manager, "active_connections", new=[]), \
+    with patch.object(connection, "get_machine_stat", return_value=healthy), \
+         patch.object(connection, "get_machine_error", return_value=flaky), \
+         patch.object(svc, "active_connections", new=[]), \
          caplog.at_level("DEBUG", logger="backend.routers.servo_thread"):
         async def drive():
             real_sleep = asyncio.sleep
@@ -272,7 +279,7 @@ def test_telemetry_loop_survives_transient_error_channel_poll_oserror(caplog):
                 await real_sleep(0)
 
             with patch.object(asyncio, "sleep", side_effect=fake_sleep):
-                task = asyncio.create_task(ws_mod.telemetry_loop())
+                task = asyncio.create_task(svc.telemetry_loop())
                 for _ in range(3):
                     await real_sleep(0)
                 task.cancel()
@@ -302,7 +309,9 @@ def test_websocket_telemetry_cleans_up_on_non_disconnect_exception():
     of the backend's lifetime, slowly growing the list and
     wasting broadcast cycles.
     """
-    from routers import ServoThreadRouter as ws_mod
+    from services.ServoThreadService import ServoThreadService
+    from routers import ServoThreadRouter as ws_mod  # noqa: F401
+    svc = ServoThreadService()
 
     class FakeWS:
         """Stand-in for a real WebSocket that always raises on poll.
@@ -330,11 +339,11 @@ def test_websocket_telemetry_cleans_up_on_non_disconnect_exception():
 
 
     fake = FakeWS()
-    active_before = len(ws_mod.manager.active_connections)
+    active_before = len(svc.active_connections)
 
     async def runner():
         try:
-            await ws_mod.websocket_telemetry(fake)
+            await svc.websocket_telemetry(fake)
         except RuntimeError:
             # The handler should ``raise`` after disconnecting so
             # FastAPI's WebSocket stack can finalise the close.
@@ -344,7 +353,7 @@ def test_websocket_telemetry_cleans_up_on_non_disconnect_exception():
 
     # The connection was added on accept, removed on the catch-all
     # exception path. Net effect: zero length change.
-    assert len(ws_mod.manager.active_connections) == active_before
+    assert len(svc.active_connections) == active_before
     # And the handler did pass through every expected step.
     assert fake.calls[0] == "accept"
     assert any(c.startswith("send_text:") for c in fake.calls)

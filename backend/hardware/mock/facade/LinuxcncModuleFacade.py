@@ -1,3 +1,4 @@
+from hardware.mock import constants_mock
 from hardware.mock.facade.CommandMock import CommandMock
 
 
@@ -19,6 +20,28 @@ class LinuxcncModuleFacade:
         self.INTERP_READING = state_mock.INTERP_READING
         self.INTERP_PAUSED = state_mock.INTERP_PAUSED
         self.INTERP_WAITING = state_mock.INTERP_WAITING
+
+        # NML jog/trajectory-mode constants. The production
+        # ``hardware.connection`` module imports these via
+        # ``getattr(linuxcnc, "JOG_CONTINUOUS", 1)`` and the mock had
+        # no equivalent until now — expose every constant the
+        # ``constants_mock`` module ships so a single ``from hardware
+        # import linuxcnc`` resolves every constant the tests use.
+        for _name in (
+            "JOG_STOP",
+            "JOG_INCREMENT",
+            "JOG_CONTINUOUS",
+            "TRAJ_MODE_FREE",
+            "TRAJ_MODE_TELEOP",
+            "MODE_MANUAL",
+            "MODE_MDI",
+            "MODE_AUTO",
+            "AUTO_RUN",
+            "AUTO_PAUSE",
+            "AUTO_RESUME",
+            "AUTO_STEP",
+        ):
+            setattr(self, _name, getattr(constants_mock, _name))
 
     def stat(self):
         """Mimics linuxcnc.stat().

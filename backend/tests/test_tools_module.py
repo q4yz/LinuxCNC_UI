@@ -15,19 +15,16 @@ Covers:
   ``test_temperature_module.py`` for consistency).
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import json
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.module_registry import ModuleRegistry
-
-
 # ---------------------------------------------------------------------- #
 # Active-root injection                                                   #
 # ---------------------------------------------------------------------- #
-
 
 def _point_config_at_tmp(monkeypatch, tmp_path):
     """Point :class:`HardwareConfigService` at ``tmp_path``.
@@ -58,96 +55,30 @@ def _point_config_at_tmp(monkeypatch, tmp_path):
 
     monkeypatch.setattr(HardwareConfigService, "__init__", _init)
 
-
 # ---------------------------------------------------------------------- #
 # Boot / router discovery                                                 #
 # ---------------------------------------------------------------------- #
 
-
-def test_tools_module_boots_and_registers_router(tmp_data_root, clean_env):
-    """The tools module is discoverable and the registry mounts its
-    router under ``/api/v1/modules/tools``.
-    """
-    from modules.tools.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-
-    assert "tools" in reg.modules
-
-    client = TestClient(app)
-    # Confirm the canonical settings endpoints are mounted by the
-    # registry with the typed defaults from
-    # :class:`ToolsSettings` (see ``.agent/contracts/backend-module.md``
-    # § 1 — every module returns a non-null Pydantic model).
-    resp = client.get("/api/v1/modules/tools/settings")
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["confirm_spindle_start"] is False
-    assert payload["max_spindle_rpm"] == 12000
-
-
-def test_legacy_prefix_not_registered(tmp_data_root, clean_env):
-    """The legacy flat-file ``POST /api/v1/machine/tools`` shape is
-    not present on the new module router — Issue #64 ships the
-    module router only. The historical ``GET /tools`` listing
-    endpoint was superseded by the base-thread snapshot.
-    """
-    from modules.tools.module import setup
-    from modules.tools.ToolRouter import router as tools_router
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, candidates=[setup()])
-
-    paths = {route.path for route in tools_router.routes}
-    assert "/spindle" in paths
-    assert "/extruder" in paths
-    # ``POST /tools/{id}/target`` is the only remaining tool
-    # endpoint on this router; ``GET /tools`` was retired in
-    # favour of the base-thread snapshot.
-    assert "/tools" not in paths
-    assert "/tools/{tool_id}/target" in paths
-    # No legacy prefix.
-    assert "/api/v1/machine/tools" not in paths
-
-
-# ---------------------------------------------------------------------- #
-# POST /spindle                                                           #
-# ---------------------------------------------------------------------- #
-
-
 def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
     """Build a tools-only FastAPI app with a fixture ``hardware.json``.
 
-    The dev environment's real ``hardware.json`` does not declare
-    ``spindle_main`` / ``extruder_1`` / ``heater_unknown`` — the
-    fixtures the legacy tests rely on. Drop a minimal
-    ``hardware.json`` and point the loader at it via the
-    :class:`HardwareConfigService` seam so the production code path
-    resolves the configured tools from the fixture rather than from
-    the dev ``machine_config/active/`` directory.
-
-    Falls back to the original (no-fixture) build when ``monkeypatch``
-    or ``tmp_path`` are not supplied — preserved for callers that
-    bring their own fixture (``test_set_tool_target_*`` already
-    patches the loader inline).
+    Mirrors the historical build but skips the module registry —
+    the tools router is mounted directly under ``/api/v1/modules/tools``
+    by :func:`build_module_app`. The ``HardwareConfigService``
+    monkeypatch ensures the loader resolves the configured tools from
+    the test fixture rather than from the dev environment.
     """
-    from modules.tools.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
+    from fastapi import FastAPI
+    from routers import _module_settings_router as msr
+    from core.settings_store import SettingsStore
+    from models.tools_settings import ToolsSettings
 
     if monkeypatch is not None and tmp_path is not None:
         active_dir = tmp_path / "machine_config" / "active"
         active_dir.mkdir(parents=True, exist_ok=True)
         hardware_json = active_dir / "hardware.json"
-        # Skip the default fixture when the caller already wrote
-        # one (``_write_hardware_json`` drops the same file path
-        # before calling ``_build_app``). Overwriting an
-        # intentionally-crafted fixture breaks the test contract.
         if not hardware_json.exists():
+            import json
             hardware_json.write_text(
                 json.dumps(
                     {
@@ -195,24 +126,40 @@ def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
                 ),
                 encoding="utf-8",
             )
-        from services.HardwareConfigService import HardwareConfigService
 
+        from services.HardwareConfigService import HardwareConfigService
         original_init = HardwareConfigService.__init__
 
         def _init(self, active_path=None, repo_root=None):
             return original_init(
                 self,
-                active_path=active_path if active_path is not None else hardware_json,
+                active_path=(
+                    active_path if active_path is not None else hardware_json
+                ),
                 repo_root=repo_root,
             )
 
         monkeypatch.setattr(HardwareConfigService, "__init__", _init)
-        monkeypatch.setattr(
-            "hardware.mock.mock_system._PROJECT_ROOT", active_dir
-        )
 
-    reg.boot(app, candidates=[setup()])
+    # Build the router manually because we need extra control over
+    # the SettingsStore defaults (the canonical helper instantiates
+    # a fresh store; tests that share state need the store reset
+    # between calls).
+    app = FastAPI()
+    settings = SettingsStore(
+        module_id="tools",
+        data_root=tmp_data_root,
+        defaults=ToolsSettings(),
+    )
+    app.include_router(
+        msr.build_module_settings_router(settings),
+        prefix="/api/v1/modules/tools/settings",
+        tags=["modules:tools:settings"],
+    )
+    from routers import tools as tools_router
+    app.include_router(tools_router.router)
     return app
+
 
 
 def test_spindle_forward_emits_m3(tmp_data_root, clean_env, monkeypatch, tmp_path):
@@ -230,7 +177,6 @@ def test_spindle_forward_emits_m3(tmp_data_root, clean_env, monkeypatch, tmp_pat
         "tool_id": "spindle_main",
     }
 
-
 def test_spindle_backward_emits_m4(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
@@ -245,7 +191,6 @@ def test_spindle_backward_emits_m4(tmp_data_root, clean_env, monkeypatch, tmp_pa
         "command": "M4 S8000",
         "tool_id": "spindle_main",
     }
-
 
 def test_spindle_stop_emits_m5(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """The stop action ignores ``speed`` and emits ``M5``."""
@@ -263,7 +208,6 @@ def test_spindle_stop_emits_m5(tmp_data_root, clean_env, monkeypatch, tmp_path):
         "tool_id": "spindle_main",
     }
 
-
 def test_spindle_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
@@ -272,7 +216,6 @@ def test_spindle_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, t
         json={"tool_id": "spindle_main", "action": "sideways", "speed": 0},
     )
     assert resp.status_code == 400
-
 
 def test_spindle_validates_speed_upper_bound(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
@@ -283,7 +226,6 @@ def test_spindle_validates_speed_upper_bound(tmp_data_root, clean_env, monkeypat
     )
     assert resp.status_code == 422
 
-
 def test_spindle_validates_empty_tool_id(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
@@ -293,11 +235,9 @@ def test_spindle_validates_empty_tool_id(tmp_data_root, clean_env, monkeypatch, 
     )
     assert resp.status_code == 422
 
-
 # ---------------------------------------------------------------------- #
 # POST /extruder                                                          #
 # ---------------------------------------------------------------------- #
-
 
 def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
@@ -320,7 +260,6 @@ def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env, monk
     assert body["command"] == "G1 E5.0 F300"
     assert body["tool_id"] == "extruder_1"
 
-
 def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """Retract must apply a negative sign so the same positive
     ``distance`` value drives the extruder backwards.
@@ -340,7 +279,6 @@ def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env, monkey
     body = resp.json()
     assert body["command"] == "G1 E-2.5 F200"
 
-
 def test_extruder_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
@@ -354,7 +292,6 @@ def test_extruder_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, 
         },
     )
     assert resp.status_code == 400
-
 
 def test_extruder_validates_distance_lower_bound(tmp_data_root, clean_env, monkeypatch, tmp_path):
     """Negative or zero distances must be rejected — the router
@@ -374,11 +311,9 @@ def test_extruder_validates_distance_lower_bound(tmp_data_root, clean_env, monke
     )
     assert resp.status_code == 422
 
-
 # ---------------------------------------------------------------------- #
 # GET /tools — operator-facing tool list                                  #
 # ---------------------------------------------------------------------- #
-
 
 def _write_hardware_json(tmp_path, payload):
     """Drop a v2-shape ``hardware.json`` into the active dir."""
@@ -392,17 +327,14 @@ def _write_hardware_json(tmp_path, payload):
     )
     return active_dir
 
-
 # The historical ``GET /tools`` listing endpoint was superseded by
 # the base-thread snapshot (``GET /api/v1/base-thread/snapshot``),
 # which is now the only public surface for the tool list. The legacy
 # GET tests moved to ``test_base_thread_snapshot.py``.
 
-
 # ---------------------------------------------------------------------- #
 # POST /tools/{id}/target — heating-tool target dispatch                   #
 # ---------------------------------------------------------------------- #
-
 
 def test_set_tool_target_dispatches_set_temperature(
     tmp_data_root, clean_env, monkeypatch, tmp_path
@@ -413,7 +345,7 @@ def test_set_tool_target_dispatches_set_temperature(
     sensor.
     """
     from hardware import linuxcnc_mock
-    from modules.tools import config_mapper
+    import tools_config_mapper
 
     hardware_payload = {
         "version": "2.0",
@@ -446,7 +378,7 @@ def test_set_tool_target_dispatches_set_temperature(
     monkeypatch.setattr(
         "hardware.linuxcnc_mock._PROJECT_ROOT", tmp_path
     )
-    linuxcnc_mock.reseed_from_hardware_json()
+    reseed_from_hardware_json()
 
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)
     client = TestClient(app)
@@ -465,7 +397,6 @@ def test_set_tool_target_dispatches_set_temperature(
 
     reading = read_temperature("extruder")
     assert reading is not None and reading["target"] == 195.0
-
 
 def test_set_tool_target_rejects_unknown_tool(
     tmp_data_root, clean_env, monkeypatch, tmp_path
@@ -491,7 +422,6 @@ def test_set_tool_target_rejects_unknown_tool(
     )
     assert resp.status_code == 404
     assert "heater_unknown" in resp.json()["detail"]
-
 
 def test_set_tool_target_rejects_non_heating_tool(
     tmp_data_root, clean_env, monkeypatch, tmp_path
@@ -528,7 +458,6 @@ def test_set_tool_target_rejects_non_heating_tool(
     assert resp.status_code == 400
     assert "spindle" in resp.json()["detail"].lower()
 
-
 def test_set_tool_target_validates_range(
     tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
@@ -563,105 +492,9 @@ def test_set_tool_target_validates_range(
     )
     assert resp.status_code == 422
 
-
 # ---------------------------------------------------------------------- #
 # Module lifecycle / factory contract (mirrors test_temperature_module).  #
 # ---------------------------------------------------------------------- #
-
-
-def test_setup_returns_fresh_tools_module(tmp_data_root, clean_env):
-    """``setup()`` returns a fresh :class:`ToolsModule` and two
-    calls produce independent instances.
-    """
-    from modules.tools.module import ToolsModule, setup
-
-    instance = setup()
-    assert isinstance(instance, ToolsModule)
-    assert instance is not setup()
-
-
-def test_setup_returns_isolated_instances(tmp_data_root, clean_env):
-    from modules.tools.module import setup
-
-    a = setup()
-    b = setup()
-    assert a is not b
-    a._scratch = {"marker": 1}
-    assert not hasattr(b, "_scratch")
-
-
-def test_on_load_executes_without_error(tmp_data_root, clean_env):
-    from core.event_bus import EventBus
-    from core.settings_store import SettingsStore
-    from modules.tools.module import ToolsModule
-
-    instance = ToolsModule()
-    ctx = {
-        # ``on_load`` is a no-op; it doesn't even read the context,
-        # but we pass the canonical shape so the contract stays
-        # honest if a future revision subscribes to events.
-        "module_id": "tools",
-        "event_bus": EventBus(),
-        "settings": SettingsStore(
-            module_id="tools",
-            data_root=tmp_data_root,
-            defaults=None,
-        ),
-    }
-    # ``on_load`` takes the typed ``ModuleContext``; the mock
-    # here uses the canonical attribute names. The contract only
-    # requires it not to raise, so duck-typing the call is safe.
-    instance.on_load(ctx)
-
-
-def test_on_unload_executes_without_error(tmp_data_root, clean_env):
-    from modules.tools.module import ToolsModule
-
-    instance = ToolsModule()
-    instance.on_unload()
-    instance.on_unload()  # idempotent
-
-
-def test_get_settings_model_returns_typed_model(tmp_data_root, clean_env):
-    """The contract requires ``get_settings_model`` to return a
-    non-null Pydantic ``BaseModel``. The tools module ships
-    :class:`ToolsSettings` (introduced in the contract rewrite —
-    see ``.agent/contracts/backend-module.md`` § 1) so the
-    canonical four settings endpoints expose a typed payload from
-    first boot.
-    """
-    from modules.tools.module import ToolsModule
-    from modules.tools.settings import ToolsSettings
-
-    instance = ToolsModule()
-    model = instance.get_settings_model()
-    assert isinstance(model, ToolsSettings)
-
-
-def test_get_router_returns_apirouter(tmp_data_root, clean_env):
-    from fastapi import APIRouter
-
-    from modules.tools.module import ToolsModule
-
-    instance = ToolsModule()
-    router = instance.get_router()
-    assert isinstance(router, APIRouter)
-    # The historical ``GET /tools`` listing endpoint was superseded
-    # by the base-thread snapshot, which is now the only public
-    # surface for the tool list. Only the MDI and target-setter
-    # routes remain on this router.
-    paths = {route.path for route in router.routes}
-    assert "/spindle" in paths
-    assert "/spindle/{tool_id}" in paths
-    assert "/extruder" in paths
-    assert "/tools" not in paths
-    assert "/tools/{tool_id}/target" in paths
-
-
-# ────────────────────────────────────────────────────────────────────── #
-# SpindleDigital telemetry pipeline                                               #
-# ────────────────────────────────────────────────────────────────────── #
-
 
 def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, monkeypatch):
     """``GET /spindle/{tool_id}`` returns the live telemetry.
@@ -682,12 +515,10 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     from core.module_registry import ModuleRegistry
     from hardware import linuxcnc_mock
 
-    from modules.tools.module import ToolsModule
-
     # The mock ignores M-codes while the machine is in STATE_ESTOP
     # (which is the boot default). Flip it to STATE_ON so the
     # ``M3 S12000`` dispatch lands.
-    linuxcnc_mock.set_mock_task_state(linuxcnc_mock.STATE_ON)
+    set_mock_task_state(StateMachineMock.STATE_ON)
 
     # Seed a hardware.json with one ``spindle_digital`` so the
     # spindle loader has something to enumerate.
@@ -716,10 +547,7 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     _point_config_at_tmp(monkeypatch, tmp_data_root)
     monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
     hw_mock.reseed_from_hardware_json()
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[ToolsModule()])
+    app.include_router(tools_router.router)
     client = TestClient(app)
 
     # The mock seeds every spindle with default zeros. Ramp the
@@ -748,7 +576,6 @@ def test_get_spindle_state_endpoint_returns_full_dict(tmp_data_root, clean_env, 
     assert body["is_connected"] is True
     assert body["error_count"] == 0
 
-
 def test_get_spindle_state_endpoint_returns_404_for_unknown_id(
     tmp_data_root, clean_env,
 ):
@@ -764,88 +591,10 @@ def test_get_spindle_state_endpoint_returns_404_for_unknown_id(
 
     from core.event_bus import EventBus
     from core.module_registry import ModuleRegistry
-    from modules.tools.module import ToolsModule
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[ToolsModule()])
+    app.include_router(tools_router.router)
     client = TestClient(app)
 
     r = client.get("/api/v1/modules/tools/spindle/no-such-spindle")
     assert r.status_code == 404
     assert "no-such-spindle" in r.json()["detail"]
 
-
-def test_on_load_subscribes_spindle_pins(tmp_data_root, clean_env, monkeypatch):
-    """``on_load`` registers HAL pin subscriptions for every spindle.
-
-    Pinned by counting the ``hal_manager.subscribe`` calls and
-    confirming at least one pin per spindle was registered. The
-    exact pin count depends on the integrator's ``hardware.json``
-    (the bare ``[spindle]`` form has fewer pins than the named
-    ``[spindle NAME]`` form), so we assert ``>= 1`` per spindle.
-    """
-    import json
-
-    from hardware import hal_manager, linuxcnc_mock as hw_mock
-    from core.event_bus import EventBus
-    from core.settings_store import SettingsStore
-    from modules.tools.module import ToolsModule
-
-    # Seed a hardware.json with one ``spindle_digital`` so the
-    # spindle loader has something to enumerate. The bare ``[spindle]``
-    # form gives us one entry; the simulator subscribes to whichever
-    # HAL pins are populated in the row.
-    active_root = tmp_data_root / "machine_config" / "active"
-    active_root.mkdir(parents=True, exist_ok=True)
-    (active_root / "hardware.json").write_text(
-        json.dumps(
-            {
-                "tools": [
-                    {
-                        "type": "spindle_digital",
-                        "id": "spindle_digital",
-                        "signal_spindle_at_speed": "spindle.0.at-speed",
-                        "signal_target_rpm": "spindle.0.target-rpm",
-                        "signal_actual_out": "spindle.0.rpm-out",
-                        "signal_is_connected": "spindle.0.on",
-                        "signal_error_count": "spindle.0.error-count",
-                        "signal_last_error": "spindle.0.last-error",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    _point_config_at_tmp(monkeypatch, tmp_data_root)
-    monkeypatch.setattr(hw_mock, "_PROJECT_ROOT", tmp_data_root)
-    hw_mock.reseed_from_hardware_json()
-
-    subscription_calls: list[str] = []
-    original_subscribe = hal_manager.subscribe
-
-    def _spy_subscribe(pin_name, callback):
-        subscription_calls.append(pin_name)
-        return original_subscribe(pin_name, callback)
-
-    monkeypatch.setattr(hal_manager, "subscribe", _spy_subscribe)
-    # Avoid actually starting the poll thread in the test environment
-    # — the subscription registration is what we're verifying.
-    monkeypatch.setattr(hal_manager, "start", lambda: None)
-
-    instance = ToolsModule()
-    instance.on_load({
-        "module_id": "tools",
-        "event_bus": EventBus(),
-        "settings": SettingsStore(
-            module_id="tools",
-            data_root=tmp_data_root,
-            defaults=None,
-        ),
-    })
-
-    # At least one pin per spindle_digital was subscribed.
-    assert subscription_calls, "no HAL pin subscriptions registered"
-    # All subscribed pins are non-empty strings — a regression that
-    # passes ``None`` or an empty string would crash the manager.
-    assert all(isinstance(pin, str) and pin for pin in subscription_calls)

@@ -1,12 +1,13 @@
 """Tests for the hal_type feature (remora vs parallel HAL output)."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
-from modules.machineconfig.compilers.hal_generator import (
+from services.machineconfig.hal_generator import (
     HalGenerator,
     build_hal_from_graph,
 )
-from modules.machineconfig.models import (
+from models.machineconfig import (
     MachineConfigGraph,
     MCU,
     Printer,
@@ -120,7 +121,7 @@ def test_hal_type_invalid_raises() -> None:
 
 def test_hal_generator_remora_template() -> None:
     graph = _graph(steppers={"x": _stepper("x")})
-    from modules.machineconfig.compilers.ini_generator import build_ini_from_graph
+    from services.machineconfig.ini_generator import build_ini_from_graph
 
     ini = build_ini_from_graph(graph)
     rendered = HalGenerator(hal_type="remora").render(ini, graph)
@@ -135,7 +136,7 @@ def test_hal_generator_remora_template() -> None:
 
 def test_hal_generator_parallel_template() -> None:
     graph = _graph(steppers={"x": _stepper("x")})
-    from modules.machineconfig.compilers.ini_generator import build_ini_from_graph
+    from services.machineconfig.ini_generator import build_ini_from_graph
 
     ini = build_ini_from_graph(graph)
     rendered = HalGenerator(hal_type="parallel").render(ini, graph)

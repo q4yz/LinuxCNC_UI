@@ -1,10 +1,11 @@
 """Tests for the ``hardware.json`` v2 Pydantic model and its cross-reference validator."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import pytest
 
-from modules.machineconfig.models.hardware_json_models import (
+from models.machineconfig.hardware_json_models import (
     Axis,
     Driver,
     Endstop,

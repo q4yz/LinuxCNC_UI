@@ -7,13 +7,14 @@ synthetic output so we have coverage even when v4l2-ctl is not on
 the CI image.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import logging
 from typing import List
 
 import pytest
 
-from modules.camera.detection import (
+from services.camera_detection import (
     USBDeviceInfo,
     _parse_v4l2ctl_output,
     detect_usb_cameras,
@@ -43,7 +44,7 @@ def test_detect_returns_list_on_no_cameras():
 
 def test_detect_returns_empty_on_non_linux(monkeypatch):
     """Non-Linux platforms get an empty list (no OpenCV probing)."""
-    import modules.camera.detection as detection
+    import services.camera_detection as detection
 
     monkeypatch.setattr(detection.sys, "platform", "win32")
     assert detect_usb_cameras() == []
@@ -54,13 +55,13 @@ def test_detect_returns_empty_on_non_linux(monkeypatch):
 
 def test_detect_never_raises_even_if_glob_explodes(monkeypatch, caplog):
     """Detection must swallow internal exceptions and log them."""
-    import modules.camera.detection as detection
+    import services.camera_detection as detection
 
     def _explode(_pattern: str) -> List[str]:  # noqa: D401 - test stub
         raise OSError("synthetic glob failure")
 
     monkeypatch.setattr(detection, "_list_video_device_paths", _explode)
-    with caplog.at_level(logging.WARNING, logger="backend.modules.camera.detection"):
+    with caplog.at_level(logging.WARNING, logger="backend.services.camera_detection"):
         result = detect_usb_cameras()
     # The exception is caught; an empty list is returned.
     assert result == []
@@ -187,7 +188,7 @@ def test_parse_v4l2ctl_output_strips_card_colon(line):
 
 def test_linux_detection_with_synthetic_devices(monkeypatch, tmp_path):
     """Inject a ``/dev/video*`` path and a v4l2-ctl name; verify the row."""
-    import modules.camera.detection as detection
+    import services.camera_detection as detection
 
     fake_path = str(tmp_path / "video0")
     monkeypatch.setattr(
@@ -219,7 +220,7 @@ def test_linux_detection_falls_back_to_synthetic_name_when_v4l2ctl_missing(
     surfaces the device. The supervisor will tell the operator later
     whether the device is actually openable.
     """
-    import modules.camera.detection as detection
+    import services.camera_detection as detection
 
     monkeypatch.setattr(detection, "_list_video_device_paths", lambda: ["/dev/video0"])
     monkeypatch.setattr(detection, "_query_v4l2_names", lambda _paths: {})
@@ -233,7 +234,7 @@ def test_linux_detection_falls_back_to_synthetic_name_when_v4l2ctl_missing(
 
 def test_linux_detection_returns_empty_when_no_dev_video(monkeypatch):
     """A host with no ``/dev/video*`` paths yields an empty list."""
-    import modules.camera.detection as detection
+    import services.camera_detection as detection
 
     monkeypatch.setattr(detection, "_list_video_device_paths", lambda: [])
     assert detection._detect_linux() == []

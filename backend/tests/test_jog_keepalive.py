@@ -6,6 +6,7 @@ canonical settings endpoints. They mirror the issue § 4.1 test
 list (``test_jog_keepalive.py``).
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import asyncio
 import time
@@ -14,7 +15,6 @@ import pytest
 from fastapi import FastAPI
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
 
 
 def _run(coro):
@@ -29,14 +29,10 @@ def _run(coro):
 
 
 @pytest.fixture()
-def machine_app(tmp_data_root, clean_env):
-    """Build a fresh FastAPI app backed by the ``AxisModule``."""
-    from modules.axis.module import AxisModule
+def machine_app(tmp_data_root, clean_env=None):
+    """Build a FastAPI app with the axis module wired up."""
+    return build_module_app("axis", tmp_data_root), None
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[AxisModule()])
-    return app, reg
 
 
 
@@ -49,7 +45,7 @@ def machine_app(tmp_data_root, clean_env):
 
 
 def _ws_dispatch(msg: dict) -> None:
-    """Helper: drive ``_dispatch_inbound`` with a fake socket.
+    """Helper: drive the service's ``dispatch_inbound`` with a fake socket.
 
     The helper doesn't need a real ``WebSocket`` because the
     dispatch path is pure (reads fields, calls ``ws_jog_*``). The
@@ -59,8 +55,10 @@ def _ws_dispatch(msg: dict) -> None:
     so we drive it to completion via ``asyncio.run`` — the same
     pattern used in ``test_jog_watchdog.py``.
     """
-    from routers.ServoThreadRouter import _dispatch_inbound
-    _run(_dispatch_inbound(None, msg))
+    from services.ServoThreadService import ServoThreadService
+
+    svc = ServoThreadService()
+    _run(svc.dispatch_inbound(None, msg))
 
 
 def test_ws_keepalive_dispatches_to_watchdog(machine_app):
@@ -75,7 +73,7 @@ def test_ws_keepalive_dispatches_to_watchdog(machine_app):
     # ``_active_jogs`` dict is wired. The WebSocket itself is not
     # opened — the dispatch path is pure.
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     # Wipe the active set so the test does not depend on prior
     # state. ``_active_jogs`` is module-private; the helper uses
@@ -115,7 +113,7 @@ def test_ws_keepalive_for_unknown_axis_is_noop(machine_app):
     phantom axis into the active set.
     """
     machine_app  # noqa: F841 — fixture side-effect only
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -133,7 +131,7 @@ def test_ws_jog_axis_registers_continuous_jog(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -170,7 +168,7 @@ def test_ws_jog_stop_removes_axis_from_active_set(machine_app):
     endpoint's behaviour.
     """
     machine_app  # noqa: F841
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -190,7 +188,7 @@ def test_ws_dispatch_ignores_unknown_type(machine_app):
     stream.
     """
     machine_app  # noqa: F841
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
@@ -210,7 +208,7 @@ def test_ws_dispatch_rejects_malformed_axes(machine_app):
     client must not be able to corrupt the watchdog state.
     """
     machine_app  # noqa: F841
-    from modules.axis.services import jog_service as jog
+    from services import jog_service as jog
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()

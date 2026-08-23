@@ -1,19 +1,20 @@
 """Tests for the hardware.json and config.txt generators."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import json
 from pathlib import Path
 
-from modules.machineconfig.compilers.config_txt_generator import (
+from services.machineconfig.config_txt_generator import (
     build_config_txt,
     klipper_to_remora_pin,
     remora_to_klipper_pin,
 )
-from modules.machineconfig.compilers.hardware_json_generator import (
+from services.machineconfig.hardware_json_generator import (
     build_hardware_json,
 )
-from modules.machineconfig.models import (
+from models.machineconfig import (
     MachineConfigGraph,
     MCU,
     Printer,
@@ -182,7 +183,7 @@ def test_hardware_json_extruder_appears_in_joints_with_canonical_number() -> Non
     with the next canonical number — the wire ``joints[]`` is a
     complete enumeration (X, Y, Z, then extruders).
     """
-    from modules.machineconfig.parser import MachineConfigParser
+    from machineconfig_parser import MachineConfigParser
 
     config = """
 [stepper_x]
@@ -349,10 +350,10 @@ def test_hardware_json_v2_carries_heater_and_extruder_tools(tmp_path):
     payload), so we drive the hardware.json generator directly to
     validate the shape without going through the file-system dance.
     """
-    from modules.machineconfig.compilers.hardware_json_generator import (
+    from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from modules.machineconfig.parser import parse_config
+    from machineconfig_parser import parse_config
 
     cfg_path = _write_machine_cfg(
         tmp_path,
@@ -418,10 +419,10 @@ def test_hardware_json_v2_empty_when_no_heaters(tmp_path):
     drives the production generator directly so the v2 shape is
     verified independently of the (now retired) ``HalCompiler``.
     """
-    from modules.machineconfig.compilers.hardware_json_generator import (
+    from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from modules.machineconfig.parser import parse_config
+    from machineconfig_parser import parse_config
 
     cfg_path = _write_machine_cfg(
         tmp_path,
@@ -470,7 +471,7 @@ def test_config_txt_emits_fan_pwm_module_with_max_power() -> None:
 
     ``max_power: 0.5`` becomes ``PWM Max: 128`` (0.5 * 255 rounded).
     """
-    from modules.machineconfig.models import Fan, Printer, Stepper
+    from models.machineconfig import Fan, Printer, Stepper
 
     graph = MachineConfigGraph(
         printer=Printer(), mcus={"mcu": _DEFAULT_REMORA_MCU}
@@ -493,7 +494,7 @@ def test_config_txt_emits_fan_pwm_module_with_max_power() -> None:
 
 def test_config_txt_fan_follows_heater_pwm_indices() -> None:
     """A standalone fan gets the next SP[i] after the heater PWMs."""
-    from modules.machineconfig.models import Extruder, Fan, Heater, Printer, Stepper
+    from models.machineconfig import Extruder, Fan, Heater, Printer, Stepper
 
     graph = MachineConfigGraph(
         printer=Printer(), mcus={"mcu": _DEFAULT_REMORA_MCU}

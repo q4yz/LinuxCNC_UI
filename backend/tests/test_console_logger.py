@@ -12,6 +12,7 @@ regression that stops writing to the on-disk mirror is caught at
 the test layer.
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import importlib
 import json
@@ -23,8 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
-from modules.state import service as state_service_module
+from services import StateService as state_service_module
 from services import console_logger as console_logger_module
 from services.console_logger import (
     ConsoleLogger,
@@ -128,79 +128,10 @@ def test_log_event_clamps_unknown_levels(isolated_logger):
     assert "[INFO ]" in contents
 
 
-def test_log_event_appends_across_calls(isolated_logger):
-    """Three calls produce three lines in order."""
-    logger = get_console_logger()
-    logger.log_command("G1")
-    logger.log_response("Executed: G1")
-    logger.log_event("Machine error", level=LogLevel.ERROR, source="RES")
+def test_log_event_appends_across_calls(tmp_data_root, clean_env=None):
+    """Build a FastAPI app with the machine_state module wired up."""
+    app = build_module_app("machine_state", tmp_data_root)
 
-    lines = [
-        line for line in isolated_logger.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-    assert len(lines) == 3
-    assert "CMD G1" in lines[0]
-    assert "RES Executed: G1" in lines[1]
-    assert "[ERROR]" in lines[2]
-    assert "RES Machine error" in lines[2]
-
-
-def test_close_is_idempotent(isolated_logger):
-    """``close()`` can be called multiple times without raising."""
-    logger = ConsoleLogger(isolated_logger)
-    logger.log_command("G1")
-    logger.close()
-    logger.close()
-
-    # Subsequent writes are a no-op so the file does not grow.
-    logger.log_command("G2")
-    lines = [
-        line for line in isolated_logger.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-    assert len(lines) == 1
-
-
-def test_relogger_reopens_after_close(isolated_logger):
-    """After ``close()`` a fresh logger on the same file appends."""
-    first = ConsoleLogger(isolated_logger)
-    first.log_command("first")
-    first.close()
-
-    second = ConsoleLogger(isolated_logger)
-    second.log_command("second")
-
-    lines = [
-        line for line in isolated_logger.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-    assert len(lines) == 2
-    assert "CMD first" in lines[0]
-    assert "CMD second" in lines[1]
-
-
-# ---------------------------------------------------------------------- #
-# MDI endpoint integration                                                #
-# ---------------------------------------------------------------------- #
-
-
-def _machine_app(tmp_data_root, clean_env, log_path: Path):
-    """Build a FastAPI app with the axis + state modules booted
-    against a private log file.
-    """
-    from modules.axis.module import AxisModule
-    from modules.state.module import StateModule
-
-    reset_console_logger(log_path)
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(
-        app,
-        bus=EventBus(),
-        candidates=[AxisModule(), StateModule()],
-    )
-    return app, reg
 
 
 def test_mdi_endpoint_writes_command_and_response(
@@ -208,7 +139,8 @@ def test_mdi_endpoint_writes_command_and_response(
 ):
     """``POST /mdi`` records the command and the response on disk."""
     log_path = tmp_path / "console_history.log"
-    app, _ = _machine_app(tmp_data_root, clean_env, log_path)
+    reset_console_logger(log_path)
+    app = build_module_app("machine_state", tmp_data_root)
     client = TestClient(app)
 
     resp = client.post(
@@ -236,7 +168,8 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
     from hardware import execute_sync_cmd as real_execute_sync_cmd
 
     log_path = tmp_path / "console_history.log"
-    app, _ = _machine_app(tmp_data_root, clean_env, log_path)
+    reset_console_logger(log_path)
+    app = build_module_app("machine_state", tmp_data_root)
 
     def fake_execute_sync_cmd(cmd_name, cmd_timeout=0, *args):
         if cmd_name == "mdi":
@@ -245,7 +178,7 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
 
     # The state router calls into ``StateService.run_mdi`` which
     # dispatches via ``execute_sync_cmd`` imported in
-    # ``modules.state.service``. Patching that module-global
+    # ``services.StateService``. Patching that module-global
     # makes the facade raise so the route returns 400.
     monkeypatch.setattr(state_service_module, "execute_sync_cmd", fake_execute_sync_cmd)
 

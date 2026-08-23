@@ -39,7 +39,7 @@ _CACHE: Dict[str, int] = {}
 def register(path: str, count: int) -> None:
     """Cache the line count for ``path``.
 
-    Called from :func:`backend.modules.program.router.load_program`
+    Called from :func:`program.router.load_program`
     after the interpreter has committed ``stat.file``. We trust the
     caller's count rather than re-reading the file here so the
     hot path stays in the program router.
@@ -63,7 +63,7 @@ def lookup(path: str) -> int:
 def unregister_all() -> None:
     """Drop every cached line count.
 
-    Called from :func:`backend.modules.program.router.unload_program`
+    Called from :func:`program.router.unload_program`
     (and any abort path) so a follow-up ``/progress`` hit cannot
     surface a stale total for a file that is no longer loaded.
     """

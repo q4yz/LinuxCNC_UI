@@ -2,11 +2,11 @@
 
 The OOP refactor split the historical monolithic machine module
 into :mod:`modules.axis`, :mod:`modules.state` and
-:mod:`modules.program`; the old ``backend.modules.machine.service``
+:mod:`modules.program`; the old ``machine.service``
 entry point no longer exists. Command-dispatch for axis motion now
-lives on :class:`modules.axis.service.AxisService`, machine-task
-state on :class:`modules.state.service.StateService`, and program
-lifecycle on :class:`modules.program.service.ProgramService`. The
+lives on :class:`services.AxisService.AxisService`, machine-task
+state on :class:`services.StateService.StateService`, and program
+lifecycle on :class:`services.ProgramService.ProgramService`. The
 hardware-layer :class:`services.machine_service.MachineService`
 remains the single gateway to the NML command channel that all of
 them dispatch through.
@@ -273,7 +273,7 @@ class TestHalSubscriptionManager:
 class TestHardwareLayerMachineService:
     """``MachineService`` composes mapper + hal manager.
 
-    Distinct from ``backend.modules.machine.service.MachineService``
+    Distinct from ``machine.service.MachineService``
     (command dispatch): the hardware-layer one handles config-driven
     hardware abstraction. The endstop surface that used to live on
     this class was retired in the refactor that moved endstop state

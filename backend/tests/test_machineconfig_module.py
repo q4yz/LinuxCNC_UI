@@ -20,6 +20,7 @@ Covers:
 """
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import logging
 from pathlib import Path
@@ -29,13 +30,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
-
 
 # ---------------------------------------------------------------------- #
 # Fixtures                                                                #
 # ---------------------------------------------------------------------- #
-
 
 @pytest.fixture()
 def isolated_machine_config(monkeypatch, tmp_path):
@@ -96,36 +94,24 @@ def isolated_machine_config(monkeypatch, tmp_path):
     # clean service cache instead of inheriting the isolated roots.
     reset_service_cache()
 
+def _machineconfig_app(tmp_data_root, clean_env=None):
+    """Build a FastAPI app with the machineconfig module wired up.
 
-def _machineconfig_app(tmp_data_root, isolated_machine_config):
-    """Build a fresh FastAPI app + registry with the machineconfig module loaded."""
-    from modules.machineconfig.module import setup
+    Registers the structured ``ConfigValidationError`` handler
+    that the legacy ``MachineConfigModule.on_load`` installed on
+    the FastAPI app — the router's compile endpoint raises that
+    exception and the handler turns it into a ``400`` with the
+    operator-facing envelope.
+    """
+    from routers.machineconfig import register_exception_handlers
 
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[setup()])
-    return app, reg
-
+    app = build_module_app("machineconfig", tmp_data_root)
+    register_exception_handlers(app)
+    return app, None
 
 # ---------------------------------------------------------------------- #
 # Boot / lifecycle                                                        #
 # ---------------------------------------------------------------------- #
-
-
-def test_machineconfig_module_satisfies_protocol(tmp_data_root, clean_env):
-    """Machineconfig module is a PluggableModule with the documented manifest."""
-    from modules.machineconfig.module import setup
-
-    instance = setup()
-    from core.protocols import PluggableModule
-
-    assert isinstance(instance, PluggableModule)
-    assert instance.manifest.id == "machineconfig"
-    assert instance.manifest.title == "Machine Config"
-    assert instance.manifest.settings_panel is True
-    assert instance.manifest.sidebar is not None
-    assert instance.manifest.sidebar.id == "machineconfig"
-
 
 def test_machineconfig_endpoints_are_mounted(
     tmp_data_root, clean_env, isolated_machine_config
@@ -152,41 +138,15 @@ def test_machineconfig_endpoints_are_mounted(
     assert payload["auto_readonly_after_stage"] is True
     assert payload["confirm_flash_default"] is False
 
-
-def test_machineconfig_registry_logs_mounted_summary(
-    tmp_data_root, clean_env, isolated_machine_config, caplog
-):
-    """The boot summary log includes the machineconfig id."""
-    from modules.machineconfig.module import setup
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    with caplog.at_level(logging.INFO, logger="core.module_registry"):
-        reg.boot(app, bus=EventBus(), candidates=[setup()])
-    summary = [
-        r.message
-        for r in caplog.records
-        if "registry: mounted=" in r.message
-    ]
-    assert summary, "expected the boot summary log line"
-    assert "mounted=['machineconfig']" in summary[0]
-
-
-# ---------------------------------------------------------------------- #
-# Compiler registry                                                       #
-# ---------------------------------------------------------------------- #
-
-
 def test_klipper_compiler_is_registered(tmp_data_root, clean_env):
     """The default compiler is registered on package import."""
-    from modules.machineconfig.compilers import registry
+    from services.machineconfig import registry
 
     assert "klipper-to-linuxcnc" in registry
     compiler = registry.get("klipper-to-linuxcnc")
     assert compiler.id == "klipper-to-linuxcnc"
     assert compiler.title == "Klipper → LinuxCNC"
     assert compiler.source_marker == "#Start"
-
 
 def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
     """The compiler produces the four canonical artifacts.
@@ -197,7 +157,7 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
     payload entirely (no stale JSON reaches the deploy step). The
     four always-on artifacts are the canonical smoke test.
     """
-    from modules.machineconfig.compilers import registry
+    from services.machineconfig import registry
 
     compiler = registry.get("klipper-to-linuxcnc")
     src = tmp_data_root / "printer.cfg"
@@ -233,10 +193,9 @@ def test_klipper_compiler_compiles_a_profile(tmp_data_root, clean_env):
     # the template spec; the legacy literal ``linuxcnc`` was retired.
     assert "MACHINE = Remora-XY" in ini
 
-
 def test_klipper_compiler_has_source_marker(tmp_data_root, clean_env):
     """Marker detection returns True only for files containing ``#Start``."""
-    from modules.machineconfig.compilers import registry
+    from services.machineconfig import registry
 
     compiler = registry.get("klipper-to-linuxcnc")
     with_marker = tmp_data_root / "with.cfg"
@@ -247,11 +206,9 @@ def test_klipper_compiler_has_source_marker(tmp_data_root, clean_env):
     assert compiler.has_source_marker(with_marker) is True
     assert compiler.has_source_marker(without_marker) is False
 
-
 # ---------------------------------------------------------------------- #
 # Profiles CRUD                                                           #
 # ---------------------------------------------------------------------- #
-
 
 def test_profiles_tree_lists_seeded_file(
     tmp_data_root, clean_env, isolated_machine_config
@@ -270,7 +227,6 @@ def test_profiles_tree_lists_seeded_file(
     starter = next(e for e in body["entries"] if e["name"] == "starter.cfg")
     assert starter["kind"] == "file"
     assert starter["has_marker"] is True
-
 
 def test_profiles_create_folder_file_read_write_rename_delete(
     tmp_data_root, clean_env, isolated_machine_config
@@ -328,7 +284,6 @@ def test_profiles_create_folder_file_read_write_rename_delete(
     )
     assert resp.status_code == 200
 
-
 def test_profiles_delete_non_empty_folder_returns_400(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -349,7 +304,6 @@ def test_profiles_delete_non_empty_folder_returns_400(
     )
     assert resp.status_code == 400
 
-
 def test_profiles_create_existing_returns_409(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -365,7 +319,6 @@ def test_profiles_create_existing_returns_409(
         json={"path": "dup"},
     )
     assert resp.status_code == 409
-
 
 def test_profiles_outside_root_rejected(
     tmp_data_root, clean_env, isolated_machine_config
@@ -388,11 +341,9 @@ def test_profiles_outside_root_rejected(
     )
     assert resp.status_code == 400
 
-
 # ---------------------------------------------------------------------- #
 # Compile / Deploy                                                        #
 # ---------------------------------------------------------------------- #
-
 
 def test_compile_stages_artifacts_and_lists_them(
     tmp_data_root, clean_env, isolated_machine_config
@@ -424,7 +375,6 @@ def test_compile_stages_artifacts_and_lists_them(
     assert resp.status_code == 200
     assert len(resp.json()) == 5
 
-
 def test_compile_marks_staged_readonly(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -439,7 +389,6 @@ def test_compile_marks_staged_readonly(
     mode = machine_cfg.stat().st_mode
     assert not (mode & 0o222), "staged files must be read-only after compile"
 
-
 def test_compile_unknown_compiler_returns_404(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -452,7 +401,6 @@ def test_compile_unknown_compiler_returns_404(
     )
     assert resp.status_code == 404
 
-
 def test_compile_missing_profile_returns_404(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -464,7 +412,6 @@ def test_compile_missing_profile_returns_404(
         json={"profile_path": "nope.cfg", "compiler_id": "klipper-to-linuxcnc"},
     )
     assert resp.status_code == 404
-
 
 def test_staged_content_endpoint_returns_text(
     tmp_data_root, clean_env, isolated_machine_config
@@ -483,7 +430,6 @@ def test_staged_content_endpoint_returns_text(
     assert body["read_only"] is True
     assert "[stepper_x]" in body["content"]
 
-
 def test_deploy_requires_confirm_flash_when_setting_on(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -500,7 +446,6 @@ def test_deploy_requires_confirm_flash_when_setting_on(
     )
     assert resp.status_code == 400
     assert "confirm_flash" in resp.json()["detail"]
-
 
 def test_deploy_promotes_staged_into_active(
     tmp_data_root, clean_env, isolated_machine_config
@@ -543,7 +488,6 @@ def test_deploy_promotes_staged_into_active(
     # Remora-flavoured template sets ``MACHINE = Remora-XY``.
     assert resp.json()["machine_name"] == "Remora-XY"
 
-
 def test_deploy_empty_staging_returns_400(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -555,7 +499,6 @@ def test_deploy_empty_staging_returns_400(
         json={"confirm_flash": True},
     )
     assert resp.status_code == 400
-
 
 def test_active_endpoint_lists_running_files(
     tmp_data_root, clean_env, isolated_machine_config
@@ -584,7 +527,6 @@ def test_active_endpoint_lists_running_files(
         "machine.hal",
     ]
 
-
 def test_active_content_endpoint_returns_text(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -605,7 +547,6 @@ def test_active_content_endpoint_returns_text(
     assert body["name"] == "linuxcnc.ini"
     assert "[EMC]" in body["content"]
 
-
 def test_machine_name_empty_active_returns_null(
     tmp_data_root, clean_env, isolated_machine_config
 ):
@@ -616,11 +557,9 @@ def test_machine_name_empty_active_returns_null(
     assert resp.status_code == 200
     assert resp.json()["machine_name"] is None
 
-
 # ---------------------------------------------------------------------- #
 # hardware.json v2 payload (issue: dynamic heater hardware.json)          #
 # ---------------------------------------------------------------------- #
-
 
 def test_hardware_json_v2_emits_user_example(
     tmp_data_root, clean_env
@@ -632,10 +571,10 @@ def test_hardware_json_v2_emits_user_example(
     The end-to-end assertion ties the parser, the v2 generator,
     and the strict Pydantic model together.
     """
-    from modules.machineconfig.compilers.hardware_json_generator import (
+    from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from modules.machineconfig.parser import MachineConfigParser
+    from machineconfig_parser import MachineConfigParser
 
     config = """
 [stepper_x]
@@ -788,16 +727,15 @@ max_temp: 130
         "heater_bed": "bed",
     }
 
-
 def test_hardware_json_v2_empty_arrays_when_no_heaters(
     tmp_data_root, clean_env
 ):
     """A profile with no heater sections compiles to empty
     ``tools`` / ``temperature_sensors`` / ``fans`` lists."""
-    from modules.machineconfig.compilers.hardware_json_generator import (
+    from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from modules.machineconfig.parser import MachineConfigParser
+    from machineconfig_parser import MachineConfigParser
 
     config = """
 [printer]
@@ -813,11 +751,9 @@ step_pin: PF13
     assert payload["fans"] == []
     assert payload["endstops"] == []
 
-
 # ---------------------------------------------------------------------- #
 # Structured-error compile response (issue #99)                           #
 # ---------------------------------------------------------------------- #
-
 
 def test_compile_duplicate_stepper_pin_returns_structured_error(
     tmp_data_root, clean_env, isolated_machine_config

@@ -6,6 +6,7 @@ import { createModuleSettings } from "../../../core/modules/settings";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
 import { useCameraStore } from "../cameraStore";
 import manifest from "../manifest";
+import { useMacroButtonConfig, MacroButtonEditor } from "../../../ui";
 
 const store = useCameraStore();
 const {
@@ -23,6 +24,14 @@ const settingsLoading = ref(false);
 const settingsSaving = ref(false);
 const settingsError = ref("");
 const saveMessage = ref("");
+
+// Custom macro buttons for the camera viewer (slot
+// ``camera.bottom``). The composable normalises a missing key to
+// ``[]`` so the editor opens cleanly on first boot.
+const buttonConfig = useMacroButtonConfig(manifest.id);
+const SLOTS = [
+  { id: "camera.bottom", label: "Camera viewer button" },
+];
 
 function preferenceFor(id) {
   return (
@@ -138,6 +147,7 @@ onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
   loadBackendSettings();
+  buttonConfig.refresh();
 });
 </script>
 
@@ -318,6 +328,24 @@ onMounted(() => {
           </div>
         </li>
       </ul>
+    </section>
+
+    <section class="space-y-3">
+      <header>
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
+          Custom buttons
+        </h3>
+        <p class="mt-1 text-xs text-gray-400">
+          Add a custom button to the camera viewer (e.g. a light-on
+          macro). The button runs the selected macro when clicked.
+        </p>
+      </header>
+      <MacroButtonEditor
+        :model-value="buttonConfig.buttons.value"
+        :slots="SLOTS"
+        :module-id="manifest.id"
+        @update:model-value="(next) => buttonConfig.persist(next)"
+      />
     </section>
   </div>
 </template>

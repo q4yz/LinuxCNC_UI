@@ -14,6 +14,7 @@ template change that adds extra whitespace) are caught here.
 """
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import re
 import shutil
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from modules.machineconfig.compilers.klipper_linuxcnc import (
+from services.machineconfig.klipper_linuxcnc import (
     KlipperToLinuxCNCCompiler,
 )
 

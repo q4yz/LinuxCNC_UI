@@ -1,12 +1,13 @@
 """Tests for the HalGenerator pipeline."""
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
-from modules.machineconfig.compilers.hal_generator import (
+from services.machineconfig.hal_generator import (
     HalGenerator,
     build_hal_from_graph,
 )
-from modules.machineconfig.models import (
+from models.machineconfig import (
     Axis,
     IniConfig,
     Joint,
@@ -108,7 +109,7 @@ def test_renderer_handles_missing_printer_velocity() -> None:
 def test_renderer_handles_extra_motor_with_split_policy() -> None:
     """Split policy emits both joint blocks under a shared axis."""
 
-    from modules.machineconfig.compilers.axis_builder import (
+    from services.machineconfig.axis_builder import (
         AxisBuilder,
         AxisMappingPolicy,
     )
@@ -159,7 +160,7 @@ def test_renderer_emits_endstop_wiring_for_stepgen_joints() -> None:
 def test_renderer_emits_pid_load_for_each_heater() -> None:
     """``loadrt PIDcontroller`` gets one alias per heater."""
 
-    from modules.machineconfig.models import Heater
+    from models.machineconfig import Heater
 
     graph = _graph(steppers={"x": _stepper("x")})
     graph.heaters["heater_bed"] = Heater(
@@ -195,7 +196,7 @@ def test_renderer_emits_pid_load_for_each_heater() -> None:
 def test_renderer_emits_sp_pv_wiring() -> None:
     """Each PWM + Temperature module gets a symbolic SP/PV net line."""
 
-    from modules.machineconfig.models import Extruder, Fan, Heater
+    from models.machineconfig import Extruder, Fan, Heater
 
     graph = _graph(steppers={"x": _stepper("x")})
     graph.heaters["heater_bed"] = Heater(

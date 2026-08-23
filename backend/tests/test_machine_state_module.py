@@ -17,6 +17,7 @@ The state / mode / MDI endpoint contract is pinned separately by
 schema, deprecation warnings).
 """
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import logging
 
@@ -24,33 +25,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.module_registry import ModuleRegistry
-from core.protocols import PluggableModule
 
-
-def _state_app(tmp_data_root, clean_env):
-    """Build a FastAPI app with the state module booted."""
-    from modules.state.module import StateModule
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    reg.boot(app, bus=EventBus(), candidates=[StateModule()])
-    return app, reg
-
-
-def test_state_module_satisfies_protocol(tmp_data_root, clean_env):
-    """StateModule is a PluggableModule with the documented
-    manifest attributes.
-    """
-    from modules.state.module import StateModule
-
-    instance = StateModule()
-    assert isinstance(instance, PluggableModule)
-    assert instance.manifest.id == "machine_state"
-    assert instance.manifest.title == "Machine State"
-    # State module has no user-tunable settings today.
-    assert instance.manifest.settings_panel is False
-
+def _state_app(tmp_data_root, clean_env=None):
+    """Build a FastAPI app with the machine_state module wired up."""
+    return build_module_app("machine_state", tmp_data_root), None
 
 def test_state_endpoints_are_mounted(tmp_data_root, clean_env):
     """The state router exposes state / mode / mdi endpoints under
@@ -93,7 +71,6 @@ def test_state_endpoints_are_mounted(tmp_data_root, clean_env):
     assert "state" in body
     assert "raw_task_state" in body
 
-
 def test_state_invalid_state_returns_400(tmp_data_root, clean_env):
     """``POST /state`` rejects unknown state strings with 400."""
     app, _ = _state_app(tmp_data_root, clean_env)
@@ -106,7 +83,6 @@ def test_state_invalid_state_returns_400(tmp_data_root, clean_env):
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Invalid state"
 
-
 def test_state_invalid_mode_returns_400(tmp_data_root, clean_env):
     """``POST /mode`` rejects unknown mode strings with 400."""
     app, _ = _state_app(tmp_data_root, clean_env)
@@ -118,7 +94,6 @@ def test_state_invalid_mode_returns_400(tmp_data_root, clean_env):
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Invalid mode"
-
 
 def test_state_module_settings_router_returns_typed_payload(
     tmp_data_root, clean_env
@@ -137,43 +112,3 @@ def test_state_module_settings_router_returns_typed_payload(
     assert resp.status_code == 200
     assert resp.json() == {"confirm_mode_change": False}
 
-
-def test_state_registry_logs_mounted_summary(
-    tmp_data_root, clean_env, caplog
-):
-    """The boot summary line includes the machine_state module id."""
-    from modules.state.module import StateModule
-
-    reg = ModuleRegistry(data_root=tmp_data_root)
-    app = FastAPI()
-    with caplog.at_level(logging.INFO, logger="core.module_registry"):
-        reg.boot(app, bus=EventBus(), candidates=[StateModule()])
-    summary = [
-        r.message
-        for r in caplog.records
-        if "registry: mounted=" in r.message
-    ]
-    assert summary, "expected the boot summary log line"
-    assert "mounted=['machine_state']" in summary[0]
-
-
-def test_state_module_on_load_and_unload_are_idempotent(
-    tmp_data_root, clean_env
-):
-    """``on_load`` / ``on_unload`` are safe to call more than once.
-
-    The state module has no background work to release so the
-    hooks are pure no-ops; this test guards against a future
-    refactor that accidentally introduces non-idempotent state.
-    """
-    from modules.state.module import StateModule
-
-    instance = StateModule()
-    fake_ctx = type(
-        "_Ctx",
-        (),
-        {"module_id": "machine_state", "extras": {}},
-    )()
-    instance.on_load(fake_ctx)
-    instance.on_unload()
-    instance.on_unload()  # second call must not raise

@@ -43,11 +43,11 @@ conn_mod = importlib.import_module("hardware.connection")
 # maps cleanly.
 linuxcnc = conn_mod.linuxcnc
 
-from modules.state.service import (  # noqa: E402
+from services.StateService import (  # noqa: E402
     MachineState,
     StateService,
 )
-from modules.state.router import router as state_router  # noqa: E402
+from routers.state import router as state_router  # noqa: E402
 
 
 # ---------------------------------------------------------------------- #
@@ -331,7 +331,6 @@ class TestGetStateEndpoint:
     @staticmethod
     def _build_app() -> FastAPI:
         """Mount the router at the same path the registry uses."""
-        app = FastAPI()
         app.include_router(
             state_router,
             prefix="/api/v1/modules/machine_state",
@@ -371,7 +370,7 @@ class TestGetStateEndpoint:
         ``STATE_*`` / ``INTERP_*`` integer field to the public
         Pydantic schema — those belong on ``raw_*`` fields only.
         """
-        from modules.state.router import _StateSnapshot
+        from routers.state import _StateSnapshot
 
         fields = _StateSnapshot.model_fields.keys()
         leaked = [

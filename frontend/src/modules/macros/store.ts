@@ -363,21 +363,23 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Generic runner; kept exported so a future release can flip the
-   * dashboard to also dispatch ``ngc`` files (or add a "dry-run"
-   * code path for ``mcode``).
+   * Generic runner. Two dispatch paths:
+   *
+   *   * ``macro`` — parses the file into blocks and fires each
+   *     static block's non-blank lines through the MDI endpoint
+   *     (existing flow; honours the E-Stop guard).
+   *   * ``ngc``   — delegates to the backend's
+   *     ``POST /api/v1/modules/macros/{name}/start?kind=ngc`` so the
+   *     controller switches to MDI mode and runs the NGC
+   *     subroutine (matches the route registered in
+   *     ``backend/routers/macros.py::start_macro``). ``mcode`` is
+   *     intentionally excluded — an operator who needs an M-code
+   *     call wraps it in a ``.macro`` instead.
    *
    * @param {"macro"|"ngc"|"mcode"} kind
    * @param {string} name
    */
   async function runMacroOfKind(kind, name) {
-    if (kind !== MACRO_KIND.MACRO) {
-      useConsoleStore().warning(
-        `Running ${kind} files from the UI is not supported — ` +
-          "they are dispatched by the controller / interpreter.",
-      );
-      return { staticDispatched: 0, pythonSkipped: 0 };
-    }
     validateMacroKindName(kind, name);
     const consoleStore = useConsoleStore();
 
@@ -385,6 +387,18 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     if (machine.isEstopActive) {
       consoleStore.error(
         "Cannot run macros while the machine is in E-Stop.",
+      );
+      return { staticDispatched: 0, pythonSkipped: 0 };
+    }
+
+    if (kind === MACRO_KIND.NGC) {
+      return runNgcMacro(name);
+    }
+
+    if (kind !== MACRO_KIND.MACRO) {
+      consoleStore.warning(
+        `Running ${kind} files from the UI is not supported — ` +
+          "wrap the call in a .macro file instead.",
       );
       return { staticDispatched: 0, pythonSkipped: 0 };
     }
@@ -445,6 +459,44 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       `Macro '${name}' dispatched ${staticDispatched} MDI command(s); skipped ${pythonSkipped} python block(s).`,
     );
     return { staticDispatched, pythonSkipped };
+  }
+
+  /**
+   * Dispatch a ``.ngc`` subroutine through the backend's
+   * ``POST /api/v1/modules/macros/{name}/start?kind=ngc`` endpoint.
+   *
+   * The endpoint exists in
+   * ``backend/routers/macros.py::start_macro`` but is not yet
+   * surfaced through the generated OpenAPI client, so this method
+   * uses a hand-rolled ``fetch`` mirroring the ``core/modules/settings``
+   * pattern. A future ``npm run generate-api`` can replace this
+   * body with a generated call.
+   *
+   * @param {string} name
+   */
+  async function runNgcMacro(name) {
+    const consoleStore = useConsoleStore();
+    const url = `/api/v1/modules/macros/${encodeURIComponent(name)}/start?kind=ngc`;
+    consoleStore.info(`Starting NGC subroutine '${name}' via ${url}.`);
+    isBusy.value = true;
+    try {
+      const res = await fetch(url, { method: "POST" });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `NGC start failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+        );
+      }
+      consoleStore.success(`NGC subroutine '${name}' dispatched.`);
+      return { staticDispatched: 1, pythonSkipped: 0 };
+    } catch (error) {
+      consoleStore.error(
+        `NGC '${name}' failed: ${describeError(error)}`,
+      );
+      return { staticDispatched: 0, pythonSkipped: 0 };
+    } finally {
+      isBusy.value = false;
+    }
   }
 
   // --- public surface ------------------------------------------ //

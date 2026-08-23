@@ -28,7 +28,7 @@ Probes execute in the order they would be exercised at lifespan boot:
    forces a recompile of the forward-referenced ``mcus`` list,
    exercises pydantic_core's compile path differently than lazy
    first-use.
-3. ``from modules.machineconfig.module import setup`` + ``setup()`` —
+3. ``from routers.machineconfig import setup`` + ``setup()`` —
    machineconfig module on_load cycle without FastAPI boot.
 4. ``KlipperToLinuxCNCCompiler()`` and ``.id`` — the concrete
    compiler class that registers in the global registry.
@@ -54,7 +54,7 @@ from pathlib import Path
 
 # Make the backend/ root importable regardless of where the script
 # is invoked from. The probes use absolute imports
-# (``from modules.machineconfig...``) that resolve against this path.
+# (``from modules.machineconfig..``) that resolve against this path.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
@@ -90,26 +90,22 @@ def _probe_pydantic_core() -> None:
 
 
 def _probe_model_rebuild() -> None:
-    from modules.machineconfig.models.hardware_json_models import (
+    from models.machineconfig.hardware_json_models import (
         HardwareJson,
     )
 
     HardwareJson.model_rebuild(force=True)
 
 
-def _probe_machineconfig_module() -> None:
-    from modules.machineconfig.module import setup as machineconfig_setup
+def _probe_machineconfig_router() -> None:
+    from routers.machineconfig import router as machineconfig_router
 
-    instance = machineconfig_setup()
-    # Touch each attribute the lifespan probes (manifest id, get_router)
-    # so a SIGILL inside any of them shows up under this probe rather
-    # than masquerading as something later.
-    _ = instance.manifest.id
-    _ = callable(instance.get_router)
+    # Touch the router to ensure its decorators executed cleanly.
+    _ = len(machineconfig_router.routes)
 
 
 def _probe_compiler_discovery() -> None:
-    from modules.machineconfig.compilers.klipper_linuxcnc import (
+    from services.machineconfig.klipper_linuxcnc import (
         KlipperToLinuxCNCCompiler,
     )
 
@@ -134,7 +130,7 @@ def _probe_openapi_schema() -> None:
 PROBES: list[tuple[str, callable]] = [
     ("1_pydantic_core_import", _probe_pydantic_core),
     ("2_hardware_json_model_rebuild_force", _probe_model_rebuild),
-    ("3_machineconfig_module_setup", _probe_machineconfig_module),
+    ("3_machineconfig_router_import", _probe_machineconfig_router),
     ("4_compiler_discovery", _probe_compiler_discovery),
     ("5_openapi_schema_generation", _probe_openapi_schema),
 ]

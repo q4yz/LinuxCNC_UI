@@ -51,9 +51,10 @@ def test_get_current_state_includes_errors():
         text = "joint 2 on limit switch error",
         time = "2026-08-11T19:38:55.948363"
     )
-    from routers.ServoThreadRouter import get_current_state
+    from services.ServoThreadService import ServoThreadService
 
-    snap = get_current_state()
+    svc = ServoThreadService()
+    snap = svc.get_current_state()
     assert "errors" in snap, "get_current_state must surface the bounded history"
     assert isinstance(snap["errors"], list)
     assert len(snap["errors"]) == 1
@@ -72,9 +73,10 @@ def test_get_current_state_returns_a_copy_not_a_live_reference():
         time="2026-08-11T19:38:43.542555"
     )
 
-    from routers.ServoThreadRouter import get_current_state
+    from services.ServoThreadService import ServoThreadService
 
-    snap = get_current_state()
+    svc = ServoThreadService()
+    snap = svc.get_current_state()
     snap["errors"].append(
         {"kind": 0, "text": "tampered", "time": "2026-08-11T20:00:00"}
     )
@@ -88,16 +90,16 @@ def test_telemetry_loop_pushes_into_history_before_broadcast():
     bounded history is current at the next ``full_state`` snapshot.
     """
     reset_error_history()
-    from routers import ServoThreadRouter as ws_mod
-    import asyncio
+    from services.ServoThreadService import ServoThreadService
 
+    svc = ServoThreadService()
     captured = []
 
     async def fake_broadcast(message):
         captured.append(message)
 
-    ws_mod.manager.active_connections = [object()]
-    ws_mod.manager.broadcast = fake_broadcast
+    svc.active_connections = [object()]
+    svc.broadcast = fake_broadcast
 
 
     reset_error_history()
@@ -109,6 +111,6 @@ def test_telemetry_loop_pushes_into_history_before_broadcast():
         time="2026-08-11T19:38:43.542555"
     )
 
-    snap = ws_mod.get_current_state()
+    snap = svc.get_current_state()
     assert snap["errors"][-1]["text"] == "linear-move-limit"
     assert snap["errors"][-1]["kind"] == 11

@@ -18,30 +18,31 @@ parser:
   why some pins didn't make it to the remora payload.
 
 All tests use the strict Klipper parser end-to-end via
-:func:`modules.machineconfig.parser.parse_config`; the compiler
+:func:`machineconfig_parser.parse_config`; the compiler
 itself is never called with a hand-rolled graph so the assertions
 mirror what the production code path produces.
 """
 
 from __future__ import annotations
+from tests._module_app_factory import build_module_app
 
 import json
 from pathlib import Path
 
 import pytest
 
-from modules.machineconfig.compilers.config_txt_generator import (
+from services.machineconfig.config_txt_generator import (
     REMORA_CONNECTION_TYPES,
     build_config_txt,
     resolve_remora_mcu,
     write_config_txt,
 )
-from modules.machineconfig.compilers.hal_generator import build_hal_from_graph
-from modules.machineconfig.compilers.hardware_json_generator import (
+from services.machineconfig.hal_generator import build_hal_from_graph
+from services.machineconfig.hardware_json_generator import (
     build_hardware_json,
 )
-from modules.machineconfig.models import MCU
-from modules.machineconfig.parser import parse_config
+from models.machineconfig import MCU
+from machineconfig_parser import parse_config
 
 
 # --------------------------------------------------------------------- #
