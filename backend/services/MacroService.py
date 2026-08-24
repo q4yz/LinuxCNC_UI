@@ -8,7 +8,7 @@ from exceptions import BadRequestError, NotFoundError
 from hardware import get_machine_stat, execute_gcode
 from hardware.Connection import MachineState, connection
 from services import get_mcode_service
-from services.console_logger import LogLevel, get_console_logger
+from services.ConsoleLogger import LogLevel, get_console_logger
 from services.macro_parser import (
     MacroParseError,
     parse_macro,

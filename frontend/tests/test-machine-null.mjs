@@ -268,10 +268,13 @@ test("machine module uses the module-scoped URL prefixes", () => {
     return;
   }
 
-  // ``ModulesAxisService`` exposes only ``/home`` (homing is
-  // the one axis-motion action kept on the axis module; the
-  // state / mode / MDI endpoints moved to the state module).
-  for (const url of ["/api/v1/modules/axis/home"]) {
+  // ``ModulesAxisService`` exposes the homing and the live
+  // axis-settings endpoints. State / mode / MDI endpoints moved
+  // to the state module.
+  for (const url of [
+    "/api/v1/modules/axis/home",
+    "/api/v1/modules/axis/settings",
+  ]) {
     assert.match(
       axisText,
       new RegExp(url.replace(/\//g, "\\/")),

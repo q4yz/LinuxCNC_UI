@@ -1,8 +1,9 @@
 # `.agent/` — Agent & Contributor Documentation
 
 This directory holds the contracts and rules that govern the
-pluggable-module system, the repository agent guide, and the
-hub-and-spoke context model used by the agents.
+per-domain router pattern, the frontend module registry, the
+repository agent guide, and the hub-and-spoke context model used
+by the agents.
 
 | Path | Audience | Purpose |
 |------|----------|---------|
@@ -15,7 +16,7 @@ hub-and-spoke context model used by the agents.
 | [`.agent/HANDOFF_TEMPLATE.md`](.agent/HANDOFF_TEMPLATE.md) | Issue resolvers | Required PR description format. |
 | [`.agent/TEST.md`](.agent/TEST.md) | CI / orchestrator | The bash script the orchestrator runs to verify every edit. Do not run it yourself. |
 | [`.agent/STATE.md`](.agent/STATE.md) | All contributors | Current as-built state of the module system. |
-| [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md) | Backend module authors | Canonical `PluggableModule` Protocol. |
+| [`.agent/contracts/backend-router.md`](.agent/contracts/backend-router.md) | Backend authors | Canonical per-domain router contract (replaces the retired `PluggableModule` Protocol). |
 | [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) | Frontend module authors | Canonical `FrontendModule` interface. |
 | [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md) | Module authors | Settings endpoints, storage layout, atomic-write contract. |
 

@@ -60,7 +60,7 @@ from services.ServoThreadService import (
 )
 from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
-from services.console_logger import get_console_logger
+from services.ConsoleLogger import get_console_logger
 
 # Models live at the backend root (one file per domain).
 from models.axis_settings import MachineSettings as AxisSettings

@@ -57,13 +57,13 @@ class _AxisSettingsCommand(BaseModel):
         ...,
         ge=0.0,
         le=5.0,
-        description="Speed multiplier percentage (between 0.0 and 5.0)."
+        description="Feed-rate override multiplier (1.0 = 100%, range 0.0-5.0)."
     )
     absolute_speed_limit: int = Field(
         ...,
         ge=0,
         le=5000,
-        description="Absolute speed limit (between 0 and 5000)."
+        description="Absolute speed limit in mm/min (converted to machine units/second by the service)."
     )
 
 
@@ -103,16 +103,8 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
     response_model=_StatusResponse,
 )
 def _axis_settings_endpoint(cmd: _AxisSettingsCommand) -> _StatusResponse:
-    """Update axis settings via the facade.
-
-    Passes the multiplier and absolute speed limit to the AxisService.
-    """
-    # Assuming your AxisService has a method to handle settings updates.
-    # Adjust the method name to match your actual service implementation.
-    service = get_axis_service()
-    if hasattr(service, "update_settings"):
-        service.update_settings(cmd.multiplier, cmd.absolute_speed_limit)
-
+    """Apply axis speed settings to the running LinuxCNC session."""
+    get_axis_service().update_settings(cmd.multiplier, cmd.absolute_speed_limit)
     return _StatusResponse(status="success")
 
 

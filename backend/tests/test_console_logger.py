@@ -25,8 +25,8 @@ from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
 from services import StateService as state_service_module
-from services import console_logger as console_logger_module
-from services.console_logger import (
+from services import ConsoleLogger as console_logger_module
+from services.ConsoleLogger import (
     ConsoleLogger,
     LogLevel,
     TYPE_TO_LEVEL,

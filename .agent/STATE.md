@@ -186,15 +186,17 @@ populated dashboard on the first frame.
 ## 5. Settings Surface
 
 Every module that needs persisted settings imports the canonical
-client from `frontend/src/core/modules/settings.js`:
+client from `frontend/src/core/modules/settings.ts`:
 
 ```js
 import { createModuleSettings } from '../../core/modules/settings.js';
 const settings = createModuleSettings('camera');
 ```
 
-The client wraps the four canonical REST endpoints in
-`backend/modules/<id>/settings.py`. The full contract lives in
+The client wraps the four canonical REST endpoints exposed by
+`backend/routers/_module_settings_router.py`, which mount under
+`/api/v1/modules/<id>/settings` for every entry in
+`backend/main.py:_MODULE_DOMAINS`. The full contract lives in
 [`contracts/settings-module.md`](contracts/settings-module.md).
 The frontend deliberately uses hand-rolled `fetch` rather than the
 generated OpenAPI client so modules keep working even when
@@ -246,7 +248,12 @@ merge.
 
 The previous nullable-module guarantee (with the per-module
 table) was retired in the rewrite that produced § 13. Modules are
-now uniformly mandatory.
+now uniformly mandatory. On the **backend** the matching concept
+is the per-domain router contract — every entry in
+`backend/main.py:_MODULE_DOMAINS` is mounted at boot via
+`app.include_router(_router)`. There is no `backend/modules/`
+folder; see `.agent/contracts/backend-router.md` for the canonical
+contract.
 
 ---
 

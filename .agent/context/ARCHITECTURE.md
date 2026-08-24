@@ -5,8 +5,10 @@
 A monorepo with two services:
 
 - **`backend/`** — Python 3 FastAPI + Uvicorn. REST endpoints, a
-  high-frequency WebSocket telemetry stream, and a pluggable module
-  registry.
+  high-frequency WebSocket telemetry stream, and per-domain routers
+  mounted from `main.py:_MODULE_DOMAINS`. There is no plugin
+  registry; see `.agent/contracts/backend-router.md` for the
+  canonical contract.
 - **`frontend/`** — Vue 3 + Vite + Pinia SPA. Reactive UI, a
   Three.js 3D toolpath viewer, and a single-file lazy module
   registry that mirrors the backend.
@@ -28,27 +30,35 @@ registry graph** (see `§ 4`) and the **event bus** (see `§ 5`).
 ```
 backend/
 ├── main.py                     # FastAPI app + lifespan + router includes
-├── core/                       # Hardware-agnostic: models, config parser, registry
-│   ├── config_manager.py       # Parses machine_config/machine.cfg
+├── core/                       # Hardware-agnostic: settings store, event bus, field masking
 │   ├── event_bus.py            # Frozen-payload pub/sub
-│   ├── module_registry.py      # Discovers modules; mounts routers + settings
-│   ├── protocols.py            # PluggableModule / ModuleManifest / ModuleContext
-│   ├── settings_store.py       # atomic-write settings persistence
-│   └── telemetry/              # WebSocket telemetry transport
+│   ├── field_masking.py        # ResponseTier helpers (STATIC / BASE / ALL)
+│   ├── models.py               # Pydantic config models (heater / stepper / axis / ...)
+│   └── settings_store.py       # atomic-write settings persistence
+├── dtos/                       # Frozen dataclass domain DTOs + HalPin handles
+├── mappers/                    # DTO ↔ Pydantic Response translation (per domain)
+├── mapper/                     # Singleton mappers for cross-domain aggregates
+├── models/                     # Pydantic request/response + per-module settings
+├── routers/                    # Per-domain FastAPI routers (one file per module id)
+│                               # + four legacy flat routers (Files/System/Base/Servo)
+├── services/                   # Per-domain service singletons + cross-domain facades
+├── storage/                    # Filesystem-backed persistence (MacroStorage, …)
+├── factories/                  # DTO / Response assembly helpers
 ├── hardware/                   # Hardware abstraction layer
 │   ├── connection.py           # Singleton connection; falls back to mock
-│   └── linuxcnc_mock.py        # In-memory simulation for dev
-├── modules/                    # Pluggable feature modules
-│   ├── camera/                 # Module package: module.py, router.py, settings.py
-│   ├── machine/                # DRO + jog + watchdog (safety-critical)
-│   ├── machineconfig/          # Profiles editor + compilers + deploy
-│   ├── program/                # Lifecycle: run / pause / resume / stop
-│   ├── temperature/            # Sensor polling + charting
-│   └── tools/                  # SpindleDigital + extruder MDI
-├── routers/                    # Legacy flat routers (websocket, files, system)
-├── services/                   # Cross-module service objects (hal_compiler, etc.)
+│   └── mock/                   # In-memory simulation for dev
 └── tests/                      # pytest: 240+ tests for module contracts + watchdogs
 ```
+
+There is **no `backend/modules/` directory**. The previous
+`PluggableModule` plugin system was retired; routers live directly
+under `backend/routers/<id>.py` and are mounted in `main.py` via
+the `_MODULE_DOMAINS` table. See
+[`.agent/contracts/backend-router.md`](../contracts/backend-router.md)
+for the canonical contract, and
+[`.agent/context/BACKEND_LAYERS.md`](BACKEND_LAYERS.md) for the
+Router → Service → DTO → Mapper → Storage split every per-domain
+module follows.
 
 ### 1.1 Hardware Abstraction Layer
 
@@ -175,16 +185,18 @@ contract — including how to add a new stream — is in
 
 | Source | Consumers |
 |--------|-----------|
-| `machine_config/machine.cfg` | Frontend parses for axis counts, limits, capabilities. Backend `core/config_manager.py` parses for the same. |
+| `machine_config/machine.cfg` | Frontend parses for axis counts, limits, capabilities. Backend `services/HardwareConfigService.py` (via `backend/models/machineconfig/linuxcnc_models.py`) parses for the same. |
 | `frontend/src/config/gcodes.js` | Every `.vue` component / Pinia action that emits G-code. Helpers like `generateSetOffset(axis, value)` keep MDI strings out of components. |
-| `backend/modules/<id>/settings.py` | Pydantic defaults for module settings. The registry's `SettingsStore` falls back to these on read. |
+| `backend/models/<id>_settings.py` | Pydantic defaults for module settings. `main.py:_MODULE_DOMAINS` builds a `SettingsStore` from each defaults instance and falls back to it on read. |
 
 ## 4. Module registry graph
 
-The "node graph" inside this application is the module registry
-on each side. Each module is a node; the registry is the edge
-manager that calls `onLoad` / `onUnload` in the right order and
-mounts the module's router / settingsPanel.
+The "node graph" inside this application is asymmetric: the
+frontend has a registry, the backend has a flat mount table. The
+two must stay in lockstep on module ids — the manifest id is the
+contract — but the implementation shapes differ.
+
+### Frontend — `FrontendRegistry`
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -196,30 +208,59 @@ mounts the module's router / settingsPanel.
 │   ├── machine        (DRO + jog + WebSocket)                 │
 │   ├── machineconfig  (profiles editor + deploy)              │
 │   ├── program        (lifecycle)                             │
+│   ├── macros         (.macro / .ngc / mcode CRUD + execute) │
 │   └── tools          (spindle / extruder)                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The backend has a structurally identical registry
-(`backend/core/module_registry.py`) that mirrors the frontend
-graph. The two registries discover the same module ids on either
-side; the manifest id is the contract.
+The registry walks `frontend/src/modules/<id>/index.ts` via a
+**static, eager** glob and consumes each module's default export.
+The matching TS types live in
+[`frontend/src/core/modules/protocols.ts`](../../frontend/src/core/modules/protocols.ts).
 
-**Eager boot.** Both registries use eager loading: the frontend
-uses `import.meta.glob(..., { eager: true })` and components are
+### Backend — flat `_MODULE_DOMAINS` mount table
+
+There is no backend registry. `backend/main.py` declares the eight
+module ids in a flat tuple and mounts each router directly:
+
+```python
+# backend/main.py:88-97
+_MODULE_DOMAINS = [
+    ("axis", AxisSettings, axis_router.router),
+    ("machine_state", StateSettings, state_router.router),
+    ("program", ProgramSettings, program_router.router),
+    ("temperature", TemperatureSettings, temperature_router.router),
+    ("tools", ToolsSettings, tools_router.router),
+    ("macros", MacrosSettings, macros_router.router),
+    ("camera", CameraSettings, camera_router.router),
+    ("machineconfig", MachineConfigSettings, machineconfig_router.router),
+]
+```
+
+`main.py:308-321` then iterates the table to mount each per-domain
+router under `/api/v1/modules/<id>` and the four canonical settings
+endpoints under `/api/v1/modules/<id>/settings` (settings first,
+so a module's bare `/{name}` cannot shadow them).
+
+**Eager boot.** Both surfaces use eager loading: the frontend
+glob is `import.meta.glob(..., { eager: true })` and components are
 imported statically inside `App.vue` and `DashboardView.vue`.
-The backend's `importlib.import_module` runs the module's
-`__init__.py` and `setup()` factory at boot. There is no
-"module disabled at build time" path — every module that ships
-is a hard dependency.
+The backend imports each router module at the top of `main.py`
+(`from routers import …`) — `importlib.import_module` runs the
+module's top-level code at boot. There is no "module disabled at
+build time" path — every module that ships is a hard dependency.
 
 **Modules are mandatory.** The previous nullable-module
 guarantee (deleting a module folder leaves the app booting and
-building) has been retired. Every module returns a non-null
-`APIRouter` and a non-null Pydantic `BaseModel` from
-`get_router()` / `get_settings_model()`. The contract forbids
-`None` returns and the registry refuses to mount a module that
-violates it. See `.agent/STATE.md` § 7 and § 13.
+building) has been retired on **both** sides. On the frontend,
+every entry under `frontend/src/modules/<id>/` ships its code in
+the bundle and runs `onLoad` at boot. On the backend, every entry
+in `_MODULE_DOMAINS` is mounted via `app.include_router(_router)`.
+The contract forbids `None` returns from `FrontendModule`'s
+default export and from the per-domain routers' module-level
+`router` binding. See `.agent/STATE.md` § 7 and § 13, plus
+[`.agent/contracts/backend-router.md`](../contracts/backend-router.md)
+for the canonical backend contract.
 
 ## 5. Event bus
 
@@ -239,12 +280,14 @@ share the same contract:
 | Concern | Where it lives |
 |---------|----------------|
 | Generated OpenAPI client | `frontend/generated/api/` (gitignored, regenerated by `scripts/generate-api.mjs`) |
-| Module contracts | `.agent/contracts/{backend,frontend,settings}-module.md` |
+| Backend module contract | `.agent/contracts/backend-router.md` (per-domain routers) |
+| Frontend module contract | `.agent/contracts/frontend-module.md` |
+| Settings contract | `.agent/contracts/settings-module.md` |
 | Settings persistence | `backend/core/settings_store.py` (atomic write per module) |
+| Backend layered pattern | `.agent/context/BACKEND_LAYERS.md` |
 | Test scripts | `frontend/tests/*.mjs`, `backend/tests/test_*.py` |
 | Repository agent guide | `.agent/AGENT.md` |
 | Test run script | `.agent/TEST.md` (the orchestrator runs this) |
-| Module design backlog | `MODULE_SYSTEM_ROADMAP.md` at the repo root |
 | Current as-built state | `.agent/STATE.md` |
 
 ## 7. `hardware.json` v2 — the canonical machine record
@@ -259,7 +302,7 @@ shape is rejected on load (no backcompat).
 The model is flat with explicit `id` fields and string
 references. Cross-references are validated by a single
 `HardwareJson` Pydantic model in
-`backend/modules/machineconfig/models/hardware_json_models.py`
+[`backend/models/machineconfig/hardware_json_models.py`](../../backend/models/machineconfig/hardware_json_models.py)
 that walks the graph once and fails fast with the full error list
 when any link is unresolved.
 

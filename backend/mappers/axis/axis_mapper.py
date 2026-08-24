@@ -1,7 +1,7 @@
 from typing import Dict, Any
 
 from core.field_masking import ResponseTier, include_static
-from dtos.axis.axis_dtos import AxisStateDTO
+from dtos.axis.AxisDto import AxisStateDTO
 from models.axis_model import AxisStateResponse
 
 

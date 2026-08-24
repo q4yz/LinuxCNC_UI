@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, List
 
-from dtos.axis.axis_dtos import AxisStateDTO
+from dtos.axis.AxisDto import AxisStateDTO
 from hardware.Connection import execute_sync_cmd, linuxcnc
 from mappers.axis.axis_mapper import AxisMapper
 from services.HardwareConfigService import HardwareConfigService
@@ -86,6 +86,10 @@ class AxisService:
         execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
         execute_sync_cmd("teleop_enable", 1.0, 0)
         execute_sync_cmd("home", 3, axis)
+
+    def update_settings(self, multiplier: float, absolute_speed_limit: int) -> None:
+        execute_sync_cmd("feedrate", 0, float(multiplier))
+        execute_sync_cmd("maxvel", 0, float(absolute_speed_limit) / 60.0)
 
 
 _axis_service: Optional[AxisService] = None

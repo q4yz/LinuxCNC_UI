@@ -10,7 +10,7 @@ from hardware.Connection import read_error_history
 from mapper.ServoThreadStateMapper import ServoThreadStateMapper
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
 from dtos.ServoThreadState import ServoThreadStateDTO
-from services.console_logger import LogLevel, get_console_logger
+from services.ConsoleLogger import LogLevel, get_console_logger
 
 logger = logging.getLogger("backend.services.servo_thread")
 

@@ -33,7 +33,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.StateService import get_state_service
-from services.console_logger import LogLevel, get_console_logger
+from services.ConsoleLogger import LogLevel, get_console_logger
 
 
 logger = logging.getLogger("backend.state_service")

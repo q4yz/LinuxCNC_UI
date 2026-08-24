@@ -4,7 +4,7 @@ Authoritative contract for the per-module persistent settings layer.
 The matching implementation lives in
 [`backend/core/settings_store.py`](backend/core/settings_store.py)
 and is mounted by
-[`backend/core/module_registry.py`](backend/core/module_registry.py).
+[`backend/main.py:_MODULE_DOMAINS`](../../backend/main.py).
 
 > **Modules are mandatory.** Every backend module exposes the four
 > canonical settings endpoints through this contract. A module

@@ -186,6 +186,14 @@ class CommandMock:
         self._state_mock.load_file(string)
         return 1
 
+    def feedrate(self, *args):
+        logger.info("Mock feedrate called with args: %s", args)
+        return 1
+
+    def maxvel(self, *args):
+        logger.info("Mock maxvel called with args: %s", args)
+        return 1
+
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!
 
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!

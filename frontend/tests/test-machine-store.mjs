@@ -196,3 +196,49 @@ test("store does NOT call the removed compat shim", () => {
     /import\s*\{[^}]*registerMachineStore[^}]*\}/,
   );
 });
+
+test("store exposes updateAxisSettings action routed through the axis facade", () => {
+  const text = readStore();
+  assert.match(
+    text,
+    /import\s*\{[^}]*axisFacade[^}]*\}\s*from\s*["']\.\.\/facades\/axisFacade/,
+    "stores/machine.ts must import the axis facade",
+  );
+  assert.match(
+    text,
+    /async\s+function\s+updateAxisSettings\s*\(/,
+    "stores/machine.ts must define updateAxisSettings",
+  );
+  assert.match(
+    text,
+    /axisFacade\.updateSettings\s*\(/,
+    "updateAxisSettings must delegate to axisFacade.updateSettings",
+  );
+  assert.match(
+    text,
+    /updateAxisSettings\b/,
+    "updateAxisSettings must be referenced inside the store's return object",
+  );
+});
+
+test("axis facade wraps ModulesAxisService.axisSettings", () => {
+  const facadeText = readFileSync(
+    resolve(repoRoot, "frontend/src/facades/axisFacade.ts"),
+    "utf-8",
+  );
+  assert.match(
+    facadeText,
+    /async\s+function\s+updateSettings\s*\(\s*multiplier\s*,\s*absoluteSpeedLimit\s*\)/,
+    "axisFacade must define updateSettings",
+  );
+  assert.match(
+    facadeText,
+    /ModulesAxisService\.axisSettings\(\s*\{\s*multiplier,\s*absolute_speed_limit:\s*absoluteSpeedLimit\s*\}\s*\)/,
+    "axisFacade.updateSettings must call ModulesAxisService.axisSettings with both fields",
+  );
+  assert.match(
+    facadeText,
+    /updateSettings\b/,
+    "axisFacade must export updateSettings",
+  );
+});

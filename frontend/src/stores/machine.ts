@@ -10,6 +10,7 @@ import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
 import {createModuleSettings} from "../core/modules/settings";
 import {servoThreadService} from "../facades/servoThreadFacade";
+import {axisFacade} from "../facades/axisFacade";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
 const AXIS_NAMES = ["X", "Y", "Z", "A", "B", "C", "U", "V", "W"];
@@ -243,6 +244,23 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         }
     }
 
+    async function updateAxisSettings(multiplier: number, absoluteSpeedLimit: number) {
+        const consoleStore = useConsoleStore();
+        const result = await axisFacade.updateSettings(multiplier, absoluteSpeedLimit);
+        if (result.ok) {
+            consoleStore.success(
+                `Axis settings updated (${Math.round(multiplier * 100)}%, ${absoluteSpeedLimit} mm/min)`,
+            );
+            return;
+        }
+        const reason =
+            result.failureReason instanceof Error
+                ? result.failureReason.message
+                : String(result.failureReason);
+        consoleStore.error(`Failed to update axis settings: ${reason}`);
+        console.error("Failed to update axis settings", result.failureReason);
+    }
+
     // ──────────────────────────────────────────────────────────────── //
     // Program lifecycle actions                                          //
     // ──────────────────────────────────────────────────────────────── //
@@ -339,6 +357,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         pauseProgram,
         resumeProgram,
         abortProgram,
+        updateAxisSettings,
     };
 });
 

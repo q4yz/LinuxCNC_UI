@@ -7,24 +7,31 @@ freshest thinking is at the top. New entries should be added at the
 
 ## 1. Module system
 
-### 1.1 Eager glob imports pull excluded modules into the bundle
+### 1.1 Modules are eager — there is no "lazy module disabled at build time" path
 
-**Symptom.** The `MODULES_ENABLED` whitelist had no effect on the
-frontend production bundle; every module's JS shipped even when
-excluded.
+**Symptom.** A previous revision attempted to make modules lazy so
+the `MODULES_ENABLED` whitelist could prune the production bundle.
+The lazy glob hid module dependencies: deleting a module folder
+left the build green because nothing referenced the deleted path
+statically.
 
-**Root cause.** The original glob used `{ eager: true }`, so every
-file matched by `import.meta.glob` was imported synchronously at
-module-init time. The whitelist filter never ran because the JS
-had already been pulled in.
+**Fix.** Eager loading is now mandatory (see
+`.agent/STATE.md` § 13 and
+`.agent/contracts/frontend-module.md` § 8). The single allowed
+glob is `import.meta.glob('../../modules/*/index.ts', { eager: true })`
+in `frontend/src/core/modules/registry.ts`. The
+`MODULES_ENABLED` whitelist is a deployment opt-out: an excluded
+module still has its JS in the bundle (it was loaded eagerly),
+it just does not run `onLoad` and is not visible in the sidebar /
+settings.
 
-**Fix.** `import.meta.glob(...)` everywhere with `{ eager: false }`.
-The whitelist now actually prunes the bundle.
-
-**Tripwire.** `frontend/src/core/modules/registry.js` carries a
-tripwire comment: changing the glob to `eager: true` is a
-regression; the union of "mounted ids" and "skipped ids" should
-always equal the union of "all module ids".
+**Tripwire.** CI lint
+`frontend/scripts/check-no-lazy-imports.mjs` rejects
+`import.meta.glob(..., { eager: false })`,
+`defineAsyncComponent`, and dynamic `import()` anywhere under
+`frontend/src/modules/` or `frontend/src/core/`. The script is
+wired into `.agent/TEST.md` so the rule trips before the bundle
+is built.
 
 ### 1.2 Pinia store ids must be `module_<id>`, not `<id>`
 
@@ -46,28 +53,33 @@ can reason about it.
 
 ### 1.3 `activePinia` boot-timing race
 
-**Symptom.** Module stores crashed at app startup with
-`Cannot read properties of undefined (reading 'has')` from inside
-Pinia.
+**Symptom.** An early revision had module stores constructed
+lazily on first `useXxxStore()` call, but the lazy path raced
+with the Pinia 3.x boot order.
 
-**Root cause.** `onLoad` hooks tried to call `useXxxStore()` before
-`app.use(pinia)` had wired up the active Pinia instance. The
-relative ordering of `main.js` and the import glob was fragile.
+**Fix.** Module stores are constructed **eagerly inside `onLoad`**
+(see `.agent/STATE.md` § 10). The `activePinia` race is resolved
+by deterministic boot ordering: `main.js` calls `app.use(pinia)`
+before `registry.boot()`, so `useXxxStore()` inside `onLoad`
+finds the active Pinia instance. The polling loop / WebSocket
+transport starts at app boot, so operators get a populated
+dashboard on the first frame.
 
-**Fix.** Module stores are lazy. The first `useXxxStore()` call
-must come from a component, not from `onLoad`. The module's polling
-loops / WebSocket handlers start when the panel mounts, not when
-the registry boots.
+### 1.4 Empty `frontend/src/modules/` folder must still build
 
-### 1.4 Empty `modules/` folder must still build
-
-**Symptom.** With no modules mounted, `npm run build` failed.
+**Symptom.** With no frontend modules mounted, `npm run build` failed.
 
 **Root cause.** Vite's glob collapses to `{}` when the directory
 is empty, but a downstream consumer expected an array.
 
 **Fix.** All consumers tolerate empty results. The registry logs
 `mounted=[] skipped=0 missing=0` and the build succeeds.
+
+**Note.** The current contract forbids shipping an empty
+`frontend/src/modules/` in practice — every module that ships is
+a hard dependency (see § 1.1 above and `.agent/STATE.md` § 7).
+The empty-build tolerance still matters because the test fixtures
+build with a temporary empty `modules/` directory.
 
 ### 1.5 Snapshots vs lazy shims
 
@@ -292,9 +304,13 @@ three unrelated endpoints because they were inlined into `main.py`.
 
 **Root cause.** "Just one quick endpoint" became five.
 
-**Fix.** Every endpoint lives in a router under `backend/routers/`
-(legacy) or `backend/modules/<id>/router.py` (post-migration).
-`main.py` only includes the routers and runs the lifespan.
+**Fix.** Every endpoint lives in a router under `backend/routers/`.
+The previous `backend/modules/<id>/router.py` shape was retired
+when the `PluggableModule` plugin system went away; per-domain
+routers are now mounted directly from `backend/routers/<id>.py`
+in `backend/main.py:_MODULE_DOMAINS`. `main.py` itself never
+declares endpoints — it only includes the routers and runs the
+lifespan.
 
 ### 3.2 Hardware calls go through the singleton `connection`
 
@@ -353,7 +369,8 @@ subprocess bound to ``http://127.0.0.1:{8080+index}/?action=stream``;
 the backend ``/stream`` endpoint is a 302 redirect to that URL.
 
 **Tripwire.** Do NOT reintroduce ``cv2`` into
-``backend/modules/camera/``. The supervisor owns the only process
+``backend/routers/camera.py`` (or any sibling under
+`backend/`). The `UstreamerSupervisor` owns the only process
 boundary the camera needs; any new capture code in the backend is
 the regression vector that brings SIGILL back. If a future feature
 needs per-frame processing (e.g. an on-screen reticle), do it in

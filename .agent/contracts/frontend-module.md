@@ -1,33 +1,39 @@
 # Frontend Module Contract (`FrontendModule`)
 
-The canonical contract every pluggable frontend module **must**
-satisfy. Authoritative source for what the registry expects and what
-module authors must implement. Living document — the matching JS
-code lives in
-[`frontend/src/core/modules/protocols.js`](frontend/src/core/modules/protocols.js)
-and
-[`frontend/src/core/modules/registry.js`](frontend/src/core/modules/registry.js).
+Authoritative contract every frontend module **must** satisfy.
+Living document. The matching JS / TS code lives in
+[`frontend/src/core/modules/`](../../../frontend/src/core/modules/).
 
 > **Modules are mandatory.** Every module that ships in
 > `frontend/src/modules/<id>/` is a hard dependency: its code is
 > loaded eagerly by Vite at app start, its `onLoad` runs during
 > `registry.boot()`, its sidebar entry is merged into the nav, and
-> its `mainView` / `settingsPanel` is rendered when the user navigates
-> to the matching route. No module is "nullable" — there is no
-> concept of a module that may be absent at runtime. A module that
-> is not ready to satisfy the full contract does not ship.
+> its `mainView` / `settingsPanel` is rendered when the user
+> navigates to the matching route. No module is "nullable" — there
+> is no concept of a module that may be absent at runtime. A module
+> that is not ready to satisfy the full contract does not ship.
 
 > **No lazy imports.** Module code is loaded **eagerly**. The
-> registry walks `frontend/src/modules/<id>/index.js` via a **static**
-> import — `import.meta.glob(..., { eager: true })` only. Dynamic
-> `import()`, `defineAsyncComponent`, and `import.meta.glob(..., {
-> eager: false })` are forbidden inside any module surface. The CI
-> lint `frontend/scripts/check-no-lazy-imports.mjs` rejects any
+> registry walks `frontend/src/modules/<id>/index.ts` via a
+> **static** import — `import.meta.glob(..., { eager: true })`
+> only. Dynamic `import()`, `defineAsyncComponent`, and
+> `import.meta.glob(..., { eager: false })` are forbidden inside
+> any module surface. The CI lint
+> `frontend/scripts/check-no-lazy-imports.mjs` rejects any
 > violation. See `.agent/STATE.md` § 13 for the rationale.
+
+> **No matching backend "module system".** The frontend registry
+> pairs with the per-domain router pattern on the backend — there
+> is **no `backend/modules/` directory**. The `id` declared in
+> each module's `manifest` is the same string used in
+> `backend/main.py:_MODULE_DOMAINS` and the URL prefix
+> `/api/v1/modules/<id>/`. See
+> [`.agent/contracts/backend-router.md`](backend-router.md) for the
+> backend contract.
 
 ## 1. The `FrontendModule` Interface
 
-```js
+```ts
 /**
  * @typedef {Object} FrontendModule
  * @property {FrontendModuleManifest} manifest
@@ -38,21 +44,23 @@ and
  */
 ```
 
+The authoritative typedef lives in
+[`frontend/src/core/modules/protocols.ts`](../../../frontend/src/core/modules/protocols.ts).
 A module is any object whose default export has every field above —
-none are optional. The registry walks `frontend/src/modules/<id>/index.js`
-statically and consumes the default export.
+none are optional. The registry walks
+`frontend/src/modules/<id>/index.ts` statically and consumes the
+default export.
 
 ## 2. FrontendModuleManifest
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | `string` | yes | Must match the backend `ModuleManifest.id`. |
+| `id` | `string` | yes | Unique module identifier. Must match the backend module id (`backend/main.py:_MODULE_DOMAINS`). |
 | `title` | `string` | yes | Human-readable display name. |
 | `version` | `string` | yes | Semantic-ish version. No default — every module declares one. |
 | `description` | `string` | yes | One-line description. Empty string is fine. |
 | `sidebar` | `SidebarEntry` | yes | Sidebar entry the module contributes. No `undefined`. |
 | `settingsPanel` | `boolean` | yes | Whether this module exposes a Settings tab. |
-| `mainView` | `import('vue').Component` | yes | Top-level view rendered by `App.vue` when this module's route is active. |
 
 ## 3. SidebarEntry
 
@@ -65,7 +73,7 @@ statically and consumes the default export.
 
 ## 4. ModuleContext
 
-```js
+```ts
 /**
  * @typedef {Object} ModuleContext
  * @property {string} id
@@ -77,7 +85,9 @@ statically and consumes the default export.
 
 `settings` is a typed client bound to the four canonical settings
 endpoints exposed by the backend `SettingsStore`. The full client
-API lives in [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md).
+API lives in [`frontend/src/core/modules/settings.ts`](../../../frontend/src/core/modules/settings.ts);
+the wire contract lives in
+[`.agent/contracts/settings-module.md`](settings-module.md).
 
 ## 5. Store ID Naming Rule (Gotcha #2)
 
@@ -87,7 +97,7 @@ prevents collisions with the legacy top-level stores (`machine`,
 `console`) and gives a regex hook for the CI lint.
 
 The lint script lives at
-[`frontend/scripts/check-store-ids.mjs`](frontend/scripts/check-store-ids.mjs)
+[`frontend/scripts/check-store-ids.mjs`](../../../frontend/scripts/check-store-ids.mjs)
 and runs in CI before the bundle is built:
 
 ```js
@@ -112,7 +122,7 @@ mutation.
 `TelemetryBus` is the sibling bus for high-frequency telemetry
 (typically 10-100 Hz). It delivers payloads **by reference** so
 consumers don't pay a clone cost on every tick. Consumers are part
-of the core platform (the existing `stores/machine.js` WebSocket
+of the core platform (the existing `stores/servoThread.js` WebSocket
 handler is the first) and must be disciplined about payload
 mutation.
 
@@ -129,12 +139,12 @@ telemetryBus.subscribe('full_state', (topic, payload) => {
 
 ## 8. Discovery — Eager Static Glob
 
-The registry walks `frontend/src/modules/<id>/index.js` via a **static,
-eager** glob:
+The registry walks `frontend/src/modules/<id>/index.ts` via a
+**static, eager** glob:
 
-```js
+```ts
 const moduleImports = import.meta.glob(
-  '../modules/*/index.js',
+  '../modules/*/index.ts',
   { eager: true },
 );
 ```
@@ -147,10 +157,10 @@ enters the registry map, not whether the JS is loaded.
 
 ## 9. Whitelist — `MODULES_ENABLED`
 
-The same `MODULES_ENABLED` env var that gates the backend registry
-also gates the frontend registry. The frontend reads it via
-`import.meta.env.VITE_MODULES_ENABLED` in Vite, falling back to
-`process.env.MODULES_ENABLED` in node-side tests.
+The `MODULES_ENABLED` env var gates the frontend registry. The
+frontend reads it via `import.meta.env.VITE_MODULES_ENABLED` in
+Vite, falling back to `process.env.MODULES_ENABLED` in node-side
+tests.
 
 - Empty / unset → mount everything discovered (dev-friendly default).
 - `MODULES_ENABLED=camera` → only mount the `camera` module.
@@ -180,31 +190,41 @@ sequence is deterministic.
 
 ## 11. Module Skeleton
 
-```js
-// frontend/src/modules/camera/index.js
+```ts
+// frontend/src/modules/camera/index.ts
+import manifest from "./manifest";
 import CameraViewer from "./components/CameraViewer.vue";
 import CameraSettings from "./components/CameraSettings.vue";
 
 export default {
-  manifest: {
-    id: 'camera',
-    title: 'Camera',
-    sidebar: { id: 'camera', label: 'Camera', order: 30 },
-    settingsPanel: true,
-    mainView: CameraViewer,
-  },
-  mainView: CameraViewer,
+  manifest,
+  sidebar: manifest.sidebar,
   settingsPanel: CameraSettings,
-  onLoad(ctx) {
-    ctx.eventBus.subscribe('module.camera.snapshot', (topic, payload) => {
-      // payload is deep-frozen; clone before storing.
-      console.log(payload)
-    })
+  mainView: CameraViewer,
+  onLoad() {
+    // Pinia state is initialised eagerly when the dashboard mounts
+    // via the module's store import.
   },
   onUnload() {
-    // idempotent teardown — clear intervals, remove listeners.
+    // Idempotent teardown — clear intervals, remove listeners.
   },
-}
+};
+```
+
+`manifest.ts` lives in its own file (not inline) so the registry
+can read the static metadata without invoking the module's runtime
+hooks:
+
+```ts
+// frontend/src/modules/camera/manifest.ts
+export default {
+  id: 'camera',
+  title: 'Camera',
+  version: '0.1.0',
+  description: 'Live USB webcam MJPEG stream.',
+  sidebar: { id: 'camera', label: 'Camera', icon: cameraIcon, order: 50 },
+  settingsPanel: true,
+};
 ```
 
 ## 12. Acceptance Checklist
@@ -213,10 +233,12 @@ A frontend module is "ready" when:
 
 - [ ] Default export has every required field (`manifest`, `onLoad`,
       `onUnload`, `mainView`, `settingsPanel`).
-- [ ] `manifest.id` matches the backend manifest.
+- [ ] `manifest.id` matches the backend module id in
+      `backend/main.py:_MODULE_DOMAINS`.
 - [ ] `manifest.sidebar` is set (no `undefined`).
 - [ ] `mainView` is a non-null Vue component imported **statically**.
-- [ ] `settingsPanel` is a non-null Vue component imported **statically**.
+- [ ] `settingsPanel` is a non-null Vue component imported
+      **statically**.
 - [ ] Pinia store ids match `^module_[a-z][a-z0-9_]+$` (lint passes).
 - [ ] Subscribers treat `eventBus` payloads as frozen.
 - [ ] `telemetryBus` payloads are cloned before storing.
@@ -225,3 +247,9 @@ A frontend module is "ready" when:
 - [ ] No `defineAsyncComponent`, dynamic `import()`, or
       `import.meta.glob(..., { eager: false })` anywhere in the
       module surface (lint passes).
+
+---
+
+**See also:** [`.agent/contracts/backend-router.md`](backend-router.md)
+for the matching per-domain router contract; [`.agent/contracts/settings-module.md`](settings-module.md)
+for the settings wire format.

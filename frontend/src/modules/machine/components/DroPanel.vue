@@ -59,18 +59,12 @@ function updateWcs(event) {
   }
 }
 
-// Handlers for the new sliders
-function handleSpeedMultiplierChange() {
-  // Usually, LinuxCNC expects a float for override (e.g., 1.0 for 100%)
-  if (store.setFeedOverride) {
-    store.setFeedOverride(speedMultiplier.value / 100)
-  }
+async function handleSpeedMultiplierChange() {
+  await store.updateAxisSettings(speedMultiplier.value / 100, maxSpeed.value)
 }
 
-function handleMaxSpeedChange() {
-  if (store.setMaxVelocity) {
-    store.setMaxVelocity(maxSpeed.value)
-  }
+async function handleMaxSpeedChange() {
+  await store.updateAxisSettings(speedMultiplier.value / 100, maxSpeed.value)
 }
 </script>
 

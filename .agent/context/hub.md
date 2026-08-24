@@ -32,9 +32,9 @@ LinuxCNC_UI/
 │   ├── HANDOFF_TEMPLATE.md    # PR description template
 │   ├── HANDOFF.md             # Agent-maintained handoff log (optional — see § 2.2)
 │   ├── contracts/             # Backend + frontend + settings module contracts
-│   │   ├── backend-module.md
-│   │   ├── frontend-module.md
-│   │   └── settings-module.md
+│   │   ├── backend-router.md  # Per-domain router contract (replaces PluggableModule)
+│   │   ├── frontend-module.md # Frontend module contract
+│   │   └── settings-module.md # Per-module settings endpoints contract
 │   └── doc/                   # Offline LinuxCNC reference docs
 │       └── linuxcnc_docs.htlm # Rendered reference (legacy filename extension)
 │
@@ -98,7 +98,7 @@ needs before editing any code.
 | [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md) | Before you do anything that has burned us before: Pinia store ids, eager imports, venv cache, the jog watchdog, hardcoded G-code, monolithic `App.vue`. The tripwires are the most valuable content. |
 | [`.agent/HANDOFF.md`](.agent/HANDOFF.md) | When you want to know what previous agents have already tried, completed, or abandoned. Optional — if the file is missing, this entry silently skips. |
 | [`.agent/STATE.md`](.agent/STATE.md) | When you need to know the **current** state of the module system (active modules, store id rules, nullable-module guarantee, migration window). Source of truth for the as-built system. |
-| [`.agent/contracts/backend-module.md`](.agent/contracts/backend-module.md) | When you are creating or modifying a backend module. |
+| [`.agent/contracts/backend-router.md`](.agent/contracts/backend-router.md) | When you are creating or modifying a backend per-domain router. (Replaces the retired `PluggableModule` protocol.) |
 | [`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) | When you are creating or modifying a frontend module. |
 | [`.agent/contracts/settings-module.md`](.agent/contracts/settings-module.md) | When you are touching the four canonical settings endpoints. |
 | [`.agent/AGENT.md`](.agent/AGENT.md) | When you need the repository agent guide — stack layout, backend + frontend conventions, quality/scope rules. |

@@ -1,0 +1,69 @@
+o<z_touch> sub
+    
+    ; Cancel all Z offsets
+    G92.1
+    G54
+    G10 L20 P0 Z[#<_hal[axis.z.pos-cmd]>]
+    
+    ; --- THE FAIL-SAFE WALL ---
+    ; Set WCS Z to 1000 immediately. 
+    ; If the script fails, this remains active to prevent crashes.
+    G10 L20 P0 Z1000
+    
+    ; Set incremental mode
+    G91
+    
+    ; Force LinuxCNC to refresh hal pin states prior to reading HAL pin
+    M66 E0 L0
+    
+    ; Check if probe is already tripped
+    O10 if [#<_hal[motion.probe-input]> EQ 1]
+        G90                  ; Return to Absolute mode
+        (ABORT, Error: Probe already tripped before fast move!)
+        
+    O10 endif
+    
+    ; Probe down using a fast feedrate (G38.3 allows us to check for failure)
+    G38.3 Z-10 F250
+    O11 if [#5070 EQ 0]
+        G90                  
+        (ABORT, Error: Fast probe missed target!)
+        
+    O11 endif
+    
+    ; Move up by 0.5mm
+    G0 Z0.5 
+    
+    ; Allow a half second for the probe input to clear
+    G4 P0.5
+    
+    ; Force LinuxCNC to refresh hal pin states
+    M66 E0 L0
+    
+    ; Check if probe is still tripped
+    O21 if [#<_hal[motion.probe-input]> EQ 1]
+        G90
+        (ABORT, Error: Probe stuck on target after retract!)
+        
+    O21 endif
+    
+    ; Probe down using a slow feedrate
+    G38.3 Z-1 F25
+    O22 if [#5070 EQ 0]
+        G90
+        (ABORT, Error: Slow probe missed target!)
+        
+    O22 endif
+    
+    ; --- PROBE SUCCESS ---
+    ; This overwrites the Z1000 fail-safe with the actual plate thickness
+    G10 L20 P0 Z19.06    
+    (MSG, Probe Successful: Z-Zero Set)
+    
+    G0 Z10               (move incrementally up 10mm above work piece)
+    G90                  (Return to absolute mode)
+
+
+    ; Force the Axis GUI to reload the G-code and update the visual offset
+    M100
+o<z_touch> endsub

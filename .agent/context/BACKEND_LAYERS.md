@@ -574,7 +574,7 @@ read by `*Mapper.to_state_dto(...)` on every snapshot
 
 ### 6.3 Persistent console log
 
-[`backend/services/console_logger.py`](../../backend/services/console_logger.py)
+[`backend/services/console_logger.py`](../../backend/services/ConsoleLogger.py)
 mirrors every MDI dispatch and every machine error into an
 on-disk log so the in-browser console clears don't lose history.
 The router that dispatches MDI calls `console_logger.log_command()`
@@ -671,8 +671,8 @@ Touching them is a low-risk, low-reward cleanup.
 
 | Module id | Router | Service(s) | DTO | Mapper | Pydantic response | Storage | Classical? |
 |-----------|--------|-----------|-----|--------|-------------------|---------|------------|
-| `axis` | [`routers/axis.py`](../../backend/routers/axis.py) | [`AxisService`](../../backend/services/AxisService.py) | [`dtos/axis/axis_dtos.py`](../../backend/dtos/axis/axis_dtos.py) | [`mappers/axis/axis_mapper.py`](../../backend/mappers/axis/axis_mapper.py) | [`models/axis_model.py`](../../backend/models/axis_model.py) | n/a (HAL-driven) | Yes |
-| `machine_state` | [`routers/state.py`](../../backend/routers/state.py) | [`StateService`](../../backend/services/StateService.py) | [`dtos/state/machine_state_dto.py`](../../backend/dtos/state/machine_state_dto.py) | (inline in router) | inline `_StateSnapshot` | n/a | **Gap** — inline Pydantic, no mapper |
+| `axis` | [`routers/axis.py`](../../backend/routers/axis.py) | [`AxisService`](../../backend/services/AxisService.py) | [`dtos/axis/axis_dtos.py`](../../backend/dtos/axis/AxisDto.py) | [`mappers/axis/axis_mapper.py`](../../backend/mappers/axis/axis_mapper.py) | [`models/axis_model.py`](../../backend/models/axis_model.py) | n/a (HAL-driven) | Yes |
+| `machine_state` | [`routers/state.py`](../../backend/routers/state.py) | [`StateService`](../../backend/services/StateService.py) | [`dtos/state/machine_state_dto.py`](../../backend/dtos/state/MachineStateDto.py) | (inline in router) | inline `_StateSnapshot` | n/a | **Gap** — inline Pydantic, no mapper |
 | `program` | [`routers/program.py`](../../backend/routers/program.py) | [`ProgramService`](../../backend/services/ProgramService.py), [`domain_file_services`](../../backend/services/domain_file_services.py) | n/a | n/a | inline, [`ProgramProgressResponse`](../../backend/services/ProgramService.py) | filesystem via `domain_file_services` | **Gap** — lifecycle ok, no DTO/Mapper |
 | `temperature` | [`routers/temperature.py`](../../backend/routers/temperature.py) | (deprecated) | (deprecated) | (deprecated) | (deprecated) | n/a | **Deprecated** — 410 redirect to `tools` |
 | `tools` | [`routers/tools.py`](../../backend/routers/tools.py) | [`ToolsService`](../../backend/services/ToolsService.py), [`SpindleDigitalService`](../../backend/services/SpindleDigitalService.py), [`ExtruderService`](../../backend/services/ExtruderService.py), [`HeaterService`](../../backend/services/HeaterService.py) | [`dtos/tools/`](../../backend/dtos/tools/) | [`mappers/tools/`](../../backend/mappers/tools/) | [`models/tools/`](../../backend/models/tools/), [`models/tools_settings.py`](../../backend/models/tools_settings.py) | `SettingsStore` (settings) | **Yes — canonical** |
@@ -717,7 +717,8 @@ Things that should never land in a code review:
 
 ---
 
-**See also:** [`.agent/contracts/backend-module.md`](../contracts/backend-module.md)
-for the `PluggableModule` protocol; [`.agent/contracts/settings-module.md`](../contracts/settings-module.md)
+**See also:** [`.agent/contracts/backend-router.md`](../contracts/backend-router.md)
+for the per-domain router contract (replaces the retired
+`PluggableModule` protocol); [`.agent/contracts/settings-module.md`](../contracts/settings-module.md)
 for the four canonical settings endpoints; [`.agent/context/ARCHITECTURE.md`](ARCHITECTURE.md)
 for the high-level backend layout and the module registry graph.

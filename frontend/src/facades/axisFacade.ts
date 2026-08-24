@@ -37,11 +37,19 @@ async function home(axis) {
   return _commandResultFrom(ModulesAxisService.home({ axis }), `home:${axis}`);
 }
 
+async function updateSettings(multiplier, absoluteSpeedLimit) {
+  return _commandResultFrom(
+    ModulesAxisService.axisSettings({ multiplier, absolute_speed_limit: absoluteSpeedLimit }),
+    "axis-settings",
+  );
+}
+
 export const axisFacade = Object.freeze({
   jogStop,
   jogContinuous,
   jogKeepalive,
   home,
+  updateSettings,
 });
 
 export default axisFacade;
