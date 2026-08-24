@@ -52,9 +52,13 @@ class MachineConfigSettings(BaseModel):
     auto_readonly_after_stage: bool = Field(
         default=True,
         description=(
-            "When True, the compile step marks every staged artifact "
-            "read-only so a typo on the Active dashboard cannot silently "
-            "diverge from the staged payload."
+            "Currently advisory only. The compile step no longer flips "
+            "POSIX write bits on the staged artifacts - read-only state "
+            "is enforced via the file-service policy "
+            "(``StagedFileService.default_read_only``) and surfaced in "
+            "the UI by the editor's source-level read-only state. Kept "
+            "in the settings schema so operators do not lose a knob "
+            "they may have already persisted."
         ),
     )
 

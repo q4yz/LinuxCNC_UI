@@ -695,6 +695,13 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
 
     settings = _require_settings_overrides()
     if settings.get("auto_readonly_after_stage", True):
+        # ``mark_read_only`` is a documented no-op now that
+        # read-only state is enforced via the service-level
+        # ``default_read_only`` policy instead of POSIX mode
+        # bits. Kept here for API parity with the legacy
+        # ``auto_readonly_after_stage`` toggle so future
+        # builds can wire it back to a meaningful behaviour
+        # without changing the router shape.
         staged_service.mark_read_only()
 
     staged_files = [

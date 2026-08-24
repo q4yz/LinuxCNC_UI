@@ -12,17 +12,18 @@ Scope (mirrors the original ``backend/modules/machineconfig/filesystem.py``
 helpers that this class replaces):
 
 * ``list_files(subpath="")`` — flat listing with size, mtime, and a
-  ``read_only`` boolean driven by the POSIX mode bit.
+  ``read_only`` boolean driven by the service-level
+  :attr:`default_read_only` policy. POSIX mode bits are no longer
+  consulted — see :meth:`_is_path_read_only` for the rationale.
 * ``read_file(filepath)`` — return raw text content.
 * ``write_file(filepath, content, overwrite=True)`` — create or
   overwrite. Honors the ``read_only`` flag for the staged/active
-  roots by raising :class:`PermissionError` rather than silently
-  flipping the bit.
+  roots by raising :class:`PermissionError`.
 * ``create_directory(dirpath)`` — recursive ``mkdir``.
 * ``delete(path)`` — unlink files and empty folders.
-* ``set_read_only(filepath, read_only=True)`` — flip the write bits
-  via :func:`os.chmod`. Used by the compile step to snapshot the
-  staged payload and by tests that want to flip a single file.
+* ``set_read_only(filepath, read_only=True)`` — no-op kept for API
+  parity. The previous implementation flipped POSIX write bits via
+  :func:`os.chmod`, which the backend no longer relies on.
 
 Path safety stays minimal (the ``safe_join`` invariant from
 ``filesystem.py``): a path that escapes the root raises
@@ -50,9 +51,10 @@ class FileMetadata:
 
     Mirrors the ``DirectoryEntry`` shape that the legacy
     ``filesystem.list_tree`` helper returned but adds the
-    ``read_only`` flag (driven by the POSIX write bits) and an
-    explicit ``modified`` ISO-8601 timestamp so the frontend does
-    not have to re-stat every file.
+    ``read_only`` flag (driven by the service-level
+    :attr:`FileService.default_read_only` policy, *not* the on-disk
+    POSIX bits) and an explicit ``modified`` ISO-8601 timestamp so
+    the frontend does not have to re-stat every file.
     """
 
     name: str
@@ -142,9 +144,11 @@ class FileService:
         """Return a flat list of every file/folder under ``subpath``.
 
         The walk is deterministic (sorted by lower-cased path) so the
-        frontend gets stable ordering across requests. Folders
-        report ``size_bytes=0`` and inherit ``read_only`` from
-        the POSIX mode bits the same way files do.
+        frontend gets stable ordering across requests. Every entry
+        inherits ``read_only`` from :attr:`default_read_only` - the
+        staging service reports ``True`` for every file, the config /
+        program services report ``False``. POSIX mode bits are
+        intentionally ignored here.
         """
         base = self._resolve_listing_root(subpath)
         if not base.exists():
@@ -170,9 +174,7 @@ class FileService:
                 if stat_result
                 else None
             )
-            read_only = (
-                self._stat_read_only(stat_result) if stat_result else self.default_read_only
-            )
+            read_only = self.default_read_only
 
             entries.append(
                 FileMetadata(
@@ -195,13 +197,6 @@ class FileService:
     def _is_excluded(self, path: Path) -> bool:
         """Hook for subclasses to drop hidden / build artefacts."""
         return False
-
-    @staticmethod
-    def _stat_read_only(stat_result) -> bool:
-        """``True`` when no write bits are set for owner/group/other."""
-        if stat_result is None:
-            return False
-        return (stat_result.st_mode & 0o222) == 0
 
     # ------------------------------------------------------------------ #
     # Read / write                                                        #
@@ -259,11 +254,22 @@ class FileService:
         target.write_bytes(data)
 
     def _is_path_read_only(self, path: Path) -> bool:
-        try:
-            stat_result = path.stat()
-        except OSError:
-            return self.default_read_only
-        return self._stat_read_only(stat_result)
+        """Logical read-only policy for ``path``.
+
+        Returns :attr:`default_read_only` regardless of the
+        on-disk POSIX mode bits. Staged and active services
+        expose a read-only API to the operator; profiles and
+        programs do not. The previous implementation read
+        ``stat().st_mode & 0o222`` and surfaced PermissionError
+        / EACCES surprises whenever an external tool (or a
+        previous compile run on a different account) flipped
+        the bits on disk. The frontend already carries its
+        own source-level read-only state for ``staged`` and
+        ``active`` (``READ_ONLY_SOURCES`` in
+        ``stores/editor.ts``), so the filesystem doesn't have to.
+        """
+        del path
+        return self.default_read_only
 
     # ------------------------------------------------------------------ #
     # Directories                                                         #
@@ -304,52 +310,29 @@ class FileService:
     # ------------------------------------------------------------------ #
 
     def set_read_only(self, filepath: str, read_only: bool = True) -> bool:
-        """Flip the POSIX write bits on ``filepath``.
+        """No-op kept for API parity.
 
-        Returns ``True`` on success, ``False`` when the chmod
-        syscall fails (which is non-fatal: a log line is emitted
-        and the caller can carry on). Used by the compile step
-        to mark every staged artifact as a snapshot.
+        The backend no longer flips POSIX write bits — read-only
+        state is the service-level :attr:`default_read_only`
+        policy. Returns ``True`` to preserve the historical
+        contract for callers like the legacy
+        ``mark_staged_readonly`` shim; nothing is actually
+        changed on disk.
         """
-        try:
-            target = self.safe_join(filepath)
-        except ValueError as exc:
-            logger.debug("set_read_only: unsafe path %s (%s)", filepath, exc)
-            return False
-
-        if not target.exists():
-            return False
-
-        try:
-            current = target.stat().st_mode
-            if read_only:
-                target.chmod(current & ~0o222)
-            else:
-                target.chmod(current | 0o222)
-            return True
-        except OSError as exc:
-            logger.debug("chmod failed on %s: %s", target, exc)
-            return False
+        del filepath, read_only
+        return True
 
     def mark_tree_read_only(self, directory: Optional[Path] = None) -> int:
-        """Recursively ``chmod`` every entry under ``directory``.
+        """No-op kept for API parity.
 
-        Defaults to the service root. Returns the number of entries
-        that were processed (chmod failures are logged and skipped).
+        The backend no longer flips POSIX write bits on the
+        staged tree — see :meth:`set_read_only` for the
+        rationale. Returns ``0`` so callers that expect a
+        count of entries processed continue to work without a
+        signature break.
         """
-        target = Path(directory) if directory is not None else self.root
-        if not target.exists():
-            return 0
-
-        count = 0
-        for entry in [target, *target.rglob("*")]:
-            try:
-                current = entry.stat().st_mode
-                entry.chmod(current & ~0o222)
-                count += 1
-            except OSError as exc:
-                logger.debug("chmod failed on %s: %s", entry, exc)
-        return count
+        del directory
+        return 0
 
     # ------------------------------------------------------------------ #
     # Tree management                                                     #
@@ -358,40 +341,19 @@ class FileService:
     def clear_directory(self, directory: Optional[Path] = None) -> None:
         """Recursively empty ``directory`` while keeping the directory itself."""
         import shutil
-        import stat
 
         target = Path(directory) if directory is not None else self.root
 
         if target.exists():
-            # Pre-flip every entry to writable so the rmtree walker
-            # never trips over read-only bits set by a previous
-            # ``mark_tree_read_only`` (or any external chmod).
-            #
-            # The previous implementation handed a single ``onerror``
-            # callback to ``shutil.rmtree`` that re-called ``func(path)``
-            # to retry. That worked on Python 3.10-3.12 because the
-            # walker only ever failed through ``os.unlink`` /
-            # ``os.rmdir`` / ``os.lstat`` (single-arg). On Python
-            # 3.13+ the walker opens the directory with
-            # ``os.open(name, O_RDONLY | O_NONBLOCK)`` first, so
-            # ``func`` arriving in the callback can be ``os.open``
-            # itself - calling ``func(path)`` from a single-arg-shaped
-            # callback then raises
-            # ``TypeError: open() missing required argument 'flags' (pos 2)``
-            # and tears the whole operation down. Pre-chmodding avoids
-            # the callback entirely and is portable across Python
-            # versions and OSes.
             for entry in [target, *target.rglob("*")]:
                 try:
-                    current = entry.stat().st_mode
-                    entry.chmod(
-                        current | stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
-                    )
-                except OSError as exc:
-                    logger.debug(
-                        "clear_directory: chmod failed on %s: %s", entry, exc
-                    )
-
+                    entry.chmod(entry.stat().st_mode | 0o222)
+                except OSError:
+                    # We may not own the entry (different user, root-owned
+                    # staging). The rmtree below will surface the actionable
+                    # error pointing at the offending entry; do not mask it
+                    # by raising here.
+                    pass
             shutil.rmtree(target)
 
         target.mkdir(parents=True, exist_ok=True)

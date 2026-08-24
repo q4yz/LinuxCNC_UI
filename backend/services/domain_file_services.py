@@ -183,11 +183,25 @@ class ProgramFileService(FileService):
 class StagedFileService(FileService):
     """Manages ``machine_config/ready_for_deploy/``.
 
-    The staged root is treated as a snapshot: after a compile step
-    every artifact is flipped read-only (the legacy
-    ``mark_staged_readonly`` helper). The router still passes the
-    resulting artifacts into :meth:`deploy_to_active`, which is the
-    one place that gets to write into the active root.
+    The staged root is treated as a *logical* snapshot:
+    :attr:`default_read_only` is ``True`` so every entry returned
+    by :meth:`list_files` reports ``read_only: true`` and every
+    write through :meth:`write_file` / :meth:`write_bytes` /
+    :meth:`delete` / :meth:`rename` raises
+    :class:`PermissionError`. The router still passes the
+    resulting artifacts into :meth:`deploy_to_active`, which is
+    the one place that gets to write into the active root.
+
+    The previous implementation flipped POSIX write bits via
+    :func:`os.chmod` at the end of every compile. That caused
+    cross-account / cross-Python-version permission cascades
+    (``shutil.rmtree`` on Python 3.13+ opens directories with
+    ``os.open(O_RDONLY | O_NONBLOCK)`` first and trips on
+    read-only bits), so the read-only state is now expressed
+    purely through the service policy. The frontend already
+    carries its own source-level read-only state for
+    ``active`` / ``staged`` (``READ_ONLY_SOURCES`` in
+    ``stores/editor.ts``).
     """
 
     default_read_only = True
@@ -196,25 +210,18 @@ class StagedFileService(FileService):
         super().__init__(root or _STAGED_DIR)
 
     def clear_and_stage(self, compiler, source: Path) -> List[Path]:
-        """Wipe the staged root and ask ``compiler`` to write fresh artifacts.
-
-        The wrapper centralises the "clear → compile → chmod"
-        sequence so the router does not have to know that
-        :func:`shutil.rmtree` and :func:`os.chmod` are involved.
-        """
+        """Wipe the staged root and ask ``compiler`` to write fresh artifacts."""
         self.clear_directory()
-        try:
-            artifacts = compiler.compile(source, self.root)
-        finally:
-            # Even when the compile raises mid-way, mark whatever
-            # made it onto disk as a snapshot so a stale half-stage
-            # does not become a deploy target.
-            self.mark_tree_read_only()
-        return list(artifacts)
+        return list(compiler.compile(source, self.root))
 
     def mark_read_only(self) -> int:
-        """Re-apply the read-only bits to the whole staged tree."""
-        return self.mark_tree_read_only()
+        """No-op kept for API parity.
+
+        See the :class:`StagedFileService` docstring for why
+        this no longer touches POSIX mode bits. Returns ``0``
+        to preserve the historical contract.
+        """
+        return 0
 
     def is_empty(self) -> bool:
         """Return ``True`` when the staging area has no entries."""

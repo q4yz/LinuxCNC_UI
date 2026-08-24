@@ -375,79 +375,87 @@ def test_compile_stages_artifacts_and_lists_them(
     assert resp.status_code == 200
     assert len(resp.json()) == 5
 
-def test_compile_marks_staged_readonly(
+def test_compile_does_not_chmod_staged_files(
     tmp_data_root, clean_env, isolated_machine_config
 ):
-    """After a compile, staged artifacts are write-protected by default."""
+    """The compile step must leave on-disk POSIX mode bits alone.
+
+    Pre-3.13 ``shutil.rmtree`` handled read-only descendants
+    silently via a single-arg ``onerror`` callback. On Python
+    3.13 the walker opens directories with
+    ``os.open(O_RDONLY | O_NONBLOCK)`` first and trips on
+    externally-chmod'd trees; we sidestep the whole class of
+    failures by not chmod'ing in the first place.
+
+    This test pins that contract: run compile twice and assert
+    every staged entry's mode bits are unchanged between the
+    two runs. (``test_staged_content_endpoint_returns_text``
+    below already pins that the API surfaces ``read_only=true``
+    on staged content — that assertion is unchanged after this
+    change because the source-level read-only state has always
+    been driven by ``StagedFileService.default_read_only=True``.)
+    """
+    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
+    client = TestClient(app)
+
+    resp1 = client.post(
+        "/api/v1/modules/machineconfig/compile",
+        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
+    )
+    assert resp1.status_code == 200, resp1.text
+    staged = isolated_machine_config["staged"]
+    first_modes = {
+        str(entry.relative_to(staged)): entry.stat().st_mode
+        for entry in [staged, *staged.rglob("*")]
+    }
+
+    resp2 = client.post(
+        "/api/v1/modules/machineconfig/compile",
+        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
+    )
+    assert resp2.status_code == 200, resp2.text
+    second_modes = {
+        str(entry.relative_to(staged)): entry.stat().st_mode
+        for entry in [staged, *staged.rglob("*")]
+    }
+
+    assert first_modes == second_modes, (
+        f"compile must not change POSIX mode bits on the "
+        f"staged tree; first={first_modes!r} second={second_modes!r}"
+    )
+
+def test_mark_read_only_is_a_noop(
+    tmp_data_root, clean_env, isolated_machine_config
+):
+    """``StagedFileService.mark_read_only`` and
+    ``FileService.set_read_only`` are documented no-ops now
+    that read-only state is the ``default_read_only`` policy,
+    not a POSIX mode bit.
+
+    Pin the contract so any future revert to ``os.chmod`` is
+    an explicit, opt-in decision.
+    """
+    from services.domain_file_services import StagedFileService
     app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
     client = TestClient(app)
     client.post(
         "/api/v1/modules/machineconfig/compile",
         json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
     )
-    machine_cfg = isolated_machine_config["staged"] / "machine.cfg"
-    mode = machine_cfg.stat().st_mode
-    assert not (mode & 0o222), "staged files must be read-only after compile"
 
-def test_compile_recovers_from_previous_readonly_staged_tree(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """Compile must succeed even when the staged tree was left
-    read-only by a previous compile on Python 3.13+.
+    staged_service = StagedFileService(root=isolated_machine_config["staged"])
+    assert staged_service.mark_read_only() == 0
+    assert staged_service.set_read_only("machine.cfg", True) is True
 
-    On Python 3.10-3.12 ``shutil.rmtree`` walked the tree via
-    single-argument syscalls (os.unlink / os.rmdir / os.lstat)
-    and the onerror callback's ``func(path)`` retry worked. On
-    Python 3.13+ the walker uses ``os.open(fd, O_RDONLY|O_NONBLOCK)``
-    first and the callback's ``func(path)`` retry raises
-    ``TypeError: open() missing required argument 'flags' (pos 2)``.
-    The fix pre-chmods the staged tree; this test pins that
-    contract regardless of Python version.
-    """
-    import stat
-
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-
-    # First compile - stages artifacts and chmods the staged tree
-    # read-only via ``mark_tree_read_only`` at the end of
-    # ``clear_and_stage``.
-    resp = client.post(
-        "/api/v1/modules/machineconfig/compile",
-        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
-    )
-    assert resp.status_code == 200, resp.text
-
-    # Force the entire staged tree read-only. ``mark_tree_read_only``
-    # already does this on POSIX, but be defensive against Windows
-    # where chmod is a no-op for non-Cygwin FS bits.
+    # Every staged file is still whatever mode the compile wrote
+    # (typically 0o644 owned by the test runner). Crucially, the
+    # no-op must not have changed those bits.
     staged = isolated_machine_config["staged"]
-    for entry in [staged, *staged.rglob("*")]:
-        try:
-            entry.chmod(entry.stat().st_mode & ~0o222)
-        except OSError:
-            pass
-
-    # Second compile must still succeed and re-emit the artefacts.
-    # Pre-3.13 this worked because shutil.rmtree's onerror callback
-    # re-called ``func(path)`` for single-arg funcs. On 3.13+ that
-    # callback gets ``os.open`` as ``func`` and the re-call
-    # raises ``TypeError: open() missing required argument
-    # 'flags' (pos 2)``. ``clear_directory`` now pre-chmods the
-    # tree, so the rmtree walker never trips on read-only bits.
-    resp = client.post(
-        "/api/v1/modules/machineconfig/compile",
-        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert sorted(body["artifacts"]) == [
-        "config.txt",
-        "hardware.json",
-        "linuxcnc.ini",
-        "machine.cfg",
-        "machine.hal",
-    ]
+    for entry in staged.rglob("*"):
+        assert entry.stat().st_mode & 0o222, (
+            f"staged entry {entry} lost its write bits; "
+            f"the no-op should have been a no-op"
+        )
 
 def test_compile_unknown_compiler_returns_404(
     tmp_data_root, clean_env, isolated_machine_config
