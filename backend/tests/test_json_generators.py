@@ -139,14 +139,13 @@ def test_hardware_json_basic() -> None:
     assert payload["joints"][0].get("position_max") is None
     assert payload["joints"][0].get("position_endstop") is None
     assert len(payload["axes"]) == 3
-    # v2.1 axis shape: ``joint_number`` (primary) + ``joint_numbers``
-    # (list). No per-axis ``id`` string handle.
-    assert "id" not in payload["axes"][0]
-    assert payload["axes"][0]["joint_number"] == 0
+    # Axis shape: string ``id`` (canonical LinuxCNC letter) +
+    # ``joint_numbers`` listing every driving joint.
+    assert payload["axes"][0]["id"] == "x"
     assert payload["axes"][0]["joint_numbers"] == [0]
-    assert payload["axes"][1]["joint_number"] == 1
+    assert payload["axes"][1]["id"] == "y"
     assert payload["axes"][1]["joint_numbers"] == [1]
-    assert payload["axes"][2]["joint_number"] == 2
+    assert payload["axes"][2]["id"] == "z"
     assert payload["axes"][2]["joint_numbers"] == [2]
     assert payload["axes"][0]["position_max"] == 300.0
     assert payload["axes"][0]["position_endstop"] == 0.0
@@ -239,12 +238,13 @@ max_temp: 250
     assert extruder_joint["rotation_distance"] == 33.5
     assert extruder_joint.get("driver") is None
     # The extruder joint_number is wired into the ``a`` axis (the
-    # trailing axis with the largest primary joint_number) so the
+    # trailing axis on the canonical letter order) so the
     # axis-to-joint graph matches the LinuxCNC-side AxisBuilder
-    # output. v2.1 axes carry integer joint_numbers, not string ids.
+    # output. Axes carry a string ``id``, not a primary integer
+    # ``joint_number``.
     a_axis = payload["axes"][-1]  # extruder axis is the trailing one
+    assert a_axis["id"] == "a"
     assert 3 in a_axis["joint_numbers"]
-    assert a_axis["joint_number"] == 3
 
 
 def test_hardware_json_includes_pins() -> None:

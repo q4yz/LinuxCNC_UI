@@ -140,13 +140,12 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
     assert len(payload["axes"]) == 4
     assert len(payload["tools"]) == 2
     assert len(payload["temperature_sensors"]) == 2
-    # v2.1: axes are identified by primary joint_number (0, 1, 2, 3)
-    # and carry ``joint_numbers`` lists instead of string ``id`` +
-    # ``joints`` references.
-    assert [a["joint_number"] for a in payload["axes"]] == [0, 1, 2, 3]
+    # Axes are identified by string ``id`` (canonical LinuxCNC
+    # letter) and carry ``joint_numbers`` lists of every driving
+    # joint's integer ``joint_number``.
+    assert [a["id"] for a in payload["axes"]] == ["x", "y", "z", "a"]
     assert [a["joint_numbers"] for a in payload["axes"]] == [[0], [1], [2], [3]]
     for axis in payload["axes"]:
-        assert "id" not in axis
         assert "joints" not in axis
     # The new fan support emits one ``fan_generic_part_cooling``
     # record for the part-cooling fan.
@@ -164,15 +163,14 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
         assert set(record.keys()) == {"id", "pin"}
         # Each Cartesian axis references its endstop by id and carries
         # its ``position_endstop``; the extruder (A) has neither.
-        # v2.1: axes are keyed by primary joint_number, not letter.
-        axes_by_jn = {a["joint_number"]: a for a in payload["axes"]}
-        assert axes_by_jn[0]["endstop"] == "endstop_x_min"
-        assert axes_by_jn[1]["endstop"] == "endstop_y_min"
-        assert axes_by_jn[2]["endstop"] == "endstop_z_min"
-        assert axes_by_jn[3].get("endstop") is None
-        assert axes_by_jn[3].get("endstop_pin") is None
-        assert axes_by_jn[0].get("position_endstop") == 0.0
-        assert axes_by_jn[0].get("position_max") == 200.0
+        axes_by_id = {a["id"]: a for a in payload["axes"]}
+        assert axes_by_id["x"]["endstop"] == "endstop_x_min"
+        assert axes_by_id["y"]["endstop"] == "endstop_y_min"
+        assert axes_by_id["z"]["endstop"] == "endstop_z_min"
+        assert axes_by_id["a"].get("endstop") is None
+        assert axes_by_id["a"].get("endstop_pin") is None
+        assert axes_by_id["x"].get("position_endstop") == 0.0
+        assert axes_by_id["x"].get("position_max") == 200.0
         # The old ``endstops`` array on each axis is gone.
         for axis in payload["axes"]:
             assert "endstops" not in axis
@@ -188,6 +186,5 @@ def test_compiler_emits_hardware_json_v2_shape(compiled_output_dir: Path) -> Non
         assert joints_by_id["stepper_z"]["joint_number"] == 2
         assert "heater_extruder" in joints_by_id
         assert joints_by_id["heater_extruder"]["joint_number"] == 3
-        # The extruder joint is wired into the ``a`` axis (v2.1:
-        # axes carry integer joint_numbers, not string ids).
-        assert 3 in axes_by_jn[3]["joint_numbers"]
+        # The extruder joint is wired into the ``a`` axis.
+        assert 3 in axes_by_id["a"]["joint_numbers"]

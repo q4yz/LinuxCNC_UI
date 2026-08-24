@@ -37,7 +37,7 @@ def _minimal_payload() -> dict:
         "kinematics": "cartesian",
         "hal_type": "remora",
         "axes": [
-            {"joint_number": 0, "joint_numbers": [0]},
+            {"id": "x", "joint_numbers": [0]},
         ],
         "joints": [
             {
@@ -88,7 +88,7 @@ class TestRootValidation:
         assert model.temperature_sensors == []
         assert model.fans == []
         assert model.endstops == []
-        assert model.axes == [Axis(joint_number=0, joint_numbers=[0])]
+        assert model.axes == [Axis(id="x", joint_numbers=[0])]
 
     def test_to_dict_omits_none_values(self) -> None:
         """The serialised payload drops None values to keep the JSON lean."""
@@ -163,19 +163,20 @@ class TestIdUniqueness:
 
 
 class TestIdPattern:
-    """v2.1: ``Axis`` no longer carries an ``id`` — the parametrize
-    set drops the ``axes`` entry. Joints, drivers, endstops, tools,
-    sensors and fans still carry string ids and the pattern check
-    still applies to them.
+    """Every entity that carries an ``id`` field must match the
+    lowercase-snake pattern. The parametrize set covers every list
+    including ``axes`` (axes are now identified by string ``id``).
     """
 
     @pytest.mark.parametrize(
         "entity_key",
-        ["joints", "drivers", "endstops", "tools", "temperature_sensors", "fans"],
+        ["axes", "joints", "drivers", "endstops", "tools", "temperature_sensors", "fans"],
     )
     def test_id_must_be_lowercase_snake(self, entity_key: str) -> None:
         payload = _minimal_payload()
-        if entity_key == "joints":
+        if entity_key == "axes":
+            payload["axes"].append({"id": "Axis-X", "joint_numbers": []})
+        elif entity_key == "joints":
             payload["joints"].append(dict(payload["joints"][0], id="Stepper-X"))
         elif entity_key == "drivers":
             payload["drivers"].append({"id": "Driver-X", "type": "TMC2209"})
@@ -206,9 +207,9 @@ class TestIdPattern:
 
 class TestCrossReferences:
     def test_axis_joint_numbers_reference_must_resolve(self) -> None:
-        """v2.1: ``axis.joint_numbers`` is a ``list[int]``; each
-        integer must match a ``joint_number`` in the top-level
-        ``joints[]`` list. Unknown joint_numbers are rejected.
+        """``axis.joint_numbers`` is a ``list[int]``; each integer
+        must match a ``joint_number`` in the top-level ``joints[]``
+        list. Unknown joint_numbers are rejected.
         """
         payload = _minimal_payload()
         payload["axes"][0]["joint_numbers"].append(999)
@@ -367,13 +368,11 @@ class TestEndstopMultiAxis:
         payload = _minimal_payload()
         payload["endstops"].append({"id": "endstop_x_min", "pin": "PG6"})
         # Second axis: no joints, but reuses the existing endstop.
-        # The primary ``joint_number`` must still be unique across
-        # axes — use ``3`` (not used by the existing axis's
-        # ``joint_number=0``) and an empty ``joint_numbers`` list
-        # (an axis with no joints is allowed).
+        # Use ``id="u"`` (a letter not already used) and an empty
+        # ``joint_numbers`` list (an axis with no joints is allowed).
         payload["axes"].append(
             {
-                "joint_number": 3,
+                "id": "u",
                 "joint_numbers": [],
                 "endstop": "endstop_x_min",
             }
@@ -502,7 +501,7 @@ class TestJointNumber:
         the payload.
         """
         payload = _minimal_payload()
-        payload["axes"].append({"joint_number": 1, "joint_numbers": [1]})
+        payload["axes"].append({"id": "y", "joint_numbers": [1]})
         payload["joints"].append(
             dict(payload["joints"][0], id="stepper_y", joint_number=0)
         )
@@ -511,62 +510,51 @@ class TestJointNumber:
 
 
 # ---------------------------------------------------------------------- #
-# Axis identification (v2.1)                                                #
+# Axis identification                                                       #
 # ---------------------------------------------------------------------- #
 
 
-class TestAxisJointNumber:
-    """v2.1 axis identification: ``joint_number`` + ``joint_numbers``.
-
-    The primary ``joint_number`` is the axis's runtime handle. It
-    must appear in ``joint_numbers`` and must be unique across the
-    ``axes[]`` list — two axes sharing a primary would either claim
-    the same LinuxCNC ``[JOINT_N]`` block or collide on the Remora
-    stepgen channel.
+class TestAxisId:
+    """Axis identification: string ``id`` (canonical LinuxCNC letter)
+    plus ``joint_numbers`` listing every driving joint. ``id`` must
+    match the lowercase id pattern and must be unique across the
+    ``axes[]`` list — two axes sharing an id would either collide on
+    the ``[AXIS_*]`` INI section or render with the same runtime
+    handle.
     """
 
-    def test_joint_number_is_required(self) -> None:
+    def test_id_is_required(self) -> None:
         payload = _minimal_payload()
-        del payload["axes"][0]["joint_number"]
-        with pytest.raises(ValueError, match="joint_number"):
+        del payload["axes"][0]["id"]
+        with pytest.raises(ValueError, match="id"):
             model_validate(payload)
 
-    def test_joint_number_must_be_non_negative(self) -> None:
+    def test_id_must_match_pattern(self) -> None:
         payload = _minimal_payload()
-        payload["axes"][0]["joint_number"] = -1
-        with pytest.raises(ValueError, match="joint_number"):
+        payload["axes"][0]["id"] = "X"  # uppercase rejected
+        with pytest.raises(ValueError, match="id"):
             model_validate(payload)
 
-    def test_primary_must_appear_in_joint_numbers(self) -> None:
-        """The primary ``joint_number`` must be a member of
-        ``joint_numbers`` — otherwise the axis references a joint
-        it doesn't actually own.
+    def test_duplicate_axis_id_rejected(self) -> None:
+        """Two axes sharing an id collide on the ``[AXIS_*]`` INI
+        block and on the runtime snapshot dict key.
         """
         payload = _minimal_payload()
-        payload["axes"][0]["joint_numbers"] = [7]
-        with pytest.raises(ValueError, match="not present in joint_numbers"):
-            model_validate(payload)
-
-    def test_duplicate_primary_joint_number_rejected(self) -> None:
-        """Two axes sharing a primary ``joint_number`` collide."""
-        payload = _minimal_payload()
-        payload["axes"].append(
-            {"joint_number": 0, "joint_numbers": [0]}
-        )
-        with pytest.raises(ValueError, match="Duplicate primary joint_number '0'"):
+        payload["axes"].append({"id": "x", "joint_numbers": [0]})
+        with pytest.raises(ValueError, match="Duplicate id 'x'"):
             model_validate(payload)
 
     def test_multi_motor_axis_is_valid(self) -> None:
-        """A dual-motor axis lists multiple joint_numbers with the
-        primary being the first (lowest).
+        """A dual-motor axis lists multiple joint_numbers under one
+        string id.
         """
         payload = _minimal_payload()
         payload["joints"].append(
             dict(payload["joints"][0], id="stepper_y", joint_number=1)
         )
-        payload["axes"][0] = {"joint_number": 0, "joint_numbers": [0, 1]}
+        payload["axes"][0] = {"id": "x", "joint_numbers": [0, 1]}
         model = model_validate(payload)
-        assert model.axes[0].joint_number == 0
+        assert model.axes[0].id == "x"
         assert model.axes[0].joint_numbers == [0, 1]
 
 
@@ -586,7 +574,7 @@ class TestErrorAggregation:
         # also picks up a stale endstop reference so the
         # aggregation has at least two distinct error messages.
         payload["axes"].append(
-            {"joint_number": 1, "joint_numbers": [1]}
+            {"id": "y", "joint_numbers": [1]}
         )
         payload["axes"][0]["endstop"] = "missing_endstop"
         payload["joints"].append(dict(payload["joints"][0]))

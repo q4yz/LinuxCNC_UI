@@ -102,12 +102,32 @@ test("macros store imports ModulesMacrosService from the generated client", () =
     /\bModulesMacrosService\b/,
   );
   assert.match(storeText, /\bgenerated\/api\b/);
-  // The dashboard "Run" path dispatches each static block line as
-  // an MDI command via the state module's
-  // ``/api/v1/modules/machine_state/mdi`` endpoint, so the
-  // generated ``ModulesMachineStateService`` wrapper must be
-  // reachable from the store (tag ``modules:machine_state``).
-  assert.match(storeText, /\bModulesMachineStateService\b/);
+  // The dashboard "Run" path is a single ``startMacro`` call
+  // through ``ModulesMacrosService`` (the generated OpenAPI
+  // client method for ``POST /api/v1/modules/macros/{name}/start``).
+  // The frontend no longer talks to the machine_state module
+  // directly for the macros path — that coupling used to leak
+  // a per-line ``runMdiCommand`` round-trip into the frontend
+  // and the JS parser. Today the backend owns both.
+  assert.match(
+    storeText,
+    /ModulesMacrosService\s*\.\s*startMacro\s*\(/,
+    "macros store must call ModulesMacrosService.startMacro for both .macro and .ngc",
+  );
+});
+
+test("macros store does not import ModulesMachineStateService", () => {
+  // Regression guard for the post-endpoint-unification state. The
+  // dispatch path is entirely through the macros module's
+  // ``/start`` endpoint; importing the machine_state service
+  // for a per-line MDI dispatch would reintroduce the round-trip
+  // storm we just removed.
+  const storeText = readText(storePath);
+  assert.doesNotMatch(
+    storeText,
+    /\bModulesMachineStateService\b/,
+    "macros store must not import ModulesMachineStateService — dispatch is unified through /macros/{name}/start",
+  );
 });
 
 test("macros store calls every documented macro endpoint", () => {
@@ -117,6 +137,9 @@ test("macros store calls every documented macro endpoint", () => {
     "readMacro",
     "writeMacro",
     "deleteMacro",
+    // ``startMacro`` is the unified dispatch endpoint — the
+    // regression guard on the previous test pins the call shape.
+    "startMacro",
   ]) {
     assert.match(
       storeText,
@@ -211,9 +234,17 @@ test("macros store exposes the run-via-MDI action", () => {
       `store must export ${symbol}`,
     );
   }
-  // ``runMacro`` must import the parser so the dispatch path
-  // stays self-contained inside the store.
-  assert.match(storeText, /import\s*\{[^}]*parseMacro[^}]*\}\s*from\s*["'][^"']*parser\.js["']/);
+  // The runtime dispatch path no longer needs the JS parser —
+  // the backend's ``start_macro`` owns parse + per-line MDI.
+  // The parser is still kept for the universal-editor preview,
+  // so it stays in the file, but the dispatch path does not
+  // import it. Pin that the runtime no longer calls
+  // ``parseMacro`` directly.
+  assert.doesNotMatch(
+    storeText,
+    /parseMacro\s*\(\s*body\s*\)/,
+    "macros store must not call parseMacro(body) — the backend handles parsing now",
+  );
 });
 
 test("macros index.js wires the manifest + four components + settingsPanel", () => {

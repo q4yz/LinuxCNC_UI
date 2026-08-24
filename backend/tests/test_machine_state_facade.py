@@ -36,7 +36,7 @@ from fastapi.testclient import TestClient
 # Resolve the ``hardware.connection`` module without going through
 # the package ``__init__`` (which re-exports ``connection = Connection()``,
 # the legacy instance — not what we want here).
-conn_mod = importlib.import_module("hardware.connection")
+conn_mod = importlib.import_module("hardware.Connection")
 
 # ``linuxcnc`` is the mock fallback in the test environment; its
 # constants match the real NML integers 1-4 so the state facade
@@ -330,11 +330,13 @@ class TestGetStateEndpoint:
 
     @staticmethod
     def _build_app() -> FastAPI:
-        """Mount the router at the same path the registry uses."""
-        app.include_router(
-            state_router,
-            prefix="/api/v1/modules/machine_state",
-        )
+        """Mount the router at the same path the registry uses.
+
+        The router carries its own ``/api/v1/modules/machine_state``
+        prefix, so we don't pass a duplicate prefix here.
+        """
+        app = FastAPI()
+        app.include_router(state_router)
         return app
 
     def test_endpoint_returns_clean_state(self):

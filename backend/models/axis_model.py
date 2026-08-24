@@ -6,27 +6,26 @@ from pydantic import BaseModel, Field
 class AxisStateResponse(BaseModel):
     """JSON response model for axis configuration.
 
-    v2.1: identified by ``joint_number`` (the LinuxCNC ``[JOINT_N]``
-    index of the axis's primary joint) plus ``joint_numbers`` (every
-    joint that drives the axis). The previous ``id`` string handle
-    was removed in favour of the integer ``joint_number`` — the
-    runtime maps that number to a Remora stepgen channel
-    ``remora.joint.{N}.*`` deterministically.
+    Identified by a string ``id`` (the canonical LinuxCNC letter —
+    ``x``, ``y``, ``z``, ``a``, ...) and lists every driving joint as
+    ``joint_numbers``. Joints are the physical motors and remain
+    keyed by integer ``joint_number`` (Remora stepgen channel
+    ``remora.joint.{N}.*``); the axis is the logical coordinate
+    frame that owns one or more joints.
     """
-    joint_number: int = Field(
+    id: str = Field(
         ...,
         description=(
-            "Primary joint_number — the LinuxCNC [JOINT_N] index of the "
-            "axis's first-listed (primary) joint. The runtime uses this "
-            "to map to remora.joint.{N}.* stepgen channels."
+            "Canonical LinuxCNC axis letter — 'x', 'y', 'z', 'a', ... "
+            "Identifies the logical axis that owns one or more joints."
         ),
     )
     joint_numbers: List[int] = Field(
         ...,
         description=(
             "All joint_numbers driving this axis. For a single-motor "
-            "axis the list has one element equal to joint_number. "
-            "Multi-motor axes (e.g. dual-motor Y) list every joint."
+            "axis the list has one element. Multi-motor axes (e.g. "
+            "dual-motor Y) list every joint."
         ),
     )
     min_limit: float = Field(..., description="Minimum soft limit for the axis")

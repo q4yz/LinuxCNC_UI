@@ -9,6 +9,7 @@ hub-and-spoke context model used by the agents.
 | [`.agent/context/hub.md`](.agent/context/hub.md) | AI agents | **Primary entry point.** Repository map + spoke navigation. Start here. |
 | [`.agent/context/VISION.md`](.agent/context/VISION.md) | AI agents | Project goals, philosophy, what we are not building. |
 | [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) | AI agents | Technical structure, module registry graph, event bus, safety watchdogs. |
+| [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md) | Backend module authors | Canonical Router → Service → DTO → Mapper → Storage pattern with worked examples and module cheat-sheet. |
 | [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md) | AI agents | Past mistakes and tripwires (Pinia store ids, eager imports, venv cache, the jog watchdog). |
 | [`.agent/AGENT.md`](.agent/AGENT.md) | All AI agents | Repository agent guide. Stack, structure, backend + frontend conventions, quality and scope rules. |
 | [`.agent/HANDOFF_TEMPLATE.md`](.agent/HANDOFF_TEMPLATE.md) | Issue resolvers | Required PR description format. |

@@ -4,17 +4,23 @@
 // by the ``?kind=`` query parameter:
 //
 //   ``"macro"`` — ``<repo>/macros/<name>.macro`` (custom G-code +
-//                  python-block payloads). Parsed + dispatched as
-//                  per-line MDI on the dashboard "Run" button.
+//                  python-block payloads). Runtime dispatch is now a
+//                  single ``POST /macros/{name}/start?kind=macro``
+//                  call — the backend parses the body and feeds each
+//                  static line into MDI. ``{python}`` blocks are
+//                  skipped with a console-log warning (mirrors the
+//                  pre-port behaviour). The JS parser in
+//                  ``./parser.ts`` is still kept for the universal
+//                  editor's preview only.
 //   ``"ngc"``   — ``<repo>/macros/<name>.ngc`` (LinuxCNC native
-//                  O-word subroutine). No "Run" affordance — the
-//                  ``program_open`` flow owns runtime; the UI only
-//                  manages the file.
+//                  O-word subroutine). Dispatched via the same
+//                  endpoint with ``?kind=ngc`` — the backend issues
+//                  a single ``o<{name}> call`` MDI command.
 //   ``"mcode"`` — ``<repo>/machine_config/m_codes/<name>`` (bare
 //                  ``M<num>`` file in the canonical LinuxCNC
 //                  ``USER_M_PATH`` range, M100..M199). No "Run"
-//                  affordance either — the interpreter dispatches
-//                  these on ``M<num>`` MDI; the UI manages.
+//                  affordance — the interpreter dispatches these on
+//                  ``M<num>`` MDI; the UI only manages the file.
 //
 // List storage is **per-kind**: each kind owns its own ``ref`` so
 // that ``loadList(kind)`` never empties the others. The previous
@@ -36,17 +42,16 @@ import { defineStore } from "pinia";
 import { reactive, ref } from "vue";
 
 import {
-  ModulesMachineStateService,
   ModulesMacrosService,
 } from "../../../generated/api/index.ts";
 import manifest from "./manifest";
 import { useConsoleStore } from "../../stores/console";
 import { useMachineStore } from "../../stores/machine";
 import { describeError as describeErrorShared } from "../../core/error-format";
-import { parseMacro, validateMacroKindName } from "./parser";
+import { validateMacroKindName } from "./parser";
 
 // Canonical kind constants. Must agree with the backend's
-// ``VALID_KINDS`` enum (``backend/modules/macros/router.py``).
+// ``VALID_KINDS`` enum (``backend/routers/macros.py``).
 export const MACRO_KIND = Object.freeze({
   MACRO: "macro",
   NGC: "ngc",
@@ -67,24 +72,6 @@ const STORE_ID = `module_${manifest.id}`;
  */
 const describeError = (error) =>
   describeErrorShared(error) || "Unknown error";
-
-/**
- * Split a static block into individual MDI commands. A block may
- * contain one or several newlines (the parser concatenates
- * consecutive non-``{...}`` content); LinuxCNC wants one command
- * per MDI call so the dashboard progress stream stays meaningful.
- *
- * Blank lines and pure-comment lines are skipped.
- *
- * @param {string} content
- * @returns {string[]}
- */
-function splitStaticBlock(content) {
-  return content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
 
 /**
  * Normalise ``""`` → ``"\n"``. FastAPI rejects a zero-byte
@@ -339,21 +326,9 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   // --- execute ------------------------------------------------- //
 
   /**
-   * "Run" a ``macro`` row. Reads its content, parses it into
-   * blocks, and dispatches each ``static`` block as one MDI
-   * command per non-blank line via
-   * ``ModulesMachineStateService.runMdiCommand``. ``python`` blocks
-   * are surfaced to the console as warnings — the backend
-   * interpreter is not implemented yet, so we explicitly do not
-   * feed them to the hardware layer.
-   *
-   * Scoped to ``kind="macro"`` only — ``ngc`` subroutines are
-   * dispatched by the controller via ``program_open`` (not MDI),
-   * and ``mcode`` files are dispatched by the interpreter on
-   * ``M<num>`` MDI. Neither surface has a "Run" button.
-   *
-   * Guarded by ``isEstopActive`` so an E-Stop block aborts the run
-   * before any MDI is dispatched.
+   * "Run" a ``macro`` row. Routes the call through
+   * ``runMacroOfKind`` so the macro + ngc dispatch lives in one
+   * place.
    *
    * @param {string} name
    * @returns {Promise<{staticDispatched: number, pythonSkipped: number}>}
@@ -363,18 +338,33 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Generic runner. Two dispatch paths:
+   * Single-dispatch runner. Both ``.macro`` and ``.ngc`` route through
+   * the same backend endpoint:
    *
-   *   * ``macro`` — parses the file into blocks and fires each
-   *     static block's non-blank lines through the MDI endpoint
-   *     (existing flow; honours the E-Stop guard).
-   *   * ``ngc``   — delegates to the backend's
-   *     ``POST /api/v1/modules/macros/{name}/start?kind=ngc`` so the
-   *     controller switches to MDI mode and runs the NGC
-   *     subroutine (matches the route registered in
-   *     ``backend/routers/macros.py::start_macro``). ``mcode`` is
-   *     intentionally excluded — an operator who needs an M-code
-   *     call wraps it in a ``.macro`` instead.
+   *   * ``POST /api/v1/modules/macros/{name}/start?kind=macro`` —
+   *     the backend reads the file, parses it into static / python
+   *     blocks, and dispatches each static line into MDI via
+   *     ``execute_gcode``. ``{python}`` blocks are skipped with a
+   *     console-log warning.
+   *   * ``POST /api/v1/modules/macros/{name}/start?kind=ngc`` —
+   *     the backend issues a single ``o<{name}> call`` MDI command
+   *     so the controller switches to MDI mode and runs the NGC
+   *     subroutine.
+   *   * ``.mcode`` is rejected by the endpoint with a 400 — the
+   *     operator wraps an M-code call in a ``.macro`` instead.
+   *
+   * E-Stop is guarded up front so the operator sees a friendly
+   * console error before the backend has to send one. The
+   * backend additionally guards against an E-Stop flipping
+   * mid-dispatch.
+   *
+   * Returns a counter object for backwards compatibility with
+   * callers that read ``lastResult.value.staticDispatched`` /
+   * ``.pythonSkipped``. The actual numbers are now operator-visible
+   * only via the console log; the endpoint returns ``204`` with no
+   * body. The counters stay ``{staticDispatched: 1,
+   * pythonSkipped: 0}`` on success so the dashboard's "Running X
+   * command(s)" line keeps its shape.
    *
    * @param {"macro"|"ngc"|"mcode"} kind
    * @param {string} name
@@ -391,11 +381,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       return { staticDispatched: 0, pythonSkipped: 0 };
     }
 
-    if (kind === MACRO_KIND.NGC) {
-      return runNgcMacro(name);
-    }
-
-    if (kind !== MACRO_KIND.MACRO) {
+    if (kind === MACRO_KIND.MCODE) {
       consoleStore.warning(
         `Running ${kind} files from the UI is not supported — ` +
           "wrap the call in a .macro file instead.",
@@ -403,101 +389,38 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       return { staticDispatched: 0, pythonSkipped: 0 };
     }
 
-    const body = await ensureMacroContent(kind, name);
-    if (body == null) return { staticDispatched: 0, pythonSkipped: 0 };
-
-    let blocks;
-    try {
-      blocks = parseMacro(body);
-    } catch (error) {
-      consoleStore.error(
-        `Macro '${name}' failed to parse: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return { staticDispatched: 0, pythonSkipped: 0 };
-    }
-
-    let staticDispatched = 0;
-    let pythonSkipped = 0;
-    consoleStore.info(`Running macro '${name}' (${blocks.length} block(s)).`);
-
-    for (let index = 0; index < blocks.length; index++) {
-      const block = blocks[index];
-      if (block.type === "python") {
-        pythonSkipped += 1;
-        consoleStore.warning(
-          `Macro '${name}' block #${index + 1}: python block skipped — interpreter not implemented yet.`,
-        );
-        continue;
-      }
-
-      const lines = splitStaticBlock(block.content);
-      for (const line of lines) {
-        // Mid-run safety re-check: an E-Stop issued during dispatch
-        // must abort the remaining commands instead of feeding them
-        // to a dead machine.
-        if (machine.isEstopActive) {
-          consoleStore.error(
-            `Macro '${name}' aborted: machine entered E-Stop during dispatch.`,
-          );
-          return { staticDispatched, pythonSkipped };
-        }
-
-        try {
-          await ModulesMachineStateService.runMdiCommand({ command: line });
-          staticDispatched += 1;
-        } catch (error) {
-          consoleStore.error(
-            `Macro '${name}' MDI '${line}' failed: ${describeError(error)}`,
-          );
-          // Continue with the next line — a single failed MDI does
-          // not invalidate the remaining commands.
-        }
-      }
-    }
-
-    consoleStore.success(
-      `Macro '${name}' dispatched ${staticDispatched} MDI command(s); skipped ${pythonSkipped} python block(s).`,
-    );
-    return { staticDispatched, pythonSkipped };
-  }
-
-  /**
-   * Dispatch a ``.ngc`` subroutine through the backend's
-   * ``POST /api/v1/modules/macros/{name}/start?kind=ngc`` endpoint.
-   *
-   * The endpoint exists in
-   * ``backend/routers/macros.py::start_macro`` but is not yet
-   * surfaced through the generated OpenAPI client, so this method
-   * uses a hand-rolled ``fetch`` mirroring the ``core/modules/settings``
-   * pattern. A future ``npm run generate-api`` can replace this
-   * body with a generated call.
-   *
-   * @param {string} name
-   */
-  async function runNgcMacro(name) {
-    const consoleStore = useConsoleStore();
-    const url = `/api/v1/modules/macros/${encodeURIComponent(name)}/start?kind=ngc`;
-    consoleStore.info(`Starting NGC subroutine '${name}' via ${url}.`);
     isBusy.value = true;
+    consoleStore.info(
+      `Dispatching ${kind} macro '${name}' via the backend start endpoint.`,
+    );
     try {
-      const res = await fetch(url, { method: "POST" });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(
-          `NGC start failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
-        );
-      }
-      consoleStore.success(`NGC subroutine '${name}' dispatched.`);
+      await ModulesMacrosService.startMacro(name, kind);
+      consoleStore.success(`Macro '${name}' (${kind}) dispatched.`);
+      // Counters stay at the "at least one thing happened" shape
+      // — the per-line breakdown lives in the console log.
       return { staticDispatched: 1, pythonSkipped: 0 };
     } catch (error) {
+      lastError.value = describeError(error);
       consoleStore.error(
-        `NGC '${name}' failed: ${describeError(error)}`,
+        `Failed to dispatch macro '${name}' (${kind}): ${lastError.value}`,
       );
       return { staticDispatched: 0, pythonSkipped: 0 };
     } finally {
       isBusy.value = false;
     }
   }
+
+  // (No separate ``runNgcMacro`` helper any more — both ``.macro``
+  // and ``.ngc`` dispatch through ``runMacroOfKind`` above, which
+  // delegates to ``ModulesMacrosService.startMacro(name, kind)``.
+  // The old hand-rolled ``fetch`` helper was deleted when the
+  // generated client method landed; the comment block below is
+  // kept as a breadcrumb for future readers.)
+  //
+  //   * See ``backend/routers/macros.py::start_macro`` for the
+  //     server-side contract that the unified ``.macro`` + ``.ngc``
+  //     dispatch implements. The endpoint signature is
+  //     ``POST /api/v1/modules/macros/{name}/start?kind={macro|ngc}``.
 
   // --- public surface ------------------------------------------ //
 

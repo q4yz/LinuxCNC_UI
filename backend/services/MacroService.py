@@ -8,6 +8,12 @@ from exceptions import BadRequestError, NotFoundError
 from hardware import get_machine_stat, execute_gcode
 from hardware.Connection import MachineState, connection
 from services import get_mcode_service
+from services.console_logger import LogLevel, get_console_logger
+from services.macro_parser import (
+    MacroParseError,
+    parse_macro,
+    split_static_block,
+)
 
 from storage.MacroStorage import (
     InvalidMacroKindError,
@@ -200,20 +206,53 @@ class MacrosService:
         )
 
     def start_macro(self, name: str, kind: str) -> None:
-        """Verifies the macro exists and executes it via the MDI channel."""
+        """Verify the macro exists and execute it via the MDI channel.
+
+        Dispatch paths by kind:
+
+        * ``.macro`` — read the file, parse it into ``static`` /
+          ``python`` blocks (see :mod:`services.macro_parser`),
+          then dispatch each non-blank static line via
+          :func:`hardware.execute_gcode`. ``python`` blocks are
+          skipped with a single WARNING line in the console
+        log so the operator sees them, mirroring the
+          behaviour the frontend parser used to provide. A
+          mid-run E-Stop aborts the dispatch between lines so a
+          dead machine does not receive the rest of the file.
+
+        * ``.ngc`` — issue a single ``o<{name}> call`` MDI command
+          so the controller switches to MDI mode and runs the
+          NGC subroutine. The check-the-state-then-call-MDI
+          dance is identical to ``.macro``.
+
+        ``.mcode`` is intentionally not routed here — an operator
+        who needs a custom M-code wraps it in a ``.macro`` (the
+        frontend editor surfaces this convention on the
+        ``MacroButton`` kind picker).
+        """
         self._validate_kind(kind)
 
-        # 1. Verify the macro actually exists before trying to run it
-        if kind != MacroKind.NGC:
-            raise NotImplementedError("only ngc execution is supported currently")
+        # 1. Verify the macro actually exists before trying to run it.
+        #    Read paths differ per kind: ``.macro`` and ``.ngc`` go
+        #    through :class:`MacroStorage`; ``.mcode`` is rejected up
+        #    front (see the .mcode block above).
+        if kind not in (MacroKind.MACRO, MacroKind.NGC):
+            raise BadRequestError(
+                f"Running {kind!r} files from the UI is not supported — "
+                "wrap the call in a .macro file instead."
+            )
 
         try:
-            self._macro_storage.read(name, kind=kind)
+            body = self._macro_storage.read(name, kind=kind)
         except (InvalidMacroNameError, MacroNotFoundError) as exc:
             raise NotFoundError(str(exc))
         except InvalidMacroKindError as exc:
             raise BadRequestError(str(exc))
 
+        # 2. Pre-flight the safety state once for the whole call
+        #    (every MDI dispatch will switch to MDI mode anyway, but
+        #    a fail-fast 400 here is friendlier than a stream of
+        #    503s from the per-line dispatch loop).
         stat = connection.get_machine_stat()
         if stat is None:
             raise BadRequestError("Cannot execute macro: LinuxCNC is not running.")
@@ -222,12 +261,70 @@ class MacrosService:
 
         if stat.estop:
             raise BadRequestError("Cannot execute macro while machine is in E-STOP.")
-        if stat.task_state != MachineState.ESTOP:
-            raise BadRequestError("Machine must be ON to execute a macro.")
+        if stat.task_state is MachineState.ON:
+            raise BadRequestError(f"Machine must be ON to execute a macro.{stat.task_state} {MachineState.ON}")
 
-        gcode = name if kind == MacroKind.MCODE else f"o<{name}> call"
+        # 3. Dispatch by kind.
+        if kind == MacroKind.NGC:
+            execute_gcode(f"o<{name}> call")
+            return
 
-        connection.execute_gcode(gcode)
+        # kind == MacroKind.MACRO below.
+        console = get_console_logger()
+        try:
+            blocks = parse_macro(body)
+        except MacroParseError as exc:
+            console.log_event(
+                f"Macro '{name}' failed to parse: {exc}",
+                level=LogLevel.ERROR,
+                source="CMD",
+            )
+            raise BadRequestError(str(exc))
+
+        static_dispatched = 0
+        python_skipped = 0
+        console.log_event(
+            f"Running macro '{name}' ({len(blocks)} block(s)).",
+            level=LogLevel.INFO,
+            source="CMD",
+        )
+
+        for index, block in enumerate(blocks):
+            if block.type == "python":
+                python_skipped += 1
+                console.log_event(
+                    f"Macro '{name}' block #{index + 1}: python block skipped — interpreter not implemented yet.",
+                    level=LogLevel.WARNING,
+                    source="CMD",
+                )
+                continue
+
+            for line in split_static_block(block.content):
+                # Mid-run safety re-check: an E-Stop issued during
+                # dispatch must abort the remaining commands instead
+                # of feeding them to a dead machine.
+                stat.poll()
+                if stat.estop:
+                    console.log_event(
+                        f"Macro '{name}' aborted: machine entered E-Stop during dispatch.",
+                        level=LogLevel.ERROR,
+                        source="CMD",
+                    )
+                    return
+                try:
+                    execute_gcode(line)
+                    static_dispatched += 1
+                except Exception as exc:  # noqa: BLE001 - keep the loop going
+                    # ``execute_gcode`` already raises HTTPException-shaped
+                    # errors; the loop continues so a single failed
+                    # line does not invalidate the remaining commands.
+                    logger.warning("Macro '%s' line '%s' failed: %s", name, line, exc)
+
+        console.log_event(
+            f"Macro '{name}' dispatched {static_dispatched} MDI command(s); skipped {python_skipped} python block(s).",
+            level=LogLevel.INFO,
+            source="CMD",
+        )
 
 
 # Singleton provider

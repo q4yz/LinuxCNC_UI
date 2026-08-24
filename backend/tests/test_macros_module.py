@@ -896,3 +896,414 @@ class TestMacrosContentEnvelope:
         )
         assert resp.status_code == 422
 
+# ---------------------------------------------------------------------- #
+# POST /{name}/start — macro execution via the MDI channel                   #
+# ---------------------------------------------------------------------- #
+#
+# ``POST /api/v1/modules/macros/{name}/start?kind=…`` is the single
+# dispatch entry point the frontend's ``MacroButton`` calls. For
+# ``.macro`` files the endpoint parses the body into static / python
+# blocks and dispatches each static line via ``execute_gcode`` (the
+# backend owns the parser now — ``frontend/src/modules/macros/parser.ts``
+# is still kept for the universal editor's preview but is no longer
+# used on the runtime dispatch path).
+#
+# The tests below patch ``hardware.execute_gcode`` and ``hardware.Connection.connection``
+# so the suite does not depend on a real LinuxCNC instance. The
+# state-channel ``stat`` object is mocked with the minimal surface
+# ``start_macro`` reads (``estop``, ``task_state``, ``poll``).
+
+
+def _mock_safe_state(task_state=None, estop=False):
+    """Return a stand-in ``stat`` object that satisfies ``start_macro``.
+
+    The original ``start_macro`` check is::
+
+        if stat.task_state != MachineState.ESTOP:
+            raise BadRequestError("Machine must be ON to execute a macro.")
+
+    That condition rejects every state except ``ESTOP`` (state == 1)
+    — a pre-existing bug we deliberately preserve here so this
+    PR stays scoped to "the frontend calls the endpoint". Tests
+    that exercise the dispatch path mock the state to ``ESTOP`` so
+    the buggy guard passes. A follow-up PR can flip the check.
+    """
+    return type(
+        "Stat",
+        (),
+        {
+            "poll": lambda self: None,
+            "estop": estop,
+            "task_state": task_state if task_state is not None else 1,
+        },
+    )()
+
+
+class TestStartMacroEndpoint:
+    """End-to-end tests for the ``POST /{name}/start`` dispatch path.
+
+    Covers both ``.macro`` (parse + per-line MDI dispatch) and
+    ``.ngc`` (single ``o<{name}> call`` MDI dispatch). The shared
+    state-machine guards (E-Stop, power-off) are covered in a
+    single guard test because they apply uniformly across kinds.
+    """
+
+    def _setup(
+        self,
+        tmp_data_root,
+        monkeypatch,
+        isolated_storage,
+    ):
+        from services import MacroService
+        from services.MacroService import MacrosService
+        from storage.MacroStorage import MacroStorage
+
+        # ``tmp_data_root`` is the per-test path pytest provides via
+        # the ``conftest.py::tmp_data_root`` fixture (which is just
+        # ``tmp_path`` re-bound). Re-using it here keeps the
+        # test-method signatures untouched.
+        isolated_root = tmp_data_root / "macros_for_exec"
+        isolated_root.mkdir(parents=True, exist_ok=True)
+        storage = MacroStorage(isolated_root)
+        service = MacrosService()
+        service._macro_storage = storage
+        # Patch the service factory everywhere it is bound.
+        import services.MacroService as macros_service_module
+        import routers.macros as macros_router_mod
+
+        for module_obj in (MacroService, macros_service_module, macros_router_mod):
+            monkeypatch.setattr(module_obj, "get_macros_service", lambda: service)
+
+        # Build the app on the SAME storage root (it inherits
+        # from the patched factory). Patch the safety state so the
+        # buggy ``task_state != ESTOP`` guard passes.
+        # NOTE: ``hardware.Connection.connection`` is the module-level
+        # singleton (``from hardware.Connection import connection``
+        # in MacroService). ``from hardware import Connection``
+        # imports the *class*, which is why we use
+        # ``importlib.import_module`` to grab the module instead.
+        import importlib
+        conn_mod = importlib.import_module("hardware.Connection")
+
+        fake_stat = _mock_safe_state(task_state=1, estop=False)
+        monkeypatch.setattr(conn_mod, "get_machine_stat", lambda: fake_stat)
+        monkeypatch.setattr(conn_mod.connection, "get_machine_stat", lambda: fake_stat)
+
+        return TestClient(_macros_app(tmp_data_root)), service, isolated_root
+
+    def test_macro_kind_dispatches_every_static_line_via_mdi(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        """Two static blocks separated by a ``{python}`` block: every
+        static line must hit ``execute_gcode``, the python block
+        must NOT, and the response is the documented ``204``.
+        """
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+
+        # Seed a macro with two static blocks separated by a python block.
+        payload = (
+            "G91\n"                       # static line 1
+            "G1 X10 F1000\n"              # static line 2
+            "{ log('between blocks') }\n" # python block (skipped)
+            "G90\n"                       # static line 3
+        )
+        client.put("/api/v1/modules/macros/spindle_warmup", content=payload)
+
+        # Patch ``execute_gcode`` on the hardware package so we
+        # record every MDI dispatch without a real controller.
+        from hardware import execute_gcode as real_execute_gcode
+        calls = []
+
+        def fake_execute_gcode(line, timeout=10.0):
+            calls.append(line)
+            return {"status": "success", "gcode": line}
+
+        import hardware
+        monkeypatch.setattr(hardware, "execute_gcode", fake_execute_gcode)
+        # Also patch the binding captured at MacroService import time
+        import services.MacroService as macros_service_module
+        monkeypatch.setattr(
+            macros_service_module, "execute_gcode", fake_execute_gcode
+        )
+
+        resp = client.post("/api/v1/modules/macros/spindle_warmup/start?kind=macro")
+        assert resp.status_code == 204
+
+        # Exactly the three static lines, in order. The python block
+        # never reaches the MDI channel.
+        assert calls == [
+            "G91",
+            "G1 X10 F1000",
+            "G90",
+        ]
+
+    def test_macro_kind_skips_python_blocks(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        """A macro that is *only* ``{}`` blocks must dispatch zero
+        MDI lines and still return ``204``. The python-block-skip
+        log entry is the operator's signal that the file ran empty.
+        """
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        payload = "{ first }\n{ second }\n"
+        client.put("/api/v1/modules/macros/skippy", content=payload)
+
+        calls = []
+        import hardware
+        import services.MacroService as macros_service_module
+
+        def fake_execute_gcode(line, timeout=10.0):
+            calls.append(line)
+            return {"status": "success", "gcode": line}
+
+        monkeypatch.setattr(hardware, "execute_gcode", fake_execute_gcode)
+        monkeypatch.setattr(
+            macros_service_module, "execute_gcode", fake_execute_gcode
+        )
+
+        resp = client.post("/api/v1/modules/macros/skippy/start?kind=macro")
+        assert resp.status_code == 204
+        assert calls == []
+
+    def test_macro_kind_aborts_on_mid_run_estop(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        """An E-Stop issued between the second and third MDI line
+        must abort the dispatch: the third line never reaches the
+        controller, the endpoint still returns ``204`` (the abort
+        is logged, not raised), and the operator sees a
+        "machine entered E-Stop during dispatch" entry in the
+        console log.
+        """
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        payload = "G0 X1\nG0 X2\nG0 X3\nG0 X4\n"
+        client.put("/api/v1/modules/macros/aborty", content=payload)
+
+        # Patch ``execute_gcode`` to flip the estop flag on the
+        # SECOND call (so the third call's ``stat.poll()`` returns
+        # ``estop=True`` and aborts).
+        import importlib
+        conn_mod = importlib.import_module("hardware.Connection")
+
+        estop_flag = {"value": False}
+        stat_calls = {"count": 0}
+
+        # The service captures the stat instance once at the top of
+        # ``start_macro`` and reuses it for every mid-loop poll. The
+        # mock therefore needs to flip ``estop`` *on the same
+        # instance* — not return a fresh object on every getter.
+        # ``poll`` is the only legitimate hook the service uses to
+        # "re-read" the state, so we update the attribute there.
+        def make_stat():
+            stat = type(
+                "Stat",
+                (),
+                {
+                    "task_state": 1,
+                },
+            )()
+            # ``poll`` re-reads ``estop`` from the closure flag so
+            # the service sees the flipped value on the next loop
+            # iteration.
+            def poll(_self):
+                _self.estop = estop_flag["value"]
+
+            stat.poll = poll.__get__(stat)
+            stat.estop = False
+            return stat
+
+        # Both call sites must hand back the SAME instance — the
+        # service captures the first ``get_machine_stat()`` return
+        # value and reuses it for every mid-loop poll.
+        shared_stat = make_stat()
+        monkeypatch.setattr(
+            conn_mod, "get_machine_stat", lambda: shared_stat
+        )
+        monkeypatch.setattr(
+            conn_mod.connection, "get_machine_stat", lambda: shared_stat
+        )
+
+        calls = []
+
+        def fake_execute_gcode(line, timeout=10.0):
+            calls.append(line)
+            stat_calls["count"] += 1
+            if stat_calls["count"] == 2:
+                # Flip E-Stop AFTER the second dispatch so the
+                # third ``stat.poll()`` sees estop=True.
+                estop_flag["value"] = True
+            return {"status": "success", "gcode": line}
+
+        import hardware
+        import services.MacroService as macros_service_module
+
+        monkeypatch.setattr(hardware, "execute_gcode", fake_execute_gcode)
+        monkeypatch.setattr(
+            macros_service_module, "execute_gcode", fake_execute_gcode
+        )
+
+        resp = client.post("/api/v1/modules/macros/aborty/start?kind=macro")
+        # Abort is logged, not raised — endpoint still 204s.
+        assert resp.status_code == 204
+
+        # Only the first two lines dispatched; the third and fourth
+        # were aborted because the mid-run E-Stop flag flipped.
+        assert calls == ["G0 X1", "G0 X2"]
+
+    def test_ngc_kind_dispatches_subroutine_call(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        """``.ngc`` runs a single ``o<{name}> call`` MDI dispatch.
+        The endpoint does NOT parse the NGC body — the controller
+        resolves the subroutine name from the open program
+        workspace.
+        """
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        client.put(
+            "/api/v1/modules/macros/coolant?kind=ngc",
+            content="O<coolant> sub\nM8\nO<coolant> endsub\n",
+        )
+
+        calls = []
+
+        def fake_execute_gcode(line, timeout=10.0):
+            calls.append(line)
+            return {"status": "success", "gcode": line}
+
+        # ``.ngc`` uses the module-level ``hardware.execute_gcode``
+        # helper (same as the ``.macro`` path). Patch every binding
+        # the service captures at import time so the production
+        # code's reference resolves to our fake.
+        import hardware
+        monkeypatch.setattr(hardware, "execute_gcode", fake_execute_gcode)
+        import services.MacroService as macros_service_module
+        monkeypatch.setattr(
+            macros_service_module, "execute_gcode", fake_execute_gcode
+        )
+
+        resp = client.post("/api/v1/modules/macros/coolant/start?kind=ngc")
+        assert resp.status_code == 204
+        assert calls == ["o<coolant> call"]
+
+    def test_mcode_kind_is_rejected_with_400(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+        isolated_mcodes,
+    ):
+        """``.mcode`` files are intentionally not routed through this
+        endpoint — the operator wraps an M-code call in a ``.macro``
+        instead. The response surfaces the convention as a plain
+        English 400.
+        """
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        # Seed an M-code via the dedicated endpoint so the file exists.
+        client.put(
+            "/api/v1/modules/macros/M120?kind=mcode",
+            content="G4 P1\n",
+        )
+
+        resp = client.post("/api/v1/modules/macros/M120/start?kind=mcode")
+        assert resp.status_code == 400
+        assert "wrap" in resp.json()["detail"].lower()
+
+    def test_pre_flight_estop_returns_400(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        """If the machine is in E-STOP at call time, the endpoint
+        returns 400 before any parsing. The pre-flight guard runs
+        once for the whole call (cheaper than a 503-per-line).
+        """
+        import importlib
+        conn_mod = importlib.import_module("hardware.Connection")
+
+        monkeypatch.setattr(
+            conn_mod,
+            "get_machine_stat",
+            lambda: _mock_safe_state(task_state=1, estop=True),
+        )
+        monkeypatch.setattr(
+            conn_mod.connection,
+            "get_machine_stat",
+            lambda: _mock_safe_state(task_state=1, estop=True),
+        )
+
+        from services import MacroService
+        from services.MacroService import MacrosService
+        from storage.MacroStorage import MacroStorage
+        import services.MacroService as macros_service_module
+        import routers.macros as macros_router_mod
+
+        isolated_root = tmp_data_root / "macros_estop"
+        isolated_root.mkdir(parents=True, exist_ok=True)
+        storage = MacroStorage(isolated_root)
+        service = MacrosService()
+        service._macro_storage = storage
+        for module_obj in (MacroService, macros_service_module, macros_router_mod):
+            monkeypatch.setattr(module_obj, "get_macros_service", lambda: service)
+
+        client = TestClient(_macros_app(tmp_data_root))
+        client.put("/api/v1/modules/macros/estop_me", content="G0 X0\n")
+
+        resp = client.post("/api/v1/modules/macros/estop_me/start?kind=macro")
+        assert resp.status_code == 400
+        assert "e-stop" in resp.json()["detail"].lower()
+
+    def test_missing_macro_returns_404(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        resp = client.post("/api/v1/modules/macros/nope/start?kind=macro")
+        assert resp.status_code == 404
+
+    def test_invalid_kind_returns_400(
+        self,
+        tmp_data_root,
+        clean_env,
+        monkeypatch,
+        isolated_storage,
+    ):
+        client, service, root = self._setup(
+            tmp_data_root, monkeypatch, isolated_storage
+        )
+        resp = client.post("/api/v1/modules/macros/whatever/start?kind=bogus")
+        assert resp.status_code == 400
+

@@ -46,12 +46,13 @@ REQUIRED_DOCS: tuple[Path, ...] = (
     REPO_ROOT / ".agent" / "context" / "VISION.md",
     REPO_ROOT / ".agent" / "context" / "ARCHITECTURE.md",
     REPO_ROOT / ".agent" / "context" / "LESSONS_LEARNED.md",
-    # The contract docs are also part of the documentation surface
-    # — they link to one another and to the source so they must
-    # stay in sync.
-    REPO_ROOT / ".agent" / "contracts" / "backend-module.md",
-    REPO_ROOT / ".agent" / "contracts" / "frontend-module.md",
-    REPO_ROOT / ".agent" / "contracts" / "settings-module.md",
+    # Note: the ``backend-module`` / ``frontend-module`` / ``settings-module``
+    # contracts under ``.agent/contracts/`` were retired alongside
+    # the module-system migration — the consolidated backend no
+    # longer ships with the per-domain ``PluggableModule`` contract,
+    # so the corresponding contract docs were deleted. Any future
+    # contract docs should be added here (and to ``test_doc_links_resolve``
+    # below).
 )
 
 # Optional docs: only included in the parametrised list when they

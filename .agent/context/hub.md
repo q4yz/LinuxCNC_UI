@@ -23,6 +23,7 @@ LinuxCNC_UI/
 │   │   ├── hub.md             # This file — AI agent entry point
 │   │   ├── VISION.md          # Project goals + philosophy
 │   │   ├── ARCHITECTURE.md    # Technical structure + module registry graph
+│   │   ├── BACKEND_LAYERS.md  # Canonical Router → Service → DTO → Mapper → Storage pattern
 │   │   └── LESSONS_LEARNED.md # Past mistakes and pitfall tripwires
 │   ├── AGENT.md               # Repository agent guide (stack, conventions, quality/scope)
 │   ├── TEST.md                # Bash script the orchestrator runs to verify edits
@@ -88,6 +89,7 @@ needs before editing any code.
 |-------|-------------------|
 | [`.agent/context/VISION.md`](.agent/context/VISION.md) | Why the project exists, what it optimizes for, what it is not. Use this to push back on requests that violate the philosophy. |
 | [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) | Backend + frontend layout, the module registry graph, the event bus, the state facade, the safety watchdog. Use this to find the right file to edit. |
+| [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md) | Canonical Router → Service → DTO → Mapper → Storage pattern with a worked example (`POST /spindle`) and the module cheat-sheet. Read before touching any backend module. |
 
 ### 2.2 Read when relevant
 
@@ -127,12 +129,16 @@ points you at them.
 2. **Skim the relevant section of
    [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md)**
    to find the file(s) the task touches.
-3. **Check
+3. **If the task touches the backend**, read
+   [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md)
+   to learn the canonical Router → Service → DTO → Mapper → Storage
+   pattern before editing anything.
+4. **Check
    [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md)**
    for any past mistake that matches the proposed approach.
-4. **If the task is a module change**, read the matching contract
+5. **If the task is a module change**, read the matching contract
    in [`.agent/contracts/`](.agent/contracts/).
-5. **Write the minimum code change**, then stop and reply with
+6. **Write the minimum code change**, then stop and reply with
    one paragraph. The orchestrator runs
    [`.agent/TEST.md`](.agent/TEST.md) after your edit.
 
@@ -156,3 +162,7 @@ points you at them.
 1. [`.agent/context/VISION.md`](.agent/context/VISION.md) — the why.
 2. [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) — the where.
 3. [`.agent/context/LESSONS_LEARNED.md`](.agent/context/LESSONS_LEARNED.md) — the don't.
+
+**If the task is backend code, also read:**
+
+4. [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md) — the layered pattern (Router / Service / DTO / Mapper / Storage).

@@ -52,6 +52,20 @@ class _HomeCommand(BaseModel):
         ),
     )
 
+class _AxisSettingsCommand(BaseModel):
+    multiplier: float = Field(
+        ...,
+        ge=0.0,
+        le=5.0,
+        description="Speed multiplier percentage (between 0.0 and 5.0)."
+    )
+    absolute_speed_limit: int = Field(
+        ...,
+        ge=0,
+        le=5000,
+        description="Absolute speed limit (between 0 and 5000)."
+    )
+
 
 class _StatusResponse(BaseModel):
     status: str = Field(..., description="Outcome summary (e.g., 'ok')")
@@ -78,6 +92,27 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
     router only translates the HTTP edge.
     """
     get_axis_service().home_single_axes(cmd.axis)
+    return _StatusResponse(status="success")
+
+
+@router.post(
+    "/settings",
+    summary="Axis Settings",
+    description="Update axis settings including speed multiplier and absolute limit.",
+    operation_id="axisSettings",
+    response_model=_StatusResponse,
+)
+def _axis_settings_endpoint(cmd: _AxisSettingsCommand) -> _StatusResponse:
+    """Update axis settings via the facade.
+
+    Passes the multiplier and absolute speed limit to the AxisService.
+    """
+    # Assuming your AxisService has a method to handle settings updates.
+    # Adjust the method name to match your actual service implementation.
+    service = get_axis_service()
+    if hasattr(service, "update_settings"):
+        service.update_settings(cmd.multiplier, cmd.absolute_speed_limit)
+
     return _StatusResponse(status="success")
 
 

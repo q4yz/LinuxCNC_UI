@@ -6,20 +6,20 @@ from models.axis_model import AxisStateResponse
 
 
 class AxisMapper:
-    """Converts between ``hardware.json`` v2.1 axis records and the
+    """Converts between ``hardware.json`` axis records and the
     runtime ``AxisStateDTO`` / ``AxisStateResponse`` pair.
 
-    The compiler emits ``hardware.json`` axes with ``joint_number``
-    (primary) and ``joint_numbers`` (list). The runtime mapper
-    copies them straight onto the DTO and onto the Pydantic response,
-    preserving the v2.1 wire shape end-to-end. The previous
-    ``id`` string handle was removed in v2.1.
+    The compiler emits ``hardware.json`` axes with a string ``id``
+    (the canonical LinuxCNC letter — ``x``, ``y``, ``z``, ``a``, ...)
+    plus a ``joint_numbers`` list of every driving joint. The runtime
+    mapper copies those fields straight onto the DTO and onto the
+    Pydantic response.
     """
 
     @classmethod
     def from_dict_to_dto(cls, data: Dict[str, Any]) -> AxisStateDTO:
         return AxisStateDTO(
-            joint_number=int(data.get("joint_number", 0)),
+            id=str(data.get("id", "")),
             joint_numbers=list(data.get("joint_numbers", [])),
             min_limit=float(data.get("position_min", 0.0)),
             max_limit=float(data.get("position_max", 0.0)),
@@ -28,7 +28,7 @@ class AxisMapper:
     @classmethod
     def to_response(cls, dto: AxisStateDTO, r: ResponseTier = ResponseTier.ALL) -> AxisStateResponse:
         return AxisStateResponse(
-            joint_number=dto.joint_number,
+            id=dto.id,
             joint_numbers=include_static(dto.joint_numbers, r),
             min_limit=include_static(dto.min_limit, r),
             max_limit=include_static(dto.max_limit, r),

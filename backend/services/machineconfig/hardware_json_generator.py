@@ -9,18 +9,18 @@ without parsing the raw config again.
 
 Shape
 -----
-The payload is the ``hardware.json`` v2.1 model — see
+The payload is the ``hardware.json`` v2 model — see
 :mod:`backend.models.machineconfig.hardware_json_models`.
 The model is flat with explicit ``id`` fields and string
 references; the cross-reference validator walks the graph in one
 pass to enforce every reference resolves into the right list.
 
-The one exception is ``Axis`` — v2.1 dropped the ``id`` string
-handle in favour of an integer ``joint_number`` (the LinuxCNC
-``[JOINT_N]`` index of the axis's primary joint) plus a
-``joint_numbers: list[int]`` for multi-motor axes. This aligns
-the wire shape with what the runtime ``AxisStateDTO`` /
-``AxisStateResponse`` already consume.
+Axes carry a string ``id`` (the canonical LinuxCNC letter —
+``x``, ``y``, ``z``, ``a``, ...) and a ``joint_numbers: list[int]``
+listing every driving joint's integer ``joint_number``. Joints
+(physical motors) keep their own string ``id`` and integer
+``joint_number`` so the runtime can map a wire ``joint_number``
+to a Remora stepgen channel ``remora.joint.{N}.*``.
 
 IDs are auto-assigned from the Klipper section name. ``[stepper_x]``
 becomes ``id: "stepper_x"``; ``[heater_bed]`` becomes
@@ -402,13 +402,11 @@ def _axis_payload(
 ) -> dict[str, Any]:
     """Build an axis entry.
 
-    v2.1: the axis is identified by its primary ``joint_number``
-    (the LinuxCNC ``[JOINT_N]`` index of the axis's first-listed
-    joint). ``joint_numbers`` carries every joint that drives the
-    axis — for a single-motor axis the list and the primary are the
-    same single integer. The canonical-letter ``id`` field that v2.0
-    emitted was removed because ``joint_number`` is the runtime's
-    canonical axis handle (mapped to a Remora stepgen channel).
+    The axis is identified by its canonical LinuxCNC ``letter`` —
+    ``x``, ``y``, ``z``, ``a``, ... — emitted as the string ``id``
+    field. ``joint_numbers`` lists every joint that drives the axis
+    (one element for a single-motor axis; multiple for a multi-motor
+    axis like a dual-motor Y).
 
     ``endstop_id`` is a single string id referencing a top-level
     ``Endstop`` record (or ``None`` when the axis has no endstop);
@@ -419,15 +417,9 @@ def _axis_payload(
     profile. ``position_max`` carries the axis travel limit (from
     the primary stepper's ``position_max``). Fields with ``None``
     values are dropped during serialisation.
-
-    The ``letter`` parameter is kept for symmetry with the
-    upstream caller and is unused on the wire; the runtime
-    derives the canonical letter from the joint_number's ordinal
-    position in the X / Y / Z / A / B / C axis order.
     """
-    primary_joint_number = joint_numbers[0] if joint_numbers else 0
     return {
-        "joint_number": primary_joint_number,
+        "id": letter.lower(),
         "joint_numbers": joint_numbers,
         "endstop": endstop_id,
         "position_max": position_max,
@@ -578,9 +570,9 @@ def build_hardware_json(
     # the LinuxCNC-side ``Joint.joint_number`` so the runtime can map
     # a wire ``joint_number`` to ``remora.joint.{N}.scale`` etc.
     # deterministically regardless of the order the user wrote the
-    # Klipper stepper sections in. v2.1: this must run BEFORE the
+    # Klipper stepper sections in. This must run BEFORE the
     # axis-records assembly so each axis record can carry its
-    # primary ``joint_number`` and ``joint_numbers`` list.
+    # ``joint_numbers`` list.
     joint_number_by_letter: dict[str, int] = {}
     joint_number = 0
     for letter in letters_in_order:
@@ -598,17 +590,15 @@ def build_hardware_json(
                     break
 
     # Now assemble the axis records with their endstop references
-    # and lifted motion-envelope fields. v2.1: each axis record is
-    # keyed by its primary ``joint_number`` and lists every driving
-    # joint by integer ``joint_numbers`` (no string ids, no per-axis
-    # letter handle).
+    # and lifted motion-envelope fields. Each axis record is keyed
+    # by its canonical LinuxCNC letter (``id``) and lists every
+    # driving joint by integer ``joint_numbers``.
     #
     # Note: only stepper-derived letters become axes here. The
     # extruder axis (``a``) is synthesised by ``AxisBuilder`` with
-    # an empty joint list and would collide with our primary
-    # ``joint_number=0`` default — we skip it and create the
-    # extruder axis explicitly below from the synthesised extruder
-    # joint records.
+    # an empty joint list — we skip it and create the extruder
+    # axis explicitly below from the synthesised extruder joint
+    # records.
     axes_records: list[dict[str, Any]] = []
     for letter in letters_in_order:
         joint_numbers = [
@@ -708,9 +698,8 @@ def build_hardware_json(
     # append it to ``axes_records``. The earlier stepper-only loop
     # skipped letters with no steppers — the synthesised extruder
     # axis was deliberately excluded there because it would have
-    # an empty ``joint_numbers`` list and a default ``joint_number=0``
-    # that would collide with the X axis primary. We build it here
-    # from the freshly-stamped extruder joint numbers.
+    # an empty ``joint_numbers`` list. We build it here from the
+    # freshly-stamped extruder joint numbers.
     if extruder_joint_records:
         extruder_joint_numbers = [r["joint_number"] for r in extruder_joint_records]
         axes_records.append(

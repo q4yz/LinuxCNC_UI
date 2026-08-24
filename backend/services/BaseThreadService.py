@@ -81,13 +81,12 @@ class BaseThreadSnapshotService:
             )
         return out
 
-    def _axis_state(self, mode: ResponseTier) -> Dict[int, AxisStateResponse]:
+    def _axis_state(self, mode: ResponseTier) -> Dict[str, AxisStateResponse]:
         out = {}
         for axis in self.axes_service.get_axis():
             # Pass the mode down to the mapper!
             response = AxisMapper.to_response(axis, mode)
-            # v2.1: key by primary joint_number (was response.id).
-            out[response.joint_number] = response
+            out[response.id] = response
         return out
 
     # --- MAIN ENGINE ---

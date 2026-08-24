@@ -651,12 +651,9 @@ max_temp: 130
     # Four axes — X / Y / Z Cartesian + the extruder (axis ``A``).
     # Phase 7 extended the AxisBuilder so the extruder becomes its
     # own axis instead of staying under the heaters list only.
-    # v2.1: axes no longer carry an ``id`` string — they are
-    # identified by their primary ``joint_number`` (0, 1, 2, 3).
-    assert [a["joint_number"] for a in payload["axes"]] == [0, 1, 2, 3]
-    # No per-axis ``id`` field on the wire.
-    for axis in payload["axes"]:
-        assert "id" not in axis
+    # Axes carry a string ``id`` (canonical LinuxCNC letter) plus
+    # ``joint_numbers`` listing every driving joint.
+    assert [a["id"] for a in payload["axes"]] == ["x", "y", "z", "a"]
 
     # Three joints from the Klipper stepper sections plus the
     # synthesised extruder joint (canonical numbering: X, Y, Z,
@@ -690,24 +687,23 @@ max_temp: 130
 
     # Each Cartesian axis references its endstop by id and carries
     # its ``position_endstop``; the extruder (A) axis is endstop-less.
-    # v2.1: axes are keyed by primary joint_number (not letter).
-    axes_by_jn = {a["joint_number"]: a for a in payload["axes"]}
-    assert axes_by_jn[0]["endstop"] == "endstop_x_min"
-    assert axes_by_jn[1]["endstop"] == "endstop_y_min"
-    assert axes_by_jn[2]["endstop"] == "endstop_z_min"
-    assert axes_by_jn[3].get("endstop") is None
-    assert axes_by_jn[3].get("endstop_pin") is None
+    axes_by_id = {a["id"]: a for a in payload["axes"]}
+    assert axes_by_id["x"]["endstop"] == "endstop_x_min"
+    assert axes_by_id["y"]["endstop"] == "endstop_y_min"
+    assert axes_by_id["z"]["endstop"] == "endstop_z_min"
+    assert axes_by_id["a"].get("endstop") is None
+    assert axes_by_id["a"].get("endstop_pin") is None
     # The extruder (A) axis owns the synthesised extruder joint.
-    assert axes_by_jn[3]["joint_numbers"] == [3]
-    assert axes_by_jn[0]["joint_numbers"] == [0]
-    assert axes_by_jn[1]["joint_numbers"] == [1]
-    assert axes_by_jn[2]["joint_numbers"] == [2]
-    assert axes_by_jn[0]["position_endstop"] == 0.0
-    assert axes_by_jn[1]["position_endstop"] == 0.0
-    assert axes_by_jn[2]["position_endstop"] == 0.0
-    assert axes_by_jn[0]["position_max"] == 300.0
-    assert axes_by_jn[1]["position_max"] == 300.0
-    assert axes_by_jn[2]["position_max"] == 300.0
+    assert axes_by_id["a"]["joint_numbers"] == [3]
+    assert axes_by_id["x"]["joint_numbers"] == [0]
+    assert axes_by_id["y"]["joint_numbers"] == [1]
+    assert axes_by_id["z"]["joint_numbers"] == [2]
+    assert axes_by_id["x"]["position_endstop"] == 0.0
+    assert axes_by_id["y"]["position_endstop"] == 0.0
+    assert axes_by_id["z"]["position_endstop"] == 0.0
+    assert axes_by_id["x"]["position_max"] == 300.0
+    assert axes_by_id["y"]["position_max"] == 300.0
+    assert axes_by_id["z"]["position_max"] == 300.0
     # The old ``endstops`` array on each axis is gone.
     for axis in payload["axes"]:
         assert "endstops" not in axis
