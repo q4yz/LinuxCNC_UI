@@ -5,8 +5,8 @@
     {
       "enabled": true,
       "icon": "",
-      "macroKind": "macro",
-      "macroName": "regression_test",
+      "macroKind": "ngc",
+      "macroName": "",
       "name": "",
       "slot": "camera.bottom"
     }

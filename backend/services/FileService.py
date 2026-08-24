@@ -331,7 +331,7 @@ class FileService:
             logger.debug("chmod failed on %s: %s", target, exc)
             return False
 
-    def mark_tree_read_only(self, directory: Optiona[Path] = None) -> int:
+    def mark_tree_read_only(self, directory: Optional[Path] = None) -> int:
         """Recursively ``chmod`` every entry under ``directory``.
 
         Defaults to the service root. Returns the number of entries
@@ -362,14 +362,37 @@ class FileService:
 
         target = Path(directory) if directory is not None else self.root
 
-        # Windows-specific fix: rmtree fails on read-only files.
-        # This callback intercepts the error, flips the write bit, and retries.
-        def remove_readonly(func, path, _):
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-
         if target.exists():
-            shutil.rmtree(target, onerror=remove_readonly)
+            # Pre-flip every entry to writable so the rmtree walker
+            # never trips over read-only bits set by a previous
+            # ``mark_tree_read_only`` (or any external chmod).
+            #
+            # The previous implementation handed a single ``onerror``
+            # callback to ``shutil.rmtree`` that re-called ``func(path)``
+            # to retry. That worked on Python 3.10-3.12 because the
+            # walker only ever failed through ``os.unlink`` /
+            # ``os.rmdir`` / ``os.lstat`` (single-arg). On Python
+            # 3.13+ the walker opens the directory with
+            # ``os.open(name, O_RDONLY | O_NONBLOCK)`` first, so
+            # ``func`` arriving in the callback can be ``os.open``
+            # itself - calling ``func(path)`` from a single-arg-shaped
+            # callback then raises
+            # ``TypeError: open() missing required argument 'flags' (pos 2)``
+            # and tears the whole operation down. Pre-chmodding avoids
+            # the callback entirely and is portable across Python
+            # versions and OSes.
+            for entry in [target, *target.rglob("*")]:
+                try:
+                    current = entry.stat().st_mode
+                    entry.chmod(
+                        current | stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+                    )
+                except OSError as exc:
+                    logger.debug(
+                        "clear_directory: chmod failed on %s: %s", entry, exc
+                    )
+
+            shutil.rmtree(target)
 
         target.mkdir(parents=True, exist_ok=True)
 

@@ -681,8 +681,17 @@ def compile_profile(payload: CompileRequest) -> CompileResponse:
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - last-resort guard
-        logger.error("Compile failed for %s: %s", payload.profile_path, exc)
-        raise HTTPException(status_code=500, detail=f"Compile failed: {exc}") from exc
+        # ``logger.exception`` writes the full traceback so the next
+        # compile failure surfaces the offending frame instead of a
+        # single Python error string. Including ``type(exc).__name__``
+        # in the HTTP body tells the operator (and the test) whether
+        # this is a TypeError, OSError, etc. - diagnostic-only change
+        # to the response envelope.
+        logger.exception("Compile failed for %s", payload.profile_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Compile failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
     settings = _require_settings_overrides()
     if settings.get("auto_readonly_after_stage", True):

@@ -28,6 +28,7 @@ so the boot summary log line stays stable.
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -336,5 +337,11 @@ if __name__ == "__main__":
     sensor_service.preload_hal_pins()
     HalPin.initialize_component()
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-    # uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")
+    uvicorn.run(
+        "main:app",  # import-string form is required when reload=True
+        host="0.0.0.0",
+        port=8000,
+        reload=_reload,
+    )
+

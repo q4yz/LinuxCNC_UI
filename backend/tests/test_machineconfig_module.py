@@ -389,6 +389,66 @@ def test_compile_marks_staged_readonly(
     mode = machine_cfg.stat().st_mode
     assert not (mode & 0o222), "staged files must be read-only after compile"
 
+def test_compile_recovers_from_previous_readonly_staged_tree(
+    tmp_data_root, clean_env, isolated_machine_config
+):
+    """Compile must succeed even when the staged tree was left
+    read-only by a previous compile on Python 3.13+.
+
+    On Python 3.10-3.12 ``shutil.rmtree`` walked the tree via
+    single-argument syscalls (os.unlink / os.rmdir / os.lstat)
+    and the onerror callback's ``func(path)`` retry worked. On
+    Python 3.13+ the walker uses ``os.open(fd, O_RDONLY|O_NONBLOCK)``
+    first and the callback's ``func(path)`` retry raises
+    ``TypeError: open() missing required argument 'flags' (pos 2)``.
+    The fix pre-chmods the staged tree; this test pins that
+    contract regardless of Python version.
+    """
+    import stat
+
+    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
+    client = TestClient(app)
+
+    # First compile - stages artifacts and chmods the staged tree
+    # read-only via ``mark_tree_read_only`` at the end of
+    # ``clear_and_stage``.
+    resp = client.post(
+        "/api/v1/modules/machineconfig/compile",
+        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Force the entire staged tree read-only. ``mark_tree_read_only``
+    # already does this on POSIX, but be defensive against Windows
+    # where chmod is a no-op for non-Cygwin FS bits.
+    staged = isolated_machine_config["staged"]
+    for entry in [staged, *staged.rglob("*")]:
+        try:
+            entry.chmod(entry.stat().st_mode & ~0o222)
+        except OSError:
+            pass
+
+    # Second compile must still succeed and re-emit the artefacts.
+    # Pre-3.13 this worked because shutil.rmtree's onerror callback
+    # re-called ``func(path)`` for single-arg funcs. On 3.13+ that
+    # callback gets ``os.open`` as ``func`` and the re-call
+    # raises ``TypeError: open() missing required argument
+    # 'flags' (pos 2)``. ``clear_directory`` now pre-chmods the
+    # tree, so the rmtree walker never trips on read-only bits.
+    resp = client.post(
+        "/api/v1/modules/machineconfig/compile",
+        json={"profile_path": "starter.cfg", "compiler_id": "klipper-to-linuxcnc"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert sorted(body["artifacts"]) == [
+        "config.txt",
+        "hardware.json",
+        "linuxcnc.ini",
+        "machine.cfg",
+        "machine.hal",
+    ]
+
 def test_compile_unknown_compiler_returns_404(
     tmp_data_root, clean_env, isolated_machine_config
 ):
