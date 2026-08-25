@@ -122,7 +122,6 @@ function handleSpindle(action: SpindleRunningState) {
 
 // Debounced slider-drag dispatch.
 watch([masterOverrideSpeed, speedPercentage], () => {
-  if (runningState.value === "idle" || runningState.value === "stop") return;
   if (isDisabled.value) return;
 
   if (postTimer) clearTimeout(postTimer);

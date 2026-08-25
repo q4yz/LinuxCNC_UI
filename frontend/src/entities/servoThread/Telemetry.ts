@@ -1,4 +1,5 @@
 import {ServoThreadStateResponse} from "../../../generated/api";
+import type {LinuxCNCErrorPayload} from "../../core/linuxcnc-errors";
 
 
 
@@ -61,7 +62,7 @@ export class ServoThreadState {
     g92Offset: number[];
     currentLine: number;
     totalLines: number;
-    errors: unknown[];
+    errors: LinuxCNCErrorPayload[];
 
     /**
      * Construct from a ``full_state`` / ``delta`` payload. Snake-case
@@ -120,7 +121,7 @@ export class ServoThreadState {
         if (delta.g92_offset !== undefined && delta.g92_offset !== null) this.g92Offset = [...delta.g92_offset];
         if (delta.current_line !== undefined && delta.current_line !== null) this.currentLine = delta.current_line;
         if (delta.total_lines !== undefined && delta.total_lines !== null) this.totalLines = delta.total_lines;
-        if (delta.errors !== undefined && delta.errors !== null) this.errors = [...(delta.errors as unknown as unknown[])];
+        if (delta.errors !== undefined && delta.errors !== null) this.errors = [...(delta.errors as unknown as LinuxCNCErrorPayload[])];
     }
 
     // --- Convenience Getters ---

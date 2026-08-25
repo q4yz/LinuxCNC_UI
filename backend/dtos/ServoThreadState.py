@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import List
+
+from dtos.LinuxCNCError import LinuxCNCError
 
 
 class ServoThreadStateDTO(BaseModel):
@@ -24,5 +26,13 @@ class ServoThreadStateDTO(BaseModel):
     current_line: int = Field(default=0)
     total_lines: int = Field(default=0)
 
-    errors: list[Any] = Field(default_factory=list)
+    errors: List[LinuxCNCError] = Field(
+        default_factory=list,
+        description=(
+            "Bounded recent LinuxCNC error-channel history. Each entry "
+            "carries the raw NML ``kind`` (integer) so power-users can "
+            "research the exact code; the frontend ships a translation "
+            "table for the operator-facing message."
+        ),
+    )
 

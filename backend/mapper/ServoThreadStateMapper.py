@@ -1,19 +1,52 @@
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from dtos.ServoThreadState import ServoThreadStateDTO
+from dtos.LinuxCNCError import LinuxCNCError
 from models.ServoThreadStateResponse import ServoThreadStateResponse
 
 
 class ServoThreadStateMapper:
 
     @staticmethod
-    def from_stat(machine_stat: Any, errors: list[Any] = None) -> ServoThreadStateDTO:
+    def normalize_errors(raw_errors: Any) -> List[LinuxCNCError]:
+        """Coerce the upstream ``stat.errors`` / ``state.errors`` shape into
+        ``List[LinuxCNCError]``.
+
+        The mock already stores ``{kind, text, time}`` dicts. A real
+        LinuxCNC daemon populates ``stat.errors`` with plain strings
+        — the ``kind`` is not preserved there, so we wrap the entry
+        with ``kind=0`` (the frontend's translation table treats ``0``
+        as "raw NML error, see text"). ``time`` defaults to ``None``
+        because the daemon does not stamp the bounded history.
+        """
+        if not raw_errors:
+            return []
+
+        normalized: List[LinuxCNCError] = []
+        for entry in raw_errors:
+            if isinstance(entry, LinuxCNCError):
+                normalized.append(entry)
+                continue
+            if isinstance(entry, dict):
+                try:
+                    normalized.append(LinuxCNCError(**entry))
+                    continue
+                except Exception:
+                    # Fall through to the string fallback if the dict
+                    # shape is unexpected so the loop never breaks.
+                    pass
+            normalized.append(
+                LinuxCNCError(kind=0, text=str(entry), time=None)
+            )
+        return normalized
+
+    @staticmethod
+    def from_stat(machine_stat: Any, errors: List[Any] = None) -> ServoThreadStateDTO:
         """
         Creates a FULL state DTO directly from the raw hardware stat.
         (We populate all fields so we have a complete baseline to diff against).
         """
-        if errors is None:
-            errors = []
+        normalized_errors = ServoThreadStateMapper.normalize_errors(errors)
 
         if machine_stat is None:
             # Safe offline defaults
@@ -22,7 +55,7 @@ class ServoThreadStateMapper:
                 position=(0.0,) * 9, actual_position=(0.0,) * 9, relative_position=(0.0,) * 9,
                 state=0, file="", homed=(0, 0, 0), interp_state=1, g5x_index=1,
                 g5x_offset=(0.0,) * 9, g92_offset=(0.0,) * 9, current_line=0, total_lines=0,
-                errors=errors
+                errors=normalized_errors
             )
 
         actual_position = getattr(machine_stat, 'actual_position', (0.0,) * 9)
@@ -54,7 +87,7 @@ class ServoThreadStateMapper:
             g92_offset=g92_offset,
             current_line=getattr(machine_stat, 'current_line', 0),
             total_lines=getattr(machine_stat, 'total_lines', 0),
-            errors=errors,
+            errors=normalized_errors,
         )
 
     @staticmethod

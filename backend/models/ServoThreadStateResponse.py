@@ -1,6 +1,8 @@
 
-from typing import Generic, TypeVar, Optional, Any
+from typing import Generic, TypeVar, Optional, List
 from pydantic import BaseModel
+
+from dtos.LinuxCNCError import LinuxCNCError
 
 T = TypeVar("T")
 
@@ -34,4 +36,4 @@ class ServoThreadStateResponse(BaseModel):
     current_line: Optional[int] = None
     total_lines: Optional[int] = None
 
-    errors: Optional[list[Any]] = None
+    errors: Optional[List[LinuxCNCError]] = None

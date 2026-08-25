@@ -1,7 +1,8 @@
+import collections
 import datetime
 import logging
 import threading
-from typing import List
+from typing import Deque, List, Optional, Tuple
 
 from hardware.mock.MockAxis import MockAxis
 
@@ -54,6 +55,16 @@ class StateMachineMock:
         # Diagnostics
         self.errors: List[dict] = []
         self._max_errors: int = 100
+        # Bounded FIFO queue that ``error_channel.poll()`` drains.
+        # ``stat.errors`` (above) is the historical buffer that
+        # ``read_error_history()`` snapshots; ``_pending_errors`` is
+        # the *channel* that fires one tuple at a time so the
+        # telemetry loop can broadcast a real-time ``{"type":"error",
+        # "data": {...}}`` envelope. Splitting the two mirrors the
+        # real-LinuxCNC NML topology where ``stat.errors`` and the
+        # error-channel queue are independent consumers of the same
+        # underlying NML error buffer.
+        self._pending_errors: Deque[Tuple[int, str, str]] = collections.deque()
 
         logger.debug("StateMachineMock initialized.")
 
@@ -166,27 +177,76 @@ class StateMachineMock:
     # Error Management
     # -----------------------------------------------------------------------
 
-    def push_error(self, text: str, kind: int = 11, time: str = None):
-        """Builds an error dictionary and pushes it into the bounded history."""
-        # Auto-generate a timestamp if one isn't provided (great for live use)
+    def push_error(self, text: str, kind: int = 11, time: Optional[str] = None):
+        """Builds an error dictionary and pushes it into both the bounded
+        history and the pending-channel queue.
+
+        ``text`` is the operator-facing message, ``kind`` is the
+        LinuxCNC NML error class, and ``time`` is the ISO-8601 stamp
+        (auto-generated when ``None``).
+
+        The history (``self.errors``) is what
+        :func:`hardware.Connection.read_error_history` reads on every
+        telemetry tick — it powers the ``full_state`` / ``delta``
+        ``errors`` payload so the UI re-hydrates the operator console
+        after a reconnect / page reload.
+
+        The pending queue (``self._pending_errors``) is what
+        ``error_channel.poll()`` drains one tuple at a time so the
+        backend can broadcast a real-time ``{"type":"error",
+        "data": {...}}`` WS envelope. Splitting the two mirrors the
+        real-LinuxCNC NML topology where ``stat.errors`` and the
+        error-channel queue are independent consumers of the same
+        underlying NML buffer.
+
+        The bound on the pending queue is intentionally generous (4x
+        ``_max_errors``) so a burst of NML errors — for example a
+        homing sequence hitting several limit switches in a row —
+        cannot outrun the 10 Hz ``telemetry_loop`` and silently drop
+        the oldest events. Anything older than that is dropped with
+        a warning so a runaway producer cannot leak memory.
+        """
         if time is None:
             time = datetime.datetime.now().isoformat()
 
         error_dict = {
             "kind": kind,
             "text": text,
-            "time": time
+            "time": time,
         }
 
         with self.lock:
             self.errors.append(error_dict)
             if len(self.errors) > self._max_errors:
                 self.errors.pop(0)
+            self._pending_errors.append((kind, text, time))
+            pending_cap = self._max_errors * 4
+            while len(self._pending_errors) > pending_cap:
+                dropped = self._pending_errors.popleft()
+                logger.warning(
+                    "Pending error queue overflow; dropping kind=%s text=%r",
+                    dropped[0],
+                    dropped[1],
+                )
             logger.error(f"Hardware Error [Kind {kind}]: {text}")
+
+    def poll_pending_error(self) -> Optional[Tuple[int, str, str]]:
+        """Drain one pending error from the channel queue.
+
+        Mirrors ``linuxcnc.error_channel.poll()`` which returns one
+        ``(kind, text)`` tuple per call (the timestamp is not part
+        of the upstream wire format — the backend stamps it on
+        receipt so the UI sees the wall-clock arrival time).
+        """
+        with self.lock:
+            if not self._pending_errors:
+                return None
+            return self._pending_errors.popleft()
 
     def clear_errors(self):
         with self.lock:
             self.errors.clear()
+            self._pending_errors.clear()
             logger.info("Error history cleared.")
 
     # -----------------------------------------------------------------------

@@ -71,8 +71,10 @@ class SpindleDigitalService:
             return self._forward(pins, dto)
         if dto.state == DirectionStateType.BACKWARD:
             return self._reverse(pins, dto)
-        if dto.state == DirectionStateType.IDLE:
+        if dto.state == DirectionStateType.STOP:
             return self._stop(pins)
+        if dto.state == DirectionStateType.CONTINUE:
+            return self._continue(pins, dto)
 
         raise BadRequestError("SpindleDigital settings must be a included")
 
@@ -125,6 +127,12 @@ class SpindleDigitalService:
         if dto.state == DirectionStateType.BACKWARD and pins.spindle_forward.get_value():
             return True
         return False
+
+    def _continue(self, pins,  dto: SpindleDigitalSettingsDTO):
+        pins.override.set_value(dto.override)
+        pins.absolute_master_override_enable.set_value(dto.master_override_enable)
+        pass
+
 
 _spindle_digital_service: Optional[SpindleDigitalService] = None
 

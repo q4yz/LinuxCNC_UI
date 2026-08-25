@@ -55,11 +55,34 @@ class LinuxcncModuleFacade:
         return CommandMock(self._state, self._hal_mock)
 
     def error_channel(self):
-        """Mimics linuxcnc.error_channel()."""
+        """Mimics ``linuxcnc.error_channel()``.
+
+        ``poll()`` drains one pending error tuple from the mock
+        state machine's queue and returns ``(kind, text)`` — exactly
+        the shape ``python-linuxcnc`` ships to callers. The
+        ``StateMachineMock`` keeps a separate FIFO queue
+        (``_pending_errors``) distinct from its bounded
+        ``errors`` history, mirroring the real NML topology where
+        ``stat.errors`` (history) and the error channel queue
+        (real-time events) are independent consumers.
+
+        ``errors`` exposes the bounded history as a defensive copy so
+        tests that introspect the queue cannot accidentally mutate
+        the underlying buffer.
+        """
         error_ch = self._state
+
         class _ErrorChannel:
             def poll(self):
-                return None  # no pending error this tick
+                pending = error_ch.poll_pending_error()
+                if pending is None:
+                    return None
+                # ``poll_pending_error`` returns ``(kind, text, time)``
+                # so the channel sidecar can carry a timestamp
+                # without forcing the NML-shaped ``(kind, text)``
+                # contract to widen.
+                kind, text, _time = pending
+                return (kind, text)
 
             @property
             def errors(self):

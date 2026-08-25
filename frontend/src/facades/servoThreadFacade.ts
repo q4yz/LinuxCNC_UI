@@ -2,10 +2,45 @@
 import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
 import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; // Adjust path if needed
+import {
+    formatLinuxCNCError,
+    isLinuxCNCError,
+    type LinuxCNCErrorPayload,
+} from '../core/linuxcnc-errors';
 
 const AXIS_NAMES: Record<number, string> = {
     0: 'X', 1: 'Y', 2: 'Z', 3: 'A', 4: 'B', 5: 'C', 6: 'U', 7: 'V', 8: 'W'
 };
+
+/**
+ * Track which error keys have already been replayed to the
+ * console so a reconnect after a transient drop does not spam
+ * the operator with every history row again. Keyed by
+ * ``kind|text|time`` — the trio is stable across a single
+ * backend session and the bounded history never grows past a
+ * few hundred rows.
+ */
+const replayedErrorKeys = new Set<string>();
+
+function errorKey(error: LinuxCNCErrorPayload): string {
+    return `${error.kind ?? '?'}|${error.text ?? ''}|${error.time ?? ''}`;
+}
+
+function emitLinuxCNCError(
+    consoleStore: ReturnType<typeof useConsoleStore>,
+    payload: unknown,
+    fallback: string,
+): void {
+    if (!isLinuxCNCError(payload)) {
+        consoleStore.error(fallback);
+        return;
+    }
+    const message = formatLinuxCNCError(payload);
+    // ``popup: true`` so the toast layer fires — the operator
+    // does not have to be looking at the console pane when an
+    // ESTOP / soft-limit fires.
+    consoleStore.error(message, { popup: true });
+}
 
 export class ServoThreadService {
     private ws: WebSocket | null = null;
@@ -24,6 +59,10 @@ export class ServoThreadService {
         this.ws.onopen = () => {
             store.setConnectionStatus('connected');
             consoleStore.success('Telemetry connected');
+            // Reset the replay ledger on every fresh socket —
+            // the bounded history is about to land via
+            // ``full_state`` and we want each row surfaced once.
+            replayedErrorKeys.clear();
         };
 
         this.ws.onmessage = (event) => {
@@ -38,6 +77,12 @@ export class ServoThreadService {
                         // dependent computed in ``stores/machine.ts``
                         // re-evaluates on the next tick.
                         store.setFullState(new ServoThreadState(envelope.data));
+                        // Replay bounded error history through the
+                        // console so the operator sees the backlog
+                        // after a reload / reconnect — without this
+                        // the operator would have to wait for a
+                        // *new* error to surface anything at all.
+                        this.replayErrorHistory(envelope.data);
                         break;
                     case 'delta':
                         // Go through the store's own ``applyDelta``
@@ -48,26 +93,27 @@ export class ServoThreadService {
                         // ``status.value.patch(delta)`` which goes
                         // through the Vue ``set`` trap.
                         store.applyDelta(envelope.data);
+                        // ``delta`` payloads only contain fields
+                        // that changed, so a freshly-arrived
+                        // ``errors`` array belongs here too. We
+                        // still go through the replay ledger so we
+                        // never double-log a row that landed in
+                        // ``full_state``.
+                        this.replayErrorHistory(envelope.data);
                         break;
                     case 'error':
-                        // The error envelope's ``data`` shape is not
-                        // a ``ServoThreadStateResponse`` — the
-                        // backend sends ``{kind, text, time}``. Treat
-                        // it as ``unknown`` and pull ``.text`` only
-                        // when present so a malformed frame cannot
-                        // crash the WS loop.
-                        if (
-                            envelope.data &&
-                            typeof envelope.data === "object" &&
-                            "text" in envelope.data
-                        ) {
-                            const text = String(
-                                (envelope.data as { text: unknown }).text,
-                            );
-                            consoleStore.error(text);
-                        } else {
-                            consoleStore.error("Unknown telemetry error payload");
-                        }
+                        // The error envelope's ``data`` shape is
+                        // ``{kind, text, time}``. The store does
+                        // not bother mirroring ``error`` envelopes
+                        // into ``status.errors`` — the bounded
+                        // history already arrived via ``full_state``
+                        // — so we only have to fan out to the
+                        // console.
+                        emitLinuxCNCError(
+                            consoleStore,
+                            envelope.data,
+                            "Unknown telemetry error payload",
+                        );
                         break;
                     default:
                         console.warn('Unknown telemetry type:', envelope.type);
@@ -163,6 +209,35 @@ export class ServoThreadService {
             this.reconnectTimer = null;
             this.connect();
         }, 2000);
+    }
+
+    /**
+     * Surface every error in ``payload.errors`` through the
+     * console exactly once. Idempotent across reconnects: the
+     * ``replayedErrorKeys`` ledger is cleared on every fresh
+     * ``ws.onopen`` so the bounded history re-hydrates after
+     * a reconnect without spamming duplicate rows for the
+     * errors that were already replayed in the previous
+     * session.
+     */
+    private replayErrorHistory(
+        payload: { errors?: unknown } | null | undefined,
+    ): void {
+        if (!payload || !Array.isArray(payload.errors) || payload.errors.length === 0) {
+            return;
+        }
+        const consoleStore = useConsoleStore();
+        for (const raw of payload.errors) {
+            if (!isLinuxCNCError(raw)) continue;
+            const key = errorKey(raw);
+            if (replayedErrorKeys.has(key)) continue;
+            replayedErrorKeys.add(key);
+            const message = formatLinuxCNCError(raw);
+            // Replay uses ``popup: true`` so the operator sees
+            // the backlog on reload without having to expand
+            // the console panel manually.
+            consoleStore.error(message, { popup: true });
+        }
     }
 
     disconnect() {

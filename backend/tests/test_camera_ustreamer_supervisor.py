@@ -424,19 +424,19 @@ def test_stream_endpoint_proxies_usb_camera_url(
     panel showed a broken image despite ustreamer being alive and
     serving MJPEG.
 
-    The fix unifies USB cameras and IP cameras behind the same
-    ``MjpegProxy`` class: the backend opens the httpx connection to
-    the supervisor's per-device URL on the operator's behalf and
-    streams the MJPEG bytes back through a same-origin
-    ``StreamingResponse``.
+    The fix unifies USB cameras and IP cameras behind the
+    ``MjpegFanout`` class: the backend opens a single httpx
+    connection per upstream URL (not per request) and streams the
+    MJPEG bytes back through a same-origin ``StreamingResponse``.
 
     The test pins both halves of the contract:
     1. The supervisor still returns the canonical ``http://127.0.0.1:{port}/?action=stream``
        URL (lock the URL shape so a future port-allocation refactor
        does not silently break this contract).
-    2. The router calls ``MjpegProxy`` with that URL — the response is
-       200 OK with the upstream's MJPEG bytes and the upstream's
-       exact ``Content-Type`` (boundary preserved verbatim).
+    2. The router calls ``MjpegFanout.get_or_create`` with that URL —
+       the response is 200 OK with the upstream's MJPEG bytes and
+       the upstream's exact ``Content-Type`` (boundary preserved
+       verbatim).
     """
     import routers.camera as router_module
 
@@ -454,27 +454,39 @@ def test_stream_endpoint_proxies_usb_camera_url(
     captured_url: list[str] = []
 
     class _FakeProxy:
-        """Stand-in for the real ``MjpegProxy`` class.
-
-        Records the URL the router handed it (so the test can assert
-        the supervisor's URL contract), then yields the synthesized
-        MJPEG body the way a real upstream would.
-        """
+        """Stand-in for ``SharedMjpegProxy``. Records the URL."""
 
         def __init__(self, url):
             captured_url.append(url)
             self.content_type = expected_content_type
 
-        async def __aenter__(self):
+        def subscribe(self):
+            return self.content_type, _FakeIter(expected_body)
+
+    class _FakeIter:
+        def __init__(self, body):
+            self._body = body
+            self._queue = object()  # router only reads ._queue on release
+
+        def __aiter__(self):
             return self
 
-        async def __aexit__(self, *exc):
-            return None
+        async def __anext__(self):
+            if self._body is None:
+                raise StopAsyncIteration
+            data, self._body = self._body, None
+            return data
 
-        async def iter_bytes(self):
-            yield expected_body
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
 
-    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
 
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -518,16 +530,33 @@ def test_stream_endpoint_proxies_second_usb_camera(
             captured_urls.append(url)
             self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
 
-        async def __aenter__(self):
+        def subscribe(self):
+            return self.content_type, _FakeIter(b"--ipcamera\r\n")
+
+    class _FakeIter:
+        def __init__(self, body):
+            self._body = body
+            self._queue = object()
+
+        def __aiter__(self):
             return self
 
-        async def __aexit__(self, *exc):
-            return None
+        async def __anext__(self):
+            if self._body is None:
+                raise StopAsyncIteration
+            data, self._body = self._body, None
+            return data
 
-        async def iter_bytes(self):
-            yield b"--ipcamera\r\n"
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
 
-    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
 
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -736,16 +765,33 @@ def test_stream_endpoint_proxies_usb_camera_via_default_device(
             captured_urls.append(url)
             self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
 
-        async def __aenter__(self):
+        def subscribe(self):
+            return self.content_type, _FakeIter(b"--ipcamera\r\n")
+
+    class _FakeIter:
+        def __init__(self, body):
+            self._body = body
+            self._queue = object()
+
+        def __aiter__(self):
             return self
 
-        async def __aexit__(self, *exc):
-            return None
+        async def __anext__(self):
+            if self._body is None:
+                raise StopAsyncIteration
+            data, self._body = self._body, None
+            return data
 
-        async def iter_bytes(self):
-            yield b"--ipcamera\r\n"
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
 
-    monkeypatch.setattr(router_module, "MjpegProxy", _FakeProxy)
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
 
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
@@ -812,3 +858,164 @@ def test_status_endpoint_omits_message_when_healthy(
     assert body["active_id"] == "/dev/video0"
     assert body["message"] == ""
     monkeypatch_which.undo()
+
+
+# ---------------------------------------------------------------------- #
+# Multi-client fan-out regression                                         #
+# ---------------------------------------------------------------------- #
+
+
+def test_stream_endpoint_fans_out_across_concurrent_clients(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """N concurrent ``/stream`` requests on the same URL must hit ONE proxy.
+
+    Regression for the operator-facing bug that motivated this module:
+    multiple browser tabs viewing the same camera used to open N
+    separate httpx connections to the upstream (one per ``MjpegProxy``
+    instance per request). IP cameras cap concurrent MJPEG clients
+    at 1–3, so once the cap was hit the operator's dashboard went
+    dead until every stale socket timed out — typically several
+    minutes of "needs a page reload to come back".
+
+    The fan-out proxy collapses this to a single upstream connection
+    per upstream URL. Two concurrent ``/stream`` requests must end up
+    sharing **one** ``SharedMjpegProxy`` and therefore one upstream
+    httpx connection.
+    """
+    import routers.camera as router_module
+
+    created_proxies: list = []
+    subscribed_count: list = []
+    registry: dict = {}
+
+    class _TrackingProxy:
+        def __init__(self, url):
+            self.url = url
+            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+            created_proxies.append(self)
+
+        def subscribe(self):
+            subscribed_count.append(self.url)
+            return self.content_type, _FakeIter(b"--ipcamera\r\n")
+
+    class _FakeIter:
+        def __init__(self, body):
+            self._body = body
+            self._queue = object()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._body is None:
+                raise StopAsyncIteration
+            data, self._body = self._body, None
+            return data
+
+    class _FakeFanout:
+        """Mirror the real ``MjpegFanout``'s share-within-URL contract."""
+
+        @classmethod
+        async def get_or_create(cls, url):
+            if url not in registry:
+                registry[url] = _TrackingProxy(url)
+            return registry[url]
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    # Fire two concurrent requests against the same URL. Each goes
+    # through the router's ``_proxy_stream_response`` which now calls
+    # ``MjpegFanout.get_or_create`` per request.
+    resp_a = client.get("/api/v1/modules/camera/stream?id=/dev/video0")
+    resp_b = client.get("/api/v1/modules/camera/stream?id=/dev/video0")
+
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+    # Both responses carried the MJPEG body verbatim — fan-out
+    # didn't change the wire contract.
+    assert resp_a.content == b"--ipcamera\r\n"
+    assert resp_b.content == b"--ipcamera\r\n"
+
+    # The optimisation: only ONE proxy was instantiated, and both
+    # requests subscribed to it. Pre-fan-out this list would have
+    # been ``[proxy, proxy]`` (one per request).
+    assert len(created_proxies) == 1, (
+        f"expected 1 shared proxy, got {len(created_proxies)} — "
+        f"the fan-out is regressed"
+    )
+    assert len(subscribed_count) == 2, (
+        "both concurrent requests should have subscribed to the proxy"
+    )
+
+
+def test_stream_endpoint_separate_cameras_get_separate_proxies(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env, monkeypatch,
+):
+    """Two DIFFERENT cameras must each get their own fan-out proxy.
+
+    Companion to the multi-client test above: the fan-out must share
+    within a URL but never collapse across URLs. Two simultaneous
+    requests for ``/dev/video0`` and ``/dev/video1`` produce two
+    proxies — one upstream connection per camera, not one for both.
+    """
+    import routers.camera as router_module
+
+    created_urls: list = []
+
+    class _TrackingProxy:
+        def __init__(self, url):
+            self.url = url
+            self.content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+            created_urls.append(url)
+
+        def subscribe(self):
+            return self.content_type, _FakeIter(b"--ipcamera\r\n")
+
+    class _FakeIter:
+        def __init__(self, body):
+            self._body = body
+            self._queue = object()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._body is None:
+                raise StopAsyncIteration
+            data, self._body = self._body, None
+            return data
+
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _TrackingProxy(url)
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp_a = client.get("/api/v1/modules/camera/stream?id=/dev/video0")
+    resp_b = client.get("/api/v1/modules/camera/stream?id=/dev/video1")
+
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+    # Distinct URLs → distinct proxies. Pinning this guards against
+    # a future refactor that "optimises" by collapsing everything
+    # into a single upstream connection regardless of source.
+    assert created_urls == [
+        "http://127.0.0.1:8080/?action=stream",
+        "http://127.0.0.1:8081/?action=stream",
+    ]

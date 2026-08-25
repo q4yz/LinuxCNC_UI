@@ -61,10 +61,11 @@ class SpindleDigitalMapper:
         action_map = {
             "forward": DirectionStateType.FORWARD,
             "backward": DirectionStateType.BACKWARD,
-            "stop": DirectionStateType.IDLE,
+            "idle": DirectionStateType.CONTINUE,
+            "stop": DirectionStateType.STOP,
         }
 
-        mapped_state = action_map.get(cmd.action.lower(), DirectionStateType.IDLE)
+        mapped_state = action_map.get(cmd.action.lower(), DirectionStateType.CONTINUE)
 
         return SpindleDigitalSettingsDTO(
             id=cmd.tool_id,

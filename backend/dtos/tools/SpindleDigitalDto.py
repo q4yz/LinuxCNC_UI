@@ -5,7 +5,8 @@ from dtos.UnconnectedHalPin import UnconnectedHalPin
 
 
 class DirectionStateType(str, Enum):
-    IDLE = "idle"
+    CONTINUE = "continue"
+    STOP = "stop"
     FORWARD = "forward"
     BACKWARD = "backward"
 
@@ -80,4 +81,4 @@ class SpindleDigitalSettingsDTO:
     master_override: int
     override: float = 1.0
     master_override_enable: bool = False
-    state: DirectionStateType = DirectionStateType.IDLE
+    state: DirectionStateType = DirectionStateType.STOP

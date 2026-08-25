@@ -9,6 +9,7 @@ from hardware import get_machine_stat, get_machine_error
 from hardware.Connection import read_error_history
 from mapper.ServoThreadStateMapper import ServoThreadStateMapper
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
+from dtos.LinuxCNCError import LinuxCNCError, now_iso
 from dtos.ServoThreadState import ServoThreadStateDTO
 from services.ConsoleLogger import LogLevel, get_console_logger
 
@@ -114,6 +115,20 @@ class ServoThreadService:
         """
         Background loop that continuously polls the CNC machine at 10Hz
         and broadcasts the state diff to all connected WebSockets.
+
+        Per tick:
+        1. Refresh ``machine_stat`` (also drains LinuxCNC's
+           ``stat.errors`` buffer for the next snapshot).
+        2. Drain any pending error-channel events via
+           ``machine_error.poll()`` and, when one fires, push it
+           into the mock's bounded history (so the next ``full_state``
+           / ``delta`` payload re-hydrates the operator console) and
+           broadcast a real-time ``{"type":"error","data":{...}}``
+           envelope so toasts fire immediately. For a real LinuxCNC
+           daemon ``stat.poll()`` already keeps ``stat.errors`` in
+           sync, so the redundant push is a no-op there.
+        3. Build a new DTO, diff it against the last broadcast, and
+           push the delta to every connected WebSocket.
         """
         console_logger = get_console_logger()
 
@@ -147,20 +162,83 @@ class ServoThreadService:
                     await asyncio.sleep(0.1)
                     continue
 
-                # Poll LinuxCNC error channel
+                # Poll LinuxCNC error channel. Drain every pending
+                # entry this tick so a burst of NML events cannot
+                # outrun the 10 Hz loop and silently starve the UI.
                 try:
-                    error = machine_error.poll()
+                    error_channel = machine_error
+                    pending_errors: list = []
+                    while True:
+                        try:
+                            entry = error_channel.poll()
+                        except (OSError, RuntimeError) as exc:
+                            logger.debug(
+                                "error_channel.poll() raised %s (%s); stopping drain",
+                                type(exc).__name__,
+                                exc,
+                            )
+                            break
+                        if entry is None:
+                            break
+                        pending_errors.append(entry)
+                        # ``linuxcnc.error_channel.poll()`` blocks
+                        # after a few hundred empty polls on some
+                        # LinuxCNC builds — bail out on a generous
+                        # ceiling so the loop never stalls.
+                        if len(pending_errors) >= 256:
+                            logger.warning(
+                                "error_channel drained %d events in one tick (cap reached); "
+                                "dropping the rest of the burst",
+                                len(pending_errors),
+                            )
+                            break
                 except (OSError, RuntimeError) as exc:
-                    logger.debug("error_channel.poll() raised %s (%s); skipping tick", type(exc).__name__, exc)
+                    logger.debug(
+                        "error_channel iteration raised %s (%s); skipping tick",
+                        type(exc).__name__,
+                        exc,
+                    )
                     await asyncio.sleep(0.1)
                     continue
 
-                if error and self.active_connections:
-                    kind, text = error
-                    console_logger.log_response(
-                        f"Machine error ({kind}): {text}",
-                        level=LogLevel.ERROR,
-                    )
+                if pending_errors and self.active_connections:
+                    for entry in pending_errors:
+                        kind, text = entry
+                        # Mirror into the mock's bounded history so a
+                        # reload / reconnect re-hydrates the
+                        # operator's console. On real LinuxCNC
+                        # ``stat.poll()`` already populated
+                        # ``stat.errors``, so this ``hasattr`` guard
+                        # keeps the path mock-only.
+                        push_error = getattr(machine_stat, "push_error", None)
+                        if callable(push_error):
+                            try:
+                                push_error(text=text, kind=kind, time=now_iso())
+                            except TypeError:
+                                # Legacy positional signature —
+                                # ``push_error(kind, text, time)`` —
+                                # tolerated for backward compat.
+                                push_error(kind, text, now_iso())
+                            except Exception as exc:  # noqa: BLE001
+                                logger.debug(
+                                    "push_error mirror failed (%s); continuing",
+                                    exc,
+                                )
+                        console_logger.log_response(
+                            f"Machine error ({kind}): {text}",
+                            level=LogLevel.ERROR,
+                        )
+                        error_envelope = {
+                            "type": "error",
+                            "data": LinuxCNCError(
+                                kind=int(kind),
+                                text=str(text),
+                                time=now_iso(),
+                            ).model_dump(),
+                        }
+                        payload = json.dumps(error_envelope)
+                        await self.broadcast(payload)
+                        console_logger.log_telemetry(payload)
 
                 current_dto = ServoThreadStateMapper.from_stat(machine_stat, read_error_history())
                 diff_resp = ServoThreadStateMapper.get_diff_response(current_dto, self._last_broadcast_state)

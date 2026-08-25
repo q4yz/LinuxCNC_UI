@@ -70,7 +70,7 @@ router = APIRouter(
 _SPINDLE_ACTIONS = {
     "forward": DirectionStateType.FORWARD,
     "backward": DirectionStateType.BACKWARD,
-    "stop": DirectionStateType.IDLE,
+    "stop": DirectionStateType.STOP,
 }
 _EXTRUDER_ACTIONS = {"extrude", "retract"}
 

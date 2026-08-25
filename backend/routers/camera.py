@@ -64,6 +64,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 
 from services.camera_detection import USBDeviceInfo, detect_usb_cameras
 from services.camera_mjpeg_proxy import MjpegProxy, MjpegProxyError
+from services.shared_mjpeg_proxy import MjpegFanout
 from models.camera_settings import CameraSettings
 
 logger = logging.getLogger("backend.camera_service")
@@ -757,7 +758,14 @@ def _redirect_to_ip_camera(url: str) -> RedirectResponse:
 
 
 async def _proxy_stream_response(url: str) -> StreamingResponse:
-    """Open the upstream, capture content-type, return the streaming body.
+    """Open the upstream via the fan-out proxy and stream bytes back.
+
+    ``MjpegFanout`` keeps a single upstream httpx connection per
+    ``url`` and fans the bytes out to every ``StreamingResponse``
+    consumer. With N tabs viewing the same camera we now hit the
+    IP-camera connection cap exactly **once**, not N times. The
+    per-subscriber queue's drop-oldest overflow policy means a
+    frozen background tab cannot freeze everyone else.
 
     Async because the upstream's response headers must be in hand
     before ``media_type`` is set on the ``StreamingResponse``. FastAPI
@@ -768,13 +776,12 @@ async def _proxy_stream_response(url: str) -> StreamingResponse:
     ``Content-Type: multipart/x-mixed-replace;boundary=ipcamera`` and
     the browser needs the ``;boundary=...`` parameter to parse the
     multipart stream into frames. Without it the browser renders
-    nothing. The :class:`MjpegProxy` class captures the upstream's
-    exact content-type synchronously in ``__aenter__`` so we can
-    surface it on the ``StreamingResponse``.
+    nothing. The fan-out proxy captures the upstream's exact
+    content-type synchronously and passes it through.
     """
-    proxy = MjpegProxy(url)
     try:
-        await proxy.__aenter__()
+        proxy = await MjpegFanout.get_or_create(url)
+        content_type, iterator = proxy.subscribe()
     except MjpegProxyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.ConnectError as exc:
@@ -800,17 +807,18 @@ async def _proxy_stream_response(url: str) -> StreamingResponse:
             detail=f"Upstream camera connection failed: {exc}",
         ) from exc
 
-    # Build the body iterator with explicit cleanup so a client
-    # disconnect tears down the upstream socket cleanly even if the
-    # generator is mid-yield. ``__aexit__`` is idempotent so the
-    # router's body wrapper finalising the iterator twice (once via
-    # the ``finally``, once via FastAPI's response cleanup) is safe.
+    # Hold the subscriber's queue handle so ``release`` can drop exactly
+    # this subscription on disconnect. ``release`` is idempotent so
+    # the router's body wrapper finalising the iterator twice (once
+    # via ``finally``, once via FastAPI's response cleanup) is safe.
+    sub = iterator._queue
+
     async def body() -> AsyncIterator[bytes]:
         try:
-            async for chunk in proxy.iter_bytes():
+            async for chunk in iterator:
                 yield chunk
         finally:
-            await proxy.__aexit__(None, None, None)
+            MjpegFanout.release(url, sub)
 
     return StreamingResponse(
         body(),
@@ -818,7 +826,7 @@ async def _proxy_stream_response(url: str) -> StreamingResponse:
         # ``;boundary=...`` parameter is what lets the browser parse
         # the multipart stream into frames. Without it the browser
         # silently fails to render.
-        media_type=proxy.content_type,
+        media_type=content_type,
         headers={
             # Prevent the browser from caching a partial or
             # truncated MJPEG response — the URL already carries
@@ -830,6 +838,7 @@ async def _proxy_stream_response(url: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
 
 
 @router.get(
@@ -871,9 +880,23 @@ def bind_settings_store(settings_store) -> None:
 def stop_manager() -> None:
     """Tear the supervisor down for ``on_unload``.
 
-    Terminates every spawned child. Idempotent.
+    Terminates every spawned ustreamer child and closes every
+    still-live MJPEG fan-out proxy. Idempotent.
     """
     _supervisor.shutdown()
+    # ``aclose_all`` schedules the per-proxy teardown via
+    # ``create_task``; it returns synchronously. The event loop
+    # processes the close before uvicorn tears the process down.
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(MjpegFanout.aclose_all())
+        else:
+            loop.run_until_complete(MjpegFanout.aclose_all())
+    except RuntimeError:
+        # No event loop bound (very-early-stop path); the proxies
+        # are best-effort cleaned up on process exit anyway.
+        pass
 
 
 __all__ = [
