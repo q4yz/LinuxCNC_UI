@@ -14,6 +14,16 @@ const { defaultJogVelocity } = storeToRefs(machineStore)
 // when the panel loses focus / unmounts.
 const activeJogAxes = ref(new Set())
 
+// Key codes whose keydown already started a jog and whose keyup
+// therefore MUST call ``stopJog``, regardless of the current
+// ``isActive`` state. Without this ledger the keyup handler used
+// to early-return on ``!isActive.value`` — if the panel lost focus
+// mid-hold (window blur, focusout to a sibling element) the jog
+// would keep running because the matching keyup never dispatched
+// the stop. ``Set<KeyboardEvent.code>`` keys on the canonical
+// event.code string so it survives keyboard layout quirks.
+const keysHeldForJog = ref(new Set())
+
 const sliderPos = ref(2)
 const sliderTouched = ref(false)
 watch(defaultJogVelocity, (velocity) => {
@@ -91,6 +101,12 @@ const stopAllJogging = async () => {
   // Snapshot the keys first — ``jogStop`` mutates the set.
   const axes = Array.from(activeJogAxes.value)
   activeJogAxes.value.clear()
+  // Any keyboard keys we were holding are now orphaned — the jog
+  // they started is being force-stopped by ``stopJog`` below, so
+  // the matching ``keyup`` would be a no-op. Drop them from the
+  // ledger proactively so the next focus / release cycle starts
+  // from a clean slate.
+  keysHeldForJog.value.clear()
   for (const axis of axes) {
     await machineStore.jogStop(axis)
   }
@@ -109,11 +125,22 @@ const handleKeyDown = (event) => {
   const binding = KEY_BINDINGS[event.code]
   if (!binding) return
 
+  // Record the key BEFORE dispatching the jog so a synchronous
+  // focusout / window-blur between this line and the matching
+  // ``keyup`` cannot strand the keyup handler.
+  keysHeldForJog.value.add(event.code)
   void startJog(binding.axis, binding.direction)
 }
 
 const handleKeyUp = (event) => {
-  if (!isActive.value) return
+  // If this key never started a jog (e.g. it was pressed before
+  // the panel gained focus, or it isn't in ``KEY_BINDINGS``) there
+  // is nothing to stop. This is the only early-return now: the
+  // previous ``focus-gated`` early-return silently dropped the
+  // stop dispatch and left a jog running with no way to terminate
+  // it short of issuing another jog command.
+  if (!keysHeldForJog.value.has(event.code)) return
+  keysHeldForJog.value.delete(event.code)
 
   const binding = KEY_BINDINGS[event.code]
   if (!binding) return
@@ -140,6 +167,11 @@ onBeforeUnmount(() => {
   // while a jog request is still in flight or after focus moved away.
   isActive.value = false
   void stopAllJogging()
+  // ``stopAllJogging`` already cleared the key ledger; the extra
+  // ``clear()`` is defence-in-depth for the unmount-during-tear-down
+  // race where the component is unmounted with the panel still
+  // logically focused.
+  keysHeldForJog.value.clear()
 })
 </script>
 

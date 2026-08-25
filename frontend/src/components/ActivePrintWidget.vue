@@ -10,6 +10,14 @@
 //     Start button that calls `runProgram`.
 //   * Active — Running / Paused. Shows the loaded filename, the
 //     progress bar, and Pause/Resume/Stop buttons.
+//
+// All write actions route directly through ``progressFacade`` — the
+// state facade ``useMachineStore`` exposes the high-resolution
+// ``systemState`` getter (Offline / Updating / Estop / PowerOff /
+// Idle / Loaded / Running / Paused / Failure) but no lifecycle
+// actions, so calling its methods would throw ``is not a function``.
+// Failures are routed through ``reportCommandFailure`` so the
+// console row + toast are uniform across every manual trigger.
 
 import {computed, ref, onMounted} from "vue";
 import {storeToRefs} from "pinia";
@@ -17,13 +25,14 @@ import {useMachineStore, SystemState} from "../stores/stateFacade";
 import {useBaseThreadStore} from "../stores/baseThread";
 import {useConsoleStore} from "../stores/console";
 import {progressFacade} from "../facades/progressFacade";
+import {reportCommandFailure} from "../core/error-format";
 import {ProgramFile} from "../entities/progress";
 
 
-const store = useMachineStore();
+const facade = useMachineStore();
 const baseThread = useBaseThreadStore();
 const consoleStore = useConsoleStore();
-const {systemState, status} = storeToRefs(store);
+const {systemState, status} = storeToRefs(facade);
 const {progress} = storeToRefs(baseThread);
 
 // --- File list state -----------------------------------------------------
@@ -129,15 +138,18 @@ async function loadFile(filename: string) {
   isLoading.value = true;
   consoleStore.debug(`[ActivePrintWidget] Loading program: ${filename}`);
   try {
+    // Call ``progressFacade`` directly. The state facade's
+    // ``useMachineStore`` is state-only — it has no
+    // ``loadProgram`` action, so going through ``store.xxxProgram``
+    // would throw ``is not a function`` and the HTTP request
+    // would never fire. Failures are routed through
+    // ``reportCommandFailure`` so the console row + toast match
+    // every other manual trigger.
     const result = await progressFacade.loadProgram(filename);
     if (result.ok) {
-      consoleStore.success(`Loaded ${filename}. Press Start to begin.`);
       await fetchFiles();
     } else {
-      consoleStore.error(
-          `[ActivePrintWidget] Failed to load: ${result.failureReason}`,
-          {popup: true, title: "Load failed"},
-      );
+      reportCommandFailure(`load ${filename}`, result);
     }
   } finally {
     isLoading.value = false;
@@ -151,17 +163,13 @@ async function startLoadedProgram() {
   }
   consoleStore.debug("[ActivePrintWidget] Requesting start...");
   const result = await progressFacade.runProgram();
-  if (result.failed) {
-    consoleStore.error(`[ActivePrintWidget] Failed to start: ${result.failureReason}`);
-  }
+  if (result.failed) reportCommandFailure("start program", result);
 }
 
 async function unloadProgram() {
   consoleStore.debug("[ActivePrintWidget] Unloading program...");
   const result = await progressFacade.unloadProgram();
-  if (result.failed) {
-    consoleStore.error(`[ActivePrintWidget] Failed to unload: ${result.failureReason}`);
-  }
+  if (result.failed) reportCommandFailure("unload program", result);
 }
 
 async function pausePrint() {
@@ -172,9 +180,7 @@ async function pausePrint() {
 
   consoleStore.debug("[ActivePrintWidget] Requesting pause...");
   const result = await progressFacade.pauseProgram();
-  if (result.failed) {
-    consoleStore.error(`[ActivePrintWidget] Failed to pause: ${result.failureReason}`);
-  }
+  if (result.failed) reportCommandFailure("pause program", result);
 }
 
 async function resumePrint() {
@@ -185,9 +191,7 @@ async function resumePrint() {
 
   consoleStore.debug("[ActivePrintWidget] Requesting resume...");
   const result = await progressFacade.resumeProgram();
-  if (result.failed) {
-    consoleStore.error(`[ActivePrintWidget] Failed to resume: ${result.failureReason}`);
-  }
+  if (result.failed) reportCommandFailure("resume program", result);
 }
 
 async function stopPrint() {
@@ -198,9 +202,7 @@ async function stopPrint() {
 
   consoleStore.debug("[ActivePrintWidget] Requesting abort/stop...");
   const result = await progressFacade.stopProgram();
-  if (result.failed) {
-    consoleStore.error(`[ActivePrintWidget] Failed to stop print: ${result.failureReason}`);
-  }
+  if (result.failed) reportCommandFailure("stop program", result);
 }
 </script>
 

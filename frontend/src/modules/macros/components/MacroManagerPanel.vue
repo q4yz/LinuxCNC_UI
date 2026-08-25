@@ -96,8 +96,8 @@ async function deleteMacro(kind, name) {
     rejectButtonText: "Cancel",
   });
   if (shouldDelete) {
-    const ok = await store.deleteMacro(kind, name);
-    if (ok) {
+    const result = await store.deleteMacro(kind, name);
+    if (result.ok) {
       await store.loadList(kind);
     }
   }
@@ -131,8 +131,8 @@ async function commitCreate() {
   // FastAPI rejects zero-byte text/plain bodies with 422. Seed
   // with a newline so the initial PUT succeeds and the editor
   // opens on an effectively blank file.
-  const ok = await store.saveMacro(createKind.value, name, "\n");
-  if (ok) {
+  const result = await store.saveMacro(createKind.value, name, "\n");
+  if (result.ok) {
     createOpen.value = false;
     await openInEditorView(createKind.value, name);
   } else if (store.lastError) {

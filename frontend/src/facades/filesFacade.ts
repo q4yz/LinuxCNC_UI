@@ -8,7 +8,7 @@ import {
 import { CommandResult } from "../entities/common/CommandResult";
 import { FileEntry } from "../entities/files/FileEntry";
 import { toFileListing } from "../mappers/filesMapper";
-import { describeError } from "../core/error-format";
+import { describeError, errorStatus } from "../core/error-format";
 
 /**
  * @returns {Promise<FileEntry[]>}
@@ -24,26 +24,29 @@ async function listFiles() {
   }
 }
 
-async function _commandResultFrom(promise, commandId) {
+async function _commandResultFrom(
+  promise: Promise<unknown>,
+  commandId: string,
+): Promise<CommandResult> {
   try {
     await promise;
     return CommandResult.success({ commandId });
-  } catch (err) {
+  } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {
       commandId,
-      message: "File command failed",
+      statusCode: errorStatus(err),
     });
   }
 }
 
-async function uploadFile(path, blob) {
+async function uploadFile(path: string, blob: Blob): Promise<CommandResult> {
   return _commandResultFrom(
     ProgramFilesService.uploadFile({ path, file: blob }),
     `upload:${path}`,
   );
 }
 
-async function deleteFile(path) {
+async function deleteFile(path: string): Promise<CommandResult> {
   return _commandResultFrom(
     ProgramFilesService.deleteFile({ path }),
     `delete:${path}`,

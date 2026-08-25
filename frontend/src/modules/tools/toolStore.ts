@@ -60,8 +60,9 @@ export const useToolStore = defineStore(STORE_ID, () => {
 
     const result = await ToolsService.controlSpindle(request);
 
-    if (!result.success) {
-      useConsoleStore().error(`Spindle command failed: ${result.message}`);
+    if (result.failed) {
+      const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";
+      useConsoleStore().error(`Spindle command failed${status}: ${result.failureReason ?? "unknown error"}`);
     }
     return result;
   }
@@ -96,8 +97,9 @@ export const useToolStore = defineStore(STORE_ID, () => {
 
     const result = await ToolsService.controlExtruder(request);
 
-    if (!result.success) {
-      useConsoleStore().error(`Extruder command failed: ${result.message}`);
+    if (result.failed) {
+      const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";
+      useConsoleStore().error(`Extruder command failed${status}: ${result.failureReason ?? "unknown error"}`);
     } else {
       useConsoleStore().info(`${action} ${distance}mm at ${speed}mm/min`);
     }
@@ -111,8 +113,9 @@ export const useToolStore = defineStore(STORE_ID, () => {
     const request: HeaterControlRequest = new HeaterControlRequest( {toolId, target} );
     const result = await ToolsService.setTarget(request);
 
-    if (!result.success) {
-      useConsoleStore().error(`Tool target failed: ${result.message}`);
+    if (result.failed) {
+      const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";
+      useConsoleStore().error(`Tool target failed${status}: ${result.failureReason ?? "unknown error"}`);
     }
     return result;
   }

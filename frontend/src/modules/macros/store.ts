@@ -1,10 +1,12 @@
-// Macros module Pinia store. Fronts ``ModulesMacrosService`` (the
-// OpenAPI-generated client) with state + cached payload + convenience
-// actions. Three ``kind`` values share the same router, distinguished
-// by the ``?kind=`` query parameter:
+// Macros module Pinia store. Fronts ``macrosFacade`` (which wraps
+// the OpenAPI-generated ``ModulesMacrosService``) with state +
+// cached payload + convenience actions.
+//
+// Three ``kind`` values share the same router, distinguished by the
+// ``?kind=`` query parameter:
 //
 //   ``"macro"`` — ``<repo>/macros/<name>.macro`` (custom G-code +
-//                  python-block payloads). Runtime dispatch is now a
+//                  python-block payloads). Runtime dispatch is a
 //                  single ``POST /macros/{name}/start?kind=macro``
 //                  call — the backend parses the body and feeds each
 //                  static line into MDI. ``{python}`` blocks are
@@ -29,10 +31,12 @@
 // that ``MacroPanel`` was rendering. Splitting the container fixes
 // that race without resorting to merge-instead-of-replace logic.
 //
-// All HTTP calls go through the generated client so we keep types in
-// sync with the OpenAPI schema. Errors are routed to
-// ``useConsoleStore``, which the operator sees in the dashboard's
-// persistent log.
+// Every manual-write action (``saveMacro``, ``deleteMacro``,
+// ``runMacro``, ``runMacroOfKind``) returns a ``Promise<CommandResult>``
+// so the UI layer has a uniform response; failures are routed
+// through ``reportCommandFailure``. Reads keep their legacy return
+// shapes (``string|null`` for ``readMacro`` / ``ensureMacroContent``,
+// array for ``loadList`` / ``loadAll``).
 //
 // ``useConsoleStore`` and ``useMachineStore`` are instantiated lazily
 // inside each action to dodge the cross-store import cycle described
@@ -41,13 +45,16 @@
 import { defineStore } from "pinia";
 import { reactive, ref } from "vue";
 
-import {
-  ModulesMacrosService,
-} from "../../../generated/api/index.ts";
+import { macrosFacade } from "../../facades/macrosFacade";
 import manifest from "./manifest";
 import { useConsoleStore } from "../../stores/console";
 import { useMachineStore } from "../../stores/machine";
-import { describeError as describeErrorShared } from "../../core/error-format";
+import {
+  describeError as describeErrorShared,
+  errorStatus,
+  reportCommandFailure,
+} from "../../core/error-format";
+import { CommandResult } from "../../entities/common/CommandResult";
 import { validateMacroKindName } from "./parser";
 
 // Canonical kind constants. Must agree with the backend's
@@ -100,6 +107,31 @@ function normalizeListEntries(response) {
   return Array.isArray(raw) ? raw : [];
 }
 
+/**
+ * Builder for the legacy ``{ staticDispatched, pythonSkipped }``
+ * counter shape historically returned by ``runMacro`` /
+ * ``runMacroOfKind``. Encoded as JSON in ``CommandResult.message``
+ * so existing dashboard widgets that read the counters keep their
+ * input — newer code should branch on ``result.failed`` instead.
+ */
+function counterPayload(dispatched, skipped) {
+  return JSON.stringify({ staticDispatched: dispatched, pythonSkipped: skipped });
+}
+
+function failureFromLegacy(reason, commandId) {
+  return CommandResult.failure(reason, {
+    commandId,
+    statusCode: null,
+  });
+}
+
+function failureFromError(error, commandId) {
+  return CommandResult.failure(describeError(error), {
+    commandId,
+    statusCode: errorStatus(error),
+  });
+}
+
 export const useMacrosStore = defineStore(STORE_ID, () => {
   // --- reactive state ------------------------------------------ //
 
@@ -150,7 +182,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     return ref;
   }
 
-  // --- list / read / write / delete ---------------------------- //
+  // --- list / read (no CommandResult — these are reads) -------- //
 
   /**
    * Fetch the listing for a single ``kind``. Writes into the
@@ -163,7 +195,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   async function loadList(kind = MACRO_KIND.MACRO) {
     const target = listRefFor(kind);
     try {
-      const response = await ModulesMacrosService.listMacros(kind);
+      const response = await macrosFacade.list(kind);
       // Tag every row with its kind so the dashboard panels can
       // join the macro + ngc refs without losing the source.
       const entries = normalizeListEntries(response).map((row) => ({
@@ -216,7 +248,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   async function readMacro(kind, name) {
     validateMacroKindName(kind, name);
     try {
-      const text = await ModulesMacrosService.readMacro(name, kind);
+      const text = await macrosFacade.read(name, kind);
       const payload =
         typeof text === "string" ? text : text == null ? "" : String(text);
       contents[cacheKey(kind, name)] = payload;
@@ -245,6 +277,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     return readMacro(kind, name);
   }
 
+  // --- write / run (CommandResult surface) -------------------- //
+
   /**
    * Persist ``body`` to ``<kind>:<name>`` (creating or overwriting).
    * Refreshes the matching per-kind listing in place — the other
@@ -254,19 +288,24 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * @param {"macro"|"ngc"|"mcode"} kind
    * @param {string} name
    * @param {string} body
-   * @returns {Promise<boolean>} Success flag.
+   * @returns {Promise<CommandResult>}
    */
-  async function saveMacro(kind, name, body) {
+  async function saveMacro(kind, name, body): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     const safeBody = normalizeEmpty(body);
     if (typeof safeBody !== "string") {
-      lastError.value = "Macro body must be a string.";
-      useConsoleStore().error(lastError.value);
-      return false;
+      const reason = "Macro body must be a string.";
+      lastError.value = reason;
+      const result = failureFromLegacy(reason, `write:${kind}:${name}`);
+      reportCommandFailure(`save macro ${kind}:${name}`, result);
+      return result;
     }
     isBusy.value = true;
-    try {
-      await ModulesMacrosService.writeMacro(name, safeBody, kind);
+    const result = await macrosFacade.write(name, safeBody, kind);
+    if (result.failed) {
+      lastError.value = describeError(result.failureReason);
+      reportCommandFailure(`save macro ${kind}:${name}`, result);
+    } else {
       contents[cacheKey(kind, name)] = safeBody;
       useConsoleStore().success(
         `Saved macro '${name}' (${kind}, ${safeBody.length} bytes).`,
@@ -280,16 +319,9 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       const idx = target.value.findIndex((entry) => entry.name === name);
       if (idx === -1) target.value.push(row);
       else target.value.splice(idx, 1, row);
-      return true;
-    } catch (error) {
-      lastError.value = describeError(error);
-      useConsoleStore().error(
-        `Failed to save macro '${name}' (${kind}): ${lastError.value}`,
-      );
-      return false;
-    } finally {
-      isBusy.value = false;
     }
+    isBusy.value = false;
+    return result;
   }
 
   /**
@@ -299,28 +331,24 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    *
    * @param {"macro"|"ngc"|"mcode"} kind
    * @param {string} name
-   * @returns {Promise<boolean>}
+   * @returns {Promise<CommandResult>}
    */
-  async function deleteMacro(kind, name) {
+  async function deleteMacro(kind, name): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     isBusy.value = true;
-    try {
-      await ModulesMacrosService.deleteMacro(name, kind);
+    const result = await macrosFacade.remove(name, kind);
+    if (result.failed) {
+      lastError.value = describeError(result.failureReason);
+      reportCommandFailure(`delete macro ${kind}:${name}`, result);
+    } else {
       delete contents[cacheKey(kind, name)];
       useConsoleStore().success(`Deleted macro '${name}' (${kind}).`);
       const target = listRefFor(kind);
       const idx = target.value.findIndex((entry) => entry.name === name);
       if (idx !== -1) target.value.splice(idx, 1);
-      return true;
-    } catch (error) {
-      lastError.value = describeError(error);
-      useConsoleStore().error(
-        `Failed to delete macro '${name}' (${kind}): ${lastError.value}`,
-      );
-      return false;
-    } finally {
-      isBusy.value = false;
     }
+    isBusy.value = false;
+    return result;
   }
 
   // --- execute ------------------------------------------------- //
@@ -331,9 +359,9 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * place.
    *
    * @param {string} name
-   * @returns {Promise<{staticDispatched: number, pythonSkipped: number}>}
+   * @returns {Promise<CommandResult>}
    */
-  async function runMacro(name) {
+  async function runMacro(name): Promise<CommandResult> {
     return runMacroOfKind(MACRO_KIND.MACRO, name);
   }
 
@@ -358,69 +386,58 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * backend additionally guards against an E-Stop flipping
    * mid-dispatch.
    *
-   * Returns a counter object for backwards compatibility with
-   * callers that read ``lastResult.value.staticDispatched`` /
-   * ``.pythonSkipped``. The actual numbers are now operator-visible
-   * only via the console log; the endpoint returns ``204`` with no
-   * body. The counters stay ``{staticDispatched: 1,
-   * pythonSkipped: 0}`` on success so the dashboard's "Running X
-   * command(s)" line keeps its shape.
+   * The success branch carries the historical counter shape
+   * ``{staticDispatched: number, pythonSkipped: number}`` as a
+   * JSON string on ``result.message`` so existing dashboard widgets
+   * that read ``lastResult.value.staticDispatched`` keep their
+   * input. New code should branch on ``result.failed``.
    *
    * @param {"macro"|"ngc"|"mcode"} kind
    * @param {string} name
+   * @returns {Promise<CommandResult>}
    */
-  async function runMacroOfKind(kind, name) {
+  async function runMacroOfKind(kind, name): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     const consoleStore = useConsoleStore();
 
     const machine = useMachineStore();
     if (machine.isEstopActive) {
-      consoleStore.error(
+      const result = failureFromLegacy(
         "Cannot run macros while the machine is in E-Stop.",
+        `start:${kind}:${name}`,
       );
-      return { staticDispatched: 0, pythonSkipped: 0 };
+      reportCommandFailure(`run macro ${kind}:${name}`, result);
+      return result;
     }
 
     if (kind === MACRO_KIND.MCODE) {
-      consoleStore.warning(
-        `Running ${kind} files from the UI is not supported — ` +
-          "wrap the call in a .macro file instead.",
+      const result = failureFromLegacy(
+        `Running ${kind} files from the UI is not supported — wrap the call in a .macro file instead.`,
+        `start:${kind}:${name}`,
       );
-      return { staticDispatched: 0, pythonSkipped: 0 };
+      reportCommandFailure(`run macro ${kind}:${name}`, result);
+      return result;
     }
 
     isBusy.value = true;
     consoleStore.info(
       `Dispatching ${kind} macro '${name}' via the backend start endpoint.`,
     );
-    try {
-      await ModulesMacrosService.startMacro(name, kind);
-      consoleStore.success(`Macro '${name}' (${kind}) dispatched.`);
-      // Counters stay at the "at least one thing happened" shape
-      // — the per-line breakdown lives in the console log.
-      return { staticDispatched: 1, pythonSkipped: 0 };
-    } catch (error) {
-      lastError.value = describeError(error);
-      consoleStore.error(
-        `Failed to dispatch macro '${name}' (${kind}): ${lastError.value}`,
-      );
-      return { staticDispatched: 0, pythonSkipped: 0 };
-    } finally {
+    const result = await macrosFacade.start(name, kind);
+    if (result.failed) {
+      lastError.value = describeError(result.failureReason);
+      reportCommandFailure(`run macro ${kind}:${name}`, result);
       isBusy.value = false;
+      return result;
     }
+    consoleStore.success(`Macro '${name}' (${kind}) dispatched.`);
+    const success = CommandResult.success({
+      commandId: `start:${kind}:${name}`,
+      message: counterPayload(1, 0),
+    });
+    isBusy.value = false;
+    return success;
   }
-
-  // (No separate ``runNgcMacro`` helper any more — both ``.macro``
-  // and ``.ngc`` dispatch through ``runMacroOfKind`` above, which
-  // delegates to ``ModulesMacrosService.startMacro(name, kind)``.
-  // The old hand-rolled ``fetch`` helper was deleted when the
-  // generated client method landed; the comment block below is
-  // kept as a breadcrumb for future readers.)
-  //
-  //   * See ``backend/routers/macros.py::start_macro`` for the
-  //     server-side contract that the unified ``.macro`` + ``.ngc``
-  //     dispatch implements. The endpoint signature is
-  //     ``POST /api/v1/modules/macros/{name}/start?kind={macro|ngc}``.
 
   // --- public surface ------------------------------------------ //
 

@@ -61,9 +61,30 @@ async function onRun(name) {
   runningName.value = name;
   try {
     const result = await store.runMacro(name);
-    lastResult.value = { name, ...result };
+    if (result.ok) {
+      // ``runMacro`` returns ``CommandResult.success({ message:
+      // JSON.stringify(counter) })`` — parse the counters so the
+      // legacy "X command(s) sent" line keeps its shape.
+      const counters = parseCounterPayload(result.message);
+      lastResult.value = { name, ...counters };
+    } else {
+      lastResult.value = null;
+    }
   } finally {
     runningName.value = "";
+  }
+}
+
+function parseCounterPayload(raw) {
+  if (!raw) return { staticDispatched: 0, pythonSkipped: 0 };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      staticDispatched: Number(parsed.staticDispatched) || 0,
+      pythonSkipped: Number(parsed.pythonSkipped) || 0,
+    };
+  } catch (_) {
+    return { staticDispatched: 0, pythonSkipped: 0 };
   }
 }
 

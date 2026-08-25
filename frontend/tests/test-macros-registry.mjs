@@ -92,28 +92,53 @@ test("macros store id follows the module_ prefix rule", () => {
   assert.match(storeText, /defineStore\(\s*STORE_ID/);
 });
 
-test("macros store imports ModulesMacrosService from the generated client", () => {
+test("macros store routes writes through macrosFacade", () => {
+  // The store was migrated to route every write through
+  // ``macrosFacade`` so manual-trigger actions return a uniform
+  // ``CommandResult``. The facade in turn talks to
+  // ``ModulesMacrosService``; the store no longer imports the
+  // generated service directly.
   const storeText = readText(storePath);
-  // The regex deliberately does not anchor on the first ``{...}``
-  // brace pair — the store has multiple ``import`` statements and
-  // we only need the right one anywhere in the file.
   assert.match(
     storeText,
-    /\bModulesMacrosService\b/,
+    /\bmacrosFacade\b/,
+    "store must import macrosFacade",
   );
-  assert.match(storeText, /\bgenerated\/api\b/);
-  // The dashboard "Run" path is a single ``startMacro`` call
-  // through ``ModulesMacrosService`` (the generated OpenAPI
-  // client method for ``POST /api/v1/modules/macros/{name}/start``).
-  // The frontend no longer talks to the machine_state module
-  // directly for the macros path — that coupling used to leak
-  // a per-line ``runMdiCommand`` round-trip into the frontend
-  // and the JS parser. Today the backend owns both.
+  // Start dispatch still funnels through the unified ``start``
+  // facade call so the backend owns the per-line MDI loop.
   assert.match(
     storeText,
-    /ModulesMacrosService\s*\.\s*startMacro\s*\(/,
-    "macros store must call ModulesMacrosService.startMacro for both .macro and .ngc",
+    /macrosFacade\s*\.\s*start\s*\(/,
+    "macros store must call macrosFacade.start for both .macro and .ngc",
   );
+});
+
+test("macrosFacade calls every documented macro endpoint", () => {
+  // Pinned against the facade source (not the store) so a future
+  // refactor that moves the call anywhere in the chain — store,
+  // facade, generated client — keeps the wire surface visible.
+  const facadeFullPath = resolve(
+    repoRoot,
+    "frontend/src/facades/macrosFacade.ts",
+  );
+  const facadeText = readText(facadeFullPath);
+  assert.ok(
+    existsSync(facadeFullPath),
+    "macrosFacade.ts missing under frontend/src/facades",
+  );
+  for (const suffix of [
+    "listMacros",
+    "readMacro",
+    "writeMacro",
+    "deleteMacro",
+    "startMacro",
+  ]) {
+    assert.match(
+      facadeText,
+      new RegExp(`ModulesMacrosService\\.${suffix}\\s*\\(`),
+      `macrosFacade must call ModulesMacrosService.${suffix}`,
+    );
+  }
 });
 
 test("macros store does not import ModulesMachineStateService", () => {
@@ -130,21 +155,21 @@ test("macros store does not import ModulesMachineStateService", () => {
   );
 });
 
-test("macros store calls every documented macro endpoint", () => {
-  const storeText = readText(storePath);
-  for (const suffix of [
-    "listMacros",
-    "readMacro",
-    "writeMacro",
-    "deleteMacro",
-    // ``startMacro`` is the unified dispatch endpoint — the
-    // regression guard on the previous test pins the call shape.
-    "startMacro",
-  ]) {
+test("macros store calls every documented macro endpoint via the facade", () => {
+  // The endpoint calls live in the facade now (see
+  // ``macrosFacade calls every documented macro endpoint`` above).
+  // This regression guard ensures the facade surface (the names
+  // the store consumes) stays aligned with the historical wire.
+  const facadeFullPath = resolve(
+    repoRoot,
+    "frontend/src/facades/macrosFacade.ts",
+  );
+  const facadeText = readText(facadeFullPath);
+  for (const name of ["list", "read", "write", "remove", "start"]) {
     assert.match(
-      storeText,
-      new RegExp(`\\b${suffix}\\(`),
-      `store must call ModulesMacrosService.${suffix}`,
+      facadeText,
+      new RegExp(`\\b${name}\\b`),
+      `macrosFacade must export ${name}()`,
     );
   }
 });

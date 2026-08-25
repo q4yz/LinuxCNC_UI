@@ -14,7 +14,7 @@ import {
   EditorDocument,
   isEditorSource,
 } from "../entities/editor/EditorDocument";
-import { describeError } from "../core/error-format";
+import { describeError, errorStatus } from "../core/error-format";
 
 async function readDocument(source, path) {
   if (!isEditorSource(source)) {
@@ -82,10 +82,10 @@ async function save(doc) {
   try {
     await writeDocument(doc.source, doc.path, doc.content);
     return CommandResult.success({ commandId: `${doc.source}:${doc.path}` });
-  } catch (err) {
+  } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {
       commandId: `${doc.source}:${doc.path}`,
-      message: "Save failed",
+      statusCode: errorStatus(err),
     });
   }
 }

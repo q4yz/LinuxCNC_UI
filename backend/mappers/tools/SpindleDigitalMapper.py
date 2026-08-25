@@ -51,7 +51,7 @@ class SpindleDigitalMapper:
             spindle_reverse=OptionalMappers.as_bool(halpin.spindle_reverse.get_value()),
             absolute_master_override_enable = OptionalMappers.as_bool(halpin.absolute_master_override_enable.get_value()),
             absolute_master_override = OptionalMappers.as_float(halpin.absolute_master_override.get_value()),
-            override=OptionalMappers.as_bool(halpin.override.get_value()),
+            override=OptionalMappers.as_int(halpin.override.get_value()) / 100.0,
         )
 
     @classmethod

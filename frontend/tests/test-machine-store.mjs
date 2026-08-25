@@ -36,79 +36,197 @@ const storePath = resolve(
   repoRoot,
   "frontend/src/stores/machine.ts",
 );
+const facadePath = resolve(
+  repoRoot,
+  "frontend/src/facades/servoThreadFacade.ts",
+);
+const jogControlsPath = resolve(
+  repoRoot,
+  "frontend/src/modules/machine/components/JogControls.vue",
+);
 
 function readStore() {
   return readFileSync(storePath, "utf-8");
 }
 
-test("store exposes jogIntervals as a reactive map", () => {
-  const text = readStore();
-  // ``jogIntervals`` is declared as ``reactive({})`` so we can
-  // mutate it from actions without losing reactivity.
-  assert.match(text, /const\s+jogIntervals\s*=\s*reactive\(\s*\{\s*\}\s*\)/);
-  // ``jogIntervals`` is exposed as a top-level return value so
-  // ``storeToRefs`` callers stay reactive.
-  assert.match(text, /jogIntervals\s*,/);
+function readFacade() {
+  return readFileSync(facadePath, "utf-8");
+}
+
+function readJogControls() {
+  return readFileSync(jogControlsPath, "utf-8");
+}
+
+test("servo-thread facade owns jogIntervals (the singleton service tracks per-axis timers)", () => {
+  // After the servo/base + store/facade split the per-axis
+  // keep-alive map (``jogIntervals``) lives inside the
+  // ``ServoThreadService`` class on the facade, not in the
+  // machine store. The machine store delegates to
+  // ``servoThreadService.jogContinuous`` / ``jogStop`` so the
+  // timers are cleared in one place. Pin the ownership here so a
+  // future contributor does not re-introduce a parallel map in
+  // ``stores/machine.ts``.
+  const text = readFacade();
+  assert.match(
+    text,
+    /private\s+jogIntervals\s*:\s*Record<number,\s*number>\s*=\s*\{\s*\}/,
+    "ServoThreadService.jogIntervals must be a Record<number, number> initialised to {}",
+  );
+  assert.match(text, /window\.clearInterval\(this\.jogIntervals\[axis\]\)/);
+  assert.match(text, /delete\s+this\.jogIntervals\[axis\]/);
+  // ``clearAllJogIntervals`` is the bulk path used on WS close
+  // and unmount — keep it around even after the per-axis path
+  // looks complete.
+  assert.match(text, /clearAllJogIntervals\s*\(\s*\)/);
 });
 
-test("store builds the jog-axis payload over the WebSocket for continuous jogs", () => {
-  const text = readStore();
+test("servo-thread facade builds the jog-axis payload over the WebSocket for continuous jogs", () => {
   // ``jogContinuous`` posts a ``jog_axis`` event over the
   // ``/ws/telemetry`` channel with ``distance: 0`` and the
   // supplied velocity. The store breaks the call across two
   // lines (object literal), so the regex tolerates the newline
   // and trailing whitespace.
-  assert.match(text, /servo\.send\(\s*\{\s*type:\s*["']jog_axis["']/);
+  const text = readFacade();
+  assert.match(text, /type:\s*["']jog_axis["']/);
   assert.match(text, /velocities:\s*\{\s*\[axis\]:\s*jogVelocity/);
   assert.match(text, /distance:\s*0/);
-  // After the initial command, the store schedules a setInterval
-  // that pings the keepalive over the open WebSocket at the
-  // configured cadence — the historical default is 250 ms; the
-  // runtime value lives in ``keepaliveIntervalMs.value`` and is
-  // bound from the module settings (with a 250 ms fallback).
-  assert.match(text, /setInterval\s*\(/);
+  // After the initial command, the facade schedules a
+  // ``setInterval`` that pings the keep-alive over the open
+  // WebSocket at the configured cadence — the historical default
+  // is 250 ms; the runtime value is supplied by the caller.
+  assert.match(text, /window\.setInterval\s*\(/);
   // Canonical: keep-alive goes over the WebSocket (no HTTP spam).
   assert.match(
     text,
-    /servo\.send\(\s*\{\s*type:\s*["']jog_keepalive["']/,
+    /type:\s*["']jog_keepalive["']/,
     "jogContinuous must send jog_keepalive over the WS, not REST",
   );
-  // The cadence is read from the module settings and falls back to
-  // the historical 250 ms value.
-  assert.match(text, /setInterval\([\s\S]*intervalMs\)/);
-  assert.match(text, /DEFAULT_KEEPALIVE_INTERVAL_MS\s*=\s*250/);
-  assert.match(text, /interval\s*<=\s*2000/);
 });
 
-test("store sends jog_axis and jog_stop over the WebSocket", () => {
-  // The /ws/telemetry channel is bidirectional; the module
-  // store routes both jog start and jog stop through
-  // ``servo.send({type: "jog_axis", ...})`` and
-  // ``servo.send({type: "jog_stop", ...})`` so the legacy REST
-  // endpoints are no longer the primary path. A regression that
-  // re-introduces a REST-only jog start or stop is caught here.
+test("machine store delegates jog axis / stop to the servo-thread facade", () => {
+  // The /ws/telemetry channel is bidirectional; the module store
+  // routes both jog start and jog stop through the facade
+  // (``servoThreadService.jogContinuous`` / ``jogStop``) so the
+  // legacy REST endpoints are no longer the primary path. A
+  // regression that re-introduced a direct ``servo.send`` call
+  // here would bypass the per-axis keep-alive timer and leave a
+  // jog running with no watchdog refresh — caught by this test.
   const text = readStore();
   assert.match(
     text,
-    /servo\.send\(\s*\{\s*type:\s*["']jog_axis["']/,
-    "jog / jogContinuous must send jog_axis over the WS",
+    /servoThreadService\.jogContinuous\s*\(/,
+    "jogContinuous must delegate to the facade (not send jog_axis directly)",
   );
   assert.match(
     text,
-    /servo\.send\(\s*\{\s*type:\s*["']jog_stop["']/,
-    "jogStop must send jog_stop over the WS",
+    /servoThreadService\.jogStop\s*\(/,
+    "jogStop must delegate to the facade (not send jog_stop directly)",
+  );
+  // And the discrete ``jog`` still sends ``jog_axis`` over the
+  // socket (it's a one-shot and does not need the timer path).
+  assert.match(
+    text,
+    /servoThreadService\.send\(\s*\{\s*type:\s*["']jog_axis["']/,
+    "jog (discrete) must send jog_axis over the WS",
   );
 });
 
-test("store clears jogIntervals on jogStop", () => {
+test("machine store does not await refreshSettings inside jogContinuous (regression)", () => {
+  // Fix A — the headline "first jog does not stop on its own"
+  // bug. ``refreshSettings`` is an HTTP round-trip; awaiting it
+  // inside ``jogContinuous`` let a click-and-release land before
+  // the WebSocket message was sent, so ``stopJog`` fired first
+  // (no-op on the backend because the axis was never
+  // registered) and then the late ``jog_axis`` started a jog
+  // with a fresh keep-alive interval that nothing would ever
+  // clear. Pin the absence of the await.
   const text = readStore();
-  // ``jogStop`` clears the per-axis interval for the axis it
-  // is asked to stop. Bulk cleanup on module unmount lives in
-  // ``modules/machine/components/JogControls.vue`` so a hot-
-  // reload during a continuous jog releases the axis within the
-  // watchdog window.
-  assert.match(text, /clearInterval\(jogIntervals\[axis\]\)/);
-  assert.match(text, /delete\s+jogIntervals\[axis\]/);
+  assert.doesNotMatch(
+    text,
+    /jogContinuous[\s\S]{0,400}await\s+refreshSettings\s*\(\s*\)/,
+    "jogContinuous must not await refreshSettings — that await races with stopJog",
+  );
+  // Same fix for the discrete jog — keep it consistent so a
+  // future regression that re-introduces the await in either
+  // path is caught here.
+  assert.doesNotMatch(
+    text,
+    /function\s+jog\s*\(\s*axis[\s\S]{0,400}await\s+refreshSettings\s*\(\s*\)/,
+    "jog must not await refreshSettings either",
+  );
+});
+
+test("machine store eagerly loads settings on instantiation (regression)", () => {
+  // Fix A — companion to the await-removal test above. The
+  // settings must be loaded eagerly (fire-and-forget) so the
+  // first jog click lands AFTER the values have populated. The
+  // promise is also cached so concurrent callers do not fire
+  // duplicate HTTP round-trips.
+  const text = readStore();
+  assert.match(
+    text,
+    /void\s+refreshSettings\s*\(\s*\)/,
+    "store factory must eagerly call refreshSettings() at least once",
+  );
+  // Idempotency: the second caller should reuse the cached
+  // promise rather than re-issue the HTTP GET.
+  assert.match(
+    text,
+    /settingsLoadPromise/,
+    "refreshSettings must cache its in-flight promise to dedupe concurrent callers",
+  );
+});
+
+test("JogControls handleKeyUp stops the jog even when isActive is false (regression)", () => {
+  // Fix B — ``handleKeyUp`` used to early-return on
+  // ``!isActive.value`` which silently dropped the stop dispatch
+  // if the panel lost focus mid-hold (window blur, focusout to
+  // a sibling element). The component now tracks the keys whose
+  // keydown started a jog (``keysHeldForJog``) and ``handleKeyUp``
+  // dispatches ``stopJog`` whenever one of those keys is
+  // released — independent of focus state. Pin the ledger plus
+  // the absence of the old early-return.
+  const text = readJogControls();
+  assert.match(
+    text,
+    /keysHeldForJog\s*=\s*ref\(\s*new\s+Set<string>\(\s*\)\s*\)/,
+    "JogControls must declare keysHeldForJog as a Set<string>",
+  );
+  // The buggy early-return must be gone from handleKeyUp. Pin
+  // the positive contract instead: the handler now keys on the
+  // ledger, not on isActive.
+  const handleKeyUpBlock = text.match(/const\s+handleKeyUp\s*=\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\n\}/);
+  assert.ok(handleKeyUpBlock, "handleKeyUp handler must exist");
+  assert.match(
+    handleKeyUpBlock[0],
+    /keysHeldForJog\.value\.has\(\s*event\.code\s*\)/,
+    "handleKeyUp must consult keysHeldForJog (not isActive)",
+  );
+  assert.doesNotMatch(
+    handleKeyUpBlock[0],
+    /if\s*\(\s*!\s*isActive\.value\s*\)\s*return/,
+    "handleKeyUp must NOT early-return on !isActive — that was the bug",
+  );
+});
+
+test("JogControls handleKeyDown records the key before dispatching the jog (regression)", () => {
+  // Fix B — companion to the handleKeyUp test. ``keysHeldForJog``
+  // must be populated BEFORE ``startJog`` runs so a synchronous
+  // focusout between keydown and keyup cannot strand the
+  // matching keyup handler. Pin the ordering: the ``add`` line
+  // appears in the keydown handler before the ``startJog``
+  // dispatch.
+  const text = readJogControls();
+  const handleKeyDownBlock = text.match(/const\s+handleKeyDown\s*=\s*\([^)]*\)\s*=>\s*\{[\s\S]*?\n\}/);
+  assert.ok(handleKeyDownBlock, "handleKeyDown handler must exist");
+  const addIdx = handleKeyDownBlock[0].indexOf("keysHeldForJog.value.add");
+  const startIdx = handleKeyDownBlock[0].indexOf("startJog(");
+  assert.ok(addIdx >= 0, "handleKeyDown must add the key to keysHeldForJog");
+  assert.ok(startIdx >= 0, "handleKeyDown must dispatch startJog");
+  assert.ok(
+    addIdx < startIdx,
+    "handleKeyDown must record the key in keysHeldForJog BEFORE dispatching startJog",
+  );
 });
 
 test("store rejects ESTOP-driven power-on", () => {

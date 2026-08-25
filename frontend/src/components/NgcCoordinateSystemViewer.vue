@@ -12,8 +12,28 @@
 //      from `/api/v1/programs/content/{filename}`.
 //
 //   3. A small overlay showing the active limits and the move count.
+//
+// Per-segment coordinate system handling:
+//
+//   The parser tags every emitted motion segment with the work
+//   coordinate system (G54..G59.3 → ``wcsIndex`` 1..9) and the
+//   in-program G92 additive offset that was active when the segment
+//   was emitted. At draw time the active WCS origin from telemetry
+//   (``store.status.g5xOffset``) is added on top of the segment's
+//   own G92 plus the live ``store.status.g92Offset`` from telemetry.
+//   The Set-Position modal mutates the active WCS via ``G10 L20 P0``
+//   MDI; the resulting ``g5x_offset`` delta from the servo thread
+//   triggers a redraw so the toolpath moves with the new origin.
+//
+//   Non-active WCSes (e.g. a G55 section while G54 is selected in
+//   the DRO dropdown) are drawn at machine origin instead of their
+//   true WCS origin because the backend only exposes the active
+//   WCS's per-axis offsets in telemetry. For files that mostly use
+//   a single WCS this is invisible; for mixed-WCS files the user
+//   should switch the active WCS to the system the file uses
+//   before relying on the preview.
 
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
@@ -31,6 +51,19 @@ interface MachineLimits {
 interface ToolpathMeta {
   filename: string
   moves: number
+}
+
+/**
+ * One motion segment with the per-segment parser state captured at
+ * the moment it was emitted. ``wcsIndex`` is 1..9 (G54..G59.3);
+ * ``g92`` is the additive origin that was active when the line was
+ * parsed (and zeroed if a G92.2 suspension was in effect).
+ */
+interface ParsedSegment {
+  from: [number, number, number]
+  to:   [number, number, number]
+  wcsIndex: number
+  g92:    [number, number, number]
 }
 
 // Typing the loosely parsed hardware.json payload
@@ -74,6 +107,7 @@ let toolheadGroup: THREE.Group | null = null
 let toolheadMesh: THREE.Mesh | null = null
 let limitsGroup: THREE.Group | null = null
 let toolpathLine: THREE.LineSegments | null = null
+let wcsMarkerGroup: THREE.Group | null = null
 let animationFrameId: number = 0
 let resizeObserver: ResizeObserver | null = null
 
@@ -84,12 +118,54 @@ const toolpathMeta = ref<ToolpathMeta>({ filename: '', moves: 0 })
 // --- Tracking Helpers ---
 let lastLoadedFilename = ''
 
+// Cache of parsed segments keyed by basename so offset ticks don't
+// refetch + reparse. ``loadProgramToolpath`` only re-reads the file
+// when the basename is not in the cache; ``redrawToolpath`` walks
+// the cache in place and rebuilds the geometry.
+const parsedCache = new Map<string, ParsedSegment[]>()
+
+// --- Coordinate-system helpers ---
+
+// Mirror of ``WORK_COORDINATE_SYSTEMS`` from ``config/gcodes.ts`` so
+// the viewer can name the active WCS without pulling in a module
+// config surface. Index 1..9 → G54..G59.3.
+const wcsNameForIndex = (idx: number): string => {
+  if (idx === 7) return 'G59.1'
+  if (idx === 8) return 'G59.2'
+  if (idx === 9) return 'G59.3'
+  if (idx >= 1 && idx <= 6) return `G${53 + idx}`
+  return 'G54'
+}
+
 // Formatting helper for the overlay
 const formatOffset = (axis: number[] | null | undefined): string => {
   if (!Array.isArray(axis) || axis.length < 3) return '0,0,0'
   const fmt = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : '0')
   return `${fmt(axis[0])},${fmt(axis[1])},${fmt(axis[2])}`
 }
+
+// Reactive views over the live telemetry. ``g5xOffset`` is the
+// ACTIVE system's per-axis offsets for X,Y,Z,A,B,C,U,V,W (see the
+// backend mapper); the viewer only consumes the first three.
+const activeWcsIdx = computed<number>(() => {
+  const n = Number(store.status.g5xIndex)
+  if (!Number.isFinite(n) || n < 1 || n > 9) return 1
+  return Math.floor(n)
+})
+
+const activeWcsName = computed(() => wcsNameForIndex(activeWcsIdx.value))
+
+const activeWcsOffset = computed<[number, number, number]>(() => {
+  const t = store.status.g5xOffset
+  if (!Array.isArray(t)) return [0, 0, 0]
+  return [Number(t[0]) || 0, Number(t[1]) || 0, Number(t[2]) || 0]
+})
+
+const liveG92 = computed<[number, number, number]>(() => {
+  const t = store.status.g92Offset
+  if (!Array.isArray(t)) return [0, 0, 0]
+  return [Number(t[0]) || 0, Number(t[1]) || 0, Number(t[2]) || 0]
+})
 
 onMounted(async () => {
   initThreeJS()
@@ -196,6 +272,12 @@ const initThreeJS = () => {
   limitsGroup = new THREE.Group()
   cncSpace.add(limitsGroup)
 
+  // Active WCS origin marker. Populated by updateWcsMarker() on
+  // every redraw so the cross tracks the runtime origin from
+  // telemetry (i.e. it follows Set-Position edits).
+  wcsMarkerGroup = new THREE.Group()
+  cncSpace.add(wcsMarkerGroup)
+
   // Resize Handling
   resizeObserver = new ResizeObserver(entries => {
     if (!renderer || !camera) return
@@ -232,13 +314,16 @@ const setupWatchers = () => {
 
   watch(
       () => [
+        store.status.g5xIndex,
         store.status.g5xOffset?.slice(0, 3),
         store.status.g92Offset?.slice(0, 3),
       ],
-      async () => {
-        if (lastLoadedFilename) {
-          await loadProgramToolpath(lastLoadedFilename)
-        }
+      () => {
+        // No refetch + reparse: the cached segments are walked in
+        // place with the new offsets. This is the path the
+        // Set-Position modal ends up on after its MDI round-trip
+        // flips a bit of g5x_offset in the telemetry stream.
+        if (lastLoadedFilename) redrawToolpath()
       },
       { deep: true },
   )
@@ -399,40 +484,66 @@ const setMachineLimits = (limits: MachineLimits | null) => {
 const loadProgramToolpath = async (filename: string) => {
   if (!scene || !filename) return
   const basename = String(filename).split(/[\\/]/).pop()
-  if (!basename || basename === lastLoadedFilename) return
+  if (!basename) return
 
-  try {
-    const text = await ProgramFilesService.readFile(basename)
-    if (typeof text !== 'string') {
+  // Only refetch + reparse when we don't already have this file in
+  // the cache. The previous implementation also short-circuited
+  // when ``basename === lastLoadedFilename``, which inadvertently
+  // blocked the offset-redraw path: the watcher fires on every
+  // g5x_offset delta, so its callback has to take the "use cache"
+  // branch instead of going through this loader. ``redrawToolpath``
+  // is that callback.
+  if (!parsedCache.has(basename)) {
+    try {
+      const text = await ProgramFilesService.readFile(basename)
+      if (typeof text !== 'string') {
+        clearToolpath()
+        return
+      }
+      const parsed = parseGcodeToolpath(text)
+      parsedCache.set(basename, parsed)
+    } catch (err) {
       clearToolpath()
       return
     }
-
-    const segments = parseGcodeToolpath(text)
-    if (!segments.length) {
-      clearToolpath()
-      lastLoadedFilename = basename
-      toolpathMeta.value = { filename: basename, moves: 0 }
-      return
-    }
-
-    replaceToolpathMesh(segments)
-    lastLoadedFilename = basename
-    toolpathMeta.value = { filename: basename, moves: segments.length / 6 } // 6 coordinates per segment
-  } catch (err) {
-    clearToolpath()
-    lastLoadedFilename = ''
   }
+
+  const segments = parsedCache.get(basename) || []
+  lastLoadedFilename = basename
+  toolpathMeta.value = { filename: basename, moves: segments.length }
+  redrawToolpath()
 }
 
-const parseGcodeToolpath = (text: string): number[] => {
-  const segments: number[] = []
+const redrawToolpath = () => {
+  if (!scene || !lastLoadedFilename) return
+  const segments = parsedCache.get(lastLoadedFilename)
+  if (!segments) return
+  replaceToolpathMesh(segments)
+  updateWcsMarker()
+}
+
+const parseGcodeToolpath = (text: string): ParsedSegment[] => {
+  const segments: ParsedSegment[] = []
   let motion = 0
   let absolute = true
   let curX = 0
   let curY = 0
   let curZ = 0
   let hasPosition = false
+
+  // Per-file parser state. ``activeWcs`` is the 1-based index into
+  // the G5x table (1..9 → G54..G59.3). ``g92`` is the additive
+  // ``G92`` origin that is currently applied; ``g92Snapshot``
+  // remembers the value just before ``G92.2`` so ``G92.3`` can
+  // restore it. ``pendingG92`` is set by the G-word loop and
+  // resolved after the axis tokens on the same line — ``G92``
+  // takes its axis values from the same line they appear on, so a
+  // single pass through the tokens would otherwise lose them.
+  let activeWcs: number = 1
+  let g92: [number, number, number] = [0, 0, 0]
+  const g92Snapshot: [number, number, number] = [0, 0, 0]
+  let g92Suspended = false
+  let pendingG92: 'set' | 'clear' | 'suspend' | 'resume' | null = null
 
   const lines = text.split(/\r?\n/)
   for (let i = 0; i < lines.length; i++) {
@@ -449,6 +560,7 @@ const parseGcodeToolpath = (text: string): number[] => {
     let newX: number | null = null
     let newY: number | null = null
     let newZ: number | null = null
+    pendingG92 = null
 
     for (const token of tokens) {
       if (!token) continue
@@ -458,16 +570,31 @@ const parseGcodeToolpath = (text: string): number[] => {
       const numeric = Number.isFinite(value)
 
       switch (letter) {
-        case 'G':
-          if (numeric) {
-            if (value === 0) motion = 0
-            else if (value === 1) motion = 1
-            else if (value === 2) motion = 2
-            else if (value === 3) motion = 3
-            else if (value === 90) absolute = true
-            else if (value === 91) absolute = false
+        case 'G': {
+          if (!numeric) break
+
+          // Modal work-coordinate-system selectors.
+          const wcs = gwordToWcsIndex(value)
+          if (wcs !== null) {
+            activeWcs = wcs
+            break
           }
+
+          if (value === 0) motion = 0
+          else if (value === 1) motion = 1
+          else if (value === 2) motion = 2
+          else if (value === 3) motion = 3
+          else if (value === 90) absolute = true
+          else if (value === 91) absolute = false
+          else if (value === 92) {
+            pendingG92 = 'set'
+            g92Suspended = false
+          }
+          else if (Math.abs(value - 92.1) < 1e-9) pendingG92 = 'clear'
+          else if (Math.abs(value - 92.2) < 1e-9) pendingG92 = 'suspend'
+          else if (Math.abs(value - 92.3) < 1e-9) pendingG92 = 'resume'
           break
+        }
         case 'X':
           if (numeric) newX = absolute ? value : curX + value
           break
@@ -478,6 +605,39 @@ const parseGcodeToolpath = (text: string): number[] => {
           if (numeric) newZ = absolute ? value : curZ + value
           break
       }
+    }
+
+    // Resolve the G92 family. ``G92 X.. Y.. Z..`` only touches the
+    // axes it explicitly mentions — omitted axes keep their current
+    // value. ``G92.1`` zeros everything, ``G92.2`` suspends (G92
+    // contribution becomes 0 until G92.3 resumes it), ``G92.3``
+    // restores the snapshot taken at suspend time.
+    if (pendingG92) {
+      if (pendingG92 === 'set') {
+        for (const token of tokens) {
+          if (!token) continue
+          const letter = token[0].toUpperCase()
+          if (letter !== 'X' && letter !== 'Y' && letter !== 'Z') continue
+          const v = Number(token.slice(1))
+          if (!Number.isFinite(v)) continue
+          if (letter === 'X') g92[0] = v
+          else if (letter === 'Y') g92[1] = v
+          else g92[2] = v
+        }
+      } else if (pendingG92 === 'clear') {
+        g92[0] = 0; g92[1] = 0; g92[2] = 0
+        g92Snapshot[0] = 0; g92Snapshot[1] = 0; g92Snapshot[2] = 0
+        g92Suspended = false
+      } else if (pendingG92 === 'suspend') {
+        g92Snapshot[0] = g92[0]; g92Snapshot[1] = g92[1]; g92Snapshot[2] = g92[2]
+        g92Suspended = true
+      } else if (pendingG92 === 'resume') {
+        g92[0] = g92Snapshot[0]; g92[1] = g92Snapshot[1]; g92[2] = g92Snapshot[2]
+        g92Suspended = false
+      }
+      pendingG92 = null
+      // G92 lines never produce a motion segment.
+      continue
     }
 
     if (newX === null && newY === null && newZ === null) continue
@@ -494,36 +654,76 @@ const parseGcodeToolpath = (text: string): number[] => {
       continue
     }
 
-    segments.push(prevX, prevY, prevZ, curX, curY, curZ)
+    // While G92.2 is in effect, the G92 contribution is zero.
+    const effectiveG92: [number, number, number] = g92Suspended
+      ? [0, 0, 0]
+      : [g92[0], g92[1], g92[2]]
+
+    segments.push({
+      from: [prevX, prevY, prevZ],
+      to:   [curX,  curY,  curZ],
+      wcsIndex: activeWcs,
+      g92: effectiveG92,
+    })
     void motion
   }
 
   return segments
 }
 
-const replaceToolpathMesh = (segments: number[]) => {
+// Map a G-word numeric value to a work-coordinate-system index
+// (1..9) when it is a system-select, or null otherwise.
+const gwordToWcsIndex = (value: number): number | null => {
+  if (!Number.isFinite(value)) return null
+  if (value >= 54 && value <= 59) return Math.floor(value) - 53
+  if (Math.abs(value - 59.1) < 1e-9) return 7
+  if (Math.abs(value - 59.2) < 1e-9) return 8
+  if (Math.abs(value - 59.3) < 1e-9) return 9
+  return null
+}
+
+const replaceToolpathMesh = (segments: ParsedSegment[]) => {
   clearToolpathMesh()
 
-  let dx = 0, dy = 0, dz = 0
-  if (props.applyWorkingOffset) {
-    const g5x = store.status.g5xOffset || []
-    const g92 = store.status.g92Offset || []
-    dx = (Number(g5x[0]) || 0) + (Number(g92[0]) || 0)
-    dy = (Number(g5x[1]) || 0) + (Number(g92[1]) || 0)
-    dz = (Number(g5x[2]) || 0) + (Number(g92[2]) || 0)
-  }
+  const activeIdx = activeWcsIdx.value
+  const runtimeG5x = props.applyWorkingOffset ? activeWcsOffset.value : [0, 0, 0]
+  const runtimeG92 = props.applyWorkingOffset ? liveG92.value : [0, 0, 0]
 
-  const offset = new Float32Array(segments.length)
-  for (let i = 0; i < segments.length; i++) {
-    const axis = i % 3
-    const delta = axis === 0 ? dx : axis === 1 ? dy : dz
-    offset[i] = segments[i] + delta
+  const flat = new Float32Array(segments.length * 6)
+  let i = 0
+  for (const seg of segments) {
+    // Only the segment's active WCS gets the live g5xOffset from
+    // telemetry. Other systems would need their own offsets, which
+    // the backend doesn't expose (it only ships the active WCS's
+    // per-axis offsets). For the typical single-WCS case this is
+    // exactly right; for G54+G55 mixes the non-active sections
+    // render at machine origin, which is a known limitation of
+    // telemetry-only data — see the file header.
+    let g5xX = 0, g5xY = 0, g5xZ = 0
+    if (seg.wcsIndex === activeIdx) {
+      g5xX = runtimeG5x[0]
+      g5xY = runtimeG5x[1]
+      g5xZ = runtimeG5x[2]
+    }
+
+    // Program-level G92 is always additive on top of the WCS
+    // origin; the live G92 from telemetry adds on top of that.
+    const dx = g5xX + seg.g92[0] + runtimeG92[0]
+    const dy = g5xY + seg.g92[1] + runtimeG92[1]
+    const dz = g5xZ + seg.g92[2] + runtimeG92[2]
+
+    flat[i++] = seg.from[0] + dx
+    flat[i++] = seg.from[1] + dy
+    flat[i++] = seg.from[2] + dz
+    flat[i++] = seg.to[0] + dx
+    flat[i++] = seg.to[1] + dy
+    flat[i++] = seg.to[2] + dz
   }
 
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute(
       'position',
-      new THREE.Float32BufferAttribute(offset, 3),
+      new THREE.Float32BufferAttribute(flat, 3),
   )
   const material = new THREE.LineBasicMaterial({ color: 0x60a5fa })
   toolpathLine = new THREE.LineSegments(geometry, material)
@@ -547,8 +747,74 @@ const clearToolpathMesh = () => {
 
 const clearToolpath = () => {
   clearToolpathMesh()
+  // Drop the previously-loaded file's parsed segments so we don't
+  // leak memory when the user unloads a program or swaps to a new
+  // one. The cache is intentionally per-file; the watcher re-fires
+  // loadProgramToolpath when ``store.status.file`` changes, which
+  // is the only path that inserts into the cache.
+  if (lastLoadedFilename) parsedCache.delete(lastLoadedFilename)
+  if (wcsMarkerGroup) {
+    while (wcsMarkerGroup.children.length) {
+      const child = wcsMarkerGroup.children.pop()
+      if (child.geometry) child.geometry.dispose()
+      if (child.material) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => m.dispose())
+        } else {
+          child.material.dispose()
+        }
+      }
+    }
+  }
   lastLoadedFilename = ''
   toolpathMeta.value = { filename: '', moves: 0 }
+}
+
+// Redraws the active WCS origin marker from the live telemetry.
+// Three short colored axis arms (red X, green Y, blue Z) at the
+// origin position; the WCS name (G54, G55, …) is shown in the
+// text overlay so we don't need a 3D sprite for the label.
+const WCS_MARKER_ARM_LENGTH = 12
+
+const updateWcsMarker = () => {
+  if (!wcsMarkerGroup) return
+
+  while (wcsMarkerGroup.children.length) {
+    const child = wcsMarkerGroup.children.pop()
+    if (child.geometry) child.geometry.dispose()
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose())
+      } else {
+        child.material.dispose()
+      }
+    }
+  }
+
+  if (!props.applyWorkingOffset) return
+
+  const [ox, oy, oz] = activeWcsOffset.value
+  const arms: Array<{ dx: number; dy: number; dz: number; color: number }> = [
+    { dx: WCS_MARKER_ARM_LENGTH, dy: 0, dz: 0, color: 0xef4444 },
+    { dx: 0, dy: WCS_MARKER_ARM_LENGTH, dz: 0, color: 0x22c55e },
+    { dx: 0, dy: 0, dz: WCS_MARKER_ARM_LENGTH, color: 0x3b82f6 },
+  ]
+
+  for (const arm of arms) {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+            [
+              ox, oy, oz,
+              ox + arm.dx, oy + arm.dy, oz + arm.dz,
+            ],
+            3,
+        ),
+    )
+    const m = new THREE.LineBasicMaterial({ color: arm.color })
+    wcsMarkerGroup.add(new THREE.LineSegments(g, m))
+  }
 }
 
 const animate = () => {
@@ -579,8 +845,8 @@ const animate = () => {
           </template>
           <template v-if="props.applyWorkingOffset && (store.status.g5xOffset || store.status.g92Offset)">
             · offset
-            G5x ({{ formatOffset(store.status.g5xOffset) }})
-            + G92 ({{ formatOffset(store.status.g92Offset) }})
+            G5x={{ activeWcsName }} ({{ formatOffset(activeWcsOffset) }})
+            + G92 ({{ formatOffset(liveG92) }})
           </template>
         </div>
       </div>

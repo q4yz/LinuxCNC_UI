@@ -58,8 +58,8 @@ async function deleteMacro(name) {
     rejectButtonText: "Cancel",
   });
   if (shouldDelete) {
-    const ok = await store.deleteMacro(MACRO_KIND.MCODE, name);
-    if (ok) await store.loadList(MACRO_KIND.MCODE);
+    const result = await store.deleteMacro(MACRO_KIND.MCODE, name);
+    if (result.ok) await store.loadList(MACRO_KIND.MCODE);
   }
 }
 
@@ -85,8 +85,8 @@ async function commitCreate() {
   // Seed with a newline so the initial PUT succeeds. The dialog
   // closes; the operator then clicks Edit (or opens the URL
   // ``/config/<name>`` directly) to reach the universal editor.
-  const ok = await store.saveMacro(MACRO_KIND.MCODE, name, "\n");
-  if (ok) {
+  const result = await store.saveMacro(MACRO_KIND.MCODE, name, "\n");
+  if (result.ok) {
     createOpen.value = false;
     await store.loadList(MACRO_KIND.MCODE);
   } else if (store.lastError) {

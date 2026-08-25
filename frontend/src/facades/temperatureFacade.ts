@@ -1,13 +1,14 @@
-import {BaseThreadService} from "../../generated/api/services/BaseThreadService";
-import {ModulesToolsService} from "../../generated/api/services/ModulesToolsService";
-import {CommandResult} from "../entities/common/CommandResult";
-import {ReadingSet} from "../entities/temperature/ReadingSet";
-import {toReadingSet} from "../mappers/temperatureMapper";
-import {describeError} from "../core/error-format";
+import { BaseThreadService } from "../../generated/api/services/BaseThreadService";
+import { ModulesToolsService } from "../../generated/api/services/ModulesToolsService";
+import { CommandResult } from "../entities/common/CommandResult";
+import { ReadingSet } from "../entities/temperature/ReadingSet";
+import { toReadingSet } from "../mappers/temperatureMapper";
+import { describeError, errorStatus } from "../core/error-format";
 
 // Adjust the import path based on where you saved the class
-import {HeaterControlRequest} from "../entities/tools/Heater";
-import {toHeaterCommand} from "../mappers/toolsMapper";
+import { HeaterControlRequest } from "../entities/tools/Heater";
+import { toHeaterCommand } from "../mappers/toolsMapper";
+import type { HeaterCommandStateResponse } from "../../generated/api/models/HeaterCommandStateResponse";
 
 export class TemperatureService {
     /**
@@ -38,16 +39,23 @@ export class TemperatureService {
 
             const response = await ModulesToolsService.setToolTarget(request.toolId, cmd);
 
-            return CommandResult.success({
-                commandId: response && (response as any).id ? (response as any).id : request.toolId,
-                message: response && (response as any).command ? (response as any).command : "ok",
-            });
+            return TemperatureService.fromHeaterCommandResponse(response, request.toolId);
         } catch (err: unknown) {
             return CommandResult.failure(describeError(err), {
                 commandId: request.toolId,
-                message: "Failed to set target",
+                statusCode: errorStatus(err),
             });
         }
+    }
+
+    private static fromHeaterCommandResponse(
+        response: HeaterCommandStateResponse,
+        fallbackCommandId: string,
+    ): CommandResult {
+        return CommandResult.success({
+            commandId: response.id ?? fallbackCommandId,
+            message: response.command ?? "",
+        });
     }
 }
 
@@ -58,9 +66,8 @@ export default TemperatureService;
  *
  * `modules/temperature/store.ts` (and other pre-OOP call sites)
  * still calls the facade with positional arguments. `TemperatureService`
- * takes a `HeaterControlRequest` object now, so this wrapper adapts
- * the old call sites to the new static API without duplicating
- * dispatch logic.
+ * takes a `HeaterControlRequest` object now, so this wrapper adapts the
+ * old call sites to the new static API without duplicating dispatch logic.
  */
 export const temperatureFacade = {
     async setTarget(toolId: string, target: number): Promise<CommandResult> {

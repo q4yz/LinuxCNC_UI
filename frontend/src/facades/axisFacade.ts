@@ -2,44 +2,56 @@
 // (positions, status) still flows through ``stores/machine.js`` —
 // this facade owns the write surface only.
 
-import { ModulesAxisService } from "../../generated/api";
+import { ModulesAxisService } from "../../generated/api/services/ModulesAxisService";
 import { CommandResult } from "../entities";
-import { describeError } from "../core/error-format";
+import { describeError, errorStatus } from "../core/error-format";
 
-async function _commandResultFrom(promise, commandId) {
+async function _commandResultFrom(
+  promise: Promise<unknown>,
+  commandId: string,
+): Promise<CommandResult> {
   try {
     await promise;
     return CommandResult.success({ commandId });
-  } catch (err) {
+  } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {
       commandId,
-      message: "Axis command failed",
+      statusCode: errorStatus(err),
     });
   }
 }
 
-async function jogStop() {
+async function jogStop(): Promise<CommandResult> {
   return _commandResultFrom(ModulesAxisService.jogStop(), "jog-stop");
 }
 
-async function jogContinuous(payload) {
+async function jogContinuous(payload: unknown): Promise<CommandResult> {
   return _commandResultFrom(
-    ModulesAxisService.jogContinuous(payload),
+    ModulesAxisService.jogContinuous(payload as never),
     "jog-continuous",
   );
 }
 
-async function jogKeepalive() {
-  return _commandResultFrom(ModulesAxisService.jogKeepalive(), "jog-keepalive");
+async function jogKeepalive(): Promise<CommandResult> {
+  return _commandResultFrom(
+    ModulesAxisService.jogKeepalive(),
+    "jog-keepalive",
+  );
 }
 
-async function home(axis) {
+async function home(axis: number): Promise<CommandResult> {
   return _commandResultFrom(ModulesAxisService.home({ axis }), `home:${axis}`);
 }
 
-async function updateSettings(multiplier, absoluteSpeedLimit) {
+async function updateSettings(
+  multiplier: number,
+  absoluteSpeedLimit: number,
+): Promise<CommandResult> {
   return _commandResultFrom(
-    ModulesAxisService.axisSettings({ multiplier, absolute_speed_limit: absoluteSpeedLimit }),
+    ModulesAxisService.axisSettings({
+      multiplier,
+      absolute_speed_limit: absoluteSpeedLimit,
+    }),
     "axis-settings",
   );
 }

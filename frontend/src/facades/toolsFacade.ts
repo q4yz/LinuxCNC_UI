@@ -9,10 +9,12 @@ import {
   toToolList,
   type AnyToolWire,
 } from "../mappers/toolsMapper";
-import { describeError } from "../core/error-format";
+import { describeError, errorStatus } from "../core/error-format";
 import { SpindleDigitalControlRequest } from "../entities/tools/SpindleDigital";
 import { HeaterControlRequest } from "../entities/tools/Heater";
 import { ExtruderControlRequest } from "../entities/tools/Extruder";
+import type { ToolCommandResponse } from "../../generated/api/models/ToolCommandResponse";
+import type { HeaterCommandStateResponse } from "../../generated/api/models/HeaterCommandStateResponse";
 
 export class ToolsService {
   // --- Reads -------------------------------------------------------------
@@ -46,14 +48,11 @@ export class ToolsService {
     const cmd = toSpindleCommand(request);
     try {
       const response = await ModulesToolsService.controlSpindle(cmd);
-      return CommandResult.success({
-        commandId: response && (response as any).tool_id ? (response as any).tool_id : request.toolId,
-        message: response && (response as any).command ? (response as any).command : "ok",
-      });
+      return ToolsService.fromToolCommandResponse(response, request.toolId);
     } catch (err: unknown) {
       return CommandResult.failure(describeError(err), {
         commandId: request.toolId,
-        message: "Spindle command failed",
+        statusCode: errorStatus(err),
       });
     }
   }
@@ -65,14 +64,11 @@ export class ToolsService {
     const cmd = toExtruderCommand(request);
     try {
       const response = await ModulesToolsService.controlExtruder(cmd);
-      return CommandResult.success({
-        commandId: response && (response as any).tool_id ? (response as any).tool_id : request.toolId,
-        message: response && (response as any).command ? (response as any).command : "ok",
-      });
+      return ToolsService.fromToolCommandResponse(response, request.toolId);
     } catch (err: unknown) {
       return CommandResult.failure(describeError(err), {
         commandId: request.toolId,
-        message: "Extruder command failed",
+        statusCode: errorStatus(err),
       });
     }
   }
@@ -83,17 +79,43 @@ export class ToolsService {
   static async setTarget(request: HeaterControlRequest): Promise<CommandResult> {
     const cmd = toHeaterCommand(request);
     try {
-      const response = await ModulesToolsService.setToolTarget(request.toolId, cmd,);
-      return CommandResult.success({
-        commandId: response && (response as any).id ? (response as any).id : request.toolId,
-        message: response && (response as any).command ? (response as any).command : "ok",
-      });
+      const response = await ModulesToolsService.setToolTarget(request.toolId, cmd);
+      return ToolsService.fromHeaterCommandResponse(response, request.toolId);
     } catch (err: unknown) {
       return CommandResult.failure(describeError(err), {
         commandId: request.toolId,
-        message: "Tool target failed",
+        statusCode: errorStatus(err),
       });
     }
+  }
+
+  /**
+   * Success-path constructor for spindle / extruder commands.
+   * Centralises the wire-field → ``CommandResult`` translation so
+   * every call site uses the same defensive defaults and the typed
+   * generated response shape (no more ``(response as any)`` casts).
+   */
+  private static fromToolCommandResponse(
+    response: ToolCommandResponse,
+    fallbackCommandId: string,
+  ): CommandResult {
+    return CommandResult.success({
+      commandId: response.tool_id ?? fallbackCommandId,
+      message: response.command ?? "",
+    });
+  }
+
+  /**
+   * Success-path constructor for heater target commands.
+   */
+  private static fromHeaterCommandResponse(
+    response: HeaterCommandStateResponse,
+    fallbackCommandId: string,
+  ): CommandResult {
+    return CommandResult.success({
+      commandId: response.id ?? fallbackCommandId,
+      message: response.command ?? "",
+    });
   }
 }
 

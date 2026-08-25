@@ -87,10 +87,10 @@ class SpindleDigitalService:
         pins.absolute_master_override_enable.set_value(dto.master_override_enable)
 
         if current_state in (MachineState.RUNNING, MachineState.PAUSED):
-            pins.override.set_value(dto.override)
+            pins.override.set_value(int(dto.override * 100))
         else:
             machine_service.ensure_mdi_mode()
-            pins.override.set_value(1)
+            pins.override.set_value(100)
             mdi = M3_FORWARD.format(speed=dto.master_override)
             machine_service.dispatch_mdi(mdi)
         return mdi
@@ -104,10 +104,10 @@ class SpindleDigitalService:
         pins.absolute_master_override_enable.set_value(dto.master_override_enable)
 
         if current_state in (MachineState.RUNNING, MachineState.PAUSED):
-            pins.override.set_value(dto.override)
+            pins.override.set_value(int(dto.override * 100))
         else:
             machine_service.ensure_mdi_mode()
-            pins.override.set_value(1)
+            pins.override.set_value(100)
             mdi = M4_BACKWARD.format(speed=dto.master_override)
             machine_service.dispatch_mdi(mdi)
         return mdi
@@ -129,7 +129,7 @@ class SpindleDigitalService:
         return False
 
     def _continue(self, pins,  dto: SpindleDigitalSettingsDTO):
-        pins.override.set_value(dto.override)
+        pins.override.set_value(int(dto.override * 100))
         pins.absolute_master_override_enable.set_value(dto.master_override_enable)
         pass
 

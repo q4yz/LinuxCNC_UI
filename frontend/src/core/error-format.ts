@@ -16,6 +16,9 @@
 // interpreter; this module consolidates it. The contract is one
 // function, one job, one place to add a new envelope shape.
 
+import { useConsoleStore } from "../stores/console";
+import type { CommandResult } from "../entities/common/CommandResult";
+
 /**
  * Render any thrown error / fetch failure as a single
  * operator-readable sentence.
@@ -83,6 +86,66 @@ export function describeError(error) {
 export function describeErrorOr(error, fallback = "Unknown error") {
   const text = describeError(error)
   return text || fallback
+}
+
+/**
+ * Extract the HTTP status code carried by a generated-client
+ * ``ApiError``. Returns ``null`` when the value is not a recognised
+ * API error envelope — native ``Error``s, ``null``, primitives, and
+ * network failures with no response all collapse to ``null`` so
+ * ``CommandResult`` callers can branch on the canonical signal
+ * without sprinkling type guards.
+ *
+ * @param {unknown} error
+ * @returns {number | null}
+ */
+export function errorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null
+  const status = (error as { status?: unknown }).status
+  return typeof status === "number" ? status : null
+}
+
+/**
+ * Uniform failure reporter for every manual user action.
+ *
+ * The legacy pattern was a hand-rolled ``consoleStore.error(`Failed
+ * to <name>: ${err.message}`)`` at every call site — the messages
+ * drifted over time (some prefixed with ``[ToolStore]``, some used
+ * ``err.body?.detail``, some missed the trailing period, none fired
+ * a toast). This helper is the single chokepoint.
+ *
+ * Message shape:
+ *
+ *   ``"<name> failed (HTTP <code>): <reason>"`` when a status code
+ *   is present;
+ *
+ *   ``"<name> failed: <reason>"`` otherwise (WebSocket fire-and-
+ *   forget, native ``Error``s without an HTTP envelope).
+ *
+ * Always routes through ``consoleStore.error(text, { popup: true })``
+ * so a toast fires; the operator does not need to be looking at
+ * the console pane when an action fails.
+ *
+ * Stores call this on ``result.failed`` after their facade call;
+ * Vue components do not need to import it directly.
+ *
+ * @param {string} name Operator-friendly label of the action
+ *   (e.g. ``"home axis 0"``, ``"start program"``, ``"deploy"``).
+ * @param {CommandResult} result The ``CommandResult`` returned by
+ *   the facade that performed the dispatch.
+ */
+export function reportCommandFailure(name: string, result: CommandResult): void {
+  const status =
+    result.statusCode != null ? ` (HTTP ${result.statusCode})` : ""
+  const reason =
+    result.failureReason == null
+      ? "unknown error"
+      : typeof result.failureReason === "string"
+        ? result.failureReason
+        : String(result.failureReason)
+  useConsoleStore().error(`${name} failed${status}: ${reason}`, {
+    popup: true,
+  })
 }
 
 export default describeError

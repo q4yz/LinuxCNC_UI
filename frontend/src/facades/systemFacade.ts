@@ -4,7 +4,7 @@ import { SystemService } from "../../generated/api/services/SystemService";
 import { CommandResult } from "../entities/common/CommandResult";
 import { SystemVersion } from "../entities/system/SystemVersion";
 import { toSystemVersion } from "../mappers/systemMapper";
-import { describeError } from "../core/error-format";
+import { describeError, errorStatus } from "../core/error-format";
 
 /**
  * @returns {Promise<SystemVersion>}
@@ -18,14 +18,14 @@ async function fetchVersion() {
   }
 }
 
-async function triggerUpdate() {
+async function triggerUpdate(): Promise<CommandResult> {
   try {
     await SystemService.postSystemUpdate();
     return CommandResult.success({ commandId: "system-update" });
-  } catch (err) {
+  } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {
       commandId: "system-update",
-      message: "Update trigger failed",
+      statusCode: errorStatus(err),
     });
   }
 }

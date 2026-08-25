@@ -3,14 +3,15 @@ import {defineStore, storeToRefs} from "pinia";
 import {computed, ref} from "vue";
 
 import {generateSetOffset} from "../config/gcodes";
-import {ModulesAxisService} from "../../generated/api";
-import {ModulesMachineStateService} from "../../generated/api";
-import {ModulesProgramService} from "../../generated/api";
 import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
 import {createModuleSettings} from "../core/modules/settings";
 import {servoThreadService} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
+import {machineStateFacade} from "../facades/machineStateFacade";
+import {progressFacade} from "../facades/progressFacade";
+import {CommandResult} from "../entities/common/CommandResult";
+import {reportCommandFailure} from "../core/error-format";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
 const AXIS_NAMES = ["X", "Y", "Z", "A", "B", "C", "U", "V", "W"];
@@ -82,82 +83,112 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // ──────────────────────────────────────────────────────────────── //
 
     let settingsLoaded = false;
+    let settingsLoadPromise: Promise<void> | null = null;
 
-    async function refreshSettings() {
-        try {
-            const settings = await machineSettings.readAll();
-            if (!settings || typeof settings !== "object") {
+    async function refreshSettings(): Promise<void> {
+        // Idempotent: a second caller while the first load is in
+        // flight awaits the same promise so we never fire two
+        // HTTP round-trips for the same store instance.
+        if (settingsLoaded) return;
+        if (settingsLoadPromise) return settingsLoadPromise;
+        settingsLoadPromise = (async () => {
+            try {
+                const settings = await machineSettings.readAll();
+                if (settings && typeof settings === "object") {
+                    const velocity = Number(settings.default_jog_velocity);
+                    if (Number.isFinite(velocity) && velocity >= 1) {
+                        defaultJogVelocity.value = velocity;
+                    }
+
+                    const interval = Number(settings.keepalive_interval_ms);
+                    if (Number.isFinite(interval) && interval >= 50 && interval <= 2000) {
+                        keepaliveIntervalMs.value = interval;
+                    }
+                }
+            } catch (err) {
+                console.warn("Machine settings unavailable; using defaults", err);
+            } finally {
                 settingsLoaded = true;
-                return;
             }
-
-            const velocity = Number(settings.default_jog_velocity);
-            if (Number.isFinite(velocity) && velocity >= 1) {
-                defaultJogVelocity.value = velocity;
-            }
-
-            const interval = Number(settings.keepalive_interval_ms);
-            if (Number.isFinite(interval) && interval >= 50 && interval <= 2000) {
-                keepaliveIntervalMs.value = interval;
-            }
-            settingsLoaded = true;
-        } catch (err) {
-            settingsLoaded = true;
-            console.warn("Machine settings unavailable; using defaults", err);
-        }
+        })();
+        return settingsLoadPromise;
     }
+
+    // Eagerly kick off the settings load when the store is first
+    // instantiated so the first jog click does not have to await a
+    // round-trip before sending ``jog_axis``. Previously the await
+    // lived inside ``jogContinuous``, which created a race: a quick
+    // click-and-release let ``stopJog`` finish before
+    // ``jogContinuous`` ever reached the WebSocket, leaving a
+    // keep-alive interval running for a jog the operator already
+    // cancelled. Loading eagerly (fire-and-forget) closes that
+    // window — the values land before any operator input on every
+    // realistic boot.
+    void refreshSettings();
 
     // ──────────────────────────────────────────────────────────────── //
     // Hardware actions                                                   //
+    //                                                                         //
+    // Every manual-trigger action returns ``Promise<CommandResult>`` so     //
+    // the Vue component layer always sees the same uniform shape. The       //
+    // failure path is channelled through ``reportCommandFailure`` so the    //
+    // console row + toast are byte-identical across every action.           //
     // ──────────────────────────────────────────────────────────────── //
 
-    async function toggleEstop() {
+    async function toggleEstop(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const targetState = status.value.isEstop ? "estop_reset" : "estop";
-        try {
-            await ModulesMachineStateService.setMachineState({state: targetState});
-            if (targetState === "estop") {
-                consoleStore.warning("E-STOP Engaged");
-            } else {
-                consoleStore.success("E-STOP Cleared");
-            }
-        } catch (err) {
-            consoleStore.error(`Failed to toggle ESTOP: ${err.message}`);
-            console.error("Failed to toggle ESTOP", err);
+        const result = await machineStateFacade.setState(targetState);
+        if (result.failed) {
+            reportCommandFailure("toggle ESTOP", result);
+        } else if (targetState === "estop") {
+            consoleStore.warning("E-STOP Engaged");
+        } else {
+            consoleStore.success("E-STOP Cleared");
         }
+        return result;
     }
 
-    async function togglePower() {
+    async function togglePower(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const isOn = status.value.isMachineOn;
         const estop = status.value.isEstop;
 
         if (estop && !isOn) {
             consoleStore.warning("Cannot turn on machine while ESTOP is active");
-            return;
+            return CommandResult.failure("ESTOP active");
         }
 
         const targetState = isOn ? "off" : "on";
-        try {
-            await ModulesMachineStateService.setMachineState({state: targetState});
-            if (targetState === "on") {
-                consoleStore.success("Machine Power ON");
-            } else {
-                consoleStore.success("Machine Power OFF");
-            }
-        } catch (err) {
-            consoleStore.error(`Failed to toggle Power: ${err.message}`);
-            console.error("Failed to toggle Power", err);
+        const result = await machineStateFacade.setState(targetState);
+        if (result.failed) {
+            reportCommandFailure("toggle power", result);
+        } else if (targetState === "on") {
+            consoleStore.success("Machine Power ON");
+        } else {
+            consoleStore.success("Machine Power OFF");
         }
+        return result;
     }
 
-    // --- Jogging Methods (Delegated to Service) ---
+    // --- Jogging Methods (kept on the WebSocket path) ---
+    //
+    // Per the design decision documented in the plan, continuous
+    // jogging over the telemetry WebSocket is fire-and-forget, not a
+    // request/response, so it does not go through ``CommandResult``.
+    // A simple ``consoleStore`` row is sufficient and a toast would
+    // be operator-noise on every keep-alive tick.
 
     async function jog(axis: number, distance: number) {
         const consoleStore = useConsoleStore();
         const axisName = AXIS_NAMES[axis];
         try {
-            if (!settingsLoaded) await refreshSettings();
+            // Settings are loaded eagerly on store creation; do not
+            // await here — the discrete jog would race against a
+            // subsequent ``stopJog`` if it ever had to wait on the
+            // HTTP round-trip. Fall back to the documented defaults
+            // (``DEFAULT_JOG_VELOCITY``) if the load is still in
+            // flight on the very first click.
             const velocity = Number.isFinite(defaultJogVelocity.value)
                 ? defaultJogVelocity.value
                 : DEFAULT_JOG_VELOCITY;
@@ -165,15 +196,26 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             consoleStore.info(`Jogging ${axisName} axis ${distance}mm`);
 
             // Dispatch discrete jog through the service
-            servoThreadService.send({type: "jog_axis", velocities: {[axis]: velocity}, distance,});
-        } catch (err) {
+            servoThreadService.send({
+                type: "jog_axis",
+                velocities: {[axis]: velocity},
+                distance,
+            });
+        } catch (err: any) {
             consoleStore.error(`Failed to jog ${axisName}: ${err.message}`);
             console.error("Failed to jog axis", axis, err);
         }
     }
 
     async function jogContinuous(axis: number, velocity: number) {
-        if (!settingsLoaded) await refreshSettings();
+        // No await on ``refreshSettings`` here — see ``jog`` above.
+        // The keep-alive interval is set up synchronously inside
+        // ``servoThreadService.jogContinuous`` so a click-and-release
+        // that lands before the settings round-trip resolves still
+        // produces a paired ``jog_axis`` + ``jog_stop`` over the
+        // socket; awaiting would let the operator's ``stopJog``
+        // overtake the jog and leave the axis running on a zombie
+        // keep-alive timer.
         const requestedVelocity = Number(velocity);
         const jogVelocity = Number.isFinite(requestedVelocity)
             ? requestedVelocity
@@ -195,131 +237,143 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Homing + coordinate system                                         //
     // ──────────────────────────────────────────────────────────────── //
 
-    async function homeAxis(axisIndex: number) {
-        const consoleStore = useConsoleStore();
-        try {
-            consoleStore.info(`Homing axis index ${axisIndex}...`);
-            await ModulesAxisService.homeAxis({axis: axisIndex});
-            consoleStore.success(`Homed axis ${axisIndex} successfully`);
-        } catch (err) {
-            consoleStore.error(`Failed to home axis ${axisIndex}: ${err.message}`);
-            console.error("Failed to home axis", axisIndex, err);
+    async function homeAxis(axisIndex: number): Promise<CommandResult> {
+        const result = await machineStateFacade.setHomeAxis(axisIndex);
+        if (result.failed) {
+            reportCommandFailure(`home axis ${axisIndex}`, result);
+        } else {
+            useConsoleStore().success(`Homed axis ${axisIndex} successfully`);
         }
+        return result;
     }
 
-    async function homeAll() {
-        const consoleStore = useConsoleStore();
-        try {
-            consoleStore.info("Homing all axes...");
-            await ModulesAxisService.homeAxis({axis: HOME_ALL});
-            consoleStore.success("All axes homed successfully");
-        } catch (err) {
-            consoleStore.error(`Failed to home all axes: ${err.message}`);
-            console.error("Failed to home all axes", err);
+    async function homeAll(): Promise<CommandResult> {
+        const result = await machineStateFacade.setHomeAxis(HOME_ALL);
+        if (result.failed) {
+            reportCommandFailure("home all axes", result);
+        } else {
+            useConsoleStore().success("All axes homed successfully");
         }
+        return result;
     }
 
-    async function setPosition(axisIndex: number, value: number) {
+    async function setPosition(axisIndex: number, value: number): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const axisName = AXIS_NAMES[axisIndex];
-        if (!axisName) return;
-        try {
-            consoleStore.command(`Setting work offset for ${axisName} to ${value}...`);
-            const cmd = generateSetOffset(axisName, value);
-            await ModulesMachineStateService.runMdiCommand({command: cmd});
-        } catch (err) {
-            consoleStore.error(`Failed to set position for ${axisName}: ${err.message}`);
-            console.error("Failed to set position for axis", axisIndex, err);
+        if (!axisName) {
+            return CommandResult.failure("Unknown axis index");
         }
+        consoleStore.command(`Setting work offset for ${axisName} to ${value}...`);
+        const cmd = generateSetOffset(axisName, value);
+        const result = await machineStateFacade.sendMdi(cmd);
+        if (result.failed) {
+            reportCommandFailure(`set position for ${axisName}`, result);
+        }
+        return result;
     }
 
-    async function setCoordinateSystem(gcodeString: string) {
+    async function setCoordinateSystem(gcodeString: string): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
-        try {
-            consoleStore.command(`Switching to Coordinate System: ${gcodeString}`);
-            await ModulesMachineStateService.runMdiCommand({command: gcodeString});
-        } catch (err) {
-            consoleStore.error(`Failed to switch Coordinate System: ${err.message}`);
-            console.error("Failed to switch coordinate system", err);
+        consoleStore.command(`Switching to Coordinate System: ${gcodeString}`);
+        const result = await machineStateFacade.sendMdi(gcodeString);
+        if (result.failed) {
+            reportCommandFailure("switch coordinate system", result);
         }
+        return result;
     }
 
-    async function updateAxisSettings(multiplier: number, absoluteSpeedLimit: number) {
+    async function updateAxisSettings(
+        multiplier: number,
+        absoluteSpeedLimit: number,
+    ): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const result = await axisFacade.updateSettings(multiplier, absoluteSpeedLimit);
         if (result.ok) {
             consoleStore.success(
                 `Axis settings updated (${Math.round(multiplier * 100)}%, ${absoluteSpeedLimit} mm/min)`,
             );
-            return;
+        } else {
+            reportCommandFailure("update axis settings", result);
         }
-        const reason =
-            result.failureReason instanceof Error
-                ? result.failureReason.message
-                : String(result.failureReason);
-        consoleStore.error(`Failed to update axis settings: ${reason}`);
-        console.error("Failed to update axis settings", result.failureReason);
+        return result;
     }
 
     // ──────────────────────────────────────────────────────────────── //
     // Program lifecycle actions                                          //
     // ──────────────────────────────────────────────────────────────── //
 
-    async function startProgram(filename: string) {
-        if (!filename || typeof filename !== "string") return;
+    async function startProgram(filename: string): Promise<CommandResult> {
+        if (!filename || typeof filename !== "string") {
+            return CommandResult.failure("Filename is required");
+        }
         const consoleStore = useConsoleStore();
-        try {
-            consoleStore.command(`Loading program ${filename}...`);
-            await ModulesProgramService.loadProgram({filename});
+        const result = await progressFacade.loadProgram(filename);
+        if (result.failed) {
+            reportCommandFailure(`load ${filename}`, result);
+        } else {
             consoleStore.success(`Loaded ${filename} — press Start to begin.`);
-        } catch (err) {
-            consoleStore.error(`Failed to load ${filename}: ${err.body?.detail || err.message}`);
-            console.error("Failed to load program", filename, err);
         }
+        return result;
     }
 
-    async function loadProgram(filename: string) {
-        if (!filename || typeof filename !== "string") return;
-        const consoleStore = useConsoleStore();
-        try {
-            await ModulesProgramService.loadProgram({filename});
-        } catch (err) {
-            consoleStore.error(`Failed to load ${filename}: ${err.body?.detail || err.message}`);
-            console.error("Failed to load program", filename, err);
+    async function loadProgram(filename: string): Promise<CommandResult> {
+        if (!filename || typeof filename !== "string") {
+            return CommandResult.failure("Filename is required");
         }
+        const result = await progressFacade.loadProgram(filename);
+        if (result.failed) {
+            reportCommandFailure(`load ${filename}`, result);
+        }
+        return result;
     }
 
-    async function pauseProgram() {
+    async function pauseProgram(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
-        try {
+        const result = await progressFacade.pauseProgram();
+        if (result.failed) {
+            reportCommandFailure("pause program", result);
+        } else {
             consoleStore.info("Pausing program");
-            await ModulesProgramService.pauseProgram();
-        } catch (err) {
-            consoleStore.error(`Failed to pause program: ${err.message}`);
-            console.error("Failed to pause program", err);
         }
+        return result;
     }
 
-    async function resumeProgram() {
+    async function resumeProgram(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
-        try {
+        const result = await progressFacade.resumeProgram();
+        if (result.failed) {
+            reportCommandFailure("resume program", result);
+        } else {
             consoleStore.info("Resuming program");
-            await ModulesProgramService.resumeProgram();
-        } catch (err) {
-            consoleStore.error(`Failed to resume program: ${err.message}`);
-            console.error("Failed to resume program", err);
         }
+        return result;
     }
 
-    async function abortProgram() {
+    async function abortProgram(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
-        try {
+        const result = await progressFacade.stopProgram();
+        if (result.failed) {
+            reportCommandFailure("abort program", result);
+        } else {
             consoleStore.warning("Aborting program");
-            await ModulesProgramService.stopProgram();
-        } catch (err) {
-            consoleStore.error(`Failed to abort program: ${err.message}`);
-            console.error("Failed to abort program", err);
         }
+        return result;
+    }
+
+    async function unloadProgram(): Promise<CommandResult> {
+        const result = await progressFacade.unloadProgram();
+        if (result.failed) {
+            reportCommandFailure("unload program", result);
+        }
+        return result;
+    }
+
+    async function runProgram(): Promise<CommandResult> {
+        const result = await progressFacade.runProgram();
+        if (result.failed) {
+            reportCommandFailure("start program", result);
+        }
+        return result;
     }
 
     // ──────────────────────────────────────────────────────────────── //
@@ -354,9 +408,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         setCoordinateSystem,
         startProgram,
         loadProgram,
+        runProgram,
         pauseProgram,
         resumeProgram,
         abortProgram,
+        unloadProgram,
         updateAxisSettings,
     };
 });
