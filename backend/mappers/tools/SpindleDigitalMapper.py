@@ -32,7 +32,7 @@ class SpindleDigitalMapper:
             spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT),
             absolute_master_override_enable=ReadWriteDynamicHalPin(f"absolute-master-override-enable{suffix}", HalDataType.BIT),
             absolute_master_override=ReadWriteDynamicHalPin(f"absolute-master-override{suffix}", HalDataType.FLOAT),
-            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.FLOAT),
+            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.S32),
         )
 
     @classmethod
