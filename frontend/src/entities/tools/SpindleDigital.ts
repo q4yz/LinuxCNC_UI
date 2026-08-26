@@ -2,7 +2,7 @@
 import {SpindleDigitalCommand} from "../../../generated/api";
 
 
-export type SpindleDirection = "forward" | "backward" | "idle";
+export type SpindleDirection = "forward" | "backward" | "stop";
 export type SpindleDigitalAction = "forward" | "backward" | "stop";
 
 export class SpindleDigital {
@@ -20,7 +20,7 @@ export class SpindleDigital {
 
     constructor(data: Partial<SpindleDigital> & { id: string }) {
         this.id = data.id;
-        this.direction = data.direction ?? "idle";
+        this.direction = data.direction ?? "stop";
         this.actualRpm = data.actualRpm ?? 0;
         this.isConnected = data.isConnected ?? false;
         this.errorCount = data.errorCount ?? 0;
@@ -31,7 +31,7 @@ export class SpindleDigital {
     }
 
     get isRunning(): boolean {
-        return this.direction !== "idle";
+        return this.direction === "forward" || this.direction === "backward";
     }
 
     get fractionOfMax(): number {
@@ -39,8 +39,6 @@ export class SpindleDigital {
         return Math.max(0, Math.min(1, this.actualRpm / this.maxRpm));
     }
 }
-
-export type SPINDLE_DIRECTIONS = "forward" | "backward" | "idle";
 
 export class SpindleDigitalControlRequest {
     readonly toolId: string;

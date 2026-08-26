@@ -22,9 +22,9 @@ const speedPercentage = ref<number>(100);
 const masterOverride = ref<boolean>(false);
 const masterOverrideSpeed = ref<number>(props.tool.minRpm ?? 0);
 
-type SpindleRunningState = "idle" | "forward" | "backward" | "stop";
+type SpindleRunningState = "forward" | "backward" | "stop";
 
-const runningState = ref<SpindleRunningState>("idle");
+const runningState = ref<SpindleRunningState>("stop");
 let postTimer: ReturnType<typeof setTimeout> | null = null;
 
 // --- State Logic ---
@@ -84,7 +84,7 @@ function handleSpindle(action: SpindleRunningState) {
   if (isDisabled.value) return; // Guard against disabled state
 
   if (action === "stop") {
-    runningState.value = "idle";
+    runningState.value = "stop";
     toolStore.sendSpindleCommand(
         props.tool.id,
         "stop",
@@ -127,12 +127,19 @@ watch([masterOverrideSpeed, speedPercentage], () => {
   if (postTimer) clearTimeout(postTimer);
   postTimer = setTimeout(() => {
     postTimer = null;
+    // The slider is only meaningful while the spindle is in forward
+    // or backward. If the operator has stopped the spindle (or it
+    // has not yet been started) we skip the dispatch — the backend
+    // rejects ``"stop"`` as an action for a speed-only update, and
+    // re-sending ``"stop"`` on every slider tick would be a no-op
+    // storm anyway.
     const action = runningState.value;
+    if (action !== "forward" && action !== "backward") return;
 
     if (isEffectiveMasterOverride.value) {
       toolStore.sendSpindleCommand(
           props.tool.id,
-          action as "forward" | "backward",
+          action,
           0,
           masterOverrideSpeed.value,
           true,
@@ -141,7 +148,7 @@ watch([masterOverrideSpeed, speedPercentage], () => {
     } else {
       toolStore.sendSpindleCommand(
           props.tool.id,
-          action as "forward" | "backward",
+          action,
           0,
           0,
           false,

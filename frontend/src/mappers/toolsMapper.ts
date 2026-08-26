@@ -79,7 +79,7 @@ export function toToolList(dict: Record<string, AnyToolWire> | null | undefined)
 export function toSpindleState(wire: SpindleDigitalStateResponse): SpindleState {
   return new SpindleState({
     id: wire.id,
-    direction: (typeof wire.state === "string" ? wire.state : "idle") as SpindleDirection,
+    direction: (typeof wire.state === "string" ? wire.state : "stop") as SpindleDirection,
     actualRpm: Number(wire.actual_rpm) || 0,
     isConnected: Boolean(wire.is_connected),
     errorCount: Number(wire.error_count) || 0,

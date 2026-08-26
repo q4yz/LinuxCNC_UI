@@ -97,7 +97,7 @@ test("toSpindleState: missing actual_rpm coerces to 0", () => {
   const s = toSpindleState({
     type: "spindle_digital",
     id: "x",
-    state: "idle",
+    state: "stop",
     min_rpm: 0,
     max_rpm: 24000,
   });
@@ -105,9 +105,9 @@ test("toSpindleState: missing actual_rpm coerces to 0", () => {
   assert.equal(s.isRunning, false);
 });
 
-test("toSpindleState: bogus direction falls back to idle", () => {
+test("toSpindleState: bogus direction falls back to 'stop'", () => {
   const s = toSpindleState({ type: "spindle_digital", id: "x", state: "spin" });
-  assert.equal(s.direction, "idle");
+  assert.equal(s.direction, "stop");
 });
 
 test("toSpindleState: backward direction is detected", () => {
