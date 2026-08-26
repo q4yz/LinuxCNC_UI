@@ -37,15 +37,20 @@ async function setState(state: string): Promise<CommandResult> {
 }
 
 async function setMode(mode: 1 | 2 | 3 | 4): Promise<CommandResult> {
+  // The generated client types ``_ModeCommand.mode`` as ``string``
+  // (the backend accepts "manual" / "auto" / "mdi") while this
+  // facade's historical contract accepted numeric literals. Cast
+  // at the seam so the public API stays intact; nobody calls this
+  // function today so the mismatch is dormant.
   return _commandResultFrom(
-    ModulesMachineStateService.setMachineModeMachineState({ mode }),
+    ModulesMachineStateService.setMachineMode({ mode: mode as unknown as string }),
     `set-mode:${mode}`,
   );
 }
 
 async function sendMdi(line: string): Promise<CommandResult> {
   return _commandResultFrom(
-    ModulesMachineStateService.machineMdi({ line }),
+    ModulesMachineStateService.runMdiCommand({ command: line }),
     "mdi",
   );
 }
