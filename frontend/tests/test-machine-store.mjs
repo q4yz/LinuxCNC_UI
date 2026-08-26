@@ -2,13 +2,12 @@
 //
 // Run with: node --test frontend/tests/test-machine-store.mjs
 //
-// The machine store lives at ``stores/machine.js`` (the cross-module
-// runtime layer) and is re-exported by ``modules/machine/store.js``.
-// It composes ``stores/servoThread.js`` for the 10 Hz WebSocket
-// telemetry (which owns the transport) and adds the module-specific
-// actions (jog, home, set position, program lifecycle, settings).
-// These tests cover the contract the store must respect after the
-// servo/base split:
+// The machine store lives at ``stores/machine.ts`` (the runtime
+// layer). It composes ``stores/servoThread.ts`` for the 10 Hz
+// WebSocket telemetry (which owns the transport) and adds the
+// machine-specific actions (jog, home, set position, program
+// lifecycle, settings). These tests cover the contract the store
+// must respect after the servo/base split:
 //
 //   * ``jogContinuous`` + ``jogStop`` round-trip populates and
 //     empties ``jogIntervals``.
@@ -42,7 +41,7 @@ const facadePath = resolve(
 );
 const jogControlsPath = resolve(
   repoRoot,
-  "frontend/src/modules/machine/components/JogControls.vue",
+  "frontend/src/components/machine/JogControls.vue",
 );
 
 function readStore() {

@@ -1,51 +1,21 @@
 <script setup>
-// Dashboard composition. Module-owned panels are imported statically
-// — every module is a hard dependency, and the lazy
-// ``defineAsyncComponent`` / ``import.meta.glob(..., { eager: false
-// })`` discovery has been removed in favour of eager, direct imports
-// (see ``.agent/STATE.md`` § 13 for the no-lazy-imports rule and
-// ``frontend/scripts/check-no-lazy-imports.mjs`` for the CI lint).
-
-import { computed, markRaw } from 'vue'
-import registry from '../core/modules/registry'
+// Dashboard composition. Each domain panel is imported statically
+// and rendered as a direct dependency. The previous registry-driven
+// ``registry.modules.has(...)`` gates are gone — every panel below
+// is required at build time.
 
 import NgcCoordinateSystemViewer from '../components/NgcCoordinateSystemViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 
-// Static imports for every dashboard panel. Module components are
-// hard dependencies so removing any of these breaks the build — that
-// is the desired behaviour. ``markRaw`` keeps the component
-// definitions out of Vue's deep reactivity so they can be safely
-// stored in the registry's reactive Map without wrapping them in a
-// Proxy (which Vue warns about: "Component that was made a reactive
-// object").
-import CameraViewerRaw from '../modules/camera/components/CameraViewer.vue'
-import TemperaturePanelRaw from '../modules/temperature/components/TemperaturePanel.vue'
-import DroPanelRaw from '../modules/machine/components/DroPanel.vue'
-import JogControlsRaw from '../modules/machine/components/JogControls.vue'
-import ToolPanelRaw from '../modules/tools/components/ToolPanel.vue'
-import MacroPanelRaw from '../modules/macros/components/MacroPanel.vue'
-import McodePanelRaw from '../modules/macros/components/McodePanel.vue'
-
-const CameraViewer = markRaw(CameraViewerRaw)
-const TemperaturePanel = markRaw(TemperaturePanelRaw)
-const DroPanel = markRaw(DroPanelRaw)
-const JogControls = markRaw(JogControlsRaw)
-const ToolPanel = markRaw(ToolPanelRaw)
-const MacroPanel = markRaw(MacroPanelRaw)
-const McodePanel = markRaw(McodePanelRaw)
-
-// ``registry.modules`` is a reactive Map so ``.has`` is tracked;
-// the computed flips once boot completes. Every panel is mounted
-// unconditionally; the registry guarantees every module shipped in
-// the repo is present.
-const cameraMounted = computed(() => registry.modules.has('camera'))
-const temperatureMounted = computed(() => registry.modules.has('temperature'))
-const machineMounted = computed(() => registry.modules.has('machine'))
-const toolsMounted = computed(() => registry.modules.has('tools'))
-const macrosMounted = computed(() => registry.modules.has('macros'))
+import CameraViewer from '../components/camera/CameraViewer.vue'
+import TemperaturePanel from '../components/temperature/TemperaturePanel.vue'
+import DroPanel from '../components/machine/DroPanel.vue'
+import JogControls from '../components/machine/JogControls.vue'
+import ToolPanel from '../components/tools/ToolPanel.vue'
+import MacroPanel from '../components/macros/MacroPanel.vue'
+import McodePanel from '../components/macros/McodePanel.vue'
 </script>
 
 <template>
@@ -56,18 +26,17 @@ const macrosMounted = computed(() => registry.modules.has('macros'))
       <!-- Left Column: flex-1 tells it to take 1 part space, but NEVER go below 570px -->
       <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
 
-        <DroPanel v-if="machineMounted" />
+        <DroPanel />
 
-        <JogControls v-if="machineMounted" />
+        <JogControls />
 
-        <ToolPanel v-if="toolsMounted" />
+        <ToolPanel />
 
-        <TemperaturePanel v-if="temperatureMounted" />
+        <TemperaturePanel />
 
-        <MacroPanel v-if="macrosMounted" />
+        <MacroPanel />
 
-        <McodePanel v-if="macrosMounted" />
-
+        <McodePanel />
 
       </div>
 
@@ -90,17 +59,13 @@ const macrosMounted = computed(() => registry.modules.has('macros'))
           </div>
         </div>
 
-
-
         <ActivePrintWidget />
 
         <div class="h-[300px]">
           <ConsolePanel />
         </div>
 
-        <div v-if="cameraMounted">
-          <CameraViewer />
-        </div>
+        <CameraViewer />
 
       </div>
 

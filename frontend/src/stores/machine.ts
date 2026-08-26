@@ -5,7 +5,7 @@ import {computed, ref} from "vue";
 import {generateSetOffset} from "../config/gcodes";
 import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
-import {createModuleSettings} from "../core/modules/settings";
+import {createModuleSettings} from "../core/settings/createModuleSettings";
 import {servoThreadService} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
@@ -21,10 +21,10 @@ const HOME_ALL = -1;
 const DEFAULT_JOG_VELOCITY = 500;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
-const MACHINE_MANIFEST_ID = "machine";
-const STORE_ID = `module_${MACHINE_MANIFEST_ID}`;
+const MACHINE_ID = "machine";
+const STORE_ID = MACHINE_ID;
 
-const machineSettings = createModuleSettings(MACHINE_MANIFEST_ID);
+const machineSettings = createModuleSettings(MACHINE_ID);
 
 export const useMachineStore = defineStore(STORE_ID, () => {
     // ──────────────────────────────────────────────────────────────── //

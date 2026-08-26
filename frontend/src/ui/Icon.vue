@@ -3,8 +3,7 @@
 //
 // Replaces the dozens of ad-hoc ``<svg>...</svg>`` blocks scattered
 // across the codebase today — see e.g. ``AppSidebar.vue:28-30`` (three
-// icons duplicated), ``modules/camera/manifest.js:20-24`` (camera
-// glyph), ``modules/machineconfig/manifest.js:14`` (gear glyph),
+// icons duplicated), ``AppSidebar.vue:34-40`` (camera + gear glyphs),
 // ``EStopHeader.vue:62-66`` (chevron + hamburger), and the toolbar
 // icons inside ``ActivePrintWidget.vue``. Each used the same Heroicons
 // path data with subtly different class soup.

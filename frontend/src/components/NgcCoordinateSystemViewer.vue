@@ -37,7 +37,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
-import { useMachineConfigStore } from '../modules/machineconfig/store'
+import { useMachineConfigStore } from '../stores/machineconfigStore'
 import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
 
 // --- Interfaces & Types ---

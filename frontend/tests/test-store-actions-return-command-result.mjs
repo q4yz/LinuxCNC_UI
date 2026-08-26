@@ -20,7 +20,6 @@ const repoRoot = resolve(here, "../..");
 
 const FRONTEND_DIR = resolve(repoRoot, "frontend");
 const STORES_DIR = resolve(FRONTEND_DIR, "src/stores");
-const MODULES_DIR = resolve(FRONTEND_DIR, "src/modules");
 
 const ALLOWED_READ_NAMES = new Set([
   // Pinia pattern — return the store implementation itself.
@@ -51,8 +50,6 @@ const ALLOWED_READ_NAMES = new Set([
   // Telemetry refresh — not a manual trigger.
   "refreshStreamMessage",
   // Module mount lifecycle hooks.
-  "onLoad",
-  "onUnload",
   "setup",
   "teardown",
   "init",
@@ -70,7 +67,9 @@ function walk(dir) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       out.push(...walk(full));
-    } else if (/store\.ts$/.test(entry)) {
+    } else if (/[Ss]tore\.ts$/.test(entry)) {
+      // Match ``fooStore.ts`` (Pinia store) but skip ``fooTypes.ts``
+      // (plain type-only file).
       out.push(full);
     }
   }
@@ -100,10 +99,7 @@ function isReExportModule(text) {
   return stripped.replace(/\s/g, "").length <= stripped.length;
 }
 
-const storePaths = [
-  resolve(STORES_DIR, "machine.ts"),
-  ...walk(MODULES_DIR),
-];
+const storePaths = walk(STORES_DIR);
 
 test("every store file has at least one async function (sanity)", () => {
   assert.ok(storePaths.length > 0, "no store files found");
@@ -198,7 +194,7 @@ test("reportCommandFailure is the single chokepoint for failure messages", () =>
   );
 
   const macrosText = readFileSync(
-    resolve(MODULES_DIR, "macros/store.ts"),
+    resolve(STORES_DIR, "macrosStore.ts"),
     "utf-8",
   );
   assert.match(
@@ -208,7 +204,7 @@ test("reportCommandFailure is the single chokepoint for failure messages", () =>
   );
 
   const machineConfigText = readFileSync(
-    resolve(MODULES_DIR, "machineconfig/store.ts"),
+    resolve(STORES_DIR, "machineconfigStore.ts"),
     "utf-8",
   );
   assert.match(

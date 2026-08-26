@@ -10,7 +10,7 @@ test("unsaved changes guard structure is present", async () => {
   const modal = await source("components/ModalConfirm.vue");
   const app = await source("App.vue");
   const editor = await source("views/EditorView.vue");
-  const profiles = await source("modules/machineconfig/components/ProfilesExplorer.vue");
+  const profiles = await source("components/machineconfig/ProfilesExplorer.vue");
 
   assert.match(store, /pristineContent/);
   assert.match(store, /isDirty/);

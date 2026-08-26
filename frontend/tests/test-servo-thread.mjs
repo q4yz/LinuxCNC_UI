@@ -282,26 +282,17 @@ test("machine store does NOT instantiate its own WebSocket", () => {
   );
 });
 
-test("App.vue does not boot the servo thread from the shell (machine module owns it)", () => {
-  // The machine module is a hard dependency; its ``onLoad``
-  // opens the WebSocket via ``useServoThreadStore().start()``. The
-  // shell no longer needs a fallback boot because the module is
-  // always present at runtime. See ``.agent/STATE.md`` § 7 for
-  // the modules-are-mandatory rule.
+test("App.vue does not consult a registry for the machine domain", () => {
+  // The machine domain is a hard dependency; the shell mounts the
+  // base-thread store eagerly so the WebSocket telemetry has its
+  // consumer wired by the time any panel mounts. There is no
+  // ``registry`` lookup anywhere in the shell.
   const appPath = resolve(repoRoot, "frontend/src/App.vue");
   const source = readFileSync(appPath, "utf-8");
   assert.doesNotMatch(
     source,
     /registry\.modules\.has\(\s*['"]machine['"]\s*\)/,
-    "App.vue must not consult the registry for the machine module (it is a hard dependency)",
+    "App.vue must not consult the registry for the machine domain (it is a hard dependency)",
   );
-  // The shell does not call ``servoThread.start()`` itself any
-  // more — the machine module owns the boot path. ``start()``
-  // would have been a double-socket if the module were also
-  // present.
-  assert.doesNotMatch(
-    source,
-    /servoThread\.start\s*\(/,
-    "App.vue must not call servoThread.start() (the machine module owns it)",
-  );
+  assert.doesNotMatch(source, /import\s+registry\b/);
 });

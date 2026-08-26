@@ -57,7 +57,7 @@ import { computed, ref } from "vue";
 
 import Button from "./Button.vue";
 import Icon from "./Icon.vue";
-import { useMacrosStore, MACRO_KIND } from "../modules/macros/store";
+import { useMacrosStore, MACRO_KIND } from "../stores/macrosStore";
 import { useMachineStore } from "../stores/machine";
 
 const props = defineProps({

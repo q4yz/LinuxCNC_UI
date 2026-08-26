@@ -21,10 +21,10 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const cameraDir = resolve(repoRoot, "frontend/src/modules/camera");
-const storePath = resolve(cameraDir, "cameraStore.ts");
-const viewerPath = resolve(cameraDir, "components/CameraViewer.vue");
-const settingsPath = resolve(cameraDir, "components/CameraSettings.vue");
+const cameraDir = resolve(repoRoot, "frontend/src/components/camera");
+const storePath = resolve(repoRoot, "frontend/src/stores/cameraStore.ts");
+const viewerPath = resolve(cameraDir, "CameraViewer.vue");
+const settingsPath = resolve(cameraDir, "CameraSettings.vue");
 
 function read(p) {
   return readFileSync(p, "utf-8");
@@ -40,13 +40,13 @@ test("cameraStore wires the per-module settings client", () => {
   const text = read(storePath);
   assert.match(
     text,
-    /import\s*\{\s*createModuleSettings\s*\}\s*from\s*["']\.\.\/\.\.\/core\/modules\/settings(?:\.js)?["']/,
+    /import\s*\{\s*createModuleSettings\s*\}\s*from\s*["']\.\.\/core\/settings\/createModuleSettings(?:\.js)?["']/,
     "cameraStore must import createModuleSettings from the canonical settings factory",
   );
   assert.match(
     text,
-    /createModuleSettings\(\s*manifest\.id\s*\)/,
-    "cameraStore must build the client from manifest.id (module_camera)",
+    /createModuleSettings\(\s*(?:['"]camera['"]|CAMERA_ID)\s*\)/,
+    "cameraStore must build the client with the literal 'camera' id",
   );
 });
 
@@ -67,15 +67,15 @@ test("cameraStore no longer touches localStorage", () => {
   );
 });
 
-test("cameraStore uses the module_ store-id prefix", () => {
+test("cameraStore uses a plain store-id (no module_ prefix)", () => {
   const text = read(storePath);
-  // Store ids match ``^module_[a-z][a-z0-9_]+$`` per the lint rule.
-  assert.match(
-    text,
-    /`module_\$\{manifest\.id\}`/,
-    "store id must be built from module_${manifest.id}",
-  );
-  assert.match(text, /defineStore\(\s*STORE_ID/);
+  // The store id is the literal ``"camera"`` (no ``module_``
+  // prefix; the prefix was retired with the registry). Either
+  // passed inline or via a typed STORE_ID alias.
+  const usesLiteral =
+    /defineStore\(\s*['"]camera['"]/.test(text) ||
+    /STORE_ID\s*=\s*['"]camera['"]/.test(text);
+  assert.ok(usesLiteral, "store id must be the literal 'camera'");
 });
 
 test("cameraStore validates the four editable preference keys", () => {
@@ -510,13 +510,21 @@ test("cameraStore exposes streamMessage and refreshStreamMessage for operator di
     /\/api\/v1\/modules\/camera\/status/,
     "cameraStore must fetch the /api/v1/modules/camera/status endpoint",
   );
-  // Console-store reporting must be lazy (LESSONS § 2.4 — cross-store
-  // imports belong inside the action, not at module scope) and must
-  // dedup so a periodic refresh does not spam the operator console.
+  // Console-store reporting must dedup so a periodic refresh does
+  // not spam the operator console. The store now imports
+  // ``useConsoleStore`` statically at module scope — the previous
+  // lazy-import workaround for the cross-store init order is gone
+  // because the registry boot sequence no longer introduces the
+  // race.
+  assert.doesNotMatch(
+    text,
+    /await\s+import\(\s*["'][^"']*stores\/console/,
+    "cameraStore must not lazy-import the console store any more (lazy imports are retired)",
+  );
   assert.match(
     text,
-    /await\s+import\(\s*["']\.\.\/\.\.\/stores\/console(?:\.js)?["']\s*\)/,
-    "cameraStore must lazy-import the console store inside refreshStreamMessage",
+    /import\s*\{[^}]*useConsoleStore[^}]*\}\s*from\s*["']\.\/console["']/,
+    "cameraStore must statically import useConsoleStore from ./console",
   );
   assert.match(
     text,

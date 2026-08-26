@@ -3,11 +3,8 @@
 // ``router.push`` for navigation and ``useRoute().name`` for
 // highlighting the current entry.
 
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-
-import registry from './core/modules/registry'
 import { useBaseThreadStore } from './stores/baseThread'
+import { servoThreadService } from './facades/servoThreadFacade'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
@@ -23,30 +20,16 @@ import EStopHeader from './components/EStopHeader.vue'
 // request per second) to keep running for the entire session.
 useBaseThreadStore().start()
 
-const route = useRoute()
-const router = useRouter()
-
-// Resolve the current route to a module's ``mainView``. Modules are
-// mandatory: every registry record carries a non-null ``mainView``
-// and the contract forbids lazy imports. We look the record up
-// synchronously and hand the resolved component straight to the
-// template — no ``defineAsyncComponent``, no ``import.meta.glob``.
-//
-// If the route name does not match a registered module id, we
-// return ``null`` so the template falls through to the regular
-// ``<router-view>``.
-const moduleView = computed(() => {
-  const name = route.name
-  if (typeof name !== 'string') return null
-  const record = registry.modules.get(name)
-  return record?.mainView ?? null
-})
-
-// Sidebar navigates via Vue Router. Keeping this thin keeps the
-// router authoritative for the active URL.
-function navigate(view) {
-  router.push({ name: view })
-}
+// Open the 10 Hz ``/ws/telemetry`` WebSocket at app mount. The
+// state facade's ``systemState`` getter short-circuits to
+// ``Offline`` until this connects — the E-Stop badge and every
+// servo-driven read (jog, machine state, machineStateText) sit
+// on that flag, so without this call the shell renders
+// permanently offline and the E-Stop toggle is stuck because its
+// engage-vs-disarm decision reads from the never-populated
+// ``status.value.isEstop``. The service guards against duplicate
+// sockets, so it is safe to call once per mount.
+servoThreadService.connect()
 </script>
 
 <template>
@@ -63,8 +46,7 @@ function navigate(view) {
 
       <!-- Main Content Area -->
       <main class="flex-1 overflow-y-auto p-4 lg:p-8">
-        <component v-if="moduleView" :is="moduleView" />
-        <router-view v-else />
+        <router-view />
       </main>
 
     </div>

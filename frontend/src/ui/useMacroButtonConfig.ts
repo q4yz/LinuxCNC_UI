@@ -28,7 +28,7 @@
 
 import { computed, ref } from "vue";
 
-import { createModuleSettings } from "../core/modules/settings";
+import { createModuleSettings } from "../core/settings/createModuleSettings";
 
 const SETTINGS_KEY = "macroButtons";
 

@@ -333,14 +333,14 @@ test("no caller still pushes the removed /config route", () => {
     "frontend/src/views/DashboardView.vue",
     "frontend/src/views/EditorView.vue",
     "frontend/src/components/FileManager.vue",
-    "frontend/src/modules/machineconfig/components/MachineConfigView.vue",
-    "frontend/src/modules/machineconfig/components/ActivePanel.vue",
-    "frontend/src/modules/machineconfig/components/CompiledOutputViewer.vue",
-    "frontend/src/modules/machineconfig/components/ProfilesExplorer.vue",
-    "frontend/src/modules/macros/components/MacroManagerPanel.vue",
-    "frontend/src/modules/macros/components/McodeManagerPanel.vue",
-    "frontend/src/modules/macros/components/McodePanel.vue",
-    "frontend/src/modules/macros/components/MacroPanel.vue",
+    "frontend/src/views/MachineConfigView.vue",
+    "frontend/src/components/machineconfig/ActivePanel.vue",
+    "frontend/src/components/machineconfig/CompiledOutputViewer.vue",
+    "frontend/src/components/machineconfig/ProfilesExplorer.vue",
+    "frontend/src/components/macros/MacroManagerPanel.vue",
+    "frontend/src/components/macros/McodeManagerPanel.vue",
+    "frontend/src/components/macros/McodePanel.vue",
+    "frontend/src/components/macros/MacroPanel.vue",
   ]
   for (const rel of sources) {
     const abs = resolve(repoRoot, rel)

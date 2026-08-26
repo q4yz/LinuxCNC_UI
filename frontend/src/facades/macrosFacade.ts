@@ -8,7 +8,7 @@ import { ModulesMacrosService } from "../../generated/api/index.ts";
 import { CommandResult } from "../entities/common/CommandResult";
 import { describeError, errorStatus } from "../core/error-format";
 import type { MacroListResponse } from "../../generated/api/models/MacroListResponse";
-import type { MacroKind } from "../modules/macros/types";
+import type { MacroKind } from "../stores/macrosTypes";
 
 async function _commandResultFrom(
   promise: Promise<unknown>,

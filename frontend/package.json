@@ -9,8 +9,6 @@
     "preview": "vite preview",
     "generate-api": "node scripts/generate-api.mjs",
     "clean": "node scripts/clean.mjs",
-    "lint:no-lazy-imports": "node scripts/check-no-lazy-imports.mjs",
-    "lint:store-ids": "node scripts/check-store-ids.mjs",
     "typecheck": "tsc --noEmit || true",
     "postinstall": "node scripts/generate-api.mjs --install",
     "test": "node --import ./scripts/vue-test-loader-register.mjs --test \"tests/**/*.mjs\""

@@ -17,7 +17,7 @@
 //     mount). The editor does NOT go through the macros Pinia
 //     store — that coupling used to leave the dropdown empty when
 //     the editor mounted in a settings tab before the macros
-//     module's ``onLoad`` ran.
+//     store had been touched.
 //
 // The editor uses ``v-model`` against a ``MacroButtonDescriptor[]``.
 // Persistence is the host's job (the host's ``@update:model-value``
@@ -86,9 +86,9 @@ const dirty = ref(new Set());
 // the generated ``ModulesMacrosService`` rather than going through
 // the macros module's Pinia store. Bypassing the store keeps the
 // editor decoupled from the macros module's lifecycle (the store
-// is constructed inside the macros module's ``onLoad`` hook,
-// which is not guaranteed to have run by the time this editor
-// mounts in a settings tab).
+// is constructed lazily on first ``useMacrosStore()`` call, so a
+// settings tab that mounts before any dashboard panel can mount
+// before the store has been touched).
 //
 // ``mcode`` is intentionally excluded: an operator who needs an
 // M-code call wraps it in a ``.macro`` file (see ``MacroButton.vue``).

@@ -21,6 +21,7 @@ import { useMachineStore } from '../stores/machine'
 // is the canonical source for the 8-state vocabulary per
 // ``.agent/STATE.md`` § 6.
 import { useMachineStore as useFacadeStore } from '../stores/stateFacade'
+import { useConsoleStore } from '../stores/console'
 
 const store = useMachineStore()
 const facade = useFacadeStore()
@@ -55,16 +56,12 @@ const stateBadgeClass = computed(() => {
 
 // Log every transition (including the first) so the operator gets
 // a written record. ``Estop`` and ``PowerOff`` are escalated to
-// warning rows; everything else is ``info``. The console store is
-// imported lazily inside the watcher — module-init order between
-// the console store and the facade would otherwise risk a Pinia
-// "no active pinia" error per ``LESSONS_LEARNED.md`` § 2.4. The
-// no-op ``next === prev`` guard skips duplicate frames that
-// re-deliver the same value (the WebSocket occasionally replays
-// the same state when only axis positions change).
-watch(systemState, async (next, prev) => {
+// warning rows; everything else is ``info``. The no-opop
+// ``next === prev`` guard skips duplicate frames that re-deliver
+// the same value (the WebSocket occasionally replays the same
+// state when only axis positions change).
+watch(systemState, (next, prev) => {
   if (next === prev) return
-  const { useConsoleStore } = await import('../stores/console')
   const consoleStore = useConsoleStore()
   const text = prev === undefined
     ? `Machine state: ${next}`
