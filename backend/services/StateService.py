@@ -16,28 +16,21 @@ from __future__ import annotations
 import logging
 import warnings
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Any, Tuple
 
-from hardware import connection
-from hardware.Connection import execute_sync_cmd, linuxcnc
+from pydantic import BaseModel
+
+from dtos.LinuxCNCError import now_iso
+from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
+    get_error_channel
+from hardware.Connection import read_error_history
 
 logger = logging.getLogger("backend.services.StateService")
 
 
 # ---------------------------------------------------------------------------
-# State facade enum — the clean, operator-facing vocabulary
+# Data Models
 # ---------------------------------------------------------------------------
-#
-# This enum is the single source of truth for the operator-facing
-# machine state on the backend side. It mirrors
-# ``frontend/src/stores/stateFacade.js::SystemState`` so the wire
-# format stays in lockstep across the HTTP / WebSocket boundary.
-#
-# The values are lowercase strings (not the LinuxCNC NML integer
-# constants) — that's the entire point of the facade: API consumers
-# never see ``task_state == 1`` / ``task_state == 4`` integers and
-# never have to import the ``linuxcnc`` module to interpret them.
-
 
 class MachineState(str, Enum):
     """Operator-facing machine state.
@@ -58,6 +51,20 @@ class MachineState(str, Enum):
     PAUSED = "paused"
     FAILURE = "failure"
 
+
+class StateSnapshot(BaseModel):
+    """JSON-serialisable snapshot for the API / WebSocket."""
+    state: MachineState
+    raw_task_state: int
+    raw_estop: int
+    raw_interp_state: int
+    file: str
+    homed: List[int]
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
 
 class StateService:
     """Machine-business facade for state / mode / MDI.
@@ -82,13 +89,7 @@ class StateService:
 
     @staticmethod
     def _resolve(table: dict, name: str) -> int:
-        """Translate an operator-facing name to its NML integer.
-
-        Missing entry → caller bug (``ValueError``); missing
-        constant on the linuxcnc module → system misconfiguration
-        (``RuntimeError``). Both bubble through ``execute_sync_cmd``'s
-        own ``HTTPException(503)`` when the channel is offline.
-        """
+        """Translate an operator-facing name to its NML integer."""
         attr = table.get(name)
         if attr is None:
             valid = ", ".join(sorted(table))
@@ -105,10 +106,10 @@ class StateService:
 
     def set_state(self, name: str) -> None:
         code = self._resolve(self._STATE_CODES, name)
-        execute_sync_cmd("state", 3, code)
+        execute_sync_cmd("state", 3.0, code)
         warnings.warn(
-            " is deprecated and will be removed "
-            "use specific methode instead",
+            "StateService.set_state() is deprecated and will be removed. "
+            "Use specific methods instead.",
             DeprecationWarning,
             stacklevel=2
         )
@@ -116,59 +117,31 @@ class StateService:
 
     def set_mode(self, name: str) -> None:
         code = self._resolve(self._MODE_CODES, name)
-        execute_sync_cmd("mode", 5, code)
+        execute_sync_cmd("mode", 5.0, code)
         logger.info("dispatched machine mode -> %s", name)
 
     def run_mdi(self, command: str) -> None:
-        """Dispatch a single MDI command.
-
-        Switches the task mode to ``MODE_MDI`` before issuing the
-        command so a stale ``MODE_AUTO`` does not silently swallow
-        the dispatch. The timeout (``5s``) is the historical
-        ``mode`` round-trip budget.
-        """
+        """Dispatch a single MDI command."""
         logger.info("Running MDI: %s", command)
-        execute_sync_cmd("mode", 5, getattr(linuxcnc, "MODE_MDI", 3))
-        execute_sync_cmd("mdi", 1, command)
+        execute_sync_cmd("mode", 5.0, getattr(linuxcnc, "MODE_MDI", 3))
+        execute_sync_cmd("mdi", 1.0, command)
 
     def turn_machine_on(self) -> None:
         """Powers on the machine. Fails if ESTOP is active."""
-        stat = connection.get_machine_stat()
+        stat = get_stat_channel()
         stat.poll()
         if getattr(stat, 'task_state', 0) == getattr(linuxcnc, "STATE_ESTOP", 1):
             raise RuntimeError("Cannot turn on machine while in E-STOP.")
 
-        execute_sync_cmd("state", 3, getattr(linuxcnc, "STATE_ON", 3))
+        execute_sync_cmd("state", 3.0, getattr(linuxcnc, "STATE_ON", 3))
 
     def trigger_estop(self) -> None:
         """Forces an immediate emergency stop."""
-        execute_sync_cmd("state", 3, getattr(linuxcnc, "STATE_ESTOP", 1))
+        execute_sync_cmd("state", 3.0, getattr(linuxcnc, "STATE_ESTOP", 1))
 
     def get_state(self) -> MachineState:
-        """Translate the linuxcnc ``task_state`` / ``estop`` /
-        ``interp_state`` triple into a clean :class:`MachineState`.
-
-        Priority order (mirrors
-        ``frontend/src/stores/stateFacade.js::systemState``):
-
-          OFFLINE → ESTOP → POWER_OFF → PAUSED → RUNNING →
-          LOADED → IDLE → FAILURE.
-
-        Returns :attr:`MachineState.OFFLINE` when:
-
-          * the NML stat channel has not connected yet
-            (``connection.get_machine_stat() is None``);
-          * the stat object raises while we try to read it
-            (mock-vs-real split, ``getattr(..., default)`` is
-            the same defensive pattern used in
-            ``routers/servo_thread.py::get_current_state``).
-
-        The ``linuxcnc.STATE_*`` / ``INTERP_*`` constants are
-        read via ``getattr(..., default)`` so a build that
-        omits one of them degrades to the offline branch
-        rather than crashing the request handler.
-        """
-        stat = connection.get_machine_stat()
+        """Translate the linuxcnc stat triple into a clean MachineState."""
+        stat = get_stat_channel()
         if stat is None:
             return MachineState.OFFLINE
 
@@ -180,16 +153,9 @@ class StateService:
         except Exception:  # noqa: BLE001 - defensive, see docstring
             return MachineState.OFFLINE
 
-        # E-stop bit wins over ``task_state`` — the operator
-        # panel must always show ``Estop`` while the bit is set
-        # even if LinuxCNC has not yet flipped ``task_state``.
         if estop == 1 or task_state == getattr(linuxcnc, "STATE_ESTOP", 1):
             return MachineState.ESTOP
 
-        # ``STATE_OFF`` and ``STATE_ESTOP_RESET`` both surface
-        # as ``POWER_OFF``: from the operator's point of view
-        # the machine is not currently executing and not ready
-        # to take a cut until they press Power.
         if task_state in (
             getattr(linuxcnc, "STATE_OFF", 3),
             getattr(linuxcnc, "STATE_ESTOP_RESET", 2),
@@ -197,9 +163,6 @@ class StateService:
             return MachineState.POWER_OFF
 
         if task_state == getattr(linuxcnc, "STATE_ON", 4):
-            # ``STATE_ON`` covers the whole "powered" range; the
-            # interpreter state disambiguates which sub-state
-            # the operator actually sees.
             if interp_state == getattr(linuxcnc, "INTERP_PAUSED", 3):
                 return MachineState.PAUSED
             if interp_state in (
@@ -207,41 +170,16 @@ class StateService:
                 getattr(linuxcnc, "INTERP_WAITING", 4),
             ):
                 return MachineState.RUNNING
-            # Interpreter idle while a file is selected — the
-            # canonical LinuxCNC "loaded but not running" state.
-            # The dashboard renders the dedicated ``Loaded``
-            # branch with its own Start button.
             if getattr(stat, "file", ""):
                 return MachineState.LOADED
             return MachineState.IDLE
 
-        # Unknown ``task_state`` — defensive default rather than
-        # crashing the WebSocket loop on a future LinuxCNC
-        # build that adds a new state we don't know about yet.
         return MachineState.FAILURE
 
-    def get_state_snapshot(self) -> dict:
-        """JSON-serialisable snapshot for the API / WebSocket.
-
-        Shape is deliberately stable::
-
-            {
-                "state": "idle",            # clean enum string
-                "raw_task_state": 4,        # diagnostic-only
-                "raw_estop": 0,
-                "raw_interp_state": 1,
-                "file": "",                 # loaded file path
-                "homed": [0, 0, 0],         # per-axis flags
-            }
-
-        ``raw_*`` fields are intentionally prefixed so a future
-        refactor can drop them without breaking the wire format.
-        The clean ``state`` field is what every consumer should
-        read; the raw fields exist only for the diagnostic panel
-        and the migration window.
-        """
-        empty = {
-            "state": MachineState.OFFLINE.value,
+    def get_state_snapshot(self) -> StateSnapshot:
+        """Return a strictly-typed snapshot of the current machine state."""
+        empty_defaults = {
+            "state": MachineState.OFFLINE,
             "raw_task_state": 0,
             "raw_estop": 0,
             "raw_interp_state": 0,
@@ -249,28 +187,22 @@ class StateService:
             "homed": [0, 0, 0],
         }
 
-        stat = connection.get_machine_stat()
+        stat = get_stat_channel()
         if stat is None:
-            return dict(empty)
+            return StateSnapshot(**empty_defaults)
 
         try:
             stat.poll()
-            task_state = int(getattr(stat, "task_state", 0))
-            estop = int(getattr(stat, "estop", 0))
-            interp_state = int(getattr(stat, "interp_state", 0))
-            file_name = getattr(stat, "file", "") or ""
-            homed = list(getattr(stat, "homed", [0, 0, 0]))
-        except Exception:  # noqa: BLE001 - defensive, see docstring
-            return dict(empty)
-
-        return {
-            "state": self.get_state().value,
-            "raw_task_state": task_state,
-            "raw_estop": estop,
-            "raw_interp_state": interp_state,
-            "file": file_name,
-            "homed": homed,
-        }
+            return StateSnapshot(
+                state=self.get_state(),
+                raw_task_state=int(getattr(stat, "task_state", 0)),
+                raw_estop=int(getattr(stat, "estop", 0)),
+                raw_interp_state=int(getattr(stat, "interp_state", 0)),
+                file=getattr(stat, "file", "") or "",
+                homed=list(getattr(stat, "homed", [0, 0, 0]))
+            )
+        except Exception:  # noqa: BLE001
+            return StateSnapshot(**empty_defaults)
 
     def get_machine_stat(self):
         warnings.warn(
@@ -279,7 +211,7 @@ class StateService:
             DeprecationWarning,
             stacklevel=2
         )
-        return connection.get_machine_stat()
+        return get_stat_channel()
 
     def get_machine_cmd(self):
         warnings.warn(
@@ -289,7 +221,7 @@ class StateService:
             DeprecationWarning,
             stacklevel=2
         )
-        return connection.get_machine_cmd()
+        return get_cmd_channel()
 
     def get_machine_error(self):
         warnings.warn(
@@ -299,7 +231,7 @@ class StateService:
             DeprecationWarning,
             stacklevel=2
         )
-        return connection.get_machine_error()
+        return get_error_channel()
 
     def is_linuxcnc_connected(self) -> bool:
         warnings.warn(
@@ -309,19 +241,68 @@ class StateService:
             DeprecationWarning,
             stacklevel=2
         )
-        return connection.is_linuxcnc_connected()
+        return is_linuxcnc_connected()
+
+    def get_polled_stat(self) -> Optional[Any]:
+        """Safely poll and return the raw stat object, suppressing transient OS errors."""
+        stat = get_stat_channel()
+        if not stat:
+            return None
+        try:
+            stat.poll()
+            return stat
+        except (OSError, RuntimeError) as exc:
+            logger.debug("stat.poll() failed (%s); returning unpolled/None", exc)
+            return None
+
+    def drain_new_errors(self, limit: int = 256) -> List[Tuple[int, str]]:
+        """Safely drain pending events from the error channel up to a limit."""
+        err_ch = get_error_channel()
+        if not err_ch:
+            return []
+
+        pending = []
+        try:
+            while len(pending) < limit:
+                entry = err_ch.poll()
+                if entry is None:
+                    break
+                pending.append(entry)
+
+            if len(pending) == limit:
+                logger.warning("error_channel drained %d events (cap reached).", limit)
+
+        except (OSError, RuntimeError) as exc:
+            logger.debug("error_channel.poll() iteration raised %s", exc)
+
+        return pending
+
+    def record_error_to_mock(self, kind: int, text: str) -> None:
+        """Mirror an error to the mock's bounded history (no-op on real hardware)."""
+        stat = get_stat_channel()
+        if not stat:
+            return
+
+        push_error = getattr(stat, "push_error", None)
+        if callable(push_error):
+            try:
+                push_error(text=text, kind=kind, time=now_iso())
+            except TypeError:
+                # Legacy positional signature fallback
+                push_error(kind, text, now_iso())
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("push_error mirror failed: %s", exc)
+
+    def get_error_history(self) -> List[str]:
+        """Fetch the full error history buffer."""
+        return read_error_history()
 
 
 _state_service: Optional[StateService] = None
 
 
 def get_state_service() -> StateService:
-    """Lazy module-level singleton (state / mode / MDI facade).
-
-    Mirrors the historical :func:`backend.services.machine_service.get_machine_control_service`
-    pattern. The instance survives across requests and resets on
-    ``uvicorn --reload``.
-    """
+    """Lazy module-level singleton (state / mode / MDI facade)."""
     global _state_service
     if _state_service is None:
         _state_service = StateService()
@@ -330,6 +311,7 @@ def get_state_service() -> StateService:
 
 __all__ = [
     "MachineState",
+    "StateSnapshot",
     "StateService",
     "get_state_service",
 ]

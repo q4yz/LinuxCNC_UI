@@ -9,6 +9,7 @@
 // but cover the LinuxCNC custom-M-code surface
 // (``machine_config/m_codes/``).
 
+import type { Component } from "vue";
 import manifest from "./manifest";
 import MacroPanel from "./components/MacroPanel.vue";
 import MacroManagerPanel from "./components/MacroManagerPanel.vue";
@@ -16,12 +17,31 @@ import McodePanel from "./components/McodePanel.vue";
 import McodeManagerPanel from "./components/McodeManagerPanel.vue";
 import { useMacrosStore } from "./store";
 
-export default {
+// ``core/modules/protocols.ts`` carries the canonical JSDoc
+// typedefs for the module surface. We re-declare the ``onLoad``
+// context shape here so this file is self-contained until
+// ``protocols.ts`` is converted to real TS interfaces.
+interface ModuleContext {
+  id: string;
+  eventBus: unknown;
+  telemetryBus: unknown;
+  settings: unknown;
+}
+
+interface MacrosModule {
+  manifest: typeof manifest;
+  mainView: Component;
+  onLoad: (ctx: ModuleContext) => void;
+  onUnload: () => void;
+  settingsPanel: Component;
+}
+
+const macrosModule: MacrosModule = {
   manifest,
   // The macros module renders its dashboard panel as the route
   // view (when the legacy ``/macros`` slot is opened directly).
   mainView: MacroPanel,
-  onLoad(/* ctx */) {
+  onLoad(_ctx: ModuleContext) {
     // Eagerly construct the store against the active Pinia
     // instance. ``loadList`` runs inside the panel's
     // ``onMounted``; the registry's hook stays a thin constructor.
@@ -36,6 +56,8 @@ export default {
   // import.meta.glob (e.g. ``EditorView.vue``).
   settingsPanel: MacroManagerPanel,
 };
+
+export default macrosModule;
 
 export {
   manifest,

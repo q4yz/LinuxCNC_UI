@@ -84,7 +84,7 @@ async def _loop() -> None:
     Capped at 10 minutes (``MAX_LIFETIME_S``) so a leaked task
     does not run forever in degenerate test environments.
     """
-    from services.jog_service import (
+    from hal_service.jog_service import (
         snapshot_active_jogs,
         stop_axis,
         _unregister_active_jog,
@@ -172,7 +172,7 @@ def stop_watchdog() -> None:
     # Clear any lingering state so the next boot does not resume a
     # jog whose keep-alive trail was lost when the task was torn down.
     try:
-        from services.jog_service import clear_active_jogs
+        from hal_service.jog_service import clear_active_jogs
 
         clear_active_jogs()
     except Exception:

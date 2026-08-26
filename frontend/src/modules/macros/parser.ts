@@ -30,52 +30,54 @@
 // M100..M199 (regex ``^M1\d{2}$``), matching
 // ``MCodeFileService.MCODE_NAME`` on the backend.
 
+import type { MacroBlock, MacroKind } from "./types";
+
 export class MacroParseError extends Error {
-  constructor(message) {
+  override name = "MacroParseError";
+
+  constructor(message: string) {
     super(message);
-    this.name = 'MacroParseError';
   }
 }
+
+const QUOTE_DOUBLE = '"';
+const QUOTE_SINGLE = "'";
+type Quote = typeof QUOTE_DOUBLE | typeof QUOTE_SINGLE;
 
 /**
  * Parse a ``.macro`` text payload into an ordered list of blocks.
  *
- * @param {string} source Raw ``.macro`` content as returned by the
- *   macros module's ``GET /api/v1/modules/macros/{name}``.
- * @returns {Array<{type: 'static'|'python', content: string}>}
- *   Empty input returns ``[]``. A source with no ``{`` returns a
- *   single-element list of one ``static`` block. A source that is
- *   just ``{}`` returns ``[{"type": "python", "content": ""}]``.
- * @throws {MacroParseError} If the source ends inside an unclosed
- *   ``{`` python block. The message reports the character offset of
- *   the opening brace that was never closed.
+ * Empty input returns ``[]``. A source with no ``{`` returns a
+ * single-element list of one ``static`` block. A source that is
+ * just ``{}`` returns ``[{"type": "python", "content": ""}]``.
+ *
+ * Throws ``MacroParseError`` if the source ends inside an unclosed
+ * ``{`` python block. The message reports the character offset of
+ * the opening brace that was never closed.
  */
-export function parseMacro(source) {
-  if (typeof source !== 'string') {
+export function parseMacro(source: string): MacroBlock[] {
+  if (typeof source !== "string") {
     throw new MacroParseError(
       `macro source must be a string, got ${typeof source}`,
     );
   }
 
-  /** @type {Array<{type: 'static'|'python', content: string}>} */
-  const blocks = [];
+  const blocks: MacroBlock[] = [];
 
   let inPython = false;
-  /** @type {null|'"'|"'"} */
-  let stringQuote = null;
+  let stringQuote: Quote | null = null;
   let escapeNext = false;
-  let openBraceOffset = null;
-  /** @type {string[]} */
-  const buffer = [];
+  let openBraceOffset: number | null = null;
+  const buffer: string[] = [];
 
   for (let offset = 0; offset < source.length; offset++) {
-    const ch = source[offset];
+    const ch = source[offset] as string;
 
     if (!inPython) {
-      if (ch === '{') {
-        const staticContent = buffer.join('').trim();
+      if (ch === "{") {
+        const staticContent = buffer.join("").trim();
         if (staticContent) {
-          blocks.push({ type: 'static', content: staticContent });
+          blocks.push({ type: "static", content: staticContent });
         }
         buffer.length = 0;
         inPython = true;
@@ -95,7 +97,7 @@ export function parseMacro(source) {
       continue;
     }
 
-    if (ch === '\\') {
+    if (ch === "\\") {
       buffer.push(ch);
       escapeNext = true;
       continue;
@@ -107,15 +109,15 @@ export function parseMacro(source) {
       continue;
     }
 
-    if (ch === '"' || ch === "'") {
+    if (ch === QUOTE_DOUBLE || ch === QUOTE_SINGLE) {
       stringQuote = ch;
       buffer.push(ch);
       continue;
     }
 
-    if (ch === '}') {
-      const pythonContent = buffer.join('').trim();
-      blocks.push({ type: 'python', content: pythonContent });
+    if (ch === "}") {
+      const pythonContent = buffer.join("").trim();
+      blocks.push({ type: "python", content: pythonContent });
       buffer.length = 0;
       inPython = false;
       stringQuote = null;
@@ -133,9 +135,9 @@ export function parseMacro(source) {
     );
   }
 
-  const trailing = buffer.join('').trim();
+  const trailing = buffer.join("").trim();
   if (trailing) {
-    blocks.push({ type: 'static', content: trailing });
+    blocks.push({ type: "static", content: trailing });
   }
 
   return blocks;
@@ -144,13 +146,10 @@ export function parseMacro(source) {
 /**
  * Same rules as ``MacroStorage._validate`` on the backend. Used by
  * the management panel so a typo surfaces before the round-trip.
- *
- * @param {string} name
- * @returns {string} The trimmed name (unchanged on success).
- * @throws {Error} When the name fails the regex.
+ * Returns the trimmed name (unchanged on success).
  */
-export function validateMacroName(name) {
-  if (typeof name !== 'string' || name === '' || name === '.' || name === '..') {
+export function validateMacroName(name: string): string {
+  if (typeof name !== "string" || name === "" || name === "." || name === "..") {
     throw new Error(`invalid macro name: ${JSON.stringify(name)}`);
   }
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) {
@@ -175,14 +174,11 @@ export const MCODE_NAME_REGEX = /^M1\d{2}$/;
  * ``^[A-Za-z0-9._-]{1,64}$`` regex (same as
  * ``MacroStorage._validate``); ``mcode`` uses the canonical LinuxCNC
  * range M100..M199 (``^M1\d{2}$``). Out-of-range names throw so the
- * UI surfaces the same error the backend would.
- *
- * @param {"macro"|"ngc"|"mcode"} kind
- * @param {string} name
- * @returns {string} The trimmed name (unchanged on success).
+ * UI surfaces the same error the backend would. Returns the trimmed
+ * name (unchanged on success).
  */
-export function validateMacroKindName(kind, name) {
-  if (kind === 'mcode') {
+export function validateMacroKindName(kind: MacroKind, name: string): string {
+  if (kind === "mcode") {
     if (!MCODE_NAME_REGEX.test(name)) {
       throw new Error(
         `invalid M-code name: ${JSON.stringify(name)} ` +

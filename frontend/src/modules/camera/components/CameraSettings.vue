@@ -1,12 +1,19 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from "vue";
+import type { Ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { createModuleSettings } from "../../../core/modules/settings";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
-import { useCameraStore } from "../cameraStore";
+import { useCameraStore, defaultPreferenceForActive } from "../cameraStore";
 import manifest from "../manifest";
 import { useMacroButtonConfig, MacroButtonEditor } from "../../../ui";
+import type { CameraDevice, EditablePreferenceKey } from "../types";
+
+interface MacroSlot {
+  id: string;
+  label: string;
+}
 
 const store = useCameraStore();
 const {
@@ -19,48 +26,50 @@ const {
 } = storeToRefs(store);
 const settings = createModuleSettings(manifest.id);
 
-const ipCameraUrl = ref("");
-const settingsLoading = ref(false);
-const settingsSaving = ref(false);
-const settingsError = ref("");
-const saveMessage = ref("");
+const ipCameraUrl: Ref<string> = ref("");
+const settingsLoading: Ref<boolean> = ref(false);
+const settingsSaving: Ref<boolean> = ref(false);
+const settingsError: Ref<string> = ref("");
+const saveMessage: Ref<string> = ref("");
 
 // Custom macro buttons for the camera viewer (slot
 // ``camera.bottom``). The composable normalises a missing key to
 // ``[]`` so the editor opens cleanly on first boot.
 const buttonConfig = useMacroButtonConfig(manifest.id);
-const SLOTS = [
+const SLOTS: MacroSlot[] = [
   { id: "camera.bottom", label: "Camera viewer button" },
 ];
 
-function preferenceFor(id) {
-  return (
-    cameraPreferences.value[id] ?? {
-      customName: "",
-      flip: false,
-      mirror: false,
-      hidden: false,
-    }
-  );
+function preferenceFor(id: string) {
+  return cameraPreferences.value[id] ?? defaultPreferenceForActive();
 }
 
-function updateCustomName(id, event) {
-  store.updatePreference(id, "customName", event.target.value);
+function updateCustomName(id: string, event: Event): void {
+  const target = event.target as HTMLInputElement;
+  store.updatePreference(id, "customName", target.value);
 }
 
-function updateBooleanPreference(id, key, event) {
-  store.updatePreference(id, key, event.target.checked);
+function updateBooleanPreference(
+  id: string,
+  key: EditablePreferenceKey,
+  event: Event,
+): void {
+  const target = event.target as HTMLInputElement;
+  store.updatePreference(id, key, target.checked);
 }
 
-async function loadBackendSettings() {
+async function loadBackendSettings(): Promise<void> {
   settingsLoading.value = true;
   settingsError.value = "";
 
   try {
-    const payload = await settings.readAll();
+    const payload = (await settings.readAll()) as
+      | { ip_camera_url?: unknown }
+      | null
+      | undefined;
     ipCameraUrl.value =
-      typeof payload.ip_camera_url === "string" ? payload.ip_camera_url : "";
-  } catch (requestError) {
+      typeof payload?.ip_camera_url === "string" ? payload.ip_camera_url : "";
+  } catch (requestError: unknown) {
     settingsError.value =
       requestError instanceof Error
         ? requestError.message
@@ -70,7 +79,7 @@ async function loadBackendSettings() {
   }
 }
 
-async function saveIpCameraUrl() {
+async function saveIpCameraUrl(): Promise<void> {
   settingsSaving.value = true;
   settingsError.value = "";
   saveMessage.value = "";
@@ -91,7 +100,7 @@ async function saveIpCameraUrl() {
           "Move them into query parameters (?user=...&pwd=...).",
         );
       }
-    } catch (parseError) {
+    } catch (parseError: unknown) {
       settingsError.value =
         parseError instanceof Error
           ? parseError.message
@@ -100,9 +109,12 @@ async function saveIpCameraUrl() {
       return;
     }
 
-    const payload = await settings.writeKey("ip_camera_url", normalizedUrl);
+    const payload = (await settings.writeKey(
+      "ip_camera_url",
+      normalizedUrl,
+    )) as { ip_camera_url?: unknown };
     ipCameraUrl.value =
-      typeof payload.ip_camera_url === "string"
+      typeof payload?.ip_camera_url === "string"
         ? payload.ip_camera_url
         : normalizedUrl;
     // Seed a default preferences row for the new URL so the operator
@@ -112,7 +124,7 @@ async function saveIpCameraUrl() {
     await store.ensurePreference(normalizedUrl);
     saveMessage.value = "IP camera URL saved.";
     await store.fetchDevices();
-  } catch (requestError) {
+  } catch (requestError: unknown) {
     settingsError.value =
       requestError instanceof Error
         ? requestError.message
@@ -127,10 +139,8 @@ async function saveIpCameraUrl() {
  * ``ip_camera_url`` and drops the matching preference row in one
  * round-trip, so the persisted settings never orphan the removed
  * camera's custom name.
- *
- * @param {{ id: string, source: string }} device
  */
-async function confirmRemove(device) {
+async function confirmRemove(device: CameraDevice | null | undefined): Promise<void> {
   if (!device || device.source !== "ip") return;
   const shouldRemove = await useConfirm({
     title: "Remove IP camera?",

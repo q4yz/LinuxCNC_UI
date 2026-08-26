@@ -210,24 +210,24 @@ test("macros store keeps per-kind listing refs so loadList never empties sibling
   const storeText = readText(storePath);
   assert.match(
     storeText,
-    /\b(?:const|let|var)\s+macroFiles\s*=\s*ref\(\s*\[\s*\]/,
+    /\b(?:const|let|var)\s+macroFiles\b[^=]*=\s*ref\(\s*\[\s*\]/,
     "store must declare a macroFiles ref",
   );
   assert.match(
     storeText,
-    /\b(?:const|let|var)\s+ngcFiles\s*=\s*ref\(\s*\[\s*\]/,
+    /\b(?:const|let|var)\s+ngcFiles\b[^=]*=\s*ref\(\s*\[\s*\]/,
     "store must declare an ngcFiles ref",
   );
   assert.match(
     storeText,
-    /\b(?:const|let|var)\s+mcodeFiles\s*=\s*ref\(\s*\[\s*\]/,
+    /\b(?:const|let|var)\s+mcodeFiles\b[^=]*=\s*ref\(\s*\[\s*\]/,
     "store must declare an mcodeFiles ref",
   );
   // The old single ref must be gone — if a future refactor
   // regresses to a shared array, this assertion trips first.
   assert.doesNotMatch(
     storeText,
-    /\b(?:const|let|var)\s+macros\s*=\s*ref\(\s*\[\s*\]/,
+    /\b(?:const|let|var)\s+macros\b[^=]*=\s*ref\(\s*\[\s*\]/,
     "store must not declare a shared `macros` ref (regression)",
   );
   // ``loadList`` writes to one of the per-kind refs via the
@@ -274,7 +274,7 @@ test("macros store exposes the run-via-MDI action", () => {
 
 test("macros index.js wires the manifest + four components + settingsPanel", () => {
   const indexText = readText(indexPath);
-  assert.match(indexText, /import manifest from "\.\/manifest\.js"/);
+  assert.match(indexText, /import manifest from "\.\/manifest(?:\.js)?"/);
   assert.match(indexText, /onLoad\(/);
   assert.match(indexText, /onUnload\(/);
   // All four components are imported and re-exported.

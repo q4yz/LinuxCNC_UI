@@ -24,12 +24,9 @@ from __future__ import annotations
 from tests._module_app_factory import build_module_app
 
 import json
-import logging
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
 
 def _axis_app(tmp_data_root, clean_env=None):
     """Build a FastAPI app with the axis module wired up."""
@@ -217,8 +214,8 @@ def test_axis_jog_dispatch_is_registered_with_watchdog(
     pins the watchdog-side state contract that both transports
     share.
     """
-    from services import jog_service as jog
-    from services.jog_service import jog_axis, jog_stop
+    from hal_service import jog_service as jog
+    from hal_service.jog_service import jog_axis, jog_stop
 
     # No active jogs at start. Clear any leftovers from a previous
     # test so the assertion is hermetic — the watchdog's

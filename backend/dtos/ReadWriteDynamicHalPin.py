@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from typing import TypeVar, Optional
 
 from dtos.HalPin import HalDataType, HalPin, logger
-from hardware import hal
-from hardware.Connection import read_hal_pin
+
+from hardware.Connection import read_hal_pin, hal
 
 T = TypeVar('T')
 

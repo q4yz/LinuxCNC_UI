@@ -15,7 +15,23 @@
 // ``settingsPanel: true`` is a hint for the future Settings UI work; today
 // the Machine Config tab already serves as the management surface.
 
-export default {
+interface SidebarEntry {
+  id: string;
+  label: string;
+  icon: string;
+  order: number;
+}
+
+interface MacrosManifest {
+  id: string;
+  title: string;
+  version: string;
+  description: string;
+  sidebar: SidebarEntry;
+  settingsPanel: boolean;
+}
+
+const manifest: MacrosManifest = {
   id: "macros",
   title: "Macros",
   version: "0.1.0",
@@ -29,3 +45,5 @@ export default {
   },
   settingsPanel: true,
 };
+
+export default manifest;

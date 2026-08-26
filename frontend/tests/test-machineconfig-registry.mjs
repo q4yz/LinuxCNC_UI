@@ -152,7 +152,7 @@ test("machineconfig store calls the generated ModulesMachineconfigService client
 
 test("machineconfig index.js wires the manifest + mainView", () => {
   const indexText = readText(indexPath);
-  assert.match(indexText, /import manifest from "\.\/manifest\.js"/);
+  assert.match(indexText, /import manifest from "\.\/manifest(?:\.js)?"/);
   assert.match(indexText, /onLoad\(/);
   assert.match(indexText, /onUnload\(/);
   // ``mainView`` is the explicit top-level component the App shell

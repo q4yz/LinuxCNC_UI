@@ -19,8 +19,8 @@ import logging
 import time
 from typing import Optional
 
-from hardware import connection
-from hardware.Connection import execute_sync_cmd, linuxcnc
+
+from hardware.Connection import execute_sync_cmd, linuxcnc, get_stat_channel
 from pydantic import BaseModel, Field
 
 from services.line_count_cache import lookup as lookup_line_count
@@ -100,7 +100,7 @@ class ProgramService:
 
     def _is_program_loaded(self) -> bool:
         """Helper to safely check if the interpreter has a file loaded."""
-        stat = connection.get_machine_stat()
+        stat = get_stat_channel()
         if not stat:
             return False
         if hasattr(stat, 'poll'):
@@ -111,7 +111,7 @@ class ProgramService:
         """Polls LinuxCNC memory until the file pointer matches the target."""
         deadline = time.monotonic() + self.LOAD_TIMEOUT_S
         while True:
-            stat = connection.get_machine_stat()
+            stat = get_stat_channel()
             if stat:
                 if hasattr(stat, 'poll'):
                     stat.poll()
@@ -147,7 +147,7 @@ class ProgramService:
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 
     def progress_program(self, stat=None) -> ProgramProgressResponse:
-        stat = connection.get_machine_stat()
+        stat = get_stat_channel()
 
         if stat is None:
             return ProgramProgressResponse(

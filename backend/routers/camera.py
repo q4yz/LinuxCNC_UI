@@ -50,21 +50,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 import subprocess
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Dict, List, Optional, Tuple
+from typing import AsyncIterator, Dict, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse, StreamingResponse
 
-from services.camera_detection import USBDeviceInfo, detect_usb_cameras
-from services.camera_mjpeg_proxy import MjpegProxy, MjpegProxyError
-from services.shared_mjpeg_proxy import MjpegFanout
+from services.camera.camera_detection import USBDeviceInfo, detect_usb_cameras
+from services.camera.camera_mjpeg_proxy import MjpegProxyError
+from services.camera.shared_mjpeg_proxy import MjpegFanout
 from models.camera_settings import CameraSettings
 
 logger = logging.getLogger("backend.camera_service")

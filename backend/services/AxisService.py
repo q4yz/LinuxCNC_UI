@@ -12,12 +12,13 @@ business logic does not need to follow that split.
 from __future__ import annotations
 
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from dtos.axis.AxisDto import AxisStateDTO
 from hardware.Connection import execute_sync_cmd, linuxcnc
 from mappers.axis.axis_mapper import AxisMapper
 from services.HardwareConfigService import HardwareConfigService
+from hal_service.jog_service import jog_keepalive, jog_axis, jog_stop
 
 logger = logging.getLogger("backend.services.AxisService")
 
@@ -48,10 +49,8 @@ class AxisService:
         config_service = HardwareConfigService()
         axes_list = config_service.get_axes()
 
-
-
         out = []
-        for tool in axes_list:  # Assuming get_tools() reads your JSON config
+        for tool in axes_list:
             out.append(AxisMapper.from_dict_to_dto(tool))
 
         self._state_cache = out
@@ -59,10 +58,8 @@ class AxisService:
 
 
     def get_axis(self) -> List[AxisStateDTO]:
-
         if self._state_cache is None:
             self.preload_hal_pins()
-
         return self._state_cache
 
 
@@ -90,6 +87,56 @@ class AxisService:
     def update_settings(self, multiplier: float, absolute_speed_limit: int) -> None:
         execute_sync_cmd("feedrate", 0, float(multiplier))
         execute_sync_cmd("maxvel", 0, float(absolute_speed_limit) / 60.0)
+
+    async def dispatch_inbound(self, msg: Dict[str, Any]) -> bool:
+        """
+        Route an inbound axis-related JSON command.
+
+        Args:
+            msg (dict): The parsed JSON payload from the WebSocket.
+
+        Returns:
+            bool: True if the message type was recognized and handled, False otherwise.
+        """
+        mtype = msg.get("type")
+
+        if mtype == "jog_keepalive":
+            axes = msg.get("axes") or []
+            if not isinstance(axes, list):
+                logger.warning("jog_keepalive: 'axes' must be a list, got %r", type(axes))
+                return True
+
+            jog_keepalive([int(a) for a in axes])
+            return True
+
+        if mtype == "jog_axis":
+            velocities = msg.get("velocities") or {}
+            if not isinstance(velocities, dict):
+                logger.warning("jog_axis: 'velocities' must be a dict, got %r", type(velocities))
+                return True
+
+            distance = float(msg.get("distance") or 0)
+            coerced = {}
+            for axis, velocity in velocities.items():
+                try:
+                    coerced[int(axis)] = float(velocity)
+                except (TypeError, ValueError):
+                    logger.warning("jog_axis: dropping bad axis/velocity pair %r=%r", axis, velocity)
+
+            jog_axis(coerced, distance)
+            return True
+
+        if mtype == "jog_stop":
+            axes = msg.get("axes") or []
+            if not isinstance(axes, list):
+                logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))
+                return True
+
+            jog_stop([int(a) for a in axes])
+            return True
+
+        # Not an axis command
+        return False
 
 
 _axis_service: Optional[AxisService] = None

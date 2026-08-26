@@ -7,6 +7,8 @@
 import { ModulesMacrosService } from "../../generated/api/index.ts";
 import { CommandResult } from "../entities/common/CommandResult";
 import { describeError, errorStatus } from "../core/error-format";
+import type { MacroListResponse } from "../../generated/api/models/MacroListResponse";
+import type { MacroKind } from "../modules/macros/types";
 
 async function _commandResultFrom(
   promise: Promise<unknown>,
@@ -23,19 +25,29 @@ async function _commandResultFrom(
   }
 }
 
-async function list(kind: string) {
-  const listing = await ModulesMacrosService.listMacros(kind);
-  return listing;
+async function list(kind: MacroKind): Promise<MacroListResponse> {
+  return ModulesMacrosService.listMacros(kind);
 }
 
-async function read(name: string, kind: string) {
-  return ModulesMacrosService.readMacro(name, kind);
+/**
+ * Unwrap the generated client's loose ``any`` response from
+ * ``readMacro``. The wire returns the macro body as ``text/plain``,
+ * which the codegen types as ``any``; we narrow to ``string``.
+ */
+function unwrapReadResponse(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  return String(value);
+}
+
+async function read(name: string, kind: MacroKind): Promise<string> {
+  return unwrapReadResponse(await ModulesMacrosService.readMacro(name, kind));
 }
 
 async function write(
   name: string,
   content: string,
-  kind: string,
+  kind: MacroKind,
 ): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesMacrosService.writeMacro(name, content, kind),
@@ -45,7 +57,7 @@ async function write(
 
 async function remove(
   name: string,
-  kind: string,
+  kind: MacroKind,
 ): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesMacrosService.deleteMacro(name, kind),
@@ -61,7 +73,7 @@ async function remove(
  */
 async function start(
   name: string,
-  kind: string,
+  kind: MacroKind,
 ): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesMacrosService.startMacro(name, kind),

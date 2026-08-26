@@ -5,30 +5,21 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from exceptions import BadRequestError, NotFoundError
-from hardware import get_machine_stat, execute_gcode
-from hardware.Connection import MachineState, connection
-from services import get_mcode_service
-from services.ConsoleLogger import LogLevel, get_console_logger
-from services.macro_parser import (
-    MacroParseError,
-    parse_macro,
-    split_static_block,
-)
 
-from storage.MacroStorage import (
-    InvalidMacroKindError,
-    InvalidMacroNameError,
-    MacroKind,
-    MacroNotFoundError,
-    MacroStorage,
-    default_storage_root,
-)
+
+from factories.DomainFileServiceFactory import get_macro_service, get_mcode_service
+from hardware import execute_gcode, get_stat_channel
+from hardware.Connection import MachineState
+from services.ConsoleLogger import get_console_logger, LogLevel
+from services.macro.macro_parser import split_static_block, MacroParseError, parse_macro
 
 logger = logging.getLogger("backend.macros_service")
 
-# ---------------------------------------------------------------------- #
-# Pydantic models                                                         #
-# ---------------------------------------------------------------------- #
+# --- (Pydantic Models remain exactly the same as before) ---
+class MacroKind:
+    MACRO = "macro"
+    NGC = "ngc"
+    MCODE = "mcode"
 
 VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
 
@@ -62,126 +53,105 @@ class MacroContentResponse(BaseModel):
     content: str = Field(..., description="Raw text content of the file.")
     size_bytes: int = Field(..., description="On-disk byte size.")
 
-
-# ---------------------------------------------------------------------- #
-# Service logic                                                           #
-# ---------------------------------------------------------------------- #
-
 class MacrosService:
     """Service handling macro read/write operations and domain validation."""
 
     def __init__(self):
-        self._macro_storage = MacroStorage(default_storage_root())
+        # We now grab the lazily-instantiated services via the factories
+        self._macro_service = get_macro_service()
+        self._mcode_service = get_mcode_service()
         self._MCODE_RE = re.compile(r"^M1\d{2}$")
 
     def _validate_kind(self, kind: str) -> str:
         if kind not in VALID_KINDS:
-            raise BadRequestError(f"unknown macro kind: {kind!r}; expected one of {VALID_KINDS}")
+            raise BadRequestError(f"Unknown macro kind: {kind!r}; expected one of {VALID_KINDS}")
         return kind
 
     def _validate_mcode_name(self, name: str) -> str:
         if not self._MCODE_RE.match(name):
-            raise BadRequestError(f"invalid M-code name: {name!r} (must match ^M1\\d{{2}}$)")
+            raise BadRequestError(f"Invalid M-code name: {name!r} (must match ^M1\\d{{2}}$)")
         return name
 
-    def _storage_size(self, name: str, kind: str) -> int:
+    def _get_service(self, kind: str):
+        """Route the file operation to the correct underlying domain FileService."""
         if kind == MacroKind.MCODE:
-            service = get_mcode_service()
-            for existing in service.list_files():
-                if existing.name == name:
-                    return existing.size_bytes
-            return 0
+            return self._mcode_service
+        return self._macro_service
 
+    def _resolve_filename(self, name: str, kind: str) -> str:
+        """Construct the physical filename based on the logical name and kind."""
+        if kind == MacroKind.MCODE:
+            return self._validate_mcode_name(name)
+        return f"{name}.{kind}"
+
+    def _storage_size(self, name: str, kind: str) -> int:
+        service = self._get_service(kind)
+        filename = self._resolve_filename(name, kind)
         try:
-            return self._macro_storage.size(name, kind=kind)
-        except (InvalidMacroNameError, InvalidMacroKindError):
+            target = service.safe_join(filename)
+            return target.stat().st_size if target.exists() else 0
+        except ValueError:
             return 0
 
     def list_macros(self, kind: str) -> MacroListResponse:
         self._validate_kind(kind)
+        service = self._get_service(kind)
 
-        if kind == MacroKind.MCODE:
-            service = get_mcode_service()
-            entries = service.list_files()
-            items = [
-                MacroListItem(name=entry.name, kind=MacroKind.MCODE, size_bytes=entry.size_bytes)
-                for entry in entries if entry.kind == "file"
-            ]
-        else:
-            names = self._macro_storage.list(kind=kind)
-            items = [
-                MacroListItem(name=name, kind=kind, size_bytes=self._storage_size(name, kind))
-                for name in names
-            ]
+        items = []
+        for entry in service.list_files():
+            if entry.kind != "file":
+                continue
+
+            if kind == MacroKind.MCODE:
+                if self._MCODE_RE.match(entry.name):
+                    items.append(MacroListItem(name=entry.name, kind=kind, size_bytes=entry.size_bytes))
+            else:
+                ext = f".{kind}"
+                if entry.name.endswith(ext):
+                    # Strip the extension for the logical API response
+                    base_name = entry.name[:-len(ext)]
+                    items.append(MacroListItem(name=base_name, kind=kind, size_bytes=entry.size_bytes))
 
         items.sort(key=lambda item: item.name)
         return MacroListResponse(macros=items)
 
     def read_macro(self, name: str, kind: str) -> str:
         self._validate_kind(kind)
-
-        if kind == MacroKind.MCODE:
-            self._validate_mcode_name(name)
-            service = get_mcode_service()
-            try:
-                target = service.safe_join(name)
-            except ValueError as exc:
-                raise BadRequestError(str(exc))
-            if not target.exists():
-                raise NotFoundError(f"M-code not found: {name}")
-            return target.read_text(encoding="utf-8")
+        service = self._get_service(kind)
+        filename = self._resolve_filename(name, kind)
 
         try:
-            return self._macro_storage.read(name, kind=kind)
-        except InvalidMacroNameError as exc:
-            raise NotFoundError(str(exc))
-        except InvalidMacroKindError as exc:
+            target = service.safe_join(filename)
+            if not target.exists():
+                raise NotFoundError(f"{kind} not found: {name}")
+            return target.read_text(encoding="utf-8")
+        except ValueError as exc:
             raise BadRequestError(str(exc))
-        except MacroNotFoundError as exc:
-            raise NotFoundError(str(exc))
 
     def write_macro(self, name: str, kind: str, content: str) -> MacroWriteResponse:
         self._validate_kind(kind)
-
-        if kind == MacroKind.MCODE:
-            self._validate_mcode_name(name)
-            service = get_mcode_service()
-            try:
-                service.write_file(name, content)
-            except ValueError as exc:
-                raise BadRequestError(str(exc))
-
-            target = service.safe_join(name)
-            size = target.stat().st_size if target.exists() else 0
-            return MacroWriteResponse(name=name, kind=MacroKind.MCODE, size=size)
+        service = self._get_service(kind)
+        filename = self._resolve_filename(name, kind)
 
         try:
-            size = self._macro_storage.write(name, content, kind=kind)
-        except (InvalidMacroNameError, InvalidMacroKindError) as exc:
+            service.write_file(filename, content)
+            target = service.safe_join(filename)
+            size = target.stat().st_size if target.exists() else 0
+            return MacroWriteResponse(name=name, kind=kind, size=size)
+        except ValueError as exc:
             raise BadRequestError(str(exc))
-
-        return MacroWriteResponse(name=name, kind=kind, size=size)
 
     def delete_macro(self, name: str, kind: str) -> None:
         self._validate_kind(kind)
-
-        if kind == MacroKind.MCODE:
-            self._validate_mcode_name(name)
-            service = get_mcode_service()
-            try:
-                target = service.safe_join(name)
-            except ValueError as exc:
-                raise BadRequestError(str(exc))
-            if not target.exists():
-                raise NotFoundError(f"M-code not found: {name}")
-            target.unlink()
-            return
+        service = self._get_service(kind)
+        filename = self._resolve_filename(name, kind)
 
         try:
-            self._macro_storage.delete(name, kind=kind)
-        except (InvalidMacroNameError, MacroNotFoundError) as exc:
-            raise NotFoundError(str(exc))
-        except InvalidMacroKindError as exc:
+            target = service.safe_join(filename)
+            if not target.exists():
+                raise NotFoundError(f"{kind} not found: {name}")
+            service.delete(filename)
+        except ValueError as exc:
             raise BadRequestError(str(exc))
 
     def read_macro_content(self, name: str, kind: str) -> MacroContentResponse:
@@ -206,54 +176,19 @@ class MacrosService:
         )
 
     def start_macro(self, name: str, kind: str) -> None:
-        """Verify the macro exists and execute it via the MDI channel.
-
-        Dispatch paths by kind:
-
-        * ``.macro`` — read the file, parse it into ``static`` /
-          ``python`` blocks (see :mod:`services.macro_parser`),
-          then dispatch each non-blank static line via
-          :func:`hardware.execute_gcode`. ``python`` blocks are
-          skipped with a single WARNING line in the console
-        log so the operator sees them, mirroring the
-          behaviour the frontend parser used to provide. A
-          mid-run E-Stop aborts the dispatch between lines so a
-          dead machine does not receive the rest of the file.
-
-        * ``.ngc`` — issue a single ``o<{name}> call`` MDI command
-          so the controller switches to MDI mode and runs the
-          NGC subroutine. The check-the-state-then-call-MDI
-          dance is identical to ``.macro``.
-
-        ``.mcode`` is intentionally not routed here — an operator
-        who needs a custom M-code wraps it in a ``.macro`` (the
-        frontend editor surfaces this convention on the
-        ``MacroButton`` kind picker).
-        """
+        """Verify the macro exists and execute it via the MDI channel."""
         self._validate_kind(kind)
 
-        # 1. Verify the macro actually exists before trying to run it.
-        #    Read paths differ per kind: ``.macro`` and ``.ngc`` go
-        #    through :class:`MacroStorage`; ``.mcode`` is rejected up
-        #    front (see the .mcode block above).
         if kind not in (MacroKind.MACRO, MacroKind.NGC):
             raise BadRequestError(
                 f"Running {kind!r} files from the UI is not supported — "
                 "wrap the call in a .macro file instead."
             )
 
-        try:
-            body = self._macro_storage.read(name, kind=kind)
-        except (InvalidMacroNameError, MacroNotFoundError) as exc:
-            raise NotFoundError(str(exc))
-        except InvalidMacroKindError as exc:
-            raise BadRequestError(str(exc))
+        # Uses the unified read method which handles presence + path validation
+        body = self.read_macro(name, kind)
 
-        # 2. Pre-flight the safety state once for the whole call
-        #    (every MDI dispatch will switch to MDI mode anyway, but
-        #    a fail-fast 400 here is friendlier than a stream of
-        #    503s from the per-line dispatch loop).
-        stat = connection.get_machine_stat()
+        stat = get_stat_channel()
         if stat is None:
             raise BadRequestError("Cannot execute macro: LinuxCNC is not running.")
 
@@ -261,10 +196,11 @@ class MacrosService:
 
         if stat.estop:
             raise BadRequestError("Cannot execute macro while machine is in E-STOP.")
-        if stat.task_state is MachineState.ON:
-            raise BadRequestError(f"Machine must be ON to execute a macro.{stat.task_state} {MachineState.ON}")
 
-        # 3. Dispatch by kind.
+        # Depending on where MachineState is imported from, ensure we are comparing correctly
+        if stat.task_state != MachineState.ON.value:
+            raise BadRequestError(f"Machine must be ON to execute a macro. Current state: {stat.task_state}")
+
         if kind == MacroKind.NGC:
             execute_gcode(f"o<{name}> call")
             return
@@ -300,9 +236,6 @@ class MacrosService:
                 continue
 
             for line in split_static_block(block.content):
-                # Mid-run safety re-check: an E-Stop issued during
-                # dispatch must abort the remaining commands instead
-                # of feeding them to a dead machine.
                 stat.poll()
                 if stat.estop:
                     console.log_event(
@@ -315,9 +248,6 @@ class MacrosService:
                     execute_gcode(line)
                     static_dispatched += 1
                 except Exception as exc:  # noqa: BLE001 - keep the loop going
-                    # ``execute_gcode`` already raises HTTPException-shaped
-                    # errors; the loop continues so a single failed
-                    # line does not invalidate the remaining commands.
                     logger.warning("Macro '%s' line '%s' failed: %s", name, line, exc)
 
         console.log_event(
@@ -326,10 +256,8 @@ class MacrosService:
             source="CMD",
         )
 
-
 # Singleton provider
 _SERVICE_INSTANCE = None
-
 
 def get_macros_service() -> MacrosService:
     global _SERVICE_INSTANCE

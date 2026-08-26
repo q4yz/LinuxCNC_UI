@@ -30,9 +30,9 @@ from typing import List, Optional
 
 import pytest
 
-from services import shared_mjpeg_proxy as smp
-from services.shared_mjpeg_proxy import MjpegFanout, SharedMjpegProxy
-from services.camera_mjpeg_proxy import MjpegProxyError
+from services.camera import shared_mjpeg_proxy as smp
+from services.camera.shared_mjpeg_proxy import MjpegFanout
+from services.camera.camera_mjpeg_proxy import MjpegProxyError
 
 
 # ---------------------------------------------------------------------- #

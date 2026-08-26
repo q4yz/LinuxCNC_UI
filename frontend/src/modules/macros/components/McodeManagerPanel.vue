@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Machine Config → M-codes sub-panel. Mirror of ``MacroManagerPanel``
 // for the ``machine_config/m_codes/`` root. The names follow the
 // strict LinuxCNC range ``M100..M199`` (regex ``^M1\d{2}$``) so the
@@ -14,42 +14,44 @@
 // consistent editor experience across every kind.
 
 import { computed, onMounted, ref, watch } from "vue";
+import type { Ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
 import { validateMacroKindName, MCODE_NAME_REGEX } from "../parser";
 import { openInEditor } from "../../../helpers/openInEditor";
+import type { MacroEntry } from "../types";
 
 const store = useMacrosStore();
 const { mcodeFiles, isBusy } = storeToRefs(store);
 
-const createOpen = ref(false);
-const createName = ref("");
-const createError = ref("");
+const createOpen: Ref<boolean> = ref(false);
+const createName: Ref<string> = ref("");
+const createError: Ref<string> = ref("");
 
 onMounted(async () => {
   await store.loadList(MACRO_KIND.MCODE);
 });
 
-const sorted = computed(() =>
+const sorted = computed<MacroEntry[]>(() =>
   [...mcodeFiles.value].sort((a, b) => a.name.localeCompare(b.name)),
 );
 
-function formatSize(bytes) {
+function formatSize(bytes: number): string {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   return (bytes / 1024).toFixed(1) + " KB";
 }
 
-function openEditor(name) {
+function openEditor(name: string): void {
   // The universal editor handles the M-code body via
   // ``source='m_codes'`` — the store dispatches to
   // ``ModulesMachineconfigService.readMCode`` / ``writeMCode``.
   openInEditor({ source: "m_codes", name });
 }
 
-async function deleteMacro(name) {
+async function deleteMacro(name: string): Promise<void> {
   const shouldDelete = await useConfirm({
     title: `Delete ${name}`,
     question: `Delete "${name}"? This cannot be undone.`,
@@ -63,18 +65,18 @@ async function deleteMacro(name) {
   }
 }
 
-function startCreate() {
+function startCreate(): void {
   createName.value = "";
   createError.value = "";
   createOpen.value = true;
 }
 
-async function commitCreate() {
+async function commitCreate(): Promise<void> {
   createError.value = "";
   const name = createName.value.trim();
   try {
     validateMacroKindName(MACRO_KIND.MCODE, name);
-  } catch (error) {
+  } catch (error: unknown) {
     createError.value = error instanceof Error ? error.message : String(error);
     return;
   }
@@ -224,4 +226,3 @@ watch(() => store.lastError, (value) => {
     </div>
   </div>
 </template>
-

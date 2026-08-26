@@ -16,7 +16,7 @@ from unittest.mock import patch
 from hardware.Connection import read_error_history
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import push_mock_error, reset_error_history
-from hardware import connection as connection_module
+from hardware import Connection as connection_module
 
 
 def test_push_error_appends_entry():

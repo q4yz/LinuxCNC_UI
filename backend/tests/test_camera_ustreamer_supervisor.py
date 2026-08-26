@@ -22,16 +22,11 @@ installed, every test monkeypatches either
 from __future__ import annotations
 from tests._module_app_factory import build_module_app
 
-import subprocess
-import sys
-from pathlib import Path
 from typing import List
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from core.event_bus import EventBus
 
 
 # ---------------------------------------------------------------------- #
@@ -128,7 +123,7 @@ def fake_no_ustreamer(monkeypatch):
 @pytest.fixture()
 def fake_linux_with_devices(monkeypatch, tmp_path):
     """Pretend we are on Linux and ``/dev/video0`` exists."""
-    import services.camera_detection as detection
+    import services.camera.camera_detection as detection
     import routers.camera as router_module
 
     monkeypatch.setattr(detection.sys, "platform", "linux")
@@ -613,7 +608,7 @@ def test_status_message_reports_ustreamer_not_installed(
 
 def test_status_message_reports_no_devices(monkeypatch, fake_no_ustreamer):
     """Linux host with no ``/dev/video*`` and no IP camera → NO_DEVICES."""
-    import services.camera_detection as detection
+    import services.camera.camera_detection as detection
     import routers.camera as router_module
 
     monkeypatch.setattr(detection.sys, "platform", "linux")

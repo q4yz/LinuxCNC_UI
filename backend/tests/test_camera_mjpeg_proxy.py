@@ -22,7 +22,6 @@ The proxy itself is exercised by the router-level test
 the proxy's unit-level contract.
 """
 from __future__ import annotations
-from tests._module_app_factory import build_module_app
 
 import asyncio
 import base64
@@ -31,8 +30,8 @@ from typing import List, Optional
 import httpx
 import pytest
 
-from services import camera_mjpeg_proxy
-from services.camera_mjpeg_proxy import (
+from services.camera import camera_mjpeg_proxy
+from services.camera.camera_mjpeg_proxy import (
     MjpegProxy,
     MjpegProxyError,
     error_message_for_status,

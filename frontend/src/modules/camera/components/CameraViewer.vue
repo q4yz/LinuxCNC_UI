@@ -1,14 +1,19 @@
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import type { Ref, ComputedRef } from "vue";
 import { storeToRefs } from "pinia";
 
-import { useCameraStore } from "../cameraStore";
+import { useCameraStore, defaultPreferenceForActive } from "../cameraStore";
 import { useMacroButtonConfig, MacroButton } from "../../../ui";
+import type { CameraDevice, CameraPreference } from "../types";
+
+const MAX_RETRY_DELAY_MS = 5_000;
+const STREAM_CONNECT_DELAY_MS = 300;
 
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.
 const logger = {
-  debug: (...args) => {
+  debug: (...args: unknown[]): void => {
     if (import.meta.env.DEV) console.debug("[CameraViewer]", ...args);
   },
 };
@@ -30,27 +35,21 @@ const {
 const buttonConfig = useMacroButtonConfig("camera");
 const { buttonsBySlot } = buttonConfig;
 
-const activeDevice = computed(() => {
+const activeDevice: ComputedRef<CameraDevice | null> = computed(() => {
   return devices.value.find((device) => device.id === activeCameraId.value) ?? null;
 });
 
-const activePreference = computed(() => {
-  return (
-    cameraPreferences.value[activeCameraId.value] ?? {
-      flip: false,
-      mirror: false,
-      customName: "",
-      hidden: false,
-    }
-  );
+const activePreference: ComputedRef<CameraPreference> = computed<CameraPreference>(() => {
+  const stored = cameraPreferences.value[activeCameraId.value];
+  return stored ?? defaultPreferenceForActive();
 });
 
-const cameraName = computed(() => {
+const cameraName: ComputedRef<string> = computed(() => {
   const customName = activePreference.value.customName.trim();
   return customName || activeDevice.value?.name || activeCameraId.value;
 });
 
-const cameraTransform = computed(() => {
+const cameraTransform: ComputedRef<string> = computed(() => {
   const { flip, mirror } = activePreference.value;
   if (flip && mirror) return "scale(-1, -1)";
   if (mirror) return "scaleX(-1)";
@@ -59,12 +58,11 @@ const cameraTransform = computed(() => {
 });
 
 // --- Hardware Race Condition Fix ---
-const streamUrl = ref("");
-let streamTimer = null;
+const streamUrl: Ref<string> = ref("");
+let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
-const MAX_RETRY_DELAY_MS = 5000;
 
-const startStream = () => {
+const startStream = (): void => {
   if (streamTimer) clearTimeout(streamTimer);
 
   if (!activeCameraId.value) {
@@ -72,11 +70,11 @@ const startStream = () => {
     return;
   }
 
-  // Add a 300ms delay so the backend can release the old lock
+  // Add a small delay so the backend can release the old lock
   streamTimer = setTimeout(() => {
     // Append Date.now() to bypass aggressive browser caching
     streamUrl.value = `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}&t=${Date.now()}`;
-  }, 300);
+  }, STREAM_CONNECT_DELAY_MS);
 };
 
 // Exponential backoff on stream failure. The backend enforces a
@@ -85,11 +83,11 @@ const startStream = () => {
 // server while the hardware is locked. Every retry also refreshes
 // ``streamMessage`` so a dependency problem surfaces with a single
 // operator-facing hint rather than the silent retry loop.
-const handleStreamError = () => {
+const handleStreamError = (): void => {
   retryCount += 1;
   const delay = Math.min(1000 * Math.pow(2, retryCount), MAX_RETRY_DELAY_MS);
   logger.debug(
-    `Camera stream failed (attempt ${retryCount}); retrying in ${delay}ms`
+    `Camera stream failed (attempt ${retryCount}); retrying in ${delay}ms`,
   );
   streamUrl.value = "";
   if (streamTimer) clearTimeout(streamTimer);
@@ -103,7 +101,7 @@ const handleStreamError = () => {
 };
 
 // Reset the backoff counter when the stream succeeds.
-const handleStreamLoad = () => {
+const handleStreamLoad = (): void => {
   retryCount = 0;
 };
 
@@ -120,7 +118,10 @@ watch(activeCameraId, () => {
 // below lands on a non-hidden row automatically — or clears the
 // active id when every camera is hidden.
 watch(
-  () => [activeCameraId.value, cameraPreferences.value[activeCameraId.value]?.hidden],
+  () => [
+    activeCameraId.value,
+    cameraPreferences.value[activeCameraId.value]?.hidden,
+  ],
   ([id, hidden]) => {
     if (id && hidden === true) {
       store.cycleCamera();

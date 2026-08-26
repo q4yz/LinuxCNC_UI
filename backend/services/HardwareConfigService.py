@@ -47,11 +47,7 @@ class HardwareConfigService:
         without monkey-patching module-level globals.
     """
 
-    def __init__(
-        self,
-        active_path: Optional[Path] = None,
-        repo_root: Optional[Path] = None,
-    ) -> None:
+    def __init__(self, active_path: Optional[Path] = None, repo_root: Optional[Path] = None,) -> None:
         self.active_path = active_path
         self.repo_root = repo_root
 

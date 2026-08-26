@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from mapper.ServoThreadStateMapper import ServoThreadStateMapper
+from mappers.ServoThreadStateMapper import ServoThreadStateMapper
 
 
 class TestNormalizeErrors:

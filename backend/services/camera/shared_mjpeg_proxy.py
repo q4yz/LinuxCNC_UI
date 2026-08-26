@@ -39,8 +39,7 @@ from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
-from services.camera_mjpeg_proxy import (
-    MjpegProxy,
+from services.camera.camera_mjpeg_proxy import (
     MjpegProxyError,
     split_url,
 )
@@ -388,7 +387,7 @@ class SharedMjpegProxy:
         # Evict from the registry so the next ``get_or_create`` opens
         # a fresh upstream connection.
         try:
-            from services.shared_mjpeg_proxy import MjpegFanout  # local import
+            from services.camera.shared_mjpeg_proxy import MjpegFanout  # local import
             MjpegFanout._evict(self.url)
         except Exception:  # noqa: BLE001 - best-effort eviction
             logger.debug(

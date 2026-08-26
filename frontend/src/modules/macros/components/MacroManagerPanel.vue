@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Machine Config → Macros management panel. Lives inside
 // ``EditorView`` next to ``ProfilesExplorer`` / ``CompilerPanel``.
 //
@@ -24,20 +24,22 @@
 // in ``EditorView`` itself (see ``router/guards/unsavedChangesGuard.js``).
 
 import { computed, onMounted, ref, watch } from "vue";
+import type { Ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store";
 import { ModalButtonStyle, useConfirm } from "../../../core/confirm";
 import { validateMacroKindName } from "../parser";
 import { openInEditor } from "../../../helpers/openInEditor";
+import type { MacroKind } from "../types";
 
 const store = useMacrosStore();
 const { macroFiles, ngcFiles, contents, isBusy } = storeToRefs(store);
 
-const createOpen = ref(false);
-const createKind = ref(MACRO_KIND.MACRO);
-const createName = ref("");
-const createError = ref("");
+const createOpen: Ref<boolean> = ref(false);
+const createKind: Ref<MacroKind> = ref(MACRO_KIND.MACRO);
+const createName: Ref<string> = ref("");
+const createError: Ref<string> = ref("");
 
 onMounted(async () => {
   // Lazy load both halves of ``<repo>/macros/`` so the panel
@@ -48,9 +50,16 @@ onMounted(async () => {
   ]);
 });
 
-const macroCards = computed(() =>
+interface MacroCard {
+  kind: MacroKind;
+  name: string;
+  displayName: string;
+  size: number;
+}
+
+const macroCards = computed<MacroCard[]>(() =>
   [...macroFiles.value, ...ngcFiles.value]
-    .map((row) => {
+    .map((row): MacroCard => {
       const cached = contents.value[`${row.kind}:${row.name}`];
       const size = typeof cached === "string" ? new Blob([cached]).size : 0;
       return {
@@ -66,7 +75,7 @@ const macroCards = computed(() =>
     .sort((a, b) => a.name.localeCompare(b.name)),
 );
 
-function formatSize(bytes) {
+function formatSize(bytes: number): string {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} KB`;
@@ -76,16 +85,16 @@ function formatSize(bytes) {
 // modal. Issue #132 moves the editor to ``EditorView`` only; we
 // push ``/editor?source=macros&name=<displayedFilename>`` here and
 // let the universal editor handle the read/write surface.
-function openInEditorView(kind, name) {
-  const displayedName = kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`
-  return openInEditor({
+function openInEditorView(kind: MacroKind, name: string): void {
+  const displayedName = kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`;
+  openInEditor({
     source: 'macros',
     name: displayedName,
     readOnly: false,
-  })
+  });
 }
 
-async function deleteMacro(kind, name) {
+async function deleteMacro(kind: MacroKind, name: string): Promise<void> {
   const display =
     kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`;
   const shouldDelete = await useConfirm({
@@ -103,19 +112,19 @@ async function deleteMacro(kind, name) {
   }
 }
 
-function startCreate() {
+function startCreate(): void {
   createName.value = "";
   createKind.value = MACRO_KIND.MACRO;
   createError.value = "";
   createOpen.value = true;
 }
 
-async function commitCreate() {
+async function commitCreate(): Promise<void> {
   createError.value = "";
   const name = createName.value.trim();
   try {
     validateMacroKindName(createKind.value, name);
-  } catch (error) {
+  } catch (error: unknown) {
     createError.value = error instanceof Error ? error.message : String(error);
     return;
   }

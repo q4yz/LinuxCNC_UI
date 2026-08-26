@@ -39,7 +39,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import WebSocketDisconnect
 
-from hardware import connection
+from hardware import Connection
 
 
 async def _drive_one_tick():

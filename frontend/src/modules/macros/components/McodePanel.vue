@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Dashboard M-code panel. Lists LinuxCNC's custom-M-code files in
 // the canonical ``M100..M199`` range from
 // ``<repo>/machine_config/m_codes/``. Each row carries name + size
@@ -19,6 +19,7 @@ import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store";
 import { openInEditor } from "../../../helpers/openInEditor";
+import type { MacroEntry } from "../types";
 
 const store = useMacrosStore();
 const { isBusy, mcodeFiles } = storeToRefs(store);
@@ -26,7 +27,7 @@ const { isBusy, mcodeFiles } = storeToRefs(store);
 // Reads the mcode-only container directly. Each per-kind listing
 // is independent in the store so ``storeToRefs(mcodeFiles)`` stays
 // reactive without clobbering siblings on load.
-const sorted = computed(() =>
+const sorted = computed<MacroEntry[]>(() =>
   [...mcodeFiles.value].sort((a, b) => a.name.localeCompare(b.name)),
 );
 
@@ -34,11 +35,11 @@ onMounted(async () => {
   await store.loadList(MACRO_KIND.MCODE);
 });
 
-async function onRefresh() {
+async function onRefresh(): Promise<void> {
   await store.loadList(MACRO_KIND.MCODE);
 }
 
-async function onDelete(name) {
+async function onDelete(name: string): Promise<void> {
   await store.deleteMacro(MACRO_KIND.MCODE, name);
 }
 </script>

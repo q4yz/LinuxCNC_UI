@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
 const cameraDir = resolve(repoRoot, "frontend/src/modules/camera");
-const storePath = resolve(cameraDir, "cameraStore.js");
+const storePath = resolve(cameraDir, "cameraStore.ts");
 const viewerPath = resolve(cameraDir, "components/CameraViewer.vue");
 const settingsPath = resolve(cameraDir, "components/CameraSettings.vue");
 
@@ -31,7 +31,7 @@ function read(p) {
 }
 
 test("camera module files exist", () => {
-  assert.ok(existsSync(storePath), "cameraStore.js missing");
+  assert.ok(existsSync(storePath), "cameraStore.ts missing");
   assert.ok(existsSync(viewerPath), "CameraViewer.vue missing");
   assert.ok(existsSync(settingsPath), "CameraSettings.vue missing");
 });
@@ -40,13 +40,13 @@ test("cameraStore wires the per-module settings client", () => {
   const text = read(storePath);
   assert.match(
     text,
-    /import\s*\{\s*createModuleSettings\s*\}\s*from\s*["']\.\.\/\.\.\/core\/modules\/settings\.js["']/,
-    "cameraStore.js must import createModuleSettings from the canonical settings factory",
+    /import\s*\{\s*createModuleSettings\s*\}\s*from\s*["']\.\.\/\.\.\/core\/modules\/settings(?:\.js)?["']/,
+    "cameraStore must import createModuleSettings from the canonical settings factory",
   );
   assert.match(
     text,
     /createModuleSettings\(\s*manifest\.id\s*\)/,
-    "cameraStore.js must build the client from manifest.id (module_camera)",
+    "cameraStore must build the client from manifest.id (module_camera)",
   );
 });
 
@@ -58,12 +58,12 @@ test("cameraStore no longer touches localStorage", () => {
   assert.doesNotMatch(
     text,
     /linuxcnc\.camera\.preferences/,
-    "cameraStore.js must not reference the old localStorage key",
+    "cameraStore must not reference the old localStorage key",
   );
   assert.doesNotMatch(
     text,
     /window\.localStorage/,
-    "cameraStore.js must not read window.localStorage",
+    "cameraStore must not read window.localStorage",
   );
 });
 
@@ -82,7 +82,9 @@ test("cameraStore validates the four editable preference keys", () => {
   const text = read(storePath);
   // The whitelist allows camelCase keys (``customName`` + three
   // booleans). ``name`` from the legacy implementation is gone.
-  assert.match(text, /EDITABLE_KEYS\s*=\s*new Set\(/);
+  // Accept either ``new Set(...)`` (JS) or ``new Set<T>(...)``
+  // (typed TS) so the test survives the migration.
+  assert.match(text, /EDITABLE_KEYS\s*=\s*new Set(?:\s*<[^>]+>)?\s*\(/);
   for (const key of ["customName", "flip", "mirror", "hidden"]) {
     assert.match(
       text,
@@ -258,23 +260,34 @@ test("coercePreference reads the backend's snake_case custom_name (regression fo
   // on every reload, which made the custom name appear to be lost
   // between page navigations even though it was persisted under
   // snake_case on disk. Pin the snake_case read so the typo cannot
-  // return.
+  // return. The migrated code uses a local ``row`` alias; the regex
+  // accepts either name (``value.custom_name`` or
+  // ``row.custom_name``).
   const text = read(storePath);
   assert.match(
     text,
-    /value\.custom_name\s*===\s*["']string["']/,
+    /(?:value|row)\.custom_name\s*===\s*["']string["']/,
     "coercePreference must read the backend's snake_case custom_name field",
   );
+  // The negative match is scoped to ``coercePreference``'s body so
+  // ``serializePreferences``'s legitimate ``row.customName`` read
+  // (camelCase in-memory → snake_case on the wire) doesn't trip it.
+  const coerceBody = text.match(
+    /function\s+coercePreference[\s\S]*?\n\s{0,3}\}/,
+  );
+  assert.ok(coerceBody, "coercePreference body must be findable");
   assert.doesNotMatch(
-    text,
-    /value\.customName\s*===\s*["']string["']/,
+    coerceBody[0],
+    /(?:value|row)\.customName\s*===\s*["']string["']/,
     "coercePreference must not read the camelCase customName — that drops the backend's snake_case value to ''",
   );
   // The wire format produced by serializePreferences is unchanged
-  // (camelCase in-memory → snake_case on the wire).
+  // (camelCase in-memory → snake_case on the wire). The migrated
+  // helper iterates ``prefs`` typed entries; ``pref`` is the same
+  // shape as before.
   assert.match(
     text,
-    /typeof\s+pref\.customName\s*===\s*["']string["']/,
+    /typeof\s+(?:pref|row)\.customName\s*===\s*["']string["']/,
     "serializePreferences must keep writing the camelCase customName to snake_case custom_name",
   );
 });
@@ -473,10 +486,12 @@ test("cameraStore exposes streamMessage and refreshStreamMessage for operator di
   // The supervisor's ``message`` field flows through to the frontend
   // verbatim so an operator whose ``ustreamer`` is not installed sees
   // "ustreamer is not installed on this host. Run 'sudo apt install
-  // ustreamer'…" rather than a silent broken <img>.
+  // ustreamer'…" rather than a silent broken <img>. The pattern
+  // accepts an optional TS type annotation between ``streamMessage``
+  // and the ``=`` (e.g. ``const streamMessage: Ref<string> = ref("")``).
   assert.match(
     text,
-    /streamMessage\s*=\s*ref\(\s*["']["']\s*\)/,
+    /streamMessage\b[^=]*=\s*ref\(\s*["']["']\s*\)/,
     "cameraStore must define streamMessage as a string ref (default empty)",
   );
   assert.match(
@@ -500,7 +515,7 @@ test("cameraStore exposes streamMessage and refreshStreamMessage for operator di
   // dedup so a periodic refresh does not spam the operator console.
   assert.match(
     text,
-    /await\s+import\(\s*["']\.\.\/\.\.\/stores\/console\.js["']\s*\)/,
+    /await\s+import\(\s*["']\.\.\/\.\.\/stores\/console(?:\.js)?["']\s*\)/,
     "cameraStore must lazy-import the console store inside refreshStreamMessage",
   );
   assert.match(

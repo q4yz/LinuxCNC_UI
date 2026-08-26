@@ -627,7 +627,7 @@ indirection without isolation.
 
 The DTO and mapper for the servo thread state live in
 [`backend/dtos/ServoThreadState.py`](../../backend/dtos/ServoThreadState.py)
-and [`backend/mapper/ServoThreadStateMapper.py`](../../backend/mapper/ServoThreadStateMapper.py)
+and [`backend/mapper/ServoThreadStateMapper.py`](../../backend/mappers/ServoThreadStateMapper.py)
 respectively — the service in
 [`backend/services/ServoThreadService.py`](../../backend/services/ServoThreadService.py)
 delegates to them. The router itself stays a dispatcher.
@@ -638,7 +638,7 @@ delegates to them. The router itself stays a dispatcher.
 and [`backend/routers/SystemRouter.py`](../../backend/routers/SystemRouter.py)
 are the legacy flat routers for filesystem browsing and system
 status. Both pre-date the module split and both are routed through
-[`backend/services/FileService.py`](../../backend/services/FileService.py).
+[`backend/services/FileService.py`](../../backend/services/domain_file_services/FileService.py).
 They are exempt from the classical split because their endpoints
 are cross-cutting and not owned by any single module.
 
@@ -679,9 +679,9 @@ Touching them is a low-risk, low-reward cleanup.
 | `macros` | [`routers/macros.py`](../../backend/routers/macros.py) | [`MacroService`](../../backend/services/MacroService.py) | n/a | n/a | inline in `MacroService` | [`storage/MacroStorage.py`](../../backend/storage/MacroStorage.py), `MCodeFileService` | Yes — no DTO layer (text-in / text-out) |
 | `camera` | [`routers/camera.py`](../../backend/routers/camera.py) | `UstreamerSupervisor` (co-located) | n/a | n/a | inline | `SettingsStore` | **Gap** — supervisor co-located with router |
 | `machineconfig` | [`routers/machineconfig.py`](../../backend/routers/machineconfig.py) | [`domain_file_services`](../../backend/services/domain_file_services.py) (`ConfigFileService`, `StagedFileService`, `ActiveFileService`, `MCodeFileService`) | n/a | n/a | inline | `domain_file_services` | Yes — no DTO layer (filesystem CRUD) |
-| (telemetry) | [`routers/BaseThreadRouter.py`](../../backend/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/services/BaseThreadService.py) | n/a | [`mapper/BaseThreadSnapshotMapper.py`](../../backend/mapper/BaseThreadSnapshotMapper.py) | [`models/BaseThreadStateResponse.py`](../../backend/models/BaseThreadStateResponse.py) | n/a | **Exception** — legacy aggregator |
-| (telemetry) | [`routers/ServoThreadRouter.py`](../../backend/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/services/ServoThreadService.py) | [`dtos/ServoThreadState.py`](../../backend/dtos/ServoThreadState.py) | [`mapper/ServoThreadStateMapper.py`](../../backend/mapper/ServoThreadStateMapper.py) | [`models/ServoThreadStateResponse.py`](../../backend/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle |
-| (legacy) | [`routers/FilesRouter.py`](../../backend/routers/FilesRouter.py) | [`FileService`](../../backend/services/FileService.py) | n/a | n/a | inline | `FileService` | **Exception** — legacy flat |
+| (telemetry) | [`routers/BaseThreadRouter.py`](../../backend/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/services/BaseThreadService.py) | n/a | [`mapper/BaseThreadSnapshotMapper.py`](../../backend/mappers/BaseThreadSnapshotMapper.py) | [`models/BaseThreadStateResponse.py`](../../backend/models/BaseThreadStateResponse.py) | n/a | **Exception** — legacy aggregator |
+| (telemetry) | [`routers/ServoThreadRouter.py`](../../backend/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/services/ServoThreadService.py) | [`dtos/ServoThreadState.py`](../../backend/dtos/ServoThreadState.py) | [`mapper/ServoThreadStateMapper.py`](../../backend/mappers/ServoThreadStateMapper.py) | [`models/ServoThreadStateResponse.py`](../../backend/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle |
+| (legacy) | [`routers/FilesRouter.py`](../../backend/routers/FilesRouter.py) | [`FileService`](../../backend/services/domain_file_services/FileService.py) | n/a | n/a | inline | `FileService` | **Exception** — legacy flat |
 | (legacy) | [`routers/SystemRouter.py`](../../backend/routers/SystemRouter.py) | [`SystemService`](../../backend/services/SystemService.py) (or inline) | n/a | n/a | inline | n/a | **Exception** — legacy flat |
 
 ## 9. Anti-patterns

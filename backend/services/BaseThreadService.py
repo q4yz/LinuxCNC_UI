@@ -2,7 +2,7 @@ import time
 from typing import Dict, Union
 
 from core.field_masking import ResponseTier
-from mapper.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
+from mappers.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
 from mappers.axis.axis_mapper import AxisMapper
 from models.axis_model import AxisStateResponse
@@ -26,7 +26,51 @@ class BaseThreadSnapshotService:
         self.tool_service = get_tools_service()
         self.axes_service = get_axis_service()
         self.temperature_service = get_temperature_service()
-        self.program_service = get_program_lifecycle_service()
+        self.program_service = get_program_lifecycle_service()#
+
+        # --- MAIN ENGINE ---
+
+    def get_snapshot(self, mode: ResponseTier = ResponseTier.ALL) -> BaseThreadSnapshotResponse:
+        """Assembles the snapshot based on the requested mode."""
+        started = time.monotonic()
+
+        logger.info("base_thread.snapshot: assembling dashboard payload mode=%s", mode.value)
+
+        # Program progress (current G-code line) has no static config, so only fetch it for BASE or ALL
+        include_progress = (mode in {ResponseTier.BASE, ResponseTier.ALL})
+
+        progress = self._read_progress() if include_progress else None
+
+        # Tools, Sensors, and Axes all have both static (limits, max_rpm) and base (actual_rpm, pos) data.
+        # We fetch them every time, but pass the `mode` down so the mappers can strip out the irrelevant fields.
+        sensors = self._sensors_snapshot(mode)
+        tools = self._tools_snapshot(mode)
+        axis = self._axis_state(mode)
+
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        logger.info(
+            "base_thread.snapshot: assembled sensors=%d tools=%d in %.1fms",
+            len(sensors) if sensors else 0,
+            len(tools) if tools else 0,
+            elapsed_ms,
+        )
+
+        return BaseThreadSnapshotMapper.to_response(
+            progress=progress,
+            sensors=sensors,
+            tools=tools,
+            axis=axis,
+        )
+
+        # --- WRAPPERS ---
+
+    def get_base_response(self) -> BaseThreadSnapshotResponse:
+        """Returns ONLY the dynamic 1Hz data."""
+        return self.get_snapshot(ResponseTier.BASE)
+
+    def get_static_response(self) -> BaseThreadSnapshotResponse:
+        """Returns ONLY the static machine configuration."""
+        return self.get_snapshot(ResponseTier.STATIC)
 
     def _read_progress(self) -> ProgramProgressResponse:
         progress = self.program_service.progress_program()
@@ -89,49 +133,6 @@ class BaseThreadSnapshotService:
             out[response.id] = response
         return out
 
-    # --- MAIN ENGINE ---
-
-    def get_snapshot(self, mode: ResponseTier = ResponseTier.ALL) -> BaseThreadSnapshotResponse:
-        """Assembles the snapshot based on the requested mode."""
-        started = time.monotonic()
-
-        logger.info("base_thread.snapshot: assembling dashboard payload mode=%s", mode.value)
-
-        # Program progress (current G-code line) has no static config, so only fetch it for BASE or ALL
-        include_progress = (mode in {ResponseTier.BASE, ResponseTier.ALL})
-
-        progress = self._read_progress() if include_progress else None
-
-        # Tools, Sensors, and Axes all have both static (limits, max_rpm) and base (actual_rpm, pos) data.
-        # We fetch them every time, but pass the `mode` down so the mappers can strip out the irrelevant fields.
-        sensors = self._sensors_snapshot(mode)
-        tools = self._tools_snapshot(mode)
-        axis = self._axis_state(mode)
-
-        elapsed_ms = (time.monotonic() - started) * 1000.0
-        logger.info(
-            "base_thread.snapshot: assembled sensors=%d tools=%d in %.1fms",
-            len(sensors) if sensors else 0,
-            len(tools) if tools else 0,
-            elapsed_ms,
-        )
-
-        return BaseThreadSnapshotMapper.to_response(
-            progress=progress,
-            sensors=sensors,
-            tools=tools,
-            axis=axis,
-        )
-
-    # --- WRAPPERS ---
-
-    def get_base_response(self) -> BaseThreadSnapshotResponse:
-        """Returns ONLY the dynamic 1Hz data."""
-        return self.get_snapshot(ResponseTier.BASE)
-
-    def get_static_response(self) -> BaseThreadSnapshotResponse:
-        """Returns ONLY the static machine configuration."""
-        return self.get_snapshot(ResponseTier.STATIC)
 
 
 _SERVICE_INSTANCE = None

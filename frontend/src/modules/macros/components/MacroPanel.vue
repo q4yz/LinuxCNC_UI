@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Dashboard macro panel. Lists every persisted macro with a "Run"
 // button; "Run" parses the macro into blocks (via the JS port of
 // ``backend/modules/macros/parser.py``) and dispatches each
@@ -20,28 +20,34 @@
 // disabled while the store is busy or the machine is in E-Stop.
 
 import { computed, onMounted, ref } from "vue";
+import type { Ref } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useMacrosStore, MACRO_KIND } from "../store";
-import { useMachineStore } from "../../../stores/machine";
+// E-Stop lives on the state facade (mirrors the
+// ``useMachineStore as useFacadeStore`` alias convention from
+// ``stores/servoThread.ts``); the orchestrator store in
+// ``stores/machine.ts`` exposes ``isEstop`` instead.
+import { useMachineStore as useFacadeStore } from "../../../stores/stateFacade";
+import type { MacroEntry, MacroLastRunResult, MacroRunCounters } from "../types";
 
 const store = useMacrosStore();
-const machine = useMachineStore();
+const machine = useFacadeStore();
 
 const { isBusy, macroFiles, ngcFiles } = storeToRefs(store);
 
 // Per-row transient state — which macro the operator has just
 // clicked and whether a dispatch is in flight. Reset when the user
 // clicks again or the list refreshes.
-const runningName = ref("");
-const lastResult = ref(/** @type {{name: string, staticDispatched: number, pythonSkipped: number} | null} */ (null));
+const runningName: Ref<string> = ref("");
+const lastResult: Ref<MacroLastRunResult | null> = ref(null);
 
 // Dashboard joins the per-kind ``macro`` and ``ngc`` containers.
 // M-codes live in their own ``McodePanel`` (separate ref) and are
 // never joined here. ``storeToRefs`` keeps each container
 // reactive independently so M-code listings never clobber the
 // macro / ngc rows on mount-order changes.
-const sorted = computed(() =>
+const sorted = computed<MacroEntry[]>(() =>
   [...macroFiles.value, ...ngcFiles.value].sort((a, b) =>
     a.name.localeCompare(b.name),
   ),
@@ -57,7 +63,7 @@ onMounted(async () => {
   ]);
 });
 
-async function onRun(name) {
+async function onRun(name: string): Promise<void> {
   runningName.value = name;
   try {
     const result = await store.runMacro(name);
@@ -75,10 +81,10 @@ async function onRun(name) {
   }
 }
 
-function parseCounterPayload(raw) {
+function parseCounterPayload(raw: string | null | undefined): MacroRunCounters {
   if (!raw) return { staticDispatched: 0, pythonSkipped: 0 };
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<MacroRunCounters>;
     return {
       staticDispatched: Number(parsed.staticDispatched) || 0,
       pythonSkipped: Number(parsed.pythonSkipped) || 0,
@@ -88,14 +94,14 @@ function parseCounterPayload(raw) {
   }
 }
 
-function onRefresh() {
+function onRefresh(): Promise<unknown> {
   return Promise.all([
     store.loadList(MACRO_KIND.MACRO),
     store.loadList(MACRO_KIND.NGC),
   ]);
 }
 
-function formatResult(entry) {
+function formatResult(entry: MacroLastRunResult | null): string {
   if (!entry) return "";
   const pythonNote = entry.pythonSkipped
     ? `, ${entry.pythonSkipped} python block(s) skipped`

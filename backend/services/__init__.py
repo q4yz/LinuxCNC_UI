@@ -1,15 +1,16 @@
 """Service layer for the LinuxCNC UI backend.
 
-Re-exports the :class:`FileService` base and the four domain
-sub-services so the rest of the codebase can import them from a
-single, clean path:
+Re-exports the :class:`FileService` base, the domain sub-services,
+and the factory helpers so the rest of the codebase can import them
+from a single, clean path:
 
     from services import ConfigFileService, StagedFileService
+    from services import get_config_service, get_staged_service
 
 The routers (``backend/routers/`` and the
 ``backend/modules/machineconfig/router.py`` module router) are
 the only consumers — they stay thin HTTP wrappers and delegate
-the actual filesystem work to one of the four services.
+the actual filesystem work to one of the services.
 
 The per-module service classes (``StateService``, ``AxisService``,
 ``ProgramService``, ``ToolsService``, ``TemperatureService``) live
@@ -17,17 +18,19 @@ in their respective modules (``modules/<name>/tool_service.py``) and
 must be imported directly from there — they are intentionally not
 re-exported from this package surface.
 """
-
-from .FileService import FileMetadata, FileService
 from .domain_file_services import (
     ActiveFileService,
     ConfigFileService,
+    FileMetadata,
+    FileService,
     MCodeFileService,
+    MacroFileService,
     ProgramFileService,
     StagedFileService,
     get_active_service,
     get_config_service,
     get_mcode_service,
+    get_macro_service,
     get_program_service,
     get_staged_service,
     reset_service_cache,
@@ -51,6 +54,7 @@ __all__ = [
     "FileMetadata",
     "FileService",
     "MCodeFileService",
+    "MacroFileService",
     "ProgramFileService",
     "StagedFileService",
     "clear_line_count_cache",
@@ -58,6 +62,7 @@ __all__ = [
     "get_active_service",
     "get_config_service",
     "get_mcode_service",
+    "get_macro_service",
     "get_pv_index",
     "get_program_service",
     "get_sp_index",

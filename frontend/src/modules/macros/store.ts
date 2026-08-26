@@ -43,12 +43,17 @@
 // in ``.agent/LESSONS_LEARNED.md`` § 2.4.
 
 import { defineStore } from "pinia";
-import { reactive, ref } from "vue";
+import { reactive, ref, type Ref } from "vue";
 
 import { macrosFacade } from "../../facades/macrosFacade";
 import manifest from "./manifest";
 import { useConsoleStore } from "../../stores/console";
-import { useMachineStore } from "../../stores/machine";
+// The E-Stop guard lives on the state facade (which exposes
+// ``isEstopActive``); the orchestrator store in ``stores/machine.ts``
+// exposes ``isEstop`` instead. We follow the alias convention from
+// ``stores/servoThread.ts`` so the guard reads from the surface
+// the rest of the app agrees on.
+import { useMachineStore as useFacadeStore } from "../../stores/stateFacade";
 import {
   describeError as describeErrorShared,
   errorStatus,
@@ -56,14 +61,20 @@ import {
 } from "../../core/error-format";
 import { CommandResult } from "../../entities/common/CommandResult";
 import { validateMacroKindName } from "./parser";
+import type { MacroContents, MacroEntry, MacroKind, MacroRunCounters } from "./types";
 
 // Canonical kind constants. Must agree with the backend's
 // ``VALID_KINDS`` enum (``backend/routers/macros.py``).
+//
+// ``Object.freeze`` keeps the existing structural-test contract
+// (``test-macros-registry.mjs`` regex matches ``Object.freeze``)
+// while ``as const`` preserves the string-literal types so the
+// derived ``MacroKind`` union stays accurate.
 export const MACRO_KIND = Object.freeze({
   MACRO: "macro",
   NGC: "ngc",
   MCODE: "mcode",
-});
+} as const);
 
 const STORE_ID = `module_${manifest.id}`;
 
@@ -77,19 +88,17 @@ const STORE_ID = `module_${manifest.id}`;
  * ``error.message`` for everything else) so a future envelope shape
  * change lives in one place.
  */
-const describeError = (error) =>
-  describeErrorShared(error) || "Unknown error";
+function describeError(error: unknown): string {
+  return describeErrorShared(error) || "Unknown error";
+}
 
 /**
  * Normalise ``""`` → ``"\n"``. FastAPI rejects a zero-byte
  * ``text/plain`` body with ``422`` so an empty editor would
  * otherwise fail to save. Mirrors the same escape the macros
  * dashboard already uses for ``.macro`` files.
- *
- * @param {string} body
- * @returns {string}
  */
-function normalizeEmpty(body) {
+function normalizeEmpty(body: string): string {
   return body.length === 0 ? "\n" : body;
 }
 
@@ -98,13 +107,10 @@ function normalizeEmpty(body) {
  * a plain array of ``{ name, kind, size_bytes }`` records. The
  * generated ``MacroListItem`` is structurally identical so we keep
  * the field names the same.
- *
- * @param {unknown} response
- * @returns {Array<{name: string, kind: string, size_bytes: number}>}
  */
-function normalizeListEntries(response) {
-  const raw = response?.macros;
-  return Array.isArray(raw) ? raw : [];
+function normalizeListEntries(response: unknown): MacroEntry[] {
+  const raw = (response as { macros?: unknown } | null | undefined)?.macros;
+  return Array.isArray(raw) ? (raw as MacroEntry[]) : [];
 }
 
 /**
@@ -114,18 +120,22 @@ function normalizeListEntries(response) {
  * so existing dashboard widgets that read the counters keep their
  * input — newer code should branch on ``result.failed`` instead.
  */
-function counterPayload(dispatched, skipped) {
-  return JSON.stringify({ staticDispatched: dispatched, pythonSkipped: skipped });
+function counterPayload(dispatched: number, skipped: number): string {
+  const counters: MacroRunCounters = {
+    staticDispatched: dispatched,
+    pythonSkipped: skipped,
+  };
+  return JSON.stringify(counters);
 }
 
-function failureFromLegacy(reason, commandId) {
+function failureFromLegacy(reason: string, commandId: string): CommandResult {
   return CommandResult.failure(reason, {
     commandId,
     statusCode: null,
   });
 }
 
-function failureFromError(error, commandId) {
+function failureFromError(error: unknown, commandId: string): CommandResult {
   return CommandResult.failure(describeError(error), {
     commandId,
     statusCode: errorStatus(error),
@@ -146,40 +156,40 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * pick the right ref (or join ``macroFiles`` + ``ngcFiles`` for
    * the legacy MacroPanel) directly.
    */
-  const macroFiles = ref([]);
-  const ngcFiles = ref([]);
-  const mcodeFiles = ref([]);
+  const macroFiles: Ref<MacroEntry[]> = ref([]);
+  const ngcFiles: Ref<MacroEntry[]> = ref([]);
+  const mcodeFiles: Ref<MacroEntry[]> = ref([]);
 
   /**
    * Cache of fetched payloads. Keyed by ``<kind>:<name>`` so the
    * dashboard's "Run" path on ``macro`` rows doesn't collide with
    * the editor opening the same name under a different kind.
    */
-  const contents = reactive({});
+  const contents: MacroContents = reactive({});
 
   /** UI flag — true while a list mutation / delete / save is in flight. */
-  const isBusy = ref(false);
+  const isBusy: Ref<boolean> = ref(false);
 
   /** Last error surfaced by an action (or ``null``). */
-  const lastError = ref(/** @type {string|null} */ (null));
+  const lastError: Ref<string | null> = ref(null);
 
   /** Map of kind → listing ref. Localised so ``loadList(kind)``
    *  can dispatch via a single table lookup.
    */
-  const listRefs = {
-    [MACRO_KIND.MACRO]: macroFiles,
-    [MACRO_KIND.NGC]: ngcFiles,
-    [MACRO_KIND.MCODE]: mcodeFiles,
+  const listRefs: Record<MacroKind, Ref<MacroEntry[]>> = {
+    macro: macroFiles,
+    ngc: ngcFiles,
+    mcode: mcodeFiles,
   };
 
-  function listRefFor(kind) {
-    const ref = listRefs[kind];
-    if (!ref) {
+  function listRefFor(kind: MacroKind): Ref<MacroEntry[]> {
+    const target = listRefs[kind];
+    if (!target) {
       throw new Error(
         `macros store: unknown kind ${JSON.stringify(kind)}`,
       );
     }
-    return ref;
+    return target;
   }
 
   // --- list / read (no CommandResult — these are reads) -------- //
@@ -188,23 +198,20 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * Fetch the listing for a single ``kind``. Writes into the
    * matching per-kind container only — calling this repeatedly
    * with different kinds never empties the others.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @returns {Promise<Array<{name: string, kind: string, size_bytes: number}>>}
    */
-  async function loadList(kind = MACRO_KIND.MACRO) {
+  async function loadList(kind: MacroKind = MACRO_KIND.MACRO): Promise<MacroEntry[]> {
     const target = listRefFor(kind);
     try {
       const response = await macrosFacade.list(kind);
       // Tag every row with its kind so the dashboard panels can
       // join the macro + ngc refs without losing the source.
-      const entries = normalizeListEntries(response).map((row) => ({
+      const entries: MacroEntry[] = normalizeListEntries(response).map((row) => ({
         ...row,
         kind,
       }));
       target.value = entries;
       return target.value;
-    } catch (error) {
+    } catch (error: unknown) {
       lastError.value = describeError(error);
       useConsoleStore().error(
         `Failed to list macros (${kind}): ${lastError.value}`,
@@ -217,10 +224,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * Reload all three listings concurrently. The per-kind
    * containers stay isolated so this is safe even with mount /
    * unmount races on the dashboard.
-   *
-   * @returns {Promise<Array<{name: string, kind: string, size_bytes: number}>>}
    */
-  async function loadAll() {
+  async function loadAll(): Promise<MacroEntry[]> {
     await Promise.all([
       loadList(MACRO_KIND.MACRO),
       loadList(MACRO_KIND.NGC),
@@ -234,18 +239,15 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   }
 
   /** Cache key for the contents map. */
-  function cacheKey(kind, name) {
+  function cacheKey(kind: MacroKind, name: string): string {
     return `${kind}:${name}`;
   }
 
   /**
    * Fetch a macro's raw payload, cache it, and return the string.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @param {string} name
-   * @returns {Promise<string|null>} ``null`` when the fetch failed.
+   * ``null`` is returned when the fetch failed.
    */
-  async function readMacro(kind, name) {
+  async function readMacro(kind: MacroKind, name: string): Promise<string | null> {
     validateMacroKindName(kind, name);
     try {
       const text = await macrosFacade.read(name, kind);
@@ -253,7 +255,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
         typeof text === "string" ? text : text == null ? "" : String(text);
       contents[cacheKey(kind, name)] = payload;
       return payload;
-    } catch (error) {
+    } catch (error: unknown) {
       lastError.value = describeError(error);
       useConsoleStore().error(
         `Failed to read macro '${name}' (${kind}): ${lastError.value}`,
@@ -266,12 +268,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * Cached lookup; falls back to a network fetch on miss. The
    * ``(kind, name)`` pair is the cache key so the same macro name
    * under different kinds does not collide.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @param {string} name
-   * @returns {Promise<string|null>}
    */
-  async function ensureMacroContent(kind, name) {
+  async function ensureMacroContent(kind: MacroKind, name: string): Promise<string | null> {
     const cached = contents[cacheKey(kind, name)];
     if (typeof cached === "string") return cached;
     return readMacro(kind, name);
@@ -284,22 +282,10 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * Refreshes the matching per-kind listing in place — the other
    * two listings stay warm. ``loadList`` would be a heavier
    * round-trip; the row we just wrote is already known.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @param {string} name
-   * @param {string} body
-   * @returns {Promise<CommandResult>}
    */
-  async function saveMacro(kind, name, body): Promise<CommandResult> {
+  async function saveMacro(kind: MacroKind, name: string, body: string): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     const safeBody = normalizeEmpty(body);
-    if (typeof safeBody !== "string") {
-      const reason = "Macro body must be a string.";
-      lastError.value = reason;
-      const result = failureFromLegacy(reason, `write:${kind}:${name}`);
-      reportCommandFailure(`save macro ${kind}:${name}`, result);
-      return result;
-    }
     isBusy.value = true;
     const result = await macrosFacade.write(name, safeBody, kind);
     if (result.failed) {
@@ -311,11 +297,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
         `Saved macro '${name}' (${kind}, ${safeBody.length} bytes).`,
       );
       const target = listRefFor(kind);
-      const size_bytes =
-        typeof safeBody === "string"
-          ? new Blob([safeBody]).size
-          : 0;
-      const row = { name, kind, size_bytes };
+      const size_bytes = new Blob([safeBody]).size;
+      const row: MacroEntry = { name, kind, size_bytes };
       const idx = target.value.findIndex((entry) => entry.name === name);
       if (idx === -1) target.value.push(row);
       else target.value.splice(idx, 1, row);
@@ -328,12 +311,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * Remove a macro from disk and drop its cached content. The
    * matching per-kind listing is patched in place; the other two
    * listings stay warm.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @param {string} name
-   * @returns {Promise<CommandResult>}
    */
-  async function deleteMacro(kind, name): Promise<CommandResult> {
+  async function deleteMacro(kind: MacroKind, name: string): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     isBusy.value = true;
     const result = await macrosFacade.remove(name, kind);
@@ -357,11 +336,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * "Run" a ``macro`` row. Routes the call through
    * ``runMacroOfKind`` so the macro + ngc dispatch lives in one
    * place.
-   *
-   * @param {string} name
-   * @returns {Promise<CommandResult>}
    */
-  async function runMacro(name): Promise<CommandResult> {
+  async function runMacro(name: string): Promise<CommandResult> {
     return runMacroOfKind(MACRO_KIND.MACRO, name);
   }
 
@@ -391,16 +367,12 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * JSON string on ``result.message`` so existing dashboard widgets
    * that read ``lastResult.value.staticDispatched`` keep their
    * input. New code should branch on ``result.failed``.
-   *
-   * @param {"macro"|"ngc"|"mcode"} kind
-   * @param {string} name
-   * @returns {Promise<CommandResult>}
    */
-  async function runMacroOfKind(kind, name): Promise<CommandResult> {
+  async function runMacroOfKind(kind: MacroKind, name: string): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     const consoleStore = useConsoleStore();
 
-    const machine = useMachineStore();
+    const machine = useFacadeStore();
     if (machine.isEstopActive) {
       const result = failureFromLegacy(
         "Cannot run macros while the machine is in E-Stop.",
