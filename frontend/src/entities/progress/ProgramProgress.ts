@@ -72,8 +72,8 @@ export class ProgramProgress {
   /** Fraction of total lines already executed (0..100). */
   get fraction(): number {
     if (this._totalLines <= 0) return 0;
-    if (this._currentLine < 0) return 0;
-    return Math.min(100, (this._currentLine / this._totalLines) * 100);
+    if (this._motionLine < 0) return 0;
+    return Math.min(100, (this._motionLine / this._totalLines) * 100);
   }
 
   get isLoaded(): boolean {

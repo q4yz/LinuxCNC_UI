@@ -34,10 +34,12 @@
 //   before relying on the preview.
 
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
 import { useMachineConfigStore } from '../stores/machineconfigStore'
+import { useBaseThreadStore } from '../stores/baseThread'
 import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
 
 // --- Interfaces & Types ---
@@ -58,12 +60,16 @@ interface ToolpathMeta {
  * the moment it was emitted. ``wcsIndex`` is 1..9 (G54..G59.3);
  * ``g92`` is the additive origin that was active when the line was
  * parsed (and zeroed if a G92.2 suspension was in effect).
+ * ``sourceLine`` is the 1-based index of the file line that
+ * produced this segment — used by the renderer to colour already-cut
+ * segments pink via the live ``motionLine`` from telemetry.
  */
 interface ParsedSegment {
   from: [number, number, number]
   to:   [number, number, number]
   wcsIndex: number
   g92:    [number, number, number]
+  sourceLine: number
 }
 
 // Typing the loosely parsed hardware.json payload
@@ -94,6 +100,29 @@ const props = withDefaults(
 
 const store = useMachineStore()
 const machineconfigStore = useMachineConfigStore()
+const baseThreadStore = useBaseThreadStore()
+const { progress: baseThreadProgress } = storeToRefs(baseThreadStore)
+
+// Tailwind pink-400 / blue-400 — fed into a per-vertex color buffer
+// so already-cut segments render pink and pending segments render blue.
+const COLOR_CUT_R = 0xf4 / 255
+const COLOR_CUT_G = 0x72 / 255
+const COLOR_CUT_B = 0xb6 / 255
+const COLOR_PENDING_R = 0x60 / 255
+const COLOR_PENDING_G = 0xa5 / 255
+const COLOR_PENDING_B = 0xfa / 255
+
+/**
+ * Live ``motionLine`` from the base-thread telemetry. The
+ * interpreter's motion-line counter lags behind the current line by
+ * the depth of the lookahead buffer; the renderer uses it as the
+ * threshold for "already cut". A negative value means no program is
+ * loaded yet (default state) — every segment renders pending.
+ */
+const motionLine = computed<number>(() => {
+  const n = Number(baseThreadProgress.value?.motionLine ?? -1);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : -1;
+});
 
 // Template ref for the container div
 const container = ref<HTMLDivElement | null>(null)
@@ -310,6 +339,15 @@ const setupWatchers = () => {
     } else {
       clearToolpath()
     }
+  })
+
+  // Recolor already-cut / pending segments every time the
+  // interpreter's motion-line advances. The buffer rebuild is
+  // cheap (one Float32Array allocation per tick, ~60 per minute
+  // for a typical run) and keeps the offset-aware redraw path
+  // untouched — both watchers end up at the same mesh builder.
+  watch(() => baseThreadProgress.value?.motionLine, () => {
+    if (lastLoadedFilename) redrawToolpath()
   })
 
   watch(
@@ -664,6 +702,7 @@ const parseGcodeToolpath = (text: string): ParsedSegment[] => {
       to:   [curX,  curY,  curZ],
       wcsIndex: activeWcs,
       g92: effectiveG92,
+      sourceLine: i + 1,
     })
     void motion
   }
@@ -682,7 +721,7 @@ const gwordToWcsIndex = (value: number): number | null => {
   return null
 }
 
-const replaceToolpathMesh = (segments: ParsedSegment[]) => {
+const replaceToolpathMesh = (segments: ParsedSegment[], motion: number = motionLine.value) => {
   clearToolpathMesh()
 
   const activeIdx = activeWcsIdx.value
@@ -690,8 +729,18 @@ const replaceToolpathMesh = (segments: ParsedSegment[]) => {
   const runtimeG92 = props.applyWorkingOffset ? liveG92.value : [0, 0, 0]
 
   const flat = new Float32Array(segments.length * 6)
-  let i = 0
-  for (const seg of segments) {
+  const colors = new Float32Array(segments.length * 6)
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    // ``motionLine`` is the source line the interpreter is currently
+    // executing. Segments whose source line is below it have been cut;
+    // everything at-or-above it is still pending. A negative motion
+    // (no program loaded) renders everything pending.
+    const isCut = motion > 0 && seg.sourceLine < motion
+    const r = isCut ? COLOR_CUT_R : COLOR_PENDING_R
+    const g = isCut ? COLOR_CUT_G : COLOR_PENDING_G
+    const b = isCut ? COLOR_CUT_B : COLOR_PENDING_B
+
     // Only the segment's active WCS gets the live g5xOffset from
     // telemetry. Other systems would need their own offsets, which
     // the backend doesn't expose (it only ships the active WCS's
@@ -712,12 +761,19 @@ const replaceToolpathMesh = (segments: ParsedSegment[]) => {
     const dy = g5xY + seg.g92[1] + runtimeG92[1]
     const dz = g5xZ + seg.g92[2] + runtimeG92[2]
 
-    flat[i++] = seg.from[0] + dx
-    flat[i++] = seg.from[1] + dy
-    flat[i++] = seg.from[2] + dz
-    flat[i++] = seg.to[0] + dx
-    flat[i++] = seg.to[1] + dy
-    flat[i++] = seg.to[2] + dz
+    const base = i * 6
+    flat[base + 0] = seg.from[0] + dx
+    flat[base + 1] = seg.from[1] + dy
+    flat[base + 2] = seg.from[2] + dz
+    flat[base + 3] = seg.to[0] + dx
+    flat[base + 4] = seg.to[1] + dy
+    flat[base + 5] = seg.to[2] + dz
+    colors[base + 0] = r
+    colors[base + 1] = g
+    colors[base + 2] = b
+    colors[base + 3] = r
+    colors[base + 4] = g
+    colors[base + 5] = b
   }
 
   const geometry = new THREE.BufferGeometry()
@@ -725,7 +781,11 @@ const replaceToolpathMesh = (segments: ParsedSegment[]) => {
       'position',
       new THREE.Float32BufferAttribute(flat, 3),
   )
-  const material = new THREE.LineBasicMaterial({ color: 0x60a5fa })
+  geometry.setAttribute(
+      'color',
+      new THREE.Float32BufferAttribute(colors, 3),
+  )
+  const material = new THREE.LineBasicMaterial({ vertexColors: true })
   toolpathLine = new THREE.LineSegments(geometry, material)
 
   if (scene) scene.children[0].add(toolpathLine)

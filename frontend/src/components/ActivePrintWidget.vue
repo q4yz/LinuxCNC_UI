@@ -19,7 +19,7 @@
 // Failures are routed through ``reportCommandFailure`` so the
 // console row + toast are uniform across every manual trigger.
 
-import {computed, ref, onMounted} from "vue";
+import {computed, ref, onMounted, onBeforeUnmount, watch} from "vue";
 import {storeToRefs} from "pinia";
 import {useMachineStore, SystemState} from "../stores/stateFacade";
 import {useBaseThreadStore} from "../stores/baseThread";
@@ -61,6 +61,17 @@ async function fetchFiles() {
 
 onMounted(() => {
   fetchFiles();
+  remainingTimerId = setInterval(() => {
+    // Reading the computed inside the interval forces Vue to
+    // re-evaluate the next time the template touches it. The
+    // interval is the trigger that pushes a fresh ``Date.now()`` into
+    // the system; the computed reads it on demand.
+    void remainingMs.value;
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  if (remainingTimerId) clearInterval(remainingTimerId);
 });
 
 // --- Lifecycle state -----------------------------------------------------
@@ -101,6 +112,63 @@ const progressFraction = computed(() =>
         : 0,
 );
 const progressPercent = computed(() => progressFraction.value.toFixed(1));
+
+// --- Time-estimate state -------------------------------------------------
+//
+// ``startedAt`` captures ``Date.now()`` the moment the interpreter
+// enters ``RUNNING``. It survives pause / resume (real elapsed time
+// is what we want to extrapolate from, not time spent moving) and is
+// cleared only when the program leaves both the running/paused and
+// the loaded surfaces — i.e. on unload, fresh load, or terminal
+// non-active states. The progress percentage is
+// ``progressFraction / 100``; extrapolating total wall-clock time is
+// ``elapsed / fraction``, with the remaining slice = ``total - elapsed``.
+const startedAt = ref<number | null>(null);
+
+watch(isRunning, (running, wasRunning) => {
+  if (running && !wasRunning) {
+    // Fresh start OR resume from pause — restart the timer so
+    // the percentage matches the wall-clock-elapsed denominator.
+    startedAt.value = Date.now();
+  }
+  // ``running === false``: leave the value alone. The user can read
+  // the frozen ETA while paused; clearing it would make the row flash
+  // between "Est. remaining: …" and "Estimating…" on every pause.
+});
+
+watch([isActive, isLoaded], ([active, loaded]) => {
+  if (!active && !loaded) {
+    startedAt.value = null;
+  }
+});
+
+const remainingMs = computed<number | null>(() => {
+  if (!isRunning.value) return null;
+  if (startedAt.value === null) return null;
+  const fraction = progressFraction.value / 100;
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) return null;
+  const elapsed = Date.now() - startedAt.value;
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return null;
+  const total = elapsed / fraction;
+  return Math.max(0, total - elapsed);
+});
+
+const formatRemaining = (ms: number): string => {
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+};
+
+// ``remainingMs`` reads ``Date.now()``, which Vue does NOT track as
+// a reactive dependency. The interval below re-evaluates the
+// computed once per second while the program is running so the
+// "Est. remaining" row ticks down without a watcher on every clock
+// tick elsewhere in the app.
+let remainingTimerId: ReturnType<typeof setInterval> | null = null;
 
 // Cap the recent-files list to the five newest G-code / NGC entries.
 const PRINTABLE_EXTENSIONS = [".gcode", ".ngc"];
@@ -319,6 +387,20 @@ async function stopPrint() {
         <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono">
           <span>Line {{ progress.currentLine }}</span>
           <span>of {{ progress.totalLines || "?" }}</span>
+        </div>
+        <div
+          v-if="remainingMs !== null"
+          class="flex items-center justify-between text-[10px] text-gray-400 font-mono"
+          data-testid="active-print-remaining"
+        >
+          <span>Est. remaining</span>
+          <span>{{ formatRemaining(remainingMs) }}</span>
+        </div>
+        <div
+          v-else-if="isRunning"
+          class="text-[10px] text-gray-500 font-mono italic"
+        >
+          Estimating…
         </div>
       </div>
 
