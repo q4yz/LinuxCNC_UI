@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Universal editor shell — the ONLY mount point for ``<Editor>``
 // anywhere in the app (issue #132).
 //

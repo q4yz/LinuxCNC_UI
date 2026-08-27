@@ -20,19 +20,19 @@ class SpindleDigitalMapper:
 
         return SpindleDigitalPins(
             id=tool_id,
-            spindle_at_speed=ReadOnlyDynamicHalPin[bool](f"spindle-at-speed{suffix}", HalDataType.BIT),
-            target_rpm=ReadOnlyDynamicHalPin(f"TargetRpm{suffix}",HalDataType.FLOAT),
-            actual_rpm=ReadOnlyDynamicHalPin(f"rpm-out{suffix}", HalDataType.FLOAT),
-            is_connected=ReadOnlyDynamicHalPin(f"is-connected{suffix}", HalDataType.BIT),
-            error_count=ReadOnlyDynamicHalPin(f"error-count{suffix}", HalDataType.S32),
-            last_error=ReadOnlyDynamicHalPin(f"last-error{suffix}", HalDataType.S32),
+            spindle_at_speed=ReadOnlyDynamicHalPin[bool](f"spindle-at-speed{suffix}", HalDataType.BIT, ""),
+            target_rpm=ReadOnlyDynamicHalPin(f"TargetRpm{suffix}",HalDataType.FLOAT, ""),
+            actual_rpm=ReadOnlyDynamicHalPin(f"rpm-out{suffix}", HalDataType.FLOAT, ""),
+            is_connected=ReadOnlyDynamicHalPin(f"is-connected{suffix}", HalDataType.BIT, ""),
+            error_count=ReadOnlyDynamicHalPin(f"error-count{suffix}", HalDataType.S32, ""),
+            last_error=ReadOnlyDynamicHalPin(f"last-error{suffix}", HalDataType.S32, ""),
             min_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_rpm"), int) or 0),
             max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
-            spindle_forward=ReadOnlyDynamicHalPin(f"spindle-forward{suffix}", HalDataType.BIT),
-            spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT),
-            absolute_master_override_enable=ReadWriteDynamicHalPin(f"absolute-master-override-enable{suffix}", HalDataType.BIT),
-            absolute_master_override=ReadWriteDynamicHalPin(f"absolute-master-override{suffix}", HalDataType.FLOAT),
-            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.S32),
+            spindle_forward=ReadOnlyDynamicHalPin(f"spindle-forward{suffix}", HalDataType.BIT, ""),
+            spindle_reverse=ReadOnlyDynamicHalPin(f"spindle-reverse{suffix}", HalDataType.BIT, ""),
+            absolute_master_override_enable=ReadWriteDynamicHalPin(f"absolute-master-override-enable{suffix}", HalDataType.BIT, ""),
+            absolute_master_override=ReadWriteDynamicHalPin(f"absolute-master-override{suffix}", HalDataType.FLOAT, ""),
+            override=ReadWriteDynamicHalPin(f"override{suffix}", HalDataType.S32, ""),
         )
 
     @classmethod

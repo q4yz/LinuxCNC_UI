@@ -13,3 +13,6 @@ class UnconnectedHalPin(HalPin[Any]):
 
     def get_value(self) -> None:
         return None
+
+    def get_doc_string(self) -> str:
+        return f"None-Unconnected-Dummy-Pin : Should be overridden by real pins"

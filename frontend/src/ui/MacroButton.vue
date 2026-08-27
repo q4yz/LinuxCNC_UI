@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Shared "custom macro button" primitive.
 //
 // Renders an operator-configurable button anywhere a UI surface wants

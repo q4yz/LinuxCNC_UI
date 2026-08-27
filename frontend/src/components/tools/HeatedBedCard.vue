@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Heated bed card — heat-only tool. Wraps the shared
 // ``HeaterControls`` block so the operator gets the same Set Temp /
 // Off affordance as every other heating tool. The bed also stays

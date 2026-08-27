@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Dedicated full-page view that hosts ``FileManager``. ``edit``
 // events are forwarded as-is to the parent (``App.vue``) so the
 // full-screen ``ConfigEditor`` receives the same mode tag. Keeping

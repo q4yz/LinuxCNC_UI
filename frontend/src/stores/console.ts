@@ -7,9 +7,28 @@ import { defineStore } from 'pinia'
 // variants; ``warning`` / ``error`` carry over directly; ``debug`` is
 // new for diagnostic logging.
 
-export const LOG_LEVELS = ['all','debug', 'info', 'warning', 'error']
+export const LOG_LEVELS = ['all','debug', 'info', 'warning', 'error'] as const
+export type LogLevel = (typeof LOG_LEVELS)[number]
 
-const TYPE_TO_LEVEL = {
+export type ToastLevel = Exclude<LogLevel, 'all'>
+
+interface ConsoleMessage {
+  id: string;
+  timestamp: string;
+  text: string;
+  type: string;
+  level: ToastLevel;
+}
+
+interface ToastOptions {
+  popup?: boolean;
+  title?: string;
+  lifetime?: number | null;
+}
+
+type ToastType = 'info' | 'success' | 'warn' | 'error';
+
+const TYPE_TO_LEVEL: Record<string, ToastLevel> = {
   info: 'info',
   success: 'info',
   command: 'info',
@@ -22,7 +41,14 @@ const TYPE_TO_LEVEL = {
 // understands. ``warning`` -> ``warn`` because the toast store
 // keeps the British spelling. ``debug`` is intentionally absent —
 // debug-level popups would be operator noise.
-const LEVEL_TO_TOAST_TYPE = {
+//
+// Note: keys are read loosely via ``Record<string, ToastType>``
+// because the action entry-points pass through both the legacy
+// ``type`` tokens (e.g. ``"success"``) and the canonical
+// ``level`` tokens (e.g. ``"info"``); unrecognised keys
+// collapse to ``undefined`` so the ``_emitToast`` no-op branch
+// fires.
+const LEVEL_TO_TOAST_TYPE: Record<string, ToastType> = {
   info: 'info',
   success: 'success',
   warning: 'warn',
@@ -37,11 +63,11 @@ const LEVEL_TO_TOAST_TYPE = {
  * @param {string} type - The historic type token.
  * @returns {string} The canonical level token.
  */
-export const typeToLevel = (type) => TYPE_TO_LEVEL[type] || 'info'
+export const typeToLevel = (type: string): ToastLevel => TYPE_TO_LEVEL[type] || 'info'
 
 export const useConsoleStore = defineStore('console', {
-  state: () => ({
-    messages: [],
+  state: (): { messages: ConsoleMessage[]; filterLevel: LogLevel } => ({
+    messages: [] as ConsoleMessage[],
     filterLevel: 'info',
   }),
   getters: {
@@ -54,13 +80,13 @@ export const useConsoleStore = defineStore('console', {
      * ``command`` / ``success`` rows share the ``info`` level, so
      * the ``All`` and ``Info`` filters surface them together.
      */
-    filteredMessages: (state) => {
+    filteredMessages: (state): ConsoleMessage[] => {
       if (state.filterLevel === 'all') return state.messages
 
       // Get the severity index of the currently active filter
       const filterIndex = LOG_LEVELS.indexOf(state.filterLevel)
 
-      return state.messages.filter((msg) => {
+      return state.messages.filter((msg: ConsoleMessage) => {
         const level = msg.level || typeToLevel(msg.type)
         const msgIndex = LOG_LEVELS.indexOf(level)
 
@@ -69,7 +95,7 @@ export const useConsoleStore = defineStore('console', {
     },
   },
   actions: {
-    _addMessage(text, type = 'info') {
+    _addMessage(text: string, type: string = 'info') {
       const level = typeToLevel(type)
       this.messages.push({
         id: Date.now() + Math.random().toString(36).substring(2, 11),
@@ -92,12 +118,12 @@ export const useConsoleStore = defineStore('console', {
      *
      * @param {string} level - One of ``info`` / ``warning`` / ``error`` / ``debug``.
      * @param {string} text  - The console text; also becomes the toast body.
-     * @param {{popup?: boolean, title?: string, lifetime?: number|null}} [opts]
+     * @param {ToastOptions} [opts]
      *   ``lifetime`` is in **seconds**. ``undefined`` falls back to
      *   the toast store's default (5 s); ``null`` makes the toast
      *   persist until the operator closes it.
      */
-    _emitToast(level, text, opts) {
+    _emitToast(level: string, text: string, opts?: ToastOptions) {
       if (!opts || !opts.popup) return
       // Dynamic import keeps the dependency one-way and avoids the
       // module-scope Pinia ordering trap.
@@ -119,36 +145,36 @@ export const useConsoleStore = defineStore('console', {
         })
     },
 
-    error(text, opts = undefined) {
+    error(text: string, opts?: ToastOptions) {
       this._addMessage(text, 'error')
       this._emitToast('error', text, opts)
     },
 
-    info(text, opts = undefined) {
+    info(text: string, opts?: ToastOptions) {
       this._addMessage(text, 'info')
       this._emitToast('info', text, opts)
     },
 
-    debug(text, opts = undefined) {
+    debug(text: string, opts?: ToastOptions) {
       this._addMessage(text, 'debug')
       this._emitToast('debug', text, opts)
     },
 
-    warning(text, opts = undefined) {
+    warning(text: string, opts?: ToastOptions) {
       this._addMessage(text, 'warning')
       this._emitToast('warning', text, opts)
     },
 
-    command(text) {
+    command(text: string) {
       this._addMessage(text, 'command')
     },
 
-    success(text, opts = undefined) {
+    success(text: string, opts?: ToastOptions) {
       this._addMessage(text, 'success')
       this._emitToast('success', text, opts)
     },
 
-    setFilterLevel(level) {
+    setFilterLevel(level: LogLevel) {
       if (!LOG_LEVELS.includes(level)) return
       this.filterLevel = level
     },

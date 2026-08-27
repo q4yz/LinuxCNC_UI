@@ -10,12 +10,12 @@ const API_PREFIX = "/api/v1/modules";
  *
  * @param {string} moduleId
  */
-export function createModuleSettings(moduleId) {
+export function createModuleSettings(moduleId: string) {
   if (!moduleId) throw new Error("createModuleSettings: moduleId is required");
   const base = `${API_PREFIX}/${moduleId}/settings`;
 
-  async function jsonRequest(method, url, body) {
-    const init = {
+  async function jsonRequest(method: string, url: string, body?: unknown): Promise<unknown> {
+    const init: RequestInit = {
       method,
       headers: { "Content-Type": "application/json" },
     };
@@ -39,30 +39,46 @@ export function createModuleSettings(moduleId) {
 
   return {
     /** Read all settings for this module. */
-    async readAll() {
-      return (await jsonRequest("GET", base)) ?? {};
+    async readAll(): Promise<Record<string, unknown>> {
+      const result = await jsonRequest("GET", base);
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        return result as Record<string, unknown>;
+      }
+      return {};
     },
 
     /** Read a single settings key. Throws on 404. */
-    async readKey(key) {
+    async readKey(key: string): Promise<unknown> {
       const data = await jsonRequest(
         "GET",
         `${base}/${encodeURIComponent(key)}`,
       );
-      return data?.[key];
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        return (data as Record<string, unknown>)[key];
+      }
+      return undefined;
     },
 
     /** Replace the entire settings payload. Returns the merged payload. */
-    async writeAll(payload) {
-      return (await jsonRequest("PUT", base, payload)) ?? {};
+    async writeAll(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+      const result = await jsonRequest("PUT", base, payload);
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        return result as Record<string, unknown>;
+      }
+      return {};
     },
 
     /** Upsert a single key. Returns the merged payload. */
-    async writeKey(key, value) {
-      return (
-        (await jsonRequest("PUT", `${base}/${encodeURIComponent(key)}`, value)) ??
-        {}
+    async writeKey(key: string, value: unknown): Promise<Record<string, unknown>> {
+      const result = await jsonRequest(
+        "PUT",
+        `${base}/${encodeURIComponent(key)}`,
+        value,
       );
+      if (result && typeof result === "object" && !Array.isArray(result)) {
+        return result as Record<string, unknown>;
+      }
+      return {};
     },
   };
 }

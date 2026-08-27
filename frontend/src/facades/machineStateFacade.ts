@@ -56,14 +56,16 @@ async function sendMdi(line: string): Promise<CommandResult> {
 }
 
 /**
- * Home a single axis (``axis >= 0``) or every axis (``axis === -1``,
- * the historical "home all" sentinel documented in
- * ``stores/machine.ts``).
+ * Home a single axis by letter (``"x"|"y"|"z"``) or every axis when
+ * ``axis === "all"``. The wire contract carries the canonical
+ * LinuxCNC letter end-to-end so the backend can do the
+ * ``letter → joint id(s)`` lookup without an index translation
+ * layer.
  */
-async function setHomeAxis(axis: number): Promise<CommandResult> {
+async function setHomeAxis(axis: "x" | "y" | "z" | "all"): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesAxisService.homeAxis({ axis }),
-    axis === -1 ? "home:all" : `home:${axis}`,
+    axis === "all" ? "home:all" : `home:${axis}`,
   );
 }
 

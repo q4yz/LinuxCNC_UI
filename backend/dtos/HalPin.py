@@ -82,6 +82,10 @@ class HalPin(ABC, Generic[T]):
     def set_value(self, value: T) -> None:
         raise NotImplementedError(f"{self.__class__.__name__} is read-only and cannot be set.")
 
+    @abstractmethod
+    def get_doc_string(self) -> str:
+        pass
+
 
 
 

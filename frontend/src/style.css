@@ -5,3 +5,81 @@
     @apply bg-gray-900 text-gray-100 m-0 p-0 font-sans antialiased;
   }
 }
+
+/* ------------------------------------------------------------------------- */
+/* Vue <style> blocks that triggered a utf-8 panic in @tailwindcss/oxide 4.2.4
+ * have been moved here. Each block documents the originating component so the
+ * rules stay with the SFC that owns the markup.
+ * ------------------------------------------------------------------------- */
+
+/* ``Editor.vue`` — CodeMirror shell layout. ``h-full`` propagates down through
+ * the flex column so the CodeMirror scroller fills the available height.
+ * ``min-h-0`` defeats the default ``min-height: auto`` that flex items inherit,
+ * which is what breaks scrolling inside a flex parent. */
+.editor-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-codemirror {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* vue-codemirror renders into these slots. */
+.cm-editor {
+  height: 100%;
+  width: 100%;
+  outline: none;
+  background: rgb(17 24 39);
+  overflow: auto;
+}
+
+.cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+/* ``DroPanel.vue`` — Cross-browser styling for the range sliders. */
+input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #3b82f6; /* Tailwind blue-500 */
+  border-radius: 50%;
+  cursor: pointer;
+}
+input[type=range]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+input[type=range]:disabled::-webkit-slider-thumb {
+  background: #4b5563; /* Tailwind gray-600 */
+  cursor: not-allowed;
+}
+input[type=range]:disabled::-moz-range-thumb {
+  background: #4b5563;
+  cursor: not-allowed;
+}
+
+/* ``TemperaturePanel.vue`` — ECharts wrapper + number-input spin-button
+ * removal so the heater setpoint input looks like a plain text field. */
+.chart {
+  width: 100%;
+  height: 100%;
+  min-height: 250px;
+}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}

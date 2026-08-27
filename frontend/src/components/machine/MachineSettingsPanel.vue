@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Machine module settings panel.
 //
 // Surfaces every persisted knob the backend's ``MachineSettings``

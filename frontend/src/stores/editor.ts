@@ -37,7 +37,7 @@ import {
   ProgramFilesService,
   ModulesMachineconfigService,
   ModulesMacrosService,
-} from '../../generated/api/index.ts'
+} from '../../generated/api/index'
 import { ApiError } from '../../generated/api/core/ApiError'
 
 // ---------------------------------------------------------------------- //
@@ -51,14 +51,15 @@ export const EDITOR_SOURCES = Object.freeze({
   M_CODES: 'm_codes',
   PROGRAMS: 'programs',
   MACROS: 'macros',
-})
+} as const)
+export type EditorSource = (typeof EDITOR_SOURCES)[keyof typeof EDITOR_SOURCES]
 
 // Friendly operator-facing labels. The UI must never leak the raw
 // enum (e.g. ``(m_codes)`` looks like an internal tag) so the
 // editor header reads the label from this map. New sources need a
 // single entry here; ``undefined`` falls back to the raw key so a
 // missing label is obvious in dev rather than silent.
-export const EDITOR_SOURCE_LABELS = Object.freeze({
+export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Object.freeze({
   [EDITOR_SOURCES.PROFILES]: 'Profiles',
   [EDITOR_SOURCES.ACTIVE]:   'Active Config',
   [EDITOR_SOURCES.STAGED]:   'Compiled Output',
@@ -67,11 +68,11 @@ export const EDITOR_SOURCE_LABELS = Object.freeze({
   [EDITOR_SOURCES.MACROS]:   'Macros',
 })
 
-export function sourceLabel(source) {
-  return EDITOR_SOURCE_LABELS[source] ?? source
+export function sourceLabel(source: string): string {
+  return EDITOR_SOURCE_LABELS[source as EditorSource] ?? source
 }
 
-const READ_ONLY_SOURCES = new Set([EDITOR_SOURCES.ACTIVE, EDITOR_SOURCES.STAGED])
+const READ_ONLY_SOURCES = new Set<string>([EDITOR_SOURCES.ACTIVE, EDITOR_SOURCES.STAGED])
 
 // ---------------------------------------------------------------------- //
 // Syntax-highlighting overlay                                              //
@@ -85,7 +86,7 @@ const READ_ONLY_SOURCES = new Set([EDITOR_SOURCES.ACTIVE, EDITOR_SOURCES.STAGED]
 // mode for CodeMirror's visual overlay without ever leaking back
 // into the routing decision.
 
-const EXTENSION_MODES = {
+const EXTENSION_MODES: Record<string, string> = {
   // Machineconfig (Klipper / LinuxCNC INI-style)
   cfg: 'config',
   ini: 'config',
@@ -127,7 +128,7 @@ const EXTENSION_MODES = {
 // Filename-level overrides that take precedence over the
 // extension-based lookup. Used to map a fixed name (whose extension
 // would otherwise fall through to ``text``) to a real mode.
-const FILENAME_MODES = {
+const FILENAME_MODES: Record<string, string> = {
   // The platform stores its snapshot as ``config.txt`` even though
   // the payload is JSON. Force JSON highlighting so the operator
   // sees the structure, not a wall of plain text.
@@ -136,9 +137,10 @@ const FILENAME_MODES = {
 
 const DEFAULT_SYNTAX_MODE = 'text'
 
-export function modeForFilename(filename) {
+export function modeForFilename(filename: string): string {
   if (!filename) return DEFAULT_SYNTAX_MODE
-  if (FILENAME_MODES[filename]) return FILENAME_MODES[filename]
+  const exact = FILENAME_MODES[filename]
+  if (exact) return exact
   const lower = filename.toLowerCase()
   const dot = lower.lastIndexOf('.')
   if (dot < 0) return DEFAULT_SYNTAX_MODE
@@ -155,61 +157,61 @@ export function modeForFilename(filename) {
 // refactor. Adding a new source means one new branch + a new entry
 // in :data:`EDITOR_SOURCES`.
 
-async function readProfileContent(name) {
+async function readProfileContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService
     .readProfileApiV1ModulesMachineconfigProfilesContentGet(name)
   return envelope?.content ?? ''
 }
 
-async function writeProfileContent(name, content) {
+async function writeProfileContent(name: string, content: string): Promise<void> {
   await ModulesMachineconfigService
     .saveProfileApiV1ModulesMachineconfigProfilesContentPut(name, { content })
 }
 
-async function readActiveContent(name) {
+async function readActiveContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService
     .readActiveApiV1ModulesMachineconfigActiveContentNameGet(name)
   return envelope?.content ?? ''
 }
 
-async function readStagedContent(name) {
+async function readStagedContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService
     .readStagedApiV1ModulesMachineconfigStagedContentNameGet(name)
   return envelope?.content ?? ''
 }
 
-async function readMCodeContent(name) {
+async function readMCodeContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService.readMCode(name)
   return envelope?.content ?? ''
 }
 
-async function writeMCodeContent(name, content) {
+async function writeMCodeContent(name: string, content: string): Promise<void> {
   await ModulesMachineconfigService.writeMCode(name, { content })
 }
 
-async function readProgramContent(name) {
+async function readProgramContent(name: string): Promise<string> {
   // ``ProgramFilesService.readFile`` throws ``ApiError`` on 404 —
   // the editor treats that as "brand-new file" and mounts with
   // empty content. Anything else bubbles up.
   try {
     return await ProgramFilesService.readFile(name)
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof ApiError && error.status === 404) return ''
     throw error
   }
 }
 
-async function writeProgramContent(name, content) {
+async function writeProgramContent(name: string, content: string): Promise<void> {
   await ProgramFilesService.writeFile(name, { content })
 }
 
-async function readMacroContent(name) {
+async function readMacroContent(name: string): Promise<string> {
   const { baseName, kind } = _macroSplitName(name)
   const envelope = await ModulesMacrosService.readMacroContent(baseName, kind)
   return envelope?.content ?? ''
 }
 
-async function writeMacroContent(name, content) {
+async function writeMacroContent(name: string, content: string): Promise<void> {
   const { baseName, kind } = _macroSplitName(name)
   await ModulesMacrosService.writeMacroContent(baseName, { content }, kind)
 }
@@ -222,7 +224,7 @@ async function writeMacroContent(name, content) {
 // only signal the dispatch ever consults; bare names default to
 // ``macro`` so the legacy ``M<num>`` bare-name flow keeps working
 // when ``kind`` cannot be inferred.
-function _macroSplitName(name) {
+function _macroSplitName(name: string): { baseName: string; kind: string } {
   const lower = (name || '').toLowerCase()
   if (lower.endsWith('.ngc')) {
     return { baseName: name.slice(0, -4), kind: 'ngc' }
@@ -233,7 +235,7 @@ function _macroSplitName(name) {
   return { baseName: name, kind: 'macro' }
 }
 
-async function dispatchRead(source, name) {
+async function dispatchRead(source: EditorSource, name: string): Promise<string> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
     case EDITOR_SOURCES.ACTIVE:   return readActiveContent(name)
@@ -246,7 +248,7 @@ async function dispatchRead(source, name) {
   }
 }
 
-async function dispatchWrite(source, name, content) {
+async function dispatchWrite(source: EditorSource, name: string, content: string): Promise<void> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return writeProfileContent(name, content)
     case EDITOR_SOURCES.M_CODES:  return writeMCodeContent(name, content)
@@ -261,7 +263,7 @@ async function dispatchWrite(source, name, content) {
 // Error formatting                                                         //
 // ---------------------------------------------------------------------- //
 
-function describeError(error) {
+function describeError(error: unknown): string {
   if (!error) return 'Unknown error'
   if (error instanceof ApiError) {
     return (
@@ -272,20 +274,33 @@ function describeError(error) {
       `HTTP ${error.status}`
     )
   }
-  return error.message || String(error)
+  if (error instanceof Error) return error.message
+  return String(error)
 }
 
 // ---------------------------------------------------------------------- //
 // Store                                                                   //
 // ---------------------------------------------------------------------- //
 
+interface EditorState {
+  source: EditorSource;
+  name: string;
+  readOnly: boolean;
+  syntaxMode: string;
+  content: string;
+  pristineContent: string;
+  isLoading: boolean;
+  isSaving: boolean;
+  error: string | null;
+}
+
 export const useEditorStore = defineStore('editor', {
-  state: () => ({
+  state: (): EditorState => ({
     // Source-driven identity: the caller pins these via
     // ``open({source, name, ...})``. The URL the operator sees in the
     // browser bar is also derived from these, so the editor is
     // always deep-linkable.
-    source: '',
+    source: '' as EditorSource,
     name: '',
     // ``readOnly`` is the property the ``<Editor>`` child consumes
     // to gate the editor surface. ``syntaxMode`` is the CodeMirror
@@ -310,24 +325,23 @@ export const useEditorStore = defineStore('editor', {
   actions: {
     /**
      * Open the editor on a file identified by ``source`` + ``name``.
-     *
-     * @param {object}   options
-     * @param {string}   options.source   One of :data:`EDITOR_SOURCES`.
-     * @param {string}   options.name     Filename (or path under ``profiles``).
-     * @param {boolean} [options.readOnly=false]
-     *   Read-only flag. Defaults to ``true`` for ``active`` /
-     *   ``staged`` because those roots are write-protected after
-     *   deploy / compile.
-     * @param {string}  [options.content='']
-     *   Caller-supplied content. Skip ``loadFile`` when present so
-     *   the editor mounts with text already in hand instead of
-     *   flashing a loading state.
      */
-    open({ source, name, readOnly, content = '' }) {
-      if (!Object.values(EDITOR_SOURCES).includes(source)) {
+    open({
+      source,
+      name,
+      readOnly,
+      content = '',
+    }: {
+      source: string;
+      name: string;
+      readOnly?: boolean;
+      content?: string;
+    }) {
+      if (!Object.values(EDITOR_SOURCES).includes(source as EditorSource)) {
         throw new Error(`Invalid editor source: ${JSON.stringify(source)}`)
       }
-      this.source = source
+      const sourceValue = source as EditorSource
+      this.source = sourceValue
       this.name = name
       // Read-only by default for the two compile-time roots.
       this.readOnly = readOnly ?? READ_ONLY_SOURCES.has(source)
@@ -355,7 +369,7 @@ export const useEditorStore = defineStore('editor', {
         const text = await dispatchRead(this.source, this.name)
         this.content = text
         this.pristineContent = text
-      } catch (error) {
+      } catch (error: unknown) {
         this.error = describeError(error)
         throw error
       } finally {
@@ -367,7 +381,7 @@ export const useEditorStore = defineStore('editor', {
      * Persist ``content`` to ``source``'s backend. Returns ``true``
      * on success, ``false`` (and sets ``state.error``) on failure.
      */
-    async saveFile(content) {
+    async saveFile(content: string) {
       if (this.readOnly) {
         this.error = 'Editor is read-only.'
         return false
@@ -392,7 +406,7 @@ export const useEditorStore = defineStore('editor', {
         this.content = safe
         this.pristineContent = safe
         return true
-      } catch (error) {
+      } catch (error: unknown) {
         this.error = describeError(error)
         return false
       } finally {
@@ -404,7 +418,7 @@ export const useEditorStore = defineStore('editor', {
      * Clear the editor state. The next ``open()`` starts fresh.
      */
     close() {
-      this.source = ''
+      this.source = '' as EditorSource
       this.name = ''
       this.readOnly = false
       this.syntaxMode = DEFAULT_SYNTAX_MODE

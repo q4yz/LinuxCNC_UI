@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // "Dumb" CodeMirror wrapper. Receives ``modelValue`` and emits
 // updates; the parent (``EditorView``) owns all file I/O through
 // ``useEditorStore``. This component is a pure presentation layer —
@@ -90,33 +90,13 @@ function forwardUpdate(value) {
   </div>
 </template>
 
-<style scoped>
-/* ``h-full`` propagates down through the flex column so the
-   CodeMirror scroller fills the available height. ``min-h-0``
-   defeats the default ``min-height: auto`` that flex items
-   inherit, which is what breaks scrolling inside a flex parent. */
-.editor-shell {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.editor-codemirror {
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-:deep(.cm-editor) {
-  height: 100%;
-  width: 100%;
-  outline: none;
-  background: rgb(17 24 39);
-  overflow: auto;
-}
-
-:deep(.cm-scroller) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-}
+<style>
+/* The scoped styles previously declared here have been moved to
+ * ``frontend/src/style.css`` — see the comment block at the top of
+ * that file for context. They used ``:deep(...)`` selectors to reach
+ * into the ``vue-codemirror`` child component; without ``scoped``
+ * those selectors become global and ``.cm-editor`` / ``.cm-scroller``
+ * collide with any other CodeMirror mount (currently there is only
+ * one, so the global styles are safe).
+ */
 </style>

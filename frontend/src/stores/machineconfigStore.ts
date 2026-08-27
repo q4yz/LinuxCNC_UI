@@ -23,52 +23,79 @@ import {
 } from "../core/error-format";
 import { CommandResult } from "../entities/common/CommandResult";
 import { machineconfigFacade } from "../facades/machineconfigFacade";
+import type { CompilerSummary } from "../../generated/api/models/CompilerSummary";
+import type { DirectoryEntryModel } from "../../generated/api/models/DirectoryEntryModel";
+import type { StagedFile } from "../../generated/api/models/StagedFile";
+import type { ActiveListing } from "../../generated/api/models/ActiveListing";
+import type { ActiveFile } from "../../generated/api/models/ActiveFile";
+import type { CompilerListResponse } from "../../generated/api/models/CompilerListResponse";
 
 const STORE_ID = "machineconfig";
+
+interface ProfilesTree {
+  root: string;
+  entries: DirectoryEntryModel[];
+}
+
+interface ActiveListingState {
+  machine_name: string | null;
+  files: ActiveFile[];
+}
+
+interface DeploySummary {
+  message: string;
+}
 
 export const useMachineConfigStore = defineStore(STORE_ID, () => {
   const consoleStore = useConsoleStore();
 
   // --- Reactive state ---------------------------------------------- //
 
-  const compilers = ref([]);
-  const selectedCompilerId = ref("");
+  const compilers = ref<CompilerSummary[]>([]);
+  const selectedCompilerId = ref<string>("");
 
-  const profilesTree = reactive({ root: "profiles", entries: [] });
-  const selectedProfilePath = ref("");
+  const profilesTree = reactive<ProfilesTree>({ root: "profiles", entries: [] });
+  const selectedProfilePath = ref<string>("");
 
-  const stagedFiles = ref([]);
-  const stagedContents = reactive({});
+  const stagedFiles = ref<StagedFile[]>([]);
+  const stagedContents = reactive<Record<string, string>>({});
 
-  const activeListing = reactive({ machine_name: null, files: [] });
-  const activeContents = reactive({});
+  const activeListing = reactive<ActiveListingState>({
+    machine_name: null,
+    files: [],
+  });
+  const activeContents = reactive<Record<string, string>>({});
 
-  const confirmFlash = ref(false);
-  const isBusy = ref(false);
-  const lastDeploySummary = ref(null);
+  const confirmFlash = ref<boolean>(false);
+  const isBusy = ref<boolean>(false);
+  const lastDeploySummary = ref<DeploySummary | null>(null);
 
   // --- Derived state ----------------------------------------------- //
 
-  const selectedCompiler = computed(() =>
-    compilers.value.find((c) => c.id === selectedCompilerId.value) || null,
+  const selectedCompiler = computed<CompilerSummary | null>(() =>
+    compilers.value.find((c: CompilerSummary) => c.id === selectedCompilerId.value) || null,
   );
 
-  const selectedProfile = computed(() => {
+  const selectedProfile = computed<DirectoryEntryModel | null>(() => {
     const path = selectedProfilePath.value;
     if (!path) return null;
     return (
-      profilesTree.entries.find((e) => e.path === path && e.kind === "file") ||
-      null
+      profilesTree.entries.find(
+        (e: DirectoryEntryModel) => e.path === path && e.kind === "file",
+      ) || null
     );
   });
 
-  const stagedTotalSize = computed(() =>
-    stagedFiles.value.reduce((sum, f) => sum + (f.size_bytes || 0), 0),
+  const stagedTotalSize = computed<number>(() =>
+    stagedFiles.value.reduce(
+      (sum: number, f: StagedFile) => sum + (f.size_bytes || 0),
+      0,
+    ),
   );
 
-  const activeTotalSize = computed(() =>
-    (activeListing.files || []).reduce(
-      (sum, f) => sum + (f.size_bytes || 0),
+  const activeTotalSize = computed<number>(() =>
+    activeListing.files.reduce(
+      (sum: number, f: ActiveFile) => sum + (f.size_bytes || 0),
       0,
     ),
   );
@@ -81,15 +108,17 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // legacy wrapper. Shared with ``stores/macrosStore.ts`` and
   // ``components/FileManager.vue`` via ``core/error-format.js`` so
   // a future envelope shape change lives in one place.
-  const describeError = (error) =>
+  const describeError = (error: unknown): string =>
     describeErrorShared(error) || "Unknown error";
 
-  function commandResultFromCaught(error: unknown, commandId: string): CommandResult {
-    const result = CommandResult.failure(describeError(error), {
+  function commandResultFromCaught(
+    error: unknown,
+    commandId: string,
+  ): CommandResult {
+    return CommandResult.failure(describeError(error), {
       commandId,
       statusCode: errorStatus(error),
     });
-    return result;
   }
 
   // --- Loader actions --------------------------------------------- //
@@ -99,186 +128,197 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // failure is informational (background refetch), not an operator
   // action.
 
-  async function loadCompilers() {
+  async function loadCompilers(): Promise<void> {
     try {
-      const response = await machineconfigFacade.listCompilers();
-      compilers.value = Array.isArray(response.compilers)
-        ? response.compilers
+      const response: CompilerListResponse = await machineconfigFacade.listCompilers() as CompilerListResponse;
+      compilers.value = Array.isArray(
+        (response as { compilers?: CompilerSummary[] }).compilers,
+      )
+        ? (response as { compilers: CompilerSummary[] }).compilers
         : [];
       if (!selectedCompilerId.value && compilers.value.length > 0) {
         selectedCompilerId.value = compilers.value[0].id;
       }
-    } catch (error) {
+    } catch (error: unknown) {
       consoleStore.error(
         `Failed to list compilers: ${describeError(error)}`,
-      )
+      );
     }
   }
 
-  async function loadProfilesTree() {
+  async function loadProfilesTree(): Promise<void> {
     try {
       const response = await machineconfigFacade.listProfiles();
-      profilesTree.entries.splice(0, profilesTree.entries.length)
-      for (const entry of response.entries || []) {
-        profilesTree.entries.push(entry)
+      profilesTree.entries.splice(0, profilesTree.entries.length);
+      for (const entry of (response as { entries?: DirectoryEntryModel[] }).entries || []) {
+        profilesTree.entries.push(entry);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       const result = commandResultFromCaught(error, "load-profiles-tree");
       reportCommandFailure("load profiles tree", result);
     }
   }
 
-  async function loadStaged() {
+  async function loadStaged(): Promise<void> {
     try {
-      stagedFiles.value = await machineconfigFacade.listStaged();
+      const response = await machineconfigFacade.listStaged();
+      stagedFiles.value = Array.isArray(response) ? (response as StagedFile[]) : [];
       // Wipe the cached content map so a fresh staging run doesn't
       // serve stale previews.
       for (const key of Object.keys(stagedContents)) {
-        delete stagedContents[key]
+        delete stagedContents[key];
       }
-    } catch (error) {
+    } catch (error: unknown) {
       const result = commandResultFromCaught(error, "load-staged");
       reportCommandFailure("load staged artifacts", result);
     }
   }
 
-  async function loadActive() {
+  async function loadActive(): Promise<void> {
     try {
-      const response = await machineconfigFacade.listActive();
-      activeListing.machine_name = response.machine_name || null
-      activeListing.files.splice(0, activeListing.files.length)
+      const response = (await machineconfigFacade.listActive()) as ActiveListing;
+      activeListing.machine_name = response.machine_name ?? null;
+      activeListing.files.splice(0, activeListing.files.length);
       for (const file of response.files || []) {
-        activeListing.files.push(file)
+        activeListing.files.push(file);
       }
       for (const key of Object.keys(activeContents)) {
-        delete activeContents[key]
+        delete activeContents[key];
       }
-    } catch (error) {
+    } catch (error: unknown) {
       const result = commandResultFromCaught(error, "load-active");
       reportCommandFailure("load active artifacts", result);
     }
   }
 
-  async function loadAll() {
+  async function loadAll(): Promise<void> {
     await Promise.all([
       loadCompilers(),
       loadProfilesTree(),
       loadStaged(),
       loadActive(),
-    ])
+    ]);
   }
 
   // --- Profile actions -------------------------------------------- //
 
-  function selectProfile(path) {
-    selectedProfilePath.value = path || ""
+  function selectProfile(path: string): void {
+    selectedProfilePath.value = path || "";
   }
 
-  async function readProfileContent(path) {
+  async function readProfileContent(path: string): Promise<string | null> {
     try {
       const response = await machineconfigFacade.readProfile(path);
-      return response.content || ""
-    } catch (error) {
-      consoleStore.error(`Failed to read ${path}: ${describeError(error)}`)
-      return null
+      return response.content || "";
+    } catch (error: unknown) {
+      consoleStore.error(`Failed to read ${path}: ${describeError(error)}`);
+      return null;
     }
   }
 
-  async function saveProfile(path, content): Promise<CommandResult> {
-    isBusy.value = true
+  async function saveProfile(path: string, content: string): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.writeProfile(path, content);
     if (result.failed) {
       reportCommandFailure(`save profile ${path}`, result);
     } else {
-      consoleStore.success(`Saved ${path}`)
-      await loadProfilesTree()
+      consoleStore.success(`Saved ${path}`);
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function createFolder(path): Promise<CommandResult> {
-    isBusy.value = true
+  async function createFolder(path: string): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.createFolder(path);
     if (result.failed) {
       reportCommandFailure(`create folder ${path}`, result);
     } else {
-      consoleStore.success(`Created folder ${path}`)
-      await loadProfilesTree()
+      consoleStore.success(`Created folder ${path}`);
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function createFile(path): Promise<CommandResult> {
-    isBusy.value = true
+  async function createFile(path: string): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.createFile(path);
     if (result.failed) {
       reportCommandFailure(`create file ${path}`, result);
     } else {
-      consoleStore.success(`Created file ${path}`)
-      await loadProfilesTree()
+      consoleStore.success(`Created file ${path}`);
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function uploadProfiles(directory, files): Promise<CommandResult> {
-    isBusy.value = true
+  async function uploadProfiles(
+    directory: string,
+    files: File[],
+  ): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.uploadProfile(directory, files);
     if (result.failed) {
       reportCommandFailure("upload profiles", result);
     } else {
-      consoleStore.success(`Uploaded ${files.length} profile file(s)`)
-      await loadProfilesTree()
+      consoleStore.success(`Uploaded ${files.length} profile file(s)`);
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function renameProfile(source, destination): Promise<CommandResult> {
-    isBusy.value = true
+  async function renameProfile(
+    source: string,
+    destination: string,
+  ): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.renameProfile(source, destination);
     if (result.failed) {
       reportCommandFailure(`rename ${source} -> ${destination}`, result);
     } else {
-      consoleStore.success(`Renamed ${source} -> ${destination}`)
+      consoleStore.success(`Renamed ${source} -> ${destination}`);
       if (selectedProfilePath.value === source) {
-        selectedProfilePath.value = destination
+        selectedProfilePath.value = destination;
       }
-      await loadProfilesTree()
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function deleteProfile(path): Promise<CommandResult> {
-    isBusy.value = true
+  async function deleteProfile(path: string): Promise<CommandResult> {
+    isBusy.value = true;
     const result = await machineconfigFacade.deleteProfile(path);
     if (result.failed) {
       reportCommandFailure(`delete profile ${path}`, result);
     } else {
-      consoleStore.success(`Deleted ${path}`)
+      consoleStore.success(`Deleted ${path}`);
       if (selectedProfilePath.value === path) {
-        selectedProfilePath.value = ""
+        selectedProfilePath.value = "";
       }
-      await loadProfilesTree()
+      await loadProfilesTree();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
   // --- Compile / Deploy ------------------------------------------- //
 
-  async function compile(profilePath): Promise<CommandResult | undefined> {
+  async function compile(
+    profilePath: string,
+  ): Promise<CommandResult | undefined> {
     if (!profilePath) return undefined;
     if (!selectedCompilerId.value) {
-      consoleStore.warning("Pick a compiler before staging.")
+      consoleStore.warning("Pick a compiler before staging.");
       const result = CommandResult.failure("Pick a compiler before staging.");
       reportCommandFailure("compile", result);
       return result;
     }
-    isBusy.value = true
+    isBusy.value = true;
     const result = await machineconfigFacade.compileProfile({
       profile_path: profilePath,
       compiler_id: selectedCompilerId.value,
@@ -304,18 +344,18 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       );
       await loadStaged();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
   async function deploy(): Promise<CommandResult | undefined> {
     if (stagedFiles.value.length === 0) {
-      consoleStore.warning("Nothing to deploy — stage a profile first.")
+      consoleStore.warning("Nothing to deploy — stage a profile first.");
       const result = CommandResult.failure("Nothing to deploy");
       reportCommandFailure("deploy", result);
       return result;
     }
-    isBusy.value = true
+    isBusy.value = true;
     const result = await machineconfigFacade.deployStaged({
       confirm_flash: confirmFlash.value,
     });
@@ -324,32 +364,34 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     } else {
       const message = result.message || "Deploy complete.";
       lastDeploySummary.value = { message };
-      consoleStore.success(message)
-      await loadActive()
+      consoleStore.success(message);
+      await loadActive();
     }
-    isBusy.value = false
+    isBusy.value = false;
     return result;
   }
 
-  async function readStagedFileContent(name) {
+  async function readStagedFileContent(name: string): Promise<string | null> {
     try {
       const response = await machineconfigFacade.readStagedContent(name);
-      stagedContents[name] = response.content || ""
-      return response.content || ""
-    } catch (error) {
-      consoleStore.error(`Failed to read staged ${name}: ${describeError(error)}`)
-      return null
+      const content = response.content || "";
+      stagedContents[name] = content;
+      return content;
+    } catch (error: unknown) {
+      consoleStore.error(`Failed to read staged ${name}: ${describeError(error)}`);
+      return null;
     }
   }
 
-  async function readActiveFileContent(name) {
+  async function readActiveFileContent(name: string): Promise<string | null> {
     try {
       const response = await machineconfigFacade.readActiveContent(name);
-      activeContents[name] = response.content || ""
-      return response.content || ""
-    } catch (error) {
-      consoleStore.error(`Failed to read active ${name}: ${describeError(error)}`)
-      return null
+      const content = response.content || "";
+      activeContents[name] = content;
+      return content;
+    } catch (error: unknown) {
+      consoleStore.error(`Failed to read active ${name}: ${describeError(error)}`);
+      return null;
     }
   }
 
@@ -388,5 +430,5 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     deploy,
     readStagedFileContent,
     readActiveFileContent,
-  }
-})
+  };
+});

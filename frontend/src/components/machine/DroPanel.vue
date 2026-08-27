@@ -1,12 +1,48 @@
-<script setup>
-import { onMounted, ref } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../../stores/machine'
+import { Axis, useMachineStore } from '../../stores/machine'
+import { useBaseThreadStore } from '../../stores/baseThread'
 import { WORK_COORDINATE_SYSTEMS } from '../../config/gcodes'
 import { useMacroButtonConfig, MacroButton } from '../../ui'
 
+
+
 const store = useMachineStore()
+const baseThreadStore = useBaseThreadStore()
 const { droX, droY, droZ, isEstop, isMachineOn, machineStateText, status } = storeToRefs(store)
+const { axes: baseThreadAxes } = storeToRefs(baseThreadStore)
+
+/**
+ * Canonical axis letters (x/y/z) whose joints are all homed.
+ * For each canonical letter we look up its ``AxisState`` in the
+ * base-thread axes map and check every ``jointNumbers`` entry
+ * against ``status.homed`` from the servo thread. Non-canonical
+ * entries on the snapshot are simply never visited; when the
+ * canonical axes list shrinks back to ``{x, y, z}`` nothing on
+ * this side needs to change.
+ */
+const homedAxisLetters = computed<Set<string>>(() => {
+  const axes = baseThreadAxes.value || {}
+  const homed = status.value.homed || []
+  const out = new Set<string>()
+  for (const letter of [Axis.X, Axis.Y, Axis.Z]) {
+    const axis = axes[letter]
+    if (!axis) continue
+    const joints = axis.jointNumbers || []
+    if (joints.length === 0) continue
+    if (joints.every((j) => Number(homed[j]) === 1)) {
+      out.add(letter)
+    }
+  }
+  return out
+})
+
+const allAxesHomed = computed(
+  () => homedAxisLetters.value.has(Axis.X)
+    && homedAxisLetters.value.has(Axis.Y)
+    && homedAxisLetters.value.has(Axis.Z),
+)
 
 // Custom macro buttons (one slot per axis row). The shared
 // ``useMacroButtonConfig`` composable reads from the per-module
@@ -141,7 +177,7 @@ async function handleMaxSpeedChange() {
           <div class="flex items-center space-x-2">
             <span class="text-red-500 font-bold w-6">X</span>
             <button
-                @click="store.homeAxis(0)"
+                @click="store.homeAxis(Axis.X)"
                 :disabled="!isMachineOn"
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home X Axis"
@@ -159,7 +195,7 @@ async function handleMaxSpeedChange() {
                 title="Set X Position"
             >SET</button>
           </div>
-          <span :class="status.homed && status.homed[0] ? 'text-gray-100' : 'text-gray-600'">
+          <span :class="homedAxisLetters.has(Axis.X) ? 'text-gray-100' : 'text-gray-600'">
             {{ droX }}
           </span>
         </div>
@@ -169,7 +205,7 @@ async function handleMaxSpeedChange() {
           <div class="flex items-center space-x-2">
             <span class="text-green-500 font-bold w-6">Y</span>
             <button
-                @click="store.homeAxis(1)"
+                @click="store.homeAxis(Axis.Y)"
                 :disabled="!isMachineOn"
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home Y Axis"
@@ -187,7 +223,7 @@ async function handleMaxSpeedChange() {
                 title="Set Y Position"
             >SET</button>
           </div>
-          <span :class="status.homed && status.homed[1] ? 'text-gray-100' : 'text-gray-600'">
+          <span :class="homedAxisLetters.has(Axis.Y) ? 'text-gray-100' : 'text-gray-600'">
             {{ droY }}
           </span>
         </div>
@@ -197,7 +233,7 @@ async function handleMaxSpeedChange() {
           <div class="flex items-center space-x-2">
             <span class="text-blue-500 font-bold w-6">Z</span>
             <button
-                @click="store.homeAxis(2)"
+                @click="store.homeAxis(Axis.Z)"
                 :disabled="!isMachineOn"
                 class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 title="Home Z Axis"
@@ -215,7 +251,7 @@ async function handleMaxSpeedChange() {
                 title="Set Z Position"
             >SET</button>
           </div>
-          <span :class="status.homed && status.homed[2] ? 'text-gray-100' : 'text-gray-600'">
+          <span :class="homedAxisLetters.has(Axis.Z) ? 'text-gray-100' : 'text-gray-600'">
             {{ droZ }}
           </span>
         </div>
@@ -223,7 +259,7 @@ async function handleMaxSpeedChange() {
 
       <div class="bg-gray-700/30 px-4 py-3 flex justify-between text-sm text-gray-400">
         <span>Machine Pos</span>
-        <span v-if="status.homed && status.homed.every(h => h === 1)" class="text-green-400">Homed</span>
+        <span v-if="allAxesHomed" class="text-green-400">Homed</span>
         <span v-else class="text-yellow-500">Un-homed</span>
       </div>
     </div>
@@ -241,7 +277,7 @@ async function handleMaxSpeedChange() {
             v-model="speedMultiplier"
             @change="handleSpeedMultiplierChange"
             min="0"
-            max="200"
+            max="400"
             step="1"
             class="w-full h-2 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-blue-500 focus:outline-none"
             :disabled="!isMachineOn"
@@ -301,30 +337,9 @@ async function handleMaxSpeedChange() {
   </div>
 </template>
 
-<style scoped>
-/* Cross-browser styling for the range sliders */
-input[type=range]::-webkit-slider-thumb {
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  background: #3b82f6; /* Tailwind blue-500 */
-  border-radius: 50%;
-  cursor: pointer;
-}
-input[type=range]::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  background: #3b82f6;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-}
-input[type=range]:disabled::-webkit-slider-thumb {
-  background: #4b5563; /* Tailwind gray-600 */
-  cursor: not-allowed;
-}
-input[type=range]:disabled::-moz-range-thumb {
-  background: #4b5563;
-  cursor: not-allowed;
-}
+<style>
+/* Range slider styles moved to ``frontend/src/style.css`` —
+ * ``@tailwindcss/oxide`` 4.2.4 panics on UTF-8 decoding of these
+ * rules inside scoped Vue blocks.
+ */
 </style>

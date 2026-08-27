@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Extruder card — heat + motion in one surface. The top half is
 // the shared ``HeaterControls`` block (Actual / Target / Set Temp);
 // the bottom half is the motion block (Speed input + Retract /

@@ -128,8 +128,8 @@ test("manual-trigger actions return Promise<CommandResult>", () => {
     const fns = [...extractExportedAsyncFunctions(text)];
 
     for (const name of fns) {
-      if (!verbs.test(name)) continue;
-      if (ALLOWED_READ_NAMES.has(name)) continue;
+      if (!verbs.test(name as string)) continue;
+      if (ALLOWED_READ_NAMES.has(name as string)) continue;
 
       // Look for a return type annotation that promises CommandResult.
       // Accepted forms: ``: Promise<CommandResult>``, ``Promise<CommandResult | ...>``,

@@ -17,12 +17,26 @@ import {reportCommandFailure} from "../core/error-format";
 const AXIS_NAMES = ["X", "Y", "Z", "A", "B", "C", "U", "V", "W"];
 
 // Sentinel accepted by the backend ``/home`` endpoint to home all axes.
-const HOME_ALL = -1;
+const HOME_ALL: "all" = "all";
 const DEFAULT_JOG_VELOCITY = 500;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
 const MACHINE_ID = "machine";
 const STORE_ID = MACHINE_ID;
+
+/**
+ * Canonical LinuxCNC axis letter identifiers. Used by the homing
+ * payload (wire contract) so the operator-facing strings travel
+ * end-to-end without an index↔letter translation layer. The
+ * string values match the canonical ``hardware.json`` axis ids
+ * (``id: "x"`` / ``id: "y"`` / ``id: "z"``) and the
+ * ``AxisState.id`` field on the base-thread snapshot.
+ */
+export enum Axis {
+  X = "x",
+  Y = "y",
+  Z = "z",
+}
 
 const machineSettings = createModuleSettings(MACHINE_ID);
 
@@ -237,12 +251,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Homing + coordinate system                                         //
     // ──────────────────────────────────────────────────────────────── //
 
-    async function homeAxis(axisIndex: number): Promise<CommandResult> {
-        const result = await machineStateFacade.setHomeAxis(axisIndex);
+    async function homeAxis(axis: Axis | "all"): Promise<CommandResult> {
+        const result = await machineStateFacade.setHomeAxis(axis);
         if (result.failed) {
-            reportCommandFailure(`home axis ${axisIndex}`, result);
+            reportCommandFailure(`home axis ${axis}`, result);
         } else {
-            useConsoleStore().success(`Homed axis ${axisIndex} successfully`);
+            useConsoleStore().success(`Homed axis ${axis} successfully`);
         }
         return result;
     }

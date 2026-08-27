@@ -19,3 +19,6 @@ class StaticHalPin(HalPin[T]):
 
     def get_value(self) -> Optional[T]:
         return self.value
+
+    def get_doc_string(self) -> str:
+        return f"StaticHalPin"

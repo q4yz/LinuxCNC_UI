@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from services.AxisService import get_axis_service
 
@@ -45,10 +46,12 @@ router = APIRouter(
 
 
 class _HomeCommand(BaseModel):
-    axis: int = Field(
+    axis: Literal["x", "y", "z", "all"] = Field(
         ...,
         description=(
-            "Axis index to home (0=X, 1=Y, 2=Z). Use -1 to home all axes."
+            "Axis letter to home: 'x', 'y', 'z', or 'all'. The "
+            "service layer translates the letter into the matching "
+            "joint id(s) before dispatching the home command."
         ),
     )
 
@@ -79,7 +82,7 @@ class _StatusResponse(BaseModel):
 @router.post(
     "/home",
     summary="Home Axis",
-    description="Home a specific axis, or all axes if axis=-1.",
+    description="Home a specific axis by letter ('x' / 'y' / 'z'), or every axis when axis='all'.",
     operation_id="homeAxis",
     response_model=_StatusResponse,
 )
@@ -88,7 +91,7 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
 
     The endpoint always switches to ``MODE_MANUAL`` first so a stale
     ``MODE_AUTO`` does not silently swallow the home command. This
-    happens inside :meth:`AxisService.home_axis`; the
+    happens inside :meth:`AxisService.home_single_axes`; the
     router only translates the HTTP edge.
     """
     get_axis_service().home_single_axes(cmd.axis)

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // DeploymentPanel — bottom-of-page panel that promotes the staged
 // artifacts into ``machine_config/active``. Includes the "Confirm
 // Flash" toggle that the backend's deploy endpoint requires by

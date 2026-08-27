@@ -1,4 +1,4 @@
-import { onBeforeRouteLeave } from "vue-router";
+import { onBeforeRouteLeave, type NavigationGuard } from "vue-router";
 
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 
@@ -13,8 +13,10 @@ export const UNSAVED_PROMPT = {
   rejectText: "Cancel",
 };
 
-export function useUnsavedChangesGuard(hasUnsavedChanges) {
-  return onBeforeRouteLeave(async () => {
+export function useUnsavedChangesGuard(
+  hasUnsavedChanges: () => boolean,
+) {
+  const guard: NavigationGuard = async () => {
     if (!hasUnsavedChanges()) return true;
     return useConfirm({
       title: UNSAVED_PROMPT.title,
@@ -25,5 +27,6 @@ export function useUnsavedChangesGuard(hasUnsavedChanges) {
       rejectButtonStyle: ModalButtonStyle.SECONDARY,
       showDismissCrossButton: false,
     });
-  });
+  };
+  return onBeforeRouteLeave(guard);
 }

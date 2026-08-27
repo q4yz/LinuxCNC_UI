@@ -53,13 +53,19 @@ export class SpindleDigitalControlRequest {
             toolId: string;
             action: SpindleDigitalAction;
             speed: number;
+            // Accept both wire snake_case and entity camelCase names
+            // for the override fields so legacy callers don't break.
+            master_override?: number;
+            masterOverride?: number;
+            master_override_enable?: boolean;
+            masterOverrideEnable?: boolean;
         }
     ) {
         this.toolId = data.toolId;
         this.action = data.action;
         this.speed = data.speed;
         this.override = data.override ?? 1.0;
-        this.masterOverride = data.master_override ?? 0;
-        this.masterOverrideEnable = data.master_override_enable ?? false;
+        this.masterOverride = data.master_override ?? data.masterOverride ?? 0;
+        this.masterOverrideEnable = data.master_override_enable ?? data.masterOverrideEnable ?? false;
     }
 }

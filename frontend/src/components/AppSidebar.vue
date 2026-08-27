@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from "../ui/index.ts";

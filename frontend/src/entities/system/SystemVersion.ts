@@ -17,7 +17,12 @@ export class SystemVersion {
     version = "",
     commit = "",
     isUpdatable = false,
-    releaseNotes = null,
+    releaseNotes = null as string | null,
+  }: {
+    version?: string;
+    commit?: string;
+    isUpdatable?: boolean;
+    releaseNotes?: string | null;
   } = {}) {
     this._version = typeof version === "string" ? version : "";
     this._commit = typeof commit === "string" ? commit : "";

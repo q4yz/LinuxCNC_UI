@@ -5,28 +5,30 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(),tailwindcss(),],
+  plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {
-      '@codemirror/lang-ini': fileURLToPath(new URL('./src/utils/codemirror-lang-ini.ts', import.meta.url)),
+      '@codemirror/lang-ini': fileURLToPath(
+        new URL('./src/utils/codemirror-lang-ini.ts', import.meta.url),
+      ),
     },
   },
   server: {
     host: '0.0.0.0',
     proxy: {
-      // Change '/api' to whatever your backend routes start with. 
+      // Change '/api' to whatever your backend routes start with.
       // If it's just '/status', use that.
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        // If your backend routes don't actually start with /api, 
+        // If the backend routes don't actually start with /api,
         // you might need a rewrite rule here.
       },
       // Proxy WebSocket requests for the telemetry stream
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,
-      }
-    }
-  }
+      },
+    },
+  },
 })

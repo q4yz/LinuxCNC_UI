@@ -59,16 +59,22 @@ export function toToolState(wire: AnyToolWire | Record<string, any> | null | und
   }
 }
 
-export function toToolList(dict: Record<string, AnyToolWire> | null | undefined): ToolList {
-  // Check if dict is null, undefined, or somehow not an object
-  if (!dict || typeof dict !== 'object') {
+export function toToolList(
+  dict: Record<string, AnyToolWire> | AnyToolWire[] | null | undefined,
+): ToolList {
+  // Accept either a record keyed by tool id (the base-thread
+  // snapshot's normal shape) or a bare array (older call sites).
+  if (!dict) {
     return new ToolList([]);
   }
 
   const tools: ToolItem[] = [];
 
-  // Object.values() extracts the array of tools from the dictionary
-  for (const wire of Object.values(dict)) {
+  const items: AnyToolWire[] = Array.isArray(dict)
+    ? dict
+    : Object.values(dict);
+
+  for (const wire of items) {
     const t = toToolState(wire);
     if (t) tools.push(t);
   }
@@ -138,6 +144,7 @@ export function toExtruderCommand(params: ExtruderControlRequest): ExtruderComma
     distance: params.distance,
     speed: params.speed,
     heater_action: params.heaterAction ?? "noop",
+    heater: params.heater ?? null,
   };
 }
 

@@ -37,14 +37,18 @@ export class ExtruderControlRequest {
   readonly heater: HeaterCommand | null;
   readonly heaterAction: HeaterAction;
 
-  constructor(
+constructor(
     data: Partial<
-      Omit<ExtruderCommand, "toolId" | "action" | "distance" | "speed">
+      Omit<ExtruderCommand, "toolId" | "action" | "speed" | "distance">
     > & {
       toolId: string;
       action: ExtruderAction;
       distance: number;
       speed: number;
+      // Accept both the wire snake_case name and the entity camelCase
+      // name so consumers can use whichever fits their context.
+      heater_action?: HeaterAction;
+      heaterAction?: HeaterAction;
     }
   ) {
     this.toolId = data.toolId;
@@ -52,7 +56,9 @@ export class ExtruderControlRequest {
     this.distance = data.distance;
     this.speed = data.speed;
     this.heater = data.heater ?? null;
-    this.heaterAction = data.heaterAction ?? "noop";
+    // The wire-derived base type carries ``heater_action`` (snake_case);
+    // legacy call sites pass camelCase ``heaterAction``. Accept both.
+    this.heaterAction = (data.heater_action ?? data.heaterAction) as HeaterAction | undefined ?? "noop";
   }
 }
 

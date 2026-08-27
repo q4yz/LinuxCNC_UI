@@ -1,0 +1,26 @@
+{
+  "include": [
+    "vite.config.*",
+    "tailwind.config.*",
+    "scripts/**/*.mjs"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": false,
+    "useDefineForClassFields": false,
+    "isolatedModules": false,
+    "jsx": "preserve",
+    "types": ["node"]
+  }
+}

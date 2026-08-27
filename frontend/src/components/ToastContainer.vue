@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // ToastContainer — renders the toasts queued by ``useToast()``
 // and handles their lifecycle (auto-dismiss timer + manual close).
 //

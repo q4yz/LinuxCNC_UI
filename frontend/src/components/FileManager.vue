@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // File manager — G-code file list, upload, delete, load, edit.
 // All HTTP calls go through the generated OpenAPI client so the
 // paths, error mapping, and types stay in sync with the backend

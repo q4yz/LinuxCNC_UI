@@ -90,7 +90,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
       action,
       distance,
       speed,
-      heater: new HeaterControlRequest({toolId : toolId, target : currentTarget}),
+      heater: new HeaterControlRequest({ toolId, target: currentTarget }).toWire(),
       heaterAction,
     };
 

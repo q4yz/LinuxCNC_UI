@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
 import { ModulesMachineStateService } from '../../generated/api/services/ModulesMachineStateService'

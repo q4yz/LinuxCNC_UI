@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // CompiledOutputViewer — read-only viewer for the artifacts that the
 // compiler just staged into ``machine_config/ready_for_deploy``.
 //

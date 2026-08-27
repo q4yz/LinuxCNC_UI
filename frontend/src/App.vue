@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup lang="ts">
 // App shell. Vue Router owns the active view; the sidebar uses
 // ``router.push`` for navigation and ``useRoute().name`` for
 // highlighting the current entry.

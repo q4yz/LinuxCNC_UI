@@ -4,7 +4,7 @@
 
 import {
   ProgramFilesService,
-} from "../../generated/api/index.ts";
+} from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
 import { FileEntry } from "../entities/files/FileEntry";
 import { toFileListing } from "../mappers/filesMapper";
@@ -13,13 +13,15 @@ import { describeError, errorStatus } from "../core/error-format";
 /**
  * @returns {Promise<FileEntry[]>}
  */
-async function listFiles() {
+async function listFiles(): Promise<ReturnType<typeof toFileListing>> {
   try {
     const wire = await ProgramFilesService.listFiles();
     return toFileListing(Array.isArray(wire) ? wire : []);
-  } catch (err) {
-    const status = err && (err.status ?? err.response?.status);
-    if (status === 404) return [];
+  } catch (err: unknown) {
+    if (err && typeof err === "object") {
+      const status = (err as { status?: unknown }).status;
+      if (status === 404) return [];
+    }
     throw err;
   }
 }
@@ -40,15 +42,21 @@ async function _commandResultFrom(
 }
 
 async function uploadFile(path: string, blob: Blob): Promise<CommandResult> {
+  // ``ProgramFilesService.uploadFile`` accepts a single
+  // ``Body_uploadFile`` envelope (just ``file`` — ``path`` is
+  // encoded in the multipart form by the caller). The generated
+  // type declares ``file`` as ``string`` but multipart upload
+  // accepts ``File`` / ``Blob`` at runtime, so pass the raw value
+  // through.
   return _commandResultFrom(
-    ProgramFilesService.uploadFile({ path, file: blob }),
+    ProgramFilesService.uploadFile({ file: blob as unknown as string }),
     `upload:${path}`,
   );
 }
 
 async function deleteFile(path: string): Promise<CommandResult> {
   return _commandResultFrom(
-    ProgramFilesService.deleteFile({ path }),
+    ProgramFilesService.deleteFile(path),
     `delete:${path}`,
   );
 }

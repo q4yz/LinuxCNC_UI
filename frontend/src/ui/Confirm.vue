@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Shared single-modal confirm primitive.
 //
 // Two flavours of confirmation live in this codebase:

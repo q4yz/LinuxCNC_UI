@@ -4,7 +4,7 @@
 // Reads keep their raw return shape so the existing ``loadList`` /
 // ``readMacro`` call sites don't have to be rewritten.
 
-import { ModulesMacrosService } from "../../generated/api/index.ts";
+import { ModulesMacrosService } from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
 import { describeError, errorStatus } from "../core/error-format";
 import type { MacroListResponse } from "../../generated/api/models/MacroListResponse";

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Dashboard composition. Each domain panel is imported statically
 // and rendered as a direct dependency. The previous registry-driven
 // ``registry.modules.has(...)`` gates are gone — every panel below

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Temperature module settings panel. Renders a global unit
 // dropdown plus one colour-swatch row per sensor. All persistence
 // lives in the module store.

@@ -1,6 +1,13 @@
-// Axis facade. Jog / home / keepalive commands. The runtime data
+// Axis facade. Home + axis-settings commands. Runtime data
 // (positions, status) still flows through ``stores/machine.js`` —
 // this facade owns the write surface only.
+//
+// Jog / keepalive commands were previously exposed here but the
+// runtime jog pipeline moved to the WebSocket layer
+// (``facades/servoThreadFacade.ts``). The HTTP ``/axis/jog*`` endpoints
+// were retired; the regenerated client no longer exposes them, so
+// the dead HTTP jog methods are removed. Call ``machineStore.jogContinuous``
+// and ``machineStore.jogStop`` for the live jog pipeline.
 
 import { ModulesAxisService } from "../../generated/api/services/ModulesAxisService";
 import { CommandResult } from "../entities";
@@ -21,26 +28,11 @@ async function _commandResultFrom(
   }
 }
 
-async function jogStop(): Promise<CommandResult> {
-  return _commandResultFrom(ModulesAxisService.jogStop(), "jog-stop");
-}
-
-async function jogContinuous(payload: unknown): Promise<CommandResult> {
+async function home(axis: "x" | "y" | "z" | "all"): Promise<CommandResult> {
   return _commandResultFrom(
-    ModulesAxisService.jogContinuous(payload as never),
-    "jog-continuous",
+    ModulesAxisService.homeAxis({ axis }),
+    `home:${axis}`,
   );
-}
-
-async function jogKeepalive(): Promise<CommandResult> {
-  return _commandResultFrom(
-    ModulesAxisService.jogKeepalive(),
-    "jog-keepalive",
-  );
-}
-
-async function home(axis: number): Promise<CommandResult> {
-  return _commandResultFrom(ModulesAxisService.home({ axis }), `home:${axis}`);
 }
 
 async function updateSettings(
@@ -57,9 +49,6 @@ async function updateSettings(
 }
 
 export const axisFacade = Object.freeze({
-  jogStop,
-  jogContinuous,
-  jogKeepalive,
   home,
   updateSettings,
 });

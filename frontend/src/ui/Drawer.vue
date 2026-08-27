@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Shared slide-out drawer primitive.
 //
 // Use cases today include the sidebar collapse (currently inline

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../../stores/machine'

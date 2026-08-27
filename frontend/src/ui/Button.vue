@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Shared button primitive.
 //
 // Consolidates the four button classes that appear across the

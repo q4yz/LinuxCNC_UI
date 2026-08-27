@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Global Emergency Stop header. Pinned to the top-right of the
 // shell so the operator can press it regardless of the active
 // route. ``App.vue`` mounts it once outside the scrolling ``<main>``.

@@ -33,17 +33,15 @@ export const hal = () =>
   StreamLanguage.define(
     clike({
       name: 'hal',
-      keywords: keyWords(halKeywords),
-      blockKeywords: '',
-      defKeywords: '',
+      keywords: keyWords(halKeywords) as { [word: string]: any },
+      blockKeywords: '' as unknown as { [word: string]: any },
       atoms: keyWords(halAtoms),
-      typeFirstDefinitions: false,
       dontAlignCalls: true,
     })
   )
 
-function keyWords(str) {
-  const obj = {}
+function keyWords(str: string): { [word: string]: any } {
+  const obj: { [word: string]: any } = {}
   for (const w of str.split(/\s+/)) {
     if (w) obj[w] = true
   }

@@ -19,11 +19,13 @@ export class TelemetryBus {
    * @param {string} topic
    * @param {TelemetryHandler} handler
    */
-  subscribe(topic, handler) {
-    if (!this._subscribers.has(topic)) {
-      this._subscribers.set(topic, new Set());
+  subscribe(topic: string, handler: TelemetryHandler): void {
+    let set = this._subscribers.get(topic);
+    if (!set) {
+      set = new Set();
+      this._subscribers.set(topic, set);
     }
-    this._subscribers.get(topic).add(handler);
+    set.add(handler);
   }
 
   /**
@@ -32,7 +34,7 @@ export class TelemetryBus {
    * @param {TelemetryHandler} handler
    * @returns {boolean}
    */
-  unsubscribe(topic, handler) {
+  unsubscribe(topic: string, handler: TelemetryHandler): boolean {
     const set = this._subscribers.get(topic);
     if (!set) return false;
     const removed = set.delete(handler);
@@ -48,7 +50,7 @@ export class TelemetryBus {
    * @param {string} topic
    * @param {any} payload
    */
-  publish(topic, payload) {
+  publish(topic: string, payload: any): void {
     const set = this._subscribers.get(topic);
     if (!set || set.size === 0) return;
     for (const handler of set) {
@@ -62,7 +64,7 @@ export class TelemetryBus {
   }
 
   /** @returns {string[]} */
-  topics() {
+  topics(): string[] {
     return Array.from(this._subscribers.keys());
   }
 }

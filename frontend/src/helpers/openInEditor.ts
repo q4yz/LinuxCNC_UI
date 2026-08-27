@@ -17,18 +17,20 @@
 import router from '../router/index'
 import { EDITOR_SOURCES } from '../stores/editor'
 
-const SOURCES = new Set(Object.values(EDITOR_SOURCES))
+const SOURCES = new Set<string>(Object.values(EDITOR_SOURCES))
 
 /**
  * Push a new editor route onto the router.
- *
- * @param {object} options
- * @param {string} options.source
- * @param {string} options.name
- * @param {boolean} [options.readOnly]
- * @returns {Promise<unknown>} The router push's return value.
  */
-export function openInEditor({ source, name, readOnly = false }) {
+export function openInEditor({
+  source,
+  name,
+  readOnly = false,
+}: {
+  source: string;
+  name: string;
+  readOnly?: boolean;
+}) {
   if (!SOURCES.has(source)) {
     throw new Error(
       `openInEditor: invalid source ${JSON.stringify(source)}; ` +
@@ -38,14 +40,18 @@ export function openInEditor({ source, name, readOnly = false }) {
   if (typeof name !== 'string' || name.length === 0) {
     throw new Error('openInEditor: name must be a non-empty string')
   }
+  // The router's typed route resolves ``source`` as the literal
+  // ``EditorSource`` union, but at runtime any validated source
+  // is acceptable. The runtime check above is the source of
+  // truth; this double cast just keeps ts-strict quiet.
   return router.push({
     name: 'editor',
     query: {
-      source,
+      source: source as never,
       name,
       readOnly: readOnly ? 'true' : 'false',
     },
-  })
+  } as never)
 }
 
 export { EDITOR_SOURCES }

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Analog spindle card — the spindle has no RPM feedback (typical
 // of a VFD driven by a 0–10 V analogue signal), so the actual /
 // target RPM tiles and the digital-spindle direction buttons are

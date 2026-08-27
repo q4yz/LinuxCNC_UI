@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Settings shell. Each panel that contributes a Settings tab is
 // imported statically and rendered as a hard dependency. The
 // registry-driven ``settingsPanels()`` walker is gone — every

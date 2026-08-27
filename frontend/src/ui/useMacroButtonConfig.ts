@@ -33,56 +33,50 @@ import { createModuleSettings } from "../core/settings/createModuleSettings";
 const SETTINGS_KEY = "macroButtons";
 
 /**
- * Coerce a server response into the canonical
- * ``MacroButtonDescriptor[]`` shape.
- *
- * @param {unknown} raw
- * @returns {Array<object>}
+ * One row of the persistent ``macroButtons`` array. Slot is the
+ * stable machine panel position; everything else is opaque to this
+ * composable and round-trips through to the host.
  */
-function normalise(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (row) =>
-      row !== null &&
-      typeof row === "object" &&
-      typeof row.slot === "string",
-  );
+export interface MacroButtonDescriptor {
+  slot: string;
+  [key: string]: unknown;
 }
 
 /**
- * Build a config client scoped to ``moduleId``.
- *
- * @param {string} moduleId
- * @returns {{
- *   buttons: import('vue').Ref<Array<object>>,
- *   buttonsBySlot: import('vue').ComputedRef<Record<string, object | undefined>>,
- *   loading: import('vue').Ref<boolean>,
- *   error: import('vue').Ref<string>,
- *   refresh: () => Promise<void>,
- *   persist: (next: Array<object>) => Promise<void>,
- * }}
+ * Coerce a server response into the canonical
+ * ``MacroButtonDescriptor[]`` shape.
  */
-export function useMacroButtonConfig(moduleId) {
-  const client = createModuleSettings(moduleId);
-  const buttons = ref([]);
-  const loading = ref(false);
-  const error = ref("");
+function normalise(raw: unknown): MacroButtonDescriptor[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (row: unknown): row is MacroButtonDescriptor =>
+      row !== null &&
+      typeof row === "object" &&
+      typeof (row as Record<string, unknown>).slot === "string",
+  );
+}
 
-  const buttonsBySlot = computed(() => {
-    const map = {};
+export function useMacroButtonConfig(moduleId: string) {
+  const client = createModuleSettings(moduleId);
+  const buttons = ref<MacroButtonDescriptor[]>([]);
+  const loading = ref<boolean>(false);
+  const error = ref<string>("");
+
+  const buttonsBySlot = computed<Record<string, MacroButtonDescriptor | undefined>>(() => {
+    const map: Record<string, MacroButtonDescriptor> = {};
     for (const row of buttons.value) {
       map[row.slot] = row;
     }
     return map;
   });
 
-  async function refresh() {
+  async function refresh(): Promise<void> {
     loading.value = true;
     error.value = "";
     try {
       const raw = await client.readKey(SETTINGS_KEY);
       buttons.value = normalise(raw);
-    } catch (requestError) {
+    } catch (requestError: unknown) {
       error.value =
         requestError instanceof Error
           ? requestError.message
@@ -93,7 +87,7 @@ export function useMacroButtonConfig(moduleId) {
     }
   }
 
-  async function persist(next) {
+  async function persist(next: MacroButtonDescriptor[]): Promise<void> {
     // ``persist`` deliberately does NOT mutate ``buttons.value``.
     // The earlier implementation wrote back into the local cache,
     // which re-fired every ``watch(() => buttons.value, ...)``
@@ -105,7 +99,7 @@ export function useMacroButtonConfig(moduleId) {
     error.value = "";
     try {
       await client.writeKey(SETTINGS_KEY, safe);
-    } catch (requestError) {
+    } catch (requestError: unknown) {
       error.value =
         requestError instanceof Error
           ? requestError.message

@@ -11,7 +11,7 @@ import { describeError, errorStatus } from "../core/error-format";
  */
 async function fetchVersion() {
   try {
-    const wire = await SystemService.getSystemVersion();
+    const wire = await SystemService.getVersionInfo();
     return toSystemVersion(wire);
   } catch (err) {
     return new SystemVersion();
@@ -20,7 +20,7 @@ async function fetchVersion() {
 
 async function triggerUpdate(): Promise<CommandResult> {
   try {
-    await SystemService.postSystemUpdate();
+    await SystemService.triggerSystemUpdate();
     return CommandResult.success({ commandId: "system-update" });
   } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {

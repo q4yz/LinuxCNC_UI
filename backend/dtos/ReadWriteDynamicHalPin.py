@@ -12,6 +12,7 @@ class ReadWriteDynamicHalPin(HalPin[T]):
     """A dynamic HAL signal name to be connected."""
     pin: str
     hal_type: HalDataType
+    description: str
 
     def __post_init__(self):
         self.check_and_register(self.pin, self.hal_type, hal.HAL_OUT)
@@ -35,3 +36,6 @@ class ReadWriteDynamicHalPin(HalPin[T]):
             logger.info("HAL write native -> %s = %s", full_pin_name, value)
         except Exception as e:
             logger.error("Failed to write native HAL pin '%s': %s", full_pin_name, e)
+
+    def get_doc_string(self) -> str:
+        return f"{self.hal_type.value}-IN : {self.description}"

@@ -183,8 +183,8 @@ onBeforeUnmount(() => {
           <input
               v-model.number="speedPercentage"
               type="range"
-              min="10"
-              max="200"
+              min="0"
+              max="400"
               step="1"
               class="w-full h-2.5 bg-gray-700 rounded-lg appearance-none outline-none accent-blue-500 cursor-pointer my-1"
           >

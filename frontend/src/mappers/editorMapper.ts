@@ -7,24 +7,22 @@
 // The mapper is also the single place that knows the
 // source-to-endpoint mapping; consumers only see the entity.
 
-import { EditorDocument, EditorSource, isEditorSource } from "../entities/editor/EditorDocument";
+import {
+  EditorDocument,
+  type EditorSource,
+  isEditorSource,
+} from "../entities/editor/EditorDocument";
 
-/**
- * @param {string|null|undefined} raw
- * @returns {EditorSource|null}
- */
-export function toEditorSource(raw) {
+export function toEditorSource(raw: unknown): EditorSource | null {
   return isEditorSource(raw) ? raw : null;
 }
 
-/**
- * @param {EditorSource} source
- * @param {string} path
- * @param {string} [content]
- * @param {boolean} [readOnly]
- * @returns {EditorDocument|null}
- */
-export function toEditorDocument(source, path, content = "", readOnly = false) {
+export function toEditorDocument(
+  source: unknown,
+  path: unknown,
+  content: string = "",
+  readOnly: boolean = false,
+): EditorDocument | null {
   if (!isEditorSource(source)) return null;
   if (typeof path !== "string" || path.length === 0) return null;
   return new EditorDocument({ source, path, content, readOnly });

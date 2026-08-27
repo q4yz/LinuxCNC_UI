@@ -10,8 +10,10 @@
     "generate-api": "node scripts/generate-api.mjs",
     "clean": "node scripts/clean.mjs",
     "typecheck": "tsc --noEmit || true",
+    "typecheck:vue": "vue-tsc --noEmit",
+    "typecheck:all": "tsc --build && vue-tsc --noEmit",
     "postinstall": "node scripts/generate-api.mjs --install",
-    "test": "node --import ./scripts/vue-test-loader-register.mjs --test \"tests/**/*.mjs\""
+    "test": "node --experimental-strip-types --import ./scripts/vue-test-loader-register.mjs --test \"tests/**/*.ts\" \"tests/**/*.mjs\""
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -27,17 +29,20 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",
+    "@tsconfig/node22": "^22.0.6",
+    "@types/node": "^26.4.0",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/test-utils": "^2.4.11",
+    "@vue/tsconfig": "^0.9.1",
     "jsdom": "^29.1.1",
     "openapi-typescript-codegen": "^0.31.0",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.9.3",
-    "vite": "^8.0.9",
-    "vitest": "^4.1.10"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.11"
   },
   "description": "This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.",
-  "main": "vite.config.js",
   "keywords": [],
   "author": "",
   "license": "ISC"

@@ -35,35 +35,39 @@ import type { CommandResult } from "../entities/common/CommandResult";
  * @returns {string} A single sentence. Empty when ``error`` is
  *   falsy.
  */
-export function describeError(error) {
+export function describeError(error: unknown): string {
   if (!error) return ""
   if (typeof error === "string") return error
   if (typeof error === "object") {
-    const body = error.body
+    const body = (error as { body?: unknown }).body
     if (body && typeof body === "object") {
       // Issue #99 structured envelope — the canonical path for
       // compile-time validation failures raised by the global
       // ``register_exception_handlers`` hook in
       // ``backend/modules/machineconfig/router.py``.
-      const structured = body.error
+      const structured = (body as { error?: unknown }).error
       if (
         structured &&
         typeof structured === "object" &&
-        typeof structured.message === "string"
+        typeof (structured as { message?: unknown }).message === "string"
       ) {
-        return structured.message
+        return (structured as { message: string }).message
       }
       // FastAPI ``HTTPException(detail=<string>)`` shape.
-      const detail = body.detail
+      const detail = (body as { detail?: unknown }).detail
       if (Array.isArray(detail)) {
-        return detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+        return detail
+          .map((d: { msg?: unknown }) =>
+            typeof d.msg === "string" ? d.msg : JSON.stringify(d),
+          )
+          .join("; ")
       }
       if (
         detail &&
         typeof detail === "object" &&
-        typeof detail.message === "string"
+        typeof (detail as { message?: unknown }).message === "string"
       ) {
-        return detail.message
+        return (detail as { message: string }).message
       }
       if (typeof detail === "string") return detail
     }
@@ -83,7 +87,7 @@ export function describeError(error) {
  *   an empty string. Defaults to ``"Unknown error"`` to mirror the
  *   legacy call sites.
  */
-export function describeErrorOr(error, fallback = "Unknown error") {
+export function describeErrorOr(error: unknown, fallback: string = "Unknown error"): string {
   const text = describeError(error)
   return text || fallback
 }

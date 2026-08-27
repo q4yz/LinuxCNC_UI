@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // CompilerPanel — picks the active Configuration Compiler and
 // triggers a compile on the currently selected profile.
 //

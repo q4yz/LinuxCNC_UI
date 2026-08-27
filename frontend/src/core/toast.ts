@@ -63,6 +63,15 @@ export const TOAST_TYPE_STYLES = {
   },
 };
 
+// Per-call option shape. ``title`` overrides the level's default
+// heading; ``lifetime`` controls auto-dismiss (see
+// ``_resolveLifetime``). Callers may pass ``{}`` to accept all
+// defaults.
+export type ToastOpts = {
+  title?: string;
+  lifetime?: number | null;
+};
+
 // Normalises the user-supplied ``lifetime`` (seconds) before it
 // reaches ``_add``. The three valid values are:
 //
@@ -77,7 +86,7 @@ export const TOAST_TYPE_STYLES = {
 // Anything else (negative, zero, ``NaN``, string, …) is rejected
 // with a ``console.warn`` and treated as ``null`` so a typo never
 // produces a flash-and-gone popup.
-function _resolveLifetime(lifetime) {
+function _resolveLifetime(lifetime: number | null | undefined): number | null {
   if (lifetime === undefined) return DEFAULT_LIFETIME_SECONDS;
   if (lifetime === null) return null;
   if (Number.isFinite(lifetime) && lifetime > 0) return lifetime;
@@ -88,15 +97,27 @@ function _resolveLifetime(lifetime) {
   return null;
 }
 
+// One row in the toast queue — the shape ``<ToastContainer>`` reads.
+// Explicit type so the ``state: () => ({...})`` literal does not
+// collapse the array to ``never[]`` under strict mode.
+export interface Toast {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  durationMs: number | null;
+  createdAt: number;
+}
+
 export const useToastStore = defineStore("toast", {
-  state: () => ({
+  state: (): { toasts: Toast[] } => ({
     /**
      * The list of currently visible toasts. Each entry carries the
      * four fields ``ToastContainer.vue`` needs to render + dismiss:
      * ``id``, ``type``, ``title``, ``body``. ``durationMs`` is a
      * hint, not a contract — the container sets the timer.
      */
-    toasts: [],
+    toasts: [] as Toast[],
   }),
   actions: {
     /**
@@ -107,7 +128,7 @@ export const useToastStore = defineStore("toast", {
      * a reference. The container also returns the id; both paths
      * are valid.
      */
-    _add(type, title, body, opts = {}) {
+    _add(type: string, title: string, body: string, opts: ToastOpts = {}) {
       if (!TOAST_TYPES.includes(type)) {
         // Defensive: callers should not hit this branch, but a typo
         // would otherwise surface as an "info" toast with no border.
@@ -121,7 +142,7 @@ export const useToastStore = defineStore("toast", {
       // or any non-finite / non-positive value produces no timer.
       const lifetime = opts.lifetime;
       const durationMs =
-        Number.isFinite(lifetime) && lifetime > 0
+        lifetime != null && Number.isFinite(lifetime) && lifetime > 0
           ? Math.round(lifetime * 1000)
           : null;
       this.toasts.push({
@@ -135,7 +156,7 @@ export const useToastStore = defineStore("toast", {
       return id;
     },
 
-    success(body, opts = {}) {
+    success(body: string, opts: ToastOpts = {}) {
       // Title defaults to the body when none is supplied so a bare
       // ``toast.success('Saved.')`` still reads as a confirmation.
       const title = opts.title || "Success";
@@ -145,7 +166,7 @@ export const useToastStore = defineStore("toast", {
       });
     },
 
-    info(body, opts = {}) {
+    info(body: string, opts: ToastOpts = {}) {
       const title = opts.title || "Info";
       return this._add("info", title, body, {
         ...opts,
@@ -153,7 +174,7 @@ export const useToastStore = defineStore("toast", {
       });
     },
 
-    warn(body, opts = {}) {
+    warn(body: string, opts: ToastOpts = {}) {
       const title = opts.title || "Warning";
       return this._add("warn", title, body, {
         ...opts,
@@ -161,7 +182,7 @@ export const useToastStore = defineStore("toast", {
       });
     },
 
-    error(body, opts = {}) {
+    error(body: string, opts: ToastOpts = {}) {
       // ``title`` defaults to ``"Error"`` so a bare
       // ``toast.error('Compile failed')`` reads as a fault, not as
       // a status update.
@@ -176,7 +197,7 @@ export const useToastStore = defineStore("toast", {
      * Remove a single toast by id. Called from the container's
      * dismiss button and from the auto-dismiss timer.
      */
-    dismiss(id) {
+    dismiss(id: string) {
       this.toasts = this.toasts.filter((toast) => toast.id !== id);
     },
 

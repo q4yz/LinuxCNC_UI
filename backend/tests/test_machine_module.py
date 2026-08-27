@@ -37,14 +37,15 @@ def test_axis_home_endpoint_is_mounted(tmp_data_root, clean_env):
 
     The router's ``get_router`` returns a single ``APIRouter`` so we
     only check the operation is wired by exercising it with the
-    happy-path payload.
+    happy-path payload. The wire contract carries a letter
+    (``"all"`` here) rather than an integer index.
     """
     app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
     resp = client.post(
         "/api/v1/modules/axis/home",
-        json={"axis": -1},
+        json={"axis": "all"},
     )
     assert resp.status_code == 200
     assert resp.json() == {"status": "success"}

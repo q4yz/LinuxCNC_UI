@@ -41,12 +41,11 @@ export const useServoThreadStore = defineStore('servoThread', () => {
                 estop: s.estop,
                 task_mode: s.taskMode,
                 interp_state: s.interpState,
-                state: s.state,
                 file: s.file,
                 current_line: s.currentLine,
                 total_lines: s.totalLines,
             },
-        });
+        } as never);
     };
 
     /**

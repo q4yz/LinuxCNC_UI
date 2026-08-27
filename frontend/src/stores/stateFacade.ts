@@ -51,11 +51,26 @@ export const SystemState = Object.freeze({
   FAILURE: "Failure",
 });
 
+// Raw telemetry payload shape. ``task_state`` / ``interp_state`` are
+// declared as ``number`` rather than the narrow ``1|2|3|4`` union so
+// the ``systemState`` getter can write a single comparison chain
+// without TypeScript flagging cross-branch equality checks as
+// "unintentional" (``1`` and ``3`` would never overlap, etc.).
+interface RawStatus {
+  task_state: number;
+  estop: number;
+  task_mode: number;
+  interp_state: number;
+  file: string;
+  current_line: number;
+  total_lines: number;
+}
+
 // Safe default payload for the initial render before the first
 // telemetry frame arrives. ``ESTOP`` is the safest default: the UI
 // must never claim the machine is idle or running when we have no
 // data.
-const DEFAULT_RAW_STATUS = Object.freeze({
+const DEFAULT_RAW_STATUS: RawStatus = Object.freeze({
   task_state: TASK_STATE.ESTOP,
   estop: 1,
   task_mode: 1,
@@ -69,8 +84,8 @@ const DEFAULT_RAW_STATUS = Object.freeze({
 // renames or reorders them would silently disagree with the
 // backend — this guard fails fast instead.
 (function validateConstants() {
-  const taskValues = Object.values(TASK_STATE);
-  const expectedTask = [1, 2, 3, 4];
+  const taskValues: number[] = Object.values(TASK_STATE);
+  const expectedTask: number[] = [1, 2, 3, 4];
   if (
     taskValues.length !== expectedTask.length ||
     !expectedTask.every((v) => taskValues.includes(v))
@@ -81,8 +96,8 @@ const DEFAULT_RAW_STATUS = Object.freeze({
       TASK_STATE,
     );
   }
-  const interpValues = Object.values(INTERP_STATE);
-  const expectedInterp = [1, 2, 3, 4];
+  const interpValues: number[] = Object.values(INTERP_STATE);
+  const expectedInterp: number[] = [1, 2, 3, 4];
   if (
     interpValues.length !== expectedInterp.length ||
     !expectedInterp.every((v) => interpValues.includes(v))
@@ -111,7 +126,7 @@ export const useMachineStore = defineStore("machineStore", {
     isUpdating: false,
     // Raw telemetry payload. ``systemState`` is for state-based UI;
     // advanced / diagnostic panels can read the integers here.
-    status: { ...DEFAULT_RAW_STATUS },
+    status: { ...DEFAULT_RAW_STATUS } as RawStatus,
   }),
 
   getters: {
@@ -215,7 +230,11 @@ export const useMachineStore = defineStore("machineStore", {
      *
      * @param {{ connectionStatus?: string, isUpdating?: boolean, status?: object }} newPayload
      */
-    updateStatus(newPayload) {
+    updateStatus(newPayload: {
+      connectionStatus?: string;
+      isUpdating?: boolean;
+      status?: Partial<RawStatus>;
+    }): void {
       if (!newPayload || typeof newPayload !== "object") return;
       if (typeof newPayload.connectionStatus === "string") {
         this.connectionStatus = newPayload.connectionStatus;

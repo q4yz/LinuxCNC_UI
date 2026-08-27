@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Shared inline SVG icon primitive.
 //
 // Replaces the dozens of ad-hoc ``<svg>...</svg>`` blocks scattered

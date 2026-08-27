@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Heater controls — Actual Temp + Target Temp tiles, a clamped
 // Set Temp input, and a Set / Off pair. Shared between
 // ``HeatedBedCard`` (heat-only tool) and ``ExtruderCard`` (heat +

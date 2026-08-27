@@ -50,21 +50,21 @@ def test_axis_home_endpoint_dispatches_to_facade(
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
-            json={"axis": 2},
+            json={"axis": "z"},
         )
 
     assert resp.status_code == 200
     assert resp.json() == {"status": "success"}
-    mock_home.assert_called_once_with(2)
+    mock_home.assert_called_once_with("z")
 
 
-def test_axis_home_endpoint_accepts_negative_axis(
+def test_axis_home_endpoint_accepts_all_keyword(
     tmp_data_root, clean_env
 ):
-    """``axis == -1`` (home all) is forwarded verbatim to the facade.
+    """``axis == "all"`` (home all) is forwarded verbatim to the facade.
 
-    The router does not interpret the sentinel — it only translates
-    the HTTP edge; the facade decides what ``-1`` means
+    The router does not interpret the keyword — it only translates
+    the HTTP edge; the facade decides what ``"all"`` means
     (:meth:`AxisService.home_single_axes` delegates to
     :meth:`AxisService.home_all_axes` internally).
     """
@@ -76,11 +76,53 @@ def test_axis_home_endpoint_accepts_negative_axis(
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
-            json={"axis": -1},
+            json={"axis": "all"},
         )
 
     assert resp.status_code == 200
-    mock_home.assert_called_once_with(-1)
+    mock_home.assert_called_once_with("all")
+
+
+def test_axis_home_endpoint_accepts_each_letter(
+    tmp_data_root, clean_env
+):
+    """``"x"``, ``"y"`` and ``"z"`` are all valid wire letters.
+
+    The contract was widened from integer indices to letters so the
+    frontend can carry the canonical LinuxCNC axis letter through the
+    wire without an index→letter translation at the seam.
+    """
+    app, _ = _axis_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    for letter in ("x", "y", "z"):
+        with patch(
+            "services.AxisService.AxisService.home_single_axes"
+        ) as mock_home:
+            resp = client.post(
+                "/api/v1/modules/axis/home",
+                json={"axis": letter},
+            )
+        assert resp.status_code == 200, f"letter {letter!r} rejected"
+        mock_home.assert_called_once_with(letter)
+
+
+def test_axis_home_endpoint_rejects_unknown_letter(
+    tmp_data_root, clean_env
+):
+    """Unknown letters fail Pydantic validation with 422.
+
+    Anything outside the ``"x"|"y"|"z"|"all"`` union is a typo
+    the operator would otherwise have to debug from the runtime.
+    """
+    app, _ = _axis_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/modules/axis/home",
+        json={"axis": "q"},
+    )
+    assert resp.status_code == 422
 
 
 def test_axis_home_endpoint_keeps_axis_tag(tmp_data_root, clean_env):

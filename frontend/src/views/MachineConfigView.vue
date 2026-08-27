@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Machineconfig top-level view. Hosts every panel that used to live
 // in ``EditorView.vue``'s ``v-else`` branch — the surface is
 // identical so existing CSS / column ratios carry over verbatim.

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Settings-pane editor for the per-module "custom macro buttons"
 // config.
 //

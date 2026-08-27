@@ -10,9 +10,16 @@ import {
   type AnyToolWire,
 } from "../mappers/toolsMapper";
 import { describeError, errorStatus } from "../core/error-format";
-import { SpindleDigitalControlRequest } from "../entities/tools/SpindleDigital";
+import {
+  SpindleDigitalControlRequest,
+  type SpindleDigitalAction,
+} from "../entities/tools/SpindleDigital";
 import { HeaterControlRequest } from "../entities/tools/Heater";
-import { ExtruderControlRequest } from "../entities/tools/Extruder";
+import {
+  ExtruderControlRequest,
+  type ExtruderAction,
+  type HeaterAction,
+} from "../entities/tools/Extruder";
 import type { ToolCommandResponse } from "../../generated/api/models/ToolCommandResponse";
 import type { HeaterCommandStateResponse } from "../../generated/api/models/HeaterCommandStateResponse";
 
@@ -23,9 +30,21 @@ export class ToolsService {
    * Pure mapper — wraps `toToolList` so the facade owns the
    * wire-shape → entity translation. The base-thread polling loop
    * calls this on every tick; the mapper is idempotent and cheap.
+   *
+   * The base-thread snapshot endpoint returns a record keyed by tool
+   * id, while older call sites pass a bare array. Accept either.
    */
-  static mapToolsWire(wires: AnyToolWire[] | Record<string, any>[] | null | undefined): ToolList {
-    return toToolList(wires as AnyToolWire[]);
+  static mapToolsWire(
+    wires:
+      | AnyToolWire[]
+      | Array<Record<string, any>>
+      | Record<string, AnyToolWire>
+      | Record<string, any>
+      | null
+      | undefined,
+  ): ToolList {
+    if (Array.isArray(wires)) return toToolList(wires as AnyToolWire[]);
+    return toToolList(wires as Record<string, AnyToolWire>);
   }
 
   /**
@@ -34,9 +53,10 @@ export class ToolsService {
    */
   static async fetchTools(): Promise<ToolList> {
     const snapshot = await BaseThreadService.getBaseThreadSnapshot();
-    return this.mapToolsWire(
-      snapshot && Array.isArray(snapshot.tools) ? snapshot.tools : []
-    );
+    const tools = snapshot && Array.isArray(snapshot.tools)
+      ? (snapshot.tools as AnyToolWire[])
+      : ([] as AnyToolWire[]);
+    return this.mapToolsWire(tools);
   }
 
   // --- Writes ------------------------------------------------------------
@@ -130,7 +150,7 @@ export class ToolsService {
 export const toolsFacade = {
   async controlSpindle(
     toolId: string,
-    action: string,
+    action: SpindleDigitalAction,
     speed: number,
     masterOverride: number = 0,
     masterOverrideEnable: boolean = false,
@@ -150,11 +170,11 @@ export const toolsFacade = {
 
   async controlExtruder(
     toolId: string,
-    action: string,
+    action: ExtruderAction,
     distance: number,
     speed: number,
     heaterTarget?: number,
-    heaterAction: string = "noop",
+    heaterAction: HeaterAction = "noop",
   ): Promise<CommandResult> {
     return ToolsService.controlExtruder(
       new ExtruderControlRequest({

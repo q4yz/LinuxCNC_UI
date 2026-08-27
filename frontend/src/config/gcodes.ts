@@ -1,4 +1,4 @@
-export const WORK_COORDINATE_SYSTEMS = [
+export const WORK_COORDINATE_SYSTEMS: ReadonlyArray<{ index: number; name: string }> = [
   { index: 1, name: 'G54' },
   { index: 2, name: 'G55' },
   { index: 3, name: 'G56' },
@@ -10,7 +10,7 @@ export const WORK_COORDINATE_SYSTEMS = [
   { index: 9, name: 'G59.3' },
 ];
 
-export const generateCoordinateSystemCommand = (index) => {
+export const generateCoordinateSystemCommand = (index: number): string => {
   const system = WORK_COORDINATE_SYSTEMS.find(sys => sys.index === index);
   return system ? system.name : 'G54';
 };
@@ -19,7 +19,7 @@ export const generateCoordinateSystemCommand = (index) => {
  * Generates the MDI command to set the current position of a specific axis.
  * Uses G10 L20 P0, which sets the active coordinate system offset.
  */
-export const generateSetOffset = (axisName, value) => {
+export const generateSetOffset = (axisName: string, value: number | string): string => {
   // E.g., if axisName='X' and value=0, returns "G10 L20 P0 X0"
   return `G10 L20 P0 ${axisName}${value}`;
 };
@@ -45,7 +45,7 @@ export const generateSetOffset = (axisName, value) => {
 // also valid in lower case per the interpreter, but the canonical
 // form is upper case and that is what we surface in the menu.
 
-export const AUTOCOMPLETE_COMMANDS = [
+export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: string; category: string; description: string }> = [
   // Motion / interpolation G-codes.
   { label: 'G0',  command: 'G0',   category: 'gcode',  description: 'Rapid move' },
   { label: 'G1',  command: 'G1',   category: 'gcode',  description: 'Linear move' },
@@ -132,7 +132,7 @@ export const AUTOCOMPLETE_COMMANDS = [
  * @param {number} limit - Maximum number of suggestions to return.
  * @returns {Array<{label: string, command: string, category: string, description: string}>}
  */
-export const filterAutocompleteCommands = (query, limit = 8) => {
+export const filterAutocompleteCommands = (query: string, limit = 8) => {
   if (typeof query !== 'string') return [];
   const trimmed = query.trim().toUpperCase();
   if (!trimmed) return [];

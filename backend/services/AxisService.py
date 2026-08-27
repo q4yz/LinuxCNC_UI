@@ -12,7 +12,7 @@ business logic does not need to follow that split.
 from __future__ import annotations
 
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 from dtos.axis.AxisDto import AxisStateDTO
 from hardware.Connection import execute_sync_cmd, linuxcnc
@@ -75,14 +75,30 @@ class AxisService:
         execute_sync_cmd("home", 3, -1)
 
 
-    def home_single_axes(self, axis: int) -> None:
-        if axis == -1:
+    def home_single_axes(self, axis: str) -> None:
+        """Home a single axis by letter, or every axis when ``"all"``.
+
+        The router hands us a canonical letter (``"x"``, ``"y"``,
+        ``"z"``) or the ``"all"`` keyword. ``"all"`` fans out to
+        :meth:`home_all_axes` so the historic ``home -1`` dispatch
+        keeps working; the letter branches own the
+        ``AxisState -> joint_numbers -> stepgen channel`` mapping
+        the operator-facing payload needs.
+        """
+        if axis == "all":
             self.home_all_axes()
             return
 
-        execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
+        # Clean lookup: find the specific axis DTO without a manual loop
+        target_axis = next((a for a in self.get_axis() if a.id == axis), None)
+
+        if target_axis is None:
+            raise ValueError(f"Cannot home unknown axis: {axis!r}")
+
+        execute_sync_cmd("mode", 1.0, getattr(linuxcnc, "MODE_MANUAL", 1))
         execute_sync_cmd("teleop_enable", 1.0, 0)
-        execute_sync_cmd("home", 3, axis)
+        # Coupled axes synchronize automatically via HOME_SEQUENCE
+        execute_sync_cmd("home", 3.0, target_axis.joint_numbers[0])
 
     def update_settings(self, multiplier: float, absolute_speed_limit: int) -> None:
         execute_sync_cmd("feedrate", 0, float(multiplier))

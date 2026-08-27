@@ -13,6 +13,6 @@ export const TEMPERATURE_UNITS = Object.freeze(
   Object.values(TemperatureUnit),
 );
 
-export function isTemperatureUnit(value) {
-  return TEMPERATURE_UNITS.includes(value);
+export function isTemperatureUnit(value: unknown): value is TemperatureUnit {
+  return TEMPERATURE_UNITS.includes(value as TemperatureUnit);
 }

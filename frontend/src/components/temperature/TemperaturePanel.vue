@@ -362,19 +362,9 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
   </div>
 </template>
 
-<style scoped>
-.chart {
-  width: 100%;
-  height: 100%;
-  min-height: 250px;
-}
-
-input[type=number]::-webkit-inner-spin-button,
-input[type=number]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-input[type=number] {
-  -moz-appearance: textfield;
-}
+<style>
+/* Chart + number-input styles moved to ``frontend/src/style.css`` —
+ * see top-level comment in that file. The Vue ``scoped`` block was
+ * triggering a UTF-8 panic in ``@tailwindcss/oxide`` 4.2.4.
+ */
 </style>

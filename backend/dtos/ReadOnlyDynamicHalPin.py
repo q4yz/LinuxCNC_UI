@@ -12,6 +12,7 @@ class ReadOnlyDynamicHalPin(HalPin[T]):
     """A dynamic HAL signal name that can only be read, not written."""
     pin: str
     hal_type: HalDataType
+    description: str
 
     def __post_init__(self):
         self.check_and_register(self.pin, self.hal_type, hal.HAL_IN)
@@ -24,3 +25,6 @@ class ReadOnlyDynamicHalPin(HalPin[T]):
 
     def set_value(self, value: T) -> None:
         raise PermissionError(f"Operation not allowed: {self.__class__.__name__} is read-only.")
+
+    def get_doc_string(self) -> str:
+        return  f"{self.hal_type.value}-OUT : {self.description}"

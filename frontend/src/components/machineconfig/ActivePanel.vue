@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // ActivePanel — "Active" dashboard. Shows the currently running
 // machine name (extracted from the active INI's [EMC] section) plus
 // the list of files currently in ``machine_config/active``.
@@ -17,7 +17,7 @@ const store = useMachineConfigStore();
 const { activeListing, activeContents, activeTotalSize, isBusy } = storeToRefs(store);
 
 const fileCards = computed(() =>
-  // In ``<script setup>`` the ref returned by ``storeToRefs`` is NOT
+  // In ``<script setup lang="ts">`` the ref returned by ``storeToRefs`` is NOT
   // auto-unwrapped in JS — only the template unwraps refs. So the
   // reactive array is on ``activeListing.value.files``, not
   // ``activeListing.files`` (which is ``undefined`` on the ref).

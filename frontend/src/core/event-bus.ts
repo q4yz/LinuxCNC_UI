@@ -10,12 +10,12 @@
  * @param {*} value
  * @returns {*}
  */
-function deepFreeze(value) {
+function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
   if (Object.isFrozen(value)) return value;
   Object.freeze(value);
-  for (const key of Object.keys(value)) {
-    const inner = /** @type {any} */ (value)[key];
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    const inner = (value as Record<string, unknown>)[key];
     if (inner && typeof inner === "object" && !Object.isFrozen(inner)) {
       deepFreeze(inner);
     }
@@ -39,11 +39,16 @@ export class EventBus {
    * @param {string} topic
    * @param {(topic: string, payload: any) => void} callback
    */
-  subscribe(topic, callback) {
-    if (!this._subscribers.has(topic)) {
-      this._subscribers.set(topic, new Set());
+  subscribe(
+    topic: string,
+    callback: (topic: string, payload: any) => void,
+  ): void {
+    let set = this._subscribers.get(topic);
+    if (!set) {
+      set = new Set();
+      this._subscribers.set(topic, set);
     }
-    this._subscribers.get(topic).add(callback);
+    set.add(callback);
   }
 
   /**
@@ -52,7 +57,10 @@ export class EventBus {
    * @param {Function} callback
    * @returns {boolean}
    */
-  unsubscribe(topic, callback) {
+  unsubscribe(
+    topic: string,
+    callback: (topic: string, payload: any) => void,
+  ): boolean {
     const set = this._subscribers.get(topic);
     if (!set) return false;
     const removed = set.delete(callback);
@@ -67,7 +75,7 @@ export class EventBus {
    * @param {string} topic
    * @param {any} payload
    */
-  publish(topic, payload) {
+  publish(topic: string, payload: any): void {
     const set = this._subscribers.get(topic);
     if (!set || set.size === 0) return;
     for (const cb of set) {
@@ -91,7 +99,7 @@ export class EventBus {
    * diagnostics in dev tools.
    * @returns {string[]}
    */
-  topics() {
+  topics(): string[] {
     return Array.from(this._subscribers.keys());
   }
 }
@@ -106,7 +114,7 @@ export class EventBus {
  *
  * @param {*} value
  */
-function clone(value) {
+function clone<T>(value: T): T {
   if (typeof structuredClone === "function") {
     try {
       return structuredClone(value);
@@ -114,7 +122,7 @@ function clone(value) {
       // structuredClone can throw on unsupported types; fall through.
     }
   }
-  return JSON.parse(JSON.stringify(value));
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 // Module-level singleton so modules can ``import { eventBus } from ...``

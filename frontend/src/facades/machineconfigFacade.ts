@@ -3,7 +3,7 @@
 // Every write returns a ``CommandResult`` so the store can route
 // its failure log through ``reportCommandFailure``.
 
-import { ModulesMachineconfigService } from "../../generated/api/index.ts";
+import { ModulesMachineconfigService } from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
 import { describeError, errorStatus } from "../core/error-format";
 

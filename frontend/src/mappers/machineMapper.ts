@@ -5,16 +5,13 @@
 
 import { MachineState } from "../entities/machine/MachineState";
 
-/**
- * @param {object|null|undefined} payload
- * @returns {MachineState}
- */
-export function toMachineState(payload) {
+export function toMachineState(payload: unknown): MachineState {
   if (!payload || typeof payload !== "object") {
     return new MachineState();
   }
+  const p = payload as Record<string, unknown>;
   // Map the servo-thread ``task_state`` int to the string enum.
-  const taskStateMap = {
+  const taskStateMap: Record<number, string> = {
     1: "idle",
     2: "loaded",
     3: "running",
@@ -25,14 +22,17 @@ export function toMachineState(payload) {
     8: "updating",
   };
   const state =
-    typeof payload.state === "string"
-      ? payload.state
-      : taskStateMap[Number(payload.task_state)] || "off";
+    typeof p.state === "string"
+      ? p.state
+      : taskStateMap[Number(p.task_state)] || "off";
   return new MachineState({
     state,
-    mode: typeof payload.mode === "string" ? payload.mode : "manual",
-    isOnline: typeof payload.isOnline === "boolean" ? payload.isOnline : Boolean(payload.connected),
-    isEstopped: Boolean(payload.estop || payload.isEstopped),
-    lastError: typeof payload.lastError === "string" ? payload.lastError : null,
+    mode: typeof p.mode === "string" ? p.mode : "manual",
+    isOnline:
+      typeof p.isOnline === "boolean"
+        ? p.isOnline
+        : Boolean(p.connected),
+    isEstopped: Boolean(p.estop || p.isEstopped),
+    lastError: typeof p.lastError === "string" ? p.lastError : null,
   });
 }

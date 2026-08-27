@@ -12,13 +12,16 @@ export const EditorSource = Object.freeze({
   M_CODES: "m_codes",
   PROGRAMS: "programs",
   MACROS: "macros",
-});
+} as const);
+export type EditorSource = (typeof EditorSource)[keyof typeof EditorSource];
 
-export const EDITOR_SOURCES = Object.freeze(Object.values(EditorSource));
+export const EDITOR_SOURCES: ReadonlyArray<EditorSource> = Object.freeze(
+  Object.values(EditorSource),
+);
 
-const READ_ONLY_SOURCES = new Set([EditorSource.ACTIVE, EditorSource.STAGED]);
+const READ_ONLY_SOURCES = new Set<string>([EditorSource.ACTIVE, EditorSource.STAGED]);
 
-export const EDITOR_SOURCE_LABELS = Object.freeze({
+export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Object.freeze({
   [EditorSource.PROFILES]: "Profiles",
   [EditorSource.ACTIVE]: "Active Config",
   [EditorSource.STAGED]: "Compiled Output",
@@ -27,15 +30,15 @@ export const EDITOR_SOURCE_LABELS = Object.freeze({
   [EditorSource.MACROS]: "Macros",
 });
 
-export function sourceLabel(source) {
-  return EDITOR_SOURCE_LABELS[source] ?? source;
+export function sourceLabel(source: string): string {
+  return EDITOR_SOURCE_LABELS[source as EditorSource] ?? source;
 }
 
-export function isEditorSource(value) {
-  return EDITOR_SOURCES.includes(value);
+export function isEditorSource(value: unknown): value is EditorSource {
+  return EDITOR_SOURCES.includes(value as EditorSource);
 }
 
-export function isReadOnlySource(source) {
+export function isReadOnlySource(source: string): boolean {
   return READ_ONLY_SOURCES.has(source);
 }
 
@@ -47,13 +50,6 @@ export class EditorDocument {
   private _content: string;
   private _readOnly: boolean;
 
-  /**
-   * @param {object} [params]
-   * @param {string} [params.source] EditorSource value
-   * @param {string} [params.path]
-   * @param {string} [params.content]
-   * @param {boolean} [params.readOnly]
-   */
   constructor({
     source,
     path,
