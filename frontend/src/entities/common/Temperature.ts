@@ -11,10 +11,12 @@ import { TemperatureUnit, isTemperatureUnit } from "./Unit";
 const KELVIN_OFFSET = 273.15;
 
 export class Temperature {
+  private _celsius: number;
+
   /**
    * @param {number} celsius Raw value in degrees Celsius.
    */
-  constructor(celsius) {
+  constructor(celsius: number) {
     if (typeof celsius !== "number" || Number.isNaN(celsius)) {
       this._celsius = 0;
     } else {
@@ -28,7 +30,7 @@ export class Temperature {
   }
 
   /** Formatted for display in the active unit (rounded to 2 dp). */
-  formatIn(unit) {
+  formatIn(unit: TemperatureUnit | string): string {
     if (!isTemperatureUnit(unit)) {
       return this._celsius.toFixed(2);
     }
@@ -37,7 +39,7 @@ export class Temperature {
   }
 
   /** Plain-number representation in the active unit (no rounding). */
-  toUnit(unit) {
+  toUnit(unit: TemperatureUnit | string): number {
     if (unit === TemperatureUnit.KELVIN) {
       return this._celsius + KELVIN_OFFSET;
     }
@@ -58,7 +60,7 @@ export class Temperature {
    * @param {number|null|undefined} max
    * @returns {Temperature}
    */
-  clampTo(min, max) {
+  clampTo(min: number | null | undefined, max: number | null | undefined): Temperature {
     let v = this._celsius;
     if (typeof min === "number" && Number.isFinite(min) && v < min) v = min;
     if (typeof max === "number" && Number.isFinite(max) && v > max) v = max;

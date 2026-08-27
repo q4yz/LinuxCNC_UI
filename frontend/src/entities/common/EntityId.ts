@@ -3,13 +3,16 @@
 // accidentally compare a string to a different string type.
 
 export class EntityId {
+  private _value: string;
+  private _kind: string;
+
   /**
    * @param {string} value
    * @param {string} [kind] Optional kind tag for debugging
    *  (``"sensor"``, ``"heater"``, ``"tool"``…). Has no semantic
    *  meaning at runtime.
    */
-  constructor(value, kind = "entity") {
+  constructor(value: string, kind: string = "entity") {
     if (typeof value !== "string" || value.length === 0) {
       throw new Error(`EntityId(${kind}): value must be a non-empty string`);
     }
@@ -25,7 +28,7 @@ export class EntityId {
     return this._value;
   }
 
-  equals(other) {
+  equals(other: unknown): boolean {
     return other instanceof EntityId && other._value === this._value;
   }
 }

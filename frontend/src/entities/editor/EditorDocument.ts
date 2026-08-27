@@ -39,15 +39,32 @@ export function isReadOnlySource(source) {
   return READ_ONLY_SOURCES.has(source);
 }
 
+type EditorSourceKey = (typeof EditorSource)[keyof typeof EditorSource];
+
 export class EditorDocument {
+  private _source: string;
+  private _path: string;
+  private _content: string;
+  private _readOnly: boolean;
+
   /**
-   * @param {object} params
-   * @param {string} params.source EditorSource value
-   * @param {string} params.path
+   * @param {object} [params]
+   * @param {string} [params.source] EditorSource value
+   * @param {string} [params.path]
    * @param {string} [params.content]
    * @param {boolean} [params.readOnly]
    */
-  constructor({ source, path, content = "", readOnly = false } = {}) {
+  constructor({
+    source,
+    path,
+    content = "",
+    readOnly = false,
+  }: {
+    source?: string;
+    path?: string;
+    content?: string;
+    readOnly?: boolean;
+  } = {}) {
     if (!isEditorSource(source)) {
       throw new Error(`EditorDocument: unknown source ${source}`);
     }

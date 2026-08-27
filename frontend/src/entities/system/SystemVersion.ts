@@ -1,6 +1,11 @@
 // System version + updatability entity.
 
 export class SystemVersion {
+  private _version: string;
+  private _commit: string;
+  private _isUpdatable: boolean;
+  private _releaseNotes: string | null;
+
   /**
    * @param {object} params
    * @param {string} [params.version]

@@ -3,13 +3,12 @@
 // cost per tick. Subscribers must clone before storing. See
 // ``.agent/STATE.md`` § 3.
 
-/**
- * @typedef {(topic: string, payload: any) => void} TelemetryHandler
- */
+type TelemetryHandler = (topic: string, payload: any) => void;
 
 export class TelemetryBus {
+  private _subscribers: Map<string, Set<TelemetryHandler>>;
+
   constructor() {
-    /** @type {Map<string, Set<TelemetryHandler>>} */
     this._subscribers = new Map();
   }
 

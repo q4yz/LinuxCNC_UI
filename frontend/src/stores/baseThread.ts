@@ -15,6 +15,7 @@ import { BaseThreadService } from "../facades/baseThreadFacade";
 import { ReadingSet } from "../entities/temperature/ReadingSet";
 import { ToolList } from "../entities/tools/ToolList";
 import { ProgramProgress } from "../entities/progress/ProgramProgress";
+import { AxisState } from "../entities/axis/AxisState";
 import { HeaterReading } from "../entities/temperature/HeaterReading";
 import { SensorReading } from "../entities/temperature/SensorReading";
 import { SpindleDigital as SpindleState } from "../entities/tools/SpindleDigital";
@@ -33,6 +34,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   const progress = shallowRef<ProgramProgress>(new ProgramProgress());
   const readings = shallowRef<ReadingSet>(new ReadingSet());
   const toolList = shallowRef<ToolList>(new ToolList([]));
+  const axes = shallowRef<Record<string, AxisState>>({});
 
   // Legacy wire shape (kept for migration window)
   const sensors = ref<Record<string, any>>({});
@@ -76,6 +78,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       progress.value = snapshot.progress;
       readings.value = snapshot.readings;
       toolList.value = snapshot.toolList;
+      axes.value = snapshot.axes;
 
       timestamp.value = snapshot.timestamp;
       connectionStatus.value = "connected";
@@ -126,6 +129,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     progress,
     readings,
     toolList,
+    axes,
     sensors,
     tools,
     timestamp,
@@ -142,6 +146,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
 export default useBaseThreadStore;
 
 export {
+  AxisState,
   HeaterReading,
   SensorReading,
   ReadingSet,

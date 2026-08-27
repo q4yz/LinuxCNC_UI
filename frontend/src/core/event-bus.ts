@@ -24,8 +24,9 @@ function deepFreeze(value) {
 }
 
 export class EventBus {
+  private _subscribers: Map<string, Set<(topic: string, payload: any) => void>>;
+
   constructor() {
-    /** @type {Map<string, Set<Function>>} */
     this._subscribers = new Map();
   }
 

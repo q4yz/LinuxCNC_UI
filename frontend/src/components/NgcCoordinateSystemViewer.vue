@@ -5,8 +5,8 @@
 // rig the original component shipped with:
 //
 //   1. A wireframe "limits box" in the X/Y plane drawn from the
-//      machine limits declared in the active `hardware.json`
-//      (`axes[].position_max`).
+//      machine limits shipped by the base-thread snapshot
+//      (``axes[].min_limit`` / ``axes[].max_limit``).
 //
 //   2. The currently loaded G-code / NGC program's toolpath, fetched
 //      from `/api/v1/programs/content/{filename}`.
@@ -38,7 +38,6 @@ import { storeToRefs } from 'pinia'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
-import { useMachineConfigStore } from '../stores/machineconfigStore'
 import { useBaseThreadStore } from '../stores/baseThread'
 import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
 
@@ -72,19 +71,6 @@ interface ParsedSegment {
   sourceLine: number
 }
 
-// Typing the loosely parsed hardware.json payload
-interface HardwareJsonAxis {
-  id?: string
-  position_max?: string | number
-  position_min?: string | number
-  position_endstop?: string | number
-}
-
-interface HardwareJsonPayload {
-  axes?: HardwareJsonAxis[]
-  [key: string]: any
-}
-
 // --- Props ---
 const props = withDefaults(
     defineProps<{
@@ -99,9 +85,8 @@ const props = withDefaults(
 )
 
 const store = useMachineStore()
-const machineconfigStore = useMachineConfigStore()
 const baseThreadStore = useBaseThreadStore()
-const { progress: baseThreadProgress } = storeToRefs(baseThreadStore)
+const { progress: baseThreadProgress, axes: baseThreadAxes } = storeToRefs(baseThreadStore)
 
 // Tailwind pink-400 / blue-400 — fed into a per-vertex color buffer
 // so already-cut segments render pink and pending segments render blue.
@@ -200,8 +185,6 @@ onMounted(async () => {
   initThreeJS()
   setupWatchers()
   animate()
-
-  await loadMachineLimits()
 
   if (typeof store.status.file === 'string' && store.status.file.length > 0) {
     await loadProgramToolpath(store.status.file)
@@ -335,7 +318,6 @@ const setupWatchers = () => {
   watch(() => store.status.file, async (newFile) => {
     if (typeof newFile === 'string' && newFile.length > 0) {
       await loadProgramToolpath(newFile)
-      await loadMachineLimits()
     } else {
       clearToolpath()
     }
@@ -366,77 +348,41 @@ const setupWatchers = () => {
       { deep: true },
   )
 
-  watch(() => machineconfigStore.activeListing?.machine_name, async (name) => {
-    if (typeof name === 'string' && name.length > 0) {
-      await loadMachineLimits()
-    }
-  })
+  // The base-thread snapshot already ships ``axes[].min_limit`` /
+  // ``max_limit`` for every Cartesian letter; pushing them through
+  // ``setMachineLimits`` rebuilds the wireframe box whenever the
+  // active profile is recompiled (limits are static config). The
+  // ``immediate: true`` flag mirrors the old ``loadMachineLimits()``
+  // call from ``onMounted`` — the very first tick paints the box
+  // before any geometry rebuilds happen.
+  watch(
+      () => axisLimits.value,
+      (next) => setMachineLimits(next),
+      { immediate: true },
+  )
 }
+
+// Project the base-thread ``axes`` map down to the X/Y envelope the
+// limits box needs. ``null`` when either axis is missing or the
+// envelope is degenerate — matches the previous hardware.json path.
+const axisLimits = computed<MachineLimits | null>(() => {
+  const axes = baseThreadAxes.value || {}
+  const x = axes['x']
+  const y = axes['y']
+  if (!x || !y) return null
+  const xMin = Number(x.minLimit)
+  const xMax = Number(x.maxLimit)
+  const yMin = Number(y.minLimit)
+  const yMax = Number(y.maxLimit)
+  if (!Number.isFinite(xMin) || !Number.isFinite(xMax)) return null
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) return null
+  if (xMax <= xMin || yMax <= yMin) return null
+  return { xMin, xMax, yMin, yMax }
+})
 
 // ---------------------------------------------------------------------- //
 // Machine limits box & Custom Rectangular Grid                           //
 // ---------------------------------------------------------------------- //
-
-const loadMachineLimits = async () => {
-  if (!scene) return
-
-  try {
-    const response = await machineconfigStore.readActiveFileContent('hardware.json')
-    const text = typeof response === 'string' ? response : ''
-    if (!text) {
-      setMachineLimits(null)
-      return
-    }
-
-    let payload: HardwareJsonPayload
-    try {
-      payload = JSON.parse(text)
-    } catch (parseErr) {
-      console.warn('[NgcCoordinateSystemViewer] hardware.json parse failed', parseErr)
-      setMachineLimits(null)
-      return
-    }
-
-    const limits = _extractLimitsFromHardwareJson(payload)
-    setMachineLimits(limits)
-  } catch (err) {
-    setMachineLimits(null)
-  }
-}
-
-const _extractLimitsFromHardwareJson = (payload: HardwareJsonPayload): MachineLimits | null => {
-  if (!payload || typeof payload !== 'object') return null
-
-  const axes = Array.isArray(payload.axes) ? payload.axes : []
-  if (!axes.length) return null
-
-  const perAxis = new Map<string, { min: number; max: number }>()
-
-  for (const axis of axes) {
-    if (!axis || typeof axis !== 'object') continue
-    const letter = typeof axis.id === 'string' ? axis.id.toLowerCase() : ''
-    if (letter !== 'x' && letter !== 'y') continue
-
-    const posMin = _coerceNumber(axis.position_min, 0)
-    const posMax = _coerceNumber(axis.position_max, 200)
-
-    perAxis.set(letter, { min: posMin, max: posMax })
-  }
-
-  if (!perAxis.has('x') || !perAxis.has('y')) return null
-
-  const x = perAxis.get('x')!
-  const y = perAxis.get('y')!
-
-  if (x.max <= x.min || y.max <= y.min) return null
-
-  return { xMin: x.min, xMax: x.max, yMin: y.min, yMax: y.max }
-}
-
-const _coerceNumber = (value: any, fallback: number): number => {
-  const n = Number(value)
-  return Number.isFinite(n) ? n : fallback
-}
 
 const setMachineLimits = (limits: MachineLimits | null) => {
   machineLimits.value = limits
