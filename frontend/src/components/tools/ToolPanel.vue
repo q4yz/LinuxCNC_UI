@@ -20,7 +20,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl  min-w-[400px] ">
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between gap-4">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm whitespace-nowrap">
         Tools

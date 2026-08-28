@@ -232,12 +232,12 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Added min-w-[380px] and overflow-x-auto -->
-  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full min-w-[380px] overflow-x-auto transition-opacity"
+  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full min-w-[250px] overflow-x-auto transition-opacity"
        :class="{ 'opacity-60': isDisabled }">
 
     <!-- LEFT COLUMN: Controls -->
     <!-- Added min-w-[260px] -->
-    <div class="flex-1 flex flex-col gap-4 min-w-[260px]">
+    <div class="flex-1 flex flex-col gap-4 min-w-[150px]">
 
       <!-- Controls Wrapper -->
       <div class="flex-1 flex flex-col gap-4" :class="{ 'pointer-events-none': isDisabled }">
@@ -352,26 +352,26 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Status Indicators -->
-      <div class="flex justify-between items-center mt-auto pt-3 border-t border-gray-800 text-xs font-mono">
-        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
-          <span class="text-gray-400">Connected:</span>
-          <div
-              class="w-2.5 h-2.5 rounded-full shrink-0"
-              :class="tool.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
-          ></div>
-          <span :class="tool.isConnected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
-              {{ tool.isConnected ? "YES" : "NO" }}
-            </span>
-        </div>
-
-        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
-          <span class="text-gray-400">Errors:</span>
-          <span :class="tool.errorCount > 0 ? 'text-red-400' : 'text-amber-400'" class="font-bold text-sm">
-              {{ tool.errorCount }}
-            </span>
-        </div>
-      </div>
+     <div class="flex justify-between items-center mt-auto pt-3 border-t border-gray-800 text-xs font-mono">
+    <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
+      <span class="text-gray-400">Conn:</span>
+      <div
+          class="w-2.5 h-2.5 rounded-full shrink-0"
+          :class="tool.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
+      ></div>
+      <span :class="tool.isConnected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
+          {{ tool.isConnected ? "YES" : "NO" }}
+        </span>
     </div>
+
+    <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
+      <span class="text-gray-400">Err:</span>
+      <span :class="tool.errorCount > 0 ? 'text-red-400' : 'text-amber-400'" class="font-bold text-sm">
+          {{ tool.errorCount }}
+        </span>
+    </div>
+  </div>
+  </div>
 
     <!-- RIGHT COLUMN: Vertical Speed Bar -->
     <div class="w-20 flex flex-col items-center gap-3 bg-gray-800/40 p-2 rounded-md border border-gray-700/50 flex-shrink-0">
