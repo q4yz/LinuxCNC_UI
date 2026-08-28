@@ -276,8 +276,8 @@ async function stopPrint() {
 
 <template>
   <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl flex flex-col">
-    <!-- Top-bar: Start button. -->
-    <div class="p-4 border-b border-gray-700">
+    <!-- Top-bar: Start button. (Hidden while active) -->
+    <div v-if="!isActive" class="p-4 border-b border-gray-700">
       <button
           type="button"
           :disabled="!isLoaded"
@@ -287,8 +287,8 @@ async function stopPrint() {
       </button>
     </div>
 
-    <!-- File list -->
-    <div class="p-4 border-b border-gray-700">
+    <!-- File list (Hidden while active) -->
+    <div v-if="!isActive" class="p-4 border-b border-gray-700">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center mb-3">
         <span class="mr-2">📂</span> Programs
       </h2>
@@ -389,16 +389,16 @@ async function stopPrint() {
           <span>of {{ progress.totalLines || "?" }}</span>
         </div>
         <div
-          v-if="remainingMs !== null"
-          class="flex items-center justify-between text-[10px] text-gray-400 font-mono"
-          data-testid="active-print-remaining"
+            v-if="remainingMs !== null"
+            class="flex items-center justify-between text-[10px] text-gray-400 font-mono"
+            data-testid="active-print-remaining"
         >
           <span>Est. remaining</span>
           <span>{{ formatRemaining(remainingMs) }}</span>
         </div>
         <div
-          v-else-if="isRunning"
-          class="text-[10px] text-gray-500 font-mono italic"
+            v-else-if="isRunning"
+            class="text-[10px] text-gray-500 font-mono italic"
         >
           Estimating…
         </div>

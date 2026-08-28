@@ -182,14 +182,6 @@ function handleSpindle(action: SpindleRunningState) {
 }
 
 // Debounced slider-drag / checkbox-toggle dispatch.
-//
-// Always sends action="continue" (DirectionStateType.CONTINUE on the
-// wire) — that backend branch only writes the three override HAL
-// pins (absolute-master-override, absolute-master-override-enable,
-// override) and never dispatches an M-code, so it is safe whether
-// the spindle is currently running or stopped. The next button
-// click (Forward / Reverse / Stop) uses the freshly-set HAL pin
-// values when it fires.
 watch([masterOverrideSpeed, speedPercentage, masterOverride], ([newMaster, newPercent, newMasterEnable]) => {
   if (isDisabled.value) return;
 
@@ -200,22 +192,36 @@ watch([masterOverrideSpeed, speedPercentage, masterOverride], ([newMaster, newPe
       newPercent === props.tool.override &&
       newMasterEnable === props.tool.masterOverrideEnable
   ) {
-      return;
+    return;
   }
 
   if (postTimer) clearTimeout(postTimer);
   postTimer = setTimeout(() => {
     postTimer = null;
-    suppressSyncUntil = Date.now() + 300;
+    suppressSyncUntil = Date.now() + 2000; // Ignore stale backend snapshots for 2s after slider release
 
-    toolStore.sendSpindleCommand(
-        props.tool.id,
-        "continue",
-        0,
-         masterOverrideSpeed.value ?? 0,
-        isEffectiveMasterOverride.value,
-        speedPercentage.value ?? 1.0
-    );
+    // Always send the current action so slider updates persist even when stopped
+    const action = runningState.value;
+
+    if (isEffectiveMasterOverride.value) {
+      toolStore.sendSpindleCommand(
+          props.tool.id,
+          action,
+          0,
+          masterOverrideSpeed.value ?? 0,
+          true,
+          1.0,
+      );
+    } else {
+      toolStore.sendSpindleCommand(
+          props.tool.id,
+          action,
+          0,
+          0,
+          false,
+          speedPercentage.value ?? 1.0,
+      );
+    }
   }, 750);
 });
 
@@ -225,20 +231,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full transition-opacity"
+  <!-- Added min-w-[380px] and overflow-x-auto -->
+  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full min-w-[380px] overflow-x-auto transition-opacity"
        :class="{ 'opacity-60': isDisabled }">
 
     <!-- LEFT COLUMN: Controls -->
-    <div class="flex-1 flex flex-col gap-4">
+    <!-- Added min-w-[260px] -->
+    <div class="flex-1 flex flex-col gap-4 min-w-[260px]">
 
-      <!-- Controls Wrapper (Disables pointer events if machine is offline/estopped) -->
+      <!-- Controls Wrapper -->
       <div class="flex-1 flex flex-col gap-4" :class="{ 'pointer-events-none': isDisabled }">
 
-        <!-- Auto Feed/Speed Section (Hidden in Manual Only mode) -->
+        <!-- Auto Feed/Speed Section -->
         <div v-if="!isManualOnly" class="flex flex-col gap-2 bg-gray-800/40 p-4 rounded-md border border-gray-700/50">
           <div class="flex justify-between items-center">
-            <span class="text-sm font-semibold text-gray-300">Auto Feed/Speed</span>
-            <span class="text-xl font-mono text-blue-400 font-bold">
+            <span class="text-sm font-semibold text-gray-300 whitespace-nowrap">Auto Feed/Speed</span>
+            <span class="text-xl font-mono text-blue-400 font-bold shrink-0 ml-2">
               <template v-if="speedPercentage === null">
                 <span class="text-gray-600 italic">{{ PLACEHOLDER }}%</span>
               </template>
@@ -268,7 +276,6 @@ onBeforeUnmount(() => {
              :class="isEffectiveMasterOverride ? 'border-blue-500/50' : 'border-gray-700'">
 
           <div class="flex items-center gap-3">
-            <!-- Normal Mode Checkbox -->
             <template v-if="!isManualOnly">
               <input
                   id="master-override"
@@ -276,16 +283,15 @@ onBeforeUnmount(() => {
                   type="checkbox"
                   :disabled="isMasterCheckboxDisabled"
                   :indeterminate.prop="masterOverride === null"
-                  class="w-5 h-5 accent-blue-500 rounded bg-gray-900 border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  class="w-5 h-5 accent-blue-500 rounded bg-gray-900 border-gray-600 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-              <label for="master-override" class="text-sm font-semibold text-white select-none"
+              <label for="master-override" class="text-sm font-semibold text-white select-none whitespace-nowrap"
                      :class="{ 'cursor-pointer': !isMasterCheckboxDisabled, 'cursor-not-allowed text-gray-500': isMasterCheckboxDisabled }">
                 Master Override Mode
               </label>
             </template>
-            <!-- Manual Mode Label -->
             <template v-else>
-              <span class="text-sm font-semibold text-white select-none">
+              <span class="text-sm font-semibold text-white select-none whitespace-nowrap">
                 Manual Control
               </span>
             </template>
@@ -293,8 +299,8 @@ onBeforeUnmount(() => {
 
           <div class="flex flex-col gap-2" :class="{ 'opacity-40 grayscale': !isEffectiveMasterOverride }">
             <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
-              <span>{{ minRpm === null ? PLACEHOLDER : minRpm }}</span>
-              <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">
+              <span class="shrink-0">{{ minRpm === null ? PLACEHOLDER : minRpm }}</span>
+              <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded shrink-0 mx-2">
                 <template v-if="masterOverrideSpeed === null">
                   <span class="text-gray-600 italic">{{ PLACEHOLDER }} RPM</span>
                 </template>
@@ -302,7 +308,7 @@ onBeforeUnmount(() => {
                   {{ masterOverrideRpmLabel }} RPM
                 </template>
               </span>
-              <span>{{ maxRpm === null ? PLACEHOLDER : maxRpm }}</span>
+              <span class="shrink-0">{{ maxRpm === null ? PLACEHOLDER : maxRpm }}</span>
             </div>
             <input
                 v-model.number="masterOverrideSpeed"
@@ -316,11 +322,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="grid grid-cols-3 gap-3">
+        <!-- Action Buttons (tightened gap and dynamic text) -->
+        <div class="grid grid-cols-3 gap-2">
           <button
               type="button"
-              class="py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               :disabled="isDisabled"
               @click="handleSpindle('backward')"
           >
@@ -328,7 +334,7 @@ onBeforeUnmount(() => {
           </button>
           <button
               type="button"
-              class="py-2.5 bg-red-600 hover:bg-red-500 text-white rounded font-bold shadow-md transition-colors tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+              class="py-2.5 bg-red-600 hover:bg-red-500 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
               :disabled="isDisabled"
               @click="handleSpindle('stop')"
           >
@@ -336,7 +342,7 @@ onBeforeUnmount(() => {
           </button>
           <button
               type="button"
-              class="py-2.5 bg-green-600 hover:bg-green-500 text-white rounded font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="py-2.5 bg-green-600 hover:bg-green-500 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               :disabled="isDisabled"
               @click="handleSpindle('forward')"
           >
@@ -347,10 +353,10 @@ onBeforeUnmount(() => {
 
       <!-- Status Indicators -->
       <div class="flex justify-between items-center mt-auto pt-3 border-t border-gray-800 text-xs font-mono">
-        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800">
+        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
           <span class="text-gray-400">Connected:</span>
           <div
-              class="w-2.5 h-2.5 rounded-full"
+              class="w-2.5 h-2.5 rounded-full shrink-0"
               :class="tool.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
           ></div>
           <span :class="tool.isConnected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
@@ -358,7 +364,7 @@ onBeforeUnmount(() => {
             </span>
         </div>
 
-        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800">
+        <div class="flex items-center gap-2 bg-gray-900 px-3 py-1.5 rounded-full border border-gray-800 shrink-0">
           <span class="text-gray-400">Errors:</span>
           <span :class="tool.errorCount > 0 ? 'text-red-400' : 'text-amber-400'" class="font-bold text-sm">
               {{ tool.errorCount }}

@@ -16,6 +16,7 @@ import JogControls from '../components/machine/JogControls.vue'
 import ToolPanel from '../components/tools/ToolPanel.vue'
 import MacroPanel from '../components/macros/MacroPanel.vue'
 import McodePanel from '../components/macros/McodePanel.vue'
+import PowerOn from "../components/machine/PowerOn.vue";
 </script>
 
 <template>
@@ -26,6 +27,8 @@ import McodePanel from '../components/macros/McodePanel.vue'
       <!-- Left Column: flex-1 tells it to take 1 part space, but NEVER go below 570px -->
       <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
 
+        <PowerOn/>
+
         <DroPanel/>
 
         <JogControls/>
@@ -34,9 +37,9 @@ import McodePanel from '../components/macros/McodePanel.vue'
 
         <TemperaturePanel/>
 
-        <MacroPanel/>
+<!--        <MacroPanel/>-->
 
-        <McodePanel/>
+<!--        <McodePanel/>-->
 
       </div>
 

@@ -417,7 +417,17 @@ export const parseGcodeToolpath = (
       effectiveMotion = motion ?? 1
     }
 
-    if (newX === null && newY === null && newZ === null) continue
+    if (newX === null && newY === null && newZ === null) {
+      // No axis words: G2/G3 with I/J/K (or R) but no X/Y/Z draws
+      // a full circle back to the current position. Anything else
+      // (a pure modal-state line) emits no segment.
+      const hasArcCentre =
+        iVal !== null || jVal !== null || kVal !== null || hasR
+      const isArc = effectiveMotion === 2 || effectiveMotion === 3
+      if (!isArc || !hasArcCentre) continue
+      // prev = cur; fall through with newX/Y/Z all null so cur is
+      // not updated.
+    }
 
     const prevX = curX
     const prevY = curY

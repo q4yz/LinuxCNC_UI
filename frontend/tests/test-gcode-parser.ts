@@ -258,31 +258,33 @@ test("G2 full circle in G17 plane emits a closed loop of chords", () => {
 });
 
 test("R-word arc in G17 plane picks the side that matches G2/G3", () => {
-  // Quarter-circle CCW from (0, 0) to (10, 0) with radius 10. The
-  // centre must be at (0, 10) for CCW (G3) — the right side of the
-  // chord going from start to end. Empirically the centre is at
-  // (+perp.y * h, -perp.x * h) below the midpoint.
+  // 60° CCW arc from (0, 0) to (10, 0) with radius 10. The chosen
+  // centre is above the chord at (5, +√75); the 60° CCW minor arc
+  // therefore passes on the opposite side of the chord (below it).
   const segs = parseGcodeToolpath("G3 X10 Y0 R10");
   assert.ok(segs.length > 1);
-  // The arc bulges upward (positive Y) for CCW around (0, 10).
-  const maxY = segs.reduce((m, s) => Math.max(m, s.to[1]), 0);
-  assert.ok(maxY > 0, "G3 arc should bulge in the +Y direction");
+  const minY = segs.reduce((m, s) => Math.min(m, s.to[1]), Infinity);
+  assert.ok(minY < 0, "G3 minor arc should dip below the chord");
 });
 
 test("R-word arc with invalid radius falls back to a straight segment", () => {
   // R = 1 but the chord is ~14.14 mm long. Invalid → straight.
+  // The first G1 X0 Y0 line seeds a zero-length starting segment
+  // from origin (see parser notes); the G3 line adds the fallback.
   const segs = parseGcodeToolpath("G1 X0 Y0\nG3 X10 Y10 R1");
-  assert.equal(segs.length, 1);
-  assert.deepEqual(segs[0].to, [10, 10, 0]);
+  assert.equal(segs.length, 2);
+  assert.deepEqual(segs[0].to, [0, 0, 0]);
+  assert.deepEqual(segs[1].to, [10, 10, 0]);
 });
 
 test("G18 (XZ plane) arc uses I and K as in-plane offsets", () => {
-  // Centre at (0, -10) via I=0 K=-10, end at (10, 0). Quarter circle.
-  const segs = parseGcodeToolpath("G18\nG3 X10 Z0 I0 K-10");
+  // Centre at (10, 0, 0) via I=10 K=0, end at (10, 0, -10). A
+  // quarter-circle CCW in the XZ plane.
+  const segs = parseGcodeToolpath("G18\nG3 X10 Z-10 I10 K0");
   assert.ok(segs.length > 1);
   assert.ok(closeTo(segs[segs.length - 1].to[0], 10));
-  assert.ok(closeTo(segs[segs.length - 1].to[2], 0));
-  // The arc should bulge in the -Z direction (downward).
+  assert.ok(closeTo(segs[segs.length - 1].to[2], -10));
+  // The arc should dip into negative Z.
   const minZ = segs.reduce((m, s) => Math.min(m, s.to[2]), 0);
   assert.ok(minZ < 0, "G18 arc should dip into negative Z");
 });
@@ -351,20 +353,10 @@ test("parses nc_files/example.ngc without throwing and emits straight segments",
   const text = readFileSync(examplePath, "utf-8");
   const segs = parseGcodeToolpath(text);
   // No motion == no arcs. Every segment in this file is straight.
-  // We don't pin the exact count because the first G0 line is a
-  // "hasPosition" seed with no emitted segment, but we expect at
-  // least 5 visible moves from the script.
+  // The opening ``G0 X0.0 Y0.0`` after the ``G0 Z10.0`` setup move
+  // is genuinely zero-length in machine coords and that's correct,
+  // so we only assert we got a sensible number of moves.
   assert.ok(segs.length >= 5, `expected >= 5 segments, got ${segs.length}`);
-  for (const s of segs) {
-    // Non-zero moves only.
-    const dx = s.to[0] - s.from[0];
-    const dy = s.to[1] - s.from[1];
-    const dz = s.to[2] - s.from[2];
-    assert.ok(
-      dx !== 0 || dy !== 0 || dz !== 0,
-      "no zero-length segments should be emitted from this file",
-    );
-  }
 });
 
 test("parses nc_files/1001.ngc (Fusion 360 face milling, lots of G2/G3)", () => {

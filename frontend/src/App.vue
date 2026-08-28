@@ -42,7 +42,9 @@ servoThreadService.connect()
     <div class="flex flex-1 overflow-hidden">
 
       <!-- Sidebar Navigation -->
-      <AppSidebar />
+
+      <div class="w-16 shrink-0"></div>
+      <AppSidebar class="absolute top-0 left-0 h-full z-40  transition-all" />
 
       <!-- Main Content Area -->
       <main class="flex-1 overflow-y-auto p-4 lg:p-8">
