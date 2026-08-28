@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
+
 from dtos.HalPin import HalPin
 from dtos.UnconnectedHalPin import UnconnectedHalPin
 
@@ -42,8 +44,8 @@ class SpindleDigitalStateDTO:
     spindle_forward: bool = False
     spindle_reverse: bool = False
     absolute_master_override_enable: bool = False
-    absolute_master_override: float =  0.0
-    override: float = 0.0
+    absolute_master_override: Optional[float] = None
+    override: Optional[float] = None
 
 
 @dataclass(slots=True)

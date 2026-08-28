@@ -71,6 +71,11 @@ _SPINDLE_ACTIONS = {
     "forward": DirectionStateType.FORWARD,
     "backward": DirectionStateType.BACKWARD,
     "stop": DirectionStateType.STOP,
+    # ``continue`` is the slider-drag / override re-tune command —
+    # it adjusts the override HAL pins (master-override-enable,
+    # master-override, override) without dispatching any M-code, so
+    # it is safe whether the spindle is currently running or stopped.
+    "continue": DirectionStateType.CONTINUE,
 }
 _EXTRUDER_ACTIONS = {"extrude", "retract"}
 
@@ -152,7 +157,7 @@ def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateRespo
 def get_spindle_state(tool_id: str) -> SpindleDigitalStateResponse:
     """Return the live spindle state for ``tool_id``."""
     state_dto = spindle_digital_service.get_spindle(tool_id)
-    return SpindleDigitalMapper.to_state_response(state_dto)
+    return SpindleDigitalMapper.to_response(state_dto)
 
 
 __all__ = [

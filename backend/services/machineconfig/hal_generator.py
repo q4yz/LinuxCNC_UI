@@ -277,6 +277,7 @@ class HalGenerator:
         pv_block = self._build_pv_block()
         pid_config_block = self._build_pid_config_block()
         spindle_block = self._build_spindle_digital_block()
+        spindle_control_block = self._build_spindle_control_block()
 
         return (
             self._multi_mcu_comment
@@ -291,6 +292,7 @@ class HalGenerator:
                 spindle_block="",
             )
             + spindle_block
+            + spindle_control_block
         )
 
     # ----- Static block builders ----------------------------------- #
@@ -582,6 +584,72 @@ class HalGenerator:
 
         lines.append("loadusr -W vfdmod vfd.ini")
         return "\n".join(lines) + "\n"
+
+    def _build_spindle_control_block(self) -> str:
+        """Wire the webgui spindle-control pins to ``halui``.
+
+        The FastAPI app publishes three ``webgui`` HAL pins per digital
+        spindle that the UI uses for live override control:
+
+        * ``webgui.override{suffix}`` — relative override scale (0.0–4.0)
+        * ``webgui.absolute-master-override{suffix}`` — absolute RPM target
+        * ``webgui.absolute-master-override-enable{suffix}`` — bit that
+          switches between relative-override and absolute-override mode
+
+        Without these ``net`` / ``setp`` lines the UI's writes would
+        land on ``webgui.*`` but never reach ``halui.spindle.0.*``, so
+        the override would never affect the live spindle. We emit one
+        block per spindle in the graph, mirroring the pyvcp-side
+        suffix logic in :meth:`_build_single_spindle_block`. Only the
+        first block is wired to ``halui.spindle.0`` because LinuxCNC
+        only exposes a single ``spindle.0`` instance; subsequent blocks
+        are emitted as commented placeholders so the operator can hand-
+        wire them later if they ever add more spindles.
+        """
+        if self._graph is None or not self._graph.spindle_digitals:
+            return ""
+
+        blocks: list[str] = []
+        for index, spindle_id in enumerate(self._graph.spindle_digitals.keys()):
+            suffix = self._spindle_pyvcp_suffix(spindle_id)
+            block = self._build_single_spindle_control_block(suffix, index == 0)
+            blocks.append(block)
+        return "\n".join(blocks)
+
+    def _build_single_spindle_control_block(self, suffix: str, is_primary: bool) -> str:
+        """Emit the webgui -> halui wiring for one spindle.
+
+        ``suffix`` follows the same convention as
+        :meth:`_spindle_pyvcp_suffix`. ``is_primary`` controls whether
+        the lines are live (``True``) or commented placeholders
+        (``False``). The primary spindle is always the first one in the
+        graph because LinuxCNC only owns ``halui.spindle.0``.
+        """
+        prefix = "    " if is_primary else "#   "
+        joiner = " " if is_primary else " # "
+
+        lines: list[str] = []
+        lines.append(f"{prefix}# Spindle control — webgui override pins -> halui.spindle.0 (suffix {suffix!r})")
+        lines.append(
+            f"{prefix}net spindle-relative-override{suffix}{joiner}"
+            f"webgui.override{suffix} halui.spindle.0.override"
+        )
+        lines.append(
+            f"{prefix}net spindle-absolute-override-enable{suffix}{joiner}"
+            f"webgui.absolute-master-override-enable{suffix} halui.spindle.0.override-enable"
+        )
+        lines.append(
+            f"{prefix}net spindle-absolute-override{suffix}{joiner}"
+            f"webgui.absolute-master-override{suffix} halui.spindle.0.override-direct-value"
+        )
+        # Default halui override-enable low so the spindle honours the
+        # programmed S-word unless the UI explicitly enables the
+        # master-override.
+        lines.append(
+            f"{prefix}setp halui.spindle.0.override-enable{joiner}0"
+        )
+        lines.append("")
+        return "\n".join(lines)
 
     # ----- Joint block builders (shared between hal types) ---------- #
 

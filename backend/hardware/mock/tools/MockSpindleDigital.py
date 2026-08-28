@@ -15,6 +15,13 @@ class MockSpindleDigital(MockComponent):
         self.spindle_reverse = False
         self.spindle_at_speed = False
         self.override = 1.0
+        # Master-override state — the absolute RPM target the UI pushes
+        # via ``webgui.absolute-master-override{suffix}`` and the bit
+        # that selects between relative-override and absolute-override
+        # modes. ``None`` until the UI has streamed a value (matches
+        # the ``Optional`` typing in ``SpindleDigitalStateDTO``).
+        self.absolute_master_override = None
+        self.absolute_master_override_enable = False
 
         # Calculate the suffix exactly as the ConfigMapper does
         suffix = self.id.replace("spindle_digital", "")
@@ -30,6 +37,8 @@ class MockSpindleDigital(MockComponent):
             f"webgui.error-count{suffix}": "error_count",
             f"webgui.last-error{suffix}": "last_error",
             f"webgui.override{suffix}": "override",
+            f"webgui.absolute-master-override{suffix}": "absolute_master_override",
+            f"webgui.absolute-master-override-enable{suffix}": "absolute_master_override_enable",
         }
 
     def read_pin(self, pin_name: str) -> Optional[Any]:
@@ -76,17 +85,30 @@ class MockSpindleDigital(MockComponent):
         return False
 
     def update(self, hal, nml, delta_time: float) -> None:
-        """Simulate VFD physics: Spooling up and down."""
+        """Simulate VFD physics: Spooling up and down.
+
+        When ``absolute_master_override_enable`` is true the spindle
+        runs at exactly ``absolute_master_override`` RPM regardless of
+        the programmed target — same semantics as the real ``halui``
+        ``override-enable`` / ``override-direct-value`` pair.
+        """
         # Ramp RPM up or down by 5000 RPM per second
         ramp_rate = 5000.0 * delta_time
 
-        if self.actual_rpm < self.target_rpm:
-            self.actual_rpm = min(self.target_rpm, self.actual_rpm + ramp_rate)
-        elif self.actual_rpm > self.target_rpm:
-            self.actual_rpm = max(self.target_rpm, self.actual_rpm - ramp_rate)
+        effective_target = self.target_rpm
+        if (
+            self.absolute_master_override_enable
+            and self.absolute_master_override is not None
+        ):
+            effective_target = self.absolute_master_override
+
+        if self.actual_rpm < effective_target:
+            self.actual_rpm = min(effective_target, self.actual_rpm + ramp_rate)
+        elif self.actual_rpm > effective_target:
+            self.actual_rpm = max(effective_target, self.actual_rpm - ramp_rate)
 
         # SpindleDigital-at-speed is True when running and within 5% of target RPM
-        if self.target_rpm > 0 and abs(self.actual_rpm - self.target_rpm) <= (self.target_rpm * 0.05):
+        if effective_target > 0 and abs(self.actual_rpm - effective_target) <= (effective_target * 0.05):
             self.spindle_at_speed = True
         else:
             self.spindle_at_speed = False
@@ -103,5 +125,7 @@ class MockSpindleDigital(MockComponent):
             "spindle_forward": self.spindle_forward,
             "spindle_reverse": self.spindle_reverse,
             "spindle_at_speed": self.spindle_at_speed,
-            "override": self.override
+            "override": self.override,
+            "absolute_master_override": self.absolute_master_override,
+            "absolute_master_override_enable": self.absolute_master_override_enable,
         }

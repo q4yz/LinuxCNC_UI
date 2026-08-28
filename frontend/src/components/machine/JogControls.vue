@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../../stores/machine'
@@ -9,19 +9,9 @@ const machineStore = useMachineStore()
 const { defaultJogVelocity } = storeToRefs(machineStore)
 
 // Locally tracked axes that currently have an active continuous jog.
-// The keep-alive timers themselves live inside ``servoThreadService``;
-// we only need to know *which* axes are moving so we can stop them
-// when the panel loses focus / unmounts.
 const activeJogAxes = ref(new Set())
 
-// Key codes whose keydown already started a jog and whose keyup
-// therefore MUST call ``stopJog``, regardless of the current
-// ``isActive`` state. Without this ledger the keyup handler used
-// to early-return on ``!isActive.value`` — if the panel lost focus
-// mid-hold (window blur, focusout to a sibling element) the jog
-// would keep running because the matching keyup never dispatched
-// the stop. ``Set<KeyboardEvent.code>`` keys on the canonical
-// event.code string so it survives keyboard layout quirks.
+// Key ledger to ensure a window blur doesn't orphan a keyup event.
 const keysHeldForJog = ref(new Set())
 
 const sliderPos = ref(2)
@@ -36,19 +26,29 @@ const containerRef = ref(null)
 const isActive = ref(false)
 
 const KEY_BINDINGS = {
+  // Standard Arrow Keys
   ArrowRight: { axis: 0, direction: 1 },
   ArrowLeft: { axis: 0, direction: -1 },
   ArrowUp: { axis: 1, direction: 1 },
   ArrowDown: { axis: 1, direction: -1 },
   PageUp: { axis: 2, direction: 1 },
-  PageDown: { axis: 2, direction: -1 }
+  PageDown: { axis: 2, direction: -1 },
+
+  // Numpad Keys (NumLock ON)
+  Numpad6: { axis: 0, direction: 1 },   // Right
+  Numpad4: { axis: 0, direction: -1 },  // Left
+  Numpad8: { axis: 1, direction: 1 },   // Back (Up)
+  Numpad2: { axis: 1, direction: -1 },  // Forward (Down)
+  Numpad9: { axis: 2, direction: 1 },   // Z-Up
+  Numpad3: { axis: 2, direction: -1 }   // Z-Down
 }
 
-// All keys that can cause a browser scroll (used to keep the page
-// from scrolling while jogging).
+// All keys that can cause a browser scroll. We aggressively preventDefault
+// on these so the page doesn't jump around while jogging.
 const SCROLL_KEYS = [
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'PageUp', 'PageDown', 'Space', 'Home', 'End'
+  'PageUp', 'PageDown', 'Space', 'Home', 'End',
+  'Numpad8', 'Numpad2', 'Numpad4', 'Numpad6', 'Numpad9', 'Numpad3'
 ]
 
 const isTypingInField = () => {
@@ -98,14 +98,8 @@ const stopJog = async (axis) => {
 }
 
 const stopAllJogging = async () => {
-  // Snapshot the keys first — ``jogStop`` mutates the set.
   const axes = Array.from(activeJogAxes.value)
   activeJogAxes.value.clear()
-  // Any keyboard keys we were holding are now orphaned — the jog
-  // they started is being force-stopped by ``stopJog`` below, so
-  // the matching ``keyup`` would be a no-op. Drop them from the
-  // ledger proactively so the next focus / release cycle starts
-  // from a clean slate.
   keysHeldForJog.value.clear()
   for (const axis of axes) {
     await machineStore.jogStop(axis)
@@ -113,32 +107,51 @@ const stopAllJogging = async () => {
 }
 
 const handleKeyDown = (event) => {
-  if (!isActive.value || isTypingInField()) return
+  if (isTypingInField()) return
 
-  // Aggressively prevent default for ANY key that might scroll the page
+  // 1. Activate Panel via Numpad 5
+  if (event.code === 'Numpad5') {
+    event.preventDefault()
+    containerRef.value?.focus()
+    activate()
+    return
+  }
+
+  // If the panel isn't focused/active, ignore all other inputs
+  if (!isActive.value) return
+
+  // 2. Adjust Speed via +/- (Numpad or standard keys)
+  if (event.code === 'NumpadAdd' || event.key === '+') {
+    event.preventDefault()
+    sliderTouched.value = true
+    // Log10 scale: +0.1 is roughly a 25% speed increase per click
+    sliderPos.value = Math.min(MAX_JOG_SPEED, sliderPos.value + 0.1)
+    return
+  }
+  if (event.code === 'NumpadSubtract' || event.key === '-') {
+    event.preventDefault()
+    sliderTouched.value = true
+    sliderPos.value = Math.max(-1, sliderPos.value - 0.1)
+    return
+  }
+
+  // 3. Prevent page scrolling for navigation keys
   if (SCROLL_KEYS.includes(event.code)) {
     event.preventDefault()
   }
 
   if (event.repeat) return
 
+  // 4. Dispatch the Jog Command
   const binding = KEY_BINDINGS[event.code]
   if (!binding) return
 
-  // Record the key BEFORE dispatching the jog so a synchronous
-  // focusout / window-blur between this line and the matching
-  // ``keyup`` cannot strand the keyup handler.
+  event.preventDefault()
   keysHeldForJog.value.add(event.code)
   void startJog(binding.axis, binding.direction)
 }
 
 const handleKeyUp = (event) => {
-  // If this key never started a jog (e.g. it was pressed before
-  // the panel gained focus, or it isn't in ``KEY_BINDINGS``) there
-  // is nothing to stop. This is the only early-return now: the
-  // previous ``focus-gated`` early-return silently dropped the
-  // stop dispatch and left a jog running with no way to terminate
-  // it short of issuing another jog command.
   if (!keysHeldForJog.value.has(event.code)) return
   keysHeldForJog.value.delete(event.code)
 
@@ -163,14 +176,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('keyup', handleKeyUp)
   window.removeEventListener('blur', handleWindowBlur)
-  // Do not rely on focus state here: a component can be destroyed
-  // while a jog request is still in flight or after focus moved away.
   isActive.value = false
   void stopAllJogging()
-  // ``stopAllJogging`` already cleared the key ledger; the extra
-  // ``clear()`` is defence-in-depth for the unmount-during-tear-down
-  // race where the component is unmounted with the panel still
-  // logically focused.
   keysHeldForJog.value.clear()
 })
 </script>
@@ -181,7 +188,7 @@ onBeforeUnmount(() => {
     tabindex="0"
     @focusin="activate"
     @focusout="handleFocusOut"
-    class="bg-gray-800 rounded-lg shadow-xl overflow-hidden mt-6 outline-none transition-all duration-200 border"
+    class="bg-gray-800 rounded-lg shadow-xl overflow-hidden outline-none transition-all duration-200 border"
     :class="isActive ? 'border-blue-400 ring-2 ring-blue-400/30' : 'border-gray-700'"
   >
     <div
@@ -192,13 +199,17 @@ onBeforeUnmount(() => {
         Jog Controls
         <span v-if="isActive" class="ml-3 px-2 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30">Active</span>
       </h2>
-      <span class="text-xs text-gray-400">Hold buttons or arrow keys for continuous motion</span>
+      <span class="text-xs text-gray-400">Hold Numpad (8/2/4/6/9/3) or Arrows</span>
     </div>
 
     <div class="px-4 pt-4">
-      <label class="block text-sm font-medium text-gray-300 mb-2">
-        Jog Speed: {{ jogSpeed < 10 ? jogSpeed.toFixed(2) : jogSpeed.toFixed(1) }} mm/s
-      </label>
+      <div class="flex justify-between items-end mb-2">
+        <label class="block text-sm font-medium text-gray-300">
+          Jog Speed: <span class="font-mono text-blue-300">{{ jogSpeed < 10 ? jogSpeed.toFixed(2) : jogSpeed.toFixed(1) }} mm/s</span>
+        </label>
+        <span class="text-[10px] text-gray-500">Use +/- to scale</span>
+      </div>
+      <!-- tabindex="-1" prevents the slider from stealing focus / showing an outline ring -->
       <input
         v-model.number="sliderPos"
         @input="sliderTouched = true"
@@ -206,6 +217,7 @@ onBeforeUnmount(() => {
         min="-1"
         :max="MAX_JOG_SPEED"
         step="0.001"
+        tabindex="-1"
         class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
       />
     </div>
@@ -247,8 +259,9 @@ onBeforeUnmount(() => {
         >X-</button>
       </div>
 
-      <div class="col-start-2 flex items-center justify-center">
-        <div class="h-4 w-4 rounded-full shadow-inner transition-colors duration-200" :class="isActive ? 'bg-blue-500' : 'bg-gray-600'"></div>
+      <div class="col-start-2 flex flex-col items-center justify-center text-[10px] text-gray-500 font-bold uppercase tracking-widest cursor-pointer" @click="() => { containerRef?.focus(); activate(); }">
+        <div class="h-4 w-4 rounded-full shadow-inner transition-colors duration-200 mb-1" :class="isActive ? 'bg-blue-500' : 'bg-gray-600'"></div>
+        Numpad 5
       </div>
 
       <div class="col-start-3">

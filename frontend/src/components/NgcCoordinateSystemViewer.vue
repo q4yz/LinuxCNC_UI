@@ -9,7 +9,14 @@
 //      (``axes[].min_limit`` / ``axes[].max_limit``).
 //
 //   2. The currently loaded G-code / NGC program's toolpath, fetched
-//      from `/api/v1/programs/content/{filename}`.
+//      from `/api/v1/programs/content/{filename}` and parsed by
+//      ``frontend/src/parsers/gcodeParser.ts``. The parser is
+//      LinuxCNC-aware: G2 / G3 are interpolated as actual arcs in the
+//      active plane (G17 / G18 / G19) with I / J / K offsets (or
+//      R-word), helical arcs are supported by linear interpolation
+//      of the out-of-plane axis, G1 / G2 / G3 stick as modal motion
+//      across lines while G0 stays non-modal, and G90.1 / G91.1
+//      switch the arc-centre mode.
 //
 //   3. A small overlay showing the active limits and the move count.
 //
@@ -40,6 +47,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
 import { useBaseThreadStore } from '../stores/baseThread'
 import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
+import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
+import { parseGcodeToolpath } from '../parsers/gcodeParser'
+import type { ParsedSegment } from '../parsers/gcodeParser'
 
 // --- Interfaces & Types ---
 interface MachineLimits {
@@ -52,23 +62,6 @@ interface MachineLimits {
 interface ToolpathMeta {
   filename: string
   moves: number
-}
-
-/**
- * One motion segment with the per-segment parser state captured at
- * the moment it was emitted. ``wcsIndex`` is 1..9 (G54..G59.3);
- * ``g92`` is the additive origin that was active when the line was
- * parsed (and zeroed if a G92.2 suspension was in effect).
- * ``sourceLine`` is the 1-based index of the file line that
- * produced this segment — used by the renderer to colour already-cut
- * segments pink via the live ``motionLine`` from telemetry.
- */
-interface ParsedSegment {
-  from: [number, number, number]
-  to:   [number, number, number]
-  wcsIndex: number
-  g92:    [number, number, number]
-  sourceLine: number
 }
 
 // --- Props ---
@@ -140,17 +133,6 @@ const parsedCache = new Map<string, ParsedSegment[]>()
 
 // --- Coordinate-system helpers ---
 
-// Mirror of ``WORK_COORDINATE_SYSTEMS`` from ``config/gcodes.ts`` so
-// the viewer can name the active WCS without pulling in a module
-// config surface. Index 1..9 → G54..G59.3.
-const wcsNameForIndex = (idx: number): string => {
-  if (idx === 7) return 'G59.1'
-  if (idx === 8) return 'G59.2'
-  if (idx === 9) return 'G59.3'
-  if (idx >= 1 && idx <= 6) return `G${53 + idx}`
-  return 'G54'
-}
-
 // Formatting helper for the overlay
 const formatOffset = (axis: number[] | null | undefined): string => {
   if (!Array.isArray(axis) || axis.length < 3) return '0,0,0'
@@ -167,7 +149,10 @@ const activeWcsIdx = computed<number>(() => {
   return Math.floor(n)
 })
 
-const activeWcsName = computed(() => wcsNameForIndex(activeWcsIdx.value))
+const activeWcsName = computed(() => {
+  const sys = WORK_COORDINATE_SYSTEMS.find((s) => s.index === activeWcsIdx.value)
+  return sys ? sys.name : 'G54'
+})
 
 const activeWcsOffset = computed<[number, number, number]>(() => {
   const t = store.status.g5xOffset
@@ -504,167 +489,6 @@ const redrawToolpath = () => {
   if (!segments) return
   replaceToolpathMesh(segments)
   updateWcsMarker()
-}
-
-const parseGcodeToolpath = (text: string): ParsedSegment[] => {
-  const segments: ParsedSegment[] = []
-  let motion = 0
-  let absolute = true
-  let curX = 0
-  let curY = 0
-  let curZ = 0
-  let hasPosition = false
-
-  // Per-file parser state. ``activeWcs`` is the 1-based index into
-  // the G5x table (1..9 → G54..G59.3). ``g92`` is the additive
-  // ``G92`` origin that is currently applied; ``g92Snapshot``
-  // remembers the value just before ``G92.2`` so ``G92.3`` can
-  // restore it. ``pendingG92`` is set by the G-word loop and
-  // resolved after the axis tokens on the same line — ``G92``
-  // takes its axis values from the same line they appear on, so a
-  // single pass through the tokens would otherwise lose them.
-  let activeWcs: number = 1
-  let g92: [number, number, number] = [0, 0, 0]
-  const g92Snapshot: [number, number, number] = [0, 0, 0]
-  let g92Suspended = false
-  let pendingG92: 'set' | 'clear' | 'suspend' | 'resume' | null = null
-
-  const lines = text.split(/\r?\n/)
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]
-    if (!raw) continue
-
-    let cleaned = raw
-    const semi = cleaned.indexOf(';')
-    if (semi >= 0) cleaned = cleaned.slice(0, semi)
-    cleaned = cleaned.replace(/\(.*?\)/g, '').trim()
-    if (!cleaned) continue
-
-    const tokens = cleaned.split(/\s+/)
-    let newX: number | null = null
-    let newY: number | null = null
-    let newZ: number | null = null
-    pendingG92 = null
-
-    for (const token of tokens) {
-      if (!token) continue
-      const letter = token[0].toUpperCase()
-      const rest = token.slice(1)
-      const value = Number(rest)
-      const numeric = Number.isFinite(value)
-
-      switch (letter) {
-        case 'G': {
-          if (!numeric) break
-
-          // Modal work-coordinate-system selectors.
-          const wcs = gwordToWcsIndex(value)
-          if (wcs !== null) {
-            activeWcs = wcs
-            break
-          }
-
-          if (value === 0) motion = 0
-          else if (value === 1) motion = 1
-          else if (value === 2) motion = 2
-          else if (value === 3) motion = 3
-          else if (value === 90) absolute = true
-          else if (value === 91) absolute = false
-          else if (value === 92) {
-            pendingG92 = 'set'
-            g92Suspended = false
-          }
-          else if (Math.abs(value - 92.1) < 1e-9) pendingG92 = 'clear'
-          else if (Math.abs(value - 92.2) < 1e-9) pendingG92 = 'suspend'
-          else if (Math.abs(value - 92.3) < 1e-9) pendingG92 = 'resume'
-          break
-        }
-        case 'X':
-          if (numeric) newX = absolute ? value : curX + value
-          break
-        case 'Y':
-          if (numeric) newY = absolute ? value : curY + value
-          break
-        case 'Z':
-          if (numeric) newZ = absolute ? value : curZ + value
-          break
-      }
-    }
-
-    // Resolve the G92 family. ``G92 X.. Y.. Z..`` only touches the
-    // axes it explicitly mentions — omitted axes keep their current
-    // value. ``G92.1`` zeros everything, ``G92.2`` suspends (G92
-    // contribution becomes 0 until G92.3 resumes it), ``G92.3``
-    // restores the snapshot taken at suspend time.
-    if (pendingG92) {
-      if (pendingG92 === 'set') {
-        for (const token of tokens) {
-          if (!token) continue
-          const letter = token[0].toUpperCase()
-          if (letter !== 'X' && letter !== 'Y' && letter !== 'Z') continue
-          const v = Number(token.slice(1))
-          if (!Number.isFinite(v)) continue
-          if (letter === 'X') g92[0] = v
-          else if (letter === 'Y') g92[1] = v
-          else g92[2] = v
-        }
-      } else if (pendingG92 === 'clear') {
-        g92[0] = 0; g92[1] = 0; g92[2] = 0
-        g92Snapshot[0] = 0; g92Snapshot[1] = 0; g92Snapshot[2] = 0
-        g92Suspended = false
-      } else if (pendingG92 === 'suspend') {
-        g92Snapshot[0] = g92[0]; g92Snapshot[1] = g92[1]; g92Snapshot[2] = g92[2]
-        g92Suspended = true
-      } else if (pendingG92 === 'resume') {
-        g92[0] = g92Snapshot[0]; g92[1] = g92Snapshot[1]; g92[2] = g92Snapshot[2]
-        g92Suspended = false
-      }
-      pendingG92 = null
-      // G92 lines never produce a motion segment.
-      continue
-    }
-
-    if (newX === null && newY === null && newZ === null) continue
-
-    const prevX = curX
-    const prevY = curY
-    const prevZ = curZ
-    if (newX !== null) curX = newX
-    if (newY !== null) curY = newY
-    if (newZ !== null) curZ = newZ
-
-    if (!hasPosition) {
-      hasPosition = true
-      continue
-    }
-
-    // While G92.2 is in effect, the G92 contribution is zero.
-    const effectiveG92: [number, number, number] = g92Suspended
-      ? [0, 0, 0]
-      : [g92[0], g92[1], g92[2]]
-
-    segments.push({
-      from: [prevX, prevY, prevZ],
-      to:   [curX,  curY,  curZ],
-      wcsIndex: activeWcs,
-      g92: effectiveG92,
-      sourceLine: i + 1,
-    })
-    void motion
-  }
-
-  return segments
-}
-
-// Map a G-word numeric value to a work-coordinate-system index
-// (1..9) when it is a system-select, or null otherwise.
-const gwordToWcsIndex = (value: number): number | null => {
-  if (!Number.isFinite(value)) return null
-  if (value >= 54 && value <= 59) return Math.floor(value) - 53
-  if (Math.abs(value - 59.1) < 1e-9) return 7
-  if (Math.abs(value - 59.2) < 1e-9) return 8
-  if (Math.abs(value - 59.3) < 1e-9) return 9
-  return null
 }
 
 const replaceToolpathMesh = (segments: ParsedSegment[], motion: number = motionLine.value) => {

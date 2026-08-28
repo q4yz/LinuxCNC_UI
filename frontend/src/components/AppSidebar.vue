@@ -18,6 +18,8 @@ function navigate(view) {
 
 const builtinItems = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', order: 1 },
+  { id: 'jogging', label: 'Jogging', icon: 'jogging', order: 1 },
+  { id: 'running', label: 'Running', icon: 'running', order: 1 },
   { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2 },
   { id: 'camera', label: 'Camera', icon: 'camera', order: 3 },
   { id: 'machineconfig', label: 'Machine Config', icon: 'machineconfig', order: 4 },

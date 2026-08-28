@@ -26,17 +26,17 @@ import McodePanel from '../components/macros/McodePanel.vue'
       <!-- Left Column: flex-1 tells it to take 1 part space, but NEVER go below 570px -->
       <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
 
-        <DroPanel />
+        <DroPanel/>
 
-        <JogControls />
+        <JogControls/>
 
-        <ToolPanel />
+        <ToolPanel/>
 
-        <TemperaturePanel />
+        <TemperaturePanel/>
 
-        <MacroPanel />
+        <MacroPanel/>
 
-        <McodePanel />
+        <McodePanel/>
 
       </div>
 
@@ -50,22 +50,23 @@ import McodePanel from '../components/macros/McodePanel.vue'
              a print is running. -->
 
 
-        <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[600px] shrink-0">
+        <div
+            class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[600px] shrink-0">
           <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
             <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
           </div>
           <div class="flex-1 relative">
-            <NgcCoordinateSystemViewer />
+            <NgcCoordinateSystemViewer/>
           </div>
         </div>
 
-        <ActivePrintWidget />
+        <ActivePrintWidget/>
 
         <div class="h-[300px]">
-          <ConsolePanel />
+          <ConsolePanel/>
         </div>
 
-        <CameraViewer />
+        <CameraViewer/>
 
       </div>
 

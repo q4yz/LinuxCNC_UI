@@ -37,6 +37,7 @@ class SpindleDigitalMapper:
 
     @classmethod
     def to_state_dto(cls, halpin: SpindleDigitalPins) -> SpindleDigitalStateDTO:
+        override_raw = OptionalMappers.as_optional_int(halpin.override.get_value())
         return SpindleDigitalStateDTO(
             id=halpin.id,
             target_rpm=OptionalMappers.as_float(halpin.target_rpm.get_value()),
@@ -50,8 +51,8 @@ class SpindleDigitalMapper:
             spindle_forward=OptionalMappers.as_bool(halpin.spindle_forward.get_value()),
             spindle_reverse=OptionalMappers.as_bool(halpin.spindle_reverse.get_value()),
             absolute_master_override_enable = OptionalMappers.as_bool(halpin.absolute_master_override_enable.get_value()),
-            absolute_master_override = OptionalMappers.as_float(halpin.absolute_master_override.get_value()),
-            override=OptionalMappers.as_int(halpin.override.get_value()) / 100.0,
+            absolute_master_override = OptionalMappers.as_optional_float(halpin.absolute_master_override.get_value()),
+            override=(override_raw / 100.0) if override_raw is not None else None,
         )
 
     @classmethod
@@ -61,7 +62,10 @@ class SpindleDigitalMapper:
         action_map = {
             "forward": DirectionStateType.FORWARD,
             "backward": DirectionStateType.BACKWARD,
-            "idle": DirectionStateType.CONTINUE,
+            # ``continue`` adjusts the override HAL pins without
+            # dispatching any M-code — used by the slider-drag /
+            # checkbox-toggle debounce in the UI.
+            "continue": DirectionStateType.CONTINUE,
             "stop": DirectionStateType.STOP,
         }
 
@@ -90,13 +94,15 @@ class SpindleDigitalMapper:
     def to_response(cls, dto: SpindleDigitalStateDTO, r : ResponseTier = ResponseTier.ALL) -> "SpindleDigitalStateResponse":
         """Translates the internal State DTO to the HTTP Response Model."""
 
-        # Consolidate hardware booleans into the UI string
+        # Consolidate hardware booleans into the UI string.
+        # ``"stop"`` (not ``"idle"``) is the canonical "no spin" state;
+        # ``idle`` is reserved for the *machine* state machine elsewhere.
         if dto.spindle_forward:
             state_str = "forward"
         elif dto.spindle_reverse:
             state_str = "backward"
         else:
-            state_str = "idle"
+            state_str = "stop"
 
         return SpindleDigitalStateResponse(
             id=dto.id,
@@ -109,5 +115,7 @@ class SpindleDigitalMapper:
             min_rpm= include_static(dto.min_rpm, r),
             max_rpm=include_static(dto.max_rpm, r),
             state=include_base(state_str,r),
-            master_override_enable=include_base(dto.absolute_master_override_enable,r)
+            master_override_enable=include_base(dto.absolute_master_override_enable,r),
+            master_override=include_base(dto.absolute_master_override,r),
+            override=include_base(dto.override,r),
         )

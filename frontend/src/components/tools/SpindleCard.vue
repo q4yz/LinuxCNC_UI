@@ -12,24 +12,23 @@ const props = defineProps<{
 
 const toolStore = useToolStore();
 
-// Read the machine's current state from the canonical facade store
-// (sibling widgets such as ActivePrintWidget / EStopHeader follow
-// the same pattern; the parent does not have to thread it through).
 const { systemState } = storeToRefs(useMachineStore());
 
-// Local working state
-const speedPercentage = ref<number>(100);
-const masterOverride = ref<boolean>(false);
-const masterOverrideSpeed = ref<number>(props.tool.minRpm ?? 0);
+// --- Local working state -------------------------------------------------
+
+// speedPercentage holds the raw backend float (e.g., 1.0 for 100%)
+const speedPercentage = ref<number | null>(null);
+const masterOverride = ref<boolean | null>(null);
+const masterOverrideSpeed = ref<number | null>(null);
 
 type SpindleRunningState = "forward" | "backward" | "stop";
 
 const runningState = ref<SpindleRunningState>("stop");
 let postTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressSyncUntil = 0; // Timestamp lock to prevent rubber-banding
 
 // --- State Logic ---
 
-// Disabled: Machine is off, estopped, offline, or updating.
 const isDisabled = computed(() => {
   return [
     SystemState.OFFLINE,
@@ -39,8 +38,6 @@ const isDisabled = computed(() => {
   ].includes(systemState.value);
 });
 
-// Manual Only: Machine is idle, loaded, or in failure.
-// We hide the percentage slider and force Master Override (Manual Control) on.
 const isManualOnly = computed(() => {
   return [
     SystemState.IDLE,
@@ -49,14 +46,27 @@ const isManualOnly = computed(() => {
   ].includes(systemState.value);
 });
 
-// The effective master override state (forced to true if in Manual Only mode)
-const isEffectiveMasterOverride = computed(() => isManualOnly.value || masterOverride.value);
+const isEffectiveMasterOverride = computed(() => isManualOnly.value || masterOverride.value === true);
 
 // --- RPM Logic ---
 
-const minRpm = computed(() => props.tool.minRpm ?? 0);
-const maxRpm = computed(() => props.tool.maxRpm ?? 24000);
-const actualRpm = computed(() => props.tool.actualRpm ?? 0);
+const minRpm = computed<number | null>(() => props.tool.minRpm);
+const maxRpm = computed<number | null>(() => props.tool.maxRpm);
+const actualRpm = computed<number | null>(() => props.tool.actualRpm);
+
+const rangeMinRpm = computed(() => minRpm.value ?? 0);
+const rangeMaxRpm = computed(() => maxRpm.value ?? 24000);
+
+const SPEED_PERCENT_MIN = 10;
+const SPEED_PERCENT_MAX = 200;
+
+// Writable computed to bridge the UI scale (10-200) with the backend float (0.1-2.0)
+const sliderSpeedPercent = computed({
+  get: () => speedPercentage.value === null ? 100 : Math.round(speedPercentage.value * 100),
+  set: (val: number) => {
+    speedPercentage.value = val / 100;
+  }
+});
 
 const minPercent = computed(() => {
   if (!maxRpm.value) return 0;
@@ -74,88 +84,139 @@ const gaugeGradient = computed(() => {
 
 const gaugeCoverHeight = computed(() => {
   if (!maxRpm.value) return '100%';
-  const pct = Math.min(100, Math.max(0, (actualRpm.value / maxRpm.value) * 100));
+  const pct = Math.min(100, Math.max(0, ((actualRpm.value ?? 0) / maxRpm.value) * 100));
   return `${100 - pct}%`;
 });
+
+// --- Sync from HAL pin (snapshot) ----------------------------------------
+watch(
+    () => [
+      props.tool.override,
+      props.tool.masterOverride,
+      props.tool.masterOverrideEnable,
+      props.tool.direction,
+    ],
+    ([newOverride, newMasterOverride, newMasterOverrideEnable, newDirection]) => {
+      const isDragging = postTimer !== null;
+
+      // Prevent UI rubber-banding: Ignore incoming snapshots while dragging
+      // OR immediately after dispatching (waiting for the backend to process the new values).
+      if (isDragging || Date.now() < suppressSyncUntil) {
+        // If the incoming snapshot exactly matches our optimistic local state,
+        // the backend has processed our command. We can release the suppression lock early.
+        const isAcknowledged =
+            newOverride === speedPercentage.value &&
+            newMasterOverride === masterOverrideSpeed.value &&
+            newMasterOverrideEnable === masterOverride.value &&
+            newDirection === runningState.value;
+
+        if (isAcknowledged) {
+          suppressSyncUntil = 0;
+        } else {
+          return; // Ignore stale snapshot
+        }
+      }
+
+      if (speedPercentage.value !== newOverride) speedPercentage.value = newOverride;
+      if (masterOverrideSpeed.value !== newMasterOverride) masterOverrideSpeed.value = newMasterOverride;
+      if (masterOverride.value !== newMasterOverrideEnable) masterOverride.value = newMasterOverrideEnable;
+      if (runningState.value !== newDirection) runningState.value = newDirection;
+    },
+    { immediate: true },
+);
+
+// --- Display formatting --------------------------------------------------
+
+const PLACEHOLDER = "--";
+
+const masterOverrideRpmLabel = computed(() =>
+    masterOverrideSpeed.value === null ? PLACEHOLDER : Math.round(masterOverrideSpeed.value)
+);
+
+const isSpeedSliderDisabled = computed(() => isDisabled.value || speedPercentage.value === null);
+const isMasterSliderDisabled = computed(() =>
+    isDisabled.value ||
+    masterOverrideSpeed.value === null ||
+    minRpm.value === null ||
+    maxRpm.value === null
+);
+const isMasterCheckboxDisabled = computed(() => isDisabled.value || masterOverride.value === null);
 
 // --- Actions ---
 
 function handleSpindle(action: SpindleRunningState) {
-  if (isDisabled.value) return; // Guard against disabled state
+  if (isDisabled.value) return;
+
+  runningState.value = action;
+  suppressSyncUntil = Date.now() + 300;
 
   if (action === "stop") {
-    runningState.value = "stop";
     toolStore.sendSpindleCommand(
         props.tool.id,
         "stop",
         0,
-        masterOverrideSpeed.value,
+        masterOverrideSpeed.value ?? 0,
         false,
         1.0,
     );
     return;
   }
 
-  // Determine the speed based on effective override mode
   let speedToSet = props.tool.actualRpm ?? 0;
 
   if (isEffectiveMasterOverride.value) {
-    speedToSet = masterOverrideSpeed.value;
+    speedToSet = masterOverrideSpeed.value ?? 0;
   } else {
-    speedToSet = Math.round(speedToSet * (speedPercentage.value / 100));
+    const percent = speedPercentage.value ?? 1.0;
+    speedToSet = Math.round(speedToSet * percent);
   }
-
-  // Cap to min/max safety boundaries
-  speedToSet = Math.min(maxRpm.value, Math.max(minRpm.value, speedToSet));
-
-  runningState.value = action;
 
   toolStore.sendSpindleCommand(
       props.tool.id,
       action as "forward" | "backward",
       speedToSet,
-      masterOverrideSpeed.value,
+      masterOverrideSpeed.value ?? 0,
       isEffectiveMasterOverride.value,
-      isEffectiveMasterOverride.value ? 1.0 : speedPercentage.value / 100,
+      isEffectiveMasterOverride.value ? 1.0 : (speedPercentage.value ?? 1.0),
   );
 }
 
-// Debounced slider-drag dispatch.
-watch([masterOverrideSpeed, speedPercentage], () => {
+// Debounced slider-drag / checkbox-toggle dispatch.
+//
+// Always sends action="continue" (DirectionStateType.CONTINUE on the
+// wire) — that backend branch only writes the three override HAL
+// pins (absolute-master-override, absolute-master-override-enable,
+// override) and never dispatches an M-code, so it is safe whether
+// the spindle is currently running or stopped. The next button
+// click (Forward / Reverse / Stop) uses the freshly-set HAL pin
+// values when it fires.
+watch([masterOverrideSpeed, speedPercentage, masterOverride], ([newMaster, newPercent, newMasterEnable]) => {
   if (isDisabled.value) return;
+
+  // Anti-echo: If the local values perfectly match the backend props,
+  // this change was triggered by the sync watcher. Do not dispatch.
+  if (
+      newMaster === props.tool.masterOverride &&
+      newPercent === props.tool.override &&
+      newMasterEnable === props.tool.masterOverrideEnable
+  ) {
+      return;
+  }
 
   if (postTimer) clearTimeout(postTimer);
   postTimer = setTimeout(() => {
     postTimer = null;
-    // The slider is only meaningful while the spindle is in forward
-    // or backward. If the operator has stopped the spindle (or it
-    // has not yet been started) we skip the dispatch — the backend
-    // rejects ``"stop"`` as an action for a speed-only update, and
-    // re-sending ``"stop"`` on every slider tick would be a no-op
-    // storm anyway.
-    const action = runningState.value;
-    if (action !== "forward" && action !== "backward") return;
+    suppressSyncUntil = Date.now() + 300;
 
-    if (isEffectiveMasterOverride.value) {
-      toolStore.sendSpindleCommand(
-          props.tool.id,
-          action,
-          0,
-          masterOverrideSpeed.value,
-          true,
-          1.0,
-      );
-    } else {
-      toolStore.sendSpindleCommand(
-          props.tool.id,
-          action,
-          0,
-          0,
-          false,
-          speedPercentage.value / 100,
-      );
-    }
-  }, 1000);
+    toolStore.sendSpindleCommand(
+        props.tool.id,
+        "continue",
+        0,
+         masterOverrideSpeed.value ?? 0,
+        isEffectiveMasterOverride.value,
+        speedPercentage.value ?? 1.0
+    );
+  }, 750);
 });
 
 onBeforeUnmount(() => {
@@ -177,16 +238,24 @@ onBeforeUnmount(() => {
         <div v-if="!isManualOnly" class="flex flex-col gap-2 bg-gray-800/40 p-4 rounded-md border border-gray-700/50">
           <div class="flex justify-between items-center">
             <span class="text-sm font-semibold text-gray-300">Auto Feed/Speed</span>
-            <span class="text-xl font-mono text-blue-400 font-bold">{{ speedPercentage }}%</span>
+            <span class="text-xl font-mono text-blue-400 font-bold">
+              <template v-if="speedPercentage === null">
+                <span class="text-gray-600 italic">{{ PLACEHOLDER }}%</span>
+              </template>
+              <template v-else>
+                {{ sliderSpeedPercent }}%
+              </template>
+            </span>
           </div>
 
           <input
-              v-model.number="speedPercentage"
+              v-model.number="sliderSpeedPercent"
               type="range"
-              min="0"
-              max="400"
+              :min="SPEED_PERCENT_MIN"
+              :max="SPEED_PERCENT_MAX"
               step="1"
-              class="w-full h-2.5 bg-gray-700 rounded-lg appearance-none outline-none accent-blue-500 cursor-pointer my-1"
+              :disabled="isSpeedSliderDisabled"
+              class="w-full h-2.5 bg-gray-700 rounded-lg appearance-none outline-none accent-blue-500 my-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
 
           <span class="text-[11px] text-gray-500 leading-tight">
@@ -205,9 +274,12 @@ onBeforeUnmount(() => {
                   id="master-override"
                   v-model="masterOverride"
                   type="checkbox"
-                  class="w-5 h-5 accent-blue-500 cursor-pointer rounded bg-gray-900 border-gray-600"
+                  :disabled="isMasterCheckboxDisabled"
+                  :indeterminate.prop="masterOverride === null"
+                  class="w-5 h-5 accent-blue-500 rounded bg-gray-900 border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-              <label for="master-override" class="text-sm font-semibold text-white cursor-pointer select-none">
+              <label for="master-override" class="text-sm font-semibold text-white select-none"
+                     :class="{ 'cursor-pointer': !isMasterCheckboxDisabled, 'cursor-not-allowed text-gray-500': isMasterCheckboxDisabled }">
                 Master Override Mode
               </label>
             </template>
@@ -221,17 +293,25 @@ onBeforeUnmount(() => {
 
           <div class="flex flex-col gap-2" :class="{ 'opacity-40 grayscale': !isEffectiveMasterOverride }">
             <div class="flex justify-between items-end text-xs text-gray-400 font-mono">
-              <span>{{ minRpm }}</span>
-              <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">{{ masterOverrideSpeed }} RPM</span>
-              <span>{{ maxRpm }}</span>
+              <span>{{ minRpm === null ? PLACEHOLDER : minRpm }}</span>
+              <span class="text-blue-300 text-sm bg-gray-900 px-2 py-1 rounded">
+                <template v-if="masterOverrideSpeed === null">
+                  <span class="text-gray-600 italic">{{ PLACEHOLDER }} RPM</span>
+                </template>
+                <template v-else>
+                  {{ masterOverrideRpmLabel }} RPM
+                </template>
+              </span>
+              <span>{{ maxRpm === null ? PLACEHOLDER : maxRpm }}</span>
             </div>
             <input
                 v-model.number="masterOverrideSpeed"
                 type="range"
-                :min="minRpm"
-                :max="maxRpm"
+                :min="rangeMinRpm"
+                :max="rangeMaxRpm"
                 step="100"
-                class="w-full h-2.5 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                :disabled="isMasterSliderDisabled"
+                class="w-full h-2.5 bg-gray-900 rounded-lg appearance-none accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
           </div>
         </div>
@@ -305,7 +385,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="text-sm font-mono text-white font-bold bg-gray-900 w-full text-center py-1 rounded">
-        {{ actualRpm }}
+        <template v-if="actualRpm === null">
+          <span class="text-gray-600 italic">{{ PLACEHOLDER }}</span>
+        </template>
+        <template v-else>
+          {{ actualRpm }}
+        </template>
       </div>
     </div>
 

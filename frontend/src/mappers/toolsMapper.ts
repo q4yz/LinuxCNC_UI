@@ -86,13 +86,19 @@ export function toSpindleState(wire: SpindleDigitalStateResponse): SpindleState 
   return new SpindleState({
     id: wire.id,
     direction: (typeof wire.state === "string" ? wire.state : "stop") as SpindleDirection,
-    actualRpm: Number(wire.actual_rpm) || 0,
+    // Preserve ``null`` semantics: an unconnected / not-yet-streamed
+    // pin must surface as ``null`` so the UI can disable the slider
+    // and show ``--`` rather than substituting a default.
+    actualRpm: wire.actual_rpm == null ? null : Number(wire.actual_rpm),
     isConnected: Boolean(wire.is_connected),
     errorCount: Number(wire.error_count) || 0,
     lastError: typeof wire.last_error === "string" ? wire.last_error : "",
     atSpeed: Boolean(wire.spindle_at_speed),
-    minRpm: Number(wire.min_rpm) || 0,
-    maxRpm: Number(wire.max_rpm) || 24000,
+    minRpm: wire.min_rpm == null ? null : Number(wire.min_rpm),
+    maxRpm: wire.max_rpm == null ? null : Number(wire.max_rpm),
+    masterOverride: wire.master_override == null ? null : Number(wire.master_override),
+    override: wire.override == null ? null : Number(wire.override),
+    masterOverrideEnable: wire.master_override_enable == null ? null : Boolean(wire.master_override_enable),
   });
 }
 

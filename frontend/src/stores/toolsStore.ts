@@ -42,7 +42,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
    */
   async function sendSpindleCommand(
       toolId: string,
-      action: "forward" | "backward" | "stop",
+      action: "forward" | "backward" | "stop" | "continue",
       speed: number,
       masterOverride = 0,
       masterOverrideEnable = false,

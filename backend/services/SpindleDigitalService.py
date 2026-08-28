@@ -130,8 +130,9 @@ class SpindleDigitalService:
 
     def _continue(self, pins,  dto: SpindleDigitalSettingsDTO):
         pins.override.set_value(int(dto.override * 100))
+        pins.absolute_master_override.set_value(dto.master_override)
         pins.absolute_master_override_enable.set_value(dto.master_override_enable)
-        pass
+        return ""
 
 
 _spindle_digital_service: Optional[SpindleDigitalService] = None

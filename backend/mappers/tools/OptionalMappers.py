@@ -24,6 +24,31 @@ class OptionalMappers:
     def as_str(cls, value: Any) -> str:
         return str(value) if value is not None else ""
 
+    @classmethod
+    def as_optional_float(cls, value: Any) -> Optional[float]:
+        """Returns ``None`` when the pin is unconnected / not yet known.
+
+        Use this for values that should round-trip as ``null`` on the
+        wire so the frontend can distinguish "HAL has not streamed
+        anything" from a real numeric zero (e.g. override RPM before
+        the first user command).
+        """
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def as_optional_int(cls, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return None
+
 
     @classmethod
     def as_optional_number(cls, value: Any, num_type: type) -> Optional[Union[int, float]]:

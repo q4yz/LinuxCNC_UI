@@ -110,10 +110,97 @@ test("toSpindleState: bogus direction falls back to 'stop'", () => {
   assert.equal(s.direction, "stop");
 });
 
+test("toSpindleState: backend 'stop' state maps to 'stop' direction", () => {
+  // The backend now reports the no-spin state as "stop" (not the
+  // deprecated "idle"). Make sure the mapper preserves it verbatim.
+  const s = toSpindleState({ type: "spindle_digital", id: "x", state: "stop" });
+  assert.equal(s.direction, "stop");
+  assert.equal(s.isRunning, false);
+});
+
+test("toSpindleState: legacy 'idle' state still falls back to 'stop'", () => {
+  // Older backends (or stale snapshots) may still emit "idle".
+  // The mapper coerces any unknown string to "stop".
+  const s = toSpindleState({ type: "spindle_digital", id: "x", state: "idle" });
+  assert.equal(s.direction, "stop");
+});
+
 test("toSpindleState: backward direction is detected", () => {
   const s = toSpindleState({ type: "spindle_digital", id: "x", state: "backward" });
   assert.equal(s.direction, "backward");
   assert.equal(s.isRunning, true);
+});
+
+// ---------------------------------------------------------------------------
+// toSpindleState — null override values
+// ---------------------------------------------------------------------------
+//
+// The HAL pin ``absolute_master_override`` and ``override`` are
+// exposed as nullable on the wire so the frontend can distinguish "not
+// yet streamed" from a real zero. The mapper must preserve ``null``;
+// it must NOT coerce it to ``0``.
+
+test("toSpindleState: null override fields round-trip as null (no default)", () => {
+  const s = toSpindleState({
+    type: "spindle_digital",
+    id: "x",
+    state: "idle",
+    master_override: null,
+    override: null,
+    master_override_enable: null,
+    actual_rpm: null,
+    min_rpm: null,
+    max_rpm: null,
+  });
+  assert.equal(s.masterOverride, null);
+  assert.equal(s.override, null);
+  assert.equal(s.masterOverrideEnable, null);
+  assert.equal(s.actualRpm, null);
+  assert.equal(s.minRpm, null);
+  assert.equal(s.maxRpm, null);
+});
+
+test("toSpindleState: missing override fields round-trip as null (undefined → null)", () => {
+  const s = toSpindleState({ type: "spindle_digital", id: "x" });
+  assert.equal(s.masterOverride, null);
+  assert.equal(s.override, null);
+  assert.equal(s.masterOverrideEnable, null);
+});
+
+test("toSpindleState: numeric override values are preserved as numbers", () => {
+  const s = toSpindleState({
+    type: "spindle_digital",
+    id: "x",
+    state: "forward",
+    master_override: 12000,
+    override: 1.0,
+    master_override_enable: true,
+  });
+  assert.equal(s.masterOverride, 12000);
+  assert.equal(s.override, 1.0);
+  assert.equal(s.masterOverrideEnable, true);
+});
+
+test("toSpindleState: fractionOfMax returns 0 when actualRpm is null", () => {
+  const s = toSpindleState({
+    type: "spindle_digital",
+    id: "x",
+    actual_rpm: null,
+    min_rpm: 0,
+    max_rpm: 24000,
+  });
+  assert.equal(s.fractionOfMax(), 0);
+});
+
+test("toSpindleState: fractionOfMax returns 0 when maxRpm is null", () => {
+  const s = toSpindleState({
+    type: "spindle_digital",
+    id: "x",
+    actual_rpm: 1000,
+    min_rpm: 0,
+    max_rpm: null,
+  });
+  assert.equal(s.fractionOfMax(), 0);
 });
 
 // ---------------------------------------------------------------------------
