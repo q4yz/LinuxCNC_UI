@@ -42,14 +42,12 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
       </div>
     </div>
 
-    <div class="p-4 space-y-4 bg-gray-700/20">
+    <div class=" space-y-4 bg-gray-700/20">
       <div
           v-if="selectedTool"
-          class="bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-sm"
+          class="bg-gray-800 border border-gray-700 rounded-lg p-1 shadow-sm"
       >
-        <h3 class="text-lg font-semibold text-gray-200 mb-4">
-          {{ selectedTool.id }}
-        </h3>
+
 
 
         <AnalogSpindleCard

@@ -18,12 +18,19 @@ export interface CameraDevice {
 
 export interface CameraPreference {
   customName: string;
-  flip: boolean;
+  /**
+   * Quarter-turn rotation of the live feed in degrees. One of
+   * ``0`` (identity), ``90``, ``180``, ``270``. Applied as a
+   * client-side CSS ``rotate(Ndeg)`` on top of any horizontal
+   * mirror. Replaces the legacy ``flip`` boolean which only did
+   * a vertical mirror.
+   */
+  rotate: number;
   mirror: boolean;
   hidden: boolean;
 }
 
-export type EditablePreferenceKey = "customName" | "flip" | "mirror" | "hidden";
+export type EditablePreferenceKey = "customName" | "rotate" | "mirror" | "hidden";
 
 /** Map of camera id → per-device preference row. */
 export type CameraPreferenceMap = Record<string, CameraPreference>;
@@ -36,7 +43,7 @@ export type CameraPreferenceMap = Record<string, CameraPreference>;
  */
 export interface WirePreference {
   custom_name: string;
-  flip: boolean;
+  rotate: number;
   mirror: boolean;
   hidden: boolean;
 }

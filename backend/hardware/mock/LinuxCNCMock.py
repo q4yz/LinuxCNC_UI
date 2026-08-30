@@ -6,6 +6,7 @@ from hardware.mock.factory.MockToolFactory import MockToolFactory
 from hardware.mock.HalMock import HalMock
 from hardware.mock.facade.HalModuleFacade import HalModuleFacade
 from hardware.mock.facade.LinuxcncModuleFacade import LinuxcncModuleFacade
+from hardware.mock.MockEStopComponent import MockEStopComponent
 from hardware.mock.StateMachineMock import StateMachineMock
 
 logger = logging.getLogger("backend.hardware.mock")
@@ -18,6 +19,13 @@ class LinuxCNCMock:
         self.internal_hal: HalMock = HalMock(nml_state=self.internal_state)
         self.hal: HalModuleFacade = HalModuleFacade(internal_hal=self.internal_hal)
         self.linuxcnc: LinuxcncModuleFacade = LinuxcncModuleFacade(state_mock=self.internal_state,hal_mock=self.internal_hal)
+
+        # Always-on core mock components. These exist for the entire
+        # process lifetime so a service can rely on the corresponding
+        # pins at any tick, regardless of whether a hardware.json has
+        # been reseeded yet. See .agent/context/MOCK_ARCHITECTURE.md
+        # § "Always-on vs tool-derived" for the decision table.
+        self.internal_hal.register_component(MockEStopComponent(self.internal_state))
 
         self._running = False
         self._thread = None

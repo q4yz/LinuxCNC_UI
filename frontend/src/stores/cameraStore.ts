@@ -52,15 +52,22 @@ const STATUS_URL = "/api/v1/modules/camera/status";
 // happens inside ``serializePreferences`` / ``deserializePreferences``.
 const EDITABLE_KEYS = new Set<EditablePreferenceKey>([
   "customName",
-  "flip",
+  "rotate",
   "mirror",
   "hidden",
 ]);
 
+// Whitelist of legal ``rotate`` values. Must agree with the backend
+// Pydantic validator's ``ALLOWED_ROTATIONS`` set in
+// ``backend/models/camera_settings.py`` so the chip-row buttons,
+// the store's input validation, and the on-disk schema all use the
+// same canonical angles. ``0`` is the identity (no rotation).
+const ROTATE_VALUES: ReadonlySet<number> = new Set([0, 90, 180, 270]);
+
 function defaultPreference(): CameraPreference {
   return {
     customName: "",
-    flip: false,
+    rotate: 0,
     mirror: false,
     hidden: false,
   };
@@ -74,6 +81,18 @@ function defaultPreference(): CameraPreference {
  */
 export function defaultPreferenceForActive(): CameraPreference {
   return defaultPreference();
+}
+
+/**
+ * Coerce a single wire-format ``rotate`` value (read from
+ * ``settings.json``) to the canonical int. Anything outside the
+ * whitelist — missing, malformed, or a leftover boolean — falls
+ * back to ``0`` so a hostile or stale disk payload cannot leave
+ * the camera image at an unsupported angle.
+ */
+function coerceRotate(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return ROTATE_VALUES.has(value) ? value : 0;
 }
 
 /**
@@ -96,7 +115,7 @@ function coercePreference(value: unknown): CameraPreference {
   const row = value as Partial<Record<keyof CameraPreference | "custom_name", unknown>>;
   return {
     customName: typeof row.custom_name === "string" ? row.custom_name : "",
-    flip: row.flip === true,
+    rotate: coerceRotate(row.rotate),
     mirror: row.mirror === true,
     hidden: row.hidden === true,
   };
@@ -110,7 +129,7 @@ function serializePreferences(prefs: CameraPreferenceMap | null | undefined): Wi
     const row = pref as Partial<CameraPreference>;
     out[id] = {
       custom_name: typeof row.customName === "string" ? row.customName : "",
-      flip: row.flip === true,
+      rotate: coerceRotate(row.rotate),
       mirror: row.mirror === true,
       hidden: row.hidden === true,
     };
@@ -328,8 +347,8 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * (the operator's custom name persists) but disappears from the
    * live enumeration. Folding the orphaned keys back into
    * ``devices.value`` keeps the settings panel usable — the
-   * operator can keep editing custom names, toggle flip/mirror,
-   * or remove the orphan entirely.
+   * operator can keep editing custom names, set rotation /
+   * mirror / hide flags, or remove the orphan entirely.
    *
    * Every stored camera — including orphaned IP URLs from prior
    * sessions — is cycleable. If the upstream is unreachable when
@@ -454,16 +473,24 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   function updatePreference(
     id: string,
     key: EditablePreferenceKey,
-    value: string | boolean,
+    value: string | boolean | number,
   ): void {
     if (!id || !EDITABLE_KEYS.has(key)) return;
     if (
-      (key === "flip" || key === "mirror" || key === "hidden") &&
+      (key === "mirror" || key === "hidden") &&
       typeof value !== "boolean"
     ) {
       return;
     }
     if (key === "customName" && typeof value !== "string") return;
+    if (
+      key === "rotate" &&
+      (typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        !ROTATE_VALUES.has(value))
+    ) {
+      return;
+    }
 
     const current = cameraPreferences.value[id] ?? defaultPreference();
     const next: CameraPreference = { ...defaultPreference(), ...current, [key]: value };

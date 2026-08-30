@@ -1,8 +1,9 @@
 import logging
 from typing import Optional
 
+from dtos.sensors.TemperatureDto import TemperatureStateDto
 from temperature_config_mapper import get_temperature_sensors
-from dtos.temperature.SensorDto import SensorStateDto
+
 from factories.temperature.TemperatureStateFactory import TemperatureStateFactory
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 from tools_config_mapper import get_all_heater
@@ -59,7 +60,7 @@ class TemperatureService:
 
         return self._halpins_cache
 
-    def get_states(self) -> list[HeaterStateDTO | SensorStateDto]:
+    def get_states(self) -> list[HeaterStateDTO | TemperatureStateDto]:
         return [TemperatureStateFactory.create(halpin) for halpin in self.get_halpins()]
 
 

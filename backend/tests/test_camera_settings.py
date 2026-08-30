@@ -146,13 +146,13 @@ def test_per_camera_preferences_round_trip(tmp_data_root: Path):
             "preferences": {
                 "/dev/video0": {
                     "custom_name": "Workshop ceiling",
-                    "flip": True,
+                    "rotate": 90,
                     "mirror": False,
                     "hidden": False,
                 },
                 "/dev/video1": {
                     "custom_name": "Bench camera",
-                    "flip": False,
+                    "rotate": 180,
                     "mirror": True,
                     "hidden": True,
                 },
@@ -163,8 +163,9 @@ def test_per_camera_preferences_round_trip(tmp_data_root: Path):
     merged = resp.json()
     assert set(merged["preferences"].keys()) == {"/dev/video0", "/dev/video1"}
     assert merged["preferences"]["/dev/video0"]["custom_name"] == "Workshop ceiling"
-    assert merged["preferences"]["/dev/video0"]["flip"] is True
+    assert merged["preferences"]["/dev/video0"]["rotate"] == 90
     assert merged["preferences"]["/dev/video1"]["hidden"] is True
+    assert merged["preferences"]["/dev/video1"]["rotate"] == 180
     # Source-selection knobs were not in the payload — defaults survive.
     assert merged["ip_camera_url"] == ""
     assert merged["default_device_id"] == ""
@@ -174,6 +175,7 @@ def test_per_camera_preferences_round_trip(tmp_data_root: Path):
     assert resp.status_code == 200
     persisted = resp.json()
     assert persisted["preferences"]["/dev/video0"]["custom_name"] == "Workshop ceiling"
+    assert persisted["preferences"]["/dev/video0"]["rotate"] == 90
     assert persisted["preferences"]["/dev/video1"]["hidden"] is True
 
     # On-disk file matches (so a fresh checkout keeps the operator's choices).
@@ -183,6 +185,7 @@ def test_per_camera_preferences_round_trip(tmp_data_root: Path):
         )
     )
     assert set(on_disk["preferences"].keys()) == {"/dev/video0", "/dev/video1"}
+    assert on_disk["preferences"]["/dev/video0"]["rotate"] == 90
 
 
 def test_preferences_put_replaces_top_level_map(tmp_data_root: Path):
@@ -263,14 +266,57 @@ def test_preferences_partial_row_persists_verbatim(tmp_data_root: Path):
 
     # Where default-fill happens: the consumer coerces the persisted
     # payload into ``CameraSettings`` and gets a fully-populated row
-    # for ``/dev/video0``, with ``flip``/``mirror``/``hidden``
+    # for ``/dev/video0``, with ``rotate``/``mirror``/``hidden``
     # materialised from the Pydantic schema.
     cfg = CameraSettings(**resp.json())
     assert "/dev/video0" in cfg.preferences
     assert cfg.preferences["/dev/video0"].custom_name == "Renamed only"
-    assert cfg.preferences["/dev/video0"].flip is False
+    assert cfg.preferences["/dev/video0"].rotate == 0
     assert cfg.preferences["/dev/video0"].mirror is False
     assert cfg.preferences["/dev/video0"].hidden is False
+
+
+def test_rotate_field_validator_rejects_non_canonical_angles():
+    """``CameraDevicePreference.rotate`` is a 4-position counter.
+
+    The Pydantic ``field_validator`` on ``rotate`` rejects anything
+    that is not in ``{0, 90, 180, 270}``. Pin the contract: an
+    out-of-range integer (``45``, ``-90``, ``91``, ``360``) and a
+    leftover boolean (``True`` sneaking through as ``1`` via
+    ``bool``-is-a-subclass-of-``int``) both raise
+    ``ValidationError`` so the consumer falls back to defaults
+    rather than rendering an unrecognised chip.
+
+    Note: Pydantic v2's default (``strict=False``) mode coerces a
+    numeric string like ``"90"`` to the int ``90`` before the
+    field_validator runs — that path lands on the canonical angle
+    and is not a reject here. Out-of-band clients that want strict
+    typing would need a different Pydantic mode; this test pins
+    only the validator contract that is reachable through the
+    Settings panel.
+    """
+    from pydantic import ValidationError
+
+    from models.camera_settings import CameraDevicePreference
+
+    # The four canonical angles pass.
+    for angle in (0, 90, 180, 270):
+        pref = CameraDevicePreference(rotate=angle)
+        assert pref.rotate == angle
+
+    # Out-of-range integers are rejected. ``180.0`` is not in this
+    # list because Pydantic coerces the float to the canonical int
+    # ``180`` before the field_validator runs — that one is a
+    # legitimate identity, not a reject.
+    for bad in (-90, 1, 45, 91, 360):
+        with pytest.raises(ValidationError):
+            CameraDevicePreference(rotate=bad)
+
+    # ``bool`` is a subclass of ``int`` — ``rotate=True`` would
+    # silently coerce to ``1`` without an explicit isinstance
+    # check. The validator must catch it.
+    with pytest.raises(ValidationError):
+        CameraDevicePreference(rotate=True)
 
 
 def test_save_ip_camera_url_then_seed_preferences_round_trip(
@@ -319,7 +365,7 @@ def test_save_ip_camera_url_then_seed_preferences_round_trip(
     next_prefs = {
         url: {
             "custom_name": "",
-            "flip": False,
+            "rotate": 0,
             "mirror": False,
             "hidden": False,
         },
@@ -336,7 +382,7 @@ def test_save_ip_camera_url_then_seed_preferences_round_trip(
     assert url in merged["preferences"]
     seeded = merged["preferences"][url]
     assert seeded["custom_name"] == ""
-    assert seeded["flip"] is False
+    assert seeded["rotate"] == 0
     assert seeded["mirror"] is False
     assert seeded["hidden"] is False
 

@@ -9,7 +9,8 @@ import { ProgramFilesService } from '../../generated/api/services/ProgramFilesSe
 import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
-import {MacroButton} from "../ui";
+import { MacroButton, useMacroButtonConfig } from '../ui'
+
 
 // --- Interfaces & Types ---
 interface MachineLimits {
@@ -169,6 +170,17 @@ const liveG92 = computed<[number, number, number]>(() => {
   return [Number(t[0]) || 0, Number(t[1]) || 0, Number(t[2]) || 0]
 })
 
+// --- Custom macro buttons (viewer.1 / viewer.2 / viewer.3) ---
+//
+// Same ``'axis'`` module id as ``DroPanel.vue`` so the operator
+// configures every dashboard macro button from the same settings
+// file; the slot id disambiguates between the DRO's per-axis rows
+// and the viewer's three slots. ``MacroButton`` itself enforces
+// the visibility contract (missing / disabled / empty rows render
+// nothing) so we just hand the descriptor down.
+const buttonConfig = useMacroButtonConfig('axis')
+const { buttonsBySlot } = buttonConfig
+
 // --- Camera-mode & jog state ---
 const { defaultJogVelocity } = storeToRefs(store)
 const cameraMode = ref<CameraMode>('default')
@@ -257,6 +269,13 @@ onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener('keyup', handleKeyUp)
   window.addEventListener('blur', handleWindowBlur)
+
+  // Hydrate the macro-button config so the three viewer slots
+  // resolve their descriptors (or render nothing if the operator
+  // hasn't configured them yet). The composable coerces a missing
+  // / corrupt payload to ``[]`` so a transient settings failure
+  // never breaks the viewer.
+  void buttonConfig.refresh()
 })
 
 onBeforeUnmount(() => {
@@ -323,6 +342,16 @@ const initThreeJS = () => {
   controls.dampingFactor = 0.05
 
   controls.enableRotate = initialFrame.enableRotate
+
+  // Three.js OrbitControls hardcodes ``touch-action: none`` on the
+  // canvas in its constructor to swallow page scroll. Override it
+  // here so vertical pan reaches the page scroller in every mode
+  // that doesn't need the full touch surface. ``Free`` mode
+  // re-applies ``none`` via ``setCameraMode`` so OrbitControls
+  // owns single-finger rotation. ``touch-action`` is not
+  // inherited, so writing it on a parent element wouldn't help —
+  // it has to go on the canvas itself.
+  renderer.domElement.style.touchAction = 'pan-y'
 
   const axesHelper = new THREE.AxesHelper(100)
   cncSpace.add(axesHelper)
@@ -465,6 +494,14 @@ const setCameraMode = (mode: CameraMode) => {
   const frame = cameraFrameFor(mode, cameraDistance.value)
   camera.up.copy(frame.up)
   controls.enableRotate = frame.enableRotate
+  // Re-apply the touch-action override here too so ``Free`` mode
+  // can flip the canvas back to OrbitControls' hardcoded ``none``
+  // (single-finger rotates the camera) without re-instantiating
+  // the controls. ``initThreeJS`` does the initial write so the
+  // first paint already has the right value.
+  if (renderer) {
+    renderer.domElement.style.touchAction = mode === 'free' ? 'none' : 'pan-y'
+  }
   cameraTween = {
     startTime: performance.now(),
     duration: 400,
@@ -870,7 +907,10 @@ const animate = () => {
       </div>
     </div>
 
-        <div class="absolute bottom-4 left-4 flex gap-2 pointer-events-auto">
+    <!-- Macro buttons (bottom-left). Three configurable slots that
+         route through the shared macros store. MacroButton renders
+         nothing when the descriptor is missing / disabled / empty. -->
+    <div class="absolute bottom-4 left-4 flex gap-2 pointer-events-auto">
       <MacroButton
         v-if="buttonsBySlot?.['viewer.1']"
         :descriptor="buttonsBySlot['viewer.1']"
@@ -893,8 +933,6 @@ const animate = () => {
         class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
       />
     </div>
-
-
   </div>
 </template>
 

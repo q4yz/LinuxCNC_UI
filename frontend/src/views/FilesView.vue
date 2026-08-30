@@ -6,6 +6,7 @@
 // the layout-vs-display boundary and lets the file list be reused
 // in other layouts.
 import FileManager from '../components/FileManager.vue';
+import ActivePrintWidget from "../components/ActivePrintWidget.vue";
 
 const emit = defineEmits(['edit']);
 
@@ -19,5 +20,6 @@ function handleEdit(...args) {
 <template>
   <div class="h-full w-full flex flex-col">
     <FileManager @edit="handleEdit" />
+    <ActivePrintWidget />
   </div>
 </template>

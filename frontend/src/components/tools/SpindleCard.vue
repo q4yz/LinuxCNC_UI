@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Added min-w-[380px] and overflow-x-auto -->
-  <div class="flex gap-6 bg-gray-900/40 p-4 rounded-lg border border-gray-700 shadow-sm w-full min-w-[250px] overflow-x-auto transition-opacity"
+  <div class="flex gap-6 bg-gray-900/40  rounded-lg border border-gray-700 shadow-sm w-full min-w-[250px] overflow-x-auto transition-opacity"
        :class="{ 'opacity-60': isDisabled }">
 
     <!-- LEFT COLUMN: Controls -->
@@ -323,6 +323,8 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Action Buttons (tightened gap and dynamic text) -->
+        <template v-if="isManualOnly">
+
         <div class="grid grid-cols-3 gap-2">
           <button
               type="button"
@@ -349,7 +351,9 @@ onBeforeUnmount(() => {
             Forward
           </button>
         </div>
+        </template>
       </div>
+
 
       <!-- Status Indicators -->
      <div class="flex justify-between items-center mt-auto pt-3 border-t border-gray-800 text-xs font-mono">

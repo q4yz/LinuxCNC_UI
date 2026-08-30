@@ -124,6 +124,7 @@ async def lifespan(app: FastAPI):
     if not HAS_HAL:
         tool_service.preload_hal_pins()
         sensor_service.preload_hal_pins()
+        state_service.preload_hal_pins()
         HalPin.initialize_component()
 
         reseed_from_hardware_json()

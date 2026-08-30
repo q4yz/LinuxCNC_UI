@@ -52,17 +52,31 @@ const fields = ref({
   estop_disables_power: true,
 });
 
-// Macro buttons (one row per axis DRO slot). The settings
-// moduleId is ``"axis"`` (not ``manifest.id`` of ``"machine"``)
-// to match the backend's ``_MODULE_DOMAINS[0]`` mount — see the
-// header comment for the full rationale.
+// Macro buttons (one row per axis DRO slot + one row per viewer
+// slot). The settings moduleId is ``"axis"`` (not ``manifest.id``
+// of ``"machine"``) to match the backend's ``_MODULE_DOMAINS[0]``
+// mount — see the header comment for the full rationale.
+//
+// We render a single editor with all six slots in one table. Two
+// editors pointing at the same ``modelValue`` would clobber each
+// other on commit: each emits the entire ``draft`` array which
+// only contains rows for its own ``slots`` prop, so a DRO commit
+// would erase viewer rows that live in the other editor's draft.
+// One editor, one shared array, one persist call — keeps the two
+// surfaces in lock-step automatically.
 const buttonConfig = useMacroButtonConfig("axis");
 
 const SLOTS = [
-  { id: "dro.x", label: "X axis row" },
-  { id: "dro.y", label: "Y axis row" },
-  { id: "dro.z", label: "Z axis row" },
+  { id: "dro.x",    label: "DRO X axis row" },
+  { id: "dro.y",    label: "DRO Y axis row" },
+  { id: "dro.z",    label: "DRO Z axis row" },
+  { id: "viewer.1", label: "Toolpath viewer — slot 1 (bottom-left)" },
+  { id: "viewer.2", label: "Toolpath viewer — slot 2 (bottom-left)" },
+  { id: "viewer.3", label: "Toolpath viewer — slot 3 (bottom-left)" },
 ];
+
+const CUSTOM_BUTTONS_DESCRIPTION =
+  "Add a custom button next to each axis row in the DRO, or to the bottom-left of the toolpath viewer (three slots). Each button runs a macro when clicked; leave the macro empty to hide the button.";
 
 onMounted(async () => {
   loading.value = true;
@@ -283,8 +297,8 @@ function onCommitEstopDisablesPower(event) {
       <MacroButtonEditor
         :model-value="buttonConfig.buttons.value"
         :slots="SLOTS"
-        module-id="machine"
-        description="Add a custom button next to each axis row in the DRO. The button runs a macro when clicked; leave the macro empty to hide the button."
+        module-id="axis"
+        :description="CUSTOM_BUTTONS_DESCRIPTION"
         @update:model-value="(next) => buttonConfig.persist(next)"
       />
     </section>

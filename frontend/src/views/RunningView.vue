@@ -10,17 +10,17 @@ import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-8">
 
       <!-- Left Column: Job Status & Machine State -->
-      <div class="lg:col-span-4 xl:col-span-4 flex flex-col space-y-6">
-        <ActivePrintWidget />
+      <div class="lg:col-span-6 xl:col-span-6 flex flex-col space-y-6">
+
         <AxisSpeedControl />
-        <ToolPanel />
+
       </div>
 
       <!-- Right Column: Toolpath & Logging -->
-      <div class="lg:col-span-8 xl:col-span-8 flex flex-col space-y-6">
+      <div class="lg:col-span-5 xl:col-span-5 flex flex-col space-y-6">
 
-        <CameraViewer/>
 
+      <ToolPanel />
 
 
       </div>

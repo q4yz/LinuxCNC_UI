@@ -29,7 +29,7 @@ from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
     get_error_channel
-from hardware.Connection import read_error_history, write_hal_pin
+from hardware.Connection import read_error_history
 
 logger = logging.getLogger("backend.services.StateService")
 
@@ -94,7 +94,7 @@ class StateService:
     }
 
     def __init__(self):
-        self._Estop: HalPin = UnconnectedHalPin()
+        self._Estop: EStopPin = None
 
     def preload_hal_pins(self):
         self._Estop = EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT,""))
@@ -161,7 +161,7 @@ class StateService:
         the required rising edge (pulse) to ensure halui registers the command.
         """
         try:
-            self._Estop.set_value(True)
+            self._Estop.pressed.set_value(True)
         except Exception as e:
             raise HTTPException(
                 status_code=503,

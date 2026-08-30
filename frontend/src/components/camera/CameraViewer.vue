@@ -49,12 +49,21 @@ const cameraName: ComputedRef<string> = computed(() => {
   return customName || activeDevice.value?.name || activeCameraId.value;
 });
 
+// CSS ``transform`` string for the live feed. Composes the
+// operator-configured quarter-turn rotation with the optional
+// horizontal mirror. Both apply independently — rotating then
+// mirroring is the same as mirroring then rotating for an
+// orthogonal axis swap, but the order is fixed here so the inline
+// style stays readable in the rendered DOM. ``rotate === 0`` and
+// ``!mirror`` short-circuit to the literal ``none`` so the element
+// gets no transform attribute when no orientation is set.
 const cameraTransform: ComputedRef<string> = computed(() => {
-  const { flip, mirror } = activePreference.value;
-  if (flip && mirror) return "scale(-1, -1)";
-  if (mirror) return "scaleX(-1)";
-  if (flip) return "scaleY(-1)";
-  return "none";
+  const { rotate, mirror } = activePreference.value;
+  if (!rotate && !mirror) return "none";
+  const parts: string[] = [];
+  if (rotate) parts.push(`rotate(${rotate}deg)`);
+  if (mirror) parts.push("scaleX(-1)");
+  return parts.join(" ");
 });
 
 // --- Hardware Race Condition Fix ---

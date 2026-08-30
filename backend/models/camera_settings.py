@@ -37,9 +37,17 @@ Three groups of knobs survive:
 from __future__ import annotations
 from typing import Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from models.macro_button import MacroButtonDescriptor
+
+
+# Whitelist of legal ``rotate`` values. Pinned to a frozenset so the
+# Pydantic validator, the frontend store, and the chip-row buttons
+# agree on a single canonical set. ``0`` is the identity (no
+# rotation); the other three cover the quarter-turn orientations an
+# operator needs when a camera is mounted sideways or upside-down.
+ALLOWED_ROTATIONS: frozenset[int] = frozenset({0, 90, 180, 270})
 
 
 class CameraDevicePreference(BaseModel):
@@ -58,9 +66,13 @@ class CameraDevicePreference(BaseModel):
             "hardware-reported name."
         ),
     )
-    flip: bool = Field(
-        default=False,
-        description="Vertical mirror of the live feed.",
+    rotate: int = Field(
+        default=0,
+        description=(
+            "Rotation of the live feed in degrees. Must be one of "
+            "0, 90, 180, 270. Applied as a client-side CSS "
+            "rotate(Ndeg) on top of any horizontal mirror."
+        ),
     )
     mirror: bool = Field(
         default=False,
@@ -74,6 +86,31 @@ class CameraDevicePreference(BaseModel):
             "and can be picked manually."
         ),
     )
+
+    @field_validator("rotate")
+    @classmethod
+    def _validate_rotate(cls, value: object) -> int:
+        """Reject anything that is not one of the four canonical angles.
+
+        Storing an arbitrary integer (``45``, ``-90``, ``91``) would
+        silently break the Settings panel's chip row and leave the
+        camera image at an unexpected angle. The validator runs on
+        every ``model_validate`` path (settings hydration, round-trip
+        PUT, seed-from-defaults) so a corrupt on-disk value also
+        raises here rather than propagating into the runtime.
+        """
+        if isinstance(value, bool) or not isinstance(value, int):
+            # ``bool`` is a subclass of ``int`` in Python; exclude it
+            # explicitly so ``rotate=True`` doesn't sneak through as
+            # ``1``.
+            raise ValueError(
+                f"rotate must be an int, got {type(value).__name__}"
+            )
+        if value not in ALLOWED_ROTATIONS:
+            raise ValueError(
+                f"rotate must be one of {sorted(ALLOWED_ROTATIONS)}, got {value}"
+            )
+        return value
 
 
 class CameraSettings(BaseModel):

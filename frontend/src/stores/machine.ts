@@ -21,7 +21,17 @@ const HOME_ALL: "all" = "all";
 const DEFAULT_JOG_VELOCITY = 500;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
 
-const MACHINE_ID = "machine";
+// The backend has no ``machine`` module — the per-axis machine
+// settings (``default_jog_velocity``, ``keepalive_interval_ms``,
+// ``jog_watchdog_timeout_ms``, ``estop_disables_power``) actually
+// live under the ``axis`` module. This mirrors the mount in
+// ``backend/main.py`` (``_MODULE_DOMAINS``) and the historical
+// note in ``MachineSettingsPanel.vue:18-26``: every other frontend
+// surface that touches these settings already passes ``"axis"``.
+// Earlier this constant was ``"machine"`` which produced a boot-time
+// 404 at ``/api/v1/modules/machine/settings`` and silently fell back
+// to the hard-coded defaults above.
+const MACHINE_ID = "axis";
 const STORE_ID = MACHINE_ID;
 
 /**

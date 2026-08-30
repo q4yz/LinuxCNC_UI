@@ -90,6 +90,7 @@ needs before editing any code.
 | [`.agent/context/VISION.md`](.agent/context/VISION.md) | Why the project exists, what it optimizes for, what it is not. Use this to push back on requests that violate the philosophy. |
 | [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) | Backend + frontend layout, the module registry graph, the event bus, the state facade, the safety watchdog. Use this to find the right file to edit. |
 | [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md) | Canonical Router → Service → DTO → Mapper → Storage pattern with a worked example (`POST /spindle`) and the module cheat-sheet. Read before touching any backend module. |
+| [`.agent/context/MOCK_ARCHITECTURE.md`](.agent/context/MOCK_ARCHITECTURE.md) | Mock HAL + NML layer under `backend/hardware/mock/`. Read before adding a new mock component, when the real-vs-mock seam is unclear, or when debugging a pin write that "should" propagate. |
 
 ### 2.2 Read when relevant
 

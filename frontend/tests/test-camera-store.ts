@@ -80,12 +80,14 @@ test("cameraStore uses a plain store-id (no module_ prefix)", () => {
 
 test("cameraStore validates the four editable preference keys", () => {
   const text = read(storePath);
-  // The whitelist allows camelCase keys (``customName`` + three
-  // booleans). ``name`` from the legacy implementation is gone.
+  // The whitelist allows camelCase keys (``customName``, the
+  // quarter-turn ``rotate`` int, and two booleans). The legacy
+  // ``flip`` boolean is gone — it only did a vertical mirror and
+  // has been replaced by the 4-position rotation counter.
   // Accept either ``new Set(...)`` (JS) or ``new Set<T>(...)``
   // (typed TS) so the test survives the migration.
   assert.match(text, /EDITABLE_KEYS\s*=\s*new Set(?:\s*<[^>]+>)?\s*\(/);
-  for (const key of ["customName", "flip", "mirror", "hidden"]) {
+  for (const key of ["customName", "rotate", "mirror", "hidden"]) {
     assert.match(
       text,
       new RegExp(`['"\`]${key}['"\`]`),
@@ -93,7 +95,9 @@ test("cameraStore validates the four editable preference keys", () => {
     );
   }
   // ``name`` was the legacy field name and must not sneak back in.
+  // ``flip`` is gone too — rotate supersedes it.
   assert.doesNotMatch(text, /EDITABLE_KEYS[^]*['"`]name['"`]/);
+  assert.doesNotMatch(text, /EDITABLE_KEYS[^]*['"`]flip['"`]/);
 });
 
 test("cycleCamera filters hidden devices out of the rotation", () => {
@@ -236,6 +240,41 @@ test("CameraSettings.vue renders the hide-from-cycle checkbox", () => {
   assert.match(
     text,
     /updateBooleanPreference\(device\.id,\s*['"]hidden['"]/,
+  );
+});
+
+test("CameraSettings.vue renders a 4-button rotation chip row (replaces the legacy flip checkbox)", () => {
+  const text = read(settingsPath);
+  // Rotation is a 4-position counter (0° / 90° / 180° / 270°),
+  // not a boolean. The template must iterate the canonical angle
+  // list and route every click through ``updatePreference(id,
+  // 'rotate', value)`` so the serialised write chain stays the
+  // single persistence path.
+  assert.match(
+    text,
+    /ROTATE_OPTIONS\s*[:=]\s*[^;\n]*\[\s*0\s*,\s*90\s*,\s*180\s*,\s*270\s*\]/,
+    "CameraSettings must declare the canonical rotation angles in reading order",
+  );
+  assert.match(
+    text,
+    /v-for\s*=\s*["']angle\s+in\s+ROTATE_OPTIONS["']/,
+    "CameraSettings must render the rotation chips by iterating ROTATE_OPTIONS",
+  );
+  assert.match(
+    text,
+    /updateRotatePreference\s*\(\s*device\.id\s*,\s*angle\s*\)/,
+    "CameraSettings must wire each chip to updateRotatePreference(device.id, angle)",
+  );
+  // The chip-row buttons must label every angle with the degree
+  // sign so the operator can pick the right orientation at a
+  // glance.
+  assert.match(text, /\{\{\s*angle\s*\}\}°/);
+  // The legacy flip checkbox binding must not survive in the
+  // template (regression guard).
+  assert.doesNotMatch(
+    text,
+    /updateBooleanPreference\(device\.id,\s*['"]flip['"]/,
+    "CameraSettings must not still bind the removed 'flip' boolean",
   );
 });
 

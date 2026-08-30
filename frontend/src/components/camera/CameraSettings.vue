@@ -44,6 +44,14 @@ function preferenceFor(id: string) {
   return cameraPreferences.value[id] ?? defaultPreferenceForActive();
 }
 
+// Canonical rotation angles rendered as the chip-row selector.
+// Must match the backend ``ALLOWED_ROTATIONS`` frozenset and the
+// frontend store's ``ROTATE_VALUES`` whitelist. Kept as a single
+// ordered tuple so the chip row renders 0° → 90° → 180° → 270° in
+// reading order and the validator, the buttons, and the on-disk
+// schema stay in sync.
+const ROTATE_OPTIONS: readonly number[] = [0, 90, 180, 270];
+
 function updateCustomName(id: string, event: Event): void {
   const target = event.target as HTMLInputElement;
   store.updatePreference(id, "customName", target.value);
@@ -56,6 +64,10 @@ function updateBooleanPreference(
 ): void {
   const target = event.target as HTMLInputElement;
   store.updatePreference(id, key, target.checked);
+}
+
+function updateRotatePreference(id: string, value: number): void {
+  store.updatePreference(id, "rotate", value);
 }
 
 async function loadBackendSettings(): Promise<void> {
@@ -291,16 +303,36 @@ onMounted(() => {
               >
             </div>
 
-            <div class="flex flex-wrap gap-5 pb-2 lg:shrink-0">
-              <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-gray-200">
-                <input
-                  type="checkbox"
-                  :checked="preferenceFor(device.id).flip"
-                  class="h-5 w-5 rounded border-gray-600 bg-gray-900 text-blue-500 focus:ring-blue-500"
-                  @change="updateBooleanPreference(device.id, 'flip', $event)"
+            <div class="flex flex-wrap items-center gap-5 pb-2 lg:shrink-0">
+              <!-- Rotation chip row. Four buttons (0° / 90° / 180° /
+                   270°) render the canonical quarter-turn angles;
+                   the active one uses the page's blue accent so the
+                   current state is obvious at a glance. Each click
+                   routes through ``updatePreference(id, 'rotate',
+                   value)`` so the serialised write chain still
+                   serialises rapid clicks in order. -->
+              <div
+                class="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 p-1"
+                role="radiogroup"
+                :aria-label="`Rotate camera ${device.name}`"
+              >
+                <button
+                  v-for="angle in ROTATE_OPTIONS"
+                  :key="angle"
+                  type="button"
+                  role="radio"
+                  :aria-checked="preferenceFor(device.id).rotate === angle"
+                  :class="[
+                    'rounded px-2 py-1 text-xs font-semibold transition-colors',
+                    preferenceFor(device.id).rotate === angle
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'bg-gray-700 text-gray-200 hover:bg-gray-600',
+                  ]"
+                  @click="updateRotatePreference(device.id, angle)"
                 >
-                Flip
-              </label>
+                  {{ angle }}°
+                </button>
+              </div>
               <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-gray-200">
                 <input
                   type="checkbox"
