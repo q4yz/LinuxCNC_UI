@@ -1,15 +1,15 @@
 from dataclasses import dataclass
 
-from dtos.HalPin import HalPin
-from dtos.UnconnectedHalPin import UnconnectedHalPin
+from dtos.pins.HalPin import HalPin
+from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 
 
 @dataclass(frozen=True, slots=True)
-class SensorPin:
+class TemperaturePin:
     id: str
     actual_temperature: HalPin[float] = UnconnectedHalPin()
 
 @dataclass(frozen=True, slots=True)
-class SensorStateDto:
+class TemperatureStateDto:
     id: str
     actual_temperature: float = 0.0

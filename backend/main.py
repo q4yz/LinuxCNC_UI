@@ -36,7 +36,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.settings_store import SettingsStore
-from dtos.HalPin import HalPin
+from dtos.pins.HalPin import HalPin
 from hardware import HAS_HAL
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
@@ -56,9 +56,9 @@ from routers import (
     tools as tools_router,
 )
 from services.ServoThreadService import (
-    ServoThreadService,
     get_servo_thread_service,
 )
+from services.StateService import get_state_service
 from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
 from services.ConsoleLogger import get_console_logger
@@ -102,6 +102,7 @@ _MODULE_DOMAINS = [
 # the same import surface so the ``__main__`` block stays sane.
 tool_service = get_tools_service()
 sensor_service = get_temperature_service()
+state_service = get_state_service()
 
 
 @asynccontextmanager
@@ -335,6 +336,7 @@ if __name__ == "__main__":
 
     tool_service.preload_hal_pins()
     sensor_service.preload_hal_pins()
+    state_service.preload_hal_pins()
     HalPin.initialize_component()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")

@@ -427,3 +427,169 @@ class TestDeprecatedPassthroughs:
             ):
                 svc.is_linuxcnc_connected()
 
+
+# ---------------------------------------------------------------------- #
+# activate_estop() — critical E-Stop write path                           #
+# ---------------------------------------------------------------------- #
+
+
+class TestActivateEstop:
+    """Critical e-stop activation writes ``halui.estop.activate`` directly.
+
+    The contract:
+      * Two HAL writes: 0 then 1 (with a small sleep) so the rising
+        edge fires on every press, even after a reset cycle left the
+        pin HIGH.
+      * On HAL failure → ``HTTPException(503)`` (no NML fallback).
+      * ``time.sleep(0.002)`` is invoked exactly once between the
+        two writes — its purpose is to cross one servo period.
+
+    The tests patch ``write_hal_pin`` (which the service imports from
+    ``hardware.Connection``) so the test never touches real HAL.
+    """
+
+    ACTIVATE_PIN = "halui.estop.activate"
+
+    def test_activate_estop_writes_zero_then_one(self):
+        """Pin must be toggled 0 → 1 so halui sees a fresh edge."""
+        svc = StateService()
+        with patch.object(
+            services_StateService_mod, "write_hal_pin", return_value=True
+        ) as mock_write:
+            with patch.object(
+                services_StateService_mod.time, "sleep"
+            ) as mock_sleep:
+                svc.activate_estop()
+
+        # Two writes, in order: 0 first (clear leftover), 1 second (raise).
+        assert mock_write.call_count == 2
+        first = mock_write.call_args_list[0]
+        second = mock_write.call_args_list[1]
+        assert first.args == (self.ACTIVATE_PIN, 0)
+        assert second.args == (self.ACTIVATE_PIN, 1)
+
+        # Exactly one sleep between the two writes, tuned to one servo period.
+        assert mock_sleep.call_count == 1
+        sleep_arg = mock_sleep.call_args.args[0]
+        assert 0.001 <= sleep_arg <= 0.005
+
+    def test_activate_estop_raises_503_when_clear_write_fails(self):
+        """A failure on the very first HAL write must surface as
+        HTTP 503, not silently fall back to NML ``cmd.state``.
+        """
+        from fastapi import HTTPException
+
+        svc = StateService()
+
+        def fail_first(name, value):
+            # Fail only on the 0-write so the test catches the
+            # error before the 1-write attempt.
+            return not (name == self.ACTIVATE_PIN and value == 0)
+
+        with patch.object(
+            services_StateService_mod, "write_hal_pin", side_effect=fail_first
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                svc.activate_estop()
+
+        assert exc_info.value.status_code == 503
+        assert "halui.estop.activate" in str(exc_info.value.detail)
+
+    def test_activate_estop_raises_503_when_raise_write_fails(self):
+        """The 1-write failure case — same 503 contract."""
+        from fastapi import HTTPException
+
+        svc = StateService()
+
+        def fail_second(name, value):
+            return not (name == self.ACTIVATE_PIN and value == 1)
+
+        with patch.object(
+            services_StateService_mod, "write_hal_pin", side_effect=fail_second
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                svc.activate_estop()
+
+        assert exc_info.value.status_code == 503
+
+    def test_activate_estop_does_not_fall_back_to_nml(self):
+        """The whole point of this endpoint is to bypass NML. A
+        wiring fault must NEVER silently switch to the slow path.
+        """
+        svc = StateService()
+        with patch.object(
+            services_StateService_mod, "write_hal_pin", return_value=False
+        ):
+            with patch.object(
+                services_StateService_mod, "execute_sync_cmd"
+            ) as mock_sync:
+                with pytest.raises(Exception):
+                    svc.activate_estop()
+                assert mock_sync.call_count == 0, (
+                    "activate_estop must not call execute_sync_cmd on "
+                    "HAL failure — silently falling back to the slow "
+                    "NML path masks wiring faults."
+                )
+
+
+# Resolve ``services.StateService`` once for the fall-back assertion above.
+services_StateService_mod = importlib.import_module("services.StateService")
+
+
+# ---------------------------------------------------------------------- #
+# POST /estop/activate HTTP route                                         #
+# ---------------------------------------------------------------------- #
+
+
+class TestActivateEstopEndpoint:
+    """``POST /api/v1/modules/machine_state/estop/activate`` end-to-end."""
+
+    @staticmethod
+    def _build_app() -> FastAPI:
+        app = FastAPI()
+        app.include_router(state_router)
+        return app
+
+    def test_endpoint_calls_service_activate_estop(self):
+        with patch.object(
+            services_StateService_mod,
+            "get_state_service",
+            return_value=StateService(),
+        ):
+            with patch.object(
+                StateService, "activate_estop"
+            ) as mock_activate:
+                client = TestClient(self._build_app())
+                resp = client.post(
+                    "/api/v1/modules/machine_state/estop/activate"
+                )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "success"}
+        mock_activate.assert_called_once_with()
+
+    def test_endpoint_propagates_503_from_service(self):
+        """If the service raises 503 (HAL unreachable), the router
+        must propagate it so the frontend sees the wiring fault.
+        """
+        from fastapi import HTTPException
+
+        svc = StateService()
+
+        def boom():
+            raise HTTPException(
+                status_code=503,
+                detail="HAL unreachable",
+            )
+
+        with patch.object(
+            StateService, "activate_estop", side_effect=boom
+        ):
+            client = TestClient(self._build_app())
+            resp = client.post(
+                "/api/v1/modules/machine_state/estop/activate"
+            )
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "HAL unreachable"
+

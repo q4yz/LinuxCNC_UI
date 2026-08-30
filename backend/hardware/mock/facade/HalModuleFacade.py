@@ -36,6 +36,14 @@ class HalModuleFacade:
         """Mimics hal.set_p('pin_name', 'value')."""
         self._internal_hal.set_pin(pin_name, value)
 
+    # Alias to match the real linuxcnc hal module's ``setp`` name.
+    # The backend's ``Connection.write_hal_pin`` calls ``hal.setp``
+    # first and only falls back to ``hal.set_p`` if needed; the
+    # alias keeps the mock on the same call signature so the new
+    # E-Stop endpoint can drive the mock HAL without an extra
+    # compatibility shim.
+    setp = set_p
+
     def component(self, name: str):
         """Mimics hal.component('name') if your app creates userspace components."""
         return MockComponent(name, self._internal_hal)

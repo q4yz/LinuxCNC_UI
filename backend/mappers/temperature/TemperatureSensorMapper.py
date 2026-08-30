@@ -1,8 +1,8 @@
 from typing import Dict, Any
 
 from core.field_masking import ResponseTier, include_base
-from dtos.HalPin import HalDataType
-from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.HalPin import HalDataType
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from dtos.temperature.SensorDto import SensorPin, SensorStateDto
 from models.temperature_response import TemperatureStateResponse
 from mappers.tools.OptionalMappers import OptionalMappers

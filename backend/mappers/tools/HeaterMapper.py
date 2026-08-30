@@ -1,16 +1,16 @@
 from typing import Dict, Any, TYPE_CHECKING
 
 from core.field_masking import ResponseTier, include_base, include_static
-from dtos.HalPin import  HalDataType
-from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-from dtos.StaticHalPin import StaticHalPin
-from dtos.UnconnectedHalPin import UnconnectedHalPin
+from dtos.pins.HalPin import  HalDataType
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.StaticHalPin import StaticHalPin
+from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 from dtos.tools.HeaterDto import HeaterStateDTO, HeaterPins, HeaterSettingsDTO
 from mappers.tools.OptionalMappers import OptionalMappers
 from models.tools.HeaterModels import HeaterStateResponse
 
 if TYPE_CHECKING:
-    from routers.tools import HeaterCommand, HeaterCommandStateResponse
+    from routers.tools import HeaterCommand
 
 
 class HeaterMapper:

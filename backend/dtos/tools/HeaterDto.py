@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from dtos.HalPin import HalPin
-from dtos.UnconnectedHalPin import UnconnectedHalPin
+from dtos.pins.HalPin import HalPin
+from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 
 
 @dataclass(frozen=True, slots=True)

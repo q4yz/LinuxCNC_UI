@@ -297,6 +297,83 @@ filter chips both see it.
 
 ## 3. Backend discipline
 
+### 3.5 Use the `HalPin` subclass architecture instead of writing HAL from services
+
+**Symptom.** A first cut of the critical E-Stop endpoint reached
+for a generic `write_hal_pin()` helper in `hardware.Connection` and
+called it directly from `StateService.activate_estop()`. The helper
+did the right thing internally — `hal.setp` with a 2 ms sleep and a
+0 → 1 rising-edge dance — but the policy was inlined into the
+service: the service imported `time`, knew about servo periods, and
+owned the edge-generation sequence.
+
+**Root cause.** The codebase already has a typed HAL-pin OOP
+hierarchy under `backend/dtos/pins/`: `HalPin` (ABC, generic over
+`T`), `UnconnectedHalPin`, `StaticHalPin`,
+`ReadOnlyDynamicHalPin`, `ReadWriteDynamicHalPin`, plus domain
+wrappers like `EStopPin` (`backend/dtos/EStopDto.py`). Services
+hold `self._foo: HalPin = UnconnectedHalPin()` typed properties
+and swap in the real pin in `preload_hal_pins()`, called once at
+boot right before `HalPin.initialize_component()`. The pattern is
+already established by `ToolsService`, `TemperatureService`, and
+the per-tool / per-sensor mappers. Reaching for a free-floating
+helper bypasses it.
+
+**Fix.** Domain-specific behaviour — edge generation, debouncing,
+pulse shaping, safety interlocks — belongs in a small `HalPin`
+subclass. The service stays a thin facade over `set_value()` /
+`get_value()`:
+
+```python
+def __init__(self):
+    self._Estop: HalPin = UnconnectedHalPin()
+
+def preload_hal_pins(self):
+    self._Estop = EStopPin(
+        "estop",
+        ReadWriteDynamicHalPin("estop", HalDataType.BIT, ""),
+    )
+
+def activate_estop(self) -> None:
+    try:
+        self._Estop.set_value(True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"HAL unreachable — cannot set webgui.estop: {e}",
+        )
+```
+
+The `webgui.estop` pin is created automatically by
+`HalPin.initialize_component()` (component name comes from
+`HalPin._component_name = "webgui"`) and routed to
+`halui.estop.activate` via the project's hand-written HAL file.
+The rising-edge dance lives inside `EStopPin`, never inside the
+HTTP service. No `time.sleep` in a service file, no `hal.setp` in
+a service file, no edge policy leaking into HTTP code.
+
+**Bootstrap order matters.** `preload_hal_pins()` only *queues*
+pins in `HalPin._pending_pins`; the actual HAL pins are created
+when `HalPin.initialize_component()` is called. The boot sequence
+in `backend/main.py` must therefore run every
+`*.preload_hal_pins()` before the single
+`HalPin.initialize_component()` call. Reversing the order — or
+splitting `initialize_component()` across multiple call sites —
+leaves the HAL component locked with zero pins, and the service's
+typed `HalPin` properties silently stay `UnconnectedHalPin()` for
+the lifetime of the process.
+
+**Tripwire.** A backend service file must not call `hal.setp`,
+`hal.set_p`, or `Connection.write_hal_pin` directly. All HAL writes
+must go through a `HalPin` subclass property assigned by a
+`preload_hal_pins()` method. Add a guard that scans every file
+under `backend/services/` (excluding `backend/dtos/pins/`) for
+those names and fails the build / merge if they appear outside
+`preload_hal_pins()` or `initialize_component()`. The check sits
+next to the "no endpoints in `main.py`" guard (§ 3.1) and the
+"hardware calls go through the singleton `connection`" guard (§
+3.2); both reject the same anti-pattern from a different angle.
+
 ### 3.1 No endpoints in `main.py`
 
 **Symptom.** A refactor of the WebSocket telemetry loop broke

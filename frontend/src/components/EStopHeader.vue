@@ -33,7 +33,13 @@ const { isEstop } = storeToRefs(store)
 const { systemState } = storeToRefs(facade)
 
 async function pressEStop() {
-  await store.toggleEstop()
+  // Critical path: always engage. No state check, no toggle — the
+  // header button is the safety-critical control surface and must
+  // remain pressable at all times, including when the UI is out of
+  // sync with the machine. The backend fails hard (503) if the HAL
+  // write fails, so a wiring fault surfaces immediately rather than
+  // silently falling back to the slower NML round-trip.
+  await store.activateEstop()
 }
 
 // Color bucket per systemState. Lifted out of the template so a

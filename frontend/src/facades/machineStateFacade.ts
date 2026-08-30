@@ -36,6 +36,29 @@ async function setState(state: string): Promise<CommandResult> {
   );
 }
 
+/**
+ * Critical e-stop activation.
+ *
+ * Drives ``halui.estop.activate`` directly via HAL, bypassing the NML
+ * command channel for the fastest possible operator reaction (~1 ms
+ * servo-thread latency instead of the ~100-300 ms NML round-trip).
+ *
+ * Used exclusively by the global E-Stop header button
+ * (``EStopHeader.vue``). The state bar's smaller E-STOP button still
+ * calls :func:`setState` so the two affordances keep distinct
+ * contracts.
+ *
+ * The backend fails hard: any HAL write failure surfaces as a
+ * ``CommandResult.failure`` (HTTP 503) without falling back to the
+ * slow NML path.
+ */
+async function activateEstop(): Promise<CommandResult> {
+  return _commandResultFrom(
+    ModulesMachineStateService.activateEstop(),
+    "estop:activate",
+  );
+}
+
 async function setMode(mode: 1 | 2 | 3 | 4): Promise<CommandResult> {
   // The generated client types ``_ModeCommand.mode`` as ``string``
   // (the backend accepts "manual" / "auto" / "mdi") while this
@@ -74,6 +97,7 @@ export const machineStateFacade = Object.freeze({
   setMode,
   sendMdi,
   setHomeAxis,
+  activateEstop,
 });
 
 export default machineStateFacade;

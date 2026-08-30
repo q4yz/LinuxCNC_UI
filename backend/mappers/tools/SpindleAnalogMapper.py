@@ -1,8 +1,8 @@
 from typing import Dict, Any
 
-from dtos.HalPin import  HalDataType
-from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-from dtos.StaticHalPin import StaticHalPin
+from dtos.pins.HalPin import  HalDataType
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.StaticHalPin import StaticHalPin
 from dtos.tools import SpindleAnalogPins
 from dtos.tools.SpindleAnalogDto import SpindleAnalogStateDTO
 from mappers.tools.OptionalMappers import OptionalMappers

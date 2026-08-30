@@ -14,16 +14,22 @@ facade does not touch the router.
 from __future__ import annotations
 
 import logging
+import time
 import warnings
 from enum import Enum
 from typing import List, Optional, Any, Tuple
 
+from fastapi import HTTPException
 from pydantic import BaseModel
 
+from dtos.EStopDto import EStopPin
 from dtos.LinuxCNCError import now_iso
+from dtos.pins.HalPin import HalDataType, HalPin
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
     get_error_channel
-from hardware.Connection import read_error_history
+from hardware.Connection import read_error_history, write_hal_pin
 
 logger = logging.getLogger("backend.services.StateService")
 
@@ -87,6 +93,13 @@ class StateService:
         "mdi": "MODE_MDI",
     }
 
+    def __init__(self):
+        self._Estop: HalPin = UnconnectedHalPin()
+
+    def preload_hal_pins(self):
+        self._Estop = EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT,""))
+        pass
+
     @staticmethod
     def _resolve(table: dict, name: str) -> int:
         """Translate an operator-facing name to its NML integer."""
@@ -138,6 +151,22 @@ class StateService:
     def trigger_estop(self) -> None:
         """Forces an immediate emergency stop."""
         execute_sync_cmd("state", 3.0, getattr(linuxcnc, "STATE_ESTOP", 1))
+
+    def activate_estop(self) -> None:
+
+        """Critical e-stop activation — drives ``webgui.estop`` directly.
+
+        We simply assert the custom software pin to True. The HAL layer is
+        responsible for routing this to `halui.estop.activate` and generating
+        the required rising edge (pulse) to ensure halui registers the command.
+        """
+        try:
+            self._Estop.set_value(True)
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"HAL unreachable — cannot set webgui.estop: {e}"
+            )
 
     def get_state(self) -> MachineState:
         """Translate the linuxcnc stat triple into a clean MachineState."""
@@ -296,6 +325,8 @@ class StateService:
     def get_error_history(self) -> List[str]:
         """Fetch the full error history buffer."""
         return read_error_history()
+
+
 
 
 _state_service: Optional[StateService] = None

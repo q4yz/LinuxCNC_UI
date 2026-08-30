@@ -9,6 +9,7 @@ import { ProgramFilesService } from '../../generated/api/services/ProgramFilesSe
 import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
+import {MacroButton} from "../ui";
 
 // --- Interfaces & Types ---
 interface MachineLimits {
@@ -868,6 +869,32 @@ const animate = () => {
         </span>
       </div>
     </div>
+
+        <div class="absolute bottom-4 left-4 flex gap-2 pointer-events-auto">
+      <MacroButton
+        v-if="buttonsBySlot?.['viewer.1']"
+        :descriptor="buttonsBySlot['viewer.1']"
+        variant="secondary"
+        size="sm"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+      />
+      <MacroButton
+        v-if="buttonsBySlot?.['viewer.2']"
+        :descriptor="buttonsBySlot['viewer.2']"
+        variant="secondary"
+        size="sm"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+      />
+      <MacroButton
+        v-if="buttonsBySlot?.['viewer.3']"
+        :descriptor="buttonsBySlot['viewer.3']"
+        variant="secondary"
+        size="sm"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+      />
+    </div>
+
+
   </div>
 </template>
 

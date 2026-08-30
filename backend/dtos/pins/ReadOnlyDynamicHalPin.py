@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, TypeVar
 
-from dtos.HalPin import HalPin, HalDataType
+from dtos.pins.HalPin import HalPin, HalDataType
 from hardware import hal
 from hardware.Connection import read_hal_pin
 

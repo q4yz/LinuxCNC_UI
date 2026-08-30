@@ -150,7 +150,7 @@ Three flavours of DTO live in this folder:
 - DTOs must not import `backend.hardware.*`. The service translates
   HAL pins into DTOs via a mapper.
 - HAL pin handles are themselves DTOs — see
-  [`backend/dtos/HalPin.py`](../../backend/dtos/HalPin.py) and the
+  [`backend/dtos/HalPin.py`](../../backend/dtos/pins/HalPin.py) and the
   concrete subclasses `StaticHalPin`, `ReadOnlyDynamicHalPin`,
   `ReadWriteDynamicHalPin`, `UnconnectedHalPin`.
 
@@ -558,15 +558,15 @@ deprecated temperature router, `503` for offline hardware,
 
 ### 6.2 HAL pin handles
 
-[`backend/dtos/HalPin.py`](../../backend/dtos/HalPin.py) is the
+[`backend/dtos/HalPin.py`](../../backend/dtos/pins/HalPin.py) is the
 abstract base. The concrete subclasses live next to it:
 
 | Subclass | Mutability | Used for |
 |----------|------------|----------|
-| [`StaticHalPin`](../../backend/dtos/StaticHalPin.py) | read-only | Configuration pins (`min_rpm`, `min_temp`) |
-| [`ReadOnlyDynamicHalPin`](../../backend/dtos/ReadOnlyDynamicHalPin.py) | read-only | Telemetry pins (`actual_rpm`, `actual_temperature`) |
-| [`ReadWriteDynamicHalPin`](../../backend/dtos/ReadWriteDynamicHalPin.py) | read/write | Control pins (`override`, `absolute_master_override`) |
-| [`UnconnectedHalPin`](../../backend/dtos/UnconnectedHalPin.py) | n/a | Default value when a HAL pin is not declared |
+| [`StaticHalPin`](../../backend/dtos/pins/StaticHalPin.py) | read-only | Configuration pins (`min_rpm`, `min_temp`) |
+| [`ReadOnlyDynamicHalPin`](../../backend/dtos/pins/ReadOnlyDynamicHalPin.py) | read-only | Telemetry pins (`actual_rpm`, `actual_temperature`) |
+| [`ReadWriteDynamicHalPin`](../../backend/dtos/pins/ReadWriteDynamicHalPin.py) | read/write | Control pins (`override`, `absolute_master_override`) |
+| [`UnconnectedHalPin`](../../backend/dtos/pins/UnconnectedHalPin.py) | n/a | Default value when a HAL pin is not declared |
 
 Pins are bundled by `*Mapper.from_dict_to_*Pins(...)` at boot, then
 read by `*Mapper.to_state_dto(...)` on every snapshot

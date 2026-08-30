@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, TypeVar
 
-from dtos.HalPin import HalPin
+from dtos.pins.HalPin import HalPin
 
 T = TypeVar('T')
 

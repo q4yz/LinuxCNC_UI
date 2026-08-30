@@ -163,6 +163,29 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         return result;
     }
 
+    /**
+     * Critical e-stop activation. Always-engage — no state check, no
+     * toggle. Drives ``halui.estop.activate`` directly via HAL so the
+     * servo thread reacts within one period (~1 ms) instead of the
+     * multi-stage NML round-trip that ``toggleEstop`` takes.
+     *
+     * The button that calls this action (``EStopHeader.vue``) stays
+     * pressable at all times, including when the UI is out of sync
+     * with the machine (e.g., a hardware reset cleared ESTOP but the
+     * WebSocket telemetry hasn't caught up yet). Idempotent: pressing
+     * while already engaged is a no-op semantically.
+     */
+    async function activateEstop(): Promise<CommandResult> {
+        const consoleStore = useConsoleStore();
+        const result = await machineStateFacade.activateEstop();
+        if (result.failed) {
+            reportCommandFailure("activate ESTOP", result);
+        } else {
+            consoleStore.warning("E-STOP Engaged");
+        }
+        return result;
+    }
+
     async function togglePower(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const isOn = status.value.isMachineOn;
@@ -412,6 +435,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         printProgress,
         refreshSettings,
         toggleEstop,
+        activateEstop,
         togglePower,
         jog,
         jogContinuous,

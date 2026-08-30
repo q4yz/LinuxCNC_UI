@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from dtos.HalPin import HalPin
+from dtos.pins.HalPin import HalPin
 
 
 @dataclass(frozen=True, slots=True)

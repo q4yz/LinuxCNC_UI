@@ -210,4 +210,36 @@ def _run_mdi_endpoint(cmd: _MdiCommand) -> _StatusResponse:
     return _StatusResponse(status="success")
 
 
+@router.post(
+    "/estop/activate",
+    summary="Engage E-Stop",
+    description=(
+        "Critical e-stop activation. Writes directly to "
+        "``halui.estop.activate`` so the servo thread reacts within "
+        "one period (~1 ms) instead of the multi-stage NML round-trip "
+        "that ``POST /state`` takes. Always-engage: idempotent on "
+        "repeat presses; pressing the button while ESTOP is already "
+        "active is a no-op semantically."
+    ),
+    operation_id="activateEstop",
+    response_model=_StatusResponse,
+)
+def _activate_estop_endpoint() -> _StatusResponse:
+    """Drive ``halui.estop.activate`` directly.
+
+    Used only by the global E-Stop header button (``EStopHeader.vue``).
+    The state bar's smaller E-STOP button still goes through
+    ``POST /state`` via :func:`_set_state_endpoint` so the two
+    affordances keep distinct behaviour contracts.
+    """
+    try:
+        get_state_service().activate_estop()
+    except HTTPException:
+        # ``activate_estop`` raises 503 on HAL write failure; let it
+        # propagate so the operator sees the wiring fault instead of
+        # a misleading 200 OK.
+        raise
+    return _StatusResponse(status="success")
+
+
 __all__ = ["router"]

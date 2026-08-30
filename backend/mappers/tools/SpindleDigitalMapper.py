@@ -1,10 +1,10 @@
 from typing import Dict, Any
 
 from core.field_masking import ResponseTier, include_base, include_static
-from dtos.HalPin import HalDataType
-from dtos.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
-from dtos.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-from dtos.StaticHalPin import StaticHalPin
+from dtos.pins.HalPin import HalDataType
+from dtos.pins.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.StaticHalPin import StaticHalPin
 from dtos.tools import SpindleDigitalPins, SpindleDigitalStateDTO
 from dtos.tools.SpindleDigitalDto import DirectionStateType, SpindleDigitalSettingsDTO
 from mappers.tools.OptionalMappers import OptionalMappers

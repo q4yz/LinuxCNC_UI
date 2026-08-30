@@ -15,8 +15,13 @@
 //     ``position: sticky; top: 0`` and a high z-index so it cannot
 //     be hidden by scrolling or overlapping elements.
 //   * The button delegates to the machine store's
-//     ``toggleEstop`` action (the canonical API dispatcher for
-//     ``POST /api/v1/modules/machine/state``).
+//     ``activateEstop`` action — the critical path that drives
+//     ``halui.estop.activate`` directly via HAL, bypassing NML.
+//     The state bar's smaller E-STOP button keeps using
+//     ``toggleEstop`` (see ``PowerOn.vue``).
+//   * The button is unconditionally pressable — no state check
+//     gates the click handler so an out-of-sync UI never disables
+//     the safety-critical control.
 //   * The button uses standard E-Stop iconography (large, red,
 //     prominent, with a STOP label).
 
@@ -76,12 +81,16 @@ test("EStopHeader destructures state with storeToRefs to preserve reactivity", (
   assert.match(text, /\{\s*isEstop\s*\}\s*=\s*storeToRefs/);
 });
 
-test("EStopHeader button delegates to the machine store's toggleEstop action", () => {
-  // ``toggleEstop`` is the canonical action that posts
-  // ``{state: 'estop'}`` or ``{state: 'estop_reset'}`` to the
-  // backend machine router. The header must not bypass it.
+test("EStopHeader button delegates to the machine store's activateEstop action", () => {
+  // ``activateEstop`` is the critical-path action that posts to
+  // ``/api/v1/modules/machine_state/estop/activate``, driving
+  // ``halui.estop.activate`` directly so the servo thread reacts
+  // within one period (~1 ms). The header must NOT delegate to the
+  // generic ``toggleEstop`` action — that one goes through the
+  // slower NML ``cmd.state`` round-trip and is reserved for the
+  // state bar's smaller E-STOP button.
   const text = readText(headerPath);
-  assert.match(text, /store\.toggleEstop\(\s*\)/);
+  assert.match(text, /store\.activateEstop\(\s*\)/);
   // And the button must wire the click handler to that action.
   assert.match(
     text,
@@ -91,6 +100,48 @@ test("EStopHeader button delegates to the machine store's toggleEstop action", (
   // entry point — guard against accidental direct bindings that
   // would skip the store action.
   assert.match(text, /async\s+function\s+pressEStop\s*\(\s*\)/);
+});
+
+test("EStopHeader button does not call toggleEstop (state-bar path only)", () => {
+  // The header is the critical-path control surface; the state
+  // bar's smaller E-STOP button (PowerOn.vue) is the only caller
+  // of ``toggleEstop``. Asserting this here prevents a future
+  // refactor from accidentally routing the header back through
+  // the slow NML path.
+  const text = readText(headerPath);
+  assert.doesNotMatch(text, /store\.toggleEstop\s*\(/);
+});
+
+test("EStopHeader button has no state-gated disable / no state-gated branch", () => {
+  // The user requirement: the button must remain pressable at all
+  // times, including when the UI is out of sync with the machine.
+  // A ``:disabled`` on the button or a state branch inside the
+  // click handler would defeat that contract. We allow the visual
+  // ``isEstop`` highlight (the pressed-in look) — only the click
+  // handler must remain unconditional.
+  const text = readText(headerPath);
+  // The button must not be disabled when ESTOP is active.
+  assert.doesNotMatch(
+    text,
+    /:\s*disabled\s*=.*isEstop/,
+  );
+  // The click handler ``pressEStop`` must not branch on ``isEstop``.
+  // Extract the function body and assert it has no ternary on
+  // ``isEstop`` (the visual :class= ternary outside the handler
+  // is allowed and is what makes the pressed-in look work).
+  const handlerMatch = text.match(
+    /async\s+function\s+pressEStop\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/,
+  );
+  assert.ok(
+    handlerMatch,
+    "EStopHeader must define an async function pressEStop()",
+  );
+  const handlerBody = handlerMatch[1];
+  assert.doesNotMatch(
+    handlerBody,
+    /\bisEstop\b/,
+    "pressEStop must not reference isEstop — the button must always engage",
+  );
 });
 
 test("EStopHeader pins to the top-right of the viewport", () => {

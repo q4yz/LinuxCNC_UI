@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from dtos.HalPin import HalPin
-from dtos.UnconnectedHalPin import UnconnectedHalPin
+from dtos.pins.HalPin import HalPin
+from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 
 
 class DirectionStateType(str, Enum):
