@@ -48,7 +48,7 @@ async function onCompile() {
           >
             <option disabled value="">Select a compiler...</option>
             <option v-for="compiler in compilers" :key="compiler.id" :value="compiler.id">
-              {{ compiler.title }} <span class="text-gray-500">({{ compiler.id }})</span>
+              {{ compiler.title }} ({{ compiler.id }})
             </option>
           </select>
           <p

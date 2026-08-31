@@ -54,7 +54,7 @@ export class ServoThreadService {
         const consoleStore = useConsoleStore();
 
         store.setConnectionStatus('connecting');
-        this.ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
+        this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry`);
 
         this.ws.onopen = () => {
             store.setConnectionStatus('connected');

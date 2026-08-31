@@ -71,6 +71,65 @@ Open `http://localhost:5173` in your browser. The Vite proxy automatically route
 
 *For detailed installation instructions, see the individual READMEs in the `backend/` and `frontend/` directories.*
 
+## Local HTTPS with mkcert (real PWA install on Android)
+
+Chrome will only install a true standalone PWA from an origin it considers trustworthy. Over plain HTTP — even with the `chrome://flags/#unsafely-treat-insecure-origin-as-secure` flag set — Chrome registers the Service Worker but still adds a bookmark shortcut to the home screen instead of a real WebAPK, and tapping the icon opens Chrome in normal browser mode. The fix is local HTTPS that the device trusts. `mkcert` is the cleanest way to do this on a LAN with no internet round-trip.
+
+### One-time setup on the dev / CNC machine
+
+```bash
+# Windows (one of):
+choco install mkcert
+# scoop install mkcert
+# manual: download the Windows release from https://github.com/FiloSottile/mkcert/releases
+
+mkcert -install        # admin required once per machine; installs the local CA
+```
+
+### Per-project cert generation
+
+```bash
+cd frontend
+# Replace the IPs with the ones your tablet will actually use. At minimum
+# include 'localhost' so desktop Chrome is happy, plus every LAN IP the
+# host binds (check `ipconfig` / `ifconfig`).
+mkcert localhost 10.0.0.109 192.168.56.1
+```
+
+This creates `frontend/.cert/localhost.pem` and `frontend/.cert/localhost-key.pem` (gitignored). Vite reads them automatically.
+
+### One-time setup on each Android device
+
+```bash
+mkcert -CAROOT     # prints the directory that contains rootCA.pem
+```
+
+Transfer `rootCA.pem` from that directory to the tablet (USB, email, cloud, anything). On the tablet:
+
+1. **Settings → Security → Encryption & credentials → Install a certificate → CA certificate**
+2. Pick `rootCA.pem`, name it "mkcert dev CA", confirm.
+3. Restart Chrome (the trust store only refreshes on relaunch).
+
+### Build & serve
+
+```bash
+cd frontend
+npm run build
+npm run preview:lan        # serves on https://0.0.0.0:4173
+```
+
+### Install on the tablet
+
+Open `https://<lan-ip>:4173` in Chrome on the tablet (no `chrome://flags` needed anymore). The address bar will show a padlock. Tap ⋮ → **Install app**. The home-screen icon will now open as a real standalone PWA — no URL bar, no tabs.
+
+### When things change
+
+- **New LAN IP / Wi-Fi network** — re-run `mkcert localhost <new-ip>` and rebuild.
+- **New Android device** — install `rootCA.pem` on it (above).
+- **Different dev machine** — run `mkcert -install` there, copy `rootCA.pem` from its `mkcert -CAROOT` dir to your existing devices so they keep trusting the certs.
+
+> The mkcert root CA must never be committed — anyone with the file can mint a cert your devices will trust. The `frontend/.cert/` directory is already in `.gitignore`.
+
 ## Architecture
 
 The monorepo layout:

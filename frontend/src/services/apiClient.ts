@@ -13,12 +13,12 @@ const configuredBase = (() => {
   if (typeof window === 'undefined') {
     return '';
   }
-  const { protocol, hostname } = window.location;
-  // Vite dev server proxies `/api` to the FastAPI backend, so leaving BASE empty in
-  // dev keeps everything on the same origin and avoids CORS. In any other
-  // deployment, fall back to the explicit backend origin on port 8000.
-  const isViteDevHost = hostname === 'localhost' || hostname === '127.0.0.1';
-  if (isViteDevHost) {
+  const { protocol, hostname, port } = window.location;
+  // Vite dev (5173) and vite preview (4173) both proxy `/api` and `/ws`
+  // to the FastAPI backend on localhost:8000, so leaving BASE empty keeps
+  // everything on the same origin and avoids CORS / mixed-content.
+  const isViteServed = port === '5173' || port === '4173';
+  if (isViteServed) {
     return '';
   }
   return `${protocol}//${hostname}:8000`;

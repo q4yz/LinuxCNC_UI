@@ -4,6 +4,7 @@ import router from './router'
 import './style.css'
 import App from './App.vue'
 import './services/apiClient' // configures the generated OpenAPI client's BASE URL
+import { registerSW } from 'virtual:pwa-register'
 
 // ECharts imports
 import ECharts from 'vue-echarts'
@@ -30,3 +31,7 @@ app.use(pinia)
 app.use(router)
 
 app.mount('#app')
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  registerSW({ immediate: true })
+}
