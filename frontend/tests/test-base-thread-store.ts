@@ -75,23 +75,32 @@ test("store exposes individual refs per snapshot stream", () => {
   assert.match(text, /\btoolList:\s*EMPTY_TOOLS\b/);
 });
 
-test("start schedules a single setInterval; stop clears it", () => {
-  // The store owns exactly one polling interval. The dashboard's
-  // single round-trip-per-second contract is the whole point of
-  // the snapshot endpoint — adding a second ``setInterval``
-  // would silently regress that.
+test("start schedules a single setInterval for the snapshot poll; stop clears it", () => {
+  // The store owns exactly one snapshot-polling interval. The
+  // dashboard's single round-trip-per-second contract is the
+  // whole point of the snapshot endpoint — adding a second
+  // ``setInterval`` driving ``refresh()`` would silently regress
+  // that. A separate watchdog ticker is allowed (it observes
+  // timing, it does not call ``refresh()``); this test pins the
+  // snapshot poll specifically.
   const text = readStore();
   assert.match(text, /setInterval\s*\(/);
   assert.match(text, /clearInterval\s*\(/);
-  // Only one setInterval / clearInterval pair — start fires once,
-  // stop fires once.
-  const setIntervalCount = (text.match(/setInterval\s*\(/g) || []).length;
-  assert.equal(setIntervalCount, 1, "store must own exactly one setInterval");
-  const clearIntervalCount = (text.match(/clearInterval\s*\(/g) || []).length;
+  // Exactly one ``setInterval`` whose body calls ``refresh()`` —
+  // start() schedules the poll once, stop() clears it once.
+  const snapPollMatches = text.match(/setInterval\(\s*\(\)\s*=>\s*\{[\s\S]{0,40}refresh\(\)/g) || [];
   assert.equal(
-    clearIntervalCount,
+    snapPollMatches.length,
     1,
-    "store must own exactly one clearInterval",
+    "store must own exactly one setInterval driving refresh() (the snapshot poll)",
+  );
+  // Same anchor on the clear side: only the snapshot poll's
+  // handle gets cleared via ``clearInterval(pollHandle)``.
+  const snapPollClearMatches = text.match(/clearInterval\(\s*pollHandle\b/g) || [];
+  assert.equal(
+    snapPollClearMatches.length,
+    1,
+    "store must own exactly one clearInterval(pollHandle) (the snapshot poll)",
   );
 });
 

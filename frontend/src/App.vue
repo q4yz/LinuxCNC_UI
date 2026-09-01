@@ -7,6 +7,7 @@ import { useBaseThreadStore } from './stores/baseThread'
 import { servoThreadService } from './facades/servoThreadFacade'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
+import PendingSnapshotDialog from './components/PendingSnapshotDialog.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import EStopHeader from './components/EStopHeader.vue'
 
@@ -55,6 +56,7 @@ servoThreadService.connect()
 
     <!-- Global Overlays -->
     <ModalConfirmHost />
+    <PendingSnapshotDialog />
     <ToastContainer />
 
   </div>

@@ -14,7 +14,7 @@ cd "$PROJECT_DIR/backend"
 source venv/bin/activate
 
 # Start uvicorn in the background
-uvicorn main:app --host 127.0.0.1 --port 8000 &
+uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 
 # CRITICAL: Ensure the backend is killed when this script exits, even if npm build fails
