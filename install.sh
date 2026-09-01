@@ -43,7 +43,7 @@ fi
 
 # --- Temporary Backend Spin-up ---
 echo -e "\n---> Temporarily starting backend to generate API schema..."
-sudo -u "$REAL_USER" ./venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 &
+sudo -u "$REAL_USER" ./venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 
 echo "Waiting for backend to expose OpenAPI schema..."
@@ -62,8 +62,8 @@ sudo -u "$REAL_USER" npm run build
 
 # --- CRITICAL: Clean up temporary Backend ---
 echo "Tearing down temporary backend..."
-kill $BACKEND_PID 2>/dev/null
-wait $BACKEND_PID 2>/dev/null || true
+kill $BACKEND_PID >/dev/null 2>&1
+wait $BACKEND_PID >/dev/null 2>&1 || true
 # --------------------------------------------
 
 # 5. Set up mkcert and the Root CA
@@ -71,7 +71,7 @@ echo -e "\n---> Configuring local Certificate Authority..."
 sudo -u "$REAL_USER" mkcert -install
 
 # Locate the generated Root CA
-CA_ROOT=$(sudo -u "$REAL_USER" mkcert -CARoot)/rootCA.pem
+CA_ROOT="/home/$REAL_USER/.local/share/mkcert/rootCA.pem"
 
 echo -e "\n---> Copying Root CA for the Vue frontend..."
 # Copy it directly into the built Vue files so your popup can link to "/cnc-root.crt"
@@ -108,7 +108,14 @@ systemctl daemon-reload
 systemctl enable ustreamer
 systemctl restart ustreamer
 
-# 8. Configure Nginx
+# 8. Fix Directory Permissions for Nginx
+echo -e "\n---> Fixing directory permissions so Nginx can serve files..."
+# Nginx (www-data user) needs traverse (execute) permissions up the entire directory tree
+chmod 755 "/home/$REAL_USER"
+chmod 755 "$PROJECT_DIR"
+chmod -R 755 "$UI_DIST_DIR"
+
+# 9. Configure Nginx
 echo -e "\n---> Configuring Nginx..."
 NGINX_CONF="/etc/nginx/sites-available/linuxcnc-ui"
 
@@ -149,7 +156,7 @@ server {
 
 # Application Server (Port 8080 - HTTPS)
 server {
-    listen 8080 ssl;
+    listen 443 ssl;
     server_name _;
 
     ssl_certificate $CERT_DIR/localhost.pem;
@@ -181,9 +188,7 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 systemctl restart nginx
 
-
-
-# 9. Configure sudoers for passwordless Nginx reload
+# 10. Configure sudoers for passwordless Nginx reload
 echo -e "\n---> Configuring passwordless Nginx reloads for $REAL_USER..."
 SUDOERS_FILE="/etc/sudoers.d/linuxcnc-nginx-reload"
 
@@ -193,10 +198,12 @@ echo "$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx" > "$SUDOERS_FI
 # Sudoers files must have strict permissions or the system will ignore them
 chmod 0440 "$SUDOERS_FILE"
 
+# Grab just the first IP address for a clean display output
+DISPLAY_IP=$(echo $ALL_IPS | awk '{print $1}')
 
 echo "=========================================="
 echo " Installation Complete!"
 echo " "
-echo " App (HTTP Popup):   http://$CURRENT_IP"
-echo " App (HTTPS Secure): https://$CURRENT_IP:8080"
+echo " App (HTTP Popup):   http://$DISPLAY_IP"
+echo " App (HTTPS Secure): https://$DISPLAY_IP"
 echo "=========================================="

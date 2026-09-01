@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const certDir = fileURLToPath(new URL('./.cert', import.meta.url))
-
+const USE_HTTPS = false;
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -49,10 +49,10 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    https: {
-      key: `${certDir}/localhost-key.pem`,
-      cert: `${certDir}/localhost.pem`,
-    },
+    https: USE_HTTPS ? {
+    key: `${certDir}/localhost-key.pem`,
+    cert: `${certDir}/localhost.pem`,
+  } : false,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

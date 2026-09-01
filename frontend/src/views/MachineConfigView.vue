@@ -40,8 +40,7 @@ onMounted(() => {
 <template>
   <div class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
     <section class="space-y-6 xl:col-span-4">
-      <UpdateManager />
-      <DebugPanel />
+
     </section>
 
     <section class="space-y-6 xl:col-span-8">
@@ -56,24 +55,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <ActivePanel />
 
-      <!-- Macros & NGC section. The macros module owns its own
-           CRUD via ``useMacrosStore()``; the panel mounts that
-           store on first use so an unrelated Machine-Config user
-           pays no startup cost. Shared with the machineconfig
-           surface because that is where operators usually discover
-           the macros UI. -->
-      <MacroManagerPanel />
-
-      <!-- M-codes sub-panel. Lives in the same module (shared
-           Pinia store) but operates on the dedicated
-           ``machine_config/m_codes/`` root. The Edit button
-           deep-links into the universal editor with the bare
-           ``M<num>`` token so the same CodeMirror surface that
-           handles profiles and ``.macro`` files also handles
-           M-codes. -->
-      <McodeManagerPanel />
     </section>
   </div>
 </template>

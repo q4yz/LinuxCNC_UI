@@ -54,7 +54,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-4">
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
         <span class="mr-2">⚙️</span> System Update
