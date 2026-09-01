@@ -1,0 +1,57 @@
+{
+  "default_jog_velocity": 500.0,
+  "estop_disables_power": true,
+  "jog_watchdog_timeout_ms": 500,
+  "keepalive_interval_ms": 250,
+  "macroButtons": [
+    {
+      "enabled": true,
+      "icon": "",
+      "macroKind": "ngc",
+      "macroName": "zero_x",
+      "name": "zero",
+      "slot": "dro.x"
+    },
+    {
+      "enabled": true,
+      "icon": "",
+      "macroKind": "ngc",
+      "macroName": "zero_y",
+      "name": "zero",
+      "slot": "dro.y"
+    },
+    {
+      "enabled": true,
+      "icon": "",
+      "macroKind": "ngc",
+      "macroName": "z_touch",
+      "name": "touch",
+      "slot": "dro.z"
+    },
+    {
+      "enabled": true,
+      "icon": "",
+      "macroKind": "ngc",
+      "macroName": "z_touch",
+      "name": "touch",
+      "slot": "viewer.1"
+    },
+    {
+      "enabled": false,
+      "icon": "",
+      "macroKind": "macro",
+      "macroName": "",
+      "name": "",
+      "slot": "viewer.2"
+    },
+    {
+      "enabled": false,
+      "icon": "",
+      "macroKind": "macro",
+      "macroName": "",
+      "name": "",
+      "slot": "viewer.3"
+    }
+  ],
+  "macro_buttons": []
+}

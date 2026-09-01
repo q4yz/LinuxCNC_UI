@@ -6,9 +6,6 @@ import { storeToRefs } from "pinia";
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
 import type { CameraDevice, CameraPreference } from "../../stores/cameraTypes";
 
-const MAX_RETRY_DELAY_MS = 5_000;
-const STREAM_CONNECT_DELAY_MS = 300;
-
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.
 const logger = {
@@ -58,62 +55,101 @@ const cameraTransform: ComputedRef<string> = computed(() => {
   return parts.join(" ");
 });
 
-// --- Hardware Race Condition Fix ---
+// ─────────────────────────────────────────────────────────────────
+// Stream lifecycle
+// ─────────────────────────────────────────────────────────────────
+//
+// On plain HTTP the browser caps the page at 6 concurrent HTTP/1.1
+// connections per origin. The MJPEG ``<img>`` holds one slot for its
+// whole lifetime, the telemetry WebSocket another — so the switch
+// sequence below is written to **release the old stream first and
+// wait out a grace period before opening the next one**, giving the
+// browser time to reclaim the old slot instead of queueing the new
+// stream (and every 1 Hz poll behind it) into a full pool — the
+// "all pending" freeze.
+//
+// Small single-purpose methods keep that ordering explicit:
+//
+//   releaseStream()            → drop the <img> (cancel socket)
+//   scheduleStreamOpen(delay)  → grace timer, then openStream()
+//   openStream()               → set the cache-busted <img> src
+//   handleStreamError()        → backoff bookkeeping + diagnostic probe
+
+const MAX_RETRY_DELAY_MS = 15_000;
+const STREAM_RETRY_BASE_MS = 2_000;
+const STREAM_CONNECT_DELAY_MS = 1_200;
+
 const streamUrl: Ref<string> = ref("");
 let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
 
-const startStream = (): void => {
-  if (streamTimer) clearTimeout(streamTimer);
-
-  if (!activeCameraId.value) {
-    streamUrl.value = "";
-    return;
+/** Drop the current ``<img>`` — the browser cancels the socket. */
+function releaseStream(): void {
+  if (streamTimer) {
+    clearTimeout(streamTimer);
+    streamTimer = null;
   }
+  streamUrl.value = "";
+}
 
-  // Add a small delay so the backend can release the old lock
-  streamTimer = setTimeout(() => {
-    // Append Date.now() to bypass aggressive browser caching
-    streamUrl.value = `/api/v1/modules/camera/stream?id=${encodeURIComponent(activeCameraId.value)}&t=${Date.now()}`;
-  }, STREAM_CONNECT_DELAY_MS);
-};
+/** Build the same-origin stream URL with a cache-buster. */
+function streamUrlFor(cameraId: string): string {
+  return `/api/v1/modules/camera/stream?id=${encodeURIComponent(cameraId)}&t=${Date.now()}`;
+}
 
-// Exponential backoff on stream failure. The backend enforces a
-// 5-second cooldown after a failed open/read; the frontend mirrors
-// that with a capped exponential backoff so we don't hammer the
-// server while the hardware is locked. The diagnostic probe explains
-// WHY the stream is down (unreachable / login page / credentials
-// rejected / dependency missing) so the operator sees the same
-// actionable text the backend logged, not a generic broken-image
-// hint from /status.
-const handleStreamError = (): void => {
+/** Mount the new ``<img>`` (assumes ``releaseStream`` already ran). */
+function openStream(): void {
+  const cameraId = activeCameraId.value;
+  if (!cameraId) return;
+  streamUrl.value = streamUrlFor(cameraId);
+}
+
+/** Grace delay, then open — never opens while a timer is pending. */
+function scheduleStreamOpen(delayMs: number = STREAM_CONNECT_DELAY_MS): void {
+  if (streamTimer) clearTimeout(streamTimer);
+  if (!activeCameraId.value) return;
+  streamTimer = setTimeout(openStream, delayMs);
+}
+
+/**
+ * Exponential backoff on stream failure. The backend enforces a
+ * 5-second cooldown after a failed open/read; the frontend mirrors
+ * that with a capped exponential backoff so we don't hammer the
+ * server while the hardware is locked. The diagnostic probe explains
+ * WHY the stream is down (unreachable / login page / credentials
+ * rejected / dependency missing) so the operator sees the same
+ * actionable text the backend logged, not a generic broken-image
+ * hint from /status.
+ */
+function handleStreamError(): void {
   retryCount += 1;
-  const delay = Math.min(1000 * Math.pow(2, retryCount), MAX_RETRY_DELAY_MS);
+  const delay = Math.min(
+    STREAM_RETRY_BASE_MS * Math.pow(2, retryCount - 1),
+    MAX_RETRY_DELAY_MS,
+  );
   logger.debug(
     `Camera stream failed (attempt ${retryCount}); retrying in ${delay}ms`,
   );
-  streamUrl.value = "";
-  if (streamTimer) clearTimeout(streamTimer);
-  streamTimer = setTimeout(() => {
-    startStream();
-  }, delay);
+  releaseStream();
+  scheduleStreamOpen(delay);
   // Ask the backend for the upstream verdict. Falls back to
   // ``refreshStreamMessage()`` internally when no id is set or the
   // probe reports healthy — the supervisor status row still carries
   // USB dependency messages.
   void store.probeStreamFailure();
-};
+}
 
-// Reset the backoff counter when the stream succeeds.
-const handleStreamLoad = (): void => {
+/** Reset the backoff counter when the stream succeeds. */
+function handleStreamLoad(): void {
   retryCount = 0;
-};
+}
 
-// Re-run the delay anytime the active camera changes
+// Re-run the release → delay → open sequence anytime the active
+// camera changes.
 watch(activeCameraId, () => {
   retryCount = 0;
-  streamUrl.value = ""; // Instantly destroy the old <img> tag to drop the socket
-  startStream();
+  releaseStream();
+  scheduleStreamOpen();
 });
 
 // If the operator hides the active camera from the Settings panel
@@ -136,15 +172,14 @@ watch(
 onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
-  startStream();
+  scheduleStreamOpen();
 });
 
 // Clean up when leaving the page to free the USB hardware and
 // await any in-flight preference write so the most recent
 // keystroke is not lost on navigation.
 onBeforeUnmount(async () => {
-  if (streamTimer) clearTimeout(streamTimer);
-  streamUrl.value = "";
+  releaseStream();
   await store.awaitInFlightPreferenceWrite();
 });
 </script>

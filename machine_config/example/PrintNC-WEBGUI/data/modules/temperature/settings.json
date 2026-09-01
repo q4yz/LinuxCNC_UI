@@ -1,0 +1,6 @@
+{
+  "ambient_celsius": 25.0,
+  "sample_period_ms": 500,
+  "sensor_colors": {},
+  "unit": "C"
+}

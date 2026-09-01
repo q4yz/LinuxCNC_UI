@@ -1,0 +1,25 @@
+{
+  "default_device_id": "",
+  "ip_camera_url": "",
+  "macro_buttons": [],
+  "preferences": {
+    "/dev/video0": {
+      "custom_name": "",
+      "hidden": true,
+      "mirror": false,
+      "rotate": 270
+    },
+    "/dev/video1": {
+      "custom_name": "",
+      "hidden": false,
+      "mirror": false,
+      "rotate": 270
+    },
+    "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara": {
+      "custom_name": "",
+      "hidden": false,
+      "mirror": false,
+      "rotate": 0
+    }
+  }
+}

@@ -1,0 +1,6 @@
+o<zero_z> sub
+    G54               
+    G10 L20 P0 Z0     
+    G4 P0.2           
+    M100              
+o<zero_z> endsub

@@ -12,6 +12,10 @@ T = TypeVar('T')
 logger = logging.getLogger(__name__)
 
 
+class HalDirection(Enum):
+    IN = "in"
+    OUT = "out"
+
 class HalDataType(Enum):
     """Domain-level representation of LinuxCNC HAL pin data types."""
     BIT = "BIT"
@@ -69,10 +73,7 @@ class HalPin(ABC, Generic[T]):
         if hal_type is not None and hal_dir is not None:
             cls._pending_pins.append((pin_name, hal_type.to_hal_constant(), hal_dir))
 
-    @abstractmethod
-    def is_static(self) -> bool:
-        """Returns True if this is just a static value, not a dynamic pin."""
-        pass
+
 
     @abstractmethod
     def get_value(self) -> Optional[T]:
@@ -85,6 +86,18 @@ class HalPin(ABC, Generic[T]):
     @abstractmethod
     def get_doc_string(self) -> str:
         pass
+
+    @abstractmethod
+    def get_direction(self) -> str:
+        pass
+
+    @abstractmethod
+    def get_pin_name(self) -> str:
+        pass
+
+    def get_comp_name(self) -> str:
+        return self._component_name
+
 
 
 

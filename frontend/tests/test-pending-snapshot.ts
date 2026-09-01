@@ -36,7 +36,9 @@ test("baseThread exposes the pending-snapshot watchdog state + actions", () => {
 
   for (const action of [
     "dismissPendingPrompt",
-    "markSnapshotPending",
+    "rearmPendingPrompt",
+    "armPoll",
+    "armWatchdog",
   ]) {
     assert.match(
       text,
@@ -44,6 +46,21 @@ test("baseThread exposes the pending-snapshot watchdog state + actions", () => {
       `store must define ${action}()`,
     );
   }
+
+  // start() must arm poll and watchdog independently — the old
+  // single ``if (pollHandle) return`` guard could leave the watchdog
+  // silent when the poll was already live.
+  assert.match(
+    text,
+    /function start\(\): void \{\s*armPoll\(\);\s*armWatchdog\(\);\s*\}/,
+    "start() must arm both timers independently",
+  );
+  // Field marker so the operator can verify the new bundle is live.
+  assert.match(
+    text,
+    /watchdog armed/,
+    "armWatchdog must log a one-time console marker",
+  );
 });
 
 test("refresh() success clears the pending state", () => {
@@ -87,6 +104,11 @@ test("PendingSnapshotDialog reads pendingSince and offers Refresh/Reload/Dismiss
     text,
     /store\.refresh\(\)/,
     "Refresh now must call store.refresh()",
+  );
+  assert.match(
+    text,
+    /rearmPendingPrompt\(\)/,
+    "Refresh now must re-arm via rearmPendingPrompt()",
   );
   assert.match(
     text,

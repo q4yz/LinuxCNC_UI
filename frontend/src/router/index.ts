@@ -5,6 +5,7 @@ import FilesView from '../views/FilesView.vue'
 import EditorView from '../views/EditorView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import MachineConfigView from '../views/MachineConfigView.vue'
+import VisualHalEditor from '../views/VisualHalEditor.vue'
 import ConfigView from '../views/ConfigView.vue'
 import CameraViewer from '../components/camera/CameraViewer.vue'
 import JoggingView from "../views/JoggingView.vue";
@@ -20,6 +21,7 @@ const BUILTIN_ROUTES = [
   {path: '/settings', name: 'settings', component: SettingsView, meta: { label: 'Settings' },},
   {path: '/camera', name: 'camera', component: CameraViewer, meta: { label: 'Camera' },},
   {path: '/machineconfig', name: 'machineconfig', component: MachineConfigView, meta: { label: 'Machine Config' },},
+  {path: '/hal-editor', name: 'hal-editor', component: VisualHalEditor, meta: { label: 'HAL Editor' },},
   {path: '/config', name: 'config', component: ConfigView, meta: { label: 'Config' },},
   {path: '/debug', name: 'debug', component: DebugView, meta: { label: 'Debug' },},
 ];

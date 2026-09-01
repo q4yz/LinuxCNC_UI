@@ -1,0 +1,55 @@
+# ==========================================================
+# WEBGUI CONNECTIONS HAL
+# Replaces old PyVCP wiring with the Python webgui component
+# ==========================================================
+
+# ----------------------------------------------------------
+# 1. Spindle Status & Speed
+# ----------------------------------------------------------
+# Read actual speed/status from VFD and share it with LinuxCNC and WebGUI
+net spindle-at-speed   vfdmod.spindle.at-speed => spindle.0.at-speed webgui.spindle-at-speed
+net spindle-speed-out  vfdmod.spindle.rpm-out  => spindle.0.speed-in webgui.rpm-out
+
+# --- MUX2 Spindle Speed Selection ---
+# in0 = G-code default speed (Uses existing 'spindle-cmd-rpm' signal from Machine.hal)
+net spindle-cmd-rpm => mux2.0.in0
+
+# in1 = Web GUI manual target speed (from Python backend)
+net web-target-rpm webgui.absolute-master-override => mux2.0.in1
+
+# sel = Boolean switch from Web GUI (True = Web GUI, False = G-code)
+net use-web-rpm webgui.absolute-master-override-enable => mux2.0.sel
+
+# out = The final winning speed goes straight to the VFD
+net final-target-rpm mux2.0.out => vfdmod.spindle.rpm-in webgui.TargetRpm
+
+# ----------------------------------------------------------
+# 2. Spindle Direction
+# ----------------------------------------------------------
+# Allows your UI to see if the spindle is currently spinning
+# (Source pin from LinuxCNC goes FIRST, then destinations)
+net spindle-forward  spindle.0.forward => vfdmod.control.run-forward webgui.spindle-forward
+net spindle-reverse  spindle.0.reverse => vfdmod.control.run-reverse webgui.spindle-reverse
+
+# ----------------------------------------------------------
+# 3. RS485 Communication & Errors
+# ----------------------------------------------------------
+# Routes VFD serial connection status to your UI indicators
+net backend-is-connected  vfdmod.rs485.is-connected => webgui.is-connected
+net backend-error-count   vfdmod.rs485.error-count  => webgui.error-count
+net backend-last-error    vfdmod.rs485.last-error   => webgui.last-error
+
+# ----------------------------------------------------------
+# 4. Web GUI Override
+# ----------------------------------------------------------
+# 1. Enable direct value mode
+setp halui.spindle.0.override.direct-value true
+
+# 2. Set the scale so each count equals 1% (0.01)
+setp halui.spindle.0.override.scale 0.01
+
+# 3. Connect your web signal to the counts pin
+net spindle-override webgui.override => halui.spindle.0.override.counts
+
+net spindle-speed-out  vfdmod.spindle.rpm-out  => spindle.0.speed-in webgui.rpm-out
+

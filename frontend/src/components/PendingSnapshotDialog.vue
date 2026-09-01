@@ -27,7 +27,7 @@ const { pendingSince, secondsSinceLastSnapshot } = storeToRefs(store);
 const open = computed<boolean>(() => pendingSince.value !== null);
 
 function refreshNow(): void {
-  store.markSnapshotPending();
+  store.rearmPendingPrompt();
   void store.refresh();
 }
 

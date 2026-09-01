@@ -173,6 +173,12 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   // store. The store only emits a new console row when the message
   // changes, so a periodic refresh does not spam the operator console.
   let lastReportedStreamMessage = "";
+  // Single-flight guard for ``probeStreamFailure`` — a stream-error
+  // burst (multiple ``<img>`` failures during one Switch Camera
+  // round) must not stack concurrent diagnostic requests, each of
+  // which opens the upstream once. On HTTP/1.1 those stacked
+  // requests eat into the browser's 6-connection budget.
+  let probeInFlight = false;
 
   // Serialised PUT chain — every write chains off the previous one
   // so rapid keystrokes never overlap on the wire and the server
@@ -347,52 +353,61 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * Used by the camera viewer's ``onerror`` handler. Falls back to
    * :func:`refreshStreamMessage` (which also surfaces USB-cam
    * dependency messages) when the probe can't run because no camera
-   * is selected.
+   * is selected. Single-flight: a burst of ``<img>`` errors resolves
+   * to at most one concurrent diagnostic request.
    *
    * Returns the diagnostic message (empty when healthy).
    */
   async function probeStreamFailure(): Promise<string> {
-    const id = activeCameraId.value || "";
-    let message = "";
-    try {
-      const response = await fetch(DIAGNOSTIC_URL, {
-        method: "GET",
-        params: id ? { id } : {},
-      });
-      if (!response.ok) {
-        throw new Error(
-          `Camera diagnostic request failed: ${response.status} ${response.statusText}`,
-        );
-      }
-      const payload = (await response.json()) as {
-        ok?: unknown;
-        message?: unknown;
-      };
-      message = payload?.ok === false && typeof payload?.message === "string"
-        ? payload.message
-        : "";
-    } catch (requestError: unknown) {
-      message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Unable to reach the camera diagnostic endpoint.";
-    }
-
-    if (!message) {
-      // Empty verdict: either the probe reports healthy (transient
-      // network blip — <img> will retry) or no camera is selected.
-      // Fall back to the supervisor's status message so a missing-
-      // device / dependency-missing condition still surfaces.
-      await refreshStreamMessage();
+    if (probeInFlight) {
       return streamMessage.value;
     }
+    probeInFlight = true;
+    try {
+      const id = activeCameraId.value || "";
+      let message = "";
+      try {
+        const url = id
+          ? `${DIAGNOSTIC_URL}?${new URLSearchParams({ id }).toString()}`
+          : DIAGNOSTIC_URL;
+        const response = await fetch(url, { method: "GET" });
+        if (!response.ok) {
+          throw new Error(
+            `Camera diagnostic request failed: ${response.status} ${response.statusText}`,
+          );
+        }
+        const payload = (await response.json()) as {
+          ok?: unknown;
+          message?: unknown;
+        };
+        message = payload?.ok === false && typeof payload?.message === "string"
+          ? payload.message
+          : "";
+      } catch (requestError: unknown) {
+        message =
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to reach the camera diagnostic endpoint.";
+      }
 
-    streamMessage.value = message;
-    if (message !== lastReportedStreamMessage) {
-      lastReportedStreamMessage = message;
-      useConsoleStore().error(`[camera] ${message}`);
+      if (!message) {
+        // Empty verdict: either the probe reports healthy (transient
+        // network blip — <img> will retry) or no camera is selected.
+        // Fall back to the supervisor's status message so a missing-
+        // device / dependency-missing condition still surfaces.
+        await refreshStreamMessage();
+        return streamMessage.value;
+      }
+
+      streamMessage.value = message;
+      if (message !== lastReportedStreamMessage) {
+        lastReportedStreamMessage = message;
+        useConsoleStore().error(`[camera] ${message}`);
+      }
+      return message;
+    } finally {
+      probeInFlight = false;
     }
-    return message;
   }
 
   /**

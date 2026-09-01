@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
         <button
             type="button"
             class="text-blue-400 underline hover:text-blue-300"
-            @click="router.push({ name: 'machineconfig' })"
+            @click="router.push({ name: 'config' })"
         >
           Machine Config
         </button>

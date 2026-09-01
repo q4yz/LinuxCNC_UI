@@ -48,6 +48,7 @@ from routers import (
     _module_settings_router,
     axis as axis_router,
     camera as camera_router,
+    hal as hal_router,
     machineconfig as machineconfig_router,
     macros as macros_router,
     program as program_router,
@@ -306,6 +307,9 @@ app.include_router(FilesRouter.router)
 app.include_router(SystemRouter.router)
 app.include_router(BaseThreadRouter.router)
 app.include_router(ServoThreadRouter.router)
+
+# Mount the Visual HAL editor's standalone layout router.
+app.include_router(hal_router.router)
 
 
 # Mount the eight per-domain routers and their canonical settings

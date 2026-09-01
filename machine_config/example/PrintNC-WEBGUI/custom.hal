@@ -1,0 +1,14 @@
+# Include your custom HAL commands here
+# This file will not be overwritten when you run stepconf again
+loadusr -W vfdmod vfd.ini
+
+
+loadrt mux2 count=1
+addf mux2.0 servo-thread
+
+
+# Force loadusr to name the component 'webgui' and wait (-W) for it to be ready
+loadusr -W -n webgui /home/printnc/LinuxCNC_UI/backend/venv/bin/python /home/printnc/LinuxCNC_UI/backend/main.py
+
+
+source webgui_connections.hal

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, TypeVar
 
-from dtos.pins.HalPin import HalPin, HalDataType
+from dtos.pins.HalPin import HalPin, HalDataType, HalDirection
 from hardware import hal
 from hardware.Connection import read_hal_pin
 
@@ -17,9 +17,6 @@ class ReadOnlyDynamicHalPin(HalPin[T]):
     def __post_init__(self):
         self.check_and_register(self.pin, self.hal_type, hal.HAL_IN)
 
-    def is_static(self) -> bool:
-        return False
-
     def get_value(self) -> Optional[T]:
         return read_hal_pin(f"{HalPin._component_name}.{self.pin}")
 
@@ -28,3 +25,9 @@ class ReadOnlyDynamicHalPin(HalPin[T]):
 
     def get_doc_string(self) -> str:
         return  f"{self.hal_type.value}-OUT : {self.description}"
+
+    def get_direction(self) -> HalDirection:
+        return HalDirection.OUT
+
+    def get_pin_name(self) -> str:
+        return self.pin

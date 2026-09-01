@@ -159,13 +159,13 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   }
 
   /**
-   * Force-re-arm the watchdog (e.g. after the operator hits
+   * Re-arm the pending prompt (e.g. after the operator hits
    * "Refresh" in the dialog). Clears the dismiss cooldown so a
    * re-fired fetch that is itself hung still surfaces the dialog,
    * and clears any sticky pending state so the operator gets a
    * fresh 6 s window.
    */
-  function markSnapshotPending(): void {
+  function rearmPendingPrompt(): void {
     pendingDismissedUntil.value = 0;
     pendingSince.value = null;
   }
@@ -204,13 +204,11 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   }
 
   /**
-   * Start the 1 Hz polling loop. Idempotent: re-entering while
-   * a loop is already running is a no-op so hot-reloads and
-   * double-mounts do not stack intervals.
+   * Arm the 1 Hz snapshot poll. Independent of the watchdog so
+   * ``start()`` can guarantee both are running when it returns.
    */
-  function start(): void {
+  function armPoll(): void {
     if (pollHandle) return;
-
     connectionStatus.value = "connecting";
     startedAt = Date.now();
     lastSuccessAt.value = null;
@@ -225,11 +223,33 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     pollHandle = setInterval(() => {
       void refresh();
     }, POLL_INTERVAL_MS);
+  }
 
-    // Independent 1 Hz watchdog — runs whether or not refresh() is
-    // currently awaiting so a hung fetch still surfaces the
-    // "stuck" dialog after 6 s.
+  /**
+   * Arm the pending-snapshot watchdog. Independent of the poll so
+   * ``start()`` can guarantee both are running when it returns — the
+   * previous ``if (pollHandle) return`` guard skipped this when the
+   * poll was already live, which could leave the watchdog silent.
+   */
+  function armWatchdog(): void {
+    if (watchdogHandle) return;
     watchdogHandle = setInterval(evaluatePending, POLL_INTERVAL_MS);
+    // One-time marker: makes "is the new bundle running?" answerable
+    // from the browser console in the field.
+    console.info(
+      `[baseThread] watchdog armed (${PENDING_TIMEOUT_MS / 1000}s threshold)`,
+    );
+  }
+
+  /**
+   * Start the 1 Hz polling loop + watchdog. Idempotent: re-entering
+   * while running is a no-op per handle, so hot-reloads and
+   * double-mounts do not stack intervals — and both timers are
+   * guaranteed armed on return.
+   */
+  function start(): void {
+    armPoll();
+    armWatchdog();
   }
 
   /**
@@ -272,7 +292,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     start,
     stop,
     dismissPendingPrompt,
-    markSnapshotPending,
+    rearmPendingPrompt,
   };
 });
 
