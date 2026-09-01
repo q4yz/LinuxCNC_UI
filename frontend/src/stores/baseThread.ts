@@ -17,9 +17,14 @@
 // exceeds ``PENDING_TIMEOUT_MS`` (6 s) the ``PendingSnapshotDialog``
 // mounted in ``App.vue`` pops a modal with a refresh button.
 //
-// Detection runs independently of the fetch path (the watchdog
-// ticks every second whether ``refresh()`` is awaiting or not) so
-// it surfaces the "stuck" state, not just hard failures.
+// The watchdog ticks every second whether or not a ``refresh()`` is
+// currently awaiting, so a hung fetch is what we want to surface —
+// the elapsed time is measured purely from the last successful
+// snapshot (or ``startedAt`` if none has landed yet), never
+// suppressed by an in-flight fetch. An earlier version tried to
+// "give the in-flight fetch a chance" by forcing elapsed time to 0
+// while a fetch was awaiting; that defeated the watchdog exactly
+// when it mattered, so the reprieve is gone.
 
 import { defineStore } from "pinia";
 import { ref, shallowRef, computed } from "vue";
@@ -75,21 +80,15 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   //
   // ``lastSuccessAt`` is the wall-clock millisecond timestamp of the
   // most recent successful ``refresh()``. ``null`` until the first
-  // good snapshot lands. ``currentAttemptStartedAt`` is set when a
-  // fetch begins so a user-driven "Refresh" can re-arm the
-  // watchdog (without it, a still-hanging fetch would not re-fire
-  // the dialog even if the operator dismissed it).
-  //
-  // ``pendingSince`` flips to the moment we first observed an
-  // unhealthy gap exceeding ``PENDING_TIMEOUT_MS`` and stays
-  // sticky until the next success — the dialog and badge both
-  // key off this single boolean.
+  // good snapshot lands. ``pendingSince`` flips to the moment we
+  // first observed an unhealthy gap exceeding ``PENDING_TIMEOUT_MS``
+  // and stays sticky until the next success — the dialog and badge
+  // both key off this single boolean.
   //
   // ``pendingDismissedUntil`` suppresses re-arming for a cooldown
   // so a dismissed dialog stays quiet (unless the user explicitly
-  // hits Refresh).
+  // hits Refresh, which calls ``rearmPendingPrompt``).
   const lastSuccessAt = ref<number | null>(null);
-  const currentAttemptStartedAt = ref<number | null>(null);
   const pendingSince = ref<number | null>(null);
   const pendingDismissedUntil = ref<number>(0);
   const secondsSinceLastSnapshot = ref<number>(0);
@@ -140,13 +139,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     const elapsedSec = Math.max(0, Math.round(elapsedMs / 1000));
     secondsSinceLastSnapshot.value = elapsedSec;
 
-    // While a fresh refresh is in flight, treat the reference as
-    // "just now" so a brief stall doesn't pop the dialog.
-    const inFlight = currentAttemptStartedAt.value !== null
-      && currentAttemptStartedAt.value > lastSuccessAt.value;
-    const effectiveMs = inFlight ? 0 : elapsedMs;
-
-    if (effectiveMs < PENDING_TIMEOUT_MS) {
+    if (elapsedMs < PENDING_TIMEOUT_MS) {
       // Snapshot recovered — clear sticky pending state (the
       // dialog auto-closes by v-if'ing on the cleared value).
       if (pendingSince.value !== null) pendingSince.value = null;
@@ -167,11 +160,12 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
 
   /**
    * Force-re-arm the watchdog (e.g. after the operator hits
-   * "Refresh" in the dialog). Resets the in-flight reference so
-   * the next 6 s gap is measured from this very moment.
+   * "Refresh" in the dialog). Clears the dismiss cooldown so a
+   * re-fired fetch that is itself hung still surfaces the dialog,
+   * and clears any sticky pending state so the operator gets a
+   * fresh 6 s window.
    */
   function markSnapshotPending(): void {
-    currentAttemptStartedAt.value = Date.now();
     pendingDismissedUntil.value = 0;
     pendingSince.value = null;
   }
@@ -187,7 +181,6 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
    * known state.
    */
   async function refresh(): Promise<void> {
-    currentAttemptStartedAt.value = Date.now();
     try {
       // The BaseThreadService handles all data extraction and mappers now
       const snapshot = await BaseThreadService.fetchSnapshot();
@@ -207,8 +200,6 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       // Loud logging — silent swallows have masked two regressions already.
       console.error("[baseThread] refresh failed:", err);
       connectionStatus.value = "error";
-    } finally {
-      currentAttemptStartedAt.value = null;
     }
   }
 
