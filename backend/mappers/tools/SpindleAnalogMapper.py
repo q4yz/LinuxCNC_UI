@@ -17,8 +17,8 @@ class SpindleAnalogMapper():
 
         return SpindleAnalogPins(
             id=tool_id,
-            analog_out=ReadWriteDynamicHalPin(f"analog-out{suffix}", HalDataType.FLOAT),
-            target_rpm=ReadWriteDynamicHalPin(f"TargetRpm{suffix}", HalDataType.FLOAT),
+            analog_out=ReadWriteDynamicHalPin(f"analog-out{suffix}", HalDataType.FLOAT, ""),
+            target_rpm=ReadWriteDynamicHalPin(f"TargetRpm{suffix}", HalDataType.FLOAT, ""),
             min_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_rpm"), int) or 0),
             max_rpm=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_rpm"), int) or 24000),
         )

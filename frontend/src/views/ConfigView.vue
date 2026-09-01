@@ -9,11 +9,32 @@
 
 import HttpsBanner from '../components/HttpsBanner.vue'
 import ActivePanel from "../components/machineconfig/ActivePanel.vue";
-import DebugPanel from "../components/DebugPanel.vue";
 import MacroManagerPanel from "../components/macros/MacroManagerPanel.vue";
 import McodeManagerPanel from "../components/macros/McodeManagerPanel.vue";
 import UpdateManager from "../components/UpdateManager.vue";
+import {useMachineConfigStore} from "../stores/machineconfigStore";
+import {onMounted} from "vue";
+import ProfilesExplorer from "../components/machineconfig/ProfilesExplorer.vue";
+import MachinesExplorer from "../components/machineconfig/MachinesExplorer.vue";
+import {openInEditor} from "../helpers/openInEditor";
+
+const machineConfigStore = useMachineConfigStore()
+
+// Used by the explorers to request an edit. Pushes the
+// ``/editor?source=<source>&name=<path>`` URL; EditorView's
+// ``watch`` detects the route change and loads the file.
+function openEditor(source, path) {
+  openInEditor({ source, name: path })
+}
+
+onMounted(() => {
+  void machineConfigStore.loadAll()
+})
+
 </script>
+
+
+
 
 <template>
   <!-- Replaced space-y-6 with flex and gap -->
@@ -30,13 +51,16 @@ import UpdateManager from "../components/UpdateManager.vue";
       <section class="flex flex-col gap-6 xl:col-span-4">
         <HttpsBanner />
         <MacroManagerPanel />
+        <McodeManagerPanel />
       </section>
 
       <!-- Replaced space-y-6 with flex flex-col gap-6 -->
       <section class="flex flex-col gap-6 xl:col-span-8">
         <UpdateManager />
+        <ProfilesExplorer @edit="(path) => openEditor('profiles', path)" />
+        <MachinesExplorer @edit="(path) => openEditor('machines', path)" />
         <ActivePanel />
-        <McodeManagerPanel />
+
       </section>
 
     </div>

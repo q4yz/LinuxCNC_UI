@@ -46,6 +46,7 @@ import { ApiError } from '../../generated/api/core/ApiError'
 
 export const EDITOR_SOURCES = Object.freeze({
   PROFILES: 'profiles',
+  MACHINES: 'machines',
   ACTIVE: 'active',
   STAGED: 'staged',
   M_CODES: 'm_codes',
@@ -61,6 +62,7 @@ export type EditorSource = (typeof EDITOR_SOURCES)[keyof typeof EDITOR_SOURCES]
 // missing label is obvious in dev rather than silent.
 export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Object.freeze({
   [EDITOR_SOURCES.PROFILES]: 'Profiles',
+  [EDITOR_SOURCES.MACHINES]: 'Machine Templates',
   [EDITOR_SOURCES.ACTIVE]:   'Active Config',
   [EDITOR_SOURCES.STAGED]:   'Compiled Output',
   [EDITOR_SOURCES.M_CODES]:  'M-codes',
@@ -168,6 +170,17 @@ async function writeProfileContent(name: string, content: string): Promise<void>
     .saveProfileApiV1ModulesMachineconfigProfilesContentPut(name, { content })
 }
 
+async function readMachineContent(name: string): Promise<string> {
+  const envelope = await ModulesMachineconfigService
+    .readMachineFileApiV1ModulesMachineconfigMachinesContentGet(name)
+  return envelope?.content ?? ''
+}
+
+async function writeMachineContent(name: string, content: string): Promise<void> {
+  await ModulesMachineconfigService
+    .saveMachineFileApiV1ModulesMachineconfigMachinesContentPut(name, { content })
+}
+
 async function readActiveContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService
     .readActiveApiV1ModulesMachineconfigActiveContentNameGet(name)
@@ -238,6 +251,7 @@ function _macroSplitName(name: string): { baseName: string; kind: string } {
 async function dispatchRead(source: EditorSource, name: string): Promise<string> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
+    case EDITOR_SOURCES.MACHINES: return readMachineContent(name)
     case EDITOR_SOURCES.ACTIVE:   return readActiveContent(name)
     case EDITOR_SOURCES.STAGED:   return readStagedContent(name)
     case EDITOR_SOURCES.M_CODES:  return readMCodeContent(name)
@@ -251,6 +265,7 @@ async function dispatchRead(source: EditorSource, name: string): Promise<string>
 async function dispatchWrite(source: EditorSource, name: string, content: string): Promise<void> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return writeProfileContent(name, content)
+    case EDITOR_SOURCES.MACHINES: return writeMachineContent(name, content)
     case EDITOR_SOURCES.M_CODES:  return writeMCodeContent(name, content)
     case EDITOR_SOURCES.PROGRAMS: return writeProgramContent(name, content)
     case EDITOR_SOURCES.MACROS:   return writeMacroContent(name, content)

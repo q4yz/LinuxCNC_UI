@@ -98,7 +98,13 @@ class StateService:
 
     def preload_hal_pins(self):
         self._Estop = EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT,""))
-        pass
+
+    def get_halpins(self) -> list:
+        """Returns the pre-built pin containers (mirrors ToolsService.get_halpins)."""
+        if self._Estop is None:
+            logging.warning("get_halpins() called before preload! Forcing late initialization.")
+            self.preload_hal_pins()
+        return [self._Estop]
 
     @staticmethod
     def _resolve(table: dict, name: str) -> int:

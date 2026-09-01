@@ -24,8 +24,8 @@ class HeaterMapper:
 
         return HeaterPins(
             id=tool_id,
-            target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT),
-            actual_temperature=ReadWriteDynamicHalPin(f"actual-temperature{suffix}", HalDataType.FLOAT),
+            target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT, ""),
+            actual_temperature=ReadWriteDynamicHalPin(f"actual-temperature{suffix}", HalDataType.FLOAT, ""),
             fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT) if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),

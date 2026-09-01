@@ -20,6 +20,7 @@ factory function.
 from .FileService import FileMetadata, FileService
 from .ActiveFileService import ActiveFileService
 from .ConfigFileService import ConfigFileService
+from .MachineFileService import MachineFileService
 from .MCodeFileService import MCodeFileService
 from .MacroFileService import MacroFileService
 from .ProgramFileService import ProgramFileService
@@ -28,6 +29,7 @@ from .StagedFileService import StagedFileService
 from factories.DomainFileServiceFactory import (
     get_active_service,
     get_config_service,
+    get_machine_service,
     get_mcode_service,
     get_macro_service,
     get_program_service,
@@ -41,11 +43,13 @@ __all__ = [
     "FileMetadata",
     "FileService",
     "MCodeFileService",
+    "MachineFileService",
     "MacroFileService",
     "ProgramFileService",
     "StagedFileService",
     "get_active_service",
     "get_config_service",
+    "get_machine_service",
     "get_mcode_service",
     "get_macro_service",
     "get_program_service",

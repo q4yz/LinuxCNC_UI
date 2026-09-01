@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import List
 
@@ -64,6 +65,11 @@ class KlipperToLinuxCNCCompiler(Compiler):
     title = "Klipper → LinuxCNC"
     source_marker = "#Start"
 
+    #: Deprecated in favour of the template-based generator
+    #: (:mod:`services.machinetemplates`). Kept functional during the
+    #: transition; the API surfaces the flag so the UI can badge it.
+    deprecated = True
+
     #: Files emitted by :meth:`compile`. Kept as a class attribute so the
     #: router can pre-declare them in OpenAPI without an instance.
     #: ``config.txt`` is optional — when no remora MCU is declared
@@ -89,6 +95,20 @@ class KlipperToLinuxCNCCompiler(Compiler):
         """
         if not source_path.exists() or not source_path.is_file():
             raise FileNotFoundError(f"Source profile not found: {source_path}")
+
+        if self.deprecated:
+            warnings.warn(
+                "KlipperToLinuxCNCCompiler is deprecated; use the "
+                "template-based generator (services.machinetemplates) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            logger.warning(
+                "Deprecated compiler '%s' used on %s — migrate to the "
+                "machine template generator.",
+                self.id,
+                source_path,
+            )
 
         # 1. Parse and strictly validate the source before writing any
         # artifacts. The graph is retained so artifact writers can consume

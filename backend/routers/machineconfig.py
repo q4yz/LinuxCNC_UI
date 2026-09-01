@@ -55,13 +55,16 @@ from services import (
     ActiveFileService,
     ConfigFileService,
     MCodeFileService,
+    MachineFileService,
     StagedFileService,
     get_active_service,
     get_config_service,
+    get_machine_service,
     get_mcode_service,
     get_staged_service,
 )
 from services.machineconfig import registry as compiler_registry
+from services.machinetemplates import MachineExistsError, generate_machine_templates
 from machineconfig_parser import ConfigValidationError
 
 logger = logging.getLogger("backend.machineconfig_service")
@@ -272,6 +275,13 @@ class CompilerSummary(BaseModel):
         default=None,
         description="Marker substring this compiler looks for, or null",
     )
+    deprecated: bool = Field(
+        default=False,
+        description=(
+            "True when the compiler is deprecated (kept functional during "
+            "the transition to the machine template generator)."
+        ),
+    )
 
 
 class CompilerListResponse(BaseModel):
@@ -372,6 +382,51 @@ class MachineNameResponse(BaseModel):
 
     machine_name: Optional[str] = Field(
         default=None, description="Machine name from active/<first>.ini's [EMC] section"
+    )
+
+
+class GenerateRequest(BaseModel):
+    """Body of ``POST /machines/generate``."""
+
+    profile_path: str = Field(
+        ..., description="Forward-slash path relative to profiles/"
+    )
+    target_folder: str = Field(
+        default="",
+        description=(
+            "Optional folder under machines/ to nest the machine folder "
+            "in (supports operator grouping). Empty = machines/ root."
+        ),
+    )
+    confirm_override: bool = Field(
+        default=False,
+        description=(
+            "Set true to replace an existing machine folder. When false "
+            "and the machine already exists the endpoint answers 409."
+        ),
+    )
+
+
+class MachineFile(BaseModel):
+    """One file written by ``POST /machines/generate``."""
+
+    name: str = Field(..., description="Basename of the generated file")
+    path: str = Field(
+        ..., description="Forward-slash path relative to machines/"
+    )
+    size_bytes: int = Field(default=0, description="File size in bytes")
+
+
+class GenerateResponse(BaseModel):
+    """Response of ``POST /machines/generate``."""
+
+    status: str = Field(..., description="Outcome summary (e.g. 'ok')")
+    machine: str = Field(..., description="Machine name (the profile file stem)")
+    target_folder: str = Field(
+        default="", description="Folder under machines/ the machine lives in"
+    )
+    files: List[MachineFile] = Field(
+        default_factory=list, description="Generated template files"
     )
 
 
@@ -618,6 +673,238 @@ def delete_profile(path: str) -> StatusMessage:
 
 
 # ---------------------------------------------------------------------- #
+# Machines (template generation + CRUD)                                   #
+# ---------------------------------------------------------------------- #
+#
+# The template-based replacement for the deprecated compiler. A profile
+# generates a per-machine template set under ``machine_config/machines/``
+# (machine.cfg copy, hardware.json, machine.ini + machine.hal templates).
+# Every endpoint mirrors the profiles CRUD so the frontend explorer is a
+# like-for-like clone. Files here are templates — writable on purpose.
+
+
+@router.get(
+    "/machines/tree",
+    summary="List machines tree",
+    description="Flat listing of every file/folder under machine_config/machines.",
+    response_model=DirectoryListing,
+)
+def get_machines_tree() -> DirectoryListing:
+    """Return the entire ``machines/`` tree as a flat list."""
+    service: MachineFileService = get_machine_service()
+    entries = service.list_files()
+    return DirectoryListing(
+        root="machines",
+        entries=[DirectoryEntryModel(**e.to_dict()) for e in entries],
+    )
+
+
+@router.post(
+    "/machines/generate",
+    summary="Generate machine templates",
+    description=(
+        "Generate the per-machine template set from a profile into "
+        "machine_config/machines/<target_folder>/<stem>/configs/: a "
+        "verbatim machine.cfg copy, the real hardware.json, and the "
+        "machine.ini / machine.hal templates (config.txt is intentionally "
+        "not generated). Answers 409 when the machine already exists "
+        "unless confirm_override is set."
+    ),
+    response_model=GenerateResponse,
+)
+def generate_machine(payload: GenerateRequest) -> GenerateResponse:
+    """Generate templates for ``payload.profile_path`` into machines/."""
+    try:
+        result = generate_machine_templates(
+            payload.profile_path,
+            target_folder=payload.target_folder or "",
+            confirm_override=payload.confirm_override,
+            config_service=get_config_service(),
+            machine_service=get_machine_service(),
+        )
+    except FileNotFoundError as exc:
+        raise NotFoundError(str(exc)) from exc
+    except MachineExistsError as exc:
+        # Structured 409: the frontend opens the "machine already
+        # exists — override?" confirm modal off ``kind`` and retries
+        # with ``confirm_override: true``.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "kind": "machine_exists",
+                "machine": exc.machine,
+                "existing": exc.existing_files,
+                "message": (
+                    f"Machine '{exc.machine}' already exists. "
+                    "Confirm to override the existing configuration."
+                ),
+            },
+        ) from exc
+    except ConfigValidationError:
+        # Structured parser envelope via the global handler (see
+        # the compile endpoint for the ordering rationale).
+        raise
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+    machine_service: MachineFileService = get_machine_service()
+    files: List[MachineFile] = []
+    for rel in result.files:
+        try:
+            target = machine_service.safe_join(rel)
+            size = target.stat().st_size if target.is_file() else 0
+        except ValueError:
+            size = 0
+        files.append(
+            MachineFile(name=rel.rsplit("/", 1)[-1], path=rel, size_bytes=size)
+        )
+
+    return GenerateResponse(
+        status="ok",
+        machine=result.machine,
+        target_folder=result.target_folder,
+        files=files,
+    )
+
+
+@router.get(
+    "/machines/content",
+    summary="Read a machine file",
+    description=(
+        "Return the raw text content of a file inside "
+        "machine_config/machines. The relative path is supplied "
+        "as the ``path`` query parameter so URL-encoded slashes "
+        "do not get stripped by the dev-server proxy."
+    ),
+    response_model=ProfileContent,
+)
+def read_machine_file(path: str) -> ProfileContent:
+    service: MachineFileService = get_machine_service()
+    try:
+        content = service.read_file(path)
+    except FileNotFoundError as exc:
+        raise NotFoundError(f"Machine file not found: {path}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return ProfileContent(path=path, content=content)
+
+
+@router.put(
+    "/machines/content",
+    summary="Save a machine file",
+    description=(
+        "Overwrite the content of a file inside machine_config/machines. "
+        "Machine files are templates — writable by design."
+    ),
+    response_model=StatusMessage,
+)
+def save_machine_file(path: str, payload: ProfileWriteRequest) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.write_file(path, payload.content, overwrite=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Saved {path}")
+
+
+@router.post(
+    "/machines/folder",
+    summary="Create a machines folder",
+    description="Create a folder (and any missing parents) under machine_config/machines.",
+    response_model=StatusMessage,
+)
+def create_machine_folder(payload: CreateEntryRequest) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.create_directory(payload.path)
+    except FileExistsError as exc:
+        raise ConflictError(f"Already exists: {payload.path}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Created folder {payload.path}")
+
+
+@router.post(
+    "/machines/file",
+    summary="Create a machines file",
+    description="Create an empty file under machine_config/machines.",
+    response_model=StatusMessage,
+)
+def create_machine_file(payload: CreateEntryRequest) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.write_file(payload.path, "", overwrite=False)
+    except FileExistsError as exc:
+        raise ConflictError(f"Already exists: {payload.path}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Created file {payload.path}")
+
+
+@router.post(
+    "/machines/upload",
+    summary="Upload a machines file",
+    description=(
+        "Upload a file into a directory under machine_config/machines. "
+        "The relative path is supplied as the ``path`` query parameter."
+    ),
+    response_model=StatusMessage,
+)
+async def upload_machine_file(path: str, file: UploadFile = File(...)) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.write_bytes(path, await file.read(), overwrite=True)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Uploaded {path}")
+
+
+@router.put(
+    "/machines/rename",
+    summary="Rename a machines entry",
+    description="Rename a file or folder under machine_config/machines.",
+    response_model=StatusMessage,
+)
+def rename_machine_entry(payload: RenameRequest) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.rename(payload.source, payload.destination)
+    except FileNotFoundError as exc:
+        raise NotFoundError(f"Not found: {payload.source}") from exc
+    except FileExistsError as exc:
+        raise ConflictError(f"Already exists: {payload.destination}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(
+        status="ok", message=f"Renamed {payload.source} -> {payload.destination}"
+    )
+
+
+@router.delete(
+    "/machines/entry",
+    summary="Delete a machines entry",
+    description=(
+        "Delete a file or empty folder under machine_config/machines. "
+        "The relative path is supplied as the ``path`` query parameter."
+    ),
+    response_model=StatusMessage,
+)
+def delete_machine_entry(path: str) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.delete(path)
+    except FileNotFoundError as exc:
+        raise NotFoundError(f"Not found: {path}") from exc
+    except IsADirectoryError as exc:
+        raise BadRequestError(f"Folder is not empty; remove contents first: {path}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(status="ok", message=f"Deleted {path}")
+
+
+# ---------------------------------------------------------------------- #
 # Compilers                                                               #
 # ---------------------------------------------------------------------- #
 
@@ -635,6 +922,7 @@ def list_compilers() -> CompilerListResponse:
             id=c.id,
             title=c.title,
             source_marker=c.source_marker,
+            deprecated=bool(getattr(c, "deprecated", False)),
         )
         for c in compiler_registry.all()
     ]

@@ -25,7 +25,7 @@ class ExtruderMapper:
         return ExtruderPins(
             id=tool_id,
             heater=HeaterMapper.from_dict_to_HeaterPins(data),
-            position=ReadWriteDynamicHalPin(str(position_val), HalDataType.FLOAT),
+            position=ReadWriteDynamicHalPin(str(position_val), HalDataType.FLOAT, ""),
         )
 
     @classmethod

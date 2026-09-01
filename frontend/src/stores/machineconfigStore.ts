@@ -46,6 +46,12 @@ interface DeploySummary {
   message: string;
 }
 
+export interface MachineGenerateOutcome {
+  status: "ok" | "conflict" | "error";
+  machine: string | null;
+  existing: string[];
+}
+
 export const useMachineConfigStore = defineStore(STORE_ID, () => {
   const consoleStore = useConsoleStore();
 
@@ -56,6 +62,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   const profilesTree = reactive<ProfilesTree>({ root: "profiles", entries: [] });
   const selectedProfilePath = ref<string>("");
+
+  const machinesTree = reactive<ProfilesTree>({ root: "machines", entries: [] });
 
   const stagedFiles = ref<StagedFile[]>([]);
   const stagedContents = reactive<Record<string, string>>({});
@@ -159,6 +167,19 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
+  async function loadMachinesTree(): Promise<void> {
+    try {
+      const response = await machineconfigFacade.listMachines();
+      machinesTree.entries.splice(0, machinesTree.entries.length);
+      for (const entry of (response as { entries?: DirectoryEntryModel[] }).entries || []) {
+        machinesTree.entries.push(entry);
+      }
+    } catch (error: unknown) {
+      const result = commandResultFromCaught(error, "load-machines-tree");
+      reportCommandFailure("load machines tree", result);
+    }
+  }
+
   async function loadStaged(): Promise<void> {
     try {
       const response = await machineconfigFacade.listStaged();
@@ -195,6 +216,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     await Promise.all([
       loadCompilers(),
       loadProfilesTree(),
+      loadMachinesTree(),
       loadStaged(),
       loadActive(),
     ]);
@@ -306,6 +328,141 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
+  // --- Machines (template generation + CRUD) ---------------------- //
+
+  /**
+   * Generate the machine template set from a profile. A structured
+   * 409 (machine already exists) resolves as ``status: "conflict"``
+   * WITHOUT toasting — the caller drives the "override?" confirm
+   * modal and retries with ``confirmOverride: true``.
+   */
+  async function generateMachine(
+    profilePath: string,
+    opts: { targetFolder?: string; confirmOverride?: boolean } = {},
+  ): Promise<MachineGenerateOutcome> {
+    if (!profilePath) {
+      return { status: "error", machine: null, existing: [] };
+    }
+    isBusy.value = true;
+    const outcome = await machineconfigFacade.generateMachine({
+      profile_path: profilePath,
+      target_folder: opts.targetFolder ?? "",
+      confirm_override: opts.confirmOverride ?? false,
+    });
+    isBusy.value = false;
+
+    if (outcome.result.ok) {
+      consoleStore.success(
+        `Generated machine templates for ${outcome.machine ?? profilePath}.`,
+      );
+      await loadMachinesTree();
+      return { status: "ok", machine: outcome.machine, existing: [] };
+    }
+    if (outcome.existsConflict) {
+      return {
+        status: "conflict",
+        machine: outcome.existsConflict.machine,
+        existing: outcome.existsConflict.existing,
+      };
+    }
+    reportCommandFailure("generate machine", outcome.result);
+    return { status: "error", machine: outcome.machine, existing: [] };
+  }
+
+  async function readMachineContent(path: string): Promise<string | null> {
+    try {
+      const response = await machineconfigFacade.readMachine(path);
+      return response.content || "";
+    } catch (error: unknown) {
+      consoleStore.error(`Failed to read ${path}: ${describeError(error)}`);
+      return null;
+    }
+  }
+
+  async function saveMachine(path: string, content: string): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.writeMachine(path, content);
+    if (result.failed) {
+      reportCommandFailure(`save machine file ${path}`, result);
+    } else {
+      consoleStore.success(`Saved ${path}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function createMachineFolder(path: string): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.createMachineFolder(path);
+    if (result.failed) {
+      reportCommandFailure(`create folder ${path}`, result);
+    } else {
+      consoleStore.success(`Created folder ${path}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function createMachineFile(path: string): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.createMachineFile(path);
+    if (result.failed) {
+      reportCommandFailure(`create file ${path}`, result);
+    } else {
+      consoleStore.success(`Created file ${path}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function uploadMachines(
+    directory: string,
+    files: File[],
+  ): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.uploadMachine(directory, files);
+    if (result.failed) {
+      reportCommandFailure("upload machine files", result);
+    } else {
+      consoleStore.success(`Uploaded ${files.length} machine file(s)`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function renameMachine(
+    source: string,
+    destination: string,
+  ): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.renameMachine(source, destination);
+    if (result.failed) {
+      reportCommandFailure(`rename ${source} -> ${destination}`, result);
+    } else {
+      consoleStore.success(`Renamed ${source} -> ${destination}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function deleteMachine(path: string): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.deleteMachine(path);
+    if (result.failed) {
+      reportCommandFailure(`delete machine entry ${path}`, result);
+    } else {
+      consoleStore.success(`Deleted ${path}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
   // --- Compile / Deploy ------------------------------------------- //
 
   async function compile(
@@ -404,6 +561,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     profilesTree,
     selectedProfilePath,
     selectedProfile,
+    machinesTree,
     stagedFiles,
     stagedContents,
     activeListing,
@@ -415,6 +573,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     activeTotalSize,
     loadCompilers,
     loadProfilesTree,
+    loadMachinesTree,
     loadStaged,
     loadActive,
     loadAll,
@@ -426,6 +585,14 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     uploadProfiles,
     renameProfile,
     deleteProfile,
+    generateMachine,
+    readMachineContent,
+    saveMachine,
+    createMachineFolder,
+    createMachineFile,
+    uploadMachines,
+    renameMachine,
+    deleteMachine,
     compile,
     deploy,
     readStagedFileContent,

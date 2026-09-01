@@ -1,35 +1,39 @@
 <script setup lang="ts">
-// Machineconfig top-level view. Hosts every panel that used to live
-// in ``EditorView.vue``'s ``v-else`` branch — the surface is
-// identical so existing CSS / column ratios carry over verbatim.
+// Machineconfig top-level view — three sections:
+//
+//   Profiles  — the profile explorer; each ``.cfg`` row carries a
+//               Generate button that creates the machine template set.
+//   Machines  — browse the generated machine template sets
+//               (``<machine>/configs/...``); files are editable
+//               templates.
+//   Active    — the currently running machine's files (read-only;
+//               switching machines happens outside the UI by
+//               starting ``linuxcnc <machine>.ini``).
+//
+// The deprecated Klipper compiler flow is no longer rendered here;
+// the backend keeps the old endpoints during the transition.
 //
 // Routing: ``router/index.ts`` declares the ``/machineconfig`` route
-// and maps it to this component. ProfilesExplorer's ``@edit`` event
-// pushes ``/editor?source=profiles&name=<path>`` via the shared
+// and maps it to this component. Both explorers push
+// ``/editor?source=<source>&name=<path>`` via the shared
 // :func:`openInEditor` helper — the universal editor contract
 // (issue #132) is the only entry point into ``EditorView``.
 
 import { onMounted } from 'vue'
 
-import UpdateManager from '../components/UpdateManager.vue'
-import DebugPanel from '../components/DebugPanel.vue'
-import CompilerPanel from '../components/machineconfig/CompilerPanel.vue'
-import CompiledOutputViewer from '../components/machineconfig/CompiledOutputViewer.vue'
-import DeploymentPanel from '../components/machineconfig/DeploymentPanel.vue'
-import ProfilesExplorer from '../components/machineconfig/ProfilesExplorer.vue'
 import ActivePanel from '../components/machineconfig/ActivePanel.vue'
-import MacroManagerPanel from '../components/macros/MacroManagerPanel.vue'
-import McodeManagerPanel from '../components/macros/McodeManagerPanel.vue'
+import MachinesExplorer from '../components/machineconfig/MachinesExplorer.vue'
+import ProfilesExplorer from '../components/machineconfig/ProfilesExplorer.vue'
 import { useMachineConfigStore } from '../stores/machineconfigStore'
 import { openInEditor } from '../helpers/openInEditor'
 
 const machineConfigStore = useMachineConfigStore()
 
-// Used by ProfilesExplorer to request an edit. Pushes the
-// ``/editor?source=profiles&name=<path>`` URL; EditorView's
+// Used by the explorers to request an edit. Pushes the
+// ``/editor?source=<source>&name=<path>`` URL; EditorView's
 // ``watch`` detects the route change and loads the file.
-function openEditor(path) {
-  openInEditor({ source: 'profiles', name: path })
+function openEditor(source, path) {
+  openInEditor({ source, name: path })
 }
 
 onMounted(() => {
@@ -40,22 +44,15 @@ onMounted(() => {
 <template>
   <div class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
     <section class="space-y-6 xl:col-span-4">
-
+      <ProfilesExplorer @edit="(path) => openEditor('profiles', path)" />
     </section>
 
-    <section class="space-y-6 xl:col-span-8">
-      <CompilerPanel />
+    <section class="space-y-6 xl:col-span-4">
+      <MachinesExplorer @edit="(path) => openEditor('machines', path)" />
+    </section>
 
-      <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ProfilesExplorer @edit="openEditor" />
-
-        <div class="space-y-6">
-          <CompiledOutputViewer />
-          <DeploymentPanel />
-        </div>
-      </div>
-
-
+    <section class="space-y-6 xl:col-span-4">
+      <ActivePanel />
     </section>
   </div>
 </template>

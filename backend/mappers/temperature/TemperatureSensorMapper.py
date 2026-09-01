@@ -23,7 +23,7 @@ class TemperatureSensorMapper:
 
         return TemperaturePin(
             id=sensor_id,
-            actual_temperature=ReadWriteDynamicHalPin[float](pin_name, HalDataType.FLOAT)
+            actual_temperature=ReadWriteDynamicHalPin[float](pin_name, HalDataType.FLOAT, "")
         )
 
     @classmethod

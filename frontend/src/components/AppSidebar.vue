@@ -22,10 +22,9 @@ const builtinItems = [
   { id: 'running', label: 'Running', icon: 'running', order: 1 },
   { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2 },
   { id: 'camera', label: 'Camera', icon: 'camera', order: 3 },
-  { id: 'machineconfig', label: 'Dep Machine Config', icon: 'machineconfig', order: 100 },
   { id: 'settings', label: 'Settings', icon: 'settings', order: 7 },
-  { id: 'config', label: 'Config', icon: 'machineconfig', order: 5 },
-  { id: 'debug', label: 'Debug', icon: 'settings', order: 6 },
+  { id: 'config', label: 'Config', icon: 'config', order: 5 },
+  { id: 'debug', label: 'Debug', icon: 'debug', order: 6 },
 ];
 
 const navItems = computed(() =>

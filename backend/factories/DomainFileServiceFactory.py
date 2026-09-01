@@ -5,6 +5,7 @@ from typing import Optional, Dict
 from services.domain_file_services import FileService
 from services.domain_file_services.ActiveFileService import ActiveFileService
 from services.domain_file_services.ConfigFileService import ConfigFileService
+from services.domain_file_services.MachineFileService import MachineFileService
 from services.domain_file_services.MCodeFileService import MCodeFileService
 from services.domain_file_services.MacroFileService import MacroFileService
 from services.domain_file_services.ProgramFileService import ProgramFileService
@@ -51,6 +52,12 @@ def get_macro_service(root: Optional[Path] = None) -> MacroFileService:
         _SERVICE_CACHE[key] = MacroFileService(root=root)
     return _SERVICE_CACHE[key]
 
+def get_machine_service(root: Optional[Path] = None) -> MachineFileService:
+    key = _cache_key(MachineFileService, root)
+    if key not in _SERVICE_CACHE:
+        _SERVICE_CACHE[key] = MachineFileService(root=root)
+    return _SERVICE_CACHE[key]
+
 def reset_service_cache() -> None:
     _SERVICE_CACHE.clear()
 
@@ -58,11 +65,13 @@ __all__ = [
     "ActiveFileService",
     "ConfigFileService",
     "MCodeFileService",
+    "MachineFileService",
     "MacroFileService",
     "ProgramFileService",
     "StagedFileService",
     "get_active_service",
     "get_config_service",
+    "get_machine_service",
     "get_mcode_service",
     "get_program_service",
     "get_staged_service",

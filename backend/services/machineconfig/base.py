@@ -64,6 +64,13 @@ class Compiler(ABC):
     #: translator that doesn't care about markers).
     source_marker: str | None = DEFAULT_SOURCE_MARKER
 
+    #: ``True`` when this compiler is deprecated. Deprecated compilers
+    #: keep working (transition period) but the API surfaces the flag
+    #: in ``GET /compilers`` so the frontend can badge them. The
+    #: template-based replacement lives in
+    #: :mod:`services.machinetemplates`.
+    deprecated: bool = False
+
     # ------------------------------------------------------------------ #
     # Public surface                                                     #
     # ------------------------------------------------------------------ #

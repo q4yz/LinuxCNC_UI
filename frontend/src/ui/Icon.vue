@@ -109,8 +109,8 @@ const ICONS = {
     path: "M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z M15 13a3 3 0 11-6 0 3 3 0 016 0z",
     stroke: true,
   },
-  machineconfig: {
-    label: "Machine Config",
+  config: {
+    label: "Config",
     path: "M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01",
     stroke: true,
   },
@@ -127,6 +127,11 @@ const ICONS = {
   running: {
     label: "Running",
     path: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+    stroke: true,
+  },
+  debug: {
+    label: "Debug",
+    path: "M9 9v-1a3 3 0 0 1 6 0v1 M8 9h8a6 6 0 0 1 1 3v3a5 5 0 0 1 -10 0v-3a6 6 0 0 1 1 -3 M3 13h4 M17 13h4 M12 20v-6 M4 19l3.35-2 M20 19l-3.35-2 M4 7l3.75 2.4 M20 7l-3.75 2.4",
     stroke: true,
   },
 
