@@ -61,11 +61,6 @@ const isTypingInField = () => {
   )
 }
 
-const blockScroll = (e) => {
-  // Allow touch dragging on the speed slider, block everything else.
-  if (e.type === 'touchmove' && e.target.tagName === 'INPUT') return
-  e.preventDefault()
-}
 
 const activate = () => {
   if (!isActive.value) {
@@ -124,7 +119,6 @@ const handleKeyDown = (event) => {
   if (event.code === 'NumpadAdd' || event.key === '+') {
     event.preventDefault()
     sliderTouched.value = true
-    // Log10 scale: +0.1 is roughly a 25% speed increase per click
     sliderPos.value = Math.min(MAX_JOG_SPEED, sliderPos.value + 0.1)
     return
   }
@@ -184,16 +178,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    ref="containerRef"
-    tabindex="0"
-    @focusin="activate"
-    @focusout="handleFocusOut"
-    class="bg-gray-800 rounded-lg shadow-xl overflow-hidden outline-none transition-all duration-200 border"
-    :class="isActive ? 'border-blue-400 ring-2 ring-blue-400/30' : 'border-gray-700'"
+      ref="containerRef"
+      tabindex="0"
+      @focusin="activate"
+      @focusout="handleFocusOut"
+      class="bg-gray-800 rounded-lg shadow-xl overflow-hidden outline-none transition-all duration-200 border"
+      :class="isActive ? 'border-blue-400 ring-2 ring-blue-400/30' : 'border-gray-700'"
   >
     <div
-      class="px-4 py-3 border-b border-gray-600 flex justify-between items-center transition-colors duration-200"
-      :class="isActive ? 'bg-blue-900/40' : 'bg-gray-700/50'"
+        class="px-4 py-3 border-b border-gray-600 flex justify-between items-center transition-colors duration-200"
+        :class="isActive ? 'bg-blue-900/40' : 'bg-gray-700/50'"
     >
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
         Jog Controls
@@ -209,53 +203,49 @@ onBeforeUnmount(() => {
         </label>
         <span class="text-[10px] text-gray-500">Use +/- to scale</span>
       </div>
-      <!-- tabindex="-1" prevents the slider from stealing focus / showing an outline ring -->
       <input
-        v-model.number="sliderPos"
-        @input="sliderTouched = true"
-        type="range"
-        min="-1"
-        :max="MAX_JOG_SPEED"
-        step="0.001"
-        tabindex="-1"
-        class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
+          v-model.number="sliderPos"
+          @input="sliderTouched = true"
+          type="range"
+          min="-1"
+          :max="MAX_JOG_SPEED"
+          step="0.001"
+          tabindex="-1"
+          class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer focus:outline-none"
       />
     </div>
 
     <div class="p-6 grid grid-cols-3 gap-3 text-center">
       <div class="col-start-2">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(1, 1)"
-          @touchstart.prevent="startJog(1, 1)"
-          @mouseup="stopJog(1)"
-          @mouseleave="stopJog(1)"
-          @touchend="stopJog(1)"
-          @touchcancel="stopJog(1)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(1, 1)"
+            @pointerup="stopJog(1)"
+            @pointercancel="stopJog(1)"
+            @contextmenu.prevent
         >Y+</button>
       </div>
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(2, 1)"
-          @touchstart.prevent="startJog(2, 1)"
-          @mouseup="stopJog(2)"
-          @mouseleave="stopJog(2)"
-          @touchend="stopJog(2)"
-          @touchcancel="stopJog(2)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(2, 1)"
+            @pointerup="stopJog(2)"
+            @pointercancel="stopJog(2)"
+            @contextmenu.prevent
         >Z+</button>
       </div>
 
       <div class="col-start-1">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(0, -1)"
-          @touchstart.prevent="startJog(0, -1)"
-          @mouseup="stopJog(0)"
-          @mouseleave="stopJog(0)"
-          @touchend="stopJog(0)"
-          @touchcancel="stopJog(0)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(0, -1)"
+            @pointerup="stopJog(0)"
+            @pointercancel="stopJog(0)"
+            @contextmenu.prevent
         >X-</button>
       </div>
 
@@ -266,37 +256,34 @@ onBeforeUnmount(() => {
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(0, 1)"
-          @touchstart.prevent="startJog(0, 1)"
-          @mouseup="stopJog(0)"
-          @mouseleave="stopJog(0)"
-          @touchend="stopJog(0)"
-          @touchcancel="stopJog(0)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(0, 1)"
+            @pointerup="stopJog(0)"
+            @pointercancel="stopJog(0)"
+            @contextmenu.prevent
         >X+</button>
       </div>
 
       <div class="col-start-2">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(1, -1)"
-          @touchstart.prevent="startJog(1, -1)"
-          @mouseup="stopJog(1)"
-          @mouseleave="stopJog(1)"
-          @touchend="stopJog(1)"
-          @touchcancel="stopJog(1)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(1, -1)"
+            @pointerup="stopJog(1)"
+            @pointercancel="stopJog(1)"
+            @contextmenu.prevent
         >Y-</button>
       </div>
 
       <div class="col-start-3">
         <button
-          class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-colors touch-none select-none focus:outline-none"
-          @mousedown.prevent="startJog(2, -1)"
-          @touchstart.prevent="startJog(2, -1)"
-          @mouseup="stopJog(2)"
-          @mouseleave="stopJog(2)"
-          @touchend="stopJog(2)"
-          @touchcancel="stopJog(2)"
+            class="w-full bg-gray-700 hover:bg-gray-600 active:bg-blue-600 py-3 rounded text-lg font-bold transition-all select-none focus:outline-none"
+            :class="isActive ? 'touch-none' : 'opacity-30 pointer-events-none'"
+            @pointerdown.prevent="startJog(2, -1)"
+            @pointerup="stopJog(2)"
+            @pointercancel="stopJog(2)"
+            @contextmenu.prevent
         >Z-</button>
       </div>
     </div>

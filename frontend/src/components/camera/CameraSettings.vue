@@ -6,13 +6,7 @@ import { storeToRefs } from "pinia";
 import { createModuleSettings } from "../../core/settings/createModuleSettings";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
-import { useMacroButtonConfig, MacroButtonEditor } from "../../ui";
 import type { CameraDevice, EditablePreferenceKey } from "../../stores/cameraTypes";
-
-interface MacroSlot {
-  id: string;
-  label: string;
-}
 
 const store = useCameraStore();
 const {
@@ -31,14 +25,6 @@ const settingsLoading: Ref<boolean> = ref(false);
 const settingsSaving: Ref<boolean> = ref(false);
 const settingsError: Ref<string> = ref("");
 const saveMessage: Ref<string> = ref("");
-
-// Custom macro buttons for the camera viewer (slot
-// ``camera.bottom``). The composable normalises a missing key to
-// ``[]`` so the editor opens cleanly on first boot.
-const buttonConfig = useMacroButtonConfig(CAMERA_ID);
-const SLOTS: MacroSlot[] = [
-  { id: "camera.bottom", label: "Camera viewer button" },
-];
 
 function preferenceFor(id: string) {
   return cameraPreferences.value[id] ?? defaultPreferenceForActive();
@@ -169,7 +155,6 @@ onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
   loadBackendSettings();
-  buttonConfig.refresh();
 });
 </script>
 
@@ -185,8 +170,7 @@ onMounted(() => {
         </p>
       </header>
 
-      <form class="flex flex-col gap-3 sm:flex-row sm:items-end" @submit.prevent="saveIpCameraUrl">
-        <label class="min-w-0 flex-1 text-sm text-gray-200">
+      <form class="flex flex-col gap-3 sm:flex-row sm:items-end" @submit.prevent="saveIpCameraUrl">        <label class="min-w-0 flex-1 text-sm text-gray-200">
           <span class="mb-1 block text-xs font-medium text-gray-400">IP camera URL</span>
           <input
             v-model="ipCameraUrl"
@@ -370,24 +354,6 @@ onMounted(() => {
           </div>
         </li>
       </ul>
-    </section>
-
-    <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          Custom buttons
-        </h3>
-        <p class="mt-1 text-xs text-gray-400">
-          Add a custom button to the camera viewer (e.g. a light-on
-          macro). The button runs the selected macro when clicked.
-        </p>
-      </header>
-      <MacroButtonEditor
-        :model-value="buttonConfig.buttons.value"
-        :slots="SLOTS"
-        :module-id="CAMERA_ID"
-        @update:model-value="(next) => buttonConfig.persist(next)"
-      />
     </section>
   </div>
 </template>

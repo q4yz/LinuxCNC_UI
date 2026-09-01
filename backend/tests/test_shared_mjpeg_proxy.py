@@ -635,6 +635,85 @@ def test_upstream_html_login_page_surfaces_as_mjpeg_proxy_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------- #
+# Failure recovery — a dead proxy must never poison the registry          #
+# ---------------------------------------------------------------------- #
+
+
+def test_failed_start_evicts_slot_and_next_request_opens_fresh_upstream(
+    monkeypatch,
+):
+    """Recovery contract: start failure → evict → next request retries.
+
+    Regression guard: a single upstream failure (camera powered off)
+    used to poison the registry slot forever — ``get_or_create``
+    never re-ran ``start()`` on an existing entry, so the stream
+    could not recover without a backend restart.
+    """
+    import httpx as _httpx
+
+    dead_client = _FakeAsyncClient(
+        None, raise_on_send=_httpx.ConnectError("camera unreachable"),
+    )
+    _install_fake_httpx(monkeypatch, dead_client)
+    url = "http://10.0.0.58/videostream.cgi?rate=0"
+
+    async def _run():
+        # 1. First request: upstream unreachable → start fails,
+        #    subscribe raises and must evict the dead slot.
+        proxy1 = await MjpegFanout.get_or_create(url)
+        first_error = None
+        try:
+            proxy1.subscribe()
+        except _httpx.ConnectError as exc:
+            first_error = exc
+        assert first_error is not None
+        assert url not in MjpegFanout._proxies, (
+            "a failed proxy must be evicted, not cached"
+        )
+
+        # 2. The camera came back: swap in a working upstream.
+        live_client = _FakeAsyncClient(
+            _FakeStream(chunks=[b"a", b"b"]),
+        )
+        _install_fake_httpx(monkeypatch, live_client)
+        proxy2 = await MjpegFanout.get_or_create(url)
+        assert proxy2 is not proxy1, (
+            "the next request must open a fresh upstream, not reuse "
+            "the dead proxy"
+        )
+        ct, it = proxy2.subscribe()
+        chunks = await _collect(it)
+        return ct, chunks
+
+    content_type, chunks = asyncio.run(_run())
+    assert content_type == "multipart/x-mixed-replace;boundary=ipcamera"
+    assert chunks == [b"a", b"b"]
+
+
+def test_subscribe_to_never_started_proxy_raises_and_evicts():
+    """A registry slot without a live pump raises a retryable error.
+
+    Guards the second half of the poisoned-slot class: a proxy that
+    never started (no cached error, no pump) must not hand out a
+    bogus empty stream — it raises and evicts so the next request
+    opens a fresh upstream.
+    """
+    proxy = smp.SharedMjpegProxy("http://camera.local/path")
+    MjpegFanout._proxies["http://camera.local/path"] = proxy
+
+    async def _run():
+        try:
+            proxy.subscribe()
+            return "no-error"
+        except MjpegProxyError as exc:
+            return str(exc)
+
+    msg = asyncio.run(_run())
+    assert "not running" in msg
+    assert "http://camera.local/path" not in MjpegFanout._proxies
+
+
+# ---------------------------------------------------------------------- #
 # Idempotency                                                              #
 # ---------------------------------------------------------------------- #
 

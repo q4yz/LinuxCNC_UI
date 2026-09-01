@@ -525,6 +525,77 @@ def test_stream_endpoint_maps_connect_error_to_503_with_hint(
     assert "connect" in resp.json()["detail"].lower()
 
 
+def test_stream_diagnostic_reports_ok_on_healthy_upstream(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
+):
+    """``GET /stream/diagnostic`` returns ``{ok: true}`` when the upstream opens."""
+    import routers.camera as router_module
+
+    class _FakeProxy:
+        def __init__(self, url):
+            self.content_type = "multipart/x-mixed-replace;boundary=x"
+
+        def subscribe(self):
+            return self.content_type, _StreamTestIter(b"")
+
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/modules/camera/stream/diagnostic",
+        params={"id": "http://10.0.0.58/videostream.cgi?rate=0"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["message"] == ""
+
+
+def test_stream_diagnostic_reports_message_on_upstream_failure(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
+):
+    """``GET /stream/diagnostic`` returns the 503 reason as JSON, never 500s.
+
+    The frontend calls this when the ``<img>`` errors so the operator
+    sees WHY the camera is down (unreachable / credentials rejected /
+    login page) instead of a silent broken image.
+    """
+    import httpx as _httpx
+    import routers.camera as router_module
+
+    class _ExplodingFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            raise _httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _ExplodingFanout)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/modules/camera/stream/diagnostic",
+        params={"id": "http://10.0.0.58/videostream.cgi?rate=0"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "connect" in body["message"].lower()
+
+
 def test_stream_endpoint_returns_503_for_rtsp_url(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):

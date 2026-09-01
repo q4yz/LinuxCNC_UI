@@ -4,7 +4,6 @@ import type { Ref, ComputedRef } from "vue";
 import { storeToRefs } from "pinia";
 
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
-import { useMacroButtonConfig, MacroButton } from "../../ui";
 import type { CameraDevice, CameraPreference } from "../../stores/cameraTypes";
 
 const MAX_RETRY_DELAY_MS = 5_000;
@@ -27,13 +26,6 @@ const {
   error,
   streamMessage,
 } = storeToRefs(store);
-
-// Operator-configurable macro button (slot ``camera.bottom``).
-// Renders alongside the existing "Switch Camera" button so the
-// operator can keep their muscle memory while adding one-off
-// shortcuts (e.g. a light-on macro).
-const buttonConfig = useMacroButtonConfig("camera");
-const { buttonsBySlot } = buttonConfig;
 
 const activeDevice: ComputedRef<CameraDevice | null> = computed(() => {
   return devices.value.find((device) => device.id === activeCameraId.value) ?? null;
@@ -89,9 +81,11 @@ const startStream = (): void => {
 // Exponential backoff on stream failure. The backend enforces a
 // 5-second cooldown after a failed open/read; the frontend mirrors
 // that with a capped exponential backoff so we don't hammer the
-// server while the hardware is locked. Every retry also refreshes
-// ``streamMessage`` so a dependency problem surfaces with a single
-// operator-facing hint rather than the silent retry loop.
+// server while the hardware is locked. The diagnostic probe explains
+// WHY the stream is down (unreachable / login page / credentials
+// rejected / dependency missing) so the operator sees the same
+// actionable text the backend logged, not a generic broken-image
+// hint from /status.
 const handleStreamError = (): void => {
   retryCount += 1;
   const delay = Math.min(1000 * Math.pow(2, retryCount), MAX_RETRY_DELAY_MS);
@@ -103,10 +97,11 @@ const handleStreamError = (): void => {
   streamTimer = setTimeout(() => {
     startStream();
   }, delay);
-  // Pull the latest diagnostic from the supervisor. The operator
-  // sees a plain-English hint ("ustreamer is not installed…") instead
-  // of an opaque broken <img>.
-  store.refreshStreamMessage();
+  // Ask the backend for the upstream verdict. Falls back to
+  // ``refreshStreamMessage()`` internally when no id is set or the
+  // probe reports healthy — the supervisor status row still carries
+  // USB dependency messages.
+  void store.probeStreamFailure();
 };
 
 // Reset the backoff counter when the stream succeeds.
@@ -142,10 +137,6 @@ onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
   startStream();
-  // Fire-and-forget; ``useMacroButtonConfig`` handles missing
-  // keys by defaulting to ``[]`` so the button stays hidden
-  // until the operator configures one in the Settings panel.
-  buttonConfig.refresh();
 });
 
 // Clean up when leaving the page to free the USB hardware and
@@ -267,13 +258,5 @@ onBeforeUnmount(async () => {
     >
       Switch Camera
     </button>
-
-    <MacroButton
-      v-if="activeCameraId"
-      :descriptor="buttonsBySlot['camera.bottom']"
-      variant="secondary"
-      size="md"
-      class="absolute bottom-4 right-36 rounded-full shadow-lg"
-    />
   </section>
 </template>

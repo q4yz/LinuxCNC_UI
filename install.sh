@@ -154,10 +154,13 @@ server {
     }
 }
 
-# Application Server (Port 8080 - HTTPS)
+# Application Server (Port 443 - HTTPS)
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name _;
+
+    keepalive_timeout 75s;
+    keepalive_requests 1000;
 
     ssl_certificate $CERT_DIR/localhost.pem;
     ssl_certificate_key $CERT_DIR/localhost-key.pem;

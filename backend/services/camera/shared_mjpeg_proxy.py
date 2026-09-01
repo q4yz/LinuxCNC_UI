@@ -335,16 +335,32 @@ class SharedMjpegProxy:
 
         On upstream-start failure the cached error is re-raised here
         so the router can return a 503 with the same shape the
-        single-client proxy produced.
+        single-client proxy produced. The dead slot is **evicted from
+        the registry first** so the next ``get_or_create`` opens a
+        fresh upstream — without this a single failure while the
+        camera was unreachable would poison the slot forever (the
+        registry never re-runs ``start`` on an existing entry) and
+        the stream could not recover without a backend restart.
         """
         if self._start_error is not None:
             err = self._start_error
-            # Clear so the registry can drop the slot and a future
-            # request can retry from scratch.
+            # Evict the dead slot so a future request retries from
+            # scratch, then surface the original failure.
             self._start_error = None
-            if isinstance(err, MjpegProxyError):
-                raise err
+            self._evict_from_registry()
             raise err
+
+        if self._response is None or self._pump_task is None:
+            # Never started (or torn down) with no cached error — the
+            # registry handed out a dead slot. Same recovery: evict
+            # and raise a retryable error instead of returning a bogus
+            # empty stream the browser would render as a silent
+            # broken image.
+            self._evict_from_registry()
+            raise MjpegProxyError(
+                "Camera stream is not running (upstream never opened). "
+                "Retry the request to reconnect."
+            )
 
         # Cancel the idle-TTL timer — at least one subscriber is now
         # live. ``call_later`` handles are cancelled by ``cancel()``.
@@ -355,6 +371,16 @@ class SharedMjpegProxy:
         sub = _SubscriberQueue()
         self._subscribers.append(sub)
         return self.content_type, _SubscriberIterator(sub)
+
+    def _evict_from_registry(self) -> None:
+        """Drop this proxy's registry slot (best-effort, idempotent)."""
+        try:
+            from services.camera.shared_mjpeg_proxy import MjpegFanout  # local import
+            MjpegFanout._evict(self.url)
+        except Exception:  # noqa: BLE001 - best-effort eviction
+            logger.debug(
+                "SharedMjpegProxy: registry evict failed", exc_info=True,
+            )
 
     def release(self, sub: "_SubscriberQueue") -> None:
         """Drop ``sub`` from the subscriber list.

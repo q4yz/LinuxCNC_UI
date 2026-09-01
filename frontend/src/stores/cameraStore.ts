@@ -45,6 +45,7 @@ const STORE_ID = "camera";
 const CAMERA_ID = STORE_ID;
 const DEVICES_URL = "/api/v1/modules/camera/devices";
 const STATUS_URL = "/api/v1/modules/camera/status";
+const DIAGNOSTIC_URL = "/api/v1/modules/camera/stream/diagnostic";
 
 // Field set the frontend lets operators touch. ``custom_name`` matches
 // the backend snake_case schema; the local ref keeps it as
@@ -338,6 +339,63 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   }
 
   /**
+   * Probe the active camera stream and surface the exact reason it
+   * is unavailable (unreachable / credentials rejected / login page /
+   * dependency missing). Calls the same upstream attempt as ``/stream``
+   * but returns a JSON verdict the ``<img>`` element cannot read.
+   *
+   * Used by the camera viewer's ``onerror`` handler. Falls back to
+   * :func:`refreshStreamMessage` (which also surfaces USB-cam
+   * dependency messages) when the probe can't run because no camera
+   * is selected.
+   *
+   * Returns the diagnostic message (empty when healthy).
+   */
+  async function probeStreamFailure(): Promise<string> {
+    const id = activeCameraId.value || "";
+    let message = "";
+    try {
+      const response = await fetch(DIAGNOSTIC_URL, {
+        method: "GET",
+        params: id ? { id } : {},
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Camera diagnostic request failed: ${response.status} ${response.statusText}`,
+        );
+      }
+      const payload = (await response.json()) as {
+        ok?: unknown;
+        message?: unknown;
+      };
+      message = payload?.ok === false && typeof payload?.message === "string"
+        ? payload.message
+        : "";
+    } catch (requestError: unknown) {
+      message =
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to reach the camera diagnostic endpoint.";
+    }
+
+    if (!message) {
+      // Empty verdict: either the probe reports healthy (transient
+      // network blip — <img> will retry) or no camera is selected.
+      // Fall back to the supervisor's status message so a missing-
+      // device / dependency-missing condition still surfaces.
+      await refreshStreamMessage();
+      return streamMessage.value;
+    }
+
+    streamMessage.value = message;
+    if (message !== lastReportedStreamMessage) {
+      lastReportedStreamMessage = message;
+      useConsoleStore().error(`[camera] ${message}`);
+    }
+    return message;
+  }
+
+  /**
    * Add a synthetic entry for every preference key that is not
    * already present in ``devices.value``.
    *
@@ -585,6 +643,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     deleteIpCamera,
     awaitInFlightPreferenceWrite,
     refreshStreamMessage,
+    probeStreamFailure,
   };
 });
 

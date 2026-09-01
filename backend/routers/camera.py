@@ -64,7 +64,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from services.camera.camera_detection import USBDeviceInfo, detect_usb_cameras
-from services.camera.camera_mjpeg_proxy import MjpegProxyError
+from services.camera.camera_mjpeg_proxy import MjpegProxyError, redact_url
 from services.camera.shared_mjpeg_proxy import MjpegFanout
 from models.camera_settings import CameraSettings
 
@@ -684,6 +684,51 @@ async def camera_stream(
     ),
 ):
     camera_id = id or _supervisor.read_default_device_id()
+    content_type, iterator, sub, fanout_url = await _subscribe_camera(camera_id)
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in iterator:
+                yield chunk
+        finally:
+            MjpegFanout.release(fanout_url, sub)
+
+    return StreamingResponse(
+        body(),
+        # Pass through the upstream's exact content-type — the
+        # ``;boundary=...`` parameter is what lets the browser parse
+        # the multipart stream into frames. Without it the browser
+        # silently fails to render.
+        media_type=content_type,
+        headers={
+            # Prevent the browser from caching a partial or
+            # truncated MJPEG response — the URL already carries
+            # ``&t=...`` cache-busters but defense-in-depth is cheap.
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            # Disable nginx buffering in case the operator fronts
+            # the backend with a reverse proxy.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _subscribe_camera(camera_id: str):
+    """Resolve any camera id to a fan-out proxy subscription.
+
+    Shared dispatch for ``/stream`` and ``/stream/diagnostic``:
+    validates the source (no id / RTSP), proxies IP-camera URLs
+    through the fan-out, and spawns-or-reuses the per-device
+    ``ustreamer`` for ``/dev/videoN`` sources.
+
+    Returns ``(content_type, iterator, sub, fanout_url)`` — the
+    caller owes ``MjpegFanout.release(fanout_url, sub)`` when its
+    consumer goes away. Raises ``HTTPException(503)`` with the
+    operator-facing reason on any failure; every failure is logged
+    at WARNING with a redacted id so the backend log always explains
+    a camera 503 (the browser only sees the status code — an
+    ``<img>`` element cannot read the response body).
+    """
     if not camera_id:
         raise HTTPException(
             status_code=503,
@@ -716,7 +761,10 @@ async def camera_stream(
     # converts embedded ``user:pass@host`` userinfo into an
     # Authorization header the browser never sees.
     if camera_id.startswith(("http://", "https://")):
-        return await _proxy_stream_response(camera_id)
+        content_type, iterator, sub = await _open_stream_subscription(
+            camera_id
+        )
+        return content_type, iterator, sub, camera_id
 
     # ``/dev/videoN`` (or anything else the supervisor understands).
     # ``spawn_or_reuse`` returns the per-device ustreamer URL
@@ -728,92 +776,119 @@ async def camera_stream(
     try:
         info = _supervisor.spawn_or_reuse(camera_id)
     except RuntimeError as exc:
+        logger.warning(
+            "camera stream unavailable for %s: %s", camera_id, exc
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return await _proxy_stream_response(info["url"])
+    content_type, iterator, sub = await _open_stream_subscription(
+        info["url"]
+    )
+    return content_type, iterator, sub, info["url"]
 
 
-async def _proxy_stream_response(url: str) -> StreamingResponse:
-    """Open the upstream via the fan-out proxy and stream bytes back.
+async def _open_stream_subscription(url: str):
+    """Open (or join) the fan-out proxy subscription for ``url``.
 
     ``MjpegFanout`` keeps a single upstream httpx connection per
-    ``url`` and fans the bytes out to every ``StreamingResponse``
-    consumer. With N tabs viewing the same camera we now hit the
-    IP-camera connection cap exactly **once**, not N times. The
-    per-subscriber queue's drop-oldest overflow policy means a
-    frozen background tab cannot freeze everyone else.
+    ``url`` and fans the bytes out to every consumer. With N tabs
+    viewing the same camera we hit the IP-camera connection cap
+    exactly **once**, not N times. The per-subscriber queue's
+    drop-oldest overflow policy means a frozen background tab cannot
+    freeze everyone else.
 
-    Async because the upstream's response headers must be in hand
-    before ``media_type`` is set on the ``StreamingResponse``. FastAPI
-    supports async handlers that return ``StreamingResponse``.
-
-    The previous design hard-coded ``media_type="multipart/x-mixed-replace"``
-    which silently broke the operator's IP camera: the upstream sent
-    ``Content-Type: multipart/x-mixed-replace;boundary=ipcamera`` and
-    the browser needs the ``;boundary=...`` parameter to parse the
-    multipart stream into frames. Without it the browser renders
-    nothing. The fan-out proxy captures the upstream's exact
-    content-type synchronously and passes it through.
+    Returns ``(content_type, iterator, sub)``; raises
+    ``HTTPException(503)`` — logged — on any upstream failure.
     """
     try:
         proxy = await MjpegFanout.get_or_create(url)
         content_type, iterator = proxy.subscribe()
     except MjpegProxyError as exc:
+        logger.warning(
+            "camera stream unavailable for %s: %s", redact_url(url), exc
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.ConnectError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Could not connect to the upstream camera. Check the "
-                "host, port, and that the camera is reachable from "
-                "this backend."
-            ),
-        ) from exc
+        detail = (
+            "Could not connect to the upstream camera. Check the "
+            "host, port, and that the camera is reachable from "
+            "this backend."
+        )
+        logger.warning(
+            "camera stream unavailable for %s: %s (%s)",
+            redact_url(url), detail, exc,
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except httpx.TimeoutException as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Upstream camera timed out. The device is on the "
-                "network but stopped responding."
-            ),
-        ) from exc
+        detail = (
+            "Upstream camera timed out. The device is on the "
+            "network but stopped responding."
+        )
+        logger.warning(
+            "camera stream unavailable for %s: %s (%s)",
+            redact_url(url), detail, exc,
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Upstream camera connection failed: {exc}",
-        ) from exc
+        detail = f"Upstream camera connection failed: {exc}"
+        logger.warning(
+            "camera stream unavailable for %s: %s",
+            redact_url(url), detail,
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
+    return content_type, iterator, iterator._queue
 
-    # Hold the subscriber's queue handle so ``release`` can drop exactly
-    # this subscription on disconnect. ``release`` is idempotent so
-    # the router's body wrapper finalising the iterator twice (once
-    # via ``finally``, once via FastAPI's response cleanup) is safe.
-    sub = iterator._queue
 
-    async def body() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in iterator:
-                yield chunk
-        finally:
-            MjpegFanout.release(url, sub)
-
-    return StreamingResponse(
-        body(),
-        # Pass through the upstream's exact content-type — the
-        # ``;boundary=...`` parameter is what lets the browser parse
-        # the multipart stream into frames. Without it the browser
-        # silently fails to render.
-        media_type=content_type,
-        headers={
-            # Prevent the browser from caching a partial or
-            # truncated MJPEG response — the URL already carries
-            # ``&t=...`` cache-busters but defense-in-depth is cheap.
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            # Disable nginx buffering in case the operator fronts
-            # the backend with a reverse proxy.
-            "X-Accel-Buffering": "no",
-        },
-    )
-
+@router.get(
+    "/stream/diagnostic",
+    summary="Probe a camera stream and report why it cannot be served",
+    description=(
+        "Runs the exact same upstream attempt as /stream but returns "
+        "a JSON verdict (``{ok, message}``) instead of MJPEG bytes. "
+        "The frontend calls this when the stream ``<img>`` errors so "
+        "the operator sees WHY the camera is down (unreachable / "
+        "credentials rejected / login page / dependency missing) "
+        "instead of a silent broken image. A successful probe "
+        "releases its subscription immediately."
+    ),
+    operation_id="diagnoseCameraStream",
+)
+async def camera_stream_diagnostic(
+    id: Optional[str] = Query(
+        default=None,
+        description=(
+            "Camera identifier — same vocabulary as /stream. "
+            "Defaults to the configured ``default_device_id``."
+        ),
+    ),
+):
+    camera_id = id or _supervisor.read_default_device_id()
+    if not camera_id:
+        return {
+            "ok": False,
+            "message": (
+                "No camera selected. Pick a device in the Camera "
+                "Settings panel."
+            ),
+        }
+    try:
+        _content_type, _iterator, sub, fanout_url = await _subscribe_camera(
+            camera_id
+        )
+    except HTTPException as exc:
+        return {"ok": False, "message": str(exc.detail)}
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never 500
+        logger.warning(
+            "camera stream diagnostic failed for %s: %s",
+            redact_url(camera_id) if "://" in camera_id else camera_id,
+            exc,
+        )
+        return {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+    # Success — release the probe subscription immediately so the
+    # fan-out refcount stays consistent with the real ``<img>``
+    # streams (the idle TTL tears the upstream down if nobody is
+    # watching).
+    MjpegFanout.release(fanout_url, sub)
+    return {"ok": True, "message": ""}
 
 
 @router.get(
