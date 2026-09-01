@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const certDir = fileURLToPath(new URL('./.cert', import.meta.url))
-const USE_HTTPS = false;
+const USE_HTTPS = true;
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [

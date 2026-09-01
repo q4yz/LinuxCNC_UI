@@ -13,17 +13,19 @@ pure-C MJPEG/HTTP server that already powers every 3D-printer camera
 panel on the planet (OctoPrint, Mainsail, Fluidd). Each detected
 ``/dev/videoN`` device gets its own ``ustreamer`` subprocess bound to
 ``http://127.0.0.1:{8080+index}/?action=stream``; the backend
-``/stream`` endpoint is a 302 redirect to that URL.
+``/stream`` endpoint proxies those bytes same-origin.
 
 Endpoints (mounted by the registry under ``/api/v1/modules/camera``):
 
 * ``GET /devices`` — combination of detected USB devices (via
   ``/dev/video*`` + ``v4l2-ctl --list-devices``) plus the IP-camera
   URL configured in settings, so the Vue picker has one place to look.
-* ``GET /stream`` — 302 redirect to the per-device ``ustreamer``
-  URL, or a 503 with a plain-English ``message`` describing why the
-  stream cannot be served (dependency missing, device absent,
-  platform unsupported, etc.).
+* ``GET /stream`` — proxied MJPEG bytes (same-origin
+  ``StreamingResponse``) for both per-device ``ustreamer`` URLs and
+  HTTP / HTTPS IP-camera URLs, or a 503 with a plain-English
+  ``message`` describing why the stream cannot be served (dependency
+  missing, device absent, platform unsupported, upstream
+  unreachable, etc.).
 * ``GET /status`` — ``{running, active_id, ustreamer_url, message}``
   for the Settings panel's status row. ``message`` is empty when the
   stream is healthy and carries a single-line operator hint otherwise.
@@ -31,12 +33,11 @@ Endpoints (mounted by the registry under ``/api/v1/modules/camera``):
   frontend picker does not change; today it is the same shape as
   ``GET /devices`` minus the IP-camera row.
 
-The ``/stream`` endpoint intentionally does not stream bytes itself.
-Browsers fetching an ``<img src>`` follow 302 redirects transparently
-without paying any CORS preflight, so the redirect-to-ustreamer
-pattern works out of the box in dev (Vite proxies ``/api`` to 8000)
-and in production (operator opens the SPA via the same hostname as
-the backend).
+Every stream is proxied — the browser never leaves the SPA's origin.
+That keeps ``<img src>`` working in dev (Vite proxies ``/api`` to
+8000) and in production behind the HTTPS reverse proxy without ever
+triggering mixed-content blocking, and keeps upstream credentials
+(query parameters or embedded userinfo) out of the browser entirely.
 
 Why no OpenCV / no Python capture? See
 ``.agent/context/LESSONS_LEARNED.md`` § 4.1 — the original
@@ -59,7 +60,7 @@ from typing import AsyncIterator, Dict, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from services.camera.camera_detection import USBDeviceInfo, detect_usb_cameras
 from services.camera.camera_mjpeg_proxy import MjpegProxyError
@@ -290,9 +291,9 @@ class UstreamerSupervisor:
 
         HTTP / HTTPS / RTSP URLs are a special case: ``ustreamer``
         cannot consume them, so the supervisor serves them by
-        returning the URL itself. The ``/stream`` endpoint turns
-        that into a 302 redirect and the browser fetches the
-        upstream MJPEG directly. No subprocess is spawned, no
+        returning the URL itself. The ``/stream`` endpoint feeds that
+        URL to the MJPEG fan-out proxy, which streams the upstream
+        bytes back same-origin. No subprocess is spawned, no
         ``/dev/videoN`` device is needed, and the dependency
         checks (ustreamer on PATH, Linux platform, …) do not
         apply. This is what lets operators paste an arbitrary IP
@@ -302,11 +303,13 @@ class UstreamerSupervisor:
             raise RuntimeError("camera_id is required")
 
         with self._lock:
-            # IP camera passthrough: the browser fetches the URL
-            # directly via the 302 redirect, so the supervisor has
-            # no subprocess to manage. Returning the URL verbatim
-            # also means an upstream URL with embedded credentials
-            # (``http://user:pass@host/path``) is preserved as-is.
+            # IP camera passthrough: the proxy fetches the upstream
+            # server-side, so the supervisor has no subprocess to
+            # manage. Returning the URL verbatim also means an
+            # upstream URL with embedded credentials
+            # (``http://user:pass@host/path``) is preserved as-is
+            # (the proxy converts userinfo into an Authorization
+            # header).
             if camera_id.startswith(("http://", "https://", "rtsp://")):
                 return {"id": camera_id, "url": camera_id}
 
@@ -386,8 +389,8 @@ class UstreamerSupervisor:
             # subprocess for HTTP / HTTPS sources, so the absence of
             # a child entry is the normal case rather than a failure.
             # The ``/stream`` endpoint proxies these via the MJPEG
-            # proxy module (so embedded credentials are not stripped
-            # by the browser on a cross-origin redirect); ``status()``
+            # proxy module (credentials stay server-side — the
+            # browser never sees the upstream URL); ``status()``
             # reports ``running=True`` so the operator's UI does not
             # render a confusing "no camera" placeholder.
             if active_id.startswith(("http://", "https://")):
@@ -654,13 +657,14 @@ def list_devices() -> Dict[str, object]:
     "/stream",
     summary="Get Live MJPEG Stream",
     description=(
-        "Returns the MJPEG stream. For ``/dev/videoN`` sources the "
-        "endpoint 302-redirects to the per-device ``ustreamer`` URL "
-        "(``http://127.0.0.1:{port}/?action=stream``). For HTTP / "
-        "HTTPS sources the backend proxies the upstream MJPEG bytes "
-        "verbatim (credentials travel in an ``Authorization`` header "
-        "so the browser never sees them on a cross-origin redirect). "
-        "Without query parameters the configured "
+        "Returns the MJPEG stream proxied same-origin. For "
+        "``/dev/videoN`` sources the per-device ``ustreamer`` URL "
+        "(``http://127.0.0.1:{port}/?action=stream``) is proxied; "
+        "for HTTP / HTTPS sources the upstream MJPEG bytes are "
+        "proxied verbatim (query-parameter credentials pass through "
+        "untouched; embedded ``user:pass@host`` userinfo travels in "
+        "an ``Authorization`` header so the browser never sees "
+        "them). Without query parameters the configured "
         "``default_device_id`` is used; empty on first boot results "
         "in 503. When the stream cannot be served for any reason the "
         "response is a 503 whose ``detail`` is a single-line "
@@ -697,20 +701,21 @@ async def camera_stream(
             status_code=503,
             detail=(
                 "RTSP camera URLs are not supported by the IP-camera "
-                "redirect. The backend can consume HTTP / HTTPS MJPEG "
+                "proxy. The backend can consume HTTP / HTTPS MJPEG "
                 "streams only."
             ),
         )
 
-    # HTTP / HTTPS: redirect to the upstream URL with credentials
-    # in query parameters. Chrome 86+ strips ``user:pass@host``
-    # userinfo from cross-origin redirect Location headers as a
-    # credential-leak hardening; query parameters are not stripped
-    # and reach the upstream intact. The dashboard's input
-    # validator ensures operators store credentials as
-    # ``?user=...&pwd=...`` rather than embedded in the host.
+    # HTTP / HTTPS: proxy the upstream MJPEG through the backend
+    # (same path as USB cameras). A 302 redirect would point the
+    # browser at the raw upstream URL — mixed content on the HTTPS
+    # appliance (and a credential leak: query-param passwords land
+    # in the browser's address bar / devtools). The proxy keeps the
+    # stream same-origin, forwards query parameters verbatim, and
+    # converts embedded ``user:pass@host`` userinfo into an
+    # Authorization header the browser never sees.
     if camera_id.startswith(("http://", "https://")):
-        return _redirect_to_ip_camera(camera_id)
+        return await _proxy_stream_response(camera_id)
 
     # ``/dev/videoN`` (or anything else the supervisor understands).
     # ``spawn_or_reuse`` returns the per-device ustreamer URL
@@ -724,36 +729,6 @@ async def camera_stream(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return await _proxy_stream_response(info["url"])
-
-
-def _redirect_to_ip_camera(url: str) -> RedirectResponse:
-    """Validate the URL and return a 302 redirect.
-
-    Chrome 86+ strips ``user:pass@host`` userinfo from cross-origin
-    redirect Location headers as a credential-leak hardening. Query
-    parameters are not stripped — they reach the upstream intact. The
-    dashboard's input validator ensures operators store credentials
-    as ``?user=...&pwd=...``; if a URL with embedded userinfo slips
-    through (older settings.json, manual API call, race between save
-    and validate), we surface a clear operator hint rather than
-    silently breaking the redirect.
-    """
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.username or parsed.password:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "IP camera URL contains embedded credentials "
-                "(user:pass@host). Move them into query parameters "
-                "(?user=...&pwd=...) so the browser forwards them "
-                "across the cross-origin redirect; Chrome strips "
-                "userinfo from Location headers and they would be "
-                "lost otherwise."
-            ),
-        )
-    return RedirectResponse(url=url, status_code=302)
 
 
 async def _proxy_stream_response(url: str) -> StreamingResponse:

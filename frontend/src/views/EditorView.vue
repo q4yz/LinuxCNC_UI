@@ -245,66 +245,64 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="hasValidTarget" class="fixed inset-0 z-10 flex flex-col bg-gray-900">
-    <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
-      <span class="font-mono text-blue-300">
-        Editing {{ currentName }} ({{ sourceLabel(currentSource) }})
-      </span>
-      <div class="flex gap-2">
+  <div v-if="hasValidTarget" class="fixed inset-0 z-10 flex bg-gray-900">
 
-        <!-- ``Save`` and ``Save & Close`` are read-write affordances.
-             When the store opens a read-only source (``active``,
-             ``staged``, or any source the caller pinned read-only),
-             both buttons are hidden so the operator does not see
-             a greyed-out control they cannot use. -->
-        <template v-if="!editorStore.readOnly">
-          <button type="button" class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500" @click="saveAndCloseEditor">Save &amp; Close</button>
-          <button
-            type="button"
-            class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500 disabled:bg-green-900"
-            :disabled="!editorStore.isDirty"
-            @click="saveEditor"
-          >
-            Save
-          </button>
-        </template>
-        <button type="button" class=" rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500 mr-30" @click="confirmClose">Close</button>
+    <!-- The new spacer pushes the editor right so it doesn't overlap the sidebar -->
+    <div class="w-16 shrink-0"></div>
+
+    <!-- Main Editor Column (Header + CodeMirror) -->
+    <div class="flex min-w-0 flex-1 flex-col">
+      <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
+        <span class="font-mono text-blue-300">
+          Editing {{ currentName }} ({{ sourceLabel(currentSource) }})
+        </span>
+        <div class="flex gap-2">
+          <!-- ``Save`` and ``Save & Close`` are read-write affordances. -->
+          <template v-if="!editorStore.readOnly">
+            <button type="button" class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500" @click="saveAndCloseEditor">Save &amp; Close</button>
+            <button
+                type="button"
+                class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500 disabled:bg-green-900"
+                :disabled="!editorStore.isDirty"
+                @click="saveEditor"
+            >
+              Save
+            </button>
+          </template>
+          <button type="button" class="rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500 mr-30" @click="confirmClose">Close</button>
+        </div>
       </div>
-    </div>
 
-    <!-- ``min-h-0`` + ``flex-1`` lets the editor scroll inside the
-         fixed-position overlay without breaking the page layout. -->
-    <div class="min-h-0 flex-1">
-      <Editor
-        :model-value="editorContent"
-        @update:model-value="handleEditorUpdate"
-        :filename="currentName"
-        :read-only="editorStore.readOnly"
-        :mode="editorStore.syntaxMode"
-      />
+      <!-- ``min-h-0`` + ``flex-1`` lets the editor scroll inside the fixed-position overlay -->
+      <div class="min-h-0 flex-1">
+        <Editor
+            :model-value="editorContent"
+            @update:model-value="handleEditorUpdate"
+            :filename="currentName"
+            :read-only="editorStore.readOnly"
+            :mode="editorStore.syntaxMode"
+        />
+      </div>
     </div>
   </div>
 
-  <!-- No-target fallback: the editor only mounts with a (source,
-       name) pair. Render a small pointer so deep-links like
-       ``/editor`` (no query) land somewhere sensible instead of an
-       empty main slot. -->
+  <!-- No-target fallback -->
   <div v-else class="flex h-full items-center justify-center p-8 text-center text-gray-400">
     <div class="space-y-3">
       <p class="text-sm">
         Pick a file from
         <button
-          type="button"
-          class="text-blue-400 underline hover:text-blue-300"
-          @click="router.push({ name: 'programs' })"
+            type="button"
+            class="text-blue-400 underline hover:text-blue-300"
+            @click="router.push({ name: 'programs' })"
         >
           G-Code Files
         </button>
         or open
         <button
-          type="button"
-          class="text-blue-400 underline hover:text-blue-300"
-          @click="router.push({ name: 'machineconfig' })"
+            type="button"
+            class="text-blue-400 underline hover:text-blue-300"
+            @click="router.push({ name: 'machineconfig' })"
         >
           Machine Config
         </button>

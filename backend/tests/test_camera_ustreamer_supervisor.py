@@ -10,8 +10,8 @@ operator-facing ``status()`` payload:
 * the ``message`` field distinguishes "dependency missing",
   "device absent", "platform unsupported", and "no devices";
 * ``/stream`` returns a 503 with that message when the stream
-  cannot be served, and a 302 to the per-device ``ustreamer`` URL
-  otherwise.
+  cannot be served, and proxied MJPEG bytes (same-origin 200)
+  otherwise — for USB devices and IP-camera URLs alike.
 
 The supervisor spawns ``ustreamer`` as a real subprocess. To keep
 the test suite deterministic on hosts that do not have ``ustreamer``
@@ -32,6 +32,28 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------- #
 # Stubs                                                                   #
 # ---------------------------------------------------------------------- #
+
+
+class _StreamTestIter:
+    """Async iterator over a fixed MJPEG body (one-shot).
+
+    Mirrors what the router reads off a real proxy subscription: an
+    async-iterable plus the ``_queue`` handle ``release`` uses to drop
+    exactly this subscription on disconnect.
+    """
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self._queue = object()  # router only reads ._queue on release
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._body is None:
+            raise StopAsyncIteration
+        data, self._body = self._body, None
+        return data
 
 
 class _FakeProc:
@@ -300,17 +322,53 @@ def test_diagnostic_skips_dependency_checks_for_ip_url(
     assert snap["message"] == ""
 
 
-def test_stream_endpoint_returns_302_to_ip_camera_url(
+def test_stream_endpoint_proxies_ip_camera_url(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
 ):
-    """``/stream?id=http://...&user=...&pwd=...`` returns a 302 redirect.
+    """``/stream?id=http://...`` proxies the upstream MJPEG same-origin.
 
-    The camera is reachable from the browser directly; the backend
-    just redirects with credentials in query parameters. Chrome
-    strips userinfo (``user:pass@host``) from cross-origin
-    Location headers; query parameters are not stripped and reach
-    the upstream intact.
+    Regression guard for the HTTPS appliance: a 302 redirect pointed
+    the browser at the raw ``http://`` upstream URL, which every
+    browser blocks as mixed content once the SPA is served over
+    HTTPS. The endpoint must stream the upstream bytes through the
+    backend instead. The upstream URL — including the query-string
+    credentials (``?user=...&pwd=...``) — must reach the proxy
+    verbatim; the proxy forwards query parameters untouched.
     """
+    import routers.camera as router_module
+
+    expected_body = (
+        b"--ipcamera\r\n"
+        b"Content-Type: image/jpeg\r\n\r\n"
+        b"\xff\xd8\xff\xe0jpeg\r\n"
+        b"--ipcamera\r\n"
+    )
+    expected_content_type = "multipart/x-mixed-replace;boundary=ipcamera"
+
+    captured_urls: list[str] = []
+
+    class _FakeProxy:
+        """Stand-in for ``SharedMjpegProxy``. Records the URL."""
+
+        def __init__(self, url):
+            captured_urls.append(url)
+            self.content_type = expected_content_type
+
+        def subscribe(self):
+            return self.content_type, _StreamTestIter(expected_body)
+
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
@@ -323,29 +381,55 @@ def test_stream_endpoint_returns_302_to_ip_camera_url(
     resp = client.get(
         "/api/v1/modules/camera/stream",
         params={"id": url},
-        follow_redirects=False,
     )
-    assert resp.status_code == 302
-    # Query params preserved verbatim — this is the whole point of the
-    # design. If a future refactor accidentally URL-encodes them or
-    # strips them, the camera never sees the credentials.
-    assert resp.headers["location"] == url
+    assert resp.status_code == 200, resp.text
+    # No redirect — the response IS the proxied MJPEG body.
+    assert resp.headers.get("location") is None
+    # The upstream's exact content-type (with boundary) is passed
+    # through — without the boundary parameter the browser cannot
+    # parse the multipart stream into frames.
+    assert resp.headers["content-type"] == expected_content_type
+    assert b"\xff\xd8\xff\xe0jpeg" in resp.content
+    # The upstream URL reached the proxy verbatim — credentials in
+    # query parameters survive (the upstream needs them).
+    assert captured_urls == [url]
 
 
-def test_stream_endpoint_returns_503_when_ip_camera_url_has_embedded_userinfo(
+def test_stream_endpoint_proxies_ip_camera_url_with_embedded_userinfo(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
 ):
-    """URLs with ``user:pass@host`` syntax return 503 with a clear hint.
+    """``http://user:pass@host`` URLs are proxied, not rejected.
 
-    Chrome strips userinfo from cross-origin Location headers; trying
-    to forward such a URL would silently break the stream because
-    the upstream gets the request without credentials and returns
-    401. The dashboard's input validator should catch this on
-    save, but if a URL with embedded userinfo slips through
-    (older ``settings.json``, manual API call, race between save
-    and validate), the endpoint surfaces a clear operator-facing
-    message rather than silently breaking the redirect.
+    The proxy converts embedded userinfo into an ``Authorization``
+    header server-side (conversion contract pinned in
+    ``test_camera_mjpeg_proxy.py``), so the old redirect-era 503
+    ("move credentials into query parameters") no longer applies —
+    the endpoint must accept the URL and forward it verbatim.
     """
+    import routers.camera as router_module
+
+    captured_urls: list[str] = []
+
+    class _FakeProxy:
+        def __init__(self, url):
+            captured_urls.append(url)
+            self.content_type = "multipart/x-mixed-replace;boundary=x"
+
+        def subscribe(self):
+            return self.content_type, _StreamTestIter(b"")
+
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
@@ -353,22 +437,45 @@ def test_stream_endpoint_returns_503_when_ip_camera_url_has_embedded_userinfo(
     resp = client.get(
         "/api/v1/modules/camera/stream",
         params={"id": bad_url},
-        follow_redirects=False,
     )
-    assert resp.status_code == 503
-    assert "user:pass@host" in resp.json()["detail"]
-    assert "query parameters" in resp.json()["detail"]
+    assert resp.status_code == 200, resp.text
+    assert captured_urls == [bad_url]
 
 
-def test_stream_endpoint_preserves_https_for_redirect(
+def test_stream_endpoint_proxies_https_ip_camera_url_unchanged(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
 ):
-    """HTTPS IP camera URLs redirect unchanged — no downgrade to HTTP.
+    """HTTPS IP camera URLs are proxied unchanged — no scheme rewrite.
 
     A future contributor might accidentally rewrite the scheme
-    (e.g., a misguided "always redirect to HTTP" cleanup). This
-    test pins that we forward whatever the operator configured.
+    (e.g., a misguided "always downgrade to HTTP" cleanup). This
+    test pins that the proxy receives whatever the operator
+    configured.
     """
+    import routers.camera as router_module
+
+    captured_urls: list[str] = []
+
+    class _FakeProxy:
+        def __init__(self, url):
+            captured_urls.append(url)
+            self.content_type = "multipart/x-mixed-replace;boundary=x"
+
+        def subscribe(self):
+            return self.content_type, _StreamTestIter(b"")
+
+    class _FakeFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            return _FakeProxy(url)
+
+        @classmethod
+        def release(cls, url, sub):
+            pass
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _FakeFanout)
+
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
@@ -378,10 +485,10 @@ def test_stream_endpoint_preserves_https_for_redirect(
     resp = client.get(
         "/api/v1/modules/camera/stream",
         params={"id": url},
-        follow_redirects=False,
     )
-    assert resp.status_code == 302
-    assert resp.headers["location"] == url
+    assert resp.status_code == 200, resp.text
+    assert resp.headers.get("location") is None
+    assert captured_urls == [url]
 
 
 def test_stream_endpoint_returns_503_for_rtsp_url(
