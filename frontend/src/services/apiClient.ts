@@ -14,13 +14,25 @@ const configuredBase = (() => {
     return '';
   }
   const { protocol, hostname, port } = window.location;
-  // Vite dev (5173) and vite preview (4173) both proxy `/api` and `/ws`
-  // to the FastAPI backend on localhost:8000, so leaving BASE empty keeps
-  // everything on the same origin and avoids CORS / mixed-content.
-  const isViteServed = port === '5173' || port === '4173';
-  if (isViteServed) {
+
+  // Vite dev (5173), vite preview (4173), standard HTTP/HTTPS (empty string, 80, 443),
+  // and the Nginx HTTPS appliance port (8080) all proxy `/api` to the backend.
+  // Leaving BASE empty keeps requests on the same origin, avoiding CORS and
+  // mixed-content blocks.
+  const isReverseProxied =
+    port === '' ||
+    port === '80' ||
+    port === '443' ||
+    port === '8080' ||
+    port === '5173' ||
+    port === '4173';
+
+  if (isReverseProxied) {
     return '';
   }
+
+  // Fallback for raw development setups (like running raw on Windows without Nginx)
+  // where the frontend isn't proxying API requests and must hit uvicorn directly.
   return `${protocol}//${hostname}:8000`;
 })();
 

@@ -11,7 +11,6 @@ fi
 REAL_USER=${SUDO_USER:-$USER}
 PROJECT_DIR=$(pwd)
 CERT_DIR="$PROJECT_DIR/frontend/.cert"
-GATEWAY_DIR="/var/www/cnc-gateway"
 UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
 
 echo "=========================================="
@@ -21,7 +20,7 @@ echo " Project Dir: $PROJECT_DIR"
 echo "=========================================="
 
 # 1. Update and install core system packages
-echo -e "\n---> Installing system dependencies (Nginx, Python venv, mkcert)..."
+echo -e "\n---> Installing system dependencies..."
 apt-get update
 apt-get install -y curl wget git nginx python3-venv mkcert libnss3-tools ustreamer
 
@@ -37,52 +36,89 @@ fi
 # 3. Set up the Python Backend Virtual Environment
 echo -e "\n---> Setting up Python virtual environment (with system-site-packages)..."
 cd "$PROJECT_DIR/backend"
-# Run as the real user to prevent permission issues
 sudo -u "$REAL_USER" python3 -m venv venv --system-site-packages
-# Install python requirements if a requirements file exists
 if [ -f "requirements.txt" ]; then
     sudo -u "$REAL_USER" ./venv/bin/pip install -r requirements.txt
 fi
+
+# --- Temporary Backend Spin-up ---
+echo -e "\n---> Temporarily starting backend to generate API schema..."
+sudo -u "$REAL_USER" ./venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 &
+BACKEND_PID=$!
+
+echo "Waiting for backend to expose OpenAPI schema..."
+timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
 
 # 4. Set up the Frontend and Build
 echo -e "\n---> Installing Frontend dependencies and building production app..."
 cd "$PROJECT_DIR/frontend"
 sudo -u "$REAL_USER" npm install
-# (Assuming you want Nginx to serve the built static files rather than the dev server)
+
+echo "Generating API client..."
+sudo -u "$REAL_USER" npm run generate-api
+
+echo "Building Vite application..."
 sudo -u "$REAL_USER" npm run build
 
-# 5. Set up mkcert and the Gateway Page
+# --- CRITICAL: Clean up temporary Backend ---
+echo "Tearing down temporary backend..."
+kill $BACKEND_PID 2>/dev/null
+wait $BACKEND_PID 2>/dev/null || true
+# --------------------------------------------
+
+# 5. Set up mkcert and the Root CA
 echo -e "\n---> Configuring local Certificate Authority..."
-# Install mkcert into the real user's trust store
 sudo -u "$REAL_USER" mkcert -install
 
 # Locate the generated Root CA
 CA_ROOT=$(sudo -u "$REAL_USER" mkcert -CARoot)/rootCA.pem
 
-echo -e "\n---> Setting up the Port 80 Download Gateway..."
-mkdir -p "$GATEWAY_DIR"
-# Copy and rename the Root CA so mobile devices recognize it
-cp "$CA_ROOT" "$GATEWAY_DIR/cnc-root.crt"
+echo -e "\n---> Copying Root CA for the Vue frontend..."
+# Copy it directly into the built Vue files so your popup can link to "/cnc-root.crt"
+cp "$CA_ROOT" "$UI_DIST_DIR/cnc-root.crt"
+chmod 644 "$UI_DIST_DIR/cnc-root.crt"
 
-
-# 6. Generate the initial SSL Certificate (so Nginx doesn't crash on boot)
+# 6. Generate the initial SSL Certificate
 echo -e "\n---> Generating initial SSL certificate..."
 sudo -u "$REAL_USER" mkdir -p "$CERT_DIR"
 cd "$CERT_DIR"
-CURRENT_IP=$(hostname -I | awk '{print $1}')
-sudo -u "$REAL_USER" mkcert -cert-file localhost.pem -key-file localhost-key.pem localhost 127.0.0.1 "$CURRENT_IP"
+ALL_IPS=$(hostname -I)
+sudo -u "$REAL_USER" mkcert -cert-file localhost.pem -key-file localhost-key.pem localhost 127.0.0.1 $ALL_IPS
 
-# 7. Configure Nginx
+# 7. Configure Camera Service (ustreamer)
+echo -e "\n---> Configuring uStreamer (USB Camera) service..."
+USTREAMER_SERVICE="/etc/systemd/system/ustreamer.service"
+cat << EOF > "$USTREAMER_SERVICE"
+[Unit]
+Description=uStreamer for CNC Camera
+After=network.target
+
+[Service]
+Type=simple
+User=$REAL_USER
+ExecStart=/usr/bin/ustreamer --device /dev/video0 --host 127.0.0.1 --port 8081 --resolution 1280x720 --desired-fps 15
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable ustreamer
+systemctl restart ustreamer
+
+# 8. Configure Nginx
 echo -e "\n---> Configuring Nginx..."
 NGINX_CONF="/etc/nginx/sites-available/linuxcnc-ui"
 
 cat << EOF > "$NGINX_CONF"
-# Gateway Server (Port 80)
+# HTTP Server (Port 80) - Used to show the Vue install popup
 server {
     listen 80;
     server_name _;
 
-    root $GATEWAY_DIR;
+    root $UI_DIST_DIR;
     index index.html;
 
     # Ensure the .crt file triggers a download with the correct MIME type
@@ -95,6 +131,20 @@ server {
     location / {
         try_files \$uri \$uri/ /index.html;
     }
+
+    # Proxy API and WebSockets so the app works on HTTP too
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+    }
 }
 
 # Application Server (Port 8080 - HTTPS)
@@ -105,22 +155,17 @@ server {
     ssl_certificate $CERT_DIR/localhost.pem;
     ssl_certificate_key $CERT_DIR/localhost-key.pem;
 
-    # Serve the built Vue frontend
     root $UI_DIST_DIR;
     index index.html;
 
     location / {
         try_files \$uri \$uri/ /index.html;
     }
-
-    # Proxy API calls to FastAPI (Port 8000)
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-
-    # Proxy WebSockets to FastAPI
     location /ws/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -136,9 +181,22 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 systemctl restart nginx
 
+
+
+# 9. Configure sudoers for passwordless Nginx reload
+echo -e "\n---> Configuring passwordless Nginx reloads for $REAL_USER..."
+SUDOERS_FILE="/etc/sudoers.d/linuxcnc-nginx-reload"
+
+# Write the rule dynamically using the detected user
+echo "$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx" > "$SUDOERS_FILE"
+
+# Sudoers files must have strict permissions or the system will ignore them
+chmod 0440 "$SUDOERS_FILE"
+
+
 echo "=========================================="
 echo " Installation Complete!"
 echo " "
-echo " Gateway is live at: http://$CURRENT_IP"
-echo " App is live at:     https://$CURRENT_IP:8080"
+echo " App (HTTP Popup):   http://$CURRENT_IP"
+echo " App (HTTPS Secure): https://$CURRENT_IP:8080"
 echo "=========================================="
