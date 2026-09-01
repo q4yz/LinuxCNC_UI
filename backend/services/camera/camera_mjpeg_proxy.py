@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 from typing import AsyncIterator, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, parse_qs, unquote, urlparse
 
 import httpx
 
@@ -67,6 +67,160 @@ class MjpegProxyError(RuntimeError):
     The supervisor turns these into actionable 503 ``detail`` strings
     (see :func:`error_message_for_status`).
     """
+
+
+#: Query-parameter key pairs operators use for camera logins, in
+#: priority order. ``user``/``pwd`` is the ESP32-style convention
+#: (e.g. ``videostream.cgi?user=...&pwd=...``), ``username``/
+#: ``password`` the generic one.
+QUERY_CREDENTIAL_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("user", "pwd"),
+    ("username", "password"),
+)
+
+#: Flat set used by :func:`redact_url` — every key whose value must
+#: never reach a log line.
+_CREDENTIAL_QUERY_KEYS = {
+    key for pair in QUERY_CREDENTIAL_KEYS for key in pair
+}
+
+
+def credentials_for(url: str) -> Optional[Tuple[str, str]]:
+    """Return the best ``(user, password)`` pair carried by ``url``.
+
+    Sources, in priority order:
+
+    1. Embedded userinfo — ``http://user:pass@host/path`` (percent
+       escapes are decoded).
+    2. Query parameters — ``?user=...&pwd=...`` or
+       ``?username=...&password=...``. The parameters **stay in the
+       URL**; cameras that read credentials from the query string
+       keep working, the pair is only lifted so the auth-challenge
+       retry (:func:`send_with_auth_challenge`) can answer HTTP
+       Basic / Digest logins that ignore query parameters.
+
+    Returns ``None`` when the URL carries no usable credentials.
+    """
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        return (unquote(parsed.username or ""), unquote(parsed.password or ""))
+    params = parse_qs(parsed.query)
+    for user_key, pwd_key in QUERY_CREDENTIAL_KEYS:
+        if user_key in params and pwd_key in params:
+            return (params[user_key][0], params[pwd_key][0])
+    return None
+
+
+def redact_url(url: str) -> str:
+    """Return ``url`` safe for log lines — credentials masked.
+
+    userinfo (``user:pass@host``) becomes ``user:***@host``; the
+    values of :data:`_CREDENTIAL_QUERY_KEYS` query parameters become
+    ``***``. Everything else round-trips verbatim so the log stays
+    useful for debugging.
+    """
+    parsed = urlparse(url)
+
+    netloc = parsed.netloc
+    if parsed.username is not None or parsed.password is not None:
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        netloc = f"{parsed.username or ''}:***@{host}"
+
+    query = parsed.query
+    if query:
+        pairs = parse_qsl(query, keep_blank_values=True)
+        if any(key.lower() in _CREDENTIAL_QUERY_KEYS for key, _ in pairs):
+            query = "&".join(
+                f"{key}=***" if key.lower() in _CREDENTIAL_QUERY_KEYS else f"{key}={value}"
+                for key, value in pairs
+            )
+
+    return parsed._replace(netloc=netloc, query=query).geturl()
+
+
+async def send_with_auth_challenge(
+    client: "httpx.AsyncClient",
+    clean_url: str,
+    credentials: Optional[Tuple[str, str]],
+) -> "httpx.Response":
+    """GET ``clean_url`` and answer one HTTP 401 login challenge.
+
+    Cameras disagree on how they accept logins: some read credentials
+    from query parameters (which stay in the URL verbatim), some
+    challenge with HTTP Basic, some with HTTP Digest. The first
+    request travels without a proxy-added ``Authorization`` header;
+    on a 401 the ``WWW-Authenticate`` scheme selects the httpx auth
+    implementation and the request is retried once with the best
+    credentials available (:func:`credentials_for` — userinfo wins
+    over query parameters).
+
+    Returns the final (stream-mode) response — callers still owe it
+    the non-200 / content-type checks.
+
+    Raises:
+        MjpegProxyError: The upstream demands a login but the URL
+            carries no credentials (actionable operator hint).
+        httpx.HTTPError: Connect / timeout / network failures —
+            propagated for the router to translate into 503s.
+    """
+    request = client.build_request("GET", clean_url)
+    response = await client.send(request, stream=True)
+    if response.status_code != 401:
+        return response
+
+    challenge = (response.headers.get("www-authenticate") or "").strip()
+    if not credentials:
+        await response.aclose()
+        logger.info(
+            "MjpegProxy: upstream demands a login (%s) but %s carries "
+            "no credentials",
+            (challenge.split(";")[0][:32] or "HTTP 401"),
+            redact_url(clean_url),
+        )
+        raise MjpegProxyError(
+            "Upstream camera requires a login (HTTP 401) but the "
+            "camera URL carries no credentials. Add them to the URL "
+            "— ?user=...&pwd=... or http://user:pass@host/... ."
+        )
+
+    # Drain-close the challenged response before re-sending.
+    await response.aclose()
+    user, pwd = credentials
+    if challenge.lower().startswith("digest"):
+        auth = httpx.DigestAuth(user, pwd)
+    else:
+        # Basic challenge — or a nonstandard / absent scheme header
+        # that still demands auth. Basic is the common denominator
+        # and what nearly every MJPEG-capable camera implements.
+        auth = httpx.BasicAuth(user, pwd)
+    logger.info(
+        "MjpegProxy: answering %s challenge for %s",
+        (challenge.split(" ")[0] if challenge else "auth"),
+        redact_url(clean_url),
+    )
+    retry = client.build_request("GET", clean_url)
+    return await client.send(retry, stream=True, auth=auth)
+
+
+def ensure_streamable_content_type(response: "httpx.Response") -> None:
+    """Reject HTML responses — a login page, not an MJPEG stream.
+
+    Some cameras answer an unauthenticated request with ``200`` plus
+    the web login page instead of a 401 challenge. Streaming that
+    into the browser's ``<img>`` renders a silent broken image;
+    raising here surfaces the actionable hint on the supervisor's
+    diagnostic panel instead.
+    """
+    content_type = (response.headers.get("content-type") or "").strip().lower()
+    if content_type.startswith("text/html"):
+        raise MjpegProxyError(
+            "Upstream camera returned its login page (text/html) "
+            "instead of an MJPEG stream. The camera requires "
+            "authentication — add credentials to the camera URL "
+            "(?user=...&pwd=... or http://user:pass@host/...)."
+        )
 
 
 def split_url(url: str) -> Tuple[str, Optional[httpx.BasicAuth]]:
@@ -173,8 +327,9 @@ class MjpegProxy:
             pool=_UPSTREAM_CONNECT_TIMEOUT_S,
         )
         self._client = httpx.AsyncClient(timeout=timeout, auth=auth)
-        request = self._client.build_request("GET", clean_url)
-        self._response = await self._client.send(request, stream=True)
+        self._response = await send_with_auth_challenge(
+            self._client, clean_url, credentials_for(self.url)
+        )
 
         if self._response.status_code != 200:
             status = self._response.status_code
@@ -183,6 +338,9 @@ class MjpegProxy:
             raise MjpegProxyError(
                 f"{detail} (upstream status {status})"
             )
+
+        # A 200 with an HTML body is a login page, not a stream.
+        ensure_streamable_content_type(self._response)
 
         # Capture the upstream's EXACT content-type — including
         # ``;boundary=ipcamera`` — so the browser can parse the
@@ -196,7 +354,7 @@ class MjpegProxy:
         )
         logger.info(
             "MjpegProxy: opened %s (content-type=%s)",
-            clean_url, self.content_type,
+            redact_url(clean_url), self.content_type,
         )
         return self
 
@@ -248,6 +406,11 @@ class MjpegProxy:
 __all__ = [
     "MjpegProxy",
     "MjpegProxyError",
-    "split_url",
+    "QUERY_CREDENTIAL_KEYS",
+    "credentials_for",
+    "ensure_streamable_content_type",
     "error_message_for_status",
+    "redact_url",
+    "send_with_auth_challenge",
+    "split_url",
 ]

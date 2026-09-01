@@ -34,7 +34,9 @@ from services.camera import camera_mjpeg_proxy
 from services.camera.camera_mjpeg_proxy import (
     MjpegProxy,
     MjpegProxyError,
+    credentials_for,
     error_message_for_status,
+    redact_url,
     split_url,
 )
 
@@ -88,6 +90,50 @@ def test_split_url_preserves_port():
 
 
 # ---------------------------------------------------------------------- #
+# credentials_for / redact_url                                            #
+# ---------------------------------------------------------------------- #
+
+
+def test_credentials_for_prefers_userinfo_over_query_params():
+    assert credentials_for("http://u1:p1@cam.local/v?user=u2&pwd=p2") == ("u1", "p1")
+
+
+def test_credentials_for_reads_query_param_pairs():
+    assert credentials_for(
+        "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
+    ) == ("Nacht", "kamara")
+    assert credentials_for("http://cam/?username=u&password=p") == ("u", "p")
+
+
+def test_credentials_for_none_when_absent():
+    assert credentials_for("http://cam.local/videostream.cgi?rate=0") is None
+    # Half a pair is not credentials.
+    assert credentials_for("http://cam/?user=solo") is None
+
+
+def test_redact_url_masks_query_credentials():
+    redacted = redact_url(
+        "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
+    )
+    assert "Nacht" not in redacted
+    assert "kamara" not in redacted
+    assert "user=***" in redacted
+    assert "pwd=***" in redacted
+    assert "rate=0" in redacted  # non-credential params stay verbatim
+
+
+def test_redact_url_masks_userinfo():
+    redacted = redact_url("http://Nacht:kamara@10.0.0.58/videostream.cgi")
+    assert "kamara" not in redacted
+    assert "Nacht:***@10.0.0.58" in redacted
+
+
+def test_redact_url_leaves_clean_urls_untouched():
+    url = "http://10.0.0.58/videostream.cgi?rate=0"
+    assert redact_url(url) == url
+
+
+# ---------------------------------------------------------------------- #
 # error_message_for_status                                                #
 # ---------------------------------------------------------------------- #
 
@@ -126,9 +172,15 @@ class _FakeStream:
         status_code: int = 200,
         content_type: Optional[str] = "multipart/x-mixed-replace;boundary=ipcamera",
         chunks: Optional[List[bytes]] = None,
+        www_authenticate: Optional[str] = None,
     ) -> None:
         self.status_code = status_code
-        self.headers = {"content-type": content_type} if content_type is not None else {}
+        headers = {}
+        if content_type is not None:
+            headers["content-type"] = content_type
+        if www_authenticate is not None:
+            headers["www-authenticate"] = www_authenticate
+        self.headers = headers
         self._chunks = chunks or []
         self.closed = False
 
@@ -146,17 +198,25 @@ class _FakeAsyncClient:
     ``send(...)`` returns a ``_FakeStream`` synchronously (the real
     httpx ``send`` is an awaitable; the class shape below lets the
     proxy's ``await self._client.send(...)`` resolve naturally).
+
+    Pass ``fake_streams`` (a list) to simulate a challenge flow: the
+    first ``send`` pops the first entry, the retry gets the next, and
+    the last entry repeats. Every call is recorded in ``send_calls``
+    as ``{"request": ..., "auth": ...}``.
     """
 
     def __init__(
         self,
         fake_stream: _FakeStream,
         raise_on_send: Optional[Exception] = None,
+        fake_streams: Optional[List[_FakeStream]] = None,
     ) -> None:
         self._fake_stream = fake_stream
+        self._fake_streams = list(fake_streams) if fake_streams else None
         self._raise_on_send = raise_on_send
         self.client_kwargs: dict = {}
         self.last_send_request = None
+        self.send_calls: List[dict] = []
 
     async def __aenter__(self):
         return self
@@ -173,9 +233,14 @@ class _FakeAsyncClient:
         self.last_send_request = (method, url)
         return ("request", method, url)
 
-    async def send(self, request, stream: bool = False):
+    async def send(self, request, stream: bool = False, auth=None):
+        self.send_calls.append({"request": request, "auth": auth})
         if self._raise_on_send is not None:
             raise self._raise_on_send
+        if self._fake_streams is not None:
+            if len(self._fake_streams) > 1:
+                return self._fake_streams.pop(0)
+            return self._fake_streams[0]
         return self._fake_stream
 
 
@@ -279,13 +344,93 @@ def test_mjpeg_proxy_no_auth_when_url_has_no_credentials(monkeypatch):
 
 
 def test_mjpeg_proxy_raises_on_upstream_401(monkeypatch):
-    """Upstream 401 → ``MjpegProxyError`` with a credentials hint."""
-    fake_stream = _FakeStream(status_code=401)
-    fake_client = _FakeAsyncClient(fake_stream)
+    """401 with credentials → one Basic retry → still 401 → credentials hint.
+
+    The URL carries userinfo credentials, so the challenge flow
+    retries once (no ``WWW-Authenticate`` scheme header → Basic, the
+    common denominator). When the retry is rejected too, the proxy
+    surfaces the operator-facing credentials hint. The flow must have
+    issued exactly two upstream requests.
+    """
+    fake_client = _FakeAsyncClient(
+        None,
+        fake_streams=[
+            _FakeStream(status_code=401),
+            _FakeStream(status_code=401),
+        ],
+    )
     with pytest.raises(MjpegProxyError, match="credentials"):
         _drive_proxy_class(
             monkeypatch, fake_client,
             "http://user:pass@camera.local/path",
+        )
+    assert len(fake_client.send_calls) == 2
+    retry_auth = fake_client.send_calls[1]["auth"]
+    assert isinstance(retry_auth, httpx.BasicAuth)
+    decoded = base64.b64decode(
+        retry_auth._auth_header.split(" ", 1)[1]
+    ).decode("utf-8")
+    assert decoded == "user:pass"
+
+
+def test_mjpeg_proxy_401_with_query_param_credentials_answers_digest_challenge(
+    monkeypatch,
+):
+    """``?user=...&pwd=...`` credentials answer a Digest challenge.
+
+    Regression guard for the operator's camera: the URL credentials
+    stay in the query string (the camera may read them there) AND the
+    lifted pair answers the ``WWW-Authenticate: Digest`` challenge via
+    ``httpx.DigestAuth`` on the retry.
+    """
+    fake_client = _FakeAsyncClient(
+        None,
+        fake_streams=[
+            _FakeStream(
+                status_code=401,
+                www_authenticate=(
+                    'Digest realm="ipcamera", nonce="abc123", qop="auth"'
+                ),
+            ),
+            _FakeStream(
+                status_code=200,
+                content_type="multipart/x-mixed-replace;boundary=ipcamera",
+                chunks=[b"\xff\xd8"],
+            ),
+        ],
+    )
+    content_type, _ = _drive_proxy_class(
+        monkeypatch, fake_client,
+        "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara",
+    )
+    assert content_type == "multipart/x-mixed-replace;boundary=ipcamera"
+    assert len(fake_client.send_calls) == 2
+    retry_auth = fake_client.send_calls[1]["auth"]
+    assert isinstance(retry_auth, httpx.DigestAuth)
+    # The query-string credentials must still travel in the URL the
+    # camera sees (both requests, challenge and retry).
+    for call in fake_client.send_calls:
+        assert "user=Nacht" in call["request"][2]
+        assert "pwd=kamara" in call["request"][2]
+
+
+def test_mjpeg_proxy_401_without_credentials_raises_login_hint(monkeypatch):
+    """401 with a credential-less URL → actionable "requires a login" hint."""
+    fake_client = _FakeAsyncClient(None, fake_streams=[_FakeStream(status_code=401)])
+    with pytest.raises(MjpegProxyError, match="requires a login"):
+        _drive_proxy_class(monkeypatch, fake_client, "http://camera.local/path")
+    # No retry without credentials — a single upstream request.
+    assert len(fake_client.send_calls) == 1
+
+
+def test_mjpeg_proxy_rejects_html_login_page(monkeypatch):
+    """Upstream 200 + ``text/html`` is a login page, not a stream."""
+    fake_stream = _FakeStream(status_code=200, content_type="text/html; charset=utf-8")
+    fake_client = _FakeAsyncClient(fake_stream)
+    with pytest.raises(MjpegProxyError, match="login page"):
+        _drive_proxy_class(
+            monkeypatch, fake_client,
+            "http://camera.local/videostream.cgi",
         )
 
 

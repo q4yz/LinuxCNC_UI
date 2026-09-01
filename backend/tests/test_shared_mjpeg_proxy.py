@@ -51,11 +51,15 @@ class _FakeStream:
         ),
         chunks: Optional[List[bytes]] = None,
         raise_after: Optional[Exception] = None,
+        www_authenticate: Optional[str] = None,
     ) -> None:
         self.status_code = status_code
-        self.headers = (
-            {"content-type": content_type} if content_type is not None else {}
-        )
+        headers = {}
+        if content_type is not None:
+            headers["content-type"] = content_type
+        if www_authenticate is not None:
+            headers["www-authenticate"] = www_authenticate
+        self.headers = headers
         self._chunks = chunks or [b"frame-1", b"frame-2", b"frame-3"]
         self._raise_after = raise_after
         self._delivered = 0
@@ -73,17 +77,25 @@ class _FakeStream:
 
 
 class _FakeAsyncClient:
-    """Stub for ``httpx.AsyncClient``. ``send`` returns a _FakeStream."""
+    """Stub for ``httpx.AsyncClient``. ``send`` returns a _FakeStream.
+
+    Pass ``fake_streams`` (a list) to simulate a challenge flow: the
+    first ``send`` pops the first entry, the retry gets the next, and
+    the last entry repeats. Every call is recorded in ``send_calls``.
+    """
 
     def __init__(
         self,
         fake_stream: _FakeStream,
         raise_on_send: Optional[Exception] = None,
+        fake_streams: Optional[List[_FakeStream]] = None,
     ) -> None:
         self._fake_stream = fake_stream
+        self._fake_streams = list(fake_streams) if fake_streams else None
         self._raise_on_send = raise_on_send
         self.client_kwargs: dict = {}
         self.last_send_request = None
+        self.send_calls: List[dict] = []
 
     async def __aenter__(self):
         return self
@@ -98,9 +110,14 @@ class _FakeAsyncClient:
         self.last_send_request = (method, url)
         return ("request", method, url)
 
-    async def send(self, request, stream: bool = False):
+    async def send(self, request, stream: bool = False, auth=None):
+        self.send_calls.append({"request": request, "auth": auth})
         if self._raise_on_send is not None:
             raise self._raise_on_send
+        if self._fake_streams is not None:
+            if len(self._fake_streams) > 1:
+                return self._fake_streams.pop(0)
+            return self._fake_streams[0]
         return self._fake_stream
 
 
@@ -549,6 +566,72 @@ def test_upstream_4xx_surfaces_as_mjpeg_proxy_error(monkeypatch):
 
     msg = asyncio.run(_run())
     assert "401" in msg
+
+
+def test_upstream_digest_challenge_is_answered_with_query_credentials(
+    monkeypatch,
+):
+    """``start()`` answers a Digest 401 using ``?user=...&pwd=...`` creds.
+
+    The camera's login is handled server-side by the proxy: the first
+    request is challenged, the retry carries ``httpx.DigestAuth``
+    built from the query-parameter credentials, and the stream opens.
+    The credentials stay in the URL for cameras that read them there.
+    """
+    fake_client = _FakeAsyncClient(
+        None,
+        fake_streams=[
+            _FakeStream(
+                status_code=401,
+                www_authenticate='Digest realm="ipcamera", nonce="abc"',
+            ),
+            _FakeStream(
+                status_code=200,
+                content_type="multipart/x-mixed-replace;boundary=ipcamera",
+                chunks=[b"a", b"b"],
+            ),
+        ],
+    )
+    _install_fake_httpx(monkeypatch, fake_client)
+
+    async def _run():
+        proxy = await MjpegFanout.get_or_create(
+            "http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
+        )
+        ct, it = proxy.subscribe()
+        chunks = await _collect(it)
+        return ct, chunks
+
+    content_type, chunks = asyncio.run(_run())
+    assert content_type == "multipart/x-mixed-replace;boundary=ipcamera"
+    assert chunks == [b"a", b"b"]
+    # Challenge + authenticated retry.
+    assert len(fake_client.send_calls) == 2
+    import httpx as _httpx
+
+    assert isinstance(fake_client.send_calls[1]["auth"], _httpx.DigestAuth)
+    # Both requests keep the credentials in the query string.
+    for call in fake_client.send_calls:
+        assert "user=Nacht" in call["request"][2]
+        assert "pwd=kamara" in call["request"][2]
+
+
+def test_upstream_html_login_page_surfaces_as_mjpeg_proxy_error(monkeypatch):
+    """200 + ``text/html`` is a login page — actionable error, not a stream."""
+    fake_stream = _FakeStream(status_code=200, content_type="text/html")
+    fake_client = _FakeAsyncClient(fake_stream)
+    _install_fake_httpx(monkeypatch, fake_client)
+
+    async def _run():
+        proxy = await MjpegFanout.get_or_create("http://camera.local/login")
+        try:
+            proxy.subscribe()
+            return "no-error"
+        except MjpegProxyError as exc:
+            return str(exc)
+
+    msg = asyncio.run(_run())
+    assert "login page" in msg
 
 
 # ---------------------------------------------------------------------- #

@@ -59,6 +59,7 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Dict, List, Optional
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 

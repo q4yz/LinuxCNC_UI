@@ -491,6 +491,40 @@ def test_stream_endpoint_proxies_https_ip_camera_url_unchanged(
     assert captured_urls == [url]
 
 
+def test_stream_endpoint_maps_connect_error_to_503_with_hint(
+    fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
+    monkeypatch,
+):
+    """An unreachable upstream is a 503 + operator hint, NOT a 500.
+
+    Regression guard: ``_proxy_stream_response`` catches
+    ``httpx.ConnectError`` / ``httpx.TimeoutException`` /
+    ``httpx.HTTPError``, but the module never imported ``httpx`` —
+    the first upstream failure crashed the endpoint with
+    ``NameError: name 'httpx' is not defined`` (ASGI 500) instead of
+    the intended 503 diagnostic. The import must stay.
+    """
+    import httpx as _httpx
+    import routers.camera as router_module
+
+    class _ExplodingFanout:
+        @classmethod
+        async def get_or_create(cls, url):
+            raise _httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr(router_module, "MjpegFanout", _ExplodingFanout)
+
+    app = _camera_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/modules/camera/stream",
+        params={"id": "http://10.0.0.58/videostream.cgi?rate=0"},
+    )
+    assert resp.status_code == 503
+    assert "connect" in resp.json()["detail"].lower()
+
+
 def test_stream_endpoint_returns_503_for_rtsp_url(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):

@@ -41,6 +41,11 @@ import httpx
 
 from services.camera.camera_mjpeg_proxy import (
     MjpegProxyError,
+    credentials_for,
+    ensure_streamable_content_type,
+    error_message_for_status,
+    redact_url,
+    send_with_auth_challenge,
     split_url,
 )
 
@@ -157,24 +162,33 @@ class SharedMjpegProxy:
                 pool=5.0,
             )
             self._client = httpx.AsyncClient(timeout=timeout, auth=auth)
-            request = self._client.build_request("GET", clean_url)
-            self._response = await self._client.send(request, stream=True)
+            # Credential-aware open: answers one HTTP 401 challenge
+            # (Basic / Digest) using the credentials carried by the
+            # URL — userinfo or query parameters. Raises
+            # ``MjpegProxyError`` when the upstream demands a login
+            # but the URL carries none (cached for ``subscribe``).
+            self._response = await send_with_auth_challenge(
+                self._client, clean_url, credentials_for(self.url)
+            )
 
             if self._response.status_code != 200:
                 # Mirror :class:`MjpegProxy`: surface a clean operator
                 # hint for non-200 upstream responses. Capture the
                 # status BEFORE ``_tear_down`` clears ``_response``.
                 status = self._response.status_code
+                detail = error_message_for_status(status)
                 await self._tear_down()
                 self._start_error = MjpegProxyError(
-                    f"Upstream camera returned HTTP {status} "
-                    f"(upstream status {status})"
+                    f"{detail} (upstream status {status})"
                 )
                 logger.info(
                     "SharedMjpegProxy: upstream returned %d for %s",
-                    status, clean_url,
+                    status, redact_url(clean_url),
                 )
                 return
+
+            # A 200 with an HTML body is a login page, not a stream.
+            ensure_streamable_content_type(self._response)
 
             self.content_type = (
                 self._response.headers.get("content-type")
@@ -185,7 +199,7 @@ class SharedMjpegProxy:
             )
             logger.info(
                 "SharedMjpegProxy: opened %s (content-type=%s)",
-                clean_url, self.content_type,
+                redact_url(clean_url), self.content_type,
             )
         except (MjpegProxyError,) as exc:
             # Cached upstream-side errors (4xx/5xx) re-raise on
