@@ -12,14 +12,14 @@ const emit = defineEmits(['edit']);
 
 // ``...args`` keeps the four-argument inner-emit signature so
 // ``mode="profile"`` survives the trip up to App.vue.
-function handleEdit(...args) {
+function handleEdit(...args: unknown[]) {
   emit('edit', ...args);
 }
 </script>
 
 <template>
   <div class="h-full w-full flex flex-col">
-    <FileManager @edit="handleEdit" />
+    <FileManager @edit="handleEdit" class="mb-4" />
     <ActivePrintWidget />
   </div>
 </template>

@@ -17,6 +17,7 @@ import ToolPanel from '../components/tools/ToolPanel.vue'
 import MacroPanel from '../components/macros/MacroPanel.vue'
 import McodePanel from '../components/macros/McodePanel.vue'
 import PowerOn from "../components/machine/PowerOn.vue";
+import BaseCard from "../ui/BaseCard.vue";
 </script>
 
 <template>
@@ -37,31 +38,19 @@ import PowerOn from "../components/machine/PowerOn.vue";
 
         <TemperaturePanel/>
 
-<!--        <MacroPanel/>-->
-
-<!--        <McodePanel/>-->
-
       </div>
 
       <!-- Right Column: flex-[2] tells it to take twice as much space as the left -->
-      <!-- min-w-[600px] ensures the 3D viewer doesn't get crushed -->
       <div class="flex-[2] min-w-[600px] flex flex-col space-y-6">
 
-        <!-- ActivePrintWidget surfaces the current program (or the five
-             newest G-code files when idle) and the pause/stop controls,
-             so the operator does not have to leave the dashboard while
-             a print is running. -->
 
 
-        <div
-            class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-[600px] shrink-0">
-          <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
-            <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolpath</h2>
-          </div>
-          <div class="flex-1 relative">
-            <NgcCoordinateSystemViewer/>
-          </div>
-        </div>
+          <BaseCard title="Toolpath" >
+            <div class="flex-1 relative h-[600px]">
+              <NgcCoordinateSystemViewer/>
+            </div>
+          </BaseCard>
+
 
         <ActivePrintWidget/>
 
@@ -72,7 +61,6 @@ import PowerOn from "../components/machine/PowerOn.vue";
         <CameraViewer/>
 
       </div>
-
     </div>
   </div>
 </template>

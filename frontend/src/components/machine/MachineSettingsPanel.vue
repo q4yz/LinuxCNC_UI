@@ -33,6 +33,8 @@ import { onMounted, ref } from "vue";
 
 import { createModuleSettings } from "../../core/settings/createModuleSettings";
 import { useMacroButtonConfig, MacroButtonEditor } from "../../ui";
+import BaseCard from "../../ui/BaseCard.vue";
+import BaseInput from "../../ui/BaseInput.vue";
 
 const settings = createModuleSettings("axis");
 
@@ -45,7 +47,14 @@ const statusMessage = ref("");
 // writes do not stomp sibling fields. Booleans / numbers / strings
 // share the same writeKey path — the backend stores the value as
 // the Pydantic-declared type.
-const fields = ref({
+type MachineSettingsFields = {
+  jog_watchdog_timeout_ms: number;
+  default_jog_velocity: number;
+  keepalive_interval_ms: number;
+  estop_disables_power: boolean;
+};
+
+const fields = ref<MachineSettingsFields>({
   jog_watchdog_timeout_ms: 500,
   default_jog_velocity: 500,
   keepalive_interval_ms: 250,
@@ -122,13 +131,16 @@ onMounted(async () => {
 // ``useMacroButtonConfig.ts``) so the only path that triggers a
 // write is the editor's emit.
 
-async function commitField(name, raw) {
+async function commitField<K extends keyof MachineSettingsFields>(
+  name: K,
+  raw: MachineSettingsFields[K],
+) {
   statusMessage.value = "";
   saving.value = true;
   try {
     const payload = await settings.writeKey(name, raw);
     if (payload && payload[name] !== undefined) {
-      fields.value[name] = payload[name];
+      fields.value[name] = payload[name] as MachineSettingsFields[K];
     }
     statusMessage.value = `Saved ${name}.`;
   } catch (requestError) {
@@ -141,166 +153,143 @@ async function commitField(name, raw) {
   }
 }
 
-function onCommitJogWatchdog(event) {
-  const value = Number(event.target.value);
+function onCommitJogWatchdog(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(value)) return;
   commitField("jog_watchdog_timeout_ms", value);
 }
 
-function onCommitJogVelocity(event) {
-  const value = Number(event.target.value);
+function onCommitJogVelocity(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(value)) return;
   commitField("default_jog_velocity", value);
 }
 
-function onCommitKeepalive(event) {
-  const value = Number(event.target.value);
+function onCommitKeepalive(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(value)) return;
   commitField("keepalive_interval_ms", value);
 }
 
-function onCommitEstopDisablesPower(event) {
-  commitField("estop_disables_power", event.target.checked);
+function onCommitEstopDisablesPower(event: Event) {
+  commitField("estop_disables_power", (event.target as HTMLInputElement).checked);
 }
 </script>
 
-<template>
-  <div class="space-y-8">
-    <p
-      v-if="loading"
-      class="text-xs text-gray-500"
-      role="status"
-    >
+<<template>
+  <div class="space-y-6">
+    <!-- Status Messages -->
+    <p v-if="loading" class="text-xs text-gray-500" role="status">
       Loading machine settings…
     </p>
-    <p
-      v-else-if="errorMessage"
-      class="text-xs text-red-300"
-      role="alert"
-    >
+    <p v-else-if="errorMessage" class="text-xs text-red-300" role="alert">
       {{ errorMessage }}
     </p>
-    <p
-      v-else-if="statusMessage"
-      class="text-xs text-green-300"
-      role="status"
-    >
+    <p v-else-if="statusMessage" class="text-xs text-green-300" role="status">
       {{ statusMessage }}
     </p>
 
-    <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          Jog safety
-        </h3>
-        <p class="mt-1 text-xs text-gray-400">
-          Continuous-jog watchdog window and the frontend's
-          keep-alive cadence. Changes take effect on the next backend
-          boot.
-        </p>
-      </header>
+    <!-- Jog Safety -->
+    <BaseCard title="Jog safety">
+      <p class="mb-4 text-xs text-gray-400">
+        Continuous-jog watchdog window and the frontend's keep-alive cadence.
+        Changes take effect on the next backend boot.
+      </p>
 
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label class="text-sm text-gray-200">
           <span class="mb-1 block text-xs font-medium text-gray-400">
             Jog watchdog timeout (ms)
           </span>
-          <input
-            type="number"
-            min="100"
-            max="5000"
-            step="50"
-            :value="fields.jog_watchdog_timeout_ms"
-            :disabled="saving"
-            class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-            data-test="machine-jog-watchdog"
-            @change="onCommitJogWatchdog"
-          >
+          <BaseInput
+              type="number"
+              min="100"
+              max="5000"
+              step="50"
+              :model-value="fields.jog_watchdog_timeout_ms"
+              :disabled="saving"
+              class="w-full"
+              data-test="machine-jog-watchdog"
+              @change="onCommitJogWatchdog"
+          />
         </label>
+
         <label class="text-sm text-gray-200">
           <span class="mb-1 block text-xs font-medium text-gray-400">
             Keep-alive interval (ms)
           </span>
-          <input
-            type="number"
-            min="50"
-            max="2000"
-            step="25"
-            :value="fields.keepalive_interval_ms"
-            :disabled="saving"
-            class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-            data-test="machine-keepalive"
-            @change="onCommitKeepalive"
-          >
+          <BaseInput
+              type="number"
+              min="50"
+              max="2000"
+              step="25"
+              :model-value="fields.keepalive_interval_ms"
+              :disabled="saving"
+              class="w-full"
+              data-test="machine-keepalive"
+              @change="onCommitKeepalive"
+          />
         </label>
       </div>
-    </section>
+    </BaseCard>
 
-    <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          Default jog velocity
-        </h3>
-        <p class="mt-1 text-xs text-gray-400">
-          Velocity (mm/min) used by a fresh continuous jog when the
-          operator has not chosen another value.
-        </p>
-      </header>
+    <!-- Default Jog Velocity -->
+    <BaseCard title="Default jog velocity">
+      <p class="mb-4 text-xs text-gray-400">
+        Velocity (mm/min) used by a fresh continuous jog when the operator
+        has not chosen another value.
+      </p>
 
       <label class="text-sm text-gray-200">
         <span class="mb-1 block text-xs font-medium text-gray-400">
           Default jog velocity (mm/min)
         </span>
-        <input
-          type="number"
-          min="1"
-          step="10"
-          :value="fields.default_jog_velocity"
-          :disabled="saving"
-          class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-          data-test="machine-jog-velocity"
-          @change="onCommitJogVelocity"
-        >
+        <BaseInput
+            type="number"
+            min="1"
+            step="10"
+            :model-value="fields.default_jog_velocity"
+            :disabled="saving"
+            class="w-full"
+            data-test="machine-jog-velocity"
+            @change="onCommitJogVelocity"
+        />
       </label>
-    </section>
+    </BaseCard>
 
-    <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          E-STOP / power policy
-        </h3>
-        <p class="mt-1 text-xs text-gray-400">
-          Native hardware transitions remain authoritative; this
-          flag is reserved for higher-level power workflows.
-        </p>
-      </header>
+    <!-- E-STOP / Power Policy -->
+    <BaseCard title="E-STOP / power policy">
+      <p class="mb-4 text-xs text-gray-400">
+        Native hardware transitions remain authoritative; this flag is
+        reserved for higher-level power workflows.
+      </p>
 
       <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-gray-200">
+        <!--
+          Note: Checkboxes use different Tailwind ring/accent classes than text inputs,
+          so keeping the native input here is correct unless you build a <BaseCheckbox>
+        -->
         <input
-          type="checkbox"
-          :checked="fields.estop_disables_power"
-          :disabled="saving"
-          class="h-5 w-5 rounded border-gray-600 bg-gray-900 text-blue-500 focus:ring-blue-500"
-          data-test="machine-estop-power"
-          @change="onCommitEstopDisablesPower"
+            type="checkbox"
+            :checked="fields.estop_disables_power"
+            :disabled="saving"
+            class="h-5 w-5 rounded border-gray-600 bg-gray-900 text-blue-500 focus:ring-blue-500"
+            data-test="machine-estop-power"
+            @change="onCommitEstopDisablesPower"
         >
         E-Stop disables machine power
       </label>
-    </section>
+    </BaseCard>
 
-    <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          Custom buttons
-        </h3>
-      </header>
+    <!-- Custom Buttons -->
+    <BaseCard title="Custom buttons">
       <MacroButtonEditor
-        :model-value="buttonConfig.buttons.value"
-        :slots="SLOTS"
-        module-id="axis"
-        :description="CUSTOM_BUTTONS_DESCRIPTION"
-        @update:model-value="(next) => buttonConfig.persist(next)"
+          :model-value="buttonConfig.buttons.value"
+          :slots="SLOTS"
+          module-id="axis"
+          :description="CUSTOM_BUTTONS_DESCRIPTION"
+          @update:model-value="(next) => buttonConfig.persist(next)"
       />
-    </section>
+    </BaseCard>
   </div>
 </template>

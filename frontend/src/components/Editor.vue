@@ -15,6 +15,7 @@
 import { computed } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
+import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { ini } from '../utils/codemirror-lang-ini'
 import { hal } from '../utils/codemirror-lang-hal'
@@ -54,7 +55,7 @@ const editorExtensions = computed(() => {
     case 'javascript':
       return [javascript(), oneDark]
     case 'json':
-      return [javascript({ json: true }), oneDark]
+      return [json(), oneDark]
     case 'config':
       return [ini(), oneDark]
     case 'hal':
@@ -68,7 +69,7 @@ const editorExtensions = computed(() => {
 
 // Forward CodeMirror's update event directly to the parent. No
 // local state, no debouncing — the parent controls cadence.
-function forwardUpdate(value) {
+function forwardUpdate(value: string) {
   emit('update:modelValue', value)
 }
 </script>

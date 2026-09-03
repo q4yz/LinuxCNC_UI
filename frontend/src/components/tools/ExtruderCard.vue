@@ -17,6 +17,8 @@ import { ref, watch } from "vue";
 
 import { useToolStore } from "../../stores/toolsStore";
 import HeaterControls from "./HeaterControls.vue";
+import { BaseButton } from "../../ui/index.ts";
+import BaseInput from "../../ui/BaseInput.vue";
 
 const props = defineProps({
   tool: { type: Object, required: true },
@@ -56,7 +58,7 @@ function distanceFor() {
   return EXTRUDER_DISTANCE_OPTIONS[distanceIndex.value];
 }
 
-function handleExtruder(action) {
+function handleExtruder(action: "extrude" | "retract") {
   toolStore.sendExtruderCommand(
     props.tool.id,
     action,
@@ -75,27 +77,21 @@ function handleExtruder(action) {
         <label class="block text-xs text-gray-400 mb-1">
           Speed (mm/min)
         </label>
-        <input
+        <BaseInput
           v-model.number="setSpeed"
           type="number"
-          class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-        >
+          class="w-full"
+        />
       </div>
       <div class="flex items-end gap-2">
-        <button
-          type="button"
-          class="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded font-semibold transition-colors flex items-center"
-          @click="handleExtruder('retract')"
-        >
-          <span class="mr-2">&uarr;</span> Retract
-        </button>
-        <button
-          type="button"
-          class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-semibold shadow transition-colors flex items-center"
-          @click="handleExtruder('extrude')"
-        >
-          <span class="mr-2">&darr;</span> Extrude
-        </button>
+        <BaseButton variant="secondary" @click="handleExtruder('retract')">
+          <template #icon><span class="mr-1">&uarr;</span></template>
+          Retract
+        </BaseButton>
+        <BaseButton variant="primary" @click="handleExtruder('extrude')">
+          <template #icon><span class="mr-1">&darr;</span></template>
+          Extrude
+        </BaseButton>
       </div>
     </div>
 
@@ -125,13 +121,14 @@ function handleExtruder(action) {
 
 <style scoped>
 /* Hide native number input spinners so the speed input matches the
-   dashboard's other controls. */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
+   dashboard's other controls. ``:deep()`` reaches the input inside
+   the shared ``BaseInput`` primitive. */
+:deep(input[type="number"]::-webkit-inner-spin-button),
+:deep(input[type="number"]::-webkit-outer-spin-button) {
   -webkit-appearance: none;
   margin: 0;
 }
-input[type="number"] {
+:deep(input[type="number"]) {
   -moz-appearance: textfield;
 }
 </style>

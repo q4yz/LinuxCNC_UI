@@ -5,22 +5,25 @@
 // schema. Routes the user to ``EditorView`` on Edit so the page
 // chrome (sidebar / header) stays visible while editing.
 
-import { ref, onMounted } from 'vue'
+import {ref, onMounted} from 'vue'
 
 import {
   ModulesProgramService,
   ProgramFilesService,
 } from '../../generated/api/index.ts'
-import { useConsoleStore } from '../stores/console'
-import { openInEditor } from '../helpers/openInEditor'
-import { describeErrorOr } from '../core/error-format'
-import { ApiError } from '../../generated/api/core/ApiError'
+import {useConsoleStore} from '../stores/console'
+import {openInEditor} from '../helpers/openInEditor'
+import {describeErrorOr} from '../core/error-format'
+import {ApiError} from '../../generated/api/core/ApiError'
+import type {FileInfo} from '../../generated/api/models/FileInfo'
+import {BaseButton} from '../ui/index.ts'
+import {Icon} from "../ui";
 
 const consoleStore = useConsoleStore()
 
-const files = ref([])
+const files = ref<FileInfo[]>([])
 const isUploading = ref(false)
-const fileInput = ref(null)
+const fileInput = ref<HTMLInputElement | null>(null)
 
 // ---- Error-mapping helper -------------------------------------- //
 //
@@ -29,7 +32,7 @@ const fileInput = ref(null)
 // The shared :func:`describeErrorOr` helper handles every envelope
 // shape (issue #99 structured error, FastAPI ``detail``, plain
 // ``Error.message``) so a future shape change lives in one place.
-const describeError = (error) => describeErrorOr(error, 'Unknown error');
+const describeError = (error: unknown) => describeErrorOr(error, 'Unknown error');
 
 // ---- File management: list / upload / delete / read -------------- //
 //
@@ -47,7 +50,7 @@ async function fetchFiles() {
   }
 }
 
-async function readFileContent(filename) {
+async function readFileContent(filename: string) {
   // ``readFile`` throws ``ApiError`` on 404. Treat that as
   // "brand-new file" so the editor mounts with empty content
   // instead of blocking the user.
@@ -59,8 +62,8 @@ async function readFileContent(filename) {
   }
 }
 
-async function handleUpload(event) {
-  const file = event.target.files[0]
+async function handleUpload(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
 
   isUploading.value = true
@@ -71,7 +74,7 @@ async function handleUpload(event) {
     // Cast through ``unknown`` so TypeScript is happy and the
     // request still sends a proper multipart upload.
     await ProgramFilesService.uploadFile({
-      file: file
+      file: file as unknown as string
     })
     consoleStore.success(`Successfully uploaded ${file.name}`)
     await fetchFiles()
@@ -88,7 +91,7 @@ function triggerFileInput() {
   if (fileInput.value) fileInput.value.click()
 }
 
-async function deleteFile(filename) {
+async function deleteFile(filename: string) {
   if (!confirm(`Are you sure you want to delete ${filename}?`)) return
 
   try {
@@ -109,10 +112,10 @@ async function deleteFile(filename) {
 // lifecycle); the operator still has to press Start in the
 // dashboard widget to begin execution.
 
-async function loadFile(filename) {
+async function loadFile(filename: string) {
   try {
     consoleStore.command(`Loading file ${filename}...`)
-    await ModulesProgramService.loadProgram({ filename })
+    await ModulesProgramService.loadProgram({filename})
     consoleStore.success(`Loaded ${filename} — press Start to begin.`)
   } catch (error) {
     consoleStore.error(`Failed to load ${filename}: ${describeError(error)}`)
@@ -128,11 +131,11 @@ async function loadFile(filename) {
 // editor. The store knows how to dispatch the read by source, so
 // the filename extension is no longer used to decide routing.
 
-async function editFile(filename) {
-  await openInEditor({ source: 'programs', name: filename })
+async function editFile(filename: string) {
+  await openInEditor({source: 'programs', name: filename})
 }
 
-function formatSize(bytes) {
+function formatSize(bytes: number) {
   if (bytes < 1024) return bytes + ' B'
   else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
   else return (bytes / 1048576).toFixed(1) + ' MB'
@@ -155,20 +158,20 @@ onMounted(() => {
 
       <div>
         <input
-          type="file"
-          ref="fileInput"
-          class="hidden"
-          accept=".ngc,.gcode,.nc"
-          @change="handleUpload"
+            type="file"
+            ref="fileInput"
+            class="hidden"
+            accept=".ngc,.gcode,.nc"
+            @change="handleUpload"
         />
-        <button
-          type="button"
-          class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm font-semibold flex items-center ml-4"
-          @click="triggerFileInput"
-          :disabled="isUploading"
+        <BaseButton
+            variant="primary"
+            class="ml-4"
+            :loading="isUploading"
+            @click="triggerFileInput"
         >
           <span class="mr-1">⬆</span> {{ isUploading ? 'Uploading...' : 'Upload' }}
-        </button>
+        </BaseButton>
       </div>
     </div>
 
@@ -176,50 +179,61 @@ onMounted(() => {
     <div class="flex-1 overflow-y-auto p-4 bg-gray-700/20">
       <table v-if="files.length" class="w-full text-left text-sm text-gray-300">
         <thead class="text-xs uppercase text-gray-400 border-b border-gray-600">
-          <tr>
-            <th class="py-2 px-2">Filename</th>
-            <th class="py-2 px-2">Size</th>
-            <th class="py-2 px-2 text-right">Actions</th>
-          </tr>
+        <tr>
+          <th class="py-2 px-2">Filename</th>
+          <th class="py-2 px-2">Size</th>
+          <th class="py-2 px-2 text-right">Actions</th>
+        </tr>
         </thead>
         <tbody>
-          <tr
+        <tr
             v-for="file in files"
             :key="file.filename"
             class="border-b border-gray-700/50 hover:bg-gray-700/40"
-          >
-            <td class="py-2 px-2 font-mono">{{ file.filename }}</td>
-            <td class="py-2 px-2">{{ formatSize(file.size_bytes || 0) }}</td>
-            <td class="py-2 px-2 text-right space-x-2">
-              <button
-                type="button"
-                class="text-blue-400 hover:text-blue-300 font-semibold"
-                @click="editFile(file.filename)"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                class="text-green-400 hover:text-green-300 font-semibold"
+        >
+          <td class="py-2 px-2 font-mono">{{ file.filename }}</td>
+          <td class="py-2 px-2">{{ formatSize(file.size_bytes || 0) }}</td>
+          <td class="py-2 px-2 text-right space-x-2">
+
+            <BaseButton
+                variant="success"
+                size="sm"
                 @click="loadFile(file.filename)"
-              >
-                Load
-              </button>
-              <button
-                type="button"
-                class="text-red-400 hover:text-red-300 font-semibold"
+                :data-test="`file-load-${file.filename}`"
+            >
+              <Icon name="refresh"/>
+              Load
+
+            </BaseButton>
+            <BaseButton
+                variant="primary"
+                size="sm"
+                @click="editFile(file.filename)"
+                :data-test="`file-edit-${file.filename}`"
+            >
+              <Icon name="edit"/>
+              Edit
+            </BaseButton>
+
+
+
+            <BaseButton
+                variant="secondary"
+                size="sm"
                 @click="deleteFile(file.filename)"
-              >
-                Delete
-              </button>
-            </td>
-          </tr>
+                :data-test="`file-delete-${file.filename}`"
+            >
+              <Icon name="trash" />
+              Delete
+            </BaseButton>
+          </td>
+        </tr>
         </tbody>
       </table>
 
       <div
-        v-else
-        class="flex flex-col items-center justify-center py-12 text-gray-500"
+          v-else
+          class="flex flex-col items-center justify-center py-12 text-gray-500"
       >
         <p class="text-sm font-semibold">No G-code files yet</p>
         <p class="text-xs mt-1">Use the Upload button to add your first file.</p>

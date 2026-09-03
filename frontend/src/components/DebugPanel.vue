@@ -11,7 +11,7 @@ import { useServoThreadStore } from '../stores/servoThread'
 // fields and nothing from the live telemetry.
 const servo = useServoThreadStore()
 const throttledState = ref({})
-let intervalId = null
+let intervalId: ReturnType<typeof setInterval> | null = null
 
 function snapshot() {
   const s = servo.status

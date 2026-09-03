@@ -33,28 +33,51 @@
 // re-typing the slot id.
 
 import { computed, onMounted, ref, watch } from "vue";
+import type { PropType } from "vue";
 
 import { ModulesMacrosService } from "../../generated/api";
 import { useMacroButtonConfig } from "./useMacroButtonConfig";
+
+// One editable row. Mirrors ``emptyDescriptor`` below; ``macroKind``
+// is a closed union so the kind picker cannot produce junk state.
+interface MacroButtonRow {
+  slot: string;
+  enabled: boolean;
+  name: string;
+  icon: string;
+  macroKind: "macro" | "ngc";
+  macroName: string;
+}
+
+// One host-declared button position (``id`` unique per host).
+interface MacroButtonSlotDef {
+  id: string;
+  label?: string;
+}
 
 const props = defineProps({
   // Two-way bound list of descriptors. The host reads/writes this
   // through ``useMacroButtonConfig.persist``; the editor mutates a
   // working copy and emits on commit.
   modelValue: {
-    type: Array,
+    type: Array as PropType<import("./useMacroButtonConfig").MacroButtonDescriptor[]>,
     required: true,
     default: () => [],
   },
   // Slot descriptors the host exposes. Each row in the editor
   // corresponds to one entry. ``id`` must be unique per host.
   slots: {
-    type: Array,
+    type: Array as PropType<MacroButtonSlotDef[]>,
     required: true,
     default: () => [],
-    validator: (v) =>
+    validator: (v: unknown) =>
       Array.isArray(v) &&
-      v.every((s) => s !== null && typeof s.id === "string"),
+      v.every(
+        (s) =>
+          s !== null &&
+          typeof s === "object" &&
+          typeof (s as MacroButtonSlotDef).id === "string",
+      ),
   },
   // Owning module id — forwarded to ``useMacroButtonConfig`` for
   // the settings read/write path. The editor no longer depends on
@@ -75,25 +98,25 @@ const emit = defineEmits(["update:modelValue"]);
 
 // Local working copy — the parent keeps the canonical
 // ``modelValue``, this editor mutates a copy and emits on commit.
-const draft = ref(normaliseDraft(props.modelValue, props.slots));
+const draft = ref<MacroButtonRow[]>(normaliseDraft(props.modelValue, props.slots));
 
 // Track which rows have unsaved local edits so we can suppress the
 // v-model echo. Avoids the "type one character → persist → fetch
 // back → re-mount input → focus loss" loop.
-const dirty = ref(new Set());
+const dirty = ref(new Set<string>());
 
 // Macro dropdown source — fetched directly from the backend via
 // the generated ``ModulesMacrosService`` rather than going through
 // the macros module's Pinia store. Bypassing the store keeps the
 // editor decoupled from the macros module's lifecycle (the store
-// is constructed lazily on first ``useMacrosStore()`` call, so a
+// is constructed lazily on first use of the macros store, so a  
 // settings tab that mounts before any dashboard panel can mount
 // before the store has been touched).
 //
 // ``mcode`` is intentionally excluded: an operator who needs an
 // M-code call wraps it in a ``.macro`` file (see ``MacroButton.vue``).
-const macroEntries = ref([]);
-const ngcEntries = ref([]);
+const macroEntries = ref<string[]>([]);
+const ngcEntries = ref<string[]>([]);
 const macroLoadError = ref("");
 
 async function loadMacroOptions() {
@@ -107,10 +130,14 @@ async function loadMacroOptions() {
     // ``{ macros: MacroListItem[] }`` where each item is
     // ``{ name, kind, size_bytes }``. We only consume ``name``.
     macroEntries.value = Array.isArray(macroResp?.macros)
-      ? macroResp.macros.map((row) => row?.name).filter(Boolean)
+      ? macroResp.macros
+          .map((row) => row?.name)
+          .filter((n): n is string => Boolean(n))
       : [];
     ngcEntries.value = Array.isArray(ngcResp?.macros)
-      ? ngcResp.macros.map((row) => row?.name).filter(Boolean)
+      ? ngcResp.macros
+          .map((row) => row?.name)
+          .filter((n): n is string => Boolean(n))
       : [];
   } catch (requestError) {
     macroEntries.value = [];
@@ -171,7 +198,7 @@ onMounted(() => {
   loadMacroOptions();
 });
 
-function emptyDescriptor(slot) {
+function emptyDescriptor(slot: string): MacroButtonRow {
   return {
     slot,
     enabled: false,
@@ -187,8 +214,12 @@ function emptyDescriptor(slot) {
  * empty row for any slot the host declared that the parent has
  * not yet configured.
  */
-function normaliseDraft(payload, slots) {
-  const rows = Array.isArray(payload) ? [...payload] : [];
+function normaliseDraft(
+  payload: import("./useMacroButtonConfig").MacroButtonDescriptor[],
+  slots: MacroButtonSlotDef[],
+): MacroButtonRow[] {
+  const rows: import("./useMacroButtonConfig").MacroButtonDescriptor[] =
+    Array.isArray(payload) ? [...payload] : [];
   for (const slot of slots) {
     if (!rows.find((r) => r.slot === slot.id)) {
       rows.push(emptyDescriptor(slot.id));
@@ -205,36 +236,34 @@ function normaliseDraft(payload, slots) {
   }));
 }
 
-function markDirty(slot) {
+function markDirty(slot: string) {
   dirty.value = new Set([...dirty.value, slot]);
 }
 
-function commitRow(row) {
+function commitRow(row: MacroButtonRow) {
   dirty.value.delete(row.slot);
   emit("update:modelValue", draft.value.map((r) => ({ ...r })));
 }
 
-function onToggleEnabled(row) {
+function onToggleEnabled(row: MacroButtonRow) {
   markDirty(row.slot);
-  // When enabling, default the kind to ``macro`` so the
-  // operator does not have to think about it.
-  if (row.enabled && row.macroKind !== "macro" && row.macroKind !== "ngc") {
-    row.macroKind = "macro";
-  }
+  // Rows are normalised to the ``macro`` / ``ngc`` union, so the
+  // legacy "coerce an invalid kind back to macro" branch cannot
+  // fire any more.
   commitRow(row);
 }
 
-function onChangeName(row) {
+function onChangeName(row: MacroButtonRow) {
   markDirty(row.slot);
   commitRow(row);
 }
 
-function onChangeIcon(row) {
+function onChangeIcon(row: MacroButtonRow) {
   markDirty(row.slot);
   commitRow(row);
 }
 
-function onChangeKind(row) {
+function onChangeKind(row: MacroButtonRow) {
   markDirty(row.slot);
   // Switching kind invalidates the macroName so the dropdown
   // does not silently keep a now-orphaned selection.
@@ -242,14 +271,14 @@ function onChangeKind(row) {
   commitRow(row);
 }
 
-function onChangeMacro(row) {
+function onChangeMacro(row: MacroButtonRow) {
   markDirty(row.slot);
   // ``<select>`` with a v-model emits per change; we treat
   // ``change`` here as the commit boundary.
   commitRow(row);
 }
 
-function descriptorFor(slot) {
+function descriptorFor(slot: MacroButtonSlotDef): MacroButtonRow | undefined {
   return draft.value.find((r) => r.slot === slot.id);
 }
 
@@ -258,7 +287,7 @@ function descriptorFor(slot) {
 // keep-the-label-prefix decision: the dropdown is short enough
 // that an inline ``kind`` qualifier saves the operator a second
 // read against the kind picker.
-function optionsFor(row) {
+function optionsFor(row: MacroButtonRow | null | undefined): string[] {
   const kind = row?.macroKind === "ngc" ? "ngc" : "macro";
   return macroOptionsByKind.value[kind];
 }
@@ -311,7 +340,7 @@ function optionsFor(row) {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.enabled = event.target.checked;
+                    row.enabled = (event.target as HTMLInputElement).checked;
                     onToggleEnabled(row);
                   }
                 "
@@ -328,7 +357,7 @@ function optionsFor(row) {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.name = event.target.value;
+                    row.name = (event.target as HTMLInputElement).value;
                     onChangeName(row);
                   }
                 "
@@ -345,7 +374,7 @@ function optionsFor(row) {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.icon = event.target.value;
+                    row.icon = (event.target as HTMLInputElement).value;
                     onChangeIcon(row);
                   }
                 "
@@ -360,7 +389,7 @@ function optionsFor(row) {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.macroKind = event.target.value;
+                    row.macroKind = (event.target as HTMLSelectElement).value === 'ngc' ? 'ngc' : 'macro';
                     onChangeKind(row);
                   }
                 "
@@ -378,7 +407,7 @@ function optionsFor(row) {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.macroName = event.target.value;
+                    row.macroName = (event.target as HTMLSelectElement).value;
                     onChangeMacro(row);
                   }
                 "

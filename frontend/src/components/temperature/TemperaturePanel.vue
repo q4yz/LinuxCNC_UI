@@ -7,6 +7,10 @@ import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {HeaterControlRequest} from "../../entities/tools/Heater";
 import {TemperatureUnit} from "../../entities";
+import { BaseButton } from '../../ui/index.ts'
+import BaseCard from '../../ui/BaseCard.vue'
+import BaseInput from '../../ui/BaseInput.vue'
+import BaseSelect from '../../ui/BaseSelect.vue'
 
 
 const store = useTemperatureStore()
@@ -234,45 +238,37 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-6 flex flex-col ">
-    <!-- Header & Controls -->
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">🔥</span> Temperatures
-      </h2>
-    </div>
-
+  <BaseCard title="🔥 Temperatures" class="mt-6">
     <!-- Global unit toggle and Cool All -->
-    <div class="px-4 py-3 border-b border-gray-700 bg-gray-700/20 flex items-center justify-between">
+    <div class="mb-3 flex items-center justify-between">
 
       <div class="flex items-center space-x-2">
         <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Unit</span>
-        <select
-            :value="unit"
-            @change="(e) => store.setUnit((e.target as HTMLSelectElement).value as any)"
-            class="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-100 font-mono text-xs focus:outline-none focus:border-blue-500"
+        <BaseSelect
+            :model-value="unit"
+            @update:model-value="(v) => store.setUnit(v as any)"
         >
           <option :value="TemperatureUnit.CELSIUS">°C</option>
           <option :value="TemperatureUnit.KELVIN">K</option>
-        </select>
+        </BaseSelect>
       </div>
 
       <div class="flex items-center space-x-2">
         <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Cool</span>
-        <button
-            type="button"
-            @click="turnOffAll"
+        <BaseButton
+            variant="secondary"
+            size="sm"
             title="Turn off all heaters"
-            class="text-blue-300 hover:text-white text-xs px-3 py-1 rounded border border-blue-800 hover:border-blue-500 bg-blue-900/30 flex items-center space-x-1 shrink-0 transition-colors shadow-sm"
+            @click="turnOffAll"
         >
           <span>❄️ All</span>
-        </button>
+        </BaseButton>
       </div>
 
     </div>
 
     <!-- Reading Rows -->
-    <div class="p-3 sm:p-4 bg-gray-700/20 border-b border-gray-600 flex flex-col space-y-2">
+    <div class="flex flex-col space-y-2">
       <div
           v-for="(data, name) in sensors"
           :key="name"
@@ -316,26 +312,27 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 
             <!-- Input & Buttons -->
             <div class="flex items-center space-x-1 sm:space-x-2">
-              <input
+              <BaseInput
                   v-model="inputTemps[name]"
                   type="number"
-                  class="w-12 sm:w-16 bg-gray-900 border border-gray-600 rounded px-1 sm:px-2 py-1 text-gray-100 font-mono text-xs text-right focus:outline-none focus:border-blue-500"
+                  class="w-20 sm:w-24 text-right text-xs font-mono"
                   @keyup.enter="setTemp(String(name))"
-              >
-              <button
-                  type="button"
+              />
+              <BaseButton
+                  variant="primary"
+                  size="sm"
                   @click="setTemp(String(name))"
-                  class="px-2 sm:px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition-colors"
               >
                 Set
-              </button>
-              <button
-                  type="button"
+              </BaseButton>
+              <BaseButton
+                  variant="secondary"
+                  size="sm"
+                  class="hidden lg:block"
                   @click="turnOff(String(name))"
-                  class="hidden lg:block px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded text-xs font-semibold transition-colors"
               >
                 Off
-              </button>
+              </BaseButton>
             </div>
           </div>
 
@@ -356,10 +353,10 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
     </div>
 
     <!-- ECharts Container -->
-    <div class="p-4 w-full h-64 relative">
+    <div class="mt-4 w-full h-64 relative">
       <v-chart class="chart" :option="chartOptions" autoresize />
     </div>
-  </div>
+  </BaseCard>
 </template>
 
 <style>

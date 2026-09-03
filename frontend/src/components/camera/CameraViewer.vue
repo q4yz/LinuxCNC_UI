@@ -5,6 +5,8 @@ import { storeToRefs } from "pinia";
 
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
 import type { CameraDevice, CameraPreference } from "../../stores/cameraTypes";
+import BaseButton from "../../ui/BaseButton.vue";
+import BaseCard from "../../ui/BaseCard.vue";
 
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.
@@ -185,8 +187,8 @@ onBeforeUnmount(async () => {
 </script>
 
 <template>
-  <section
-    class="relative flex min-h-[300px] w-full items-center justify-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950 shadow-xl"
+  <BaseCard
+    class="relative flex min-h-[300px] w-full items-center justify-center bg-gray-950"
     aria-label="Camera viewer"
   >
     <!-- 1. The active stream -->
@@ -265,14 +267,15 @@ onBeforeUnmount(async () => {
       <p v-else-if="error" class="mt-2 max-w-md text-xs text-red-300">
         {{ error }}
       </p>
-      <button
+      <BaseButton
         v-if="!isLoading"
-        type="button"
-        class="mt-4 rounded bg-gray-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-600"
+        variant="secondary"
+        size="sm"
+        class="mt-4"
         @click="streamMessage ? store.refreshStreamMessage() : store.fetchDevices()"
       >
         {{ streamMessage ? "Re-check" : "Refresh Cameras" }}
-      </button>
+      </BaseButton>
     </div>
 
     <div
@@ -282,16 +285,16 @@ onBeforeUnmount(async () => {
       {{ cameraName }}
     </div>
 
-    <button
+    <BaseButton
       v-if="activeCameraId"
-      type="button"
+      variant="primary"
       :disabled="devices.length < 2"
-      class="absolute bottom-4 right-4 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-900 disabled:text-gray-400"
+      class="absolute bottom-4 right-4 shadow-lg"
       aria-label="Switch Camera"
       title="Switch Camera"
       @click="store.cycleCamera()"
     >
       Switch Camera
-    </button>
-  </section>
+    </BaseButton>
+  </BaseCard>
 </template>

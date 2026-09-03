@@ -20,6 +20,8 @@ import { storeToRefs } from "pinia";
 import { useMacrosStore, MACRO_KIND } from "../../stores/macrosStore";
 import { openInEditor } from "../../helpers/openInEditor";
 import type { MacroEntry } from "../../stores/macrosTypes";
+import { BaseButton, Icon } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const store = useMacrosStore();
 const { isBusy, mcodeFiles } = storeToRefs(store);
@@ -45,27 +47,23 @@ async function onDelete(name: string): Promise<void> {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">⚙️</span> M-Codes
-      </h2>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-gray-400 font-mono">
-          {{ sorted.length }} M-code{{ sorted.length === 1 ? '' : 's' }}
-        </span>
-        <button
-          type="button"
-          class="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500 text-white disabled:opacity-50"
-          :disabled="isBusy"
-          @click="onRefresh"
-        >
-          ↻ Refresh
-        </button>
-      </div>
-    </div>
+  <BaseCard title="⚙️ M-Codes">
+    <template #header-actions>
+      <span class="text-xs text-gray-400 font-mono">
+        {{ sorted.length }} M-code{{ sorted.length === 1 ? '' : 's' }}
+      </span>
+      <BaseButton
+        variant="secondary"
+        size="sm"
+        :disabled="isBusy"
+        @click="onRefresh"
+      >
+        <template #icon><Icon name="refresh" class="h-3.5 w-3.5" /></template>
+        Refresh
+      </BaseButton>
+    </template>
 
-    <div v-if="sorted.length === 0" class="p-6 text-center text-gray-500 text-sm">
+    <div v-if="sorted.length === 0" class="text-center text-gray-500 text-sm">
       <p>No M-codes yet.</p>
       <p class="mt-1 text-xs text-gray-600">
         Add one in <span class="font-mono">Machine Config</span> →
@@ -73,7 +71,7 @@ async function onDelete(name: string): Promise<void> {
       </p>
     </div>
 
-    <ul v-else class="p-3 space-y-2">
+    <ul v-else class="space-y-2">
       <li
         v-for="row in sorted"
         :key="row.name"
@@ -91,23 +89,23 @@ async function onDelete(name: string): Promise<void> {
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">
-          <a
-            class="rounded bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-sm font-semibold text-white"
-            :href="`#/editor?source=m_codes&name=${encodeURIComponent(row.name)}`"
-            @click.prevent="openInEditor({ source: 'm_codes', name: row.name })"
+          <BaseButton
+            variant="primary"
+            size="sm"
+            @click="openInEditor({ source: 'm_codes', name: row.name })"
           >
             Edit
-          </a>
-          <button
-            type="button"
-            class="rounded bg-red-600 hover:bg-red-500 disabled:bg-red-900 px-3 py-1.5 text-sm font-semibold text-white"
+          </BaseButton>
+          <BaseButton
+            variant="danger"
+            size="sm"
             :disabled="isBusy"
             @click="onDelete(row.name)"
           >
             Delete
-          </button>
+          </BaseButton>
         </div>
       </li>
     </ul>
-  </div>
+  </BaseCard>
 </template>

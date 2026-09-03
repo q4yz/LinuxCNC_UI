@@ -11,6 +11,7 @@ import ExtruderCard from "./ExtruderCard.vue";
 import HeatedBedCard from "./HeatedBedCard.vue";
 import SpindleCard from "./SpindleCard.vue";
 import { useToolStore } from "../../stores/toolsStore";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const toolStore = useToolStore();
 
@@ -20,11 +21,8 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl  min-w-[400px] ">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between gap-4">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm whitespace-nowrap">
-        Tools
-      </h2>
+  <BaseCard title="Tools" class="min-w-[400px]">
+    <template #header-actions>
       <!-- Use toolList.size and iterate over toolList.all() -->
       <div v-if="toolList.size > 0" class="flex flex-wrap gap-2 justify-end">
         <button
@@ -40,9 +38,9 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
           {{ tool.id }}
         </button>
       </div>
-    </div>
+    </template>
 
-    <div class=" space-y-4 bg-gray-700/20">
+    <div class="space-y-4">
       <div
           v-if="selectedTool"
           class="bg-gray-800 border border-gray-700 rounded-lg p-1 shadow-sm"
@@ -51,7 +49,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
 
 
         <AnalogSpindleCard
-            v-if="selectedTool.type === 'analog_spindle'"
+            v-if="selectedTool.type === 'spindle_analog'"
             :tool="selectedTool"
         />
         <SpindleCard
@@ -63,14 +61,14 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
             :tool="selectedTool"
         />
         <HeatedBedCard
-            v-else-if="selectedTool.type === 'heated_bed'"
+            v-else-if="selectedTool.type === 'heater'"
             :tool="selectedTool"
         />
         <div
             v-else
             class="text-sm text-gray-400 italic"
         >
-          Unknown tool type: {{ selectedTool.type }}
+          Unknown tool type.
         </div>
       </div>
 
@@ -81,7 +79,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
         No tools configured yet.
       </div>
     </div>
-  </div>
+  </BaseCard>
 </template>
 
 <style scoped>

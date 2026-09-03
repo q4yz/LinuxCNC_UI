@@ -7,6 +7,8 @@ import { createModuleSettings } from "../../core/settings/createModuleSettings";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
 import type { CameraDevice, EditablePreferenceKey } from "../../stores/cameraTypes";
+import { BaseButton } from "../../ui/index.ts";
+import BaseInput from "../../ui/BaseInput.vue";
 
 const store = useCameraStore();
 const {
@@ -37,11 +39,6 @@ function preferenceFor(id: string) {
 // reading order and the validator, the buttons, and the on-disk
 // schema stay in sync.
 const ROTATE_OPTIONS: readonly number[] = [0, 90, 180, 270];
-
-function updateCustomName(id: string, event: Event): void {
-  const target = event.target as HTMLInputElement;
-  store.updatePreference(id, "customName", target.value);
-}
 
 function updateBooleanPreference(
   id: string,
@@ -172,23 +169,24 @@ onMounted(() => {
 
       <form class="flex flex-col gap-3 sm:flex-row sm:items-end" @submit.prevent="saveIpCameraUrl">        <label class="min-w-0 flex-1 text-sm text-gray-200">
           <span class="mb-1 block text-xs font-medium text-gray-400">IP camera URL</span>
-          <input
+          <BaseInput
             v-model="ipCameraUrl"
             type="text"
             inputmode="url"
             autocomplete="url"
             placeholder="http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
             :disabled="settingsLoading || settingsSaving"
-            class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-          >
+            class="w-full"
+          />
         </label>
-        <button
+        <BaseButton
           type="submit"
-          :disabled="settingsLoading || settingsSaving"
-          class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-900"
+          variant="primary"
+          :loading="settingsSaving"
+          :disabled="settingsLoading"
         >
           {{ settingsSaving ? "Saving..." : "Save URL" }}
-        </button>
+        </BaseButton>
       </form>
 
       <p class="text-xs text-gray-500">
@@ -218,14 +216,14 @@ onMounted(() => {
             Names, image orientation, and the hide flag persist with the machine (not just this browser).
           </p>
         </div>
-        <button
-          type="button"
-          :disabled="devicesLoading"
-          class="rounded bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition-colors hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-60"
+        <BaseButton
+          variant="secondary"
+          size="sm"
+          :loading="devicesLoading"
           @click="store.fetchDevices()"
         >
           {{ devicesLoading ? "Refreshing..." : "Refresh Devices" }}
-        </button>
+        </BaseButton>
       </header>
 
       <p v-if="devicesError" class="text-xs text-red-300" role="alert">
@@ -277,14 +275,14 @@ onMounted(() => {
               <label :for="`camera-custom-name-${index}`" class="block text-xs font-medium text-gray-400">
                 Custom name
               </label>
-              <input
+              <BaseInput
                 :id="`camera-custom-name-${index}`"
                 type="text"
-                :value="preferenceFor(device.id).customName"
+                :model-value="preferenceFor(device.id).customName"
                 placeholder="Use hardware name"
-                class="mt-1 w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
-                @input="updateCustomName(device.id, $event)"
-              >
+                class="mt-1 w-full"
+                @update:model-value="(v) => store.updatePreference(device.id, 'customName', String(v ?? ''))"
+              />
             </div>
 
             <div class="flex flex-wrap items-center gap-5 pb-2 lg:shrink-0">
@@ -342,14 +340,14 @@ onMounted(() => {
                  hardware. The action clears the URL and drops the
                  preference row so the persisted settings stay clean. -->
             <div v-if="device.source === 'ip'" class="flex shrink-0">
-              <button
-                type="button"
+              <BaseButton
+                variant="danger"
+                size="sm"
                 :title="`Remove ${device.id}`"
-                class="rounded border border-red-800 bg-red-900/40 px-3 py-1.5 text-xs font-semibold text-red-200 transition-colors hover:bg-red-800 hover:text-white"
                 @click="confirmRemove(device)"
               >
                 Remove
-              </button>
+              </BaseButton>
             </div>
           </div>
         </li>

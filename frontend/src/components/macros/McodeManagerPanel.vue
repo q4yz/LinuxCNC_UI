@@ -22,6 +22,9 @@ import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { validateMacroKindName, MCODE_NAME_REGEX } from "../../parsers/macrosParser";
 import { openInEditor } from "../../helpers/openInEditor";
 import type { MacroEntry } from "../../stores/macrosTypes";
+import {BaseButton, Icon} from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
+import BaseInput from "../../ui/BaseInput.vue";
 
 const store = useMacrosStore();
 const { mcodeFiles, isBusy } = storeToRefs(store);
@@ -102,33 +105,28 @@ watch(() => store.lastError, (value) => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">⚙️</span> M-Codes
-      </h2>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-gray-400 font-mono">
-          {{ sorted.length }} M-code{{ sorted.length === 1 ? '' : 's' }}
-        </span>
-        <button
-          type="button"
-          class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-xs font-semibold text-white"
-          :disabled="isBusy"
-          @click="startCreate"
-          data-test="mcodes-create"
-        >
-          + New M-code
-        </button>
-      </div>
-    </div>
+  <BaseCard title="⚙️ M-Codes">
+    <template #header-actions>
+      <span class="text-xs text-gray-400 font-mono">
+        {{ sorted.length }} M-code{{ sorted.length === 1 ? '' : 's' }}
+      </span>
+      <BaseButton
+        variant="primary"
+        size="sm"
+        :disabled="isBusy"
+        @click="startCreate"
+        data-test="mcodes-create"
+      >
+        + New M-code
+      </BaseButton>
+    </template>
 
-    <div v-if="sorted.length === 0" class="p-6 text-center text-gray-500 text-sm">
+    <div v-if="sorted.length === 0" class="text-center text-gray-500 text-sm">
       No M-codes yet. Use <span class="font-mono">+ New M-code</span>
       to create one (M100..M199).
     </div>
 
-    <ul v-else class="p-3 space-y-2">
+    <ul v-else class="space-y-2">
       <li
         v-for="row in sorted"
         :key="row.name"
@@ -146,24 +144,24 @@ watch(() => store.lastError, (value) => {
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"
+          <BaseButton
+            variant="primary"
+            size="sm"
             :disabled="isBusy"
             @click="openEditor(row.name)"
             :data-test="`mcodes-edit-${row.name}`"
           >
-            Edit
-          </button>
-          <button
-            type="button"
-            class="rounded bg-red-600 hover:bg-red-500 disabled:bg-red-900 px-3 py-1.5 text-sm font-semibold text-white"
+            <Icon name="edit"  />
+          </BaseButton>
+          <BaseButton
+            variant="secondary"
+            size="sm"
             :disabled="isBusy"
             @click="deleteMacro(row.name)"
             :data-test="`mcodes-delete-${row.name}`"
           >
-            Delete
-          </button>
+            <Icon name="trash"  />
+          </BaseButton>
         </div>
       </li>
     </ul>
@@ -185,12 +183,12 @@ watch(() => store.lastError, (value) => {
           <label class="block text-xs uppercase tracking-wider text-gray-400 mb-1">
             Name
           </label>
-          <input
+          <BaseInput
             v-model="createName"
             type="text"
             autofocus
             placeholder="e.g. M101"
-            class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-gray-200"
+            class="w-full font-mono"
             data-test="mcodes-create-name"
           />
           <p class="mt-1 text-[11px] text-gray-500">
@@ -206,23 +204,19 @@ watch(() => store.lastError, (value) => {
           {{ createError }}
         </p>
         <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded bg-gray-600 px-3 py-2 hover:bg-gray-500"
-            @click="createOpen = false"
-          >
+          <BaseButton variant="secondary" @click="createOpen = false">
             Cancel
-          </button>
-          <button
+          </BaseButton>
+          <BaseButton
+            variant="primary"
             type="submit"
-            class="rounded bg-blue-600 px-3 py-2 font-semibold hover:bg-blue-500 disabled:bg-blue-900"
             :disabled="isBusy || !createName.trim()"
             data-test="mcodes-create-submit"
           >
             Create
-          </button>
+          </BaseButton>
         </div>
       </form>
     </div>
-  </div>
+  </BaseCard>
 </template>

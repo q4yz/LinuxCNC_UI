@@ -159,7 +159,7 @@ test("filterAutocompleteCommands returns empty for empty input", () => {
   // Round-trip the function via a fresh ``data:`` import so the
   // test does not depend on the rest of the source tree (the
   // helper is a pure function).
-  const tmp = resolve(here, "../src/config/gcodes.js");
+  const tmp = resolve(here, "../src/config/gcodes.ts");
   const url = "file://" + tmp;
   // We use a dynamic import in a Promise so ``node --test`` does
   // not have to be configured for ESM.
@@ -172,7 +172,7 @@ test("filterAutocompleteCommands returns empty for empty input", () => {
 
 
 test("filterAutocompleteCommands is case-insensitive on the label", () => {
-  const url = "file://" + resolve(here, "../src/config/gcodes.js");
+  const url = "file://" + resolve(here, "../src/config/gcodes.ts");
   return import(url).then((mod) => {
     const matches = mod.filterAutocompleteCommands("g1", 5);
     assert.ok(matches.length > 0, "G1 must match for lowercase 'g1'");
@@ -182,7 +182,7 @@ test("filterAutocompleteCommands is case-insensitive on the label", () => {
 
 
 test("filterAutocompleteCommands caps the result count", () => {
-  const url = "file://" + resolve(here, "../src/config/gcodes.js");
+  const url = "file://" + resolve(here, "../src/config/gcodes.ts");
   return import(url).then((mod) => {
     // ``G`` is a prefix for many G-codes; the helper must cap
     // the result to the supplied limit so the menu never
@@ -194,7 +194,7 @@ test("filterAutocompleteCommands caps the result count", () => {
 
 
 test("filterAutocompleteCommands matches descriptions", () => {
-  const url = "file://" + resolve(here, "../src/config/gcodes.js");
+  const url = "file://" + resolve(here, "../src/config/gcodes.ts");
   return import(url).then((mod) => {
     // Searching for the description snippet must surface
     // relevant commands even when the label does not start

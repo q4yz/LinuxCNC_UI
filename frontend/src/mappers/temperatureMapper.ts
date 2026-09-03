@@ -1,7 +1,8 @@
 import { HeaterReading } from "../entities/temperature";
 import { SensorReading } from "../entities/temperature";
 import { ReadingSet, type AnyReading } from "../entities/temperature/ReadingSet";
-import {HeaterStateResponse, TemperatureStateResponse} from "../../generated/api";
+// Type-only import — see SpindleDigital.ts for the strip-types rationale.
+import type {HeaterStateResponse, TemperatureStateResponse} from "../../generated/api";
 
 
 

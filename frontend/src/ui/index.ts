@@ -6,7 +6,7 @@
 // import from this barrel rather than from the individual files so
 // the import surface stays narrow:
 //
-//     import { Button, Icon, Drawer, Confirm } from "@/ui";
+//     import { BaseButton, Icon, Drawer, Confirm } from "@/ui";
 //
 // (In practice consumers use the relative path; this barrel is for
 // grep-ability — a future ESM alias in ``vite.config.js`` can move
@@ -17,7 +17,7 @@
 // small — primitives are for things that appear in 3+ unrelated
 // call sites; one-off UI stays in the consuming component.
 
-export { default as Button } from "./Button.vue";
+export { default as BaseButton } from "./BaseButton.vue";
 export { default as Icon } from "./Icon.vue";
 export { default as Drawer } from "./Drawer.vue";
 export { default as Confirm } from "./Confirm.vue";

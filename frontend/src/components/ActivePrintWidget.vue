@@ -19,7 +19,7 @@
 // Failures are routed through ``reportCommandFailure`` so the
 // console row + toast are uniform across every manual trigger.
 
-import {computed, ref, onMounted, onBeforeUnmount, watch} from "vue";
+import {computed, ref, shallowRef, onMounted, onBeforeUnmount, watch} from "vue";
 import {storeToRefs} from "pinia";
 import {useMachineStore, SystemState} from "../stores/stateFacade";
 import {useBaseThreadStore} from "../stores/baseThread";
@@ -27,6 +27,8 @@ import {useConsoleStore} from "../stores/console";
 import {progressFacade} from "../facades/progressFacade";
 import {reportCommandFailure} from "../core/error-format";
 import {ProgramFile} from "../entities/progress";
+import {BaseButton} from "../ui/index.ts";
+import BaseCard from "../ui/BaseCard.vue";
 
 
 const facade = useMachineStore();
@@ -39,7 +41,9 @@ const {progress} = storeToRefs(baseThread);
 //
 // `files` is the canonical list of programs on the active
 // backend root. Refreshed on mount and after every successful load.
-const files = ref<ProgramFile[]>([]);
+// ``shallowRef`` — entities are immutable snapshots and ``ref``'s
+// deep ``UnwrapRef`` would strip the ``ProgramFile`` class privates.
+const files = shallowRef<ProgramFile[]>([]);
 const isLoadingList = ref<boolean>(false);
 const loadError = ref<string | null>(null);
 
@@ -275,28 +279,30 @@ async function stopPrint() {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl flex flex-col">
+  <BaseCard title=" 📂 Programs">
     <!-- Top-bar: Start button. (Hidden while active) -->
-    <div v-if="!isActive" class="p-4 border-b border-gray-700">
-      <button
-          type="button"
-          :disabled="!isLoaded"
-          @click="startLoadedProgram"
-          class="w-full px-4 py-3 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded font-semibold text-base transition-colors shadow"
-      >Start
-      </button>
-    </div>
+
+    <template #header-actions>
+      <div v-if="!isActive" class="w-48" >
+        <BaseButton
+            variant="success"
+
+            class="w-full"
+            :disabled="!isLoaded"
+            @click="startLoadedProgram"
+        >Start
+        </BaseButton>
+      </div>
+    </template>
+    <template #footer-actions>
+
+    </template>
+
 
     <!-- File list (Hidden while active) -->
     <div v-if="!isActive" class="p-4 border-b border-gray-700">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center mb-3">
-        <span class="mr-2">📂</span> Programs
-      </h2>
-      <p class="text-[10px] text-gray-500 -mt-2 mb-2">
-        Click <span class="font-semibold">Load</span> to queue — overrides
-        the current file when the machine is in
-        <span class="font-semibold">Loaded</span> state.
-      </p>
+
+
 
       <ul v-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
         <li
@@ -312,18 +318,17 @@ async function stopPrint() {
           >
             {{ file.name }}
           </span>
-          <button
-              type="button"
-              :class="isLoadedFile(file.name)
-              ? 'shrink-0 px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-semibold transition-colors'
-              : 'shrink-0 px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-wait text-white rounded text-xs font-semibold transition-colors'"
+          <BaseButton
+              :variant="isLoadedFile(file.name) ? 'danger' : 'primary'"
+              size="sm"
+              class="shrink-0"
+              :loading="isLoading && !isLoadedFile(file.name)"
               :disabled="isLoading || (systemState === SystemState.RUNNING || systemState === SystemState.PAUSED)"
               @click="isLoadedFile(file.name) ? unloadProgram() : loadFile(file.name)"
           >
-            <span v-if="isLoading && !isLoadedFile(file.name)">Loading…</span>
-            <span v-else-if="isLoadedFile(file.name)">Unload</span>
+            <span v-if="isLoadedFile(file.name)">Unload</span>
             <span v-else>Load</span>
-          </button>
+          </BaseButton>
         </li>
       </ul>
 
@@ -405,28 +410,25 @@ async function stopPrint() {
       </div>
 
       <div class="flex items-center gap-2 pt-2">
-        <button
-            type="button"
-            class="flex-1 px-3 py-2 rounded font-semibold text-sm transition-colors"
-            :class="isPaused
-            ? 'bg-green-600 hover:bg-green-500 text-white'
-            : 'bg-yellow-600 hover:bg-yellow-500 text-white'"
+        <BaseButton
+            class="flex-1"
+            :variant="isPaused ? 'success' : 'primary'"
             @click="isPaused ? resumePrint() : pausePrint()"
         >
           {{ isPaused ? "Resume" : "Pause" }}
-        </button>
-        <button
-            type="button"
-            class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded font-semibold text-sm transition-colors"
+        </BaseButton>
+        <BaseButton
+            variant="danger"
+            class="flex-1"
             @click="stopPrint"
         >
           Stop / Cancel
-        </button>
+        </BaseButton>
       </div>
 
       <span v-if="!isRunning && !isPaused" class="text-xs text-gray-500 italic">
         Program loaded but not yet running.
       </span>
     </div>
-  </div>
+  </BaseCard>
 </template>

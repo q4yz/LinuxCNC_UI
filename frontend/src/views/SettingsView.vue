@@ -8,7 +8,7 @@ import CameraSettings from '../components/camera/CameraSettings.vue'
 import MachineSettingsPanel from '../components/machine/MachineSettingsPanel.vue'
 import TemperatureSettingsPanel from '../components/temperature/TemperatureSettingsPanel.vue'
 
-function apiBaseUrl(moduleId) {
+function apiBaseUrl(moduleId: string) {
   return `/api/v1/modules/${moduleId}/settings`
 }
 </script>

@@ -41,12 +41,16 @@ const STORE_ID = MACHINE_ID;
  * string values match the canonical ``hardware.json`` axis ids
  * (``id: "x"`` / ``id: "y"`` / ``id: "z"``) and the
  * ``AxisState.id`` field on the base-thread snapshot.
+ *
+ * Erasable ``as const`` object (not a TS ``enum``) so the runtime
+ * strip-types loader can load this module.
  */
-export enum Axis {
-  X = "x",
-  Y = "y",
-  Z = "z",
-}
+export const Axis = {
+  X: "x",
+  Y: "y",
+  Z: "z",
+} as const;
+export type Axis = (typeof Axis)[keyof typeof Axis];
 
 const machineSettings = createModuleSettings(MACHINE_ID);
 
@@ -65,7 +69,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const status = computed(() => servo.status);
     const connectionStatus = computed(() => servo.connectionStatus);
     //const errors = computed(() => servo.errors || []);
-    //const isUpdating = computed(() => servo.isUpdating || false);
 
     // ──────────────────────────────────────────────────────────────── //
     // Module-private state                                               //
@@ -73,6 +76,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
     const defaultJogVelocity = ref(DEFAULT_JOG_VELOCITY);
     const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
+    const isUpdating = ref(false);
 
     // ──────────────────────────────────────────────────────────────── //
     // Derived values (Using the new ServoThreadState getters!)           //
@@ -83,6 +87,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     const droZ = computed(() => (status.value.relativePosition?.[2] || 0).toFixed(3));
 
     const isEstop = computed(() => status.value.isEstop);
+    const isEstopActive = computed(() => status.value.isEstop);
     const isMachineOn = computed(() => status.value.isMachineOn);
     const isPrinting = computed(() => status.value.isPrinting);
     const isPaused = computed(() => status.value.isPaused);
@@ -432,11 +437,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         status,
         defaultJogVelocity,
         keepaliveIntervalMs,
-        //isUpdating,
+        isUpdating,
         droX,
         droY,
         droZ,
         isEstop,
+        isEstopActive,
         isMachineOn,
         machineStateText,
         isPrinting,

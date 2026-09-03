@@ -4,7 +4,9 @@ import { storeToRefs } from "pinia";
 
 import { useToolStore } from "../../stores/toolsStore";
 import { SpindleDigital } from "../../entities/tools";
+import type { SpindleDirection } from "../../entities/tools/SpindleDigital";
 import { SystemState, useMachineStore } from "../../stores/stateFacade";
+import { BaseButton } from "../../ui/index.ts";
 
 const props = defineProps<{
   tool: SpindleDigital;
@@ -30,20 +32,24 @@ let suppressSyncUntil = 0; // Timestamp lock to prevent rubber-banding
 // --- State Logic ---
 
 const isDisabled = computed(() => {
-  return [
-    SystemState.OFFLINE,
-    SystemState.POWER_OFF,
-    SystemState.ESTOP,
-    SystemState.UPDATING
-  ].includes(systemState.value);
+  return (
+    [
+      SystemState.OFFLINE,
+      SystemState.POWER_OFF,
+      SystemState.ESTOP,
+      SystemState.UPDATING
+    ] as string[]
+  ).includes(systemState.value);
 });
 
 const isManualOnly = computed(() => {
-  return [
-    SystemState.IDLE,
-    SystemState.LOADED,
-    SystemState.FAILURE
-  ].includes(systemState.value);
+  return (
+    [
+      SystemState.IDLE,
+      SystemState.LOADED,
+      SystemState.FAILURE
+    ] as string[]
+  ).includes(systemState.value);
 });
 
 const isEffectiveMasterOverride = computed(() => isManualOnly.value || masterOverride.value === true);
@@ -70,7 +76,7 @@ const sliderSpeedPercent = computed({
 
 const minPercent = computed(() => {
   if (!maxRpm.value) return 0;
-  return (minRpm.value / maxRpm.value) * 100;
+  return ((minRpm.value ?? 0) / maxRpm.value) * 100;
 });
 
 const gaugeGradient = computed(() => {
@@ -90,7 +96,7 @@ const gaugeCoverHeight = computed(() => {
 
 // --- Sync from HAL pin (snapshot) ----------------------------------------
 watch(
-    () => [
+    (): [number | null, number | null, boolean | null, SpindleDirection] => [
       props.tool.override,
       props.tool.masterOverride,
       props.tool.masterOverrideEnable,
@@ -326,30 +332,30 @@ onBeforeUnmount(() => {
         <template v-if="isManualOnly">
 
         <div class="grid grid-cols-3 gap-2">
-          <button
-              type="button"
-              class="py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          <BaseButton
+              variant="secondary"
+              class="w-full"
               :disabled="isDisabled"
               @click="handleSpindle('backward')"
           >
             Reverse
-          </button>
-          <button
-              type="button"
-              class="py-2.5 bg-red-600 hover:bg-red-500 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+          </BaseButton>
+          <BaseButton
+              variant="danger"
+              class="w-full tracking-widest"
               :disabled="isDisabled"
               @click="handleSpindle('stop')"
           >
             STOP
-          </button>
-          <button
-              type="button"
-              class="py-2.5 bg-green-600 hover:bg-green-500 text-white rounded text-sm md:text-base font-bold shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          </BaseButton>
+          <BaseButton
+              variant="success"
+              class="w-full"
               :disabled="isDisabled"
               @click="handleSpindle('forward')"
           >
             Forward
-          </button>
+          </BaseButton>
         </div>
         </template>
       </div>

@@ -9,25 +9,26 @@
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {TemperatureUnit} from "../../entities/index.ts";
+import BaseSelect from '../../ui/BaseSelect.vue'
 
 const store = useTemperatureStore()
 const { sensors, unit, sensorColors } = storeToRefs(store)
 
 const SENSOR_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,40}$/
-function isSensorName(name) {
+function isSensorName(name: unknown): name is string {
   return typeof name === 'string' && SENSOR_NAME_PATTERN.test(name)
 }
 
-const sensorList = () => {
-  const list = []
+const sensorList = (): string[] => {
+  const list: string[] = []
   for (const name of Object.keys(sensors.value || {})) {
     if (isSensorName(name)) list.push(name)
   }
   return list
 }
 
-function onColorChange(name, event) {
-  const hex = event?.target?.value
+function onColorChange(name: string, event: Event) {
+  const hex = (event?.target as HTMLInputElement | null)?.value
   if (!hex) return
   store.setSensorColor(name, hex)
 }
@@ -49,14 +50,13 @@ function onColorChange(name, event) {
         </p>
       </header>
       <div class="flex items-center space-x-2">
-        <select
-          :value="unit"
-          @change="(e) => store.setUnit(e.target.value)"
-          class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500"
+        <BaseSelect
+          :model-value="unit"
+          @update:model-value="(v) => store.setUnit(v as TemperatureUnit)"
         >
           <option :value="TemperatureUnit.CELSIUS">°C</option>
           <option :value="TemperatureUnit.KELVIN">K</option>
-        </select>
+        </BaseSelect>
         <span class="text-xs text-gray-500">
           Persists via
           <code class="bg-gray-700 px-1 py-0.5 rounded">PUT .../settings/unit</code>.

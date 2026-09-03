@@ -15,6 +15,7 @@
 import { computed, ref, watch } from "vue";
 
 import { useToolStore } from "../../stores/toolsStore";
+import { BaseButton } from "../../ui/index.ts";
 
 const props = defineProps({
   tool: { type: Object, required: true },
@@ -105,19 +106,22 @@ function stopSpindle() {
       </div>
     </div>
 
-    <!-- Stop Button -->
-    <button
-      type="button"
-      class="w-full px-4 py-3 bg-red-600 hover:bg-red-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded font-bold tracking-widest shadow transition-colors flex justify-center items-center gap-2"
+    <!-- Stop BaseButton -->
+    <BaseButton
+      variant="danger"
+      size="lg"
+      class="w-full tracking-widest"
       :disabled="!isRunning"
       @click="stopSpindle"
     >
       <!-- Optional Stop Icon -->
-      <svg v-if="isRunning" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd" />
-      </svg>
+      <template #icon>
+        <svg v-if="isRunning" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd" />
+        </svg>
+      </template>
       STOP
-    </button>
+    </BaseButton>
   </div>
 </template>
 

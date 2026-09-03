@@ -20,6 +20,7 @@
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useBaseThreadStore } from "../stores/baseThread";
+import { BaseButton, Icon } from "../ui/index.ts";
 
 const store = useBaseThreadStore();
 const { pendingSince, secondsSinceLastSnapshot } = storeToRefs(store);
@@ -57,14 +58,9 @@ function dismiss(): void {
           <h2 id="pending-snapshot-title" class="text-lg font-semibold text-amber-300">
             Connection appears stuck
           </h2>
-          <button
-            type="button"
-            class="text-xl text-gray-400 hover:text-white"
-            aria-label="Dismiss"
-            @click="dismiss"
-          >
-            &times;
-          </button>
+          <BaseButton variant="ghost" size="sm" aria-label="Dismiss" @click="dismiss">
+            <template #icon><Icon name="close" class="h-4 w-4" /></template>
+          </BaseButton>
         </div>
 
         <p class="mt-4 text-gray-200">
@@ -80,27 +76,15 @@ function dismiss(): void {
         </p>
 
         <div class="mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            type="button"
-            class="rounded border border-gray-600 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800"
-            @click="dismiss"
-          >
+          <BaseButton variant="secondary" @click="dismiss">
             Dismiss
-          </button>
-          <button
-            type="button"
-            class="rounded border border-amber-600 px-4 py-2 text-sm font-semibold text-amber-200 hover:bg-amber-950"
-            @click="reloadPage"
-          >
+          </BaseButton>
+          <BaseButton variant="secondary" @click="reloadPage">
             Reload page
-          </button>
-          <button
-            type="button"
-            class="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
-            @click="refreshNow"
-          >
+          </BaseButton>
+          <BaseButton variant="primary" @click="refreshNow">
             Refresh now
-          </button>
+          </BaseButton>
         </div>
       </section>
     </div>

@@ -1,14 +1,18 @@
 // Program-progress entity. Mirrors the `ProgramProgressResponse`
 // Pydantic shape on the backend.
 
-export enum InterpState {
-  ERROR = -1,
-  NOT_LOADED = 0,
-  IDLE = 1,
-  READING = 2,
-  PAUSED = 3,
-  WAITING = 4,
-}
+// Erasable ``as const`` object (not a TS ``enum``) so the runtime
+// strip-types loader (``node --experimental-strip-types``) can load
+// this module without a transform pass.
+export const InterpState = {
+  ERROR: -1,
+  NOT_LOADED: 0,
+  IDLE: 1,
+  READING: 2,
+  PAUSED: 3,
+  WAITING: 4,
+} as const;
+export type InterpState = (typeof InterpState)[keyof typeof InterpState];
 
 // Kept for backward compatibility with JS consumers during the migration
 export const INTERP_STATES = {

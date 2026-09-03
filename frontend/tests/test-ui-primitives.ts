@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-const buttonPath = resolve(repoRoot, "frontend/src/ui/Button.vue");
+const buttonPath = resolve(repoRoot, "frontend/src/ui/BaseButton.vue");
 const iconPath = resolve(repoRoot, "frontend/src/ui/Icon.vue");
 const drawerPath = resolve(repoRoot, "frontend/src/ui/Drawer.vue");
 const confirmPath = resolve(repoRoot, "frontend/src/ui/Confirm.vue");
@@ -32,10 +32,10 @@ const confirm = read(confirmPath);
 const index = read(indexPath);
 
 // ---------------------------------------------------------------- //
-// Button.vue                                                            //
+// BaseButton.vue                                                            //
 // ---------------------------------------------------------------- //
 
-test("Button exposes the documented variants and sizes", () => {
+test("BaseButton exposes the documented variants and sizes", () => {
   // Five variants, three sizes, and a ``loading`` spinner are
   // the contract. Adding a variant requires a new entry in
   // ``VARIANT_CLASSES``; the test asserts the contract so
@@ -58,9 +58,9 @@ test("Button exposes the documented variants and sizes", () => {
   assert.match(button, /<slot\s*\/>/);
 });
 
-test("Button defaults are stable", () => {
+test("BaseButton defaults are stable", () => {
   // The default variant is ``primary`` so a one-off
-  // ``<Button>Save</Button>`` always renders the dashboard's
+  // ``<BaseButton>Save</BaseButton>`` always renders the dashboard's
   // primary blue without the consumer having to specify it.
   assert.match(button, /variant:\s*\{\s*type:\s*String,\s*default:\s*"primary"/);
   assert.match(button, /size:\s*\{\s*type:\s*String,\s*default:\s*"md"/);
@@ -68,8 +68,13 @@ test("Button defaults are stable", () => {
   // common button render is just a plain button.
   assert.match(button, /loading:\s*\{\s*type:\s*Boolean,\s*default:\s*false/);
   // Native button type defaults to ``button`` so a stray
-  // ``<Button>`` inside a form does not accidentally submit.
-  assert.match(button, /type:\s*\{\s*type:\s*String,\s*default:\s*"button"/);
+  // ``<BaseButton>`` inside a form does not accidentally submit.
+  // The migration types the prop with ``PropType`` so the native
+  // ``<button type>`` binding stays exhaustively checked.
+  assert.match(
+    button,
+    /type:\s*\{\s*type:\s*String as PropType<"button" \| "submit" \| "reset">,\s*default:\s*"button"/,
+  );
 });
 
 // ---------------------------------------------------------------- //
@@ -106,9 +111,10 @@ test("Icon ships the icon set documented in the file", () => {
   assert.match(icon, /size:\s*\{\s*type:\s*String,\s*default:\s*"h-4 w-4"/);
   // Decorative (the common case) keeps aria-hidden; ``label=true``
   // opt-in exposes ``aria-label`` for the rare screen-reader-only
-  // icon.
-  assert.match(icon, /aria-hidden="true"/);
-  assert.match(icon, /aria-label="label \? icon\.label : null"/);
+  // icon. ``undefined`` (not ``null``) drops the attribute — Vue's
+  // template type-checker rejects ``null`` for Booleanish props.
+  assert.match(icon, /:aria-hidden="label \? undefined : 'true'"/);
+  assert.match(icon, /aria-label="label \? icon\.label : undefined"/);
 });
 
 test("Icon unknown-name renders an empty placeholder, not a fallback", () => {
@@ -148,10 +154,11 @@ test("Drawer exposes the v-model + slide lifecycle", () => {
 test("Drawer disallows non-anchor sides at prop-validation time", () => {
   // The router only ships ``right`` and ``left``; ``top`` /
   // ``bottom`` are reserved for future expansion. The validator
-  // constrains caller mistakes at prop-check time.
+  // constrains caller mistakes at prop-check time. (The ``s``
+  // parameter is typed ``string`` since the TS migration.)
   assert.match(
     drawer,
-    /validator:\s*\(s\)\s*=>\s*\["right",\s*"left"\]\.includes\(s\)/,
+    /validator:\s*\(s(: string)?\)\s*=>\s*\["right",\s*"left"\]\.includes\(s\)/,
   );
 });
 
@@ -176,7 +183,7 @@ test("Confirm emits both confirm and cancel distinctly", () => {
 test("Confirm supports three button variants", () => {
   // ``primary`` / ``success`` / ``danger`` cover every confirm
   // action in the dashboards. ``secondary`` is the default reject
-  // styling. Reusing ``Button.vue`` here means every visual change
+  // styling. Reusing ``BaseButton.vue`` here means every visual change
   // to buttons propagates to modals automatically.
   for (const v of ["primary", "success", "danger"]) {
     assert.match(
@@ -206,12 +213,12 @@ test("Confirm is keyboard-friendly", () => {
   assert.match(confirm, /!event\.shiftKey/);
 });
 
-test("Confirm reuses Button + Icon primitives", () => {
+test("Confirm reuses BaseButton + Icon primitives", () => {
   // The whole point of the shared UI layer is that Confirm
-  // composes Button + Icon rather than re-implementing the styling.
+  // composes BaseButton + Icon rather than re-implementing the styling.
   // Asserting the imports here is the regression guard.
   assert.match(confirm, /import Icon from "\.\/Icon\.vue"/);
-  assert.match(confirm, /import Button from "\.\/Button\.vue"/);
+  assert.match(confirm, /import BaseButton from "\.\/BaseButton\.vue"/);
   // Uses ``<Icon name="close">`` for the dismiss cross.
   assert.match(confirm, /<Icon name="close"/);
 });
@@ -223,7 +230,7 @@ test("Confirm reuses Button + Icon primitives", () => {
 test("ui/index.js exports the four primitives", () => {
   // A future contributor adding a primitive to ``ui/`` should
   // also re-export it here so consumers import from one place.
-  for (const name of ["Button", "Icon", "Drawer", "Confirm"]) {
+  for (const name of ["BaseButton", "Icon", "Drawer", "Confirm"]) {
     assert.match(index, new RegExp(`export\\s+\\{\\s*default\\s+as\\s+${name}`));
   }
 });

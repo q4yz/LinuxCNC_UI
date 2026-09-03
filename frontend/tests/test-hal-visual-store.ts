@@ -75,6 +75,17 @@ test("createSignal auto-names empty input", () => {
     assert.notEqual(created!.name.trim(), "");
 });
 
+test("createSignal can pre-set the signal type", () => {
+    const store = useHalVisualStore();
+    const created = store.createSignal("preset-sig", "float");
+    assert.ok(created);
+    assert.equal(created!.type, "float");
+    // The pre-set type is enforced from the very first drop.
+    const mismatch = store.connectPin(created!.id, IN_BIT);
+    assert.equal(mismatch.ok, false);
+    assert.match(mismatch.message ?? "", /Type mismatch/);
+});
+
 test("an OUT pin becomes the single source and locks the signal type", () => {
     const { store, signal } = freshSignal();
     const result = store.connectPin(signal.id, OUT_FLOAT);

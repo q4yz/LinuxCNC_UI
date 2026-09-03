@@ -14,20 +14,23 @@ import {
   TOAST_TYPES,
   useToastStore,
 } from "../core/toast";
+import type { Toast } from "../core/toast";
+import { BaseButton, Icon } from "../ui/index.ts";
 
 const toastStore = useToastStore();
 
 // Active per-toast timers keyed by id. ``Map`` so the cleanup
 // hook can iterate deterministically; a plain object would also
 // work but loses ordering on insertion / iteration.
-const timers = new Map();
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function scheduleDismiss(toast) {
+function scheduleDismiss(toast: Toast) {
   // ``durationMs === null`` means "persist until the operator
   // closes the toast". ``0`` / negative / non-finite are
   // normalised to ``null`` so a malformed call site never causes
   // a flash-and-gone.
-  if (!Number.isFinite(toast.durationMs) || toast.durationMs <= 0) {
+  const durationMs = toast.durationMs;
+  if (durationMs === null || !Number.isFinite(durationMs) || durationMs <= 0) {
     return;
   }
   // Clear any previous timer for this id (the queue might have
@@ -37,7 +40,7 @@ function scheduleDismiss(toast) {
   const handle = setTimeout(() => {
     toastStore.dismiss(toast.id);
     timers.delete(toast.id);
-  }, toast.durationMs);
+  }, durationMs);
   timers.set(toast.id, handle);
 }
 
@@ -78,14 +81,17 @@ const visibleToasts = computed(() =>
   toastStore.toasts.filter((toast) => TOAST_TYPES.includes(toast.type)),
 );
 
-function styleFor(type) {
+function styleFor(type: string) {
   // ``TOAST_TYPE_STYLES`` always carries an entry for every type,
   // but a future rename should not silently drop the border. Fall
   // back to the ``info`` palette so the toast stays visible.
-  return TOAST_TYPE_STYLES[type] || TOAST_TYPE_STYLES.info;
+  return (
+    TOAST_TYPE_STYLES[type as keyof typeof TOAST_TYPE_STYLES] ||
+    TOAST_TYPE_STYLES.info
+  );
 }
 
-function onClose(id) {
+function onClose(id: string) {
   toastStore.dismiss(id);
 }
 
@@ -133,15 +139,15 @@ const _renderEpoch = ref(Date.now());
         </p>
         <p class="text-sm break-words whitespace-pre-wrap">{{ toast.body }}</p>
       </div>
-      <button
-        type="button"
-        @click="onClose(toast.id)"
-        class="text-gray-500 hover:text-gray-200 text-base leading-none shrink-0"
+      <BaseButton
+        variant="ghost"
+        size="sm"
         :aria-label="`Dismiss ${toast.type} toast`"
         data-test="toast-dismiss"
+        @click="onClose(toast.id)"
       >
-        ✕
-      </button>
+        <template #icon><Icon name="close" class="h-4 w-4" /></template>
+      </BaseButton>
     </div>
   </div>
 </template>

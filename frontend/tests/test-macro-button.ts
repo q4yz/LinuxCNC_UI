@@ -9,7 +9,7 @@
 //
 //   * ``MacroButton.vue`` documents the visibility contract
 //     (descriptor falsy / disabled / empty → render nothing).
-//   * The button reuses the shared ``Button`` primitive so a future
+//   * The button reuses the shared ``BaseButton`` primitive so a future
 //     palette change propagates automatically.
 //   * The icon-rendering branch falls through to a literal
 //     ``<span>`` so emoji / unicode glyphs render without a new
@@ -68,8 +68,8 @@ test("MacroButton hides itself when the descriptor is missing or disabled", () =
   );
   assert.match(
     buttonText,
-    /descriptor !== null/,
-    "MacroButton must check descriptor !== null",
+    /descriptor != null/,
+    "MacroButton must null-check the descriptor",
   );
   assert.match(
     buttonText,
@@ -78,7 +78,7 @@ test("MacroButton hides itself when the descriptor is missing or disabled", () =
   );
   assert.match(
     buttonText,
-    /descriptor\.macroName\.length > 0/,
+    /descriptor\.macroName \?\? ""\)\.length > 0/,
     "MacroButton must check descriptor.macroName is non-empty",
   );
 });
@@ -101,20 +101,20 @@ test("MacroButton dispatches via useMacrosStore.runMacroOfKind", () => {
   );
 });
 
-test("MacroButton reuses the shared Button primitive", () => {
+test("MacroButton reuses the shared BaseButton primitive", () => {
   // Style consistency is the whole point of the shared UI layer.
-  // The primitive must wrap ``<Button>`` so a future palette /
+  // The primitive must wrap ``<BaseButton>`` so a future palette /
   // sizing tweak propagates to every host.
-  assert.match(buttonText, /import Button from "\.\/Button\.vue"/);
+  assert.match(buttonText, /import BaseButton from "\.\/BaseButton\.vue"/);
   assert.match(
     buttonText,
-    /<Button\b/,
-    "MacroButton must render the shared Button primitive",
+    /<BaseButton\b/,
+    "MacroButton must render the shared BaseButton primitive",
   );
 });
 
 test("MacroButton accepts the documented variants and sizes", () => {
-  // Match the ``<Button>`` primitive's contract so a host can
+  // Match the ``<BaseButton>`` primitive's contract so a host can
   // request any variant / size that matches its siblings.
   for (const v of ["primary", "success", "danger", "secondary", "ghost"]) {
     assert.match(
@@ -145,7 +145,7 @@ test("MacroButton falls back to literal text for non-icon glyphs", () => {
   );
   assert.match(
     buttonText,
-    /v-else-if="descriptor\.icon"/,
+    /v-else-if="descriptor\?\.icon"/,
     "MacroButton must render a literal span for unknown glyphs",
   );
 });

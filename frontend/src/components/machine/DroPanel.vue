@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { storeToRefs } from 'pinia'
-import { Axis, useMachineStore } from '../../stores/machine'
-import { useBaseThreadStore } from '../../stores/baseThread'
-import { WORK_COORDINATE_SYSTEMS } from '../../config/gcodes'
-import { useMacroButtonConfig, MacroButton } from '../../ui'
-
-
+import {computed, onMounted, ref} from 'vue'
+import {storeToRefs} from 'pinia'
+import {Axis, useMachineStore} from '../../stores/machine'
+import {useBaseThreadStore} from '../../stores/baseThread'
+import {WORK_COORDINATE_SYSTEMS} from '../../config/gcodes'
+import {useMacroButtonConfig, MacroButton} from '../../ui'
+import BaseCard from "../../ui/BaseCard.vue";
+import {BaseButton} from "../../ui";
+import BaseInput from "../../ui/BaseInput.vue";
+import BaseSelect from "../../ui/BaseSelect.vue";
 
 const store = useMachineStore()
 const baseThreadStore = useBaseThreadStore()
-const { droX, droY, droZ,  isMachineOn, status } = storeToRefs(store)
-const { axes: baseThreadAxes } = storeToRefs(baseThreadStore)
+const {droX, droY, droZ, isMachineOn, status} = storeToRefs(store)
+const {axes: baseThreadAxes} = storeToRefs(baseThreadStore)
 
 /**
  * Canonical axis letters (x/y/z) whose joints are all homed.
@@ -39,9 +41,9 @@ const homedAxisLetters = computed<Set<string>>(() => {
 })
 
 const allAxesHomed = computed(
-  () => homedAxisLetters.value.has(Axis.X)
-    && homedAxisLetters.value.has(Axis.Y)
-    && homedAxisLetters.value.has(Axis.Z),
+    () => homedAxisLetters.value.has(Axis.X)
+        && homedAxisLetters.value.has(Axis.Y)
+        && homedAxisLetters.value.has(Axis.Z),
 )
 
 // Custom macro buttons (one slot per axis row). The shared
@@ -56,7 +58,7 @@ const allAxesHomed = computed(
 // (``MachineSettingsPanel.vue``) uses the same id so both ends
 // of the read/write pair share ``<data_root>/modules/axis/settings.json``.
 const buttonConfig = useMacroButtonConfig('axis')
-const { buttonsBySlot } = buttonConfig
+const {buttonsBySlot} = buttonConfig
 
 onMounted(() => {
   // Fire-and-forget; the composable handles missing keys by
@@ -65,206 +67,228 @@ onMounted(() => {
 })
 
 // Set Position modal state
-const setPositionModal = ref({ visible: false, axis: null, axisName: '', value: '' })
+const setPositionModal = ref<{visible: boolean; axis: number | null; axisName: string; value: string}>({visible: false, axis: null, axisName: '', value: ''})
 
 // Speed controls state (initialized to default values)
 const speedMultiplier = ref(100) // 100%
 const maxSpeed = ref(1000) // mm/min or unit/min
 
-function openSetPosition(axis, axisName, currentValue) {
-  setPositionModal.value = { visible: true, axis, axisName, value: currentValue }
+function openSetPosition(axis: number, axisName: string, currentValue: number) {
+  setPositionModal.value = {visible: true, axis, axisName, value: String(currentValue)}
 }
 
 function closeSetPosition() {
-  setPositionModal.value = { visible: false, axis: null, axisName: '', value: '' }
+  setPositionModal.value = {visible: false, axis: null, axisName: '', value: ''}
 }
 
 async function applySetPosition() {
-  const { axis, value } = setPositionModal.value
+  const {axis, value} = setPositionModal.value
+  if (axis === null) return
   const parsed = parseFloat(value)
   if (!isFinite(parsed)) return
   await store.setPosition(axis, parsed)
   closeSetPosition()
 }
 
-function updateWcs(event) {
-  const newIndex = parseInt(event.target.value)
+function updateWcs(event: Event) {
+  const newIndex = parseInt((event.target as HTMLSelectElement).value)
   const system = WORK_COORDINATE_SYSTEMS.find(s => s.index === newIndex)
   if (system) {
     store.setCoordinateSystem(system.name)
   }
 }
-
-
 </script>
 
 <template>
-  <div class="flex flex-col space-y-6">
-    <!-- Top Banner for ESTOP / Machine State -->
-
-
-    <!-- DRO (Digital Readout) Panel -->
-    <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-      <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between">
-        <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Toolhead / DRO</h2>
-        <!-- Home All Button -->
-        <div class="flex items-center space-x-2">
-          <!-- WCS Dropdown -->
-          <select
-              v-model="status.g5xIndex"
-              @change="updateWcs"
-              class="bg-gray-900 border border-gray-600 text-gray-200 text-xs rounded px-2 py-1 outline-none font-bold"
-              title="Work Coordinate System"
-              :disabled="!isMachineOn"
+  <!-- DRO (Digital Readout) Panel -->
+  <BaseCard title="Toolhead / DRO" footer="Machine Pos">
+    <template #header-actions>
+      <div class="flex items-center space-x-2">
+        <!-- WCS Dropdown -->
+        <BaseSelect
+            v-model="status.g5xIndex"
+            @change="updateWcs"
+            class="text-xs"
+            title="Work Coordinate System"
+            :disabled="!isMachineOn"
+        >
+          <option
+              v-for="sys in WORK_COORDINATE_SYSTEMS"
+              :key="sys.index"
+              :value="sys.index"
           >
-            <option
-                v-for="sys in WORK_COORDINATE_SYSTEMS"
-                :key="sys.index"
-                :value="sys.index"
-            >
-              {{ sys.name }}
-            </option>
-          </select>
-          <button
-              @click="store.homeAll()"
-              :disabled="!isMachineOn"
-              class="flex items-center space-x-1 px-3 py-1 rounded text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title="Home All Axes"
-          >
+            {{ sys.name }}
+          </option>
+        </BaseSelect>
+        <BaseButton
+            @click="store.homeAll()"
+            :disabled="!isMachineOn"
+            size="sm"
+            title="Home All Axes"
+        >
+          <template #icon>
             <span>⌂</span>
-            <span>HOME ALL</span>
-          </button>
-        </div>
+          </template>
+          <span>HOME ALL</span>
+        </BaseButton>
       </div>
+    </template>
 
-      <div class="p-6 space-y-4 font-mono text-3xl text-right tracking-tight">
-        <!-- X Axis Row -->
-        <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
-          <div class="flex items-center space-x-2">
-            <span class="text-red-500 font-bold w-6">X</span>
-            <button
-                @click="store.homeAxis(Axis.X)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Home X Axis"
-            >🏠</button>
-            <MacroButton
-                :descriptor="buttonsBySlot['dro.x']"
-                variant="secondary"
-                size="sm"
-                class="px-2 py-1 text-xs"
-            />
-            <button
-                @click="openSetPosition(0, 'X', 0)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-xs font-bold bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Set X Position"
-            >SET</button>
-          </div>
-          <span :class="homedAxisLetters.has(Axis.X) ? 'text-gray-100' : 'text-gray-600'">
+    <div class="space-y-4 font-mono text-3xl text-right tracking-tight p-4">
+      <!-- X Axis Row -->
+      <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
+        <div class="flex items-center space-x-2">
+          <span class="text-red-500 font-bold w-6">X</span>
+          <BaseButton
+              @click="store.homeAxis(Axis.X)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              class="text-base"
+              title="Home X Axis"
+          >
+            🏠
+          </BaseButton>
+          <MacroButton
+              :descriptor="buttonsBySlot['dro.x']"
+              variant="secondary"
+              size="sm"
+              class="px-2 py-1 text-xs"
+          />
+          <BaseButton
+              @click="openSetPosition(0, 'X', 0)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              title="Set X Position"
+          >
+            SET
+          </BaseButton>
+        </div>
+        <span :class="homedAxisLetters.has(Axis.X) ? 'text-gray-100' : 'text-gray-600'">
             {{ droX }}
           </span>
-        </div>
-
-        <!-- Y Axis Row -->
-        <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
-          <div class="flex items-center space-x-2">
-            <span class="text-green-500 font-bold w-6">Y</span>
-            <button
-                @click="store.homeAxis(Axis.Y)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Home Y Axis"
-            >🏠</button>
-            <MacroButton
-                :descriptor="buttonsBySlot['dro.y']"
-                variant="secondary"
-                size="sm"
-                class="px-2 py-1 text-xs"
-            />
-            <button
-                @click="openSetPosition(1, 'Y', 0)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-xs font-bold bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Set Y Position"
-            >SET</button>
-          </div>
-          <span :class="homedAxisLetters.has(Axis.Y) ? 'text-gray-100' : 'text-gray-600'">
-            {{ droY }}
-          </span>
-        </div>
-
-        <!-- Z Axis Row -->
-        <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
-          <div class="flex items-center space-x-2">
-            <span class="text-blue-500 font-bold w-6">Z</span>
-            <button
-                @click="store.homeAxis(Axis.Z)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-base bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Home Z Axis"
-            >🏠</button>
-            <MacroButton
-                :descriptor="buttonsBySlot['dro.z']"
-                variant="secondary"
-                size="sm"
-                class="px-2 py-1 text-xs"
-            />
-            <button
-                @click="openSetPosition(2, 'Z', 0)"
-                :disabled="!isMachineOn"
-                class="px-2 py-1 rounded text-xs font-bold bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Set Z Position"
-            >SET</button>
-          </div>
-          <span :class="homedAxisLetters.has(Axis.Z) ? 'text-gray-100' : 'text-gray-600'">
-            {{ droZ }}
-          </span>
-        </div>
       </div>
 
-      <div class="bg-gray-700/30 px-4 py-3 flex justify-between text-sm text-gray-400">
-        <span>Machine Pos</span>
-        <span v-if="allAxesHomed" class="text-green-400">Homed</span>
-        <span v-else class="text-yellow-500">Un-homed</span>
+      <!-- Y Axis Row -->
+      <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
+        <div class="flex items-center space-x-2">
+          <span class="text-green-500 font-bold w-6">Y</span>
+          <BaseButton
+              @click="store.homeAxis(Axis.Y)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              class="text-base"
+              title="Home Y Axis"
+          >
+            🏠
+          </BaseButton>
+          <MacroButton
+              :descriptor="buttonsBySlot['dro.y']"
+              variant="secondary"
+              size="sm"
+              class="px-2 py-1 text-xs"
+          />
+          <BaseButton
+              @click="openSetPosition(1, 'Y', 0)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              title="Set Y Position"
+          >
+            SET
+          </BaseButton>
+        </div>
+        <span :class="homedAxisLetters.has(Axis.Y) ? 'text-gray-100' : 'text-gray-600'">
+            {{ droY }}
+          </span>
+      </div>
+
+      <!-- Z Axis Row -->
+      <div class="flex justify-between items-center bg-gray-900 px-4 py-3 rounded border border-gray-800">
+        <div class="flex items-center space-x-2">
+          <span class="text-blue-500 font-bold w-6">Z</span>
+          <BaseButton
+              @click="store.homeAxis(Axis.Z)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              class="text-base"
+              title="Home Z Axis"
+          >
+            🏠
+          </BaseButton>
+          <MacroButton
+              :descriptor="buttonsBySlot['dro.z']"
+              variant="secondary"
+              size="sm"
+              class="px-2 py-1 text-xs"
+          />
+          <BaseButton
+              @click="openSetPosition(2, 'Z', 0)"
+              :disabled="!isMachineOn"
+              variant="secondary"
+              size="sm"
+              title="Set Z Position"
+          >
+            SET
+          </BaseButton>
+        </div>
+        <span :class="homedAxisLetters.has(Axis.Z) ? 'text-gray-100' : 'text-gray-600'">
+            {{ droZ }}
+          </span>
       </div>
     </div>
 
-    <!-- Speed Controls Panel -->
+    <template #footer-actions>
+      <span v-if="allAxesHomed" class="text-green-400">Homed</span>
+      <span v-else class="text-yellow-500">Un-homed</span>
+    </template>
 
 
-    <!-- Set Position Modal -->
-    <Teleport to="body">
-      <div
-          v-if="setPositionModal.visible"
-          class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
-          @click.self="closeSetPosition"
-      >
-        <div class="bg-gray-800 border border-gray-600 rounded-lg p-6 shadow-2xl w-72">
-          <h3 class="text-lg font-bold text-gray-100 mb-4">Set {{ setPositionModal.axisName }} Position</h3>
-          <input
-              v-model="setPositionModal.value"
-              type="number"
-              step="0.001"
-              class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100 font-mono text-xl text-right focus:outline-none focus:border-blue-500"
-              @keyup.enter="applySetPosition"
-              @keyup.escape="closeSetPosition"
-              autofocus
-          />
-          <div class="flex space-x-3 mt-4">
-            <button
-                @click="applySetPosition"
-                class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded transition-colors"
-            >Apply</button>
-            <button
-                @click="closeSetPosition"
-                class="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-2 rounded transition-colors"
-            >Cancel</button>
-          </div>
+  </BaseCard>
+
+  <!-- Speed Controls Panel -->
+
+
+  <!-- Set Position Modal -->
+  <Teleport to="body">
+    <div
+        v-if="setPositionModal.visible"
+        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+        @click.self="closeSetPosition"
+    >
+      <div class="bg-gray-800 border border-gray-600 rounded-lg p-6 shadow-2xl w-72">
+        <h3 class="text-lg font-bold text-gray-100 mb-4">Set {{ setPositionModal.axisName }} Position</h3>
+        <BaseInput
+            v-model="setPositionModal.value"
+            type="number"
+            step="0.001"
+            class="w-full font-mono text-xl text-right"
+            @keyup.enter="applySetPosition"
+            @keyup.escape="closeSetPosition"
+            autofocus
+        />
+        <div class="flex space-x-3 mt-4">
+          <BaseButton
+              @click="applySetPosition"
+              variant="primary"
+              class="flex-1"
+          >
+            Apply
+          </BaseButton>
+          <BaseButton
+              @click="closeSetPosition"
+              variant="secondary"
+              class="flex-1"
+          >
+            Cancel
+          </BaseButton>
         </div>
       </div>
-    </Teleport>
-  </div>
+    </div>
+  </Teleport>
 </template>
 
 <style>

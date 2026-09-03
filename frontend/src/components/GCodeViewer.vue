@@ -7,13 +7,17 @@ import { useMachineStore } from '../stores/machine'
 const store = useMachineStore()
 
 // Template ref for the container div
-const container = ref(null)
+const container = ref<HTMLElement | null>(null)
 
 // Three.js instances
-let scene, camera, renderer, controls
-let toolheadGroup, toolheadMesh
-let animationFrameId
-let resizeObserver
+let scene: THREE.Scene | null = null
+let camera: THREE.PerspectiveCamera | null = null
+let renderer: THREE.WebGLRenderer | null = null
+let controls: OrbitControls | null = null
+let toolheadGroup: THREE.Group | null = null
+let toolheadMesh: THREE.Mesh | null = null
+let animationFrameId = 0
+let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
   initThreeJS()
@@ -38,15 +42,16 @@ onBeforeUnmount(() => {
   // Traverse scene to dispose of geometries and materials
   if (scene) {
     scene.traverse((object) => {
-      if (!object.isMesh) return
-      
-      object.geometry.dispose()
-      
-      if (object.material.isMaterial) {
-        cleanMaterial(object.material)
-      } else {
+      const mesh = object as THREE.Mesh
+      if (!mesh.isMesh) return
+
+      mesh.geometry.dispose()
+
+      if (Array.isArray(mesh.material)) {
         // an array of materials
-        for (const material of object.material) cleanMaterial(material)
+        for (const material of mesh.material) cleanMaterial(material)
+      } else if (mesh.material.isMaterial) {
+        cleanMaterial(mesh.material)
       }
     })
   }
@@ -57,20 +62,22 @@ onBeforeUnmount(() => {
   }
 })
 
-const cleanMaterial = material => {
+const cleanMaterial = (material: THREE.Material) => {
   material.dispose()
   // dispose textures
   for (const key of Object.keys(material)) {
-    const value = material[key]
+    const value = (material as unknown as Record<string, unknown>)[key]
     if (value && typeof value === 'object' && 'minFilter' in value) {
-      value.dispose()
+      (value as unknown as { dispose: () => void }).dispose()
     }
   }
 }
 
 const initThreeJS = () => {
-  const width = container.value.clientWidth
-  const height = container.value.clientHeight
+  if (!container.value) return
+  const el = container.value
+  const width = el.clientWidth
+  const height = el.clientHeight
 
   // --- Scene Setup ---
   scene = new THREE.Scene()
@@ -92,7 +99,7 @@ const initThreeJS = () => {
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(width, height)
   renderer.setPixelRatio(window.devicePixelRatio)
-  container.value.appendChild(renderer.domElement)
+  el.appendChild(renderer.domElement)
 
   // --- Controls ---
   controls = new OrbitControls(camera, renderer.domElement)
@@ -140,7 +147,8 @@ const initThreeJS = () => {
 
   // --- Resize Handling ---
   resizeObserver = new ResizeObserver(entries => {
-    for (let entry of entries) {
+    if (!renderer || !camera) return
+    for (const entry of entries) {
       const newWidth = entry.contentRect.width
       const newHeight = entry.contentRect.height
       renderer.setSize(newWidth, newHeight)
@@ -148,7 +156,7 @@ const initThreeJS = () => {
       camera.updateProjectionMatrix()
     }
   })
-  resizeObserver.observe(container.value)
+  resizeObserver.observe(el)
 }
 
 const updateToolheadPosition = () => {
@@ -174,6 +182,7 @@ const setupWatchers = () => {
 
 const animate = () => {
   animationFrameId = requestAnimationFrame(animate)
+  if (!controls || !renderer || !scene || !camera) return
   controls.update() // Required if enableDamping is true
   renderer.render(scene, camera)
 }

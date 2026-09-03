@@ -4,16 +4,17 @@ import { useConsoleStore, LOG_LEVELS } from '../stores/console'
 import { ModulesMachineStateService } from '../../generated/api/services/ModulesMachineStateService'
 import { filterAutocompleteCommands } from '../config/gcodes'
 import { useMachineStore } from '../stores/machine'
+import { BaseButton } from '../ui/index.ts'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()
 
 const commandInput = ref('')
-const messageContainer = ref(null)
-const inputWrapper = ref(null)
+const messageContainer = ref<HTMLElement | null>(null)
+const inputWrapper = ref<HTMLElement | null>(null)
 
 // Command History
-const commandHistory = ref([])
+const commandHistory = ref<string[]>([])
 const historyIndex = ref(-1)
 
 // ----------------------------------------------------------------- //
@@ -83,7 +84,7 @@ const submitCommand = async () => {
        consoleStore.success(`Executed: ${cmd}`)
     }
   } catch (e) {
-    consoleStore.error(`Error: ${e.message}`)
+    consoleStore.error(`Error: ${e instanceof Error ? e.message : String(e)}`)
   }
 
   commandInput.value = ''
@@ -112,7 +113,11 @@ const onBlur = () => {
   }, 120)
 }
 
-const selectSuggestion = (entry) => {
+interface SuggestionEntry {
+  command: string;
+}
+
+const selectSuggestion = (entry: SuggestionEntry | null | undefined) => {
   if (!entry) return
   commandInput.value = entry.command
   showSuggestions.value = false
@@ -123,7 +128,7 @@ const selectSuggestion = (entry) => {
   if (inputEl) inputEl.focus()
 }
 
-const moveSuggestion = (delta) => {
+const moveSuggestion = (delta: number) => {
   if (!suggestions.value.length) return
   const next = suggestionIndex.value + delta
   if (next < 0) {
@@ -135,7 +140,7 @@ const moveSuggestion = (delta) => {
   }
 }
 
-const onKeyDown = (event) => {
+const onKeyDown = (event: KeyboardEvent) => {
   // The menu is only useful while it is visible.
   if (!showSuggestions.value || suggestions.value.length === 0) {
     // ``Tab`` is otherwise captured by the browser for focus
@@ -191,9 +196,9 @@ const historyDown = () => {
 // a click elsewhere in the document needs a window-level listener
 // to close the menu. The component owns the listener so it is
 // removed in ``onBeforeUnmount`` and never leaks across reloads.
-const handleDocumentMouseDown = (event) => {
+const handleDocumentMouseDown = (event: MouseEvent) => {
   if (!inputWrapper.value) return
-  if (inputWrapper.value.contains(event.target)) return
+  if (inputWrapper.value.contains(event.target as Node)) return
   showSuggestions.value = false
 }
 
@@ -206,7 +211,7 @@ onBeforeUnmount(() => {
 })
 
 // Styling for different message types
-const getMessageClass = (type) => {
+const getMessageClass = (type: string) => {
   switch(type) {
     case 'error': return 'text-red-400 font-semibold'
     case 'warning': return 'text-yellow-400'
@@ -243,7 +248,7 @@ const getMessageClass = (type) => {
         </button>
       </div>
 
-      <button @click="consoleStore.clearMessages()" class="text-xs text-gray-400 hover:text-white transition-colors shrink-0">Clear</button>
+      <BaseButton variant="ghost" size="sm" class="shrink-0" @click="consoleStore.clearMessages()">Clear</BaseButton>
     </div>
 
     <!-- Message Area -->
@@ -306,12 +311,9 @@ const getMessageClass = (type) => {
           spellcheck="false"
           data-test="console-input"
         >
-        <button
-          @click="submitCommand"
-          class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-semibold transition-colors"
-        >
+        <BaseButton variant="primary" size="sm" @click="submitCommand">
           SEND
-        </button>
+        </BaseButton>
       </div>
     </div>
   </div>

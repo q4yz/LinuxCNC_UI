@@ -13,6 +13,8 @@
 import { ref } from "vue";
 
 import { useToolStore } from "../../stores/toolsStore";
+import { BaseButton } from "../../ui/index.ts";
+import BaseInput from "../../ui/BaseInput.vue";
 
 const props = defineProps({
   tool: { type: Object, required: true },
@@ -88,14 +90,14 @@ async function turnOff() {
         <label class="block text-xs text-gray-400 mb-1">
           Set Temp (°C)
         </label>
-        <input
+        <BaseInput
           v-model.number="inputTemp"
           type="number"
           :min="tool.min_temp ?? undefined"
           :max="tool.max_temp ?? undefined"
-          class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+          class="w-full"
           @keyup.enter="applyTemp"
-        >
+        />
         <p
           v-if="hasRange()"
           class="mt-1 text-[11px] text-gray-500 font-mono"
@@ -103,33 +105,26 @@ async function turnOff() {
           {{ rangeLabel() }}
         </p>
       </div>
-      <button
-        type="button"
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-semibold shadow transition-colors"
-        @click="applyTemp"
-      >
+      <BaseButton variant="primary" @click="applyTemp">
         Set
-      </button>
-      <button
-        type="button"
-        class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded font-semibold transition-colors"
-        @click="turnOff"
-      >
+      </BaseButton>
+      <BaseButton variant="secondary" @click="turnOff">
         Off
-      </button>
+      </BaseButton>
     </div>
   </div>
 </template>
 
 <style scoped>
 /* Hide native number input spinners so the temp input matches the
-   dashboard's other controls. */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
+   dashboard's other controls. ``:deep()`` reaches the input inside
+   the shared ``BaseInput`` primitive. */
+:deep(input[type="number"]::-webkit-inner-spin-button),
+:deep(input[type="number"]::-webkit-outer-spin-button) {
   -webkit-appearance: none;
   margin: 0;
 }
-input[type="number"] {
+:deep(input[type="number"]) {
   -moz-appearance: textfield;
 }
 </style>

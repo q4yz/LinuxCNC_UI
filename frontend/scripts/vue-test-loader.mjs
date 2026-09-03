@@ -36,11 +36,19 @@ export async function resolve(specifier, context, nextResolve) {
 
   // Relative + extensionless: try the default resolver first
   // (covers .js / .mjs / .cjs / package.json), then fall back to .ts.
+  // Node's ESM resolver does not expand directory imports to an
+  // ``index`` barrel (unlike bundlers), so also try
+  // ``<specifier>/index.ts`` — src barrels like
+  // ``entities/temperature`` rely on this under the test runner.
   try {
     return await nextResolve(specifier, context);
   } catch (err) {
-    if (err && err.code === 'ERR_MODULE_NOT_FOUND') {
-      return nextResolve(specifier + '.ts', context);
+    if (err && (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'ERR_UNSUPPORTED_DIR_IMPORT')) {
+      try {
+        return await nextResolve(specifier + '.ts', context);
+      } catch {
+        return nextResolve(specifier + '/index.ts', context);
+      }
     }
     throw err;
   }

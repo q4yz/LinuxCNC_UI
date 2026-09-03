@@ -12,7 +12,7 @@ const router = useRouter()
 // (no registry — modules are hard dependencies in this build).
 const activeId = computed(() => route.name || 'dashboard')
 
-function navigate(view) {
+function navigate(view: string) {
   router.push({ name: view })
 }
 

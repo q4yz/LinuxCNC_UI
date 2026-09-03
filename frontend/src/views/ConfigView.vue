@@ -23,7 +23,7 @@ const machineConfigStore = useMachineConfigStore()
 // Used by the explorers to request an edit. Pushes the
 // ``/editor?source=<source>&name=<path>`` URL; EditorView's
 // ``watch`` detects the route change and loads the file.
-function openEditor(source, path) {
+function openEditor(source: string, path: string) {
   openInEditor({ source, name: path })
 }
 

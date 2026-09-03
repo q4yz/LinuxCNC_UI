@@ -14,7 +14,7 @@ import {
 import {HeaterControlRequest, HeaterState} from "../entities/tools/Heater";
 import {Extruder, ExtruderControlRequest} from "../entities/tools/Extruder";
 import {SpindleAnalog as SpindleAnalogState} from "../entities/tools/SpindleAnalog";
-import {ToolItem, ToolList} from "../entities/tools/ToolList";
+import {ToolList, type ToolItem} from "../entities/tools/ToolList";
 
 // Analog fallback if your backend ever adds an analog type
 export interface AnalogSpindleWire {

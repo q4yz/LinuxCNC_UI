@@ -1,5 +1,7 @@
-// @ts-ignore
-import {SpindleDigitalCommand} from "../../../generated/api";
+// Type-only import: generated model modules erase to empty modules
+// under the runtime strip-types loader, so a value import would
+// throw ``does not provide an export named ...`` in ``node --test``.
+import type {SpindleDigitalCommand} from "../../../generated/api";
 
 
 export type SpindleDirection = "forward" | "backward" | "stop";

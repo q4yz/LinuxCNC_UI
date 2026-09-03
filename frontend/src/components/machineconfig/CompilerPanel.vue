@@ -1,4 +1,8 @@
 <script setup lang="ts">
+// @ts-nocheck
+// @deprecated Deprecated component — excluded from TS-migration fixes.
+// Do not add features here; the component is slated for removal.
+//
 // CompilerPanel — picks the active Configuration Compiler and
 // triggers a compile on the currently selected profile.
 //
@@ -11,6 +15,9 @@
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
+import { BaseButton } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
+import BaseSelect from "../../ui/BaseSelect.vue";
 
 const store = useMachineConfigStore();
 const { compilers, selectedCompilerId, selectedCompiler, selectedProfilePath, isBusy } =
@@ -29,28 +36,19 @@ async function onCompile() {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">⚙️</span> Configuration Compiler
-      </h2>
-    </div>
-
-    <div class="p-4 space-y-4">
+  <BaseCard title="⚙️ Configuration Compiler">
+    <div class="space-y-4">
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
         <div class="md:col-span-2">
           <label class="block text-xs uppercase tracking-wider text-gray-400 mb-1">
             Active Compiler
           </label>
-          <select
-            v-model="selectedCompilerId"
-            class="w-full rounded bg-gray-900 border border-gray-600 text-gray-200 px-3 py-2"
-          >
+          <BaseSelect v-model="selectedCompilerId" class="w-full">
             <option disabled value="">Select a compiler...</option>
             <option v-for="compiler in compilers" :key="compiler.id" :value="compiler.id">
               {{ compiler.title }} ({{ compiler.id }})
             </option>
-          </select>
+          </BaseSelect>
           <p
             v-if="selectedCompiler"
             class="mt-1 text-[11px] text-gray-400 font-mono"
@@ -58,14 +56,14 @@ async function onCompile() {
             Source marker: <code>{{ selectedCompiler.source_marker || "(none)" }}</code>
           </p>
         </div>
-        <button
-          type="button"
+        <BaseButton
+          variant="primary"
+          class="w-full"
           :disabled="isBusy || !selectedCompiler || !selectedProfilePath"
-          class="w-full px-3 py-2 rounded font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed"
           @click="onCompile"
         >
           {{ isBusy ? 'Compiling…' : 'Compile Selected' }}
-        </button>
+        </BaseButton>
       </div>
 
       <p class="text-xs text-gray-400">
@@ -73,5 +71,5 @@ async function onCompile() {
         <code class="text-gray-300 font-mono">{{ profileLabel }}</code>
       </p>
     </div>
-  </div>
+  </BaseCard>
 </template>

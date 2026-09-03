@@ -5,8 +5,8 @@ import test from "node:test";
 const source = async (path) => readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 
 test("unsaved changes guard structure is present", async () => {
-  const store = await source("stores/editor.js");
-  const confirm = await source("core/confirm.js");
+  const store = await source("stores/editor.ts");
+  const confirm = await source("core/confirm.ts");
   const modal = await source("components/ModalConfirm.vue");
   const app = await source("App.vue");
   const editor = await source("views/EditorView.vue");

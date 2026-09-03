@@ -95,7 +95,7 @@ export const useHalVisualStore = defineStore("halVisual", () => {
 
     // --- signal lifecycle ---------------------------------------------- //
 
-    function createSignal(name?: string): VisualSignal | null {
+    function createSignal(name?: string, type: string = ""): VisualSignal | null {
         const trimmed = (name ?? "").trim();
         const finalName = trimmed || `signal-${signals.value.length + 1}`;
         if (signals.value.some((s) => s.name === finalName)) {
@@ -104,7 +104,10 @@ export const useHalVisualStore = defineStore("halVisual", () => {
         const signal: VisualSignal = {
             id: `draft:${++draftCounter}`,
             name: finalName,
-            type: "",
+            // Empty string means "auto" — the type is adopted from the
+            // first connected pin. A pre-set type is enforced by
+            // ``connectPin``'s type-matching rule from the first drop on.
+            type: type,
             source: null,
             targets: [],
             description: "",

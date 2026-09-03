@@ -32,7 +32,7 @@
 import { onBeforeUnmount, onMounted, watch } from "vue";
 
 import Icon from "./Icon.vue";
-import Button from "./Button.vue";
+import BaseButton from "./BaseButton.vue";
 
 const props = defineProps({
   // Two-way bound. Setting to ``false`` from outside emits
@@ -42,24 +42,24 @@ const props = defineProps({
   title: { type: String, default: "Confirm" },
   question: { type: String, default: "Are you sure?" },
   description: { type: String, default: "" },
-  // Button labels. The host picks text that fits the operator's
+  // BaseButton labels. The host picks text that fits the operator's
   // mental model ("Delete", "Unload", "Reset") rather than the
   // generic "Confirm" / "Cancel".
   confirmButtonText: { type: String, default: "Confirm" },
   rejectButtonText: { type: String, default: "Cancel" },
-  // Button variants — see ``Button.vue``. ``primary`` matches the
+  // BaseButton variants — see ``BaseButton.vue``. ``primary`` matches the
   // default confirm action; ``danger`` is for destructive flows
   // (delete, reset). ``secondary`` is reserved for soft prompts
   // where the operator is unlikely to regret the action.
   confirmButtonStyle: {
     type: String,
     default: "primary",
-    validator: (v) => ["primary", "success", "danger"].includes(v),
+    validator: (v: string) => ["primary", "success", "danger"].includes(v),
   },
   rejectButtonStyle: {
     type: String,
     default: "secondary",
-    validator: (v) => ["primary", "secondary"].includes(v),
+    validator: (v: string) => ["primary", "secondary"].includes(v),
   },
   // Closing the modal via backdrop / Escape does **not** fire the
   // ``confirm`` event — it fires ``cancel`` instead. Treat those as
@@ -91,7 +91,7 @@ function onBackdropClick() {
   if (props.closeOnBackdrop) close();
 }
 
-function onKeydown(event) {
+function onKeydown(event: KeyboardEvent) {
   if (!props.open) return;
   if (event.key === "Escape" && props.closeOnEsc) close();
   else if (event.key === "Enter" && !event.shiftKey) confirm();
@@ -150,7 +150,7 @@ watch(
             >
               {{ title }}
             </h2>
-            <button
+            <base-button
               v-if="showDismissCrossButton"
               type="button"
               class="text-xl leading-none text-gray-400 hover:text-white"
@@ -159,7 +159,7 @@ watch(
               @click="close"
             >
               <Icon name="close" size="h-4 w-4" />
-            </button>
+            </base-button>
           </header>
 
           <p class="mt-4 text-gray-200">{{ question }}</p>
@@ -168,20 +168,20 @@ watch(
           </p>
 
           <footer class="mt-6 flex justify-end gap-3">
-            <Button
+            <BaseButton
               :variant="rejectButtonStyle"
               data-test="confirm-reject"
               @click="close"
             >
               {{ rejectButtonText }}
-            </Button>
-            <Button
+            </BaseButton>
+            <BaseButton
               :variant="confirmButtonStyle"
               data-test="confirm-accept"
               @click="confirm"
             >
               {{ confirmButtonText }}
-            </Button>
+            </BaseButton>
           </footer>
         </section>
       </div>

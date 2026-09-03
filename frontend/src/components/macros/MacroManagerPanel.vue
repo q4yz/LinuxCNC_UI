@@ -32,6 +32,10 @@ import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { validateMacroKindName } from "../../parsers/macrosParser";
 import { openInEditor } from "../../helpers/openInEditor";
 import type { MacroKind } from "../../stores/macrosTypes";
+import { BaseButton } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
+import BaseInput from "../../ui/BaseInput.vue";
+import {Icon} from "../../ui";
 
 const store = useMacrosStore();
 const { macroFiles, ngcFiles, contents, isBusy } = storeToRefs(store);
@@ -155,32 +159,27 @@ watch(() => store.lastError, (value) => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-4">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">🧩</span> Macros &amp; NGC
-      </h2>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-gray-400 font-mono">
-          {{ macroCards.length }} file{{ macroCards.length === 1 ? '' : 's' }}
-        </span>
-        <button
-          type="button"
-          class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-xs font-semibold text-white"
-          :disabled="isBusy"
-          @click="startCreate"
-          data-test="macros-create"
-        >
-          + New macro
-        </button>
-      </div>
-    </div>
+  <BaseCard title="🧩 Macros &amp; NGC" >
+    <template #header-actions>
+      <span class="text-xs text-gray-400 font-mono">
+        {{ macroCards.length }} file{{ macroCards.length === 1 ? '' : 's' }}
+      </span>
+      <BaseButton
+        variant="primary"
+        size="sm"
+        :disabled="isBusy"
+        @click="startCreate"
+        data-test="macros-create"
+      >
+        + New macro
+      </BaseButton>
+    </template>
 
-    <div v-if="macroCards.length === 0" class="p-6 text-center text-gray-500 text-sm">
+    <div v-if="macroCards.length === 0" class="text-center text-gray-500 text-sm">
       No macros yet. Use <span class="font-mono">+ New macro</span> to create one.
     </div>
 
-    <ul v-else class="p-3 space-y-2">
+    <ul v-else class="space-y-2">
       <li
         v-for="card in macroCards"
         :key="`${card.kind}:${card.name}`"
@@ -205,24 +204,24 @@ watch(() => store.lastError, (value) => {
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"
+          <BaseButton
+            variant="primary"
+            size="sm"
             :disabled="isBusy"
             @click="openInEditorView(card.kind, card.name)"
             :data-test="`macros-edit-${card.kind}-${card.name}`"
           >
-            Edit
-          </button>
-          <button
-            type="button"
-            class="rounded bg-red-600 hover:bg-red-500 disabled:bg-red-900 px-3 py-1.5 text-sm font-semibold text-white"
+            <Icon name="edit"  />
+          </BaseButton>
+          <BaseButton
+            variant="secondary"
+            size="sm"
             :disabled="isBusy"
             @click="deleteMacro(card.kind, card.name)"
             :data-test="`macros-delete-${card.kind}-${card.name}`"
           >
-            Delete
-          </button>
+            <Icon name="trash" />
+          </BaseButton>
         </div>
       </li>
     </ul>
@@ -267,12 +266,12 @@ watch(() => store.lastError, (value) => {
           <label class="block text-xs uppercase tracking-wider text-gray-400 mb-1">
             Name
           </label>
-          <input
+          <BaseInput
             v-model="createName"
             type="text"
             autofocus
             placeholder="e.g. home_all"
-            class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-gray-200"
+            class="w-full font-mono"
             data-test="macros-create-name"
           />
           <p class="mt-1 text-[11px] text-gray-500">
@@ -287,21 +286,17 @@ watch(() => store.lastError, (value) => {
           {{ createError }}
         </p>
         <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded bg-gray-600 px-3 py-2 hover:bg-gray-500"
-            @click="createOpen = false"
-          >
+          <BaseButton variant="secondary" @click="createOpen = false">
             Cancel
-          </button>
-          <button
+          </BaseButton>
+          <BaseButton
+            variant="primary"
             type="submit"
-            class="rounded bg-blue-600 px-3 py-2 font-semibold hover:bg-blue-500 disabled:bg-blue-900"
             :disabled="isBusy || !createName.trim()"
             data-test="macros-create-submit"
           >
             Create
-          </button>
+          </BaseButton>
         </div>
       </form>
     </div>
@@ -309,5 +304,5 @@ watch(() => store.lastError, (value) => {
     <!-- Edit modal removed: the universal editor contract (issue
          #132) pushes the operator to ``/editor?source=macros&name=...``
          instead of mounting ``Editor`` inline. -->
-  </div>
+  </BaseCard>
 </template>

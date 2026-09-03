@@ -19,26 +19,21 @@ the caching contract and everything above it stays identical.
 from __future__ import annotations
 
 import logging
+import re
+import subprocess
 from typing import List, Optional
 
 from dtos.pins.HalPin import HalDirection
 from dtos.pins.MachineHalPin import MachineHalPin
 from dtos.pins.MachineSignal import MachineHalSignal
+from hardware import hal
 from mappers.hal_mapper import HalMapper
 from models.hal import HalLayoutResponse
 
 logger = logging.getLogger("backend.services.hal_pin_signal")
 
 
-def _pin(name: str, comp: str, value, direction: HalDirection, doc: str = "") -> MachineHalPin:
-    """Shorthand for building a mock :class:`MachineHalPin`."""
-    return MachineHalPin(
-        value=value,
-        pin=name,
-        component_name=comp,
-        description=doc,
-        direction=direction,
-    )
+
 
 
 class HalPinSignalService:
@@ -88,57 +83,142 @@ class HalPinSignalService:
     # ------------------------------------------------------------------ #
 
     def _read_pins_from_linuxcnc(self) -> List[MachineHalPin]:
-        """Stub for the real ``hal`` pin introspection.
+        """Reads all pins, types, directions, and values from LinuxCNC via halcmd."""
+        pins: List[MachineHalPin] = []
 
-        TODO: replace with the ``linuxcnc`` / ``hal`` library call
-        (``hal.components()`` + ``comp.pins()`` introspection) when
-        running against a live HAL. Returns a hardcoded, realistic
-        mix of boolean (bit) and float pins in both directions.
-        """
-        return [
-            # OUT pins (writers) — right-hand palette
-            _pin("spindle-on", "motion", True, HalDirection.OUT, "Spindle forward command from the trajectory planner"),
-            _pin("spindle-speed-out", "motion", 1200.0, HalDirection.OUT, "Commanded spindle speed [RPM]"),
-            _pin("coolant-mist", "motion", False, HalDirection.OUT, "Mist coolant command"),
-            _pin("x-pos-cmd", "axis", 0.0, HalDirection.OUT, "X axis commanded position [mm]"),
-            _pin("feed-cmd", "motion", 0.0, HalDirection.OUT, "Commanded feed rate [mm/min]"),
-            _pin("at-speed", "spindle", False, HalDirection.OUT, "VFD feedback: spindle reached the commanded speed"),
-            # IN pins (readers) — left-hand palette
-            _pin("spindle-at-speed", "motion", False, HalDirection.IN, "Motion controller reads the at-speed feedback"),
-            _pin("x-pos-fb", "spindle", 0.0, HalDirection.IN, "Drive-side X axis position input [mm]"),
-            _pin("estop-in", "iocontrol", True, HalDirection.IN, "Physical E-STOP chain state (True = released)"),
-            _pin("spindle-brake-in", "spindle", False, HalDirection.IN, "Spindle brake engage request from hardware"),
-            _pin("toolchanger-ready", "toolchanger", False, HalDirection.IN, "Toolchanger is ready to accept a change"),
-        ]
+        try:
+            raw = subprocess.check_output(
+                ["halcmd", "show", "pin"], text=True, stderr=subprocess.DEVNULL
+            )
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return pins
+
+        # Matches lines like:
+        # 5  bit   OUT   TRUE  motion.spindle-on
+        # 5  float IN    0.0   motion.spindle-speed-in
+        pattern = re.compile(
+            r"^\s*\d+\s+(?P<type>\w+)\s+(?P<dir>IN|OUT|I/O)\s+(?P<val>\S+)\s+(?P<name>\S+)"
+        )
+
+        for line in raw.splitlines():
+            m = pattern.match(line)
+            if not m:
+                continue
+
+            d = m.groupdict()
+            full_name = d["name"]
+            raw_type = d["type"].lower()
+            raw_val = d["val"]
+
+            # Parse value
+            if raw_type == "bit":
+                val = raw_val.upper() in ("TRUE", "1")
+            elif raw_type == "float":
+                try:
+                    val = float(raw_val)
+                except ValueError:
+                    val = 0.0
+            elif raw_type in ("s32", "u32"):
+                try:
+                    val = int(raw_val)
+                except ValueError:
+                    val = 0
+            else:
+                val = raw_val
+
+            direction = HalDirection.IN if d["dir"] == "IN" else HalDirection.OUT
+
+            parts = full_name.split(".", 1)
+            comp_prefix = parts[0] if len(parts) > 1 else "hal"
+            short_name = parts[1] if len(parts) > 1 else full_name
+
+            pins.append(
+                MachineHalPin(
+                    component=comp_prefix,
+                    pin=short_name,
+                    value=val,
+                    direction=direction,
+                    description=f"{d['type']} pin ({full_name})"
+                )
+            )
+
+        return pins
 
     def _read_signals_from_linuxcnc(
-        self, pins: Optional[List[MachineHalPin]] = None
+            self, pins: Optional[List[MachineHalPin]] = None
     ) -> List[MachineHalSignal]:
-        """Stub for the real ``hal`` signal introspection.
-
-        TODO: replace with the ``hal`` signal listing when running
-        against a live HAL. Returns two pre-wired signals so the
-        editor's middle column renders meaningful content; the
-        already-read pin list is reused so a layout build performs
-        exactly one pin introspection pass.
-        """
+        """Reads all signals and their connected source/target pins."""
         if pins is None:
             pins = self._read_pins_from_linuxcnc()
-        pins_by_name = {p.get_pin_name(): p for p in pins}
-        return [
-            MachineHalSignal(
-                name="spindle-at-speed-sig",
-                source=pins_by_name["at-speed"],
-                targets=(pins_by_name["spindle-at-speed"],),
-                description="VFD at-speed feedback routed into the motion controller",
-            ),
-            MachineHalSignal(
-                name="x-position-sig",
-                source=pins_by_name["x-pos-cmd"],
-                targets=(pins_by_name["x-pos-fb"],),
-                description="X axis command routed to the drive's position input",
-            ),
-        ]
+
+        # Index pins by full component.pin and short name
+        pins_by_key = {}
+        for p in pins:
+            # Resolve either p.name or p.pin safely
+            pin_name = getattr(p, "pin", getattr(p, "name", None))
+            comp_name = getattr(p, "component", None)
+
+            if hasattr(p, "get_pin_name"):
+                pins_by_key[p.get_pin_name()] = p
+
+            if pin_name:
+                pins_by_key[pin_name] = p
+                if comp_name:
+                    pins_by_key[f"{comp_name}.{pin_name}"] = p
+
+        try:
+            raw = subprocess.check_output(
+                ["halcmd", "show", "sig"], text=True, stderr=subprocess.DEVNULL
+            )
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return []
+
+        signals: List[MachineHalSignal] = []
+        current_sig_name: Optional[str] = None
+        source_pin: Optional[MachineHalPin] = None
+        target_pins: List[MachineHalPin] = []
+
+        def _flush():
+            nonlocal current_sig_name, source_pin, target_pins
+            if current_sig_name and (source_pin or target_pins):
+                signals.append(
+                    MachineHalSignal(
+                        name=current_sig_name,
+                        source=source_pin,
+                        targets=tuple(target_pins),
+                        description=f"HAL signal {current_sig_name}",
+                    )
+                )
+            current_sig_name = None
+            source_pin = None
+            target_pins = []
+
+        # Matches signal header: bit TRUE sig-name
+        sig_header = re.compile(r"^\s*(bit|float|s32|u32)\s+\S+\s+(\S+)", re.IGNORECASE)
+        # Matches connections: <== comp.pin (source) or ==> comp.pin (target)
+        pin_link = re.compile(r"^\s*(<==|==>|<=>)\s+(\S+)")
+
+        for line in raw.splitlines():
+            header_m = sig_header.match(line)
+            if header_m:
+                _flush()
+                current_sig_name = header_m.group(2)
+                continue
+
+            link_m = pin_link.match(line)
+            if link_m and current_sig_name:
+                arrow, full_pin_name = link_m.groups()
+                short_name = full_pin_name.split(".", 1)[-1]
+                matched = pins_by_key.get(full_pin_name) or pins_by_key.get(short_name)
+
+                if matched:
+                    if arrow in ("<==", "<=>"):
+                        source_pin = matched
+                    else:
+                        target_pins.append(matched)
+
+        _flush()
+        return signals
 
 
 # Singleton Provider

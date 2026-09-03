@@ -12,6 +12,8 @@ import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { openInEditor } from "../../helpers/openInEditor";
+import { BaseButton, Icon } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const store = useMachineConfigStore();
 const { activeListing, activeContents, activeTotalSize, isBusy } = storeToRefs(store);
@@ -33,7 +35,26 @@ const fileCards = computed(() =>
   })),
 );
 
-function descriptionFor(name) {
+interface FileCard {
+  name: string;
+  size: number;
+  description: string;
+  modalTitle: string;
+}
+
+interface ZipEntry {
+  name: string;
+  data: Uint8Array;
+}
+
+interface ZipCentralEntry {
+  name: Uint8Array;
+  crc: number;
+  size: number;
+  offset: number;
+}
+
+function descriptionFor(name: string) {
   switch (name) {
     case "machine.cfg":
       return "Source profile snapshot for the live configuration.";
@@ -50,7 +71,7 @@ function descriptionFor(name) {
   }
 }
 
-function formatSize(bytes) {
+function formatSize(bytes: number) {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -65,7 +86,7 @@ async function refresh() {
 // universal editor contract (issue #132) routes through
 // ``/editor?source=active&name=...&readOnly=true`` instead so the
 // editor only lives in one place.
-function openInEditorView(card) {
+function openInEditorView(card: FileCard) {
   return openInEditor({
     source: 'active',
     name: card.name,
@@ -73,7 +94,7 @@ function openInEditorView(card) {
   })
 }
 
-async function downloadFile(name) {
+async function downloadFile(name: string) {
   const content = activeContents.value[name] ?? (await store.readActiveFileContent(name));
   if (content === null) return;
   saveBlob(new Blob([content], { type: "application/octet-stream" }), name);
@@ -81,8 +102,8 @@ async function downloadFile(name) {
 
 async function downloadZip() {
   const encoder = new TextEncoder();
-  const files = [];
-  for (const file of activeListing.files || []) {
+  const files: ZipEntry[] = [];
+  for (const file of activeListing.value.files || []) {
     const content = activeContents.value[file.name] ?? (await store.readActiveFileContent(file.name));
     if (content === null) return;
     files.push({ name: file.name, data: encoder.encode(content) });
@@ -92,7 +113,7 @@ async function downloadZip() {
 
 // --- ZIP helpers (intentionally duplicated with CompiledOutputViewer) ---
 
-function createZip(files) {
+function createZip(files: ZipEntry[]) {
   const chunks = [];
   const central = [];
   let offset = 0;
@@ -113,118 +134,118 @@ function createZip(files) {
   chunks.push(endHeader(files.length, offset - centralOffset, centralOffset));
   return concatBytes(chunks);
 }
-function zipHeader(signature, crc, size, nameLength) {
+function zipHeader(signature: number, crc: number, size: number, nameLength: number) {
   const bytes = new Uint8Array(30); const view = new DataView(bytes.buffer);
   view.setUint32(0, signature, true); view.setUint16(4, 20, true); view.setUint32(14, crc, true);
   view.setUint32(18, size, true); view.setUint32(22, size, true); view.setUint16(26, nameLength, true); return bytes;
 }
-function centralHeader(file) {
+function centralHeader(file: ZipCentralEntry) {
   const bytes = new Uint8Array(46); const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x02014b50, true); view.setUint16(4, 20, true); view.setUint16(6, 20, true);
   view.setUint32(16, file.crc, true); view.setUint32(20, file.size, true); view.setUint32(24, file.size, true);
   view.setUint16(28, file.name.length, true); view.setUint32(42, file.offset, true); return bytes;
 }
-function endHeader(count, size, offset) {
+function endHeader(count: number, size: number, offset: number) {
   const bytes = new Uint8Array(22); const view = new DataView(bytes.buffer);
   view.setUint32(0, 0x06054b50, true); view.setUint16(8, count, true); view.setUint16(10, count, true);
   view.setUint32(12, size, true); view.setUint32(16, offset, true); return bytes;
 }
-function crc32(data) {
+function crc32(data: Uint8Array) {
   let crc = -1;
   for (const byte of data) { crc ^= byte; for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); }
   return (crc ^ -1) >>> 0;
 }
-function concatBytes(parts) {
+function concatBytes(parts: Uint8Array[]) {
   const result = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
   let offset = 0; for (const part of parts) { result.set(part, offset); offset += part.length; } return result;
 }
-function saveBlob(blob, filename) {
+function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
   anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
 }
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">⚡</span> Active
-        <span class="ml-2 px-1.5 py-0.5 rounded bg-yellow-700/40 text-yellow-200 text-[10px] uppercase tracking-wider">
-          Read-only
-        </span>
-      </h2>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-gray-400 font-mono">
-          {{ fileCards.length }} file(s) · {{ formatSize(activeTotalSize) }}
-        </span>
-        <button
-          type="button"
-          class="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:bg-blue-900"
-          :disabled="isBusy || !fileCards.length"
-          @click="downloadZip"
-        >
-          Download ZIP
-        </button>
-        <button
-          type="button"
-          class="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500 text-white"
-          :disabled="isBusy"
-          @click="refresh"
-        >
-          ↻ Refresh
-        </button>
-      </div>
-    </div>
-
-    <div class="p-4 border-b border-gray-700">
-      <div class="text-xs uppercase tracking-wider text-gray-400 mb-1">
-        Currently running machine
-      </div>
-      <div
-        class="font-mono text-lg font-semibold"
-        :class="activeListing.machine_name ? 'text-blue-300' : 'text-gray-500'"
+  <BaseCard title="⚡ Active">
+    <template #header-actions>
+      <span class="px-1.5 py-0.5 rounded bg-yellow-700/40 text-yellow-200 text-[10px] uppercase tracking-wider">
+        Read-only
+      </span>
+      <span class="text-xs text-gray-400 font-mono">
+        {{ fileCards.length }} file(s) · {{ formatSize(activeTotalSize) }}
+      </span>
+      <BaseButton
+        variant="primary"
+        size="sm"
+        :disabled="isBusy || !fileCards.length"
+        @click="downloadZip"
       >
-        {{ activeListing.machine_name || '(no active configuration)' }}
-      </div>
-    </div>
-
-    <div v-if="fileCards.length === 0" class="p-6 text-center text-gray-500 text-sm">
-      The active directory is empty. Stage and deploy a profile to populate it.
-    </div>
-
-    <ul v-else class="p-3 space-y-2">
-      <li
-        v-for="card in fileCards"
-        :key="card.name"
-        class="flex items-center justify-between gap-4 rounded-lg border border-gray-700 bg-gray-900/60 p-3"
+        Download ZIP
+      </BaseButton>
+      <BaseButton
+        variant="secondary"
+        size="sm"
+        :disabled="isBusy"
+        @click="refresh"
       >
-        <div class="min-w-0">
-          <div class="font-mono text-sm font-semibold text-gray-100 truncate flex items-center gap-2">
-            🔒 {{ card.name }}
-            <span class="text-[10px] text-yellow-300/80 uppercase tracking-wider">locked</span>
+        <template #icon><Icon name="refresh" class="h-3.5 w-3.5" /></template>
+        Refresh
+      </BaseButton>
+    </template>
+
+
+
+
+      <div class="mb-3 pb-3 border-b border-gray-700 p-4">
+        <div class="text-xs uppercase tracking-wider text-gray-400 mb-1">
+          Currently running machine
+        </div>
+        <div
+          class="font-mono text-lg font-semibold"
+          :class="activeListing.machine_name ? 'text-blue-300' : 'text-gray-500'"
+        >
+          {{ activeListing.machine_name || '(no active configuration)' }}
+        </div>
+      </div>
+
+      <div v-if="fileCards.length === 0" class="text-center text-gray-500 text-sm">
+        The active directory is empty. Stage and deploy a profile to populate it.
+      </div>
+
+      <ul v-else class="space-y-2">
+        <li
+          v-for="card in fileCards"
+          :key="card.name"
+          class="flex items-center justify-between gap-4 rounded-lg border border-gray-700 bg-gray-900/60 p-3"
+        >
+          <div class="min-w-0">
+            <div class="font-mono text-sm font-semibold text-gray-100 truncate flex items-center gap-2">
+              🔒 {{ card.name }}
+              <span class="text-[10px] text-yellow-300/80 uppercase tracking-wider">locked</span>
+            </div>
+            <div class="text-xs text-gray-400 truncate">{{ card.description }}</div>
           </div>
-          <div class="text-xs text-gray-400 truncate">{{ card.description }}</div>
-        </div>
-        <div class="flex items-center gap-3 shrink-0">
-          <span class="text-xs text-gray-500 font-mono">{{ formatSize(card.size) }}</span>
-          <button
-            type="button"
-            class="rounded bg-gray-600 hover:bg-gray-500 disabled:bg-gray-800 px-3 py-1.5 text-sm font-semibold text-white"
-            :disabled="isBusy"
-            @click="downloadFile(card.name)"
-          >
-            Download
-          </button>
-          <button
-            type="button"
-            class="rounded bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white"
-            :disabled="isBusy"
-            @click="openInEditorView(card)"
-          >
-            View
-          </button>
-        </div>
-      </li>
-    </ul>
-  </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <span class="text-xs text-gray-500 font-mono">{{ formatSize(card.size) }}</span>
+            <BaseButton
+              variant="secondary"
+              size="sm"
+              :disabled="isBusy"
+              @click="downloadFile(card.name)"
+            >
+              Download
+            </BaseButton>
+            <BaseButton
+              variant="primary"
+              size="sm"
+              :disabled="isBusy"
+              @click="openInEditorView(card)"
+            >
+              View
+            </BaseButton>
+          </div>
+        </li>
+      </ul>
+
+  </BaseCard>
 </template>

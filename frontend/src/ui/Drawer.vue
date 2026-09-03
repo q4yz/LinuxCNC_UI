@@ -33,7 +33,7 @@ const props = defineProps({
   side: {
     type: String,
     default: "right",
-    validator: (s) => ["right", "left"].includes(s),
+    validator: (s: string) => ["right", "left"].includes(s),
   },
   // Tailwind max-width class so consumers control the panel
   // footprint. Defaults to ``w-96`` (24 rem) — wider than the
@@ -79,7 +79,7 @@ function onBackdropClick() {
   emitClose();
 }
 
-function onKeydown(event) {
+function onKeydown(event: KeyboardEvent) {
   if (!props.closeOnEsc) return;
   if (event.key === "Escape" && props.open) {
     emitClose();

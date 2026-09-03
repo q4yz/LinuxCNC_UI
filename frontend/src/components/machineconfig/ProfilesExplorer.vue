@@ -3,6 +3,10 @@ import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
+import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
+import { BaseButton, Icon } from "../../ui/index.ts";
+import BaseInput from "../../ui/BaseInput.vue";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
@@ -13,19 +17,23 @@ const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
-const isDragging = ref(false);
+
 const entries = computed(() =>
   profilesTree.value.entries
     .filter((entry) => (entry.parent || "") === currentDirectory.value)
     .sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "folder" ? -1 : 1),
 );
 
+
+const isDragging = ref(false);
+let dragCounter = 0;
+
 const breadcrumbs = computed(() => currentDirectory.value.split("/").filter(Boolean));
 
-function joinPath(directory, name) {
+function joinPath(directory: string, name: string) {
   return [directory, name].filter(Boolean).join("/");
 }
-function navigate(entry) {
+function navigate(entry: DirectoryEntryModel) {
   activeMenu.value = "";
   if (entry.kind === "folder") currentDirectory.value = entry.path;
   else store.selectProfile(entry.path);
@@ -34,10 +42,10 @@ function goBack() {
   const parts = breadcrumbs.value.slice(0, -1);
   currentDirectory.value = parts.join("/");
 }
-function goToCrumb(index) {
+function goToCrumb(index: number) {
   currentDirectory.value = breadcrumbs.value.slice(0, index + 1).join("/");
 }
-async function editFile(entry) {
+async function editFile(entry: DirectoryEntryModel) {
   if (entry.kind === "file") {
     store.selectProfile(entry.path);
 
@@ -49,13 +57,13 @@ async function editFile(entry) {
     emit("edit", entry.path, false, "profile", content);
   }
 }
-function formatSize(bytes) {
+function formatSize(bytes: number) {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
-async function onGenerate(entry) {
+async function onGenerate(entry: DirectoryEntryModel) {
   store.selectProfile(entry.path);
   const outcome = await store.generateMachine(entry.path);
   if (outcome.status === "conflict") {
@@ -78,17 +86,17 @@ async function onCreate() {
   newEntryName.value = "";
   createOpen.value = false;
 }
-async function renameEntry(entry) {
+async function renameEntry(entry: DirectoryEntryModel) {
   activeMenu.value = "";
   const name = window.prompt("New name", entry.name)?.trim();
   if (name && name !== entry.name) await store.renameProfile(entry.path, joinPath(entry.parent || "", name));
 }
-async function copyOrMove(entry) {
+async function copyOrMove(entry: DirectoryEntryModel) {
   activeMenu.value = "";
   const destination = window.prompt("Move to path", entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameProfile(entry.path, destination);
 }
-async function deleteEntry(entry) {
+async function deleteEntry(entry: DirectoryEntryModel) {
   activeMenu.value = "";
   const shouldDelete = await useConfirm({
     title: "Profil löschen",
@@ -99,17 +107,17 @@ async function deleteEntry(entry) {
   });
   if (shouldDelete) await store.deleteProfile(entry.path);
 }
-async function dropFiles(event) {
+async function dropFiles(event: DragEvent) {
   isDragging.value = false;
   const files = Array.from(event.dataTransfer?.files || []);
   if (files.length) await store.uploadProfiles(currentDirectory.value, files);
 }
-async function downloadProfile(entry) {
+async function downloadProfile(entry: DirectoryEntryModel) {
   const content = await store.readProfileContent(entry.path);
   if (content === null) return;
   downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
 }
-function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
+function downloadBlob(content: string | Blob | object, name: string, mimeType = "text/plain;charset=utf-8") {
   // Prevent the Axios [object Object] trap
   const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
 
@@ -131,16 +139,38 @@ function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
     URL.revokeObjectURL(url);
   }, 150);
 }
+
+
+
+function onDragEnter() {
+  dragCounter++;
+  isDragging.value = true;
+}
+
+function onDragLeave() {
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    isDragging.value = false;
+  }
+}
+
+function onDrop(e: DragEvent) {
+  dragCounter = 0;
+  isDragging.value = false;
+  dropFiles(e);
+}
+
 </script>
 
 <template>
-  <div
-    class="relative flex min-h-[360px] flex-col overflow-hidden rounded-lg border bg-gray-800 shadow-xl transition-colors"
+  <BaseCard
+    class="relative flex min-h-[360px] flex-col   "
     :class="isDragging ? 'border-blue-400 bg-blue-950/30' : 'border-gray-700'"
-    @dragenter.prevent="isDragging = true"
-    @dragover.prevent="isDragging = true"
-    @dragleave.self="isDragging = false"
-    @drop.prevent="dropFiles"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
   >
     <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
       <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Profiles</h2>
@@ -148,7 +178,9 @@ function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
     </div>
 
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
-      <button type="button" class="rounded px-2 py-1 text-gray-200 hover:bg-gray-700 disabled:text-gray-600" :disabled="!currentDirectory" @click="goBack" title="Back">←</button>
+      <BaseButton variant="ghost" size="sm" :disabled="!currentDirectory" @click="goBack" title="Back" aria-label="Back">
+        <template #icon><Icon name="chevronLeft" class="h-4 w-4" /></template>
+      </BaseButton>
       <button type="button" class="font-mono text-blue-300 hover:text-blue-200" @click="currentDirectory = ''">profiles</button>
       <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb}-${index}`">
         <span class="text-gray-600">/</span>
@@ -171,12 +203,12 @@ function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
           <span>{{ entry.kind === 'folder' ? '📁' : '📄' }}</span>
           <div class="min-w-0 flex-1">
             <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
-            <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes) }}</div>
+            <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes ?? 0) }}</div>
           </div>
           <span v-if="entry.kind === 'file' && entry.has_marker" class="rounded bg-purple-700/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-200">#Start</span>
-          <button v-if="entry.kind === 'file' && entry.name.toLowerCase().endsWith('.cfg')" type="button" class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:bg-emerald-900" :disabled="isBusy" @click.stop="onGenerate(entry)">Generate</button>
-          <button v-if="entry.kind === 'file'" type="button" class="rounded px-2 py-1 text-gray-300 hover:bg-gray-600" title="Download" @click.stop="downloadProfile(entry)">↓</button>
-          <button type="button" class="rounded px-2 py-1 text-lg leading-none text-gray-300 hover:bg-gray-600" title="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</button>
+          <BaseButton v-if="entry.kind === 'file' && entry.name.toLowerCase().endsWith('.cfg')" variant="success" size="sm" :disabled="isBusy" @click.stop="onGenerate(entry)">Generate</BaseButton>
+          <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadProfile(entry)">↓</BaseButton>
+          <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
         </div>
         <div v-if="activeMenu === entry.path" class="absolute right-2 top-10 z-10 w-36 rounded border border-gray-600 bg-gray-900 py-1 text-sm shadow-xl">
           <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="renameEntry(entry)">Rename</button>
@@ -196,12 +228,12 @@ function downloadBlob(content, name, mimeType = "text/plain;charset=utf-8") {
           <label><input v-model="newEntryKind" type="radio" value="file" /> File</label>
           <label><input v-model="newEntryKind" type="radio" value="folder" /> Folder</label>
         </div>
-        <input v-model="newEntryName" autofocus type="text" placeholder="Name" class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-gray-200" />
+        <BaseInput v-model="newEntryName" autofocus type="text" placeholder="Name" class="w-full font-mono" />
         <div class="flex justify-end gap-2">
-          <button type="button" class="rounded bg-gray-600 px-3 py-2 hover:bg-gray-500" @click="createOpen = false">Cancel</button>
-          <button type="submit" class="rounded bg-blue-600 px-3 py-2 font-semibold hover:bg-blue-500 disabled:bg-blue-900" :disabled="isBusy || !newEntryName.trim()">Create</button>
+          <BaseButton variant="secondary" @click="createOpen = false">Cancel</BaseButton>
+          <BaseButton variant="primary" type="submit" :disabled="isBusy || !newEntryName.trim()">Create</BaseButton>
         </div>
       </form>
     </div>
-  </div>
+  </BaseCard>
 </template>

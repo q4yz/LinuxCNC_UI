@@ -30,6 +30,8 @@ import { useMacrosStore, MACRO_KIND } from "../../stores/macrosStore";
 // ``stores/machine.ts`` exposes ``isEstop`` instead.
 import { useMachineStore as useFacadeStore } from "../../stores/stateFacade";
 import type { MacroEntry, MacroLastRunResult, MacroRunCounters } from "../../stores/macrosTypes";
+import { BaseButton, Icon } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const store = useMacrosStore();
 const machine = useFacadeStore();
@@ -111,34 +113,30 @@ function formatResult(entry: MacroLastRunResult | null): string {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">🧩</span> Macros &amp; NGC
-      </h2>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-gray-400 font-mono">
-          {{ sorted.length }} file{{ sorted.length === 1 ? '' : 's' }}
-        </span>
-        <button
-          type="button"
-          class="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500 text-white disabled:opacity-50"
-          :disabled="isBusy"
-          @click="onRefresh"
-        >
-          ↻ Refresh
-        </button>
-      </div>
-    </div>
+  <BaseCard title="🧩 Macros &amp; NGC">
+    <template #header-actions>
+      <span class="text-xs text-gray-400 font-mono">
+        {{ sorted.length }} file{{ sorted.length === 1 ? '' : 's' }}
+      </span>
+      <BaseButton
+        variant="secondary"
+        size="sm"
+        :disabled="isBusy"
+        @click="onRefresh"
+      >
+        <template #icon><Icon name="refresh" class="h-3.5 w-3.5" /></template>
+        Refresh
+      </BaseButton>
+    </template>
 
-    <div v-if="sorted.length === 0" class="p-6 text-center text-gray-500 text-sm">
+    <div v-if="sorted.length === 0" class="text-center text-gray-500 text-sm">
       <p>No macros yet.</p>
       <p class="mt-1 text-xs text-gray-600">
         Add one in <span class="font-mono">Machine Config</span> → <span class="font-mono">Macros</span>.
       </p>
     </div>
 
-    <ul v-else class="p-3 space-y-2">
+    <ul v-else class="space-y-2">
       <li
         v-for="row in sorted"
         :key="`${row.kind}:${row.name}`"
@@ -167,17 +165,18 @@ function formatResult(entry: MacroLastRunResult | null): string {
           <!-- Run only on ``macro`` rows. NGC subroutines run via
                the controller's ``program_open`` flow, not MDI; the
                UI only manages the file content. -->
-          <button
+          <BaseButton
             v-if="row.kind === 'macro'"
-            type="button"
-            class="rounded bg-green-600 hover:bg-green-500 disabled:bg-green-900 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-semibold text-white"
-            :disabled="isBusy || runningName === row.name || machine.isEstopActive"
+            variant="success"
+            size="sm"
+            :loading="runningName === row.name"
+            :disabled="isBusy || machine.isEstopActive"
             :title="machine.isEstopActive ? 'Cannot run while in E-Stop' : 'Run macro'"
             @click="onRun(row.name)"
           >
-            <span v-if="runningName === row.name">Running…</span>
-            <span v-else>▶ Run</span>
-          </button>
+            <span v-if="runningName !== row.name">▶ Run</span>
+            <span v-else>Running…</span>
+          </BaseButton>
           <span
             v-else
             class="text-[10px] text-gray-500 uppercase tracking-wider"
@@ -191,10 +190,10 @@ function formatResult(entry: MacroLastRunResult | null): string {
 
     <div
       v-if="lastResult"
-      class="px-3 py-2 border-t border-gray-700 text-[11px] text-gray-400 font-mono"
+      class="mt-3 pt-2 border-t border-gray-700 text-[11px] text-gray-400 font-mono"
       data-test="macro-last-result"
     >
       {{ formatResult(lastResult) }}
     </div>
-  </div>
+  </BaseCard>
 </template>

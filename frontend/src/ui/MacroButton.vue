@@ -51,40 +51,44 @@
 //   * another macro is already running (``isBusy``).
 //
 // The button is non-functional while loading and shows the shared
-// ``<Button>`` spinner so the operator sees the in-flight state.
+// ``<BaseButton>`` spinner so the operator sees the in-flight state.
 
 import { computed, ref } from "vue";
+import type { PropType } from "vue";
 
-import Button from "./Button.vue";
+import BaseButton from "./BaseButton.vue";
 import Icon from "./Icon.vue";
 import { useMacrosStore, MACRO_KIND } from "../stores/macrosStore";
 import { useMachineStore } from "../stores/machine";
+import type { MacroButtonDescriptor } from "./useMacroButtonConfig";
 
 const props = defineProps({
   // Resolved config row from ``useMacroButtonConfig``. ``null``
   // renders nothing — the host decides which slot id feeds in.
   descriptor: {
-    type: Object,
+    type: Object as PropType<MacroButtonDescriptor | null | undefined>,
     default: null,
     // Allow ``null`` so a missing config keeps the host surface
     // clean without prop-validation noise.
-    validator: (v) =>
+    validator: (v: unknown) =>
       v === null ||
       (typeof v === "object" &&
-        typeof v.slot === "string" &&
-        typeof v.enabled === "boolean" &&
-        typeof v.name === "string" &&
-        typeof v.icon === "string" &&
-        typeof v.macroName === "string" &&
-        (v.macroKind === MACRO_KIND.MACRO || v.macroKind === MACRO_KIND.NGC)),
+        v !== null &&
+        typeof (v as MacroButtonDescriptor).slot === "string" &&
+        typeof (v as MacroButtonDescriptor).enabled === "boolean" &&
+        typeof (v as MacroButtonDescriptor).name === "string" &&
+        typeof (v as MacroButtonDescriptor).icon === "string" &&
+        typeof (v as MacroButtonDescriptor).macroName === "string" &&
+        ((v as MacroButtonDescriptor).macroKind === MACRO_KIND.MACRO ||
+          (v as MacroButtonDescriptor).macroKind === MACRO_KIND.NGC)),
   },
-  // Visual variants — matches the ``<Button>`` primitive so a
+  // Visual variants — matches the ``<BaseButton>`` primitive so a
   // host can request the same look-and-feel as its sibling
   // buttons.
   variant: {
     type: String,
     default: "primary",
-    validator: (v) =>
+    validator: (v: string) =>
       ["primary", "success", "danger", "secondary", "ghost"].includes(v),
   },
   // Sizes — ``sm`` matches the existing home/set buttons in the
@@ -93,7 +97,7 @@ const props = defineProps({
   size: {
     type: String,
     default: "sm",
-    validator: (s) => ["sm", "md", "lg"].includes(s),
+    validator: (s: string) => ["sm", "md", "lg"].includes(s),
   },
   // Tooltip override. Defaults to the descriptor's ``name`` so a
   // button rendered as an icon still announces itself on hover.
@@ -112,9 +116,9 @@ const isRunning = ref(false);
 
 const isVisible = computed(
   () =>
-    props.descriptor !== null &&
+    props.descriptor != null &&
     props.descriptor.enabled === true &&
-    props.descriptor.macroName.length > 0,
+    (props.descriptor.macroName ?? "").length > 0,
 );
 
 const isDisabled = computed(
@@ -148,8 +152,8 @@ const KNOWN_ICONS = new Set([
 
 const iconIsKnown = computed(
   () =>
-    props.descriptor !== null &&
-    KNOWN_ICONS.has(props.descriptor.icon),
+    props.descriptor != null &&
+    KNOWN_ICONS.has(props.descriptor.icon ?? ""),
 );
 
 const resolvedTitle = computed(() => {
@@ -164,8 +168,8 @@ async function onClick() {
   isRunning.value = true;
   try {
     await macrosStore.runMacroOfKind(
-      props.descriptor.macroKind,
-      props.descriptor.macroName,
+      props.descriptor.macroKind === "ngc" ? "ngc" : "macro",
+      props.descriptor.macroName ?? "",
     );
   } finally {
     isRunning.value = false;
@@ -174,7 +178,7 @@ async function onClick() {
 </script>
 
 <template>
-  <Button
+  <BaseButton
     v-if="isVisible"
     :variant="variant"
     :size="size"
@@ -186,10 +190,10 @@ async function onClick() {
   >
     <Icon
       v-if="iconIsKnown"
-      :name="descriptor.icon"
+      :name="descriptor?.icon ?? ''"
       :size="size === 'sm' ? 'h-4 w-4' : size === 'lg' ? 'h-6 w-6' : 'h-5 w-5'"
     />
-    <span v-else-if="descriptor.icon">{{ descriptor.icon }}</span>
-    <span>{{ descriptor.name }}</span>
-  </Button>
+    <span v-else-if="descriptor?.icon">{{ descriptor.icon }}</span>
+    <span>{{ descriptor?.name }}</span>
+  </BaseButton>
 </template>

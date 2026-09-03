@@ -34,12 +34,16 @@ const SETTINGS_KEY = "macroButtons";
 
 /**
  * One row of the persistent ``macroButtons`` array. Slot is the
- * stable machine panel position; everything else is opaque to this
- * composable and round-trips through to the host.
+ * stable machine panel position; the well-known fields are typed
+ * so hosts can read them without casting.
  */
 export interface MacroButtonDescriptor {
   slot: string;
-  [key: string]: unknown;
+  enabled?: boolean;
+  name?: string;
+  icon?: string;
+  macroName?: string;
+  macroKind?: "macro" | "ngc";
 }
 
 /**

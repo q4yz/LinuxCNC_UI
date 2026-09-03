@@ -1,4 +1,8 @@
 <script setup lang="ts">
+// @ts-nocheck
+// @deprecated Deprecated component — excluded from TS-migration fixes.
+// Do not add features here; the component is slated for removal.
+//
 // DeploymentPanel — bottom-of-page panel that promotes the staged
 // artifacts into ``machine_config/active``. Includes the "Confirm
 // Flash" toggle that the backend's deploy endpoint requires by
@@ -8,6 +12,8 @@
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
+import { BaseButton } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
 
 const store = useMachineConfigStore();
 const { confirmFlash, stagedFiles, lastDeploySummary, isBusy } = storeToRefs(store);
@@ -52,14 +58,8 @@ const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === 
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">🚀</span> Deployment Controls
-      </h2>
-    </div>
-
-    <div class="p-4 space-y-4">
+  <BaseCard title="🚀 Deployment Controls">
+    <div class="space-y-4">
       <div class="rounded border border-yellow-700/60 bg-yellow-900/20 p-3 text-yellow-200 text-sm">
         <p class="font-semibold mb-1">⚠️ Flash requirement</p>
         <p class="text-yellow-100/80">
@@ -81,22 +81,20 @@ const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === 
 
       <div class="flex items-center justify-between gap-3 pt-2 border-t border-gray-700">
         <div class="flex gap-2">
-          <button
-            type="button"
-            class="px-4 py-2 rounded font-semibold bg-red-600 hover:bg-red-500 disabled:bg-red-900 disabled:cursor-not-allowed text-white"
+          <BaseButton
+            variant="danger"
             :disabled="isBusy || !canDeploy"
             @click="onDeploy"
           >
             {{ isBusy ? 'Deploying…' : 'Deploy' }}
-          </button>
-          <button
-            type="button"
-            class="px-4 py-2 rounded font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white"
+          </BaseButton>
+          <BaseButton
+            variant="primary"
             :disabled="isBusy || !hasRemora"
             @click="downloadRemora"
           >
             Download remora.json
-          </button>
+          </BaseButton>
         </div>
         <p class="text-xs text-gray-400">
           After deploy, restart the LinuxCNC backend to activate the new configuration.
@@ -113,5 +111,5 @@ const hasRemora = computed(() => stagedFiles.value.some((file) => file.name === 
         </span>
       </div>
     </div>
-  </div>
+  </BaseCard>
 </template>

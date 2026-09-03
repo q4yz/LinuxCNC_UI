@@ -4,6 +4,8 @@ import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
 import { useConsoleStore } from '../stores/console'
 import { SystemService } from '../../generated/api/services/SystemService'
+import { BaseButton } from '../ui/index.ts'
+import BaseCard from '../ui/BaseCard.vue'
 
 const store = useMachineStore()
 const consoleStore = useConsoleStore()
@@ -22,7 +24,7 @@ const fetchVersion = async () => {
       consoleStore.info('Update available')
     }
   } catch (error) {
-    consoleStore.error(`Failed to fetch version: ${error.message}`)
+    consoleStore.error(`Failed to fetch version: ${error instanceof Error ? error.message : String(error)}`)
     currentVersion.value = 'error'
   }
 }
@@ -44,7 +46,7 @@ const updateSystem = async () => {
     }, 10000)
   } catch (error) {
     store.$patch({ isUpdating: false })
-    consoleStore.error(`Update failed to start: ${error.message}`)
+    consoleStore.error(`Update failed to start: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -54,33 +56,24 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden mt-4">
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">⚙️</span> System Update
-      </h2>
-    </div>
-    
-    <div class="p-4 flex items-center justify-between">
+  <BaseCard title="⚙️ System Update">
+    <div class="flex items-center justify-between  p-4">
       <div class="flex flex-col">
         <span class="text-gray-400 text-xs">Current Version</span>
         <span class="font-mono text-lg font-bold text-gray-200">{{ currentVersion }}</span>
         <span class="text-gray-400 text-xs">Latest</span>
         <span class="font-mono text-sm text-gray-400">{{ latestVersion }}</span>
       </div>
-      
-      <button 
-        @click="updateSystem"
-        class="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded font-semibold transition-colors flex items-center shadow"
-      >
+
+      <BaseButton variant="secondary" :loading="isUpdating" @click="updateSystem">
         <span class="mr-2">🔄</span> Update System
-      </button>
+      </BaseButton>
     </div>
 
     <!-- Fullscreen Overlay using Teleport -->
     <Teleport to="body">
-      <div 
-        v-if="isUpdating" 
+      <div
+        v-if="isUpdating"
         class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/90 backdrop-blur-sm"
       >
         <div class="flex flex-col items-center p-8 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl max-w-md w-full text-center">
@@ -90,5 +83,5 @@ onMounted(() => {
         </div>
       </div>
     </Teleport>
-  </div>
+  </BaseCard>
 </template>

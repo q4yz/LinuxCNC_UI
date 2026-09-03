@@ -630,7 +630,7 @@ const setMachineLimits = (limits: MachineLimits | null) => {
     const child = limitsGroup.children.pop() as THREE.Mesh | THREE.LineSegments
     if (child.geometry) child.geometry.dispose()
     if (child.material) {
-      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose())
+      if (Array.isArray(child.material)) child.material.forEach((m: THREE.Material) => m.dispose())
       else child.material.dispose()
     }
   }
@@ -754,7 +754,7 @@ const clearToolpathMesh = () => {
   if (!toolpathLine) return
   if (toolpathLine.geometry) toolpathLine.geometry.dispose()
   if (toolpathLine.material) {
-    if (Array.isArray(toolpathLine.material)) toolpathLine.material.forEach((m) => m.dispose())
+    if (Array.isArray(toolpathLine.material)) toolpathLine.material.forEach((m: THREE.Material) => m.dispose())
     else toolpathLine.material.dispose()
   }
   if (toolpathLine.parent) toolpathLine.parent.remove(toolpathLine)
@@ -766,10 +766,10 @@ const clearToolpath = () => {
   if (lastLoadedFilename) parsedCache.delete(lastLoadedFilename)
   if (wcsMarkerGroup) {
     while (wcsMarkerGroup.children.length) {
-      const child = wcsMarkerGroup.children.pop()
-      if (child.geometry) child.geometry.dispose()
-      if (child.material) {
-        if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose())
+      const child = wcsMarkerGroup.children.pop() as THREE.Mesh | undefined
+      if (child?.geometry) child.geometry.dispose()
+      if (child?.material) {
+        if (Array.isArray(child.material)) child.material.forEach((m: THREE.Material) => m.dispose())
         else child.material.dispose()
       }
     }
@@ -783,10 +783,10 @@ const WCS_MARKER_ARM_LENGTH = 12
 const updateWcsMarker = () => {
   if (!wcsMarkerGroup) return
   while (wcsMarkerGroup.children.length) {
-    const child = wcsMarkerGroup.children.pop()
-    if (child.geometry) child.geometry.dispose()
-    if (child.material) {
-      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose())
+    const child = wcsMarkerGroup.children.pop() as THREE.Mesh | undefined
+    if (child?.geometry) child.geometry.dispose()
+    if (child?.material) {
+      if (Array.isArray(child.material)) child.material.forEach((m: THREE.Material) => m.dispose())
       else child.material.dispose()
     }
   }

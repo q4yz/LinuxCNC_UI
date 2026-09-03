@@ -4,10 +4,14 @@
 // temperature module's display unit toggle (the frontend converts
 // °C ↔ K at the edge) and the chart Y-axis label.
 
-export enum TemperatureUnit {
-  CELSIUS = "C",
-  KELVIN = "K",
-}
+// Erasable ``as const`` object (not a TS ``enum``) so the runtime
+// strip-types loader (``node --experimental-strip-types``) can load
+// this module without a transform pass.
+export const TemperatureUnit = {
+  CELSIUS: "C",
+  KELVIN: "K",
+} as const;
+export type TemperatureUnit = (typeof TemperatureUnit)[keyof typeof TemperatureUnit];
 
 export const TEMPERATURE_UNITS = Object.freeze(
   Object.values(TemperatureUnit),

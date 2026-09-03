@@ -27,20 +27,21 @@
 // "✕", "↻ Refresh" patterns render with the icon on the left.
 
 import { computed } from "vue";
+import type { PropType } from "vue";
 
 const props = defineProps({
   // Visual variants.
   variant: {
     type: String,
     default: "primary",
-    validator: (v) =>
+    validator: (v: string) =>
       ["primary", "success", "danger", "secondary", "ghost"].includes(v),
   },
   // Sizes.
   size: {
     type: String,
     default: "md",
-    validator: (s) => ["sm", "md", "lg"].includes(s),
+    validator: (s: string) => ["sm", "md", "lg"].includes(s),
   },
   // Disabled state. Forwarded to the underlying button so it wins
   // over a caller-supplied ``disabled`` attribute.
@@ -50,7 +51,10 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   // Native button type. Defaults to ``button`` so a stray use
   // inside a form does not accidentally submit.
-  type: { type: String, default: "button" },
+  type: {
+    type: String as PropType<"button" | "submit" | "reset">,
+    default: "button",
+  },
   // Tailwind class passthrough for one-off spacing tweaks. Kept
   // narrow on purpose; the library should not become a dumping
   // ground for arbitrary Tailwind.
@@ -73,8 +77,11 @@ const SIZE_CLASSES = {
 };
 
 const baseClasses = computed(() => {
-  const variant = VARIANT_CLASSES[props.variant] || VARIANT_CLASSES.primary;
-  const size = SIZE_CLASSES[props.size] || SIZE_CLASSES.md;
+  const variant =
+    VARIANT_CLASSES[props.variant as keyof typeof VARIANT_CLASSES] ||
+    VARIANT_CLASSES.primary;
+  const size =
+    SIZE_CLASSES[props.size as keyof typeof SIZE_CLASSES] || SIZE_CLASSES.md;
   // Disabled + loading force the same muted treatment; loading is
   // an ``or-disabled`` because every loading button should also
   // be unclickable.

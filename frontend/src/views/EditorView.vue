@@ -40,6 +40,7 @@ import {
 } from '../stores/editor';
 import { openInEditor } from '../helpers/openInEditor';
 import {useConsoleStore} from "../stores/console";
+import { BaseButton } from '../ui/index.ts';
 
 const editorStore = useEditorStore();
 const consoleStore = useConsoleStore()
@@ -65,7 +66,7 @@ const SOURCES = Object.values(EDITOR_SOURCES)
 const currentSource = computed(() => {
   const raw = route.query?.source
   const value = Array.isArray(raw) ? raw[0] : raw
-  return typeof value === 'string' && SOURCES.includes(value) ? value : ''
+  return typeof value === 'string' && (SOURCES as readonly string[]).includes(value) ? value : ''
 })
 
 const currentName = computed(() => {
@@ -180,7 +181,8 @@ async function saveEditor() {
     consoleStore.success(`File '${currentName.value}' saved successfully!`, { popup: true })
 
   } catch (error) {
-    consoleStore.error(`Failed to save file: ${error.message || error}`, { popup: true })
+    const detail = error instanceof Error ? error.message : String(error)
+    consoleStore.error(`Failed to save file: ${detail}`, { popup: true })
   }
 }
 
@@ -202,13 +204,13 @@ async function confirmClose() {
 function closeEditor() {
   editorContent.value = ''
   editorStore.close()
-  const target = currentSource.value === EDITOR_SOURCES.PROGRAMS ? 'programs' : 'machineconfig'
+  const target = currentSource.value === EDITOR_SOURCES.PROGRAMS ? 'programs' : 'config'
   router.push({ name: target }).catch(err => console.error("Router error on close:", err))
 }
 
 // Mirror local edits into the store so ``saveFile`` uses the
 // latest content.
-function handleEditorUpdate(value) {
+function handleEditorUpdate(value: string) {
   editorContent.value = value
   editorStore.content = value
 }
@@ -221,7 +223,7 @@ function handleEditorUpdate(value) {
 // regardless of focus (CodeMirror, header button, anywhere inside
 // the overlay). ``isDirty`` and ``readOnly`` short-circuit so we
 // never persist noise.
-function onSaveShortcut(event) {
+function onSaveShortcut(event: KeyboardEvent) {
   const isSaveChord = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's'
   if (!isSaveChord) return
   event.preventDefault()
@@ -259,17 +261,16 @@ onBeforeUnmount(() => {
         <div class="flex gap-2">
           <!-- ``Save`` and ``Save & Close`` are read-write affordances. -->
           <template v-if="!editorStore.readOnly">
-            <button type="button" class="rounded bg-blue-600 px-4 py-2 font-semibold hover:bg-blue-500" @click="saveAndCloseEditor">Save &amp; Close</button>
-            <button
-                type="button"
-                class="rounded bg-green-600 px-4 py-2 font-semibold hover:bg-green-500 disabled:bg-green-900"
+            <BaseButton variant="primary" @click="saveAndCloseEditor">Save &amp; Close</BaseButton>
+            <BaseButton
+                variant="success"
                 :disabled="!editorStore.isDirty"
                 @click="saveEditor"
             >
               Save
-            </button>
+            </BaseButton>
           </template>
-          <button type="button" class="rounded bg-gray-600 px-4 py-2 font-semibold hover:bg-gray-500 mr-30" @click="confirmClose">Close</button>
+          <BaseButton variant="secondary" class="mr-30" @click="confirmClose">Close</BaseButton>
         </div>
       </div>
 

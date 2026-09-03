@@ -234,14 +234,16 @@ test("Close button keeps its mr-30 spacing (not mr-3)", () => {
   // the E-Stop header overlap the Close button. Guard the
   // string so a future "Tailwind lint" pass does not silently
   // rewrite it.
+  // The button renders through the shared ``<BaseButton>`` primitive
+  // (or a raw ``<button>``); both spellings are accepted here.
   assert.match(
     editorViewText,
-    /Close<\/button>/,
+    /Close<\/(button|BaseButton)>/,
     "Close button must still render",
   )
   // The Close button's class list still contains ``mr-30``.
   const closeButtonMatch = editorViewText.match(
-    /<button[^>]*@click=["']confirmClose["'][^>]*>[\s\S]*?Close<\/button>/,
+    /<(button|BaseButton)[^>]*@click=["']confirmClose["'][^>]*>[\s\S]*?Close<\/(button|BaseButton)>/,
   )
   assert.ok(closeButtonMatch, "Close button template must be parseable")
   assert.match(

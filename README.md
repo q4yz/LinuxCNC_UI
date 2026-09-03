@@ -34,7 +34,7 @@ A web-based operator interface for LinuxCNC. The backend wraps the LinuxCNC Pyth
 
 - **JS to TS migration** — the initial version was written in JavaScript; I am currently converting it to TypeScript.
 - **Keeping control over AI-generated code** — solved by adding more documentation and examples and keeping the prompts small, so every generated solution stays reviewable and maintainable.
-- **PWA support over HTTPS on a local URL** — a PWA requires a secure context, which is impossible to get for a plain LAN address. A local root CA created with `mkcert` would work, but it would require every user to trust a random CA, and I wanted to keep plain HTTP available as well. Solution: an nginx reverse proxy that terminates HTTPS.
+- **PWA support over HTTPS on a local URL** — a PWA requires a secure context, which is impossible to get for a plain LAN address. A local root CA created with `mkcert` would work, but it would require every user to trust a random CA, and I wanted to keep plain HTTP available as well. Solution: a nginx reverse proxy that terminates HTTPS.
 - **AI prefers dicts over strictly typed classes** — this caused problems with slow conversions during the mocking phase. Solution: gradually convert to dataclasses, as expected by the REST API, and apply design patterns like factories and mappers. In the beginning, with JavaScript and Python dicts, the only saving grace was the strictly enforced OpenAPI schema, which provided at least some typing.
 - **HTTPS prevents webcams from being integrated into the UI** — secure pages cannot embed the camera streams directly. Solution: the cameras are now connected to the backend, which forwards the streams to the frontend.
 

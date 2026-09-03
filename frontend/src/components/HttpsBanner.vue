@@ -33,7 +33,7 @@ function onDismiss() {
       data-test="https-inline-banner"
       class="mt-4 relative w-full max-w-3xl p-4 md:p-5 bg-yellow-400 text-black rounded-xl shadow-lg border border-yellow-500 flex flex-col md:flex-row md:items-center gap-4 pr-12"
   >
-    <!-- Close Button (Top Right) -->
+    <!-- Close BaseButton (Top Right) -->
     <button
         type="button"
         @click="onDismiss"
@@ -52,7 +52,7 @@ function onDismiss() {
       </p>
     </div>
 
-    <!-- Button Area (Right Side on desktop, stacked below on mobile) -->
+    <!-- BaseButton Area (Right Side on desktop, stacked below on mobile) -->
     <div class="flex flex-col sm:flex-row shrink-0 gap-3">
       <a
           href="/cnc-root.crt"
