@@ -143,7 +143,22 @@ backend or the machine itself is down:
   process (`start_new_session=True`), console output tee'd into
   `logs/linuxcnc_console.log`. The command is overridable via the
   `LINUXCNC_START_COMMAND` env var (a `{ini}`-templated string) for
-  setups that need e.g. `xterm -e linuxcnc {ini}`.
+  setups that need e.g. `xterm -e linuxcnc {ini}`. Prefixed with
+  `stdbuf -oL -eL` when available — LinuxCNC's own stdio is fully
+  block-buffered once redirected to a file, so a hard abort (bad
+  HAL/INI parse, realtime error) can lose its error text entirely
+  instead of reaching the log, even though the operator still sees
+  it in LinuxCNC's own on-screen error dialog.
+- `GET /api/v1/system/machine/log` (`?lines=N`) — merged, labelled
+  tail of every known LinuxCNC log: this UI's own tee
+  (`logs/linuxcnc_console.log`) plus `~/linuxcnc_print.txt` /
+  `~/linuxcnc_debug.txt`, where LinuxCNC's own launcher redirects
+  once it decides it isn't talking to an interactive terminal — true
+  for every detached session we spawn, so our tee alone can stay
+  empty on a crash while the real text lands in one of those two
+  instead. So the UI can show why a session crashed without shell
+  access; an immediate-crash `start()` failure folds the merged tail
+  straight into its 400 response.
 - `POST /api/v1/system/machine/stop` — SIGINT → (grace period) →
   SIGTERM → SIGKILL escalation.
 - `POST /api/v1/system/machine/switch` — stop → deploy the selected

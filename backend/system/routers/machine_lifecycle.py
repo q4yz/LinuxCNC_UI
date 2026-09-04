@@ -76,13 +76,17 @@ class MachineDefaultRequest(BaseModel):
 
 
 class MachineLogResponse(BaseModel):
-    """Tail of the LinuxCNC console log."""
+    """Merged tail of every known LinuxCNC log."""
 
-    path: str = Field(..., description="Absolute path of the console log file.")
-    exists: bool = Field(..., description="Whether the log file exists yet.")
+    path: str = Field(..., description="Absolute path of this UI's own console-log tee.")
+    exists: bool = Field(..., description="Whether at least one of the known log sources exists yet.")
     log: str = Field(
         ...,
-        description="Tail of the console log, most recent lines last. Empty when the file doesn't exist yet.",
+        description=(
+            "Merged, labelled tail of every log source that exists (this UI's "
+            "tee plus LinuxCNC's own ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt), "
+            "most recent lines last within each section. Empty when none exist yet."
+        ),
     )
 
 
@@ -124,10 +128,13 @@ def get_machine_status() -> MachineStatusResponse:
     "/log",
     summary="Get the LinuxCNC console log tail",
     description=(
-        "Returns the tail of logs/linuxcnc_console.log — the tee'd "
-        "stdout+stderr of every started LinuxCNC session, most recent "
-        "lines last. Lets an operator see why a session crashed or "
-        "failed to start without shell access to the machine."
+        "Returns the tail of every known LinuxCNC log, merged under "
+        "labelled sections: this UI's own tee (logs/linuxcnc_console.log) "
+        "plus LinuxCNC's own ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt "
+        "(where its launcher redirects once it isn't talking to an "
+        "interactive terminal — true for every session we spawn). Lets "
+        "an operator see why a session crashed or failed to start "
+        "without shell access to the machine."
     ),
     operation_id="getMachineConsoleLog",
     response_model=MachineLogResponse,

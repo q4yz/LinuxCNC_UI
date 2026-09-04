@@ -11,6 +11,7 @@ matching the rest of the system service's test suite.
 from __future__ import annotations
 
 import signal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -52,6 +53,23 @@ def isolated_active_dir(monkeypatch, tmp_path):
     reset_service_cache()
     yield active
     reset_service_cache()
+
+
+@pytest.fixture()
+def isolated_logs(monkeypatch, tmp_path):
+    """Point every log source :class:`MachineLifecycleService` reads
+    at an isolated tmp tree — otherwise ``console_log()`` would also
+    pick up whatever real ``~/linuxcnc_print.txt`` /
+    ``~/linuxcnc_debug.txt`` happen to exist in the test-running
+    machine's actual home directory, making these tests non-hermetic.
+    """
+    console = tmp_path / "console.log"
+    print_log = tmp_path / "linuxcnc_print.txt"
+    debug_log = tmp_path / "linuxcnc_debug.txt"
+    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", console)
+    monkeypatch.setattr(mls_module, "_HOME_PRINT_LOG", print_log)
+    monkeypatch.setattr(mls_module, "_HOME_DEBUG_LOG", debug_log)
+    return {"console": console, "print": print_log, "debug": debug_log}
 
 
 @pytest.fixture()
@@ -241,10 +259,21 @@ def test_start_raises_not_found_without_default_machine(no_processes, isolated_m
 
 
 def _patch_launch(monkeypatch, tmp_path, exit_code=None):
-    """Replace the real process launch with ``_FakePopen``."""
+    """Replace the real process launch with ``_FakePopen``.
+
+    ``shutil.which("stdbuf")`` is pinned to "not found" so the
+    launch-command assertions below see the bare command — CI runs
+    on ubuntu-latest, where the real ``stdbuf`` *is* on PATH, which
+    would otherwise silently prepend ``["stdbuf", "-oL", "-eL"]`` and
+    break every exact-match assertion here. The prefixing itself is
+    covered separately in ``test_build_command_prefers_stdbuf_when_available``.
+    """
     monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "console.log")
+    monkeypatch.setattr(mls_module, "_HOME_PRINT_LOG", tmp_path / "linuxcnc_print.txt")
+    monkeypatch.setattr(mls_module, "_HOME_DEBUG_LOG", tmp_path / "linuxcnc_debug.txt")
     monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
     monkeypatch.delenv("LINUXCNC_START_COMMAND", raising=False)
+    monkeypatch.setattr(mls_module.shutil, "which", lambda name: None)
     monkeypatch.setattr(
         mls_module.subprocess,
         "Popen",
@@ -290,6 +319,7 @@ def test_start_honours_command_override(
     monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "console.log")
     monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
     monkeypatch.setenv("LINUXCNC_START_COMMAND", "xterm -e linuxcnc {ini}")
+    monkeypatch.setattr(mls_module.shutil, "which", lambda name: None)
     monkeypatch.setattr(
         mls_module.subprocess,
         "Popen",
@@ -305,6 +335,49 @@ def test_start_honours_command_override(
     # deployment target is always Linux (forward-slash paths).
     assert _FakePopen.last_command[:3] == ["xterm", "-e", "linuxcnc"]
     assert _FakePopen.last_command[3].replace("\\", "") == str(ini).replace("\\", "")
+
+
+def test_build_command_prefers_stdbuf_when_available(monkeypatch):
+    """LinuxCNC's own stdio is fully block-buffered once redirected
+    to our log file, so a hard abort (realtime error, bad HAL/INI
+    parse) can lose its entire error message — the operator still
+    sees it in LinuxCNC's on-screen dialog (X11, not stdio) while the
+    log stays empty. ``stdbuf -oL -eL`` forces line buffering so
+    every line lands in the log as it's printed, crash or not."""
+    ini = Path("PrintNC") / "config" / "machine.ini"
+    monkeypatch.setattr(mls_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.delenv("LINUXCNC_START_COMMAND", raising=False)
+
+    command = _service()._build_command(ini)
+
+    assert command[:3] == ["stdbuf", "-oL", "-eL"]
+    assert command[3:] == ["linuxcnc", str(ini)]
+
+
+def test_build_command_skips_stdbuf_when_not_on_path(monkeypatch):
+    ini = Path("PrintNC") / "config" / "machine.ini"
+    monkeypatch.setattr(mls_module.shutil, "which", lambda name: None)
+    monkeypatch.delenv("LINUXCNC_START_COMMAND", raising=False)
+
+    command = _service()._build_command(ini)
+
+    assert command == ["linuxcnc", str(ini)]
+
+
+def test_build_command_prefixes_stdbuf_before_an_override_too(monkeypatch):
+    ini = Path("PrintNC") / "config" / "machine.ini"
+    monkeypatch.setattr(mls_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setenv("LINUXCNC_START_COMMAND", "xterm -e linuxcnc {ini}")
+
+    command = _service()._build_command(ini)
+
+    # See test_start_honours_command_override: shlex.split runs in
+    # POSIX mode regardless of host OS, so a Windows dev/test
+    # machine's backslash path separators get eaten as escape
+    # characters — a test-environment quirk only.
+    assert command[:5] == ["stdbuf", "-oL", "-eL", "xterm", "-e"]
+    assert command[5] == "linuxcnc"
+    assert command[6].replace("\\", "") == str(ini).replace("\\", "")
 
 
 def test_start_raises_bad_request_when_process_exits_immediately(
@@ -342,25 +415,58 @@ def test_start_crash_error_includes_console_log_tail(
 # --------------------------------------------------------------------- #
 
 
-def test_console_log_reports_missing_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "nope.log")
-
+def test_console_log_reports_missing_file(isolated_logs):
     result = _service().console_log()
 
     assert result["exists"] is False
     assert result["log"] == ""
 
 
-def test_console_log_returns_the_requested_tail(monkeypatch, tmp_path):
-    log_path = tmp_path / "console.log"
-    log_path.write_text("\n".join(f"line {i}" for i in range(1, 11)) + "\n", encoding="utf-8")
-    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", log_path)
+def test_console_log_returns_the_requested_tail(isolated_logs):
+    isolated_logs["console"].write_text(
+        "\n".join(f"line {i}" for i in range(1, 11)) + "\n", encoding="utf-8"
+    )
 
     result = _service().console_log(lines=3)
 
     assert result["exists"] is True
-    assert result["path"] == str(log_path)
-    assert result["log"] == "line 8\nline 9\nline 10"
+    assert result["path"] == str(isolated_logs["console"])
+    assert "line 8\nline 9\nline 10" in result["log"]
+    assert "logs/linuxcnc_console.log" in result["log"]
+
+
+def test_console_log_merges_linuxcncs_own_redirect_targets(isolated_logs):
+    """LinuxCNC redirects its own stdout/stderr to
+    ``~/linuxcnc_print.txt`` / ``~/linuxcnc_debug.txt`` the moment it
+    isn't talking to an interactive terminal — true for every
+    detached session we spawn — so our tee alone can stay empty while
+    the real crash text lands in one of these instead. Both must
+    surface even when our own tee has nothing."""
+    isolated_logs["debug"].write_text(
+        "Error: INI file section [AXIS_0] missing required key STEPGEN_MAXVEL\n",
+        encoding="utf-8",
+    )
+
+    result = _service().console_log()
+
+    assert result["exists"] is True
+    assert "STEPGEN_MAXVEL" in result["log"]
+    assert "linuxcnc_debug.txt" in result["log"]
+
+
+def test_console_log_labels_each_present_source(isolated_logs):
+    isolated_logs["console"].write_text("tee output\n", encoding="utf-8")
+    isolated_logs["print"].write_text("print output\n", encoding="utf-8")
+
+    result = _service().console_log()
+
+    assert "tee output" in result["log"]
+    assert "print output" in result["log"]
+    assert "linuxcnc_console.log" in result["log"]
+    assert "linuxcnc_print.txt" in result["log"]
+    # The debug log was never written — it must not appear as a
+    # confusing empty section.
+    assert "linuxcnc_debug.txt" not in result["log"]
 
 
 # --------------------------------------------------------------------- #
@@ -575,22 +681,18 @@ def test_stop_endpoint_returns_200_when_already_stopped(no_processes, isolated_a
     assert response.json()["running"] is False
 
 
-def test_log_endpoint_returns_the_tail(monkeypatch, tmp_path):
-    log_path = tmp_path / "console.log"
-    log_path.write_text("boom: config error\n", encoding="utf-8")
-    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", log_path)
+def test_log_endpoint_returns_the_tail(isolated_logs):
+    isolated_logs["console"].write_text("boom: config error\n", encoding="utf-8")
 
     response = _client().get("/api/v1/system/machine/log")
 
     assert response.status_code == 200
     body = response.json()
     assert body["exists"] is True
-    assert body["log"] == "boom: config error"
+    assert "boom: config error" in body["log"]
 
 
-def test_log_endpoint_reports_missing_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "nope.log")
-
+def test_log_endpoint_reports_missing_file(isolated_logs):
     response = _client().get("/api/v1/system/machine/log")
 
     assert response.status_code == 200

@@ -22,13 +22,21 @@ repository root and ``DISPLAY`` inherited (defaulting to ``:0`` so the
 LinuxCNC GUI opens on the machine's console display). The launch
 command can be overridden with the ``LINUXCNC_START_COMMAND`` env var
 using a ``{ini}`` placeholder, e.g. ``"xterm -e linuxcnc {ini}"``.
+``_build_command`` also prefixes ``stdbuf -oL -eL`` when available —
+see its docstring for why a hard LinuxCNC abort would otherwise lose
+its error text entirely instead of reaching the log.
 
-:meth:`MachineLifecycleService.console_log` surfaces that same file's
-tail to the UI (``GET /api/v1/system/machine/log``) so an operator can
-see why a session failed without shell access. An immediate crash
-(``start()`` returning within the 0.5s poll window) folds the tail
-straight into the raised error, since that is the most common "it
-just won't start" case.
+:meth:`MachineLifecycleService.console_log` surfaces the tail of
+*every* known LinuxCNC log to the UI (``GET
+/api/v1/system/machine/log``) so an operator can see why a session
+failed without shell access — not just our own tee, but also
+``~/linuxcnc_print.txt`` / ``~/linuxcnc_debug.txt``, which is where
+LinuxCNC's own launcher redirects once it decides it isn't talking to
+an interactive terminal (true for every detached session we spawn);
+see :meth:`console_log`'s docstring. An immediate crash (``start()``
+returning within the 0.5s poll window) folds the merged tail straight
+into the raised error, since that is the most common "it just won't
+start" case.
 """
 from __future__ import annotations
 
@@ -36,6 +44,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -58,8 +67,22 @@ PROCESS_PATTERNS: tuple[str, ...] = ("linuxcnc", "emc", "milltask", "linuxcncsvr
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CONSOLE_LOG = _REPO_ROOT / "logs" / "linuxcnc_console.log"
 
-#: Bytes read from the tail of the console log per request — caps
-#: memory when the log has accumulated many sessions' worth of output.
+#: LinuxCNC's own launcher redirects its stdout/stderr to these two
+#: files under the user's home directory the moment it decides it's
+#: not talking to an interactive terminal — which is exactly our
+#: case, since we spawn it detached. When that redirect fires it
+#: happens *inside* the child, downstream of our own
+#: ``stdout=log_handle`` on ``Popen`` — our tee never sees a single
+#: byte, no matter the buffering, because the child re-pointed its
+#: own fds elsewhere before printing anything. These paths are
+#: LinuxCNC's documented behaviour, not configurable by us; read them
+#: alongside our own tee so a crash is visible regardless of which
+#: path it actually took.
+_HOME_PRINT_LOG = Path.home() / "linuxcnc_print.txt"
+_HOME_DEBUG_LOG = Path.home() / "linuxcnc_debug.txt"
+
+#: Bytes read from the tail of each log source per request — caps
+#: memory when a log has accumulated many sessions' worth of output.
 _LOG_TAIL_MAX_BYTES = 512 * 1024
 
 #: Lines of console-log tail folded into the crash error message so
@@ -185,34 +208,58 @@ class MachineLifecycleService:
         logger.info("Default machine set to '%s' (%s).", machine, ini)
         return ini
 
+    def _read_log_tail(self, path: Path) -> Optional[str]:
+        """Last ``_LOG_TAIL_MAX_BYTES`` bytes of ``path`` (seeking from
+        the end so a log grown across many sessions is never loaded
+        into memory in full), or ``None`` when it doesn't exist."""
+        if not path.is_file():
+            return None
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - _LOG_TAIL_MAX_BYTES))
+                raw = fh.read()
+            return raw.decode("utf-8", errors="replace")
+        except OSError as exc:
+            logger.warning("Could not read log %s: %s", path, exc)
+            return None
+
     def console_log(self, lines: int = 200) -> Dict[str, Any]:
-        """Tail of ``logs/linuxcnc_console.log``.
+        """Tail of every known LinuxCNC log, merged.
 
-        Reads at most the last ``_LOG_TAIL_MAX_BYTES`` bytes of the
-        file (seeking from the end) before splitting into lines, so a
-        log that has grown across many sessions is never loaded into
-        memory in full — only the most recent output, which is what a
-        "why didn't it start" investigation needs.
+        Three sources are checked, because we don't control which one
+        actually gets LinuxCNC's error text: our own tee
+        (``logs/linuxcnc_console.log``) only receives it when
+        LinuxCNC treats its stdout as a plain pipe; the moment it
+        decides it isn't talking to an interactive terminal (true for
+        every detached session we spawn), its own launcher redirects
+        to ``~/linuxcnc_print.txt`` / ``~/linuxcnc_debug.txt``
+        instead, upstream of anything we can intercept. Each source
+        that exists gets its own tail (last ``lines`` lines, capped at
+        ``_LOG_TAIL_MAX_BYTES``) under a header naming it, so a crash
+        is visible no matter which path it took.
         """
-        exists = _CONSOLE_LOG.is_file()
-        text = ""
-        if exists:
-            try:
-                with open(_CONSOLE_LOG, "rb") as fh:
-                    fh.seek(0, os.SEEK_END)
-                    size = fh.tell()
-                    fh.seek(max(0, size - _LOG_TAIL_MAX_BYTES))
-                    raw = fh.read()
-                text = raw.decode("utf-8", errors="replace")
-            except OSError as exc:
-                logger.warning("Could not read console log %s: %s", _CONSOLE_LOG, exc)
-                exists = False
+        sources = [
+            ("logs/linuxcnc_console.log (this UI's own tee)", _CONSOLE_LOG),
+            ("~/linuxcnc_print.txt (LinuxCNC's stdout)", _HOME_PRINT_LOG),
+            ("~/linuxcnc_debug.txt (LinuxCNC's debug/error log)", _HOME_DEBUG_LOG),
+        ]
 
-        tail_lines = text.splitlines()[-max(1, lines):] if text else []
+        sections: List[str] = []
+        any_exists = False
+        for label, path in sources:
+            text = self._read_log_tail(path)
+            if text is None:
+                continue
+            any_exists = True
+            tail_lines = text.splitlines()[-max(1, lines):] if text else []
+            sections.append(f"--- {label} ---\n" + ("\n".join(tail_lines) or "(empty)"))
+
         return {
             "path": str(_CONSOLE_LOG),
-            "exists": exists,
-            "log": "\n".join(tail_lines),
+            "exists": any_exists,
+            "log": "\n\n".join(sections),
         }
 
     def status(self) -> Dict[str, Any]:
@@ -322,11 +369,26 @@ class MachineLifecycleService:
         return status
 
     def _build_command(self, ini: Path) -> List[str]:
-        """Resolve the launch command (``LINUXCNC_START_COMMAND`` override)."""
+        """Resolve the launch command (``LINUXCNC_START_COMMAND`` override).
+
+        Prefixed with ``stdbuf -oL -eL`` when available: LinuxCNC's
+        own startup (halcmd, milltask, ...) is written against plain
+        C stdio, which switches from line-buffered to fully block
+        buffered as soon as stdout isn't a tty — i.e. the moment we
+        redirect it into ``_CONSOLE_LOG``. A clean exit still flushes
+        that buffer, but a hard abort (realtime error, segfault, a
+        signal from a bad HAL/INI parse) does not — the operator
+        sees the failure in LinuxCNC's own on-screen error dialog
+        (which talks to X11 directly, bypassing stdio) while our log
+        stays empty, because the buffered text was never written out.
+        ``stdbuf`` forces line buffering regardless of the
+        destination, so every line lands in the log as it's printed.
+        """
         template = os.environ.get("LINUXCNC_START_COMMAND", "").strip()
-        if not template:
-            return ["linuxcnc", str(ini)]
-        return shlex.split(template.format(ini=str(ini)))
+        command = shlex.split(template.format(ini=str(ini))) if template else ["linuxcnc", str(ini)]
+        if shutil.which("stdbuf"):
+            command = ["stdbuf", "-oL", "-eL"] + command
+        return command
 
     # ------------------------------------------------------------------ #
     # Stop                                                                #
