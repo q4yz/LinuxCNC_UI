@@ -5,9 +5,9 @@ system (`frontend/src/modules/<id>/`, a `ModuleRegistry`, per-module
 manifests, eager-import lint rules). **That system has been retired
 and no longer exists in the codebase.** The frontend now imports
 views and components directly where they're used — see
-[`.agent/context/ARCHITECTURE.md`](context/ARCHITECTURE.md) § 2 for
+[`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) § 2 for
 the current frontend layout, and
-[`.agent/contracts/backend-router.md`](contracts/backend-router.md)
+[`.agent/contracts/backend-router.md`](.agent/contracts/backend-router.md)
 for the backend's per-app `_MODULE_DOMAINS` mount tables (the closest
 remaining thing to a "module system," and it's a flat table, not a
 registry).
@@ -38,7 +38,7 @@ The dashboard reads two distinct transport streams from the backend:
 The base-thread store lives at `frontend/src/stores/baseThread.ts`.
 It has three top-level refs (`progress`, `sensors`, `tools`) and
 three actions (`refresh`, `start`, `stop`). See
-[`.agent/context/ARCHITECTURE.md`](context/ARCHITECTURE.md) § 2.4 for
+[`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) § 2.4 for
 why the split exists.
 
 ### 1.1 What lives on the WebSocket (servo thread) only
@@ -173,7 +173,7 @@ from this UI), `mcode` (LinuxCNC `M100`-`M199` files under
 kind-switched panel.
 
 **Machine config / templates** — see
-[`.agent/context/ARCHITECTURE.md`](context/ARCHITECTURE.md) § 7 for
+[`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) § 7 for
 the current template-generation pipeline
 (`backend/system/services/machinetemplates/generator.py`) and the
 `hardware.json` v2.1 schema. The old "compiler" concept described in

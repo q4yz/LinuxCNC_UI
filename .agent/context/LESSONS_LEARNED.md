@@ -5,92 +5,72 @@ the team has paid for. Each entry is ordered newest-first so the
 freshest thinking is at the top. New entries should be added at the
 **top** of the appropriate section, not the bottom.
 
-## 1. Module system
+## 1. Module system (retired — history only)
 
-### 1.1 Modules are eager — there is no "lazy module disabled at build time" path
+> **This entire system no longer exists.** There was once a dynamic
+> frontend module registry (`frontend/src/modules/<id>/`, an eager
+> `import.meta.glob` registry, a `module_<id>` Pinia store-id
+> convention, a `MODULES_ENABLED` whitelist, `check-no-lazy-imports.mjs`
+> / `check-store-ids.mjs` lint scripts). It has been fully removed;
+> the frontend now imports views/components directly (see
+> [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) § 2). None of
+> the fixes below apply to the current codebase — they are kept as
+> **general lessons** (the failure mode can recur in a different
+> shape) not as **current instructions**.
 
-**Symptom.** A previous revision attempted to make modules lazy so
-the `MODULES_ENABLED` whitelist could prune the production bundle.
-The lazy glob hid module dependencies: deleting a module folder
-left the build green because nothing referenced the deleted path
-statically.
+### 1.1 A "lazy module disabled at build time" path hides missing dependencies
 
-**Fix.** Eager loading is now mandatory (see
-`.agent/STATE.md` § 13 and
-`.agent/contracts/frontend-module.md` § 8). The single allowed
-glob is `import.meta.glob('../../modules/*/index.ts', { eager: true })`
-in `frontend/src/core/modules/registry.ts`. The
-`MODULES_ENABLED` whitelist is a deployment opt-out: an excluded
-module still has its JS in the bundle (it was loaded eagerly),
-it just does not run `onLoad` and is not visible in the sidebar /
-settings.
+**Symptom.** A previous revision made frontend modules lazy-loaded
+so a whitelist could prune the production bundle. The lazy glob hid
+module dependencies: deleting a module folder left the build green
+because nothing referenced the deleted path statically.
 
-**Tripwire.** CI lint
-`frontend/scripts/check-no-lazy-imports.mjs` rejects
-`import.meta.glob(..., { eager: false })`,
-`defineAsyncComponent`, and dynamic `import()` anywhere under
-`frontend/src/modules/` or `frontend/src/core/`. The script is
-wired into `.agent/TEST.md` so the rule trips before the bundle
-is built.
+**General lesson.** If a future feature needs conditional inclusion
+(a build-time flag, an optional integration), prefer a pattern where
+removing the thing being conditioned on breaks the build loudly —
+static imports, not a glob that silently returns fewer entries.
 
-### 1.2 Pinia store ids must be `module_<id>`, not `<id>`
+### 1.2 A local naming convention prevented store-id collisions
 
-**Symptom.** A module's Pinia store collided with the legacy
-top-level `machine` / `console` stores, silently shadowing them
-and breaking the dashboard.
+**Symptom.** A module-scoped Pinia store collided with a top-level
+store of the same id, silently shadowing it and breaking the
+dashboard.
 
-**Root cause.** Naive `defineStore('machine', ...)` inside a module
-folder; the runtime id was the same as the legacy monolith.
-
-**Fix.** Pattern: `const STORE_ID = 'module_' + manifest.id;
-defineStore(STORE_ID, ...)`. The lint script
-`frontend/scripts/check-store-ids.mjs` enforces the
-`^module_[a-z][a-z0-9_]+$` regex against every module store id.
-
-**Tripwire.** Never hardcode a Pinia store id as a literal string
-inside a module. Always build it from `manifest.id` so the lint
-can reason about it.
+**General lesson.** When two independent parts of the codebase can
+both register something under a shared namespace (store ids, event
+names, settings keys), a naming convention plus a lint check is
+cheap insurance. There is no module-scoped Pinia namespace to
+protect today, but the same risk exists wherever two stores could
+plausibly pick the same id — check `frontend/src/stores/` for
+existing names before adding a new one.
 
 ### 1.3 `activePinia` boot-timing race
 
-**Symptom.** An early revision had module stores constructed
-lazily on first `useXxxStore()` call, but the lazy path raced
-with the Pinia 3.x boot order.
+**Symptom.** An early revision had feature stores constructed
+lazily on first `useXxxStore()` call, but the lazy path raced with
+the Pinia 3.x boot order.
 
-**Fix.** Module stores are constructed **eagerly inside `onLoad`**
-(see `.agent/STATE.md` § 10). The `activePinia` race is resolved
-by deterministic boot ordering: `main.js` calls `app.use(pinia)`
-before `registry.boot()`, so `useXxxStore()` inside `onLoad`
-finds the active Pinia instance. The polling loop / WebSocket
-transport starts at app boot, so operators get a populated
-dashboard on the first frame.
+**General lesson.** `main.ts` calls `app.use(pinia)` before mounting
+the app; anything that calls `useXxxStore()` outside of a component
+setup or a store action should confirm it runs after that call, not
+before.
 
-### 1.4 Empty `frontend/src/modules/` folder must still build
+### 1.4 (retired) Empty module directory had to still build
 
-**Symptom.** With no frontend modules mounted, `npm run build` failed.
-
-**Root cause.** Vite's glob collapses to `{}` when the directory
-is empty, but a downstream consumer expected an array.
-
-**Fix.** All consumers tolerate empty results. The registry logs
-`mounted=[] skipped=0 missing=0` and the build succeeds.
-
-**Note.** The current contract forbids shipping an empty
-`frontend/src/modules/` in practice — every module that ships is
-a hard dependency (see § 1.1 above and `.agent/STATE.md` § 7).
-The empty-build tolerance still matters because the test fixtures
-build with a temporary empty `modules/` directory.
+Historical only — there is no `frontend/src/modules/` directory to
+be empty or non-empty. No current equivalent.
 
 ### 1.5 Snapshots vs lazy shims
 
-**Symptom.** A round-trip refactor of the temperature module wiped
-the rolling chart history; the polled array was re-created on
-every component mount.
+**Symptom.** A round-trip refactor of the temperature panel wiped
+the rolling chart history; the polled array was re-created on every
+component mount.
 
-**Root cause.** The component held the array in local `ref`s
+**Root cause.** The component held the array in a local `ref`
 instead of reading from the Pinia store.
 
-**Fix.** Store-owned `reactive` containers; the component reads
+**Fix — still current.** Store-owned `reactive` containers
+(`frontend/src/stores/temperatureStore.ts`); the component reads
 through `storeToRefs`. The store outlives the mount/unmount/remount
 cycle, so the chart history survives.
 
@@ -98,47 +78,36 @@ cycle, so the chart history survives.
 
 ### 2.7 Never hand-roll HTTP calls when a generated OpenAPI service exists
 
-**Symptom.** The tools store initially shipped with a local
-`postJson` helper plus raw `fetch()` calls for every backend route
-(`GET /tools`, `POST /spindle`, `POST /extruder`,
-`POST /tools/{id}/target`). Same shape was duplicated in
-`TemperaturePanel.vue` for the per-sensor target endpoint. The two
-surfaces drift independently — a backend field rename silently
-breaks the hand-written `fetch` while the generated client tracks
-it via `npm run generate-api`.
+**Symptom.** A domain store shipped with a local `postJson` helper
+plus raw `fetch()` calls for every backend route instead of the
+generated client. A backend field rename silently breaks the
+hand-written `fetch` while the generated client tracks it via
+`npm run generate-api`.
 
-**Root cause.** The generated `ModulesToolsService` (and its
-peers under `frontend/generated/api/services/`) sits next to the
-store, but the store's author reached for the familiar `fetch`
-shape because every other module file already had a similar
-helper. There was no tripwire so the regression stayed invisible.
+**Fix — still current.** Every backend module endpoint has a
+generated counterpart under
+`frontend/generated/api/services/Modules<Name>Service.ts` (e.g.
+`ModulesToolsService.ts`, `ModulesTemperatureService.ts` — see
+`frontend/generated/api/services/` for the full list, one per
+module id plus a `*SettingsService.ts` per module for the settings
+endpoints). Domain stores under `frontend/src/stores/` should
+import the service and call its static methods rather than
+hand-rolling `fetch`.
 
-**Fix.** Every backend module endpoint has a generated
-counterpart under
-`frontend/generated/api/services/Modules<Name>Service.ts`. Module
-stores import the service and call its static methods; errors
-flow through `describeError` from `core/error-format.js` so the
-console store sees the same envelope shape as every other
-module. The temperature module is mid-migration —
-`TemperaturePanel.vue:37` still has raw `fetch` for the per-sensor
-target endpoint; the store layer already consumes via
-`useBaseThreadStore()`. Same lesson applies there.
+**One exception.** `frontend/src/core/settings/createModuleSettings.ts`
+is deliberately hand-rolled `fetch` so callers keep working when
+`generated/api/` is stale — e.g. a fresh checkout before
+`npm run generate-api` has run. The exception is the **settings**
+endpoint, not the data endpoints.
 
-**One exception.** `frontend/src/core/modules/settings.js` is
-deliberately hand-rolled `fetch` (per its own header comment § 2)
-so module stores keep working when `generated/api/` is stale —
-e.g. a fresh checkout before `npm run generate-api` has run. The
-exception is the **settings** endpoint, not the data endpoints.
-
-**Tripwire.** No `fetch(...)` call in a module store file. The
-template is `test-tools-module.mjs`:
-- `assert.doesNotMatch(text, /\bfetch\s*\(/);`
-- `assert.doesNotMatch(text, /\bpostJson\s*\(/);`
-- `assert.doesNotMatch(text, /\/api\/v1\/modules\/<id>\//);`
-- `assert.match(text, /import\s+\{[^}]*Modules<Name>Service[^}]*\}\s+from\s+["'][^"']*generated\/api\/services\/Modules<Name>Service/);`
-
-Add the same guard to every module's `test-<id>-module.mjs` so a
-future regression is caught before merge.
+**Tripwire.** No `fetch(...)` call in a store file outside of
+`createModuleSettings.ts`. `frontend/tests/test-tools-module.ts`
+is the closest thing to an automated guard today — it asserts the
+tools store consumes `useBaseThreadStore()` rather than its own
+polling/fetch, and it does not currently regex-ban a stray `fetch(`
+call directly, so a new hand-rolled `fetch` in a different store
+would not be caught automatically. Treat this as a code-review
+check until a dedicated lint exists (see `.agent/HANDOFF.md` § 2).
 
 ### 2.5 Strict-null idempotency gate silently disables the poll
 
@@ -191,8 +160,8 @@ use a truthy check (`if (this.handle)`) or the loose-null check
 silently breaks on the first call when the property has never
 been set.
 
-**See also.** `frontend/src/stores/baseThread.js` header comment
-§ GOTCHAS, `.agent/STATE.md` § 12.6.
+**See also.** `frontend/src/stores/baseThread.ts`,
+`.agent/STATE.md` § 1.4.
 
 ### 2.6 Cross-module reactivity needs `deep: true` and a sync ingest
 
@@ -230,9 +199,8 @@ stopSensorWatch = watch(
    baseThread snapshot field. The payload is small (a handful of
    sensor / tool rows) so the deep-traversal cost is negligible.
 
-**See also.** `frontend/src/modules/temperature/store.js`,
-`frontend/src/modules/tools/toolStore.js`, `frontend/src/stores/baseThread.js`
-header comment § GOTCHAS.
+**See also.** `frontend/src/stores/temperatureStore.ts`,
+`frontend/src/stores/toolsStore.ts`, `.agent/STATE.md` § 1.4.
 
 ### 2.1 No hardcoded G-code in components
 
@@ -242,22 +210,22 @@ string literals scattered across `.vue` files.
 **Root cause.** Each author built their own helper.
 
 **Fix.** All G-code construction lives in
-`frontend/src/config/gcodes.js`. Export helper functions like
+`frontend/src/config/gcodes.ts`. Export helper functions like
 `generateSetOffset(axis, value)`; consumers import the helper,
 never the G-code string.
 
 ### 2.2 No monolithic `App.vue`
 
 **Symptom.** `App.vue` grew to 400+ lines and held the WebSocket
-subscription, the route map, the module switcher, and the active
-print widget.
+subscription, the route map, and the active print widget.
 
 **Root cause.** "I'll just put this here for now, refactor later."
 Later never came.
 
 **Fix.** `App.vue` is a layout wrapper. It renders the sidebar and
-the active view via `<router-view>` plus the module-owned override.
-Any logic > 5 lines belongs in a component or a store.
+the active view via `<router-view>` (the static route table in
+`frontend/src/router/index.ts` — see `ARCHITECTURE.md` § 2.2). Any
+logic > 5 lines belongs in a component or a store.
 
 ### 2.3 `storeToRefs()` is mandatory when destructuring
 
@@ -308,10 +276,10 @@ service: the service imported `time`, knew about servo periods, and
 owned the edge-generation sequence.
 
 **Root cause.** The codebase already has a typed HAL-pin OOP
-hierarchy under `backend/dtos/pins/`: `HalPin` (ABC, generic over
-`T`), `UnconnectedHalPin`, `StaticHalPin`,
+hierarchy under `backend/common/dtos/pins/`: `HalPin` (ABC, generic
+over `T`), `UnconnectedHalPin`, `StaticHalPin`,
 `ReadOnlyDynamicHalPin`, `ReadWriteDynamicHalPin`, plus domain
-wrappers like `EStopPin` (`backend/dtos/EStopDto.py`). Services
+wrappers like `EStopPin` (`backend/common/dtos/EStopDto.py`). Services
 hold `self._foo: HalPin = UnconnectedHalPin()` typed properties
 and swap in the real pin in `preload_hal_pins()`, called once at
 boot right before `HalPin.initialize_component()`. The pattern is
@@ -354,9 +322,9 @@ a service file, no edge policy leaking into HTTP code.
 
 **Bootstrap order matters.** `preload_hal_pins()` only *queues*
 pins in `HalPin._pending_pins`; the actual HAL pins are created
-when `HalPin.initialize_component()` is called. The boot sequence
-in `backend/main.py` must therefore run every
-`*.preload_hal_pins()` before the single
+when `HalPin.initialize_component()` is called. The machine
+backend's boot sequence (`backend/machine/main.py`) must therefore
+run every `*.preload_hal_pins()` before the single
 `HalPin.initialize_component()` call. Reversing the order — or
 splitting `initialize_component()` across multiple call sites —
 leaves the HAL component locked with zero pins, and the service's
@@ -366,13 +334,14 @@ the lifetime of the process.
 **Tripwire.** A backend service file must not call `hal.setp`,
 `hal.set_p`, or `Connection.write_hal_pin` directly. All HAL writes
 must go through a `HalPin` subclass property assigned by a
-`preload_hal_pins()` method. Add a guard that scans every file
-under `backend/services/` (excluding `backend/dtos/pins/`) for
-those names and fails the build / merge if they appear outside
-`preload_hal_pins()` or `initialize_component()`. The check sits
-next to the "no endpoints in `main.py`" guard (§ 3.1) and the
-"hardware calls go through the singleton `connection`" guard (§
-3.2); both reject the same anti-pattern from a different angle.
+`preload_hal_pins()` method — a scan of every file under
+`backend/machine/services/` (excluding `backend/common/dtos/pins/`)
+for those names, outside `preload_hal_pins()` or
+`initialize_component()`, is the manual check today (no automated
+guard yet — see `.agent/HANDOFF.md` § 2). It pairs with the "no
+endpoints in `main.py`" lesson (§ 3.1) and the "hardware calls go
+through the singleton `connection`" lesson (§ 3.2); both reject the
+same anti-pattern from a different angle.
 
 ### 3.1 No endpoints in `main.py`
 
@@ -381,13 +350,13 @@ three unrelated endpoints because they were inlined into `main.py`.
 
 **Root cause.** "Just one quick endpoint" became five.
 
-**Fix.** Every endpoint lives in a router under `backend/routers/`.
-The previous `backend/modules/<id>/router.py` shape was retired
-when the `PluggableModule` plugin system went away; per-domain
-routers are now mounted directly from `backend/routers/<id>.py`
-in `backend/main.py:_MODULE_DOMAINS`. `main.py` itself never
-declares endpoints — it only includes the routers and runs the
-lifespan.
+**Fix.** Every endpoint lives in a router under
+`backend/<app>/routers/`. Per-domain routers are mounted directly
+from `backend/<app>/routers/<id>.py` in that app's own
+`main.py:_MODULE_DOMAINS` (see `.agent/contracts/backend-router.md`).
+Neither `backend/machine/main.py` nor `backend/system/main.py`
+declares endpoints directly — each only includes its routers and
+runs its own lifespan.
 
 ### 3.2 Hardware calls go through the singleton `connection`
 
@@ -396,9 +365,9 @@ test suite because `import linuxcnc` failed.
 
 **Root cause.** Feature code imported `linuxcnc` directly.
 
-**Fix.** `backend/hardware/connection.py` is the only place that
-imports `linuxcnc`. It falls back to `linuxcnc_mock.py` on
-`ImportError`. Feature code calls `execute_sync_cmd(...)` on the
+**Fix.** `backend/common/hardware/Connection.py` is the only place
+that imports `linuxcnc`. It falls back to `backend/common/hardware/mock/`
+on `ImportError`. Feature code calls `execute_sync_cmd(...)` on the
 connection.
 
 ### 3.3 The jog watchdog is a contract, not a config
@@ -446,7 +415,7 @@ subprocess bound to ``http://127.0.0.1:{8080+index}/?action=stream``;
 the backend ``/stream`` endpoint is a 302 redirect to that URL.
 
 **Tripwire.** Do NOT reintroduce ``cv2`` into
-``backend/routers/camera.py`` (or any sibling under
+``backend/machine/routers/camera.py`` (or any sibling under
 `backend/`). The `UstreamerSupervisor` owns the only process
 boundary the camera needs; any new capture code in the backend is
 the regression vector that brings SIGILL back. If a future feature
@@ -476,27 +445,33 @@ same string in its empty-state row; and the camera store emits a
 single console-store row per distinct diagnostic value so the
 operator console does not go quiet during a sustained outage.
 
-## 5. Test discipline
+### 4.3 Migration order (historical — the module-to-flat-router migration)
+
+This predates the current architecture (it describes the order used
+when the old `PluggableModule` system was flattened into per-domain
+routers, and later when the frontend module registry was retired
+entirely). Kept because the general lesson still holds: migrate the
+highest-fan-in dependency first.
 
 The order that worked:
 
 1. **camera** — self-contained, no shared state, no telemetry,
-   easy nullable test.
+   easy to migrate in isolation.
 2. **temperature** — shared mock state but simulation stays in
-   `core/`; main risk is the polling loop.
-3. **machine** (axis) — largest, safety-critical keep-alive /
-   watchdog, owns the WebSocket subscription, drives every other
-   module.
-4. **program** — `program_router` in `routers/machine.py`; simple
-   once machine is done.
-5. **files, system, config, compiler** — backend-only or low-
+   the hardware mock layer; main risk is the polling loop.
+3. **machine / axis** — largest, safety-critical keep-alive /
+   watchdog, owns the WebSocket subscription, drives nearly every
+   other domain.
+4. **program** — simple once machine is done.
+5. **files, system, config, machine-config generation** — low-
    coupling; migrated one at a time.
-6. **telemetry refactor** (Phase 4) — decouple WebSocket from
-   machine module's Pinia store.
+6. **telemetry refactor** — decouple the WebSocket from any single
+   domain's store (this became the servo-thread / base-thread
+   split, see `ARCHITECTURE.md` § 2.4).
 
 If you reverse the order, the migration costs roughly 3× because
-the machine module's WebSocket + watchdog is the dependency root
-for nearly every other module.
+the machine domain's WebSocket + watchdog is the dependency root
+for nearly everything else.
 
 ## 5. Test discipline
 
@@ -596,16 +571,16 @@ remain: read minimum, write minimum, do not browse, do not hedge.
 
 ## 7. Hot debris (known limitations to track)
 
+See [`.agent/HANDOFF.md`](.agent/HANDOFF.md) § 2 for the maintained
+technical-debt list (the two-backend split, typing-discipline
+tooling gaps, pre-existing test failures, etc.). The items below are
+smaller/older observations not worth a full HANDOFF.md entry:
+
 - `DebugPanel.vue` polls `JSON.parse(JSON.stringify(useMachineStore()))`
-  every 3 seconds. Motivates Phase 4 (event-bus subscriptions).
-- `CameraPanel.vue` uses raw `<img src>` because the stream is
-  MJPEG, not typed JSON. Stays raw after migration.
-- Legacy `backend/main.py` imports flat routers **and** boots the
-  registry. Removing a module after migration must not remove the
-  legacy `include_router` until the consumer has migrated.
-- `MODULES_ENABLED` whitelist is "soft" on frontend (console.warn)
-  and "hard warning log" on backend. Consider aligning.
-- The watchdog hard-caps its own lifetime at 10 minutes per loop.
-  Bounds the impact of a buggy loop in CI/test environments.
+  every 3 seconds rather than subscribing to the event bus.
+- `CameraViewer.vue` uses a raw `<img src>` because the stream is
+  MJPEG, not typed JSON. This is expected to stay raw.
+- The jog watchdog hard-caps its own lifetime at 10 minutes per
+  loop. Bounds the impact of a buggy loop in CI/test environments.
 - Multi-machine, remote access, and time-series DB logging are
-  out of scope for the current vision.
+  out of scope for the current vision (see `VISION.md`).

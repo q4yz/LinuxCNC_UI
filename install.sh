@@ -133,23 +133,7 @@ systemctl restart ustreamer
 # prefix to the service that owns it.
 echo -e "\n---> Configuring backend services (machine :8000, system :8001)..."
 
-MACHINE_SERVICE="/etc/systemd/system/linuxcnc-ui-machine.service"
-cat << EOF > "$MACHINE_SERVICE"
-[Unit]
-Description=LinuxCNC UI Machine Backend (telemetry, NML, HAL — port 8000)
-After=network.target
 
-[Service]
-Type=simple
-User=$REAL_USER
-WorkingDirectory=$PROJECT_DIR/backend/machine
-ExecStart=$PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
 
 SYSTEM_SERVICE="/etc/systemd/system/linuxcnc-ui-system.service"
 cat << EOF > "$SYSTEM_SERVICE"

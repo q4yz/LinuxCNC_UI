@@ -63,5 +63,5 @@ npm --prefix frontend run generate-api
 # module registry they checked — there is no replacement lint step
 # today; see the technical-debt list in .agent/HANDOFF.md § 2.)
 npm --prefix frontend run build
-node --test "frontend/tests/**/*.mjs"
+npm --prefix frontend run test
 ```

@@ -37,7 +37,7 @@ runs on a developer laptop.
    `_MODULE_DOMAINS` table — no plugin runtime, no `setup()`
    factory. The frontend has no equivalent dynamic registry;
    components and views are imported directly where they're used
-   (see [`.agent/context/ARCHITECTURE.md`](ARCHITECTURE.md) § 2).
+   (see [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) § 2).
 4. **Safety is non-negotiable.** Continuous jogging requires a 250 ms
    frontend keep-alive and a 500 ms backend watchdog. E-Stop is a
    single tap. The dashboard defaults to `ESTOP` when no telemetry
