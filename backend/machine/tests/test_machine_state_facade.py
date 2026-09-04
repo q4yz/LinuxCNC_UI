@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import importlib
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
+from dtos.EStopDto import EStopPin
 
 
 # Resolve the ``hardware.connection`` module without going through
@@ -134,7 +136,7 @@ class TestGetState:
     def test_returns_offline_when_stat_channel_is_none(self):
         """NML channel has not connected yet → ``OFFLINE``."""
         svc = StateService()
-        with patch.object(conn_mod, "get_machine_stat", return_value=None):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=None):
             assert svc.get_state() is MachineState.OFFLINE
 
     def test_returns_estop_when_task_state_is_estop(self):
@@ -144,7 +146,7 @@ class TestGetState:
             task_state=getattr(linuxcnc, "STATE_ESTOP", 1),
             estop=1,
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.ESTOP
 
     def test_estop_bit_wins_over_task_state(self):
@@ -157,7 +159,7 @@ class TestGetState:
             task_state=getattr(linuxcnc, "STATE_ON", 4),
             estop=1,
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.ESTOP
 
     @pytest.mark.parametrize("task_state", [
@@ -171,7 +173,7 @@ class TestGetState:
         """
         svc = StateService()
         stat = _fake_stat(task_state=task_state, estop=0)
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.POWER_OFF
 
     def test_returns_loaded_when_file_set_and_interp_idle(self):
@@ -183,7 +185,7 @@ class TestGetState:
             interp_state=getattr(linuxcnc, "INTERP_IDLE", 1),
             file="/tmp/example.gcode",
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.LOADED
 
     @pytest.mark.parametrize("interp_state", [
@@ -203,7 +205,7 @@ class TestGetState:
             estop=0,
             interp_state=interp_state,
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.RUNNING
 
     def test_returns_paused_when_interp_paused(self):
@@ -213,7 +215,7 @@ class TestGetState:
             estop=0,
             interp_state=getattr(linuxcnc, "INTERP_PAUSED", 3),
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.PAUSED
 
     def test_returns_idle_when_no_file_and_interp_idle(self):
@@ -224,7 +226,7 @@ class TestGetState:
             interp_state=getattr(linuxcnc, "INTERP_IDLE", 1),
             file="",
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.IDLE
 
     def test_returns_failure_for_unknown_task_state(self):
@@ -233,7 +235,7 @@ class TestGetState:
         """
         svc = StateService()
         stat = _fake_stat(task_state=99, estop=0)
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             assert svc.get_state() is MachineState.FAILURE
 
     def test_returns_offline_when_poll_raises(self):
@@ -246,7 +248,7 @@ class TestGetState:
                 raise RuntimeError("stat.poll() blew up")
 
         with patch.object(
-            conn_mod, "get_machine_stat", return_value=_BrokenStat()
+            services_StateService_mod, "get_stat_channel", return_value=_BrokenStat()
         ):
             assert svc.get_state() is MachineState.OFFLINE
 
@@ -271,10 +273,10 @@ class TestGetStateSnapshot:
             file="/tmp/example.gcode",
             homed=[1, 1, 0],
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             snap = svc.get_state_snapshot()
 
-        assert set(snap.keys()) == {
+        assert set(snap.model_dump().keys()) == {
             "state",
             "raw_task_state",
             "raw_estop",
@@ -291,20 +293,20 @@ class TestGetStateSnapshot:
             interp_state=getattr(linuxcnc, "INTERP_IDLE", 1),
             file="/tmp/example.gcode",
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             snap = svc.get_state_snapshot()
-        assert snap["state"] == "loaded"
+        assert snap.state == "loaded"
 
     def test_snapshot_offline_when_channel_none(self):
         svc = StateService()
-        with patch.object(conn_mod, "get_machine_stat", return_value=None):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=None):
             snap = svc.get_state_snapshot()
-        assert snap["state"] == MachineState.OFFLINE.value
-        assert snap["raw_task_state"] == 0
-        assert snap["raw_estop"] == 0
-        assert snap["raw_interp_state"] == 0
-        assert snap["file"] == ""
-        assert snap["homed"] == [0, 0, 0]
+        assert snap.state == MachineState.OFFLINE.value
+        assert snap.raw_task_state == 0
+        assert snap.raw_estop == 0
+        assert snap.raw_interp_state == 0
+        assert snap.file == ""
+        assert snap.homed == [0, 0, 0]
 
     def test_snapshot_passes_through_homed_array(self):
         svc = StateService()
@@ -315,9 +317,9 @@ class TestGetStateSnapshot:
             file="",
             homed=[1, 1, 1],
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             snap = svc.get_state_snapshot()
-        assert snap["homed"] == [1, 1, 1]
+        assert snap.homed == [1, 1, 1]
 
 
 # ---------------------------------------------------------------------- #
@@ -347,7 +349,7 @@ class TestGetStateEndpoint:
             file="/tmp/cut.gcode",
             homed=[1, 1, 1],
         )
-        with patch.object(conn_mod, "get_machine_stat", return_value=stat):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=stat):
             client = TestClient(self._build_app())
             resp = client.get("/api/v1/modules/machine_state/state")
 
@@ -360,7 +362,7 @@ class TestGetStateEndpoint:
         assert body["homed"] == [1, 1, 1]
 
     def test_endpoint_returns_offline_when_stat_none(self):
-        with patch.object(conn_mod, "get_machine_stat", return_value=None):
+        with patch.object(services_StateService_mod, "get_stat_channel", return_value=None):
             client = TestClient(self._build_app())
             resp = client.get("/api/v1/modules/machine_state/state")
 
@@ -400,27 +402,27 @@ class TestDeprecatedPassthroughs:
     def test_get_machine_stat_warns(self):
         svc = StateService()
         with patch.object(
-            conn_mod, "get_machine_stat", return_value=_fake_stat()
+            services_StateService_mod, "get_stat_channel", return_value=_fake_stat()
         ):
             with pytest.warns(DeprecationWarning, match="get_machine_stat"):
                 svc.get_machine_stat()
 
     def test_get_machine_cmd_warns(self):
         svc = StateService()
-        with patch.object(conn_mod, "get_machine_cmd", return_value=None):
+        with patch.object(services_StateService_mod, "get_cmd_channel", return_value=None):
             with pytest.warns(DeprecationWarning, match="get_machine_cmd"):
                 svc.get_machine_cmd()
 
     def test_get_machine_error_warns(self):
         svc = StateService()
-        with patch.object(conn_mod, "get_machine_error", return_value=None):
+        with patch.object(services_StateService_mod, "get_error_channel", return_value=None):
             with pytest.warns(DeprecationWarning, match="get_machine_error"):
                 svc.get_machine_error()
 
     def test_is_linuxcnc_connected_warns(self):
         svc = StateService()
         with patch.object(
-            conn_mod, "is_linuxcnc_connected", return_value=False
+            services_StateService_mod, "is_linuxcnc_connected", return_value=False
         ):
             with pytest.warns(
                 DeprecationWarning, match="is_linuxcnc_connected"
@@ -434,102 +436,74 @@ class TestDeprecatedPassthroughs:
 
 
 class TestActivateEstop:
-    """Critical e-stop activation writes ``halui.estop.activate`` directly.
+    """Critical e-stop activation drives ``self._Estop.pressed.set_value(True)``.
 
-    The contract:
-      * Two HAL writes: 0 then 1 (with a small sleep) so the rising
-        edge fires on every press, even after a reset cycle left the
-        pin HIGH.
-      * On HAL failure → ``HTTPException(503)`` (no NML fallback).
-      * ``time.sleep(0.002)`` is invoked exactly once between the
-        two writes — its purpose is to cross one servo period.
+    Per the ``HalPin`` subclass architecture (see
+    ``.agent/context/LESSONS_LEARNED.md`` § 3.5), any pin-level policy
+    (edge generation, debouncing) belongs on the ``HalPin`` subclass
+    wrapped by ``EStopPin`` — the service itself only calls
+    ``set_value(True)`` on the current pin and translates a raised
+    exception into ``HTTPException(503)``. These tests swap in a
+    fake pin object so no real HAL is touched.
 
-    The tests patch ``write_hal_pin`` (which the service imports from
-    ``hardware.Connection``) so the test never touches real HAL.
+    NOTE: an earlier version of this test pinned a two-write
+    (0 then 1) rising-edge dance called directly against
+    ``halui.estop.activate`` via a free-floating ``write_hal_pin``
+    helper — exactly the anti-pattern LESSONS_LEARNED § 3.5 describes
+    fixing. That dance does not exist in the current
+    ``ReadWriteDynamicHalPin``/``EStopPin`` pair, and it does not need
+    to: edge generation for ``halui.estop.activate`` is the HAL
+    wiring's job, not Python's — see the docstring on
+    :meth:`StateService.activate_estop`. The backend's only
+    responsibility is asserting ``webgui.estop`` and turning a write
+    failure into ``HTTPException(503)``, which is exactly what these
+    tests pin.
     """
 
-    ACTIVATE_PIN = "halui.estop.activate"
-
-    def test_activate_estop_writes_zero_then_one(self):
-        """Pin must be toggled 0 → 1 so halui sees a fresh edge."""
+    def test_activate_estop_calls_set_value_true(self):
+        """The current pin's ``set_value(True)`` is the entire write path."""
         svc = StateService()
-        with patch.object(
-            services_StateService_mod, "write_hal_pin", return_value=True
-        ) as mock_write:
-            with patch.object(
-                services_StateService_mod.time, "sleep"
-            ) as mock_sleep:
-                svc.activate_estop()
+        mock_pin = MagicMock()
+        svc._Estop = EStopPin("estop", mock_pin)
 
-        # Two writes, in order: 0 first (clear leftover), 1 second (raise).
-        assert mock_write.call_count == 2
-        first = mock_write.call_args_list[0]
-        second = mock_write.call_args_list[1]
-        assert first.args == (self.ACTIVATE_PIN, 0)
-        assert second.args == (self.ACTIVATE_PIN, 1)
+        svc.activate_estop()
 
-        # Exactly one sleep between the two writes, tuned to one servo period.
-        assert mock_sleep.call_count == 1
-        sleep_arg = mock_sleep.call_args.args[0]
-        assert 0.001 <= sleep_arg <= 0.005
+        mock_pin.set_value.assert_called_once_with(True)
 
-    def test_activate_estop_raises_503_when_clear_write_fails(self):
-        """A failure on the very first HAL write must surface as
-        HTTP 503, not silently fall back to NML ``cmd.state``.
+    def test_activate_estop_raises_503_when_set_value_fails(self):
+        """A failure writing the pin must surface as HTTP 503, not
+        silently fall back to NML ``cmd.state``.
         """
-        from fastapi import HTTPException
-
         svc = StateService()
+        mock_pin = MagicMock()
+        mock_pin.set_value.side_effect = RuntimeError("HAL unreachable")
+        svc._Estop = EStopPin("estop", mock_pin)
 
-        def fail_first(name, value):
-            # Fail only on the 0-write so the test catches the
-            # error before the 1-write attempt.
-            return not (name == self.ACTIVATE_PIN and value == 0)
-
-        with patch.object(
-            services_StateService_mod, "write_hal_pin", side_effect=fail_first
-        ):
-            with pytest.raises(HTTPException) as exc_info:
-                svc.activate_estop()
+        with pytest.raises(HTTPException) as exc_info:
+            svc.activate_estop()
 
         assert exc_info.value.status_code == 503
-        assert "halui.estop.activate" in str(exc_info.value.detail)
-
-    def test_activate_estop_raises_503_when_raise_write_fails(self):
-        """The 1-write failure case — same 503 contract."""
-        from fastapi import HTTPException
-
-        svc = StateService()
-
-        def fail_second(name, value):
-            return not (name == self.ACTIVATE_PIN and value == 1)
-
-        with patch.object(
-            services_StateService_mod, "write_hal_pin", side_effect=fail_second
-        ):
-            with pytest.raises(HTTPException) as exc_info:
-                svc.activate_estop()
-
-        assert exc_info.value.status_code == 503
+        assert "estop" in str(exc_info.value.detail).lower()
 
     def test_activate_estop_does_not_fall_back_to_nml(self):
         """The whole point of this endpoint is to bypass NML. A
         wiring fault must NEVER silently switch to the slow path.
         """
         svc = StateService()
+        mock_pin = MagicMock()
+        mock_pin.set_value.side_effect = RuntimeError("HAL unreachable")
+        svc._Estop = EStopPin("estop", mock_pin)
+
         with patch.object(
-            services_StateService_mod, "write_hal_pin", return_value=False
-        ):
-            with patch.object(
-                services_StateService_mod, "execute_sync_cmd"
-            ) as mock_sync:
-                with pytest.raises(Exception):
-                    svc.activate_estop()
-                assert mock_sync.call_count == 0, (
-                    "activate_estop must not call execute_sync_cmd on "
-                    "HAL failure — silently falling back to the slow "
-                    "NML path masks wiring faults."
-                )
+            services_StateService_mod, "execute_sync_cmd"
+        ) as mock_sync:
+            with pytest.raises(HTTPException):
+                svc.activate_estop()
+            assert mock_sync.call_count == 0, (
+                "activate_estop must not call execute_sync_cmd on "
+                "HAL failure — silently falling back to the slow "
+                "NML path masks wiring faults."
+            )
 
 
 # Resolve ``services.StateService`` once for the fall-back assertion above.

@@ -27,7 +27,14 @@ class ServoThreadStateMapper:
             if isinstance(entry, LinuxCNCError):
                 normalized.append(entry)
                 continue
-            if isinstance(entry, dict):
+            if isinstance(entry, dict) and {"kind", "text", "time"} & entry.keys():
+                # Pydantic's default ``extra="ignore"`` means an
+                # unrecognised-shape dict would otherwise construct
+                # silently with every field at its default (an
+                # empty-looking error row) instead of falling through
+                # to the string wrapper below — only attempt the
+                # model construction when the dict actually carries
+                # at least one of the fields we understand.
                 try:
                     normalized.append(LinuxCNCError(**entry))
                     continue

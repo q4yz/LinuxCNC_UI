@@ -35,23 +35,64 @@ def isolated_storage(monkeypatch, tmp_path: Path):
     """Re-point the router's storage at a fresh ``tmp_path`` tree.
 
     The HTTP integration tests never touch the real ``<repo>/macros/``
-    directory — we monkeypatch ``get_macros_service`` so it returns a
-    service instance backed by an isolated ``MacroStorage`` rooted at
-    ``tmp_path/macros``. M-code cases below also re-point the
-    ``MCodeFileService`` root via a parallel fixture so the cross-kind
+    directory. ``MacrosService.__init__`` resolves its macro backing
+    store via ``domain_file_services.get_macro_service()`` — a
+    module-level cache keyed by ``(class, root)`` that returns the
+    *same* instance for every no-args call, across every test in the
+    process (see ``domain_file_services/service_factory.py``). Simply
+    building a fresh ``MacrosService()`` and stashing a
+    ``._macro_storage`` attribute on it (the previous approach here)
+    does not isolate anything — that attribute is never read; every
+    real read/write goes through ``self._macro_service``, still
+    pointing at the shared cached instance, so macros written by one
+    test leak into the next. The fix mirrors ``isolated_mcodes``
+    below: construct the isolated ``MacroFileService`` directly and
+    monkeypatch the ``get_macro_service`` factory function itself (on
+    every module that imported it) so ``MacrosService.__init__``
+    picks up the isolated instance instead of the cache.
+
+    M-code cases below also re-point the ``MCodeFileService`` root
+    via the parallel ``isolated_mcodes`` fixture so the cross-kind
     isolation tests do not touch ``<repo>/machine_config/m_codes/``
     either.
+
+    Fixture-order gotcha: ``MacrosService.__init__`` captures
+    *both* ``self._macro_service`` and ``self._mcode_service`` (via
+    ``get_macro_service()`` / ``get_mcode_service()``) once, at
+    construction time. A test that also requests ``isolated_mcodes``
+    needs its ``get_mcode_service`` patch to be in place *before*
+    ``MacrosService()`` is built — but pytest runs this fixture
+    body before ``isolated_mcodes``'s (parameter order), so
+    constructing eagerly here would freeze in the real
+    (un-isolated) mcode service for any test that isolates both
+    kinds. ``get_macros_service`` is therefore patched with a
+    lazily-constructing accessor instead of a pre-built instance —
+    by the time anything actually calls it (from inside the test
+    body, after every requested fixture has finished setting up),
+    every relevant factory patch is already in place.
     """
     from services import MacroService
-    from storage.MacroStorage import MacroStorage
+    from domain_file_services import MacroFileService
     import services.MacroService as macros_service_module
     import routers.macros as macros_router_mod
 
     isolated_root = tmp_path / "macros"
     isolated_root.mkdir(parents=True, exist_ok=True)
-    storage = MacroStorage(isolated_root)
-    service = MacroService.MacrosService()
-    service._macro_storage = storage
+    macro_service = MacroFileService(isolated_root)
+
+    monkeypatch.setattr(
+        macros_service_module,
+        "get_macro_service",
+        lambda root=None, _service=macro_service: _service,
+    )
+
+    _lazy_holder: dict[str, "MacroService.MacrosService"] = {}
+
+    def _get_isolated_macros_service():
+        if "instance" not in _lazy_holder:
+            _lazy_holder["instance"] = MacroService.MacrosService()
+        return _lazy_holder["instance"]
+
     # Patch the binding on every module namespace that captured it
     # at ``from … import get_macros_service`` time.
     for module_obj in (
@@ -62,9 +103,14 @@ def isolated_storage(monkeypatch, tmp_path: Path):
         monkeypatch.setattr(
             module_obj,
             "get_macros_service",
-            lambda: service,
+            _get_isolated_macros_service,
         )
-    return {"root": isolated_root, "storage": storage}
+    # Drop the cached singleton so the eventual lazy construction
+    # above builds against the patched factories rather than a
+    # stale cache entry left over from an earlier test.
+    from domain_file_services import reset_service_cache
+    reset_service_cache()
+    return {"root": isolated_root, "storage": macro_service}
 
 @pytest.fixture()
 def isolated_mcodes(monkeypatch, tmp_path: Path):

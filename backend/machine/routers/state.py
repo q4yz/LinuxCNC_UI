@@ -133,7 +133,7 @@ def _get_state_endpoint() -> _StateSnapshot:
     documented :class:`_StateSnapshot` shape.
     """
     snapshot = get_state_service().get_state_snapshot()
-    return _StateSnapshot(**snapshot)
+    return _StateSnapshot(**snapshot.model_dump())
 
 
 @router.post(

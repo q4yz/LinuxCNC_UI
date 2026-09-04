@@ -1,7 +1,7 @@
 // Structural tests for ``frontend/src/facades/temperatureFacade.ts``.
 //
 // Behavioural coverage of the wire-shape translation lives in
-// ``test-temperature-mapper.mjs``. This file pins the facade's
+// ``test-temperature-mapper.ts``. This file pins the facade's
 // public surface so a future refactor that silently renames or
 // drops a method is caught immediately.
 //
@@ -25,17 +25,22 @@ const generatedPath = resolve(
   "frontend/generated/api/index.ts",
 );
 
-test("module surface: temperatureFacade object + named export", () => {
-  assert.match(source, /export\s+const\s+temperatureFacade\s*=/);
-  assert.match(source, /export\s+default\s+temperatureFacade/);
+test("module surface: TemperatureService class + default export", () => {
+  // The static class is the facade's real surface —
+  // ``temperatureFacade``, a positional-argument wrapper object for
+  // pre-OOP call sites, was removed once its last consumer
+  // (``stores/temperatureStore.ts``) migrated to calling
+  // ``TemperatureService`` directly.
+  assert.match(source, /export\s+class\s+TemperatureService\s*\{/);
+  assert.match(source, /export\s+default\s+TemperatureService/);
 });
 
 test("facade exposes fetchReadings()", () => {
-  assert.match(source, /fetchReadings\s*[(:]/);
+  assert.match(source, /static\s+async\s+fetchReadings\s*\(/);
 });
 
-test("facade exposes setTarget(toolId, target)", () => {
-  assert.match(source, /setTarget\s*\(\s*\w+\s*,\s*\w+\s*\)/);
+test("facade exposes setTarget(request: HeaterControlRequest)", () => {
+  assert.match(source, /static\s+async\s+setTarget\s*\(\s*request\s*:\s*HeaterControlRequest\s*\)/);
 });
 
 test("facade delegates fetchReadings to BaseThreadService.getBaseThreadSnapshot", () => {
@@ -56,11 +61,7 @@ test("facade returns CommandResult, never throws", () => {
   assert.match(source, /CommandResult\.failure/);
   assert.match(source, /describeError/);
   // The ``setTarget`` body must wrap the call in a try/catch.
-  assert.match(source, /catch\s*\(\s*err\s*\)/);
-});
-
-test("facade is frozen so consumers cannot mutate the surface", () => {
-  assert.match(source, /Object\.freeze\(\{[\s\S]+fetchReadings[\s\S]+setTarget/);
+  assert.match(source, /catch\s*\(\s*err\s*:\s*unknown\s*\)/);
 });
 
 test("(skipped without generated client) behavioural: setTarget success", async (t) => {
@@ -79,7 +80,12 @@ test("(skipped without generated client) behavioural: setTarget success", async 
     t.skip(`facade import failed: ${err.message}`);
     return;
   }
-  const result = await facade.temperatureFacade.setTarget("extruder", 210);
+  const { HeaterControlRequest } = await import(
+    pathToFileURL(resolve(repoRoot, "frontend/src/entities/tools/Heater.ts")).href
+  );
+  const result = await facade.default.setTarget(
+    new HeaterControlRequest({ toolId: "extruder", target: 210 }),
+  );
   assert.ok(result, "facade must return a CommandResult");
   // ``result.ok`` is the only reliable assertion — the generated
   // client's actual response shape depends on the backend build.

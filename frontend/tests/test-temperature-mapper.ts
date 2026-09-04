@@ -100,9 +100,16 @@ test("toReading: heater with non-finite min_temp / max_temp → null", () => {
   assert.equal(r.hasBounds(), false);
 });
 
-test("toReading: unknown / missing type → null", () => {
-  assert.equal(toReading({ id: "x" }), null);
+test("toReading: unknown type → null", () => {
   assert.equal(toReading({ id: "x", type: "mystery" }), null);
+});
+
+test("toReading: missing type falls back to legacy duck-typing", () => {
+  // No explicit ``type`` field: older payloads are inferred by shape.
+  // No ``target`` present → treated as a plain sensor reading.
+  const r = toReading({ id: "x" });
+  assert.equal(r.constructor.name, "SensorReading");
+  assert.equal(r.actualCelsius, 0);
 });
 
 test("toReading: type='spindle_digital' is NOT a temperature reading", () => {

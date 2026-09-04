@@ -5,7 +5,6 @@ import { ReadingSet } from "../entities/temperature/ReadingSet";
 import { toReadingSet } from "../mappers/temperatureMapper";
 import { describeError, errorStatus } from "../core/error-format";
 
-// Adjust the import path based on where you saved the class
 import { HeaterControlRequest } from "../entities/tools/Heater";
 import { toHeaterCommand } from "../mappers/toolsMapper";
 import type { HeaterCommandStateResponse } from "../../generated/api/models/HeaterCommandStateResponse";
@@ -60,23 +59,3 @@ export class TemperatureService {
 }
 
 export default TemperatureService;
-
-/**
- * Legacy positional-API wrapper.
- *
- * `modules/temperature/store.ts` (and other pre-OOP call sites)
- * still calls the facade with positional arguments. `TemperatureService`
- * takes a `HeaterControlRequest` object now, so this wrapper adapts the
- * old call sites to the new static API without duplicating dispatch logic.
- */
-export const temperatureFacade = {
-    async setTarget(toolId: string, target: number): Promise<CommandResult> {
-        return TemperatureService.setTarget(
-            new HeaterControlRequest({toolId, target}),
-        );
-    },
-
-    async fetchReadings(): Promise<ReadingSet> {
-        return TemperatureService.fetchReadings();
-    },
-};

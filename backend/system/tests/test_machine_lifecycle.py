@@ -127,12 +127,102 @@ def test_status_reports_running_with_pids(running_process, isolated_active_dir):
     assert status["pids"] == [4242]
 
 
-def test_status_reports_generated_ini(no_processes, isolated_active_dir):
-    ini = isolated_active_dir / "machine.ini"
+# --------------------------------------------------------------------- #
+# Default machine (persisted selection)                                  #
+# --------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def isolated_machines_root(monkeypatch, tmp_path, request):
+    """Point ``MACHINE_CONFIG_DIR`` / ``MACHINES_DIR`` at an isolated
+    tmp tree with a ``machines/`` folder.
+
+    The default-machine helpers read ``MACHINE_CONFIG_DIR`` at call
+    time (import inside the method), so patching the paths module is
+    enough. The machine file service is a cached singleton, so the
+    cache must be dropped both before and after — same pattern as
+    :func:`isolated_active_dir`.
+    """
+    from services import domain_file_services, reset_service_cache
+
+    mc = tmp_path / "machine_config"
+    machines = mc / "machines"
+    machines.mkdir(parents=True)
+    paths_mod = domain_file_services.paths
+    monkeypatch.setattr(paths_mod, "MACHINE_CONFIG_DIR", mc)
+    monkeypatch.setattr(paths_mod, "MACHINES_DIR", machines)
+    reset_service_cache()
+    request.addfinalizer(reset_service_cache)
+    return {"machine_config": mc, "machines": machines}
+
+
+def _make_machine(machines_root, name):
+    """Create ``machines/<name>/config/machine.ini`` and return the ini."""
+    cfg = machines_root / name / "config"
+    cfg.mkdir(parents=True)
+    ini = cfg / "machine.ini"
     ini.write_text("[EMC]\n")
+    return ini
+
+
+def test_default_machine_is_none_until_set(no_processes, isolated_machines_root):
+    assert _service().default_machine() is None
+    assert _service().default_ini() is None
     status = _service().status()
-    assert status["ini_exists"] is True
+    assert status["default_machine"] is None
+    assert status["ini_exists"] is False
+
+
+def test_set_default_machine_persists_and_validates(no_processes, isolated_machines_root):
+    ini = _make_machine(isolated_machines_root["machines"], "PrintNC")
+
+    returned = _service().set_default_machine("PrintNC")
+
+    assert returned == ini
+    assert _service().default_machine() == "PrintNC"
+    assert _service().default_ini() == ini
+    # The selection survives on disk (a fresh service instance sees it).
+    assert _service().default_machine() == "PrintNC"
+
+    status = _service().status()
+    assert status["default_machine"] == "PrintNC"
+    # Deprecated alias kept in lockstep for the generated model.
+    assert status["machine_name"] == "PrintNC"
     assert status["ini_path"] == str(ini)
+    assert status["ini_exists"] is True
+
+
+def test_machine_ini_accepts_the_generated_configs_layout(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    """Real generator output: ``machines/<name>/configs/machine.ini``
+    (plural ``configs/``) must resolve even though the manual
+    ``config/`` convention is tried first.
+    """
+    cfg = isolated_machines_root["machines"] / "printnc" / "configs"
+    cfg.mkdir(parents=True)
+    ini = cfg / "machine.ini"
+    ini.write_text("[EMC]\n")
+
+    assert _service().machine_ini("printnc") == ini
+
+    _service().set_default_machine("printnc")
+    assert _service().default_ini() == ini
+    status = _service().status()
+    assert status["default_machine"] == "printnc"
+    assert status["ini_exists"] is True
+
+
+def test_set_default_machine_rejects_missing_ini(no_processes, isolated_machines_root):
+    (isolated_machines_root["machines"] / "Empty").mkdir()
+    with pytest.raises(NotFoundError):
+        _service().set_default_machine("Empty")
+    assert _service().default_machine() is None
+
+
+def test_machine_ini_rejects_path_escape(no_processes, isolated_machines_root):
+    with pytest.raises(BadRequestError):
+        _service().machine_ini("../outside")
 
 
 # --------------------------------------------------------------------- #
@@ -145,23 +235,45 @@ def test_start_raises_conflict_when_already_running(running_process, isolated_ac
         _service().start()
 
 
-def test_start_raises_not_found_without_generated_ini(no_processes, isolated_active_dir):
+def test_start_raises_not_found_without_default_machine(no_processes, isolated_machines_root):
     with pytest.raises(NotFoundError):
         _service().start()
 
 
-def test_start_runs_linuxcnc_with_the_generated_ini(no_processes, isolated_active_dir, monkeypatch, tmp_path):
-    ini = isolated_active_dir / "machine.ini"
-    ini.write_text("[EMC]\n")
-
+def _patch_launch(monkeypatch, tmp_path, exit_code=None):
+    """Replace the real process launch with ``_FakePopen``."""
     monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "console.log")
     monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
     monkeypatch.delenv("LINUXCNC_START_COMMAND", raising=False)
     monkeypatch.setattr(
         mls_module.subprocess,
         "Popen",
-        lambda command, **kwargs: _FakePopen(command, exit_code=None, pid=1234),
+        lambda command, **kwargs: _FakePopen(command, exit_code=exit_code, pid=1234),
     )
+
+
+def test_start_persists_and_launches_the_requested_machine(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    ini = _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _patch_launch(monkeypatch, tmp_path)
+
+    result = _service().start(machine="PrintNC")
+
+    # start implies main: the selection is persisted and the INI at
+    # machines/<machine>/config/machine.ini is what gets launched.
+    assert _service().default_machine() == "PrintNC"
+    assert _FakePopen.last_command == ["linuxcnc", str(ini)]
+    assert result["started_pid"] == 1234
+    assert result["default_machine"] == "PrintNC"
+
+
+def test_start_without_machine_launches_the_default(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    ini = _make_machine(isolated_machines_root["machines"], "OtherCNC")
+    _service().set_default_machine("OtherCNC")
+    _patch_launch(monkeypatch, tmp_path)
 
     result = _service().start()
 
@@ -169,9 +281,11 @@ def test_start_runs_linuxcnc_with_the_generated_ini(no_processes, isolated_activ
     assert result["started_pid"] == 1234
 
 
-def test_start_honours_command_override(no_processes, isolated_active_dir, monkeypatch, tmp_path):
-    ini = isolated_active_dir / "machine.ini"
-    ini.write_text("[EMC]\n")
+def test_start_honours_command_override(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    ini = _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _service().set_default_machine("PrintNC")
 
     monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "console.log")
     monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
@@ -194,18 +308,11 @@ def test_start_honours_command_override(no_processes, isolated_active_dir, monke
 
 
 def test_start_raises_bad_request_when_process_exits_immediately(
-    no_processes, isolated_active_dir, monkeypatch, tmp_path
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
 ):
-    ini = isolated_active_dir / "machine.ini"
-    ini.write_text("[EMC]\n")
-
-    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "console.log")
-    monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(
-        mls_module.subprocess,
-        "Popen",
-        lambda command, **kwargs: _FakePopen(command, exit_code=1, pid=1234),
-    )
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _service().set_default_machine("PrintNC")
+    _patch_launch(monkeypatch, tmp_path, exit_code=1)
 
     with pytest.raises(BadRequestError):
         _service().start()
@@ -333,8 +440,11 @@ def test_switch_deploys_generated_machine_then_reports_status(no_processes, monk
 
     result = _service().switch(machine="PrintNC", start_machine=False)
 
+    # The deploy itself still lands in active/ (legacy switch flow).
     assert (dirs["active"] / "machine.ini").exists()
-    assert result["ini_exists"] is True
+    # But status() reports the *default machine*, not active/ — the
+    # default was never set in this test, so no INI is reported.
+    assert result["ini_exists"] is False
 
 
 # --------------------------------------------------------------------- #
@@ -342,7 +452,7 @@ def test_switch_deploys_generated_machine_then_reports_status(no_processes, monk
 # --------------------------------------------------------------------- #
 
 
-def test_get_status_endpoint_returns_200(no_processes, isolated_active_dir):
+def test_get_status_endpoint_returns_200(no_processes, isolated_machines_root):
     response = _client().get("/api/v1/system/machine")
     assert response.status_code == 200
     body = response.json()
@@ -350,12 +460,13 @@ def test_get_status_endpoint_returns_200(no_processes, isolated_active_dir):
         "running": False,
         "pids": [],
         "machine_name": None,
+        "default_machine": None,
         "ini_path": None,
         "ini_exists": False,
     }
 
 
-def test_start_endpoint_returns_404_without_generated_ini(no_processes, isolated_active_dir):
+def test_start_endpoint_returns_404_without_default_machine(no_processes, isolated_machines_root):
     response = _client().post("/api/v1/system/machine/start")
     assert response.status_code == 404
 
@@ -363,6 +474,54 @@ def test_start_endpoint_returns_404_without_generated_ini(no_processes, isolated
 def test_start_endpoint_returns_409_when_already_running(running_process, isolated_active_dir):
     response = _client().post("/api/v1/system/machine/start")
     assert response.status_code == 409
+
+
+def test_start_endpoint_with_machine_body_persists_default(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    ini = _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _patch_launch(monkeypatch, tmp_path)
+
+    response = _client().post(
+        "/api/v1/system/machine/start",
+        json={"machine": "PrintNC"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["started_pid"] == 1234
+    assert body["default_machine"] == "PrintNC"
+    assert body["ini_path"] == str(ini)
+    assert _service().default_machine() == "PrintNC"
+
+
+def test_set_default_endpoint_persists_without_starting(
+    no_processes, isolated_machines_root
+):
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+
+    response = _client().post(
+        "/api/v1/system/machine/default",
+        json={"machine": "PrintNC"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["default_machine"] == "PrintNC"
+    assert body["running"] is False
+    # Selection persisted, nothing launched.
+    assert _service().default_machine() == "PrintNC"
+
+
+def test_set_default_endpoint_returns_404_for_missing_ini(
+    no_processes, isolated_machines_root
+):
+    (isolated_machines_root["machines"] / "Empty").mkdir()
+    response = _client().post(
+        "/api/v1/system/machine/default",
+        json={"machine": "Empty"},
+    )
+    assert response.status_code == 404
 
 
 def test_stop_endpoint_returns_200_when_already_stopped(no_processes, isolated_active_dir):

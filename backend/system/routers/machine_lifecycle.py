@@ -23,22 +23,55 @@ router = APIRouter(prefix="/api/v1/system/machine", tags=["System: Machine Lifec
 
 
 class MachineStatusResponse(BaseModel):
-    """Live state of the LinuxCNC session and the generated INI."""
+    """Live state of the LinuxCNC session and the default machine."""
 
     running: bool = Field(..., description="Whether a LinuxCNC session process is alive.")
     pids: List[int] = Field(..., description="Pids of the detected LinuxCNC processes.")
     machine_name: Optional[str] = Field(
-        None, description="Machine name from the active INI, if deployed."
+        None,
+        description="Deprecated alias of ``default_machine`` (kept until the generated client is regenerated).",
+    )
+    default_machine: Optional[str] = Field(
+        None,
+        description="Machine folder (under machine_config/machines) selected as the default.",
     )
     ini_path: Optional[str] = Field(
-        None, description="Path of the generated INI under machine_config/active."
+        None,
+        description="Path of the default machine's INI (machines/<default>/config/machine.ini), if it exists.",
     )
-    ini_exists: bool = Field(..., description="Whether a generated INI exists.")
+    ini_exists: bool = Field(..., description="Whether the default machine's INI exists.")
 
 
 class MachineStartResponse(MachineStatusResponse):
     started_pid: Optional[int] = Field(
         None, description="Pid of the launched LinuxCNC process."
+    )
+
+
+class MachineStartRequest(BaseModel):
+    """Optional body for ``POST /start``."""
+
+    machine: Optional[str] = Field(
+        None,
+        description=(
+            "Machine folder under machine_config/machines. When given, "
+            "it is persisted as the default (start implies main) and "
+            "its config/machine.ini is launched. When omitted, the "
+            "persisted default machine is started."
+        ),
+    )
+
+
+class MachineDefaultRequest(BaseModel):
+    """Body for ``POST /default`` — select the default machine."""
+
+    machine: str = Field(
+        ...,
+        description=(
+            "Machine folder under machine_config/machines. Persisted as "
+            "the default without starting anything; the folder must "
+            "contain config/machine.ini."
+        ),
     )
 
 
@@ -65,8 +98,9 @@ class MachineSwitchRequest(BaseModel):
     summary="Get machine session status",
     description=(
         "Reports whether a LinuxCNC session is running (pgrep on "
-        "linuxcnc/emc/milltask/linuxcncsvr), which machine is active, and "
-        "whether a generated INI exists under machine_config/active."
+        "linuxcnc/emc/milltask/linuxcncsvr), which machine is the "
+        "persisted default, and whether its INI exists at "
+        "machines/<default>/config/machine.ini."
     ),
     operation_id="getMachineSessionStatus",
     response_model=MachineStatusResponse,
@@ -79,22 +113,51 @@ def get_machine_status() -> MachineStatusResponse:
     "/start",
     summary="Start the LinuxCNC session",
     description=(
-        "Runs the console command `linuxcnc <machine_config/active/machine.ini>` "
-        "as a detached console process on the machine's display (DISPLAY=:0 "
-        "unless inherited). Console output is tee'd into "
-        "logs/linuxcnc_console.log. Returns 409 when a session is already "
-        "running and 404 when no generated INI has been deployed."
+        "Starts the LinuxCNC session. With a ``machine`` body that "
+        "machine is persisted as the default and its "
+        "machines/<machine>/config/machine.ini is launched; without "
+        "one, the persisted default machine is started (404 when no "
+        "default has been selected). Runs the console command as a "
+        "detached process on the machine's display (DISPLAY=:0 unless "
+        "inherited); console output is tee'd into "
+        "logs/linuxcnc_console.log. Returns 409 when a session is "
+        "already running and 404 when the machine's INI is missing."
     ),
     operation_id="startMachineSession",
     response_model=MachineStartResponse,
     responses={
         409: {"description": "LinuxCNC is already running."},
-        404: {"description": "No generated INI in machine_config/active, or the linuxcnc executable is missing."},
+        404: {"description": "No default machine selected, or the machine's config/machine.ini is missing."},
         400: {"description": "The process failed to start or exited immediately."},
     },
 )
-def start_machine() -> MachineStartResponse:
-    return MachineStartResponse(**get_machine_lifecycle_service().start())
+def start_machine(
+    payload: MachineStartRequest = Body(default=MachineStartRequest()),
+) -> MachineStartResponse:
+    return MachineStartResponse(
+        **get_machine_lifecycle_service().start(machine=payload.machine)
+    )
+
+
+@router.post(
+    "/default",
+    summary="Set the default machine",
+    description=(
+        "Persists the default machine (\"Select as main\") without "
+        "starting anything. Generic \"Start machine\" actions launch "
+        "this machine's machines/<default>/config/machine.ini."
+    ),
+    operation_id="setDefaultMachine",
+    response_model=MachineStatusResponse,
+    responses={
+        404: {"description": "The machine's config/machine.ini is missing."},
+        400: {"description": "Invalid machine path."},
+    },
+)
+def set_default_machine(payload: MachineDefaultRequest) -> MachineStatusResponse:
+    service = get_machine_lifecycle_service()
+    service.set_default_machine(payload.machine)
+    return MachineStatusResponse(**service.status())
 
 
 @router.post(

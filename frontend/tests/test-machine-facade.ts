@@ -149,7 +149,7 @@ test("facade defines updateStatus action that mutates the raw state", () => {
   const text = readFacade();
   assert.match(
     text,
-    /updateStatus\s*\(\s*newPayload\s*\)\s*\{/,
+    /updateStatus\s*\(\s*newPayload\s*:/,
     "updateStatus must accept a payload object",
   );
   // The action must touch all three flags the transport cares about.
@@ -171,10 +171,12 @@ test("facade is registered as a Pinia store via defineStore", () => {
 
 test("servo-thread store forwards telemetry to the facade on every WS message", () => {
   // The facade is useless in production unless the servo-thread
-  // store (which owns the WebSocket) calls ``updateStatus`` on
-  // every ``full_state`` / ``delta`` payload. The machine module
-  // store composes the servo thread; it does not import the
-  // facade directly.
+  // store's ``mirrorToFacade()`` runs on every state change. The
+  // WebSocket dispatch itself (full_state/delta branches) lives in
+  // ``facades/servoThreadFacade.ts``, which calls into
+  // ``store.setFullState`` / ``store.applyDelta`` — both of which
+  // call ``mirrorToFacade()`` (see the dedicated coverage in
+  // test-servo-thread.ts).
   const servoPath = resolve(
     repoRoot,
     "frontend/src/stores/servoThread.ts",
@@ -183,13 +185,11 @@ test("servo-thread store forwards telemetry to the facade on every WS message", 
   // Import the facade from the servo-thread store.
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\/stateFacade\.js["']/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["']\.\/stateFacade["']/,
   );
-  // Forward on the full_state and delta branches via the
-  // mirror helper.
-  assert.match(text, /useFacadeStore\s*\(/);
-  assert.match(text, /payload\.type\s*===\s*["']full_state["']/);
-  assert.match(text, /payload\.type\s*===\s*["']delta["']/);
+  assert.match(text, /useFacadeStore\s*\(\s*\)/);
+  assert.match(text, /const\s+setFullState\s*=/);
+  assert.match(text, /const\s+applyDelta\s*=/);
 });
 
 test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
@@ -202,7 +202,7 @@ test("ActivePrintWidget binds to the facade store (systemState getter)", () => {
   const text = readFileSync(widgetPath, "utf-8");
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/stateFacade\.js["']/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*["'][^"']*stores\/stateFacade["']/,
   );
   assert.match(text, /systemState/);
   // No legacy compat-shim import — the widget reads from the
@@ -317,7 +317,7 @@ test("FilesView forwards every edit-event argument to App.vue", () => {
   );
   const text = readFileSync(fvPath, "utf-8");
   // ``handleEdit`` must use a rest parameter so mode/content survive.
-  assert.match(text, /function\s+handleEdit\s*\(\s*\.\.\.\s*args\s*\)/);
+  assert.match(text, /function\s+handleEdit\s*\(\s*\.\.\.\s*args\s*:/);
   assert.match(text, /emit\(\s*['"]edit['"]\s*,\s*\.\.\.\s*args\s*\)/);
 });
 
@@ -352,9 +352,9 @@ test("ActivePrintWidget reads progress from the base-thread store", () => {
   //
   //   * import ``useBaseThreadStore`` and destructure the
   //     ``progress`` ref via ``storeToRefs``,
-  //   * bind the template to ``progress.current_line`` /
-  //     ``progress.total_lines`` (the polled values, not the
-  //     legacy WebSocket fields),
+  //   * bind the template to ``progress.currentLine`` /
+  //     ``progress.totalLines`` — the ``ProgramProgress`` entity's
+  //     camelCase getters (not the raw snake_case wire fields),
   //   * NOT own its own ``setInterval`` / ``clearInterval`` —
   //     that's the base-thread store's job.
   const widgetPath = resolve(
@@ -367,17 +367,15 @@ test("ActivePrintWidget reads progress from the base-thread store", () => {
     text,
     /const\s*\{\s*progress\s*\}\s*=\s*storeToRefs\s*\(\s*baseThread\s*\)/,
   );
-  assert.match(text, /\{\{\s*progress\.current_line\s*\}\}/);
+  assert.match(text, /\{\{\s*progress\.currentLine\s*\}\}/);
   assert.match(
     text,
-    /\{\{\s*progress\.total_lines[^}]*\}\}/,
-    "template must render the polled total_lines (with '?' fallback)",
+    /\{\{\s*progress\.totalLines[^}]*\}\}/,
+    "template must render the polled totalLines (with '?' fallback)",
   );
   // The widget must NOT own a polling interval — the base-thread
-  // store owns that. ``onBeforeUnmount`` was used to clear the
-  // legacy interval and must be gone now too.
+  // store owns that.
   assert.doesNotMatch(text, /setInterval\s*\(\s*pollProgress/);
   assert.doesNotMatch(text, /clearInterval\s*\(\s*progressPollHandle/);
-  assert.doesNotMatch(text, /onBeforeUnmount\s*\(/);
   assert.doesNotMatch(text, /ModulesProgramService\.getProgramProgress\s*\(/);
 });

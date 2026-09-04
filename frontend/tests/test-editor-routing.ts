@@ -23,7 +23,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -322,34 +322,12 @@ test("Save buttons are hidden when readOnly=true", () => {
   )
 })
 
-test("no caller still pushes the removed /config route", () => {
-  // Regression guard: when the universal editor refactor replaced
-  // ``/config/:filename`` with ``/editor?source=...&name=...`` a
-  // few callers were left behind — the route was removed but the
-  // pushes were not. Grep every Vue file under ``src/`` for any
-  // ``name: 'config'`` router push; the legacy route no longer
-  // exists so any match is a bug.
-  const sources = [
-    "frontend/src/views/DashboardView.vue",
-    "frontend/src/views/EditorView.vue",
-    "frontend/src/components/FileManager.vue",
-    "frontend/src/views/MachineConfigView.vue",
-    "frontend/src/components/machineconfig/ActivePanel.vue",
-    "frontend/src/components/machineconfig/CompiledOutputViewer.vue",
-    "frontend/src/components/machineconfig/ProfilesExplorer.vue",
-    "frontend/src/components/macros/MacroManagerPanel.vue",
-    "frontend/src/components/macros/McodeManagerPanel.vue",
-    "frontend/src/components/macros/McodePanel.vue",
-    "frontend/src/components/macros/MacroPanel.vue",
-  ]
-  for (const rel of sources) {
-    const abs = resolve(repoRoot, rel)
-    if (!existsSync(abs)) continue
-    const text = readText(abs)
-    assert.doesNotMatch(
-      text,
-      /router\.push\(\s*\{\s*name:\s*['"]config['"]/,
-      `${rel} still pushes the removed 'config' route`,
-    )
-  }
-})
+// The premise behind this test ("the /config route was removed by
+// the universal-editor refactor") is stale: ``/config`` is alive and
+// well — MachineConfigView.vue was folded into ConfigView.vue, which
+// is the primary machine-config page now (see test-https-banner.ts's
+// "router registers the /config route" and "AppSidebar exposes a
+// config entry"). EditorView.vue's ``closeEditor()`` legitimately
+// routes back to ``{ name: 'config' }`` after closing a
+// profiles/macros/m_codes/active/staged file — that's correct
+// current behaviour, not a leftover bug.

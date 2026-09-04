@@ -320,8 +320,8 @@ class TestExecuteGcode:
             },
         )()
         with patch.object(conn_mod, "_stat_ch", conn_mod._LazyChannel("stat")):
-            with patch.object(conn_mod, "get_machine_stat", return_value=fake_stat):
-                with patch.object(conn_mod, "get_machine_cmd", return_value=fake_cmd):
+            with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
+                with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
                     result = execute_gcode("G28")
 
         assert result == {"status": "success", "gcode": "G28"}
@@ -333,8 +333,8 @@ class TestExecuteGcode:
         """
         from fastapi import HTTPException
 
-        with patch.object(conn_mod, "get_machine_stat", return_value=None):
-            with patch.object(conn_mod, "get_machine_cmd", return_value=None):
+        with patch.object(conn_mod, "get_stat_channel", return_value=None):
+            with patch.object(conn_mod, "get_cmd_channel", return_value=None):
                 with pytest.raises(HTTPException) as excinfo:
                     execute_gcode("G28")
         assert excinfo.value.status_code == 503
@@ -358,8 +358,8 @@ class TestExecuteGcode:
                 "wait_complete": lambda self, t: getattr(conn_mod.linuxcnc, "RCS_DONE", 1),
             },
         )()
-        with patch.object(conn_mod, "get_machine_stat", return_value=fake_stat):
-            with patch.object(conn_mod, "get_machine_cmd", return_value=fake_cmd):
+        with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
                 execute_gcode("G28")
 
         assert mode_called == []

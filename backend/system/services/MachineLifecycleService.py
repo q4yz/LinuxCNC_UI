@@ -2,16 +2,19 @@
 
 The system service is the always-running half of the backend split,
 so it owns the LinuxCNC *process* lifecycle: detecting whether a
-``linuxcnc`` session is alive, starting the generated INI, stopping
-the session again, and switching the active machine (deploy a
-generated machine's templates → restart). Generating the templates
-themselves (profile → ``machine_config/machines/<name>/configs/``)
-is a separate step — see
-``POST /api/v1/modules/machineconfig/machines/generate``.
+``linuxcnc`` session is alive, starting the default machine's INI,
+stopping the session again, and remembering which machine is the
+"default" (the one generic "Start machine" buttons launch).
+
+The default machine is persisted in
+``machine_config/default_machine.json`` and points at a machine
+folder under ``machine_config/machines/`` whose INI lives at
+``<machine>/config/machine.ini`` — the ``machine_config/active/``
+deploy flow is deprecated and no longer part of the start path.
 
 Starting literally runs the console command::
 
-    linuxcnc <machine_config/active/machine.ini>
+    linuxcnc <machine_config/machines/<default>/config/machine.ini>
 
 The process is spawned detached (``start_new_session=True``) with its
 console output tee'd into ``logs/linuxcnc_console.log`` at the
@@ -22,6 +25,7 @@ using a ``{ini}`` placeholder, e.g. ``"xterm -e linuxcnc {ini}"``.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shlex
@@ -46,6 +50,10 @@ PROCESS_PATTERNS: tuple[str, ...] = ("linuxcnc", "emc", "milltask", "linuxcncsvr
 #: Console log for started LinuxCNC sessions (repository root).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CONSOLE_LOG = _REPO_ROOT / "logs" / "linuxcnc_console.log"
+
+#: Persisted default-machine selection, stored as
+#: ``machine_config/default_machine.json`` (sibling of ``machines/``).
+_DEFAULT_MACHINE_FILE_NAME = "default_machine.json"
 
 #: Grace period (seconds) between SIGINT and SIGTERM / SIGKILL escalation.
 _STOP_GRACE_SECONDS = 10.0
@@ -84,26 +92,94 @@ class MachineLifecycleService:
     def is_running(self) -> bool:
         return bool(linuxcnc_pids())
 
-    def active_ini(self) -> Optional[Path]:
-        """First ``*.ini`` under ``machine_config/active`` (the generated one)."""
-        if not ACTIVE_DIR.exists():
-            return None
-        inis = sorted(ACTIVE_DIR.glob("*.ini"))
-        return inis[0] if inis else None
+    # ------------------------------------------------------------------ #
+    # Default machine (persisted selection)                               #
+    # ------------------------------------------------------------------ #
 
-    def machine_name(self) -> Optional[str]:
+    def _default_machine_file(self) -> Path:
+        """``machine_config/default_machine.json`` (call-time path lookup
+        so tests can repoint ``MACHINE_CONFIG_DIR``)."""
+        from domain_file_services.paths import MACHINE_CONFIG_DIR
+
+        return Path(MACHINE_CONFIG_DIR) / _DEFAULT_MACHINE_FILE_NAME
+
+    def default_machine(self) -> Optional[str]:
+        """Name of the persisted default machine, if any."""
         try:
-            return get_active_service().machine_name()
-        except Exception as exc:  # noqa: BLE001 - best-effort probe
-            logger.warning("machine_name probe failed: %s", exc)
+            data = json.loads(self._default_machine_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             return None
+        name = data.get("default_machine") if isinstance(data, dict) else None
+        return name if isinstance(name, str) and name else None
+
+    def machine_ini(self, machine: str) -> Path:
+        """Absolute INI path of a machine folder.
+
+        Two layouts are accepted (first match wins):
+
+          * ``machines/<machine>/config/machine.ini``   (manual layout)
+          * ``machines/<machine>/configs/machine.ini``  (generator output)
+
+        Raises:
+            BadRequestError: ``machine`` escapes ``machines/``.
+            NotFoundError: the INI exists in neither layout.
+        """
+        try:
+            base = get_machine_service().safe_join(machine)
+        except ValueError as exc:
+            raise BadRequestError(str(exc)) from exc
+
+        for relative in ("config/machine.ini", "configs/machine.ini"):
+            candidate = base / relative
+            if candidate.is_file():
+                return candidate
+
+        raise NotFoundError(
+            f"No INI for machine '{machine}' — looked at "
+            f"machines/{machine}/config/machine.ini and "
+            f"machines/{machine}/configs/machine.ini."
+        )
+
+    def default_ini(self) -> Optional[Path]:
+        """INI of the persisted default machine, or ``None`` when unset
+        (or the selected machine has since been deleted)."""
+        name = self.default_machine()
+        if not name:
+            return None
+        try:
+            return self.machine_ini(name)
+        except (NotFoundError, BadRequestError):
+            return None
+
+    def set_default_machine(self, machine: str) -> Path:
+        """Persist ``machine`` as the default ("Select as main").
+
+        Returns the machine's INI path. Raises when the machine folder
+        carries no INI (``config/`` or ``configs/`` layout) — a default
+        that cannot start would only move the failure to a later, more
+        confusing place.
+        """
+        ini = self.machine_ini(machine)
+        path = self._default_machine_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"default_machine": machine}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        logger.info("Default machine set to '%s' (%s).", machine, ini)
+        return ini
 
     def status(self) -> Dict[str, Any]:
-        ini = self.active_ini()
+        ini = self.default_ini()
+        name = self.default_machine()
         return {
             "running": self.is_running(),
             "pids": linuxcnc_pids(),
-            "machine_name": self.machine_name(),
+            # ``machine_name`` is kept as a deprecated alias of
+            # ``default_machine`` so the existing generated API model
+            # stays valid until the client is regenerated.
+            "machine_name": name,
+            "default_machine": name,
             "ini_path": str(ini) if ini else None,
             "ini_exists": ini is not None,
         }
@@ -112,19 +188,34 @@ class MachineLifecycleService:
     # Start                                                               #
     # ------------------------------------------------------------------ #
 
-    def start(self) -> Dict[str, Any]:
-        """Run ``linuxcnc <generated ini>`` as a console process."""
+    def start(self, machine: Optional[str] = None) -> Dict[str, Any]:
+        """Run ``linuxcnc <ini>`` as a console process.
+
+        Args:
+            machine: Optional machine folder name under
+                ``machine_config/machines``. When given, it is
+                persisted as the default ("start implies main") and
+                its ``config/machine.ini`` is launched. When omitted,
+                the persisted default machine is started; a
+                ``NotFoundError`` is raised when no default has been
+                selected yet.
+        """
         if self.is_running():
             raise ConflictError(
                 f"LinuxCNC is already running (pids {linuxcnc_pids()})."
             )
 
-        ini = self.active_ini()
-        if ini is None:
+        if machine is not None:
+            # Starting a specific machine makes it the default — one
+            # source of truth for "which machine is main".
+            self.set_default_machine(machine)
+        elif self.default_machine() is None:
             raise NotFoundError(
-                "No generated INI found in machine_config/active — "
-                "generate and deploy a machine first."
+                "No default machine selected — select one with "
+                "'Select as main' in the Machines explorer."
             )
+
+        ini = self.machine_ini(self.default_machine())
 
         command = self._build_command(ini)
         env = os.environ.copy()
@@ -141,7 +232,11 @@ class MachineLifecycleService:
         try:
             process = subprocess.Popen(
                 command,
-                cwd=str(ACTIVE_DIR),
+                # Relative INI references (e.g. HAL includes) resolve
+                # against the machine's own config folder — the
+                # deprecated active/ dir is no longer part of the
+                # start path.
+                cwd=str(ini.parent),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 env=env,

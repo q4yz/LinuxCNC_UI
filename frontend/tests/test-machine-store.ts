@@ -237,13 +237,17 @@ test("store rejects ESTOP-driven power-on", () => {
 });
 
 test("store forwards MDI commands through ModulesMachineStateService.runMdiCommand", () => {
-  const text = readStore();
-  // ``setPosition`` and ``setCoordinateSystem`` both funnel
-  // through the MDI endpoint. After the state-module extraction,
-  // MDI lives in ``backend.modules.state.router`` (tag
+  // MDI dispatch (setPosition / setCoordinateSystem) is handled by
+  // ``machineStateFacade.ts``, which the store delegates to — not
+  // the store itself. After the state-module extraction, MDI lives
+  // in ``backend.system... machine_state`` router (tag
   // ``modules:machine_state``); the regenerated client wrapper is
   // ``ModulesMachineStateService``. ``homeAxis`` stays on
   // ``ModulesAxisService`` because homing is an axis action.
+  const text = readFileSync(
+    resolve(repoRoot, "frontend/src/facades/machineStateFacade.ts"),
+    "utf-8",
+  );
   assert.match(text, /ModulesMachineStateService\.runMdiCommand\(\s*\{\s*command:/);
 });
 
@@ -345,12 +349,12 @@ test("axis facade wraps ModulesAxisService.axisSettings", () => {
   );
   assert.match(
     facadeText,
-    /async\s+function\s+updateSettings\s*\(\s*multiplier\s*,\s*absoluteSpeedLimit\s*\)/,
+    /async\s+function\s+updateSettings\s*\(\s*multiplier\s*:[\s\S]*?absoluteSpeedLimit\s*:/,
     "axisFacade must define updateSettings",
   );
   assert.match(
     facadeText,
-    /ModulesAxisService\.axisSettings\(\s*\{\s*multiplier,\s*absolute_speed_limit:\s*absoluteSpeedLimit\s*\}\s*\)/,
+    /ModulesAxisService\.axisSettings\(\s*\{\s*multiplier,\s*absolute_speed_limit:\s*absoluteSpeedLimit\s*,?\s*\}\s*\)/,
     "axisFacade.updateSettings must call ModulesAxisService.axisSettings with both fields",
   );
   assert.match(

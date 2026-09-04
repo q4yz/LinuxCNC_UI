@@ -107,7 +107,9 @@ test("Profiles explorer generates machines with an override confirm", () => {
 });
 
 test("view renders Profiles / Machines / Active without compiler panels", () => {
-  const text = read("views/MachineConfigView.vue");
+  // MachineConfigView.vue was folded into ConfigView.vue — the Config
+  // page is now the single home for the machine-config explorers.
+  const text = read("views/ConfigView.vue");
 
   assert.match(text, /ProfilesExplorer/, "Profiles section required");
   assert.match(text, /MachinesExplorer/, "Machines section required");

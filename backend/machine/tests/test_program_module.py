@@ -73,9 +73,9 @@ def _program_app(tmp_data_root, clean_env=None):
 
 def _state_snapshot() -> dict[str, Any]:
     """Read the mock's program lifecycle fields under the lock."""
-    from hardware import connection
+    from hardware import get_stat_channel
 
-    stat = connection.get_machine_stat()
+    stat = get_stat_channel()
     if stat is not None:
         poll = getattr(stat, "poll", None)
         if callable(poll):

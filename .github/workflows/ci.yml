@@ -67,7 +67,11 @@ jobs:
       # 5. Finally, build
       - name: Vue Type Check
         working-directory: ./frontend
-        run: npm run type-check || true
+        run: npm run type-check
+
+      - name: Run Frontend Tests
+        working-directory: ./frontend
+        run: npm run test
 
       - name: Build Vite App
         working-directory: ./frontend
@@ -112,6 +116,14 @@ jobs:
       - name: Type Check with Mypy
         run: mypy .
 
-      - name: Run Tests
-        # Runs any files starting with test_*.py
-        run: pytest || echo "No tests written yet, skipping"
+      - name: Run Machine Tests
+        working-directory: ./backend/machine
+        run: pytest tests/
+
+      - name: Run System Tests
+        working-directory: ./backend/system
+        run: pytest tests/
+
+      - name: Run Common Tests
+        working-directory: ./backend/common
+        run: pytest tests/

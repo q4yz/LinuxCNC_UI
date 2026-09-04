@@ -20,7 +20,7 @@ const {
   toToolList,
   toSpindleState,
   toExtruderState,
-  toHeaterReading,
+  toHeaterState,
   toSpindleCommand,
   toExtruderCommand,
   toHeaterCommand,
@@ -90,10 +90,13 @@ test("toSpindleState: type='spindle_digital' → SpindleDigital", () => {
   assert.equal(s.errorCount, 0);
   assert.equal(s.atSpeed, true);
   assert.equal(s.isRunning, true);
-  assert.equal(s.fractionOfMax(), 11500 / 24000);
+  assert.equal(s.fractionOfMax, 11500 / 24000);
 });
 
-test("toSpindleState: missing actual_rpm coerces to 0", () => {
+test("toSpindleState: missing actual_rpm stays null (not coerced to 0)", () => {
+  // The entity's own doc comment is explicit: callers must not
+  // substitute 0 for "no data yet" — the UI needs to tell the two
+  // apart (disabled slider + "--" vs. a real zero reading).
   const s = toSpindleState({
     type: "spindle_digital",
     id: "x",
@@ -101,7 +104,7 @@ test("toSpindleState: missing actual_rpm coerces to 0", () => {
     min_rpm: 0,
     max_rpm: 24000,
   });
-  assert.equal(s.actualRpm, 0);
+  assert.equal(s.actualRpm, null);
   assert.equal(s.isRunning, false);
 });
 
@@ -189,7 +192,7 @@ test("toSpindleState: fractionOfMax returns 0 when actualRpm is null", () => {
     min_rpm: 0,
     max_rpm: 24000,
   });
-  assert.equal(s.fractionOfMax(), 0);
+  assert.equal(s.fractionOfMax, 0);
 });
 
 test("toSpindleState: fractionOfMax returns 0 when maxRpm is null", () => {
@@ -200,7 +203,7 @@ test("toSpindleState: fractionOfMax returns 0 when maxRpm is null", () => {
     min_rpm: 0,
     max_rpm: null,
   });
-  assert.equal(s.fractionOfMax(), 0);
+  assert.equal(s.fractionOfMax, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -212,7 +215,7 @@ test("toExtruderState: type='extruder' → Extruder", () => {
   assert.equal(e.constructor.name, "Extruder");
   assert.equal(e.id, "extruder_main");
   assert.equal(e.position, 12.5);
-  assert.equal(e.heater.constructor.name, "HeaterReading");
+  assert.equal(e.heater.constructor.name, "HeaterState");
   assert.equal(e.heater.id, "extruder_main");
   assert.equal(e.heater.actualCelsius, 210);
   assert.equal(e.heater.targetCelsius, 215);
@@ -243,12 +246,18 @@ test("toExtruderState: nested heater with no id falls back to outer id", () => {
 });
 
 // ---------------------------------------------------------------------------
-// toHeaterReading — HeaterStateResponse
+// toHeaterState — HeaterStateResponse
+//
+// Not to be confused with ``entities/temperature/HeaterReading`` (used
+// by the temperature panel/mapper) — the tools-panel ``HeaterState``
+// entity is a separate, simpler class: ``minTemp``/``maxTemp`` are
+// plain numbers with defaults (0 / 300), never ``null``, and it has
+// no ``hasBounds()`` method.
 // ---------------------------------------------------------------------------
 
-test("toHeaterReading: type='heater' → HeaterReading", () => {
-  const h = toHeaterReading(heaterWire());
-  assert.equal(h.constructor.name, "HeaterReading");
+test("toHeaterState: type='heater' → HeaterState", () => {
+  const h = toHeaterState(heaterWire());
+  assert.equal(h.constructor.name, "HeaterState");
   assert.equal(h.id, "extruder");
   assert.equal(h.actualCelsius, 210);
   assert.equal(h.targetCelsius, 215);
@@ -256,13 +265,13 @@ test("toHeaterReading: type='heater' → HeaterReading", () => {
   assert.equal(h.maxTemp, 300);
 });
 
-test("toHeaterReading: type='heated_bed' (legacy alias) → HeaterReading", () => {
-  const h = toHeaterReading({ ...heaterWire(), type: "heated_bed" });
-  assert.equal(h.constructor.name, "HeaterReading");
+test("toHeaterState: type='heated_bed' (legacy alias) → HeaterState", () => {
+  const h = toHeaterState({ ...heaterWire(), type: "heated_bed" });
+  assert.equal(h.constructor.name, "HeaterState");
 });
 
-test("toHeaterReading: non-finite min/max → null", () => {
-  const h = toHeaterReading({
+test("toHeaterState: non-finite min/max fall back to defaults (0 / 300)", () => {
+  const h = toHeaterState({
     type: "heater",
     id: "x",
     target: 0,
@@ -270,9 +279,8 @@ test("toHeaterReading: non-finite min/max → null", () => {
     min_temp: "bad",
     max_temp: NaN,
   });
-  assert.equal(h.minTemp, null);
-  assert.equal(h.maxTemp, null);
-  assert.equal(h.hasBounds(), false);
+  assert.equal(h.minTemp, 0);
+  assert.equal(h.maxTemp, 300);
 });
 
 // ---------------------------------------------------------------------------
@@ -285,9 +293,9 @@ test("toToolState: type='spindle_digital' → SpindleDigital", () => {
   assert.equal(s.id, "spindle_main");
 });
 
-test("toToolState: type='spindle_analog' → SpindleDigital", () => {
+test("toToolState: type='spindle_analog' → SpindleAnalog", () => {
   const s = toToolState({ ...spindleWireDigital(), type: "spindle_analog" });
-  assert.equal(s.constructor.name, "SpindleDigital");
+  assert.equal(s.constructor.name, "SpindleAnalog");
 });
 
 test("toToolState: type='extruder' → Extruder", () => {
@@ -296,15 +304,15 @@ test("toToolState: type='extruder' → Extruder", () => {
   assert.equal(e.id, "extruder_main");
 });
 
-test("toToolState: type='heater' → HeaterReading", () => {
+test("toToolState: type='heater' → HeaterState", () => {
   const h = toToolState(heaterWire());
-  assert.equal(h.constructor.name, "HeaterReading");
+  assert.equal(h.constructor.name, "HeaterState");
   assert.equal(h.id, "extruder");
 });
 
-test("toToolState: type='heated_bed' (legacy alias) → HeaterReading", () => {
+test("toToolState: type='heated_bed' (legacy alias) → HeaterState", () => {
   const h = toToolState({ ...heaterWire(), type: "heated_bed" });
-  assert.equal(h.constructor.name, "HeaterReading");
+  assert.equal(h.constructor.name, "HeaterState");
 });
 
 test("toToolState: unknown / missing type → null", () => {
@@ -333,7 +341,7 @@ test("toToolState: heterogeneous live tools[] array dispatches correctly", () =>
     1,
   );
   assert.equal(
-    out.filter((t) => t.constructor.name === "HeaterReading").length,
+    out.filter((t) => t.constructor.name === "HeaterState").length,
     2,
   );
   assert.equal(
@@ -393,14 +401,19 @@ test("toSpindleCommand: defaults", () => {
   });
 });
 
-test("toExtruderCommand: defaults heater_action to set", () => {
+test("toExtruderCommand: passes through an explicit embedded heater command", () => {
+  // ``toExtruderCommand`` has no "heaterTarget" convenience field —
+  // callers that want the move to also set a temperature build the
+  // embedded ``heater``/``heaterAction`` fields themselves (see
+  // ``ExtruderControlRequest``).
   assert.deepEqual(
     toExtruderCommand({
       toolId: "e",
       action: "extrude",
       distance: 5,
       speed: 300,
-      heaterTarget: 200,
+      heater: { id: "e", target: 200 },
+      heaterAction: "set",
     }),
     {
       tool_id: "e",
@@ -409,6 +422,25 @@ test("toExtruderCommand: defaults heater_action to set", () => {
       speed: 300,
       heater: { id: "e", target: 200 },
       heater_action: "set",
+    },
+  );
+});
+
+test("toExtruderCommand: defaults heater_action to 'noop' and heater to null", () => {
+  assert.deepEqual(
+    toExtruderCommand({
+      toolId: "e",
+      action: "extrude",
+      distance: 5,
+      speed: 300,
+    }),
+    {
+      tool_id: "e",
+      action: "extrude",
+      distance: 5,
+      speed: 300,
+      heater: null,
+      heater_action: "noop",
     },
   );
 });

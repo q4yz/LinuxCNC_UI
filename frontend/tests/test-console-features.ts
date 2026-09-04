@@ -98,7 +98,7 @@ test("console store exposes a filteredMessages getter", () => {
 
 test("console store guards setFilterLevel against unknown values", () => {
   const text = readText(consoleStorePath);
-  assert.match(text, /setFilterLevel\(level\)/);
+  assert.match(text, /setFilterLevel\(\s*level\s*:/);
   // The body must reject unknown levels so the chip row cannot
   // point the store at a value the getter does not understand.
   assert.match(text, /if\s*\(\s*!LOG_LEVELS\.includes\(level\)\s*\)\s*return/);
@@ -368,7 +368,7 @@ test("toast store defaults every type to a 5s lifetime", () => {
   }
   // ``dismiss`` and ``clear`` are the lifecycle hooks the container
   // calls to remove toasts.
-  assert.match(text, /dismiss\s*\(\s*id\s*\)/);
+  assert.match(text, /dismiss\s*\(\s*id\s*:/);
   assert.match(text, /clear\s*\(\s*\)/);
 });
 
@@ -425,13 +425,13 @@ test("console store forwards opts.popup to the toast layer", () => {
   // optional so a missing import never crashes the console pipeline.
   assert.match(text, /_emitToast\s*\(/);
   assert.match(text, /opts\.popup/);
-  assert.match(text, /import\(['"]\.\.\/core\/toast\.js['"]\)/);
+  assert.match(text, /import\(['"]\.\.\/core\/toast['"]\)/);
   // Each action must pass ``opts`` through to ``_emitToast``.
   for (const method of ["error", "info", "warning", "success", "debug"]) {
     assert.match(
       text,
-      new RegExp(`${method}\\s*\\(\\s*text\\s*,\\s*opts\\s*\\)`),
-      `expected ${method}(text, opts) signature`,
+      new RegExp(`${method}\\s*\\(\\s*text\\s*:[\\s\\S]*?opts\\s*\\?\\s*:`),
+      `expected ${method}(text: ..., opts?: ...) signature`,
     );
   }
 });

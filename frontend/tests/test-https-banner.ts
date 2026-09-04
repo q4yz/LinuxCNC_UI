@@ -107,17 +107,12 @@ test("ConfigView mounts the HttpsBanner", () => {
   assert.match(configView, /<HttpsBanner\s*\/>/);
 });
 
-test("ConfigView explains the HTTPS install steps", () => {
-  // The page is not just the banner — when the operator is already
-  // on HTTPS, they still need to know how to trust the root CA on
-  // their client device.
-  assert.match(configView, /Installing the root certificate/);
-  assert.match(configView, /\/cnc-root\.crt/);
-  // Three client platforms covered — Android, iOS, desktop.
-  assert.match(configView, /Android/);
-  assert.match(configView, /iOS/);
-  assert.match(configView, /Desktop/);
-});
+// The detailed per-platform (Android/iOS/Desktop) root-CA install
+// walkthrough that used to live inline in ConfigView.vue was
+// removed — HttpsBanner.vue's own download-the-cert CTA (already
+// covered by "HttpsBanner links the download CTA to /cnc-root.crt"
+// above) is the entire feature now. There's no separate install
+// guide left anywhere in the codebase to pin.
 
 // ---------------------------------------------------------------- //
 // router/index.ts                                                    //
@@ -135,10 +130,10 @@ test("router registers the /config route", () => {
 // AppSidebar.vue (regression guard)                                  //
 // ---------------------------------------------------------------- //
 
-test("AppSidebar does not expose a config entry", () => {
-  // The Config page is route-only by design. A future contributor
-  // adding it to the sidebar would re-introduce noise on every
-  // operator screen — this test pins the boundary.
-  assert.doesNotMatch(sidebar, /id:\s*['"]config['"]/);
-  assert.doesNotMatch(sidebar, /name:\s*['"]config['"]/);
+test("AppSidebar exposes a config entry", () => {
+  // ConfigView.vue was repurposed from a niche HTTPS-setup helper
+  // into the primary machine-config management page (profiles,
+  // machines, macros, m-codes, active-config panel) — it earns a
+  // direct sidebar link now rather than staying route-only.
+  assert.match(sidebar, /id:\s*['"]config['"]/);
 });

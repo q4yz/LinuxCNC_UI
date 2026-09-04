@@ -32,7 +32,10 @@ test("toProgramProgress: builds ProgramProgress from wire", () => {
   assert.equal(p.isRunning, true);
   assert.equal(p.isPaused, false);
   assert.equal(p.isLoaded, true);
-  assert.equal(p.fraction, 50);
+  // ``fraction`` is derived from motionLine/totalLines (the actual
+  // executing position), not currentLine (what the interpreter is
+  // reading) — the two can differ mid-move.
+  assert.equal(p.fraction, 51);
 });
 
 test("toProgramProgress: empty / null input → defaults", () => {
@@ -60,7 +63,8 @@ test("toProgramProgress: coerces non-numeric fields", () => {
 });
 
 test("ProgramProgress.fraction clamps at 100", () => {
-  const p = new ProgramProgress({ currentLine: 200, totalLines: 100 });
+  // fraction reads motionLine, not currentLine.
+  const p = new ProgramProgress({ motionLine: 200, totalLines: 100 });
   assert.equal(p.fraction, 100);
 });
 

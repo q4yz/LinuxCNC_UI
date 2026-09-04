@@ -10,14 +10,20 @@
 //
 // The suite validates the contract the consumer modules rely on:
 //
-//   * The store is a Pinia store via ``defineStore('baseThread', …)``.
+//   * The store is a Pinia store via ``defineStore('baseThread', …)``
+//     — a Composition-API setup store (``() => {...}``), not the
+//     Options-API ``{state, getters, actions}`` shape.
 //   * State exposes individual refs for every snapshot stream:
-//     ``progress``, ``sensors``, ``tools``.
-//   * A single ``setInterval`` in ``start`` drives the 1 Hz poll.
+//     ``progress``, ``readings``, ``toolList``, plus the legacy
+//     ``sensors``/``tools`` refs kept for the migration window.
+//   * A single ``setInterval`` in ``armPoll`` (called by ``start``)
+//     drives the 1 Hz poll.
 //   * A matching ``clearInterval`` in ``stop`` releases the handle.
-//   * ``start`` is idempotent (re-entry while running is a no-op).
+//   * ``start``/``armPoll`` is idempotent (re-entry while running is
+//     a no-op).
 //   * The progress fraction getter collapses on zero / missing
-//     totals and clamps at 100, mirroring the facade's contract.
+//     totals and clamps at 100, mirroring the ``ProgramProgress``
+//     entity's own contract.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -48,31 +54,31 @@ test("store is registered as a Pinia store via defineStore", () => {
   const text = readStore();
   assert.match(
     text,
-    /export\s+const\s+useBaseThreadStore\s*=\s*defineStore\(\s*['"]baseThread['"]/,
+    /export\s+const\s+useBaseThreadStore\s*=\s*defineStore\(\s*['"]baseThread['"]\s*,\s*\(\s*\)\s*=>\s*\{/,
+    "must be a Composition-API setup store: defineStore('baseThread', () => {...})",
   );
-  assert.match(text, /state:\s*\(\s*\)\s*=>\s*\(/);
-  assert.match(text, /getters:\s*\{/);
-  assert.match(text, /actions:\s*\{/);
+  assert.match(text, /return\s*\{[\s\S]*?refresh,[\s\S]*?start,[\s\S]*?stop,?[\s\S]*?\}/);
 });
 
 test("store exposes individual refs per snapshot stream", () => {
-  // The store must expose ``progress``, ``sensors``, and ``tools``
-  // as separate reactive refs so consumers can destructure them
-  // via ``storeToRefs`` without losing reactivity. Adding a new
-  // stream means adding one new ref + one watcher on the consumer
-  // side — no schema migration required.
+  // The store must expose ``progress``, ``readings``, ``toolList``,
+  // ``sensors``, and ``tools`` as separate reactive refs so
+  // consumers can destructure them via ``storeToRefs`` without
+  // losing reactivity. Adding a new stream means adding one new
+  // ref + one watcher on the consumer side — no schema migration
+  // required.
   //
-  // After the anti-corruption-layer refactor ``progress`` is an
-  // entity instance (``ProgramProgress``), not a plain object
-  // literal — the entity owns the math.
+  // After the anti-corruption-layer refactor ``progress`` /
+  // ``readings`` / ``toolList`` are entity instances
+  // (``ProgramProgress`` / ``ReadingSet`` / ``ToolList``), not
+  // plain object literals — the entity owns the math.
   const text = readStore();
-  assert.match(text, /\bprogress:\s*new\s+ProgramProgress\b/);
-  assert.match(text, /\bsensors:\s*\{/);
-  assert.match(text, /\btools:\s*\[\s*\]/);
-  // And the typed entity surface lives alongside the legacy
-  // arrays during the migration window.
-  assert.match(text, /\breadings:\s*EMPTY_READINGS\b/);
-  assert.match(text, /\btoolList:\s*EMPTY_TOOLS\b/);
+  assert.match(text, /\bprogress\s*=\s*shallowRef[<(][\s\S]*?new\s+ProgramProgress\(\)/);
+  assert.match(text, /\breadings\s*=\s*shallowRef[<(][\s\S]*?new\s+ReadingSet\(\)/);
+  assert.match(text, /\btoolList\s*=\s*shallowRef[<(][\s\S]*?new\s+ToolList\(\[\]\)/);
+  // The legacy plain-object/array refs kept for the migration window.
+  assert.match(text, /\bsensors\s*=\s*ref[<(][\s\S]*?\(\{\}\)/);
+  assert.match(text, /\btools\s*=\s*ref[<(][\s\S]*?\(\[\]\)/);
 });
 
 test("start schedules a single setInterval for the snapshot poll; stop clears it", () => {
@@ -105,44 +111,48 @@ test("start schedules a single setInterval for the snapshot poll; stop clears it
 });
 
 test("start is idempotent — re-entry while running is a no-op", () => {
-  // Hot-reloads / double-mounts must not stack intervals. The
-  // ``_pollHandle`` sentinel is the canonical pattern. The check
-  // must be a truthy one — ``_pollHandle`` is a non-state property
-  // on the Pinia store instance, so it is ``undefined`` on the
-  // first call. A strict-null check (``!== null``) would evaluate
-  // ``undefined !== null`` to ``true`` and silently disable the
-  // 1 Hz poll.
+  // Hot-reloads / double-mounts must not stack intervals. ``start()``
+  // delegates to ``armPoll()``, which guards on the closure-scoped
+  // ``pollHandle`` variable (not a reactive ``ref`` — a plain `let`
+  // so Vue never wraps it in a proxy). The check must be truthy,
+  // not a strict-null check: on the very first call ``pollHandle``
+  // is ``undefined``, and ``undefined !== null`` evaluates to
+  // ``true`` — a strict-null guard would silently disable the poll
+  // forever after the very first start().
   const text = readStore();
   assert.match(
     text,
-    /if\s*\(\s*this\._pollHandle\s*\)\s*return/,
-    "start() must guard with a truthy check, not a strict-null check (catches undefined on the first call)",
+    /function\s+armPoll\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?if\s*\(\s*pollHandle\s*\)\s*return/,
+    "armPoll() must guard with a truthy check, not a strict-null check (catches undefined on the first call)",
   );
   // Explicitly forbid the broken pattern so the regression cannot
   // be reintroduced without flagging the test.
   assert.doesNotMatch(
     text,
-    /if\s*\(\s*this\._pollHandle\s*!==\s*null\s*\)\s*return/,
-    "start() must not use a strict-null check — it returns early on the first call because _pollHandle is undefined",
+    /if\s*\(\s*pollHandle\s*!==\s*null\s*\)\s*return/,
+    "armPoll() must not use a strict-null check — it would return early on the first call because pollHandle is undefined",
   );
-  assert.match(text, /stop\s*\(\s*\)\s*\{[\s\S]*?this\._pollHandle\s*=\s*null/);
+  assert.match(
+    text,
+    /function\s+stop\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?pollHandle\s*=\s*null/,
+  );
 });
 
 test("progressFraction getter collapses on zero / missing totals and clamps at 100", () => {
-  // Mirrors the ``ProgramProgress.fraction`` getter contract:
-  // missing / zero / negative totals collapse to 0, the bar never
-  // exceeds 100. The getter delegates to the entity so the math
-  // lives in exactly one place.
+  // The entity (``ProgramProgress.fraction``) owns the actual
+  // 0-collapse / 100-clamp math; the store's computed getter
+  // delegates to it and adds a defensive ``Number.isFinite`` guard
+  // so a NaN/Infinity can never leak into the progress bar's width.
   const text = readStore();
-  assert.match(text, /progressFraction\s*\(\s*state\s*\)\s*\{/);
-  // Delegates to ``ProgramProgress.fraction`` rather than
-  // re-implementing the math inline.
   assert.match(
     text,
-    /state\.progress\.fraction|\.fraction\b/,
+    /const\s+progressFraction\s*=\s*computed\s*\(\s*\(\s*\)\s*=>\s*\{/,
+  );
+  assert.match(
+    text,
+    /progress\.value\.fraction/,
     "progressFraction must read from ProgramProgress.fraction",
   );
-  // Defensive: guards against NaN/Infinity leaking through.
   assert.match(
     text,
     /Number\.isFinite/,
@@ -150,20 +160,22 @@ test("progressFraction getter collapses on zero / missing totals and clamps at 1
   );
 });
 
-test("store calls BaseThreadService.getBaseThreadSnapshot on refresh", () => {
-  // The single canonical endpoint for every slow stream. The
-  // OpenAPI codegen maps the ``getBaseThreadSnapshot`` operation
-  // id onto a dedicated ``BaseThreadService`` class; the store
-  // must use that name, not a hand-patched fallback on
-  // ``SystemService`` (which the regeneration would silently
-  // strip).
+test("store calls BaseThreadService.fetchSnapshot on refresh, which wraps the generated getBaseThreadSnapshot op", () => {
+  // The store goes through the domain facade
+  // (``facades/baseThreadFacade.ts``), not the generated client
+  // directly. The facade's ``BaseThreadService.fetchSnapshot()`` is
+  // the one place that calls the OpenAPI-generated
+  // ``getBaseThreadSnapshot`` operation — pin both ends of that
+  // chain so a hand-patched fallback (e.g. onto ``SystemService``,
+  // which a regeneration would silently strip) can't sneak in at
+  // either layer.
   const text = readStore();
-  assert.match(
-    text,
-    /BaseThreadService\.getBaseThreadSnapshot\s*\(/,
+  assert.match(text, /BaseThreadService\.fetchSnapshot\s*\(/);
+
+  const facadeText = readFileSync(
+    resolve(repoRoot, "frontend/src/facades/baseThreadFacade.ts"),
+    "utf-8",
   );
-  assert.doesNotMatch(
-    text,
-    /SystemService\.getBaseThreadSnapshot\s*\(/,
-  );
+  assert.match(facadeText, /ApiBaseThreadService\.getBaseThreadSnapshot\s*\(/);
+  assert.doesNotMatch(facadeText, /SystemService\.getBaseThreadSnapshot\s*\(/);
 });

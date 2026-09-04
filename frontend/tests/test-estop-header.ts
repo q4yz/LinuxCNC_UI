@@ -57,7 +57,7 @@ test("EStopHeader uses <script setup> Composition API", () => {
   // The component must follow the project convention (see
   // ``.agent/AGENT.md`` § Frontend conventions).
   const text = readText(headerPath);
-  assert.match(text, /<script\s+setup>/);
+  assert.match(text, /<script\s+setup(\s+lang="ts")?\s*>/);
 });
 
 test("EStopHeader imports the machine store", () => {
@@ -69,7 +69,7 @@ test("EStopHeader imports the machine store", () => {
   const text = readText(headerPath);
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machine\.js['"]/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/machine['"]/,
   );
 });
 
@@ -250,7 +250,7 @@ test("EStopHeader imports the State Facade for the high-resolution machine state
   // singleton that the machine module's WebSocket handler updates.
   assert.match(
     text,
-    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/stateFacade\.js['"]/,
+    /import\s*\{[^}]*useMachineStore[^}]*\}\s*from\s*['"]\.\.\/stores\/stateFacade['"]/,
     "EStopHeader must import useMachineStore from the State Facade",
   );
   // ``systemState`` is destructured via storeToRefs (Pinia reactivity
@@ -293,12 +293,16 @@ test("EStopHeader logs every systemState transition to the console", () => {
     /watch\(\s*systemState\b/,
     "EStopHeader must watch systemState",
   );
-  // Cross-store import must be lazy (LESSONS_LEARNED § 2.4): inside
-  // the watcher, not at module scope.
+  // Cross-store dependency must be resolved at call time, inside the
+  // watcher callback, not at module scope (LESSONS_LEARNED § 2.4) —
+  // avoids circular-init ordering issues. A static top-level import
+  // of ``useConsoleStore`` plus a call-time ``useConsoleStore()``
+  // inside the watcher satisfies this just as well as a dynamic
+  // ``import()`` would.
   assert.match(
     text,
-    /import\(\s*['"]\.\.\/stores\/console\.js['"]\s*\)/,
-    "EStopHeader must lazy-import useConsoleStore inside the watcher",
+    /watch\(\s*systemState[\s\S]*?useConsoleStore\s*\(\s*\)/,
+    "EStopHeader must call useConsoleStore() inside the systemState watcher",
   );
   // The watcher calls into the console store.
   assert.match(

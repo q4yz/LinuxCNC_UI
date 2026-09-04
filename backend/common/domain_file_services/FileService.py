@@ -239,7 +239,13 @@ class FileService:
             )
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # ``newline=""`` disables Python's universal-newline
+        # translation so a ``\n`` in ``content`` is written as a
+        # literal ``\n`` on every platform — without it, text-mode
+        # writes on Windows translate every ``\n`` to ``\r\n``,
+        # silently corrupting G-code/macro/HAL files that must stay
+        # LF-only for the (POSIX) LinuxCNC controller.
+        target.write_text(content, encoding="utf-8", newline="")
 
     def write_bytes(self, filepath: str, data: bytes, overwrite: bool = True) -> None:
         """Binary sibling of :meth:`write_file` used by file uploads."""

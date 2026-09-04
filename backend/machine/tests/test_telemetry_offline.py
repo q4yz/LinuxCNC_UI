@@ -2,9 +2,9 @@
 WebSocket telemetry layer.
 
 The backend must boot and serve its telemetry endpoint even when
-the LinuxCNC daemon isn't reachable. ``connection`` wraps
-the NML channels in :class:`_LazyChannel`, so the channel helpers
-return ``None`` until the daemon comes online. These tests pin the
+the LinuxCNC daemon isn't reachable. ``hardware.Connection``'s
+``get_stat_channel()`` / ``get_error_channel()`` helpers return
+``None`` until the daemon comes online. These tests pin the
 contract that:
 
 * ``get_current_state()`` returns the safe offline snapshot
@@ -39,7 +39,9 @@ from unittest.mock import patch
 import pytest
 from fastapi import WebSocketDisconnect
 
-from hardware import Connection
+import importlib
+
+state_service_mod = importlib.import_module("services.StateService")
 
 
 async def _drive_one_tick():
@@ -78,15 +80,17 @@ def test_telemetry_loop_survives_one_offline_tick():
 
     Before the fix the loop called ``machine_stat.poll()``
     directly; the offline case ``get_machine_stat() is None``
-    crashed with ``AttributeError`` every 100 ms. The new
-    implementation re-fetches inside the body and skips the
-    ``.poll()`` call when either channel is offline.
+    crashed with ``AttributeError`` every 100 ms. The current
+    implementation delegates to ``StateService.get_polled_stat()`` /
+    ``get_error_history()``, which already guard the offline case —
+    this test pins that ``telemetry_loop`` survives when the
+    underlying channel helpers report offline.
     """
     from services.ServoThreadService import ServoThreadService
     from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
-    with patch.object(connection, "get_machine_stat", return_value=None), \
-         patch.object(connection, "get_machine_error", return_value=None):
+    with patch.object(state_service_mod, "get_stat_channel", return_value=None), \
+         patch.object(state_service_mod, "get_error_channel", return_value=None):
         # Drive exactly one tick of the loop. If the bug is
         # present, an ``AttributeError`` is raised the moment
         # the loop body touches ``None.poll()`` and propagates

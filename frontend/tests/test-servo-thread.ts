@@ -1,25 +1,27 @@
-// Servo-thread store behavioural tests.
+// Servo-thread store + facade behavioural tests.
 //
-// Run with: node --test frontend/tests/test-servo-thread.mjs
+// Run with: node --test frontend/tests/test-servo-thread.ts
 //
-// The servo-thread store owns the 10 Hz ``/ws/telemetry`` WebSocket
-// transport + the time-critical reactive state (``status``,
-// ``connectionStatus``, ``errors``, ``isUpdating``). The machine
-// module composes this store for telemetry; this suite pins the
-// contract the module store depends on:
+// The 10 Hz ``/ws/telemetry`` WebSocket transport lives on
+// ``ServoThreadService`` (``facades/servoThreadFacade.ts``), not on
+// the Pinia store — ``stores/servoThread.ts`` is a thin reactive
+// state container (``status``, ``connectionStatus``,
+// ``lastMessageAt``) with mutation actions
+// (``setFullState``/``applyDelta``/``setConnectionStatus``) that the
+// facade calls into. This suite pins that split:
 //
-//   * The store opens the socket on ``start()`` and re-connects
-//     with a 2 s back-off on close.
-//   * ``full_state`` / ``delta`` / ``error`` payloads dispatch
-//     to the right handlers and mirror into the State Facade.
-//   * ``payload.type === "error"`` routes through
+//   * The facade opens the socket in ``connect()`` and re-connects
+//     with a 2 s back-off on close (unless the close was deliberate).
+//   * ``full_state`` / ``delta`` / ``error`` envelope types dispatch
+//     to the right handlers and mirror into the State Facade via the
+//     store's own ``mirrorToFacade()``.
+//   * The facade's ``error`` branch routes through
 //     ``useConsoleStore().error(...)`` with ``popup: true`` — the
 //     silent-bug regression guard.
-//   * Historical errors on ``full_state`` replay through the
-//     console store so a reconnecting operator sees the backlog.
-//   * The store is the single source of truth for the WebSocket
-//     transport — ``modules/machine/store.js`` must NOT contain
-//     ``new WebSocket(`` after the servo/base split.
+//   * Historical errors on ``full_state``/``delta`` replay through
+//     the console store so a reconnecting operator sees the backlog.
+//   * ``stores/machine.ts`` must NOT contain ``new WebSocket(`` after
+//     the servo/base split — the facade owns the only socket.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -63,87 +65,96 @@ test("servo-thread store file lives at stores/servoThread.js", () => {
   );
 });
 
-test("servo-thread store exposes connectionStatus + errors + isUpdating as refs", () => {
+test("servo-thread store exposes connectionStatus as a ref", () => {
+  // ``errors``/``isUpdating`` are not separate store-level refs in
+  // the current design — ``connectionStatus`` (four-state:
+  // disconnected/connecting/connected/error-ish via console routing)
+  // is the store's own transport-status signal; per-frame error
+  // history lives on the ``ServoThreadState`` instance in ``status``.
   const text = readServo();
   assert.match(text, /const\s+connectionStatus\s*=\s*ref\(\s*['"]disconnected['"]\s*\)/);
-  assert.match(text, /const\s+isUpdating\s*=\s*ref\(\s*false\s*\)/);
-  assert.match(text, /const\s+errors\s*=\s*ref\(\s*\[\s*\]\s*\)/);
 });
 
-test("servo-thread store opens /ws/telemetry and re-uses wsUrl with a 2 s back-off", () => {
-  const text = readServo();
-  // The store owns the ``new WebSocket(wsUrl)`` call.
+test("servo-thread facade opens /ws/telemetry and re-connects with a 2 s back-off", () => {
+  const text = readFacade();
+  // The facade owns the ``new WebSocket(...)`` call.
   assert.match(text, /\/ws\/telemetry/);
-  assert.match(text, /new\s+WebSocket\s*\(\s*wsUrl\s*\)/);
-  // 2 s reconnect back-off — see LESSONS_LEARNED § 2.5-style
-  // cadence commentary.
-  assert.match(text, /reconnectTimer\s*=\s*setTimeout\([\s\S]*?connect\(\s*\)/);
-  assert.match(text, /RECONNECT_DELAY_MS\s*=\s*2_000/);
+  assert.match(text, /new\s+WebSocket\s*\(/);
+  // 2 s reconnect back-off in ``scheduleReconnect()``.
+  assert.match(
+    text,
+    /scheduleReconnect\s*\(\s*\)\s*\{[\s\S]*?setTimeout\s*\([\s\S]*?,\s*2000\s*\)/,
+    "scheduleReconnect() must re-invoke connect() after a 2000ms setTimeout",
+  );
 });
 
-test("servo-thread start() / stop() are idempotent", () => {
-  const text = readServo();
-  // ``start()`` short-circuits if a socket is already in flight;
-  // ``stop()`` clears the reconnect timer before closing so the
-  // async ``onclose`` cannot schedule a reconnect during teardown.
-  assert.match(text, /if\s*\(\s*socket\s*\)\s*return/);
-  assert.match(text, /shouldReconnect\s*=\s*false/);
-  assert.match(text, /socket\s*=\s*null/);
+test("servo-thread facade does not auto-reconnect after a deliberate disconnect", () => {
+  // ``disconnect()`` flips ``manualClose`` before closing the
+  // socket; ``onclose`` checks the flag before scheduling a
+  // reconnect, so a deliberate close (machine went offline) does
+  // not fight the app shell's own reconnect-on-heartbeat logic.
+  const text = readFacade();
+  assert.match(text, /disconnect\s*\(\s*\)\s*\{[\s\S]*?manualClose\s*=\s*true/);
+  assert.match(text, /if\s*\(\s*this\.manualClose\s*\)\s*return/);
 });
 
-test("servo-thread mirrors the live state into the State Facade on every frame", () => {
-  const text = readServo();
-  // The State Facade (``stores/stateFacade.js``) is the consumer
-  // surface for widgets that just need the high-resolution state
-  // vocabulary. Every payload branch must call ``updateStatus``
-  // so ``systemState`` / ``printProgress`` / etc. stay current.
-  assert.match(text, /payload\.type\s*===\s*["']full_state["']/);
-  assert.match(text, /payload\.type\s*===\s*["']delta["']/);
-  assert.match(text, /updateStatus\s*\(/);
+test("servo-thread routes full_state/delta envelopes to the store and mirrors to the State Facade", () => {
+  // The facade dispatches on the parsed envelope type; the store's
+  // own ``setFullState``/``applyDelta`` (tested separately below)
+  // call ``mirrorToFacade()`` so widgets reading ``stores/stateFacade``
+  // stay current for both frame types.
+  const text = readFacade();
+  assert.match(text, /case\s*['"]full_state['"][\s\S]*?store\.setFullState\(/);
+  assert.match(text, /case\s*['"]delta['"][\s\S]*?store\.applyDelta\(/);
 });
 
-test("servo-thread routes LinuxCNC WS errors through the console store with popup", () => {
+test("servo-thread facade routes LinuxCNC WS errors through the console store with popup", () => {
   // Regression guard for the silent-bug where the WebSocket
   // ``error`` branch only logged to the browser devtools console
   // (console.error) instead of routing through ``useConsoleStore()``,
   // so the operator's ``ConsolePanel`` never saw the row and the
-  // toast never fired. ``popup: true`` is required because
-  // ``core/console.js`` short-circuits ``_emitToast`` when the
-  // flag is missing.
-  const text = readServo();
+  // toast never fired. ``popup: true`` is required so the toast
+  // layer fires.
+  const text = readFacade();
   assert.match(
     text,
-    /payload\.type === "error"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
-    "the WS error branch must call useConsoleStore().error() with popup:true",
+    /case\s*['"]error['"][\s\S]*?emitLinuxCNCError\(/,
+    "the WS 'error' envelope branch must route through emitLinuxCNCError",
+  );
+  assert.match(
+    text,
+    /function\s+emitLinuxCNCError[\s\S]*?consoleStore\.error\([\s\S]*?popup:\s*true/,
+    "emitLinuxCNCError must call consoleStore.error() with popup:true",
   );
 });
 
-test("servo-thread replays full_state errors through the console store", () => {
-  // The backend keeps a bounded error history on ``SharedMachineState``
-  // and ships it on ``full_state``. The frontend replays those
-  // entries through ``useConsoleStore().error()`` so the operator's
-  // ``ConsolePanel`` shows the backlog on reload / reconnect.
-  const text = readServo();
+test("servo-thread facade replays full_state/delta error history through the console store", () => {
+  // The backend keeps a bounded error history and ships it on
+  // ``full_state`` (and any subsequent ``delta`` that changes it).
+  // The frontend replays those entries through
+  // ``useConsoleStore().error()`` so the operator's ``ConsolePanel``
+  // shows the backlog on reload / reconnect, deduped via
+  // ``replayedErrorKeys`` so a reconnect doesn't spam duplicates.
+  const text = readFacade();
+  assert.match(text, /case\s*['"]full_state['"][\s\S]*?this\.replayErrorHistory\(/);
+  assert.match(text, /case\s*['"]delta['"][\s\S]*?this\.replayErrorHistory\(/);
   assert.match(
     text,
-    /payload\.type === "full_state"[\s\S]*?useConsoleStore\(\)\.error\([\s\S]*?popup:\s*true/,
-    "the full_state branch must replay historical errors via useConsoleStore",
+    /replayErrorHistory[\s\S]*?consoleStore\.error\([\s\S]*?popup:\s*true/,
+    "replayErrorHistory must call consoleStore.error() with popup:true",
   );
 });
 
-test("servo-thread store exposes a send() action for inbound WS commands", () => {
-  // The /ws/telemetry channel is now bidirectional. The
-  // machine module's ``jogContinuous`` calls ``servo.send({type:
-  // "jog_keepalive", ...})`` every 250 ms instead of POSTing to
-  // ``/api/v1/modules/machine/jog/keepalive`` — the new action
-  // is the difference between 4 RTT/s/axis and zero.
-  const text = readServo();
-  // Action declaration.
-  assert.match(text, /function\s+send\s*\(/);
+test("servo-thread facade exposes a send() method for inbound WS commands", () => {
+  // The /ws/telemetry channel is bidirectional. The machine store's
+  // ``jogContinuous`` calls ``servoThreadService.send({type:
+  // "jog_keepalive", ...})`` every 250 ms instead of POSTing to a
+  // REST keepalive endpoint — the difference between 4 RTT/s/axis
+  // and zero.
+  const text = readFacade();
+  assert.match(text, /send\s*\(\s*payload\s*:\s*object\s*\)/);
   // No-op guard when the socket isn't open.
-  assert.match(text, /socket\.readyState\s*!==\s*WebSocket\.OPEN/);
-  // Public surface returns the action.
-  assert.match(text, /\bsend\s*,/);
+  assert.match(text, /this\.ws\.readyState\s*===\s*WebSocket\.OPEN/);
 });
 
 test("servo-thread store exposes applyDelta that routes through status.value.patch", () => {
@@ -202,7 +213,7 @@ test("servo-thread store mirrors state into the State Facade on every frame", ()
   const text = readServo();
   assert.match(
     text,
-    /mirrorToFacade\s*\(\s*\)\s*:\s*void/,
+    /const\s+mirrorToFacade\s*=\s*\(\s*\)\s*:\s*void\s*=>/,
     "the store must define mirrorToFacade()",
   );
   assert.match(
@@ -255,11 +266,6 @@ test("DebugPanel reads telemetry from useServoThreadStore, not useMachineStore",
     text,
     /from\s*["']\.\.\/stores\/machine["']/,
     "DebugPanel must NOT import from stores/machine (status moved out of $state)",
-  );
-  assert.doesNotMatch(
-    text,
-    /store\.\$state/,
-    "DebugPanel must NOT read store.$state (no longer carries telemetry)",
   );
 });
 

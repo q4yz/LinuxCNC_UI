@@ -6,17 +6,121 @@
 // files are templates and therefore editable, and there is no
 // per-file action button — generation is started from the Profiles
 // explorer.
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
+import { useConsoleStore } from "../../stores/console";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
+import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
+const consoleStore = useConsoleStore();
 const { machinesTree, isBusy } = storeToRefs(store);
+
+// ─────────────────────────────────────────────────────────────────
+// Machine lifecycle (system service, :8001)
+//
+// Root-level folders under ``machines/`` ARE the machines. Each one
+// gets "Start" (persist as default + launch its
+// config/machine.ini) and "Set main" (persist as default only) —
+// see ``backend/system/routers/machine_lifecycle.py``.
+// ─────────────────────────────────────────────────────────────────
+const defaultMachine = ref<string | null>(null);
+const sessionRunning = ref(false);
+const startingPath = ref<string | null>(null);
+const settingMainPath = ref<string | null>(null);
+
+/** Root-level folders are machine folders. */
+function isMachineFolder(entry: DirectoryEntryModel): boolean {
+  return entry.kind === "folder" && !entry.parent;
+}
+
+async function refreshLifecycleStatus(): Promise<void> {
+  try {
+    const status = await MachineLifecycleFacade.getStatus();
+    defaultMachine.value = status.default_machine;
+    sessionRunning.value = status.running;
+  } catch {
+    // The explorer stays fully usable without lifecycle info —
+    // the buttons surface errors when pressed.
+  }
+}
+
+function lifecycleError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function startMachine(entry: DirectoryEntryModel): Promise<void> {
+  activeMenu.value = "";
+  if (startingPath.value !== null) return;
+
+  // Starting a machine stops a running session first (backend
+  // behaviour) — make that explicit when one is live.
+  if (sessionRunning.value) {
+    const confirmed = await useConfirm({
+      title: "Start machine",
+      question: `Starting ${entry.name} stops the running machine session first. Continue?`,
+      confirmButtonText: "Start",
+      confirmButtonStyle: ModalButtonStyle.DANGER,
+      rejectButtonText: "Cancel",
+    });
+    if (!confirmed) return;
+  }
+
+  startingPath.value = entry.path;
+  try {
+    const status = await MachineLifecycleFacade.startMachine(entry.name);
+    defaultMachine.value = status.default_machine;
+    sessionRunning.value = status.running;
+    consoleStore.success(
+      `Machine ${entry.name} started (pid ${status.started_pid ?? "?"})`,
+    );
+  } catch (err: unknown) {
+    const status = (err as { status?: unknown } | null)?.status;
+    if (status === 409) {
+      consoleStore.warning("LinuxCNC is already running");
+    } else if (status === 404) {
+      consoleStore.error(
+        `Cannot start ${entry.name}: no machines/${entry.name}/config/machine.ini`,
+      );
+    } else {
+      consoleStore.error(`Failed to start ${entry.name}: ${lifecycleError(err)}`);
+    }
+  } finally {
+    startingPath.value = null;
+  }
+}
+
+async function selectAsMain(entry: DirectoryEntryModel): Promise<void> {
+  activeMenu.value = "";
+  if (settingMainPath.value !== null) return;
+
+  settingMainPath.value = entry.path;
+  try {
+    const status = await MachineLifecycleFacade.setDefaultMachine(entry.name);
+    defaultMachine.value = status.default_machine;
+    consoleStore.success(`${entry.name} is now the default machine`);
+  } catch (err: unknown) {
+    const status = (err as { status?: unknown } | null)?.status;
+    if (status === 404) {
+      consoleStore.error(
+        `Cannot select ${entry.name}: no machines/${entry.name}/config/machine.ini`,
+      );
+    } else {
+      consoleStore.error(`Failed to set default: ${lifecycleError(err)}`);
+    }
+  } finally {
+    settingMainPath.value = null;
+  }
+}
+
+onMounted(() => {
+  void refreshLifecycleStatus();
+});
 
 const currentDirectory = ref("");
 const activeMenu = ref("");
@@ -163,6 +267,36 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
             <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
             <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes ?? 0) }}</div>
           </div>
+          <!-- Root-level machine folders: lifecycle actions.
+               "Start" persists the machine as default AND launches
+               it; "Set main" only persists the default. -->
+          <template v-if="isMachineFolder(entry)">
+            <span
+              v-if="defaultMachine === entry.name"
+              class="rounded border border-amber-600 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-amber-300"
+              title="Default machine — started by generic Start-machine buttons"
+            >
+              main
+            </span>
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              :loading="startingPath === entry.path"
+              :disabled="startingPath !== null"
+              :title="defaultMachine === entry.name ? 'Start default machine' : 'Start this machine (makes it the default)'"
+              aria-label="Start machine"
+              @click.stop="startMachine(entry)"
+            >▶</BaseButton>
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              :loading="settingMainPath === entry.path"
+              :disabled="settingMainPath !== null || defaultMachine === entry.name"
+              :title="defaultMachine === entry.name ? 'Already the default machine' : 'Set as default machine'"
+              aria-label="Set as default machine"
+              @click.stop="selectAsMain(entry)"
+            >★</BaseButton>
+          </template>
           <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadMachineFile(entry)">↓</BaseButton>
           <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
         </div>

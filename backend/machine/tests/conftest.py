@@ -12,12 +12,26 @@ import pytest
 
 _APP_DIR = Path(__file__).resolve().parents[1]        # backend/machine
 _COMMON_DIR = _APP_DIR.parent / "common"              # backend/common
-# Insert common first, the app dir second — each insert(0) puts the
-# app dir at the very front so app-local packages shadow same-named
-# shared packages.
+# Make both importable, the app dir at the very front so app-local
+# packages shadow same-named shared packages.
+#
+# The `while ... remove` + unconditional re-insert (instead of the old
+# `if not in sys.path` guard) matters since backend/__init__.py exists:
+# pytest imports this conftest as ``backend.machine.tests.conftest`` and
+# inserts the repo root (the package basedir) into sys.path itself —
+# which can leave ``backend/machine`` in the list at a position BELOW
+# ``backend/common``. With the guard, machine was skipped and common
+# ended up first, so plain ``import tests`` (machine/tests vs
+# common/tests vs system/tests all share the bare package name)
+# resolved to common's suite — "No module named
+# 'tests._module_app_factory'" for every module test.
 for _entry in (str(_COMMON_DIR), str(_APP_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+    while _entry in sys.path:
+        sys.path.remove(_entry)
+    sys.path.insert(0, _entry)
+# If anything imported a foreign ``tests`` package before this conftest
+# ran, evict it so the test modules below re-import machine's own.
+sys.modules.pop("tests", None)
 
 
 @pytest.fixture()

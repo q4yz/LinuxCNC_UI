@@ -32,6 +32,21 @@ export type AnyToolWire =
   | ExtruderStateResponse
   | AnalogSpindleWire;
 
+const VALID_SPINDLE_DIRECTIONS: ReadonlySet<SpindleDirection> = new Set([
+  "forward",
+  "backward",
+  "stop",
+]);
+
+/** Coerce any unrecognised/legacy ``state`` string (e.g. the old
+ * "idle") to "stop" rather than let it leak into the UI verbatim. */
+function toSpindleDirection(state: unknown): SpindleDirection {
+  return typeof state === "string" &&
+    VALID_SPINDLE_DIRECTIONS.has(state as SpindleDirection)
+    ? (state as SpindleDirection)
+    : "stop";
+}
+
 // --- Mappers ---
 
 /**
@@ -40,12 +55,19 @@ export type AnyToolWire =
 export function toToolState(wire: unknown): ToolItem | null {
   if (!wire || typeof wire !== "object" || !("type" in wire)) return null;
   const w = wire as Record<string, unknown>;
+  if (typeof w.id !== "string" || w.id.length === 0) return null;
 
   switch (w.type) {
     case "extruder":
       return toExtruderState(wire as ExtruderStateResponse);
 
+    // "heated_bed" is a heater like any other extruder/bed heater —
+    // same wire shape, same entity. It is a distinct backend tool
+    // `type` (see `ToolType` in the backend's hardware.json models)
+    // from the plain "heater" case, so it needs its own switch arm
+    // or a real bed-heater tool silently disappears from the panel.
     case "heater":
+    case "heated_bed":
       return toHeaterState(wire as HeaterStateResponse);
 
     case "spindle_digital":
@@ -86,7 +108,7 @@ export function toToolList(
 export function toSpindleState(wire: SpindleDigitalStateResponse): SpindleState {
   return new SpindleState({
     id: wire.id,
-    direction: (typeof wire.state === "string" ? wire.state : "stop") as SpindleDirection,
+    direction: toSpindleDirection(wire.state),
     // Preserve ``null`` semantics: an unconnected / not-yet-streamed
     // pin must surface as ``null`` so the UI can disable the slider
     // and show ``--`` rather than substituting a default.
@@ -117,7 +139,15 @@ export function toExtruderState(wire: ExtruderStateResponse): Extruder {
   return new Extruder({
     id: wire.id,
     position: Number(wire.position) || 0,
-    heater: wire.heater ? toHeaterState(wire.heater) : null,
+    // A nested heater without its own ``id`` inherits the extruder's
+    // — it's the same physical tool, and every headerless nested
+    // heater falling back to a shared literal ("unknown_heater")
+    // would collide across multiple extruders.
+    heater: wire.heater
+      ? toHeaterState(
+          wire.heater.id ? wire.heater : { ...wire.heater, id: wire.id },
+        )
+      : null,
   });
 }
 
