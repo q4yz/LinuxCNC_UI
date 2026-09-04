@@ -316,9 +316,12 @@ The `webgui.estop` pin is created automatically by
 `HalPin.initialize_component()` (component name comes from
 `HalPin._component_name = "webgui"`) and routed to
 `halui.estop.activate` via the project's hand-written HAL file.
-The rising-edge dance lives inside `EStopPin`, never inside the
-HTTP service. No `time.sleep` in a service file, no `hal.setp` in
-a service file, no edge policy leaking into HTTP code.
+Rising-edge generation for `halui.estop.activate` is the HAL
+wiring's job, not Python's — `EStopPin` does a single flat write
+and nothing more; there is no edge-generation code anywhere in the
+Python pin classes, by design. No `time.sleep` in a service file,
+no `hal.setp` in a service file, no edge policy leaking into HTTP
+code — full stop, not "moved to a pin subclass instead."
 
 **Bootstrap order matters.** `preload_hal_pins()` only *queues*
 pins in `HalPin._pending_pins`; the actual HAL pins are created

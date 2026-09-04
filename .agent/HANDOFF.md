@@ -14,6 +14,40 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
+### 1.0d Fixed every pre-existing backend test failure (root cause, not deletion)
+
+- **Context.** The technical-debt list in § 2.1 (below, at the time)
+  documented ~41 pre-existing failures across `backend/machine/tests`
+  and `backend/system/tests`, inherited from before the typing-gate
+  work in § 1.0c. Asked to fix or delete them, scoped to the backend
+  only.
+
+- **Outcome.** All three backend suites pass cleanly:
+  `backend/common/tests` 30/30, `backend/machine/tests` 375/375,
+  `backend/system/tests` 214/214 (+1 skipped). Every failure was
+  root-caused and fixed — none were deleted to make the count go
+  down. See the rewritten § 2.1 for the itemized bug list (stale
+  mock patch targets from a `get_machine_stat` → `get_stat_channel`
+  rename that tests never followed; a real `GET /state` 500 caused
+  by `_StateSnapshot(**a_pydantic_model)`; a real mapper bug where
+  Pydantic's default `extra="ignore"` silently defeated a malformed-
+  input fallback; a real Windows-only file-corruption bug from a
+  missing `newline=""` on `Path.write_text()`; and a real two-layer
+  test-isolation bug in the macros test fixtures).
+
+- **One question raised, then resolved by the user.** Rewriting
+  `TestActivateEstop` surfaced that `.agent/context/LESSONS_LEARNED.md`
+  § 3.5 claimed "the [rising-edge] dance lives inside `EStopPin`" —
+  it doesn't; the pin classes do a single flat write. This was
+  raised as an open question and settled: edge generation for
+  `halui.estop.activate` is the HAL wiring's job, not the backend's
+  — by design, not a gap. `StateService.activate_estop()`'s own
+  docstring already said as much ("The HAL layer is responsible for
+  routing this to `halui.estop.activate` and generating the required
+  rising edge"); the LESSONS_LEARNED § 3.5 line was corrected to
+  match, and the test docstring's "open question" framing was
+  removed.
+
 ### 1.0c Rewrote `.agent/` for the current architecture; added a typing-discipline gate
 
 - **Context.** Two related asks: (1) sweep every `.agent/` doc for
@@ -1014,38 +1048,104 @@ removal + template system (Arc 3). What follows is current as of
 the docs pass that removed the last mentions of the frontend module
 registry and the old compiler (see the dated entries above).
 
-### 2.1 Pre-existing test failures (not caused by the docs pass)
+### 2.1 Backend test suites — all green (fixed, not deleted)
 
-Running each suite separately today:
+All three backend suites pass cleanly today:
 
-- `backend/common/tests` — **30 passed**, 0 failed.
-- `backend/machine/tests` — **33 failed**, 343 passed. Almost all of
-  the failures are in `test_machine_state_facade.py` (~24 cases): the
-  tests patch `get_machine_stat` on the hardware connection module,
-  but the current `backend/common/hardware/Connection.py` does not
-  expose a function by that name — the test file is aspirational
-  relative to the actual module surface, not a real regression from
-  recent work. The remainder
-  (`test_machine_state_module.py::test_state_endpoints_are_mounted`,
-  two `test_program_module.py` cases, one
-  `test_servo_thread_mapper.py` case, one `test_telemetry_offline.py`
-  case) look like smaller, independent pre-existing gaps.
-- `backend/system/tests` — **8 failed**, 206 passed, 1 skipped, all
-  in `test_macros_module.py`. The visible failure mode is a
-  `size_bytes` mismatch (test expects a smaller byte count than the
-  actual UTF-8-encoded payload), suggesting the test's expected
-  value assumes different newline/encoding handling than the current
-  `MacroStorage`/`MacroService` implementation produces.
+- `backend/common/tests` — 30 passed, 0 failed.
+- `backend/machine/tests` — 375 passed, 0 failed.
+- `backend/system/tests` — 214 passed, 1 skipped, 0 failed.
 
-None of these were introduced by the `.agent/` documentation pass, or
-by the typing-discipline pass in § 2.2 below (both were verified
-against this exact failure list before and after) — verify with
-`git log` before assuming otherwise regardless, since this count was
-taken at a point in time. Worth a dedicated debugging session: fix
-or delete `test_machine_state_facade.py` (it looks like it was
-written against a planned API that was never finished, or against
-an older `Connection` module shape), and investigate the macros
-byte-count assumption.
+This section used to document ~41 pre-existing failures across
+`backend/machine` and `backend/system`. Every one was root-caused
+and fixed (not deleted) in a dedicated pass; the fixes fell into a
+few buckets, in case the same shape of bug shows up again:
+
+- **Stale mock patch targets.** Several test files patched
+  `hardware.Connection.get_machine_stat` / `get_machine_cmd` /
+  `get_machine_error` — names that don't exist; the real functions
+  are `get_stat_channel` / `get_cmd_channel` / `get_error_channel`
+  (renamed at some point without the tests following). Some also
+  needed the patch **target module** changed, not just the name —
+  `StateService.py` does `from hardware import get_stat_channel,
+  ...`, which binds the name into `services.StateService`'s own
+  namespace, so patching `hardware.Connection.get_stat_channel`
+  doesn't affect it; the fix patches `services.StateService
+  .get_stat_channel` instead (classic "patch where it's looked up,
+  not where it's defined").
+- **A real production bug the tests had been catching all along.**
+  `routers/state.py`'s `GET /state` handler did
+  `_StateSnapshot(**snapshot)` where `snapshot` is a
+  `services.StateService.StateSnapshot` — a Pydantic model
+  instance, not a mapping — which raises `TypeError` on every call.
+  Fixed to `_StateSnapshot(**snapshot.model_dump())`. This endpoint
+  was broken in production the whole time; nothing else exercised
+  it.
+- **An architecture question raised, then settled (not a bug).**
+  `test_machine_state_facade.py`'s `TestActivateEstop` class used to
+  pin a two-write (0 then 1) rising-edge dance against
+  `halui.estop.activate` with a `time.sleep()` between the writes —
+  exactly the anti-pattern `.agent/context/LESSONS_LEARNED.md` § 3.5
+  describes replacing with the `HalPin` subclass architecture. The
+  current `activate_estop()` uses that architecture
+  (`self._Estop.pressed.set_value(True)`) and does **not** generate
+  an edge in Python — confirmed correct: edge generation for
+  `halui.estop.activate` is the HAL wiring's job, not the backend's.
+  `StateService.activate_estop()`'s own docstring already said so;
+  `LESSONS_LEARNED.md` § 3.5's stale claim that "the dance lives
+  inside `EStopPin`" was corrected. The test was rewritten to pin
+  the actual current contract (calls `set_value(True)`, 503 on
+  failure, no NML fallback).
+- **A real mapper bug.** `ServoThreadStateMapper.normalize_errors`
+  tried `LinuxCNCError(**entry)` for any dict entry; Pydantic's
+  default `extra="ignore"` means a dict with none of `kind` /
+  `text` / `time` constructs *successfully* with every field at its
+  default — producing a blank, useless error row — instead of
+  falling through to the `str(entry)` fallback the function exists
+  to provide. Fixed by only attempting the model construction when
+  the dict has at least one recognised key.
+- **A real cross-platform (Windows) file-corruption bug.**
+  `domain_file_services/FileService.write_file()` used
+  `Path.write_text(content, encoding="utf-8")` with no `newline=`
+  argument — on Windows this silently rewrites every `\n` in the
+  content as `\r\n`. Every macro/M-code/program file written through
+  this path (the base class every domain file service shares) picked
+  up CRLF line endings on a Windows dev/build machine. Fixed with
+  `newline=""` (matches the pattern `storage/MacroStorage.py` already
+  used correctly). **Not yet applied** to the handful of other
+  `write_text()` call sites with the same missing argument
+  (`services/machineconfig/hardware_json_generator.py`,
+  `services/machinetemplates/generator.py` — the `hardware.json` /
+  `machine.ini` / `machine.hal` / `custom.hal` /
+  `postgui_call_list.hal` writers) — no currently-failing test
+  exercises those, so they were left alone rather than changed
+  speculatively; worth a follow-up pass since a CRLF-corrupted
+  `machine.hal` reaching a real (POSIX) LinuxCNC controller is a
+  believable failure mode.
+- **A real test-isolation bug.** `test_macros_module.py`'s
+  `isolated_storage` fixture built a fresh `MacroStorage` and
+  stashed it on a `._macro_storage` attribute that
+  `MacrosService` never actually reads (real reads/writes go
+  through `self._macro_service`, resolved once at `__init__` via
+  the module-level `domain_file_services.get_macro_service()`
+  cache) — so nothing was isolated, and macros written by one test
+  bled into the next test's "empty" assertions. Fixed to patch the
+  `get_macro_service` factory function itself, mirroring the
+  already-correct `isolated_mcodes` fixture next to it. That fix
+  then exposed a second, subtler ordering bug: `MacrosService
+  .__init__` captures both `get_macro_service()` and
+  `get_mcode_service()` once, and pytest resolves `isolated_storage`
+  before `isolated_mcodes` (parameter order), so eagerly
+  constructing `MacrosService()` inside `isolated_storage` would
+  freeze in the real `mcode` service before `isolated_mcodes` ever
+  got to patch it. Fixed by making the patched `get_macros_service`
+  lazily construct on first call instead of eagerly at fixture-setup
+  time — by then every fixture the test requested has finished
+  running.
+
+None of the fixes above touch `.agent/` docs or the typing-discipline
+gate from § 2.2 — verify with `git log` if this section looks stale
+by the time you're reading it.
 
 ### 2.2 Typing discipline — now gated, but not `--strict`
 

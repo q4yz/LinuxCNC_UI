@@ -16,11 +16,11 @@ echo "Temporarily starting both backends to generate API schemas..."
 source "$PROJECT_DIR/backend/venv/bin/activate"
 
 cd "$PROJECT_DIR/backend/machine"
-uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend-machine.log" 2>&1 &
+sudo -u "$REAL_USER" bash -c "exec $PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 > \"$PROJECT_DIR/backend-machine.log\" 2>&1" &
 MACHINE_BACKEND_PID=$!
 
 cd "$PROJECT_DIR/backend/system"
-uvicorn main:app --host 127.0.0.1 --port 8001 > "$PROJECT_DIR/backend-system.log" 2>&1 &
+sudo -u "$REAL_USER" bash -c "exec $PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001 > \"$PROJECT_DIR/backend-system.log\" 2>&1" &
 SYSTEM_BACKEND_PID=$!
 
 # CRITICAL: Ensure both backends are killed when this script exits, even if npm build fails
