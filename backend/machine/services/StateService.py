@@ -99,7 +99,7 @@ class StateService:
     def preload_hal_pins(self):
         self._Estop = EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT,""))
 
-    def get_halpins(self) -> list:
+    def get_halpins(self) -> List[EStopPin]:
         """Returns the pre-built pin containers (mirrors ToolsService.get_halpins)."""
         if self._Estop is None:
             logging.warning("get_halpins() called before preload! Forcing late initialization.")
@@ -107,7 +107,7 @@ class StateService:
         return [self._Estop]
 
     @staticmethod
-    def _resolve(table: dict, name: str) -> int:
+    def _resolve(table: dict[str, str], name: str) -> int:
         """Translate an operator-facing name to its NML integer."""
         attr = table.get(name)
         if attr is None:
@@ -148,6 +148,8 @@ class StateService:
     def turn_machine_on(self) -> None:
         """Powers on the machine. Fails if ESTOP is active."""
         stat = get_stat_channel()
+        if stat is None:
+            raise RuntimeError("Cannot turn on machine: stat channel unavailable.")
         stat.poll()
         if getattr(stat, 'task_state', 0) == getattr(linuxcnc, "STATE_ESTOP", 1):
             raise RuntimeError("Cannot turn on machine while in E-STOP.")
@@ -296,7 +298,7 @@ class StateService:
         if not err_ch:
             return []
 
-        pending = []
+        pending: List[Tuple[int, str]] = []
         try:
             while len(pending) < limit:
                 entry = err_ch.poll()

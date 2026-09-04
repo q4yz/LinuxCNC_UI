@@ -7,6 +7,7 @@
 import CameraSettings from '../components/camera/CameraSettings.vue'
 import MachineSettingsPanel from '../components/machine/MachineSettingsPanel.vue'
 import TemperatureSettingsPanel from '../components/temperature/TemperatureSettingsPanel.vue'
+import MachineGate from '../components/machine/MachineGate.vue'
 
 function apiBaseUrl(moduleId: string) {
   return `/api/v1/modules/${moduleId}/settings`
@@ -43,7 +44,9 @@ function apiBaseUrl(moduleId: string) {
 
       <div class="p-6">
         <h2 class="text-lg font-semibold text-gray-200">Camera settings</h2>
-        <CameraSettings class="mt-4" />
+        <MachineGate label="Camera settings">
+          <CameraSettings class="mt-4" />
+        </MachineGate>
         <p class="mt-4 text-xs text-gray-500">
           Persisted at: <code>{{ apiBaseUrl('camera') }}</code>
         </p>
@@ -51,7 +54,9 @@ function apiBaseUrl(moduleId: string) {
 
       <div class="p-6 border-t border-gray-700">
         <h2 class="text-lg font-semibold text-gray-200">Machine Config settings</h2>
-        <MachineSettingsPanel class="mt-4" />
+        <MachineGate label="Machine settings">
+          <MachineSettingsPanel class="mt-4" />
+        </MachineGate>
         <p class="mt-4 text-xs text-gray-500">
           Persisted at: <code>{{ apiBaseUrl('machineconfig') }}</code>
         </p>
@@ -59,7 +64,9 @@ function apiBaseUrl(moduleId: string) {
 
       <div class="p-6 border-t border-gray-700">
         <h2 class="text-lg font-semibold text-gray-200">Temperature settings</h2>
-        <TemperatureSettingsPanel class="mt-4" />
+        <MachineGate label="Temperature settings">
+          <TemperatureSettingsPanel class="mt-4" />
+        </MachineGate>
         <p class="mt-4 text-xs text-gray-500">
           Persisted at: <code>{{ apiBaseUrl('temperature') }}</code>
         </p>

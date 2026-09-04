@@ -26,7 +26,7 @@ via a coroutine that the pump drains.
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import pytest
 
@@ -93,9 +93,9 @@ class _FakeAsyncClient:
         self._fake_stream = fake_stream
         self._fake_streams = list(fake_streams) if fake_streams else None
         self._raise_on_send = raise_on_send
-        self.client_kwargs: dict = {}
+        self.client_kwargs: dict[str, Any] = {}
         self.last_send_request = None
-        self.send_calls: List[dict] = []
+        self.send_calls: List[dict[str, Any]] = []
 
     async def __aenter__(self):
         return self
@@ -127,7 +127,7 @@ def _install_fake_httpx(monkeypatch, fake_client: _FakeAsyncClient):
         smp.httpx,
         "AsyncClient",
         lambda **kwargs: (
-            setattr(fake_client, "client_kwargs", kwargs) or fake_client
+            setattr(fake_client, "client_kwargs", kwargs) or fake_client  # type: ignore[func-returns-value]
         ),
     )
 
@@ -248,7 +248,7 @@ def test_five_concurrent_subscribers_share_one_upstream(monkeypatch):
         send_calls.append(args)
         return await real_send(*args, **kwargs)
 
-    fake_client.send = _tracked_send  # type: ignore[assignment]
+    fake_client.send = _tracked_send
     _install_fake_httpx(monkeypatch, fake_client)
 
     async def _run():
@@ -489,7 +489,7 @@ def test_new_subscriber_within_idle_window_reuses_proxy(monkeypatch):
         send_calls.append(args)
         return await real_send(*args, **kwargs)
 
-    fake_client.send = _tracked_send  # type: ignore[assignment]
+    fake_client.send = _tracked_send
     _install_fake_httpx(monkeypatch, fake_client)
 
     async def _run():

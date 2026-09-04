@@ -40,7 +40,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger("backend.services.file_service")
 
@@ -65,10 +65,10 @@ class FileMetadata:
     modified: Optional[str] = None
     read_only: bool = False
     has_marker: bool = False
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
-        payload = {
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "name": self.name,
             "path": self.path,
             "parent": self.parent,

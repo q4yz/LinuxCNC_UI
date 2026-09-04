@@ -12,7 +12,7 @@ class MockComponent:
         self.internal_hal = internal_hal
         self.name = name
         self.is_ready = False
-        self._pins = {}  # Internal dictionary to store pin values
+        self._pins: dict[str, float] = {}  # Internal dictionary to store pin values
 
     def newpin(self, pin_name: str, pin_type: int, pin_dir: int):
         """Mocks creating a new pin."""

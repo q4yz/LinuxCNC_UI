@@ -3,6 +3,12 @@
 // and rendered as a direct dependency. The previous registry-driven
 // ``registry.modules.has(...)`` gates are gone — every panel below
 // is required at build time.
+//
+// Machine-level panels are wrapped in ``<MachineGate>``: they only
+// mount (and only generate network traffic) while the machine
+// backend (:8000) is confirmed reachable. The console stays
+// ungated — it also carries system-side rows and the offline
+// explanation itself.
 
 import NgcCoordinateSystemViewer from '../components/NgcCoordinateSystemViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
@@ -17,6 +23,7 @@ import ToolPanel from '../components/tools/ToolPanel.vue'
 import MacroPanel from '../components/macros/MacroPanel.vue'
 import McodePanel from '../components/macros/McodePanel.vue'
 import PowerOn from "../components/machine/PowerOn.vue";
+import MachineGate from "../components/machine/MachineGate.vue";
 import BaseCard from "../ui/BaseCard.vue";
 </script>
 
@@ -28,15 +35,25 @@ import BaseCard from "../ui/BaseCard.vue";
       <!-- Left Column: flex-1 tells it to take 1 part space, but NEVER go below 570px -->
       <div class="flex-1 min-w-[min(100%,570px)] flex flex-col space-y-6">
 
-        <PowerOn/>
+        <MachineGate label="Machine">
+          <PowerOn/>
+        </MachineGate>
 
-        <DroPanel/>
+        <MachineGate label="DRO">
+          <DroPanel/>
+        </MachineGate>
 
-        <JogControls/>
+        <MachineGate label="Jog">
+          <JogControls/>
+        </MachineGate>
 
-        <ToolPanel/>
+        <MachineGate label="Tools">
+          <ToolPanel/>
+        </MachineGate>
 
-        <TemperaturePanel/>
+        <MachineGate label="Temperature">
+          <TemperaturePanel/>
+        </MachineGate>
 
       </div>
 
@@ -47,18 +64,28 @@ import BaseCard from "../ui/BaseCard.vue";
 
           <BaseCard title="Toolpath" >
             <div class="flex-1 relative h-[600px]">
-              <NgcCoordinateSystemViewer/>
+              <MachineGate label="Toolpath">
+                <NgcCoordinateSystemViewer/>
+              </MachineGate>
             </div>
           </BaseCard>
 
 
-        <ActivePrintWidget/>
+        <MachineGate label="Job status">
+          <ActivePrintWidget/>
+        </MachineGate>
 
         <div class="h-[300px]">
           <ConsolePanel/>
         </div>
 
-        <CameraViewer/>
+        <!-- Camera: the gate's v-if physically unmounts the MJPEG
+             <img> when the machine goes offline, aborting a hung
+             stream instead of leaving the browser waiting on a
+             dead connection. -->
+        <MachineGate label="Camera">
+          <CameraViewer/>
+        </MachineGate>
 
       </div>
     </div>

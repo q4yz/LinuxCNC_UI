@@ -35,11 +35,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List
 
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# An async subscriber: ``await callback(topic, payload)``. The payload
+# is intentionally ``Any`` (not ``dict``) — it is often a Pydantic
+# ``BaseModel`` instance, sometimes a primitive, and the bus itself
+# never introspects its shape.
+EventBusCallback = Callable[[str, Any], Awaitable[None]]
 
 
 class EventBus:
@@ -59,13 +65,13 @@ class EventBus:
 
     def __init__(self) -> None:
         # topic -> list of async callbacks
-        self._subscribers: Dict[str, List[Callable]] = defaultdict(list)
+        self._subscribers: Dict[str, List[EventBusCallback]] = defaultdict(list)
 
         # Last known payload per topic; used to skip redundant updates
         # on "state." topics so noisy modules don't flood the bus.
         self._state_cache: Dict[str, Any] = {}
 
-    def subscribe(self, topic: str, callback: Callable) -> None:
+    def subscribe(self, topic: str, callback: EventBusCallback) -> None:
         """Register an async callback for a specific topic.
 
         Args:
@@ -76,7 +82,7 @@ class EventBus:
         self._subscribers[topic].append(callback)
         logger.debug("Subscribed to topic: %s", topic)
 
-    def unsubscribe(self, topic: str, callback: Callable) -> bool:
+    def unsubscribe(self, topic: str, callback: EventBusCallback) -> bool:
         """Remove a previously registered callback.
 
         Args:
@@ -158,7 +164,7 @@ class EventBus:
         return payload
 
     async def _safe_invoke(
-        self, callback: Callable, topic: str, payload: Any
+        self, callback: EventBusCallback, topic: str, payload: Any
     ) -> None:
         """Invoke a single subscriber without letting exceptions escape.
 

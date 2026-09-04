@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from hardware.mock.LinuxCNCMock import hal, mock_system
 from hardware.mock.tools.MockHeater import MockHeater
@@ -135,7 +135,7 @@ def reset_error_history() -> None:
     mock_system.internal_state.clear_errors()
 
 
-def push_mock_error(text: str, kind: int = 11, time: str = None) -> None:
+def push_mock_error(text: str, kind: int = 11, time: Optional[str] = None) -> None:
     """Injects a fake error into the LinuxCNC error channel."""
     mock_system.internal_state.push_error(text=text, kind=kind, time=time)
 

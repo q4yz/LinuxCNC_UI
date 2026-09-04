@@ -22,7 +22,7 @@ installed, every test monkeypatches either
 from __future__ import annotations
 from tests._module_app_factory import build_module_app
 
-from typing import List
+from typing import List, Optional
 
 import pytest
 from fastapi import FastAPI
@@ -72,7 +72,7 @@ class _FakeProc:
         stdout=None,
         stderr=None,
         start_new_session: bool = False,
-        exit_code: int = None,
+        exit_code: Optional[int] = None,
     ) -> None:
         self.args = args
         self.stdout = stdout

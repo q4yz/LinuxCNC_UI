@@ -8,7 +8,7 @@ import { onScopeDispose, ref, watch, type Ref } from "vue";
 import { createModuleSettings } from "../core/settings/createModuleSettings";
 import { useBaseThreadStore } from "./baseThread";
 import { TemperatureUnit } from "../entities";
-import type { ReadingSet } from "../entities/temperature";
+import { HeaterReading, type ReadingSet } from "../entities/temperature";
 
 import type { CommandResult } from "../entities";
 import {HeaterControlRequest} from "../entities/tools/Heater";
@@ -27,7 +27,7 @@ const DEFAULT_SENSOR_COLORS: Record<string, string> = {};
 const STORE_ID = TEMPERATURE_ID;
 
 // Singleton settings client
-let settingsClientSingleton: any = null;
+let settingsClientSingleton: ReturnType<typeof createModuleSettings> | null = null;
 function settingsClient() {
     if (!settingsClientSingleton) {
         settingsClientSingleton = createModuleSettings(TEMPERATURE_ID);
@@ -68,7 +68,7 @@ function readingsToChartShape(readings: ReadingSet): Record<string, ChartSensorS
     readings.forEach((r) => {
         out[r.id] = {
             actual: r.actualCelsius,
-            ...(r.isControllable && { target: (r as any).targetCelsius }),
+            ...(r instanceof HeaterReading && r.isControllable && { target: r.targetCelsius }),
         };
     });
     return out;
@@ -104,14 +104,15 @@ export const useTemperatureStore = defineStore(
             visibleSensors.value = next;
         }
 
-        function applySettings(settings: any) {
+        function applySettings(settings: unknown) {
             if (!settings || typeof settings !== "object") return;
-            if (settings.unit === TemperatureUnit.CELSIUS || settings.unit === TemperatureUnit.KELVIN) {
-                unit.value = settings.unit;
+            const s = settings as Record<string, unknown>;
+            if (s.unit === TemperatureUnit.CELSIUS || s.unit === TemperatureUnit.KELVIN) {
+                unit.value = s.unit;
             }
-            if (settings.sensor_colors && typeof settings.sensor_colors === "object") {
+            if (s.sensor_colors && typeof s.sensor_colors === "object") {
                 const next = { ...sensorColors.value };
-                for (const [name, hex] of Object.entries(settings.sensor_colors)) {
+                for (const [name, hex] of Object.entries(s.sensor_colors)) {
                     if (typeof hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
                         next[name] = hex;
                     }

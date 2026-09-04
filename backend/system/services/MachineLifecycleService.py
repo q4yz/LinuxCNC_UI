@@ -29,7 +29,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
@@ -98,7 +98,7 @@ class MachineLifecycleService:
             logger.warning("machine_name probe failed: %s", exc)
             return None
 
-    def status(self) -> dict:
+    def status(self) -> Dict[str, Any]:
         ini = self.active_ini()
         return {
             "running": self.is_running(),
@@ -112,7 +112,7 @@ class MachineLifecycleService:
     # Start                                                               #
     # ------------------------------------------------------------------ #
 
-    def start(self) -> dict:
+    def start(self) -> Dict[str, Any]:
         """Run ``linuxcnc <generated ini>`` as a console process."""
         if self.is_running():
             raise ConflictError(
@@ -188,7 +188,7 @@ class MachineLifecycleService:
     # Stop                                                                #
     # ------------------------------------------------------------------ #
 
-    def stop(self, grace_seconds: float = _STOP_GRACE_SECONDS) -> dict:
+    def stop(self, grace_seconds: float = _STOP_GRACE_SECONDS) -> Dict[str, Any]:
         """Stop the running LinuxCNC session (SIGINT → SIGTERM → SIGKILL)."""
         pids = linuxcnc_pids()
         if not pids:
@@ -239,7 +239,7 @@ class MachineLifecycleService:
     # Switch machine                                                      #
     # ------------------------------------------------------------------ #
 
-    def switch(self, machine: Optional[str] = None, start_machine: bool = True) -> dict:
+    def switch(self, machine: Optional[str] = None, start_machine: bool = True) -> Dict[str, Any]:
         """Switch the active machine: stop → (deploy) → start.
 
         Args:

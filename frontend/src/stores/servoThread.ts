@@ -18,6 +18,22 @@ export const useServoThreadStore = defineStore('servoThread', () => {
     const status = ref<ServoThreadState>(new ServoThreadState());
     const connectionStatus = ref('disconnected');
 
+    // Wall-clock millisecond timestamp of the last WebSocket frame
+    // of ANY type (delta, full_state, error, heartbeat). The
+    // base-thread freeze watchdog reads this to decide whether the
+    // servo channel is still delivering traffic — see
+    // ``stores/baseThread.ts`` for the all-channels-stuck rule.
+    const lastMessageAt = ref(0);
+
+    /**
+     * Stamp WS liveness. Called by the facade as the very first
+     * statement of ``onmessage`` — before any parsing — so even a
+     * malformed frame proves the transport is alive.
+     */
+    const noteWsMessage = (): void => {
+        lastMessageAt.value = Date.now();
+    };
+
     /**
      * Mirror the live state into the State Facade
      * (``stores/stateFacade.ts``). The facade is the consumer
@@ -78,7 +94,7 @@ export const useServoThreadStore = defineStore('servoThread', () => {
         mirrorToFacade();
     };
 
-    return {status, connectionStatus, setFullState, applyDelta, setConnectionStatus};
+    return {status, connectionStatus, lastMessageAt, setFullState, applyDelta, setConnectionStatus, noteWsMessage};
 
 
 });

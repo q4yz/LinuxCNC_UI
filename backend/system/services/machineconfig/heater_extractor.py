@@ -18,6 +18,8 @@ for sorting.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from models.machineconfig import MachineConfigGraph
@@ -113,7 +115,7 @@ class HeaterExtractor:
         ]
 
     @staticmethod
-    def to_dicts(graph: MachineConfigGraph) -> list[dict]:
+    def to_dicts(graph: MachineConfigGraph) -> list[dict[str, Any]]:
         """Convenience wrapper that returns plain dicts for JSON dumps.
 
         Equivalent to ``[h.model_dump() for h in HeaterExtractor.extract(graph)]``

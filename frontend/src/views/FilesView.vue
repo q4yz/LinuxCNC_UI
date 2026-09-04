@@ -7,6 +7,7 @@
 // in other layouts.
 import FileManager from '../components/FileManager.vue';
 import ActivePrintWidget from "../components/ActivePrintWidget.vue";
+import MachineGate from "../components/machine/MachineGate.vue";
 
 const emit = defineEmits(['edit']);
 
@@ -20,6 +21,8 @@ function handleEdit(...args: unknown[]) {
 <template>
   <div class="h-full w-full flex flex-col">
     <FileManager @edit="handleEdit" class="mb-4" />
-    <ActivePrintWidget />
+    <MachineGate label="Job status">
+      <ActivePrintWidget />
+    </MachineGate>
   </div>
 </template>

@@ -200,7 +200,7 @@ def parse_macro(source: str) -> List[Block]:
             continue
 
         if ch in ('"', "'"):
-            string_quote = ch  # type: ignore[assignment]
+            string_quote = ch
             buffer.append(ch)
             continue
 

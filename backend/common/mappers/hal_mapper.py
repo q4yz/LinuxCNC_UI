@@ -44,7 +44,7 @@ class HalMapper:
         return "float"
 
     @staticmethod
-    def pin_full_name(pin: MachineHalPin) -> str:
+    def pin_full_name(pin: MachineHalPin[Any]) -> str:
         """``<component>.<pin>``; tolerates a missing component."""
         comp = pin.get_comp_name()
         name = pin.get_pin_name()
@@ -53,7 +53,7 @@ class HalMapper:
         return name or comp
 
     @staticmethod
-    def to_pin_resource(pin: MachineHalPin) -> HalPinResource:
+    def to_pin_resource(pin: MachineHalPin[Any]) -> HalPinResource:
         """Flatten one :class:`MachineHalPin` into a :class:`HalPinResource`."""
         full_name = HalMapper.pin_full_name(pin)
         direction = pin.get_direction()
@@ -69,7 +69,7 @@ class HalMapper:
         )
 
     @staticmethod
-    def to_signal_resource(signal: MachineHalSignal) -> HalSignalResource:
+    def to_signal_resource(signal: MachineHalSignal[Any]) -> HalSignalResource:
         """Flatten one :class:`MachineHalSignal` into a :class:`HalSignalResource`.
 
         The signal's type token is derived from its source pin when
@@ -96,8 +96,8 @@ class HalMapper:
 
     @staticmethod
     def to_layout(
-        pins: Sequence[MachineHalPin],
-        signals: Iterable[MachineHalSignal],
+        pins: Sequence[MachineHalPin[Any]],
+        signals: Iterable[MachineHalSignal[Any]],
     ) -> HalLayoutResponse:
         """Split pins into IN/OUT palettes and map every signal.
 

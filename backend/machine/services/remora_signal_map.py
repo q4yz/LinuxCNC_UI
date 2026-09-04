@@ -37,7 +37,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("backend.services.remora_signal_map")
 
@@ -62,14 +62,14 @@ def _resolve_active_dir(active_dir: Path | None) -> Path:
 
 
 _cache_lock = threading.Lock()
-_cache_payload: Optional[dict] = None
+_cache_payload: Optional[dict[str, Any]] = None
 _cache_source: Optional[Path] = None
 
 
 def _load_payload(
     active_dir: Path | None = None,
     hardware_filename: str = "hardware.json",
-) -> Optional[dict]:
+) -> Optional[dict[str, Any]]:
     """Read + parse ``hardware.json``; cache the result per path.
 
     The cache is keyed on the absolute path so two callers using
@@ -117,7 +117,7 @@ def _load_payload(
 # ---------------------------------------------------------------------------
 
 
-def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
+def _build_indices(payload: dict[str, Any]) -> tuple[dict[str, int], dict[str, int]]:
     """Build (sp_index_by_id, pv_index_by_id) from a parsed payload.
 
     The ordering mirrors the compiler's ``config_txt_generator``:
@@ -152,7 +152,7 @@ def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
             ),
             key=lambda t: t.get("id", ""),
         )
-        sensors_by_id: dict[str, dict] = {}
+        sensors_by_id: dict[str, dict[str, Any]] = {}
         for s in payload.get("temperature_sensors") or []:
             if isinstance(s, dict) and isinstance(s.get("id"), str):
                 sensors_by_id[s["id"]] = s
@@ -192,7 +192,7 @@ def _build_indices(payload: dict) -> tuple[dict[str, int], dict[str, int]]:
         # distinguishes them: ``fan_<heater>`` = piggy-back,
         # ``fan`` / ``fan_<named>`` = standalone.
         seen_piggy = {
-            t.get("id") + "_fan"
+            str(t.get("id", "")) + "_fan"
             for t in sorted_heating_tools
             if isinstance(t, dict)
         }

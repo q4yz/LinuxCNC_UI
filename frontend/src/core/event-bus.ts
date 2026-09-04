@@ -24,7 +24,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 export class EventBus {
-  private _subscribers: Map<string, Set<(topic: string, payload: any) => void>>;
+  private _subscribers: Map<string, Set<(topic: string, payload: unknown) => void>>;
 
   constructor() {
     this._subscribers = new Map();
@@ -37,11 +37,11 @@ export class EventBus {
    * and is silently ignored otherwise.
    *
    * @param {string} topic
-   * @param {(topic: string, payload: any) => void} callback
+   * @param {(topic: string, payload: unknown) => void} callback
    */
   subscribe(
     topic: string,
-    callback: (topic: string, payload: any) => void,
+    callback: (topic: string, payload: unknown) => void,
   ): void {
     let set = this._subscribers.get(topic);
     if (!set) {
@@ -59,7 +59,7 @@ export class EventBus {
    */
   unsubscribe(
     topic: string,
-    callback: (topic: string, payload: any) => void,
+    callback: (topic: string, payload: unknown) => void,
   ): boolean {
     const set = this._subscribers.get(topic);
     if (!set) return false;
@@ -73,9 +73,9 @@ export class EventBus {
    * Each subscriber receives its own deep-frozen copy.
    *
    * @param {string} topic
-   * @param {any} payload
+   * @param {unknown} payload
    */
-  publish(topic: string, payload: any): void {
+  publish(topic: string, payload: unknown): void {
     const set = this._subscribers.get(topic);
     if (!set || set.size === 0) return;
     for (const cb of set) {

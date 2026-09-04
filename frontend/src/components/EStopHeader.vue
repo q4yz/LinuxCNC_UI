@@ -22,18 +22,15 @@ import { useMachineStore } from '../stores/machine'
 // ``.agent/STATE.md`` § 6.
 import { useMachineStore as useFacadeStore } from '../stores/stateFacade'
 import { useConsoleStore } from '../stores/console'
-import { useBaseThreadStore } from '../stores/baseThread'
 
 const store = useMachineStore()
 const facade = useFacadeStore()
-const baseThread = useBaseThreadStore()
 // ``storeToRefs`` preserves reactivity for both the legacy compat
 // (``isEstop``) and the facade (``systemState``) — plain ES
 // destructuring would silently lose Pinia reactivity (see
 // ``.agent/context/LESSONS_LEARNED.md`` § 2.3).
 const { isEstop } = storeToRefs(store)
 const { systemState } = storeToRefs(facade)
-const { pendingSince, secondsSinceLastSnapshot } = storeToRefs(baseThread)
 
 async function pressEStop() {
   // Critical path: always engage. No state check, no toggle — the
@@ -124,26 +121,6 @@ watch(systemState, (next, prev) => {
       data-testid="estop-machine-state"
     >
       {{ systemState }}
-    </div>
-
-    <!--
-      "Connection appears stuck" indicator. Surfaces the same
-      watchdog state the ``PendingSnapshotDialog`` reads from. Only
-      rendered while the watchdog has crossed ``PENDING_TIMEOUT_MS``
-      so a healthy page renders nothing extra. The dialog handles
-      the full operator prompt; this badge exists so the operator
-      notices the stuck state when the modal is dismissed (the badge
-      stays visible until the snapshot recovers).
-    -->
-    <div
-      v-if="pendingSince !== null"
-      class="mt-1 rounded border border-amber-700 bg-amber-950/60 px-2 py-1 text-center font-mono text-[10px] uppercase tracking-widest text-amber-300"
-      role="status"
-      aria-live="polite"
-      data-testid="shot-stuck-badge"
-      :title="`Dashboard has not received a snapshot in ${secondsSinceLastSnapshot}s`"
-    >
-      Stuck {{ secondsSinceLastSnapshot }}s
     </div>
   </div>
 </template>

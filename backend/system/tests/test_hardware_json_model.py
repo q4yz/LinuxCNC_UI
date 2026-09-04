@@ -1,6 +1,9 @@
 """Tests for the ``hardware.json`` v2 Pydantic model and its cross-reference validator."""
 
 from __future__ import annotations
+
+from typing import Any
+
 from tests._module_app_factory import build_module_app
 
 import pytest
@@ -24,7 +27,7 @@ from models.machineconfig.hardware_json_models import (
 # ---------------------------------------------------------------------- #
 
 
-def _minimal_payload() -> dict:
+def _minimal_payload() -> dict[str, Any]:
     """A minimal but valid ``hardware.json`` v2.1 payload.
 
     Every entity is present with the bare minimum fields the model

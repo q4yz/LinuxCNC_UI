@@ -1,0 +1,7 @@
+# Development-only tooling — never installed in production.
+#
+# mypy enforces the typing discipline in .agent/AGENT.md (no bare
+# `dict`/`list`/`Callable`/etc. without type parameters). See
+# backend/mypy.ini for the enabled checks and the `disable_error_code`
+# list of pre-existing type debt tracked in .agent/HANDOFF.md § 2.
+mypy==2.3.1

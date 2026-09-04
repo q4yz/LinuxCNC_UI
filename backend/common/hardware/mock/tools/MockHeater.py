@@ -43,5 +43,5 @@ class MockHeater(MockComponent):
             # Cool down by 0.5 degrees per second
             self.actual = max(ambient, self.actual - (0.5 * delta_time))
 
-    def get_legacy_state(self) -> dict:
+    def get_legacy_state(self) -> dict[str, Any]:
         return {"actual": self.actual, "target": self.target}

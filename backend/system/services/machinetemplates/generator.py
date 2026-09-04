@@ -33,7 +33,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from machineconfig_parser import parse_config
 from domain_file_services import paths
@@ -224,7 +224,7 @@ def generate_machine_templates(
     # gantry declared as ``[stepper_y]`` + ``[stepper_y1]`` — render
     # one [JOINT_N] per physical motor instead of collapsing them.
     graph = parse_config(source)
-    payload: Dict = build_hardware_json(graph, machine_name)
+    payload: Dict[str, Any] = build_hardware_json(graph, machine_name)
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
 
     if catalog is None:

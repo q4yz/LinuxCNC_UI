@@ -269,7 +269,7 @@ class TestMacroStorage:
 
         storage = MacroStorage(tmp_path / "macros")
         with pytest.raises(TypeError):
-            storage.write("hello", b"bytes-not-str")  # type: ignore[arg-type]
+            storage.write("hello", b"bytes-not-str")
 
 # ---------------------------------------------------------------------- #
 # Atomic-write interrupt test (mirrors test_settings_store.py)            #

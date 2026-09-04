@@ -11,7 +11,7 @@ to know the low-level sync mechanics or linuxcnc channel specifics.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from hardware.Connection import (
     DeviceConfigMapper,
@@ -38,7 +38,7 @@ class MachineService:
         self.mapper = mapper
         self.hal_mgr = hal_sub_mgr
 
-    def safe_execute_gcode(self, command: str, timeout: float = 2.0) -> dict:
+    def safe_execute_gcode(self, command: str, timeout: float = 2.0) -> Dict[str, Any]:
         """Executes a G-code command only if the machine is online."""
         if not is_linuxcnc_connected():
             logger.warning("Dropped G-code dispatch (offline): %s", command)

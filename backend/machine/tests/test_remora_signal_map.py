@@ -14,6 +14,8 @@ come first (alphabetical by canonical id), then standalone fan PWMs.
 
 from __future__ import annotations
 
+from typing import Any
+
 import json
 from pathlib import Path
 
@@ -30,7 +32,7 @@ from services.remora_signal_map import (
 def active_dir_with_payload(tmp_path: Path) -> Path:
     """Write a v2 hardware.json fixture and return the active dir."""
 
-    def _make(payload: dict) -> Path:
+    def _make(payload: dict[str, Any]) -> Path:
         target = tmp_path / "active"
         target.mkdir()
         (target / "hardware.json").write_text(

@@ -59,8 +59,8 @@ def _counting_reads(service: HalPinSignalService):
     # Patch the bound methods on the instance; ``get_layout`` calls
     # ``self._read_pins_from_linuxcnc()`` so the instance attribute
     # shadows the class method.
-    service._read_pins_from_linuxcnc = counting_pins  # type: ignore[method-assign]
-    service._read_signals_from_linuxcnc = counting_signals  # type: ignore[method-assign]
+    service._read_pins_from_linuxcnc = counting_pins
+    service._read_signals_from_linuxcnc = counting_signals
     return lambda: pins_calls.count, lambda: signals_calls.count
 
 

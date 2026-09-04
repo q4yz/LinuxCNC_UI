@@ -2,6 +2,7 @@
 
 import ActivePanel from "../components/machineconfig/ActivePanel.vue";
 import DebugPanel from "../components/DebugPanel.vue";
+import MachineGate from "../components/machine/MachineGate.vue";
 
 </script>
 
@@ -13,7 +14,9 @@ import DebugPanel from "../components/DebugPanel.vue";
 
   <div class="grid grid-cols-1 gap-6 pb-8 xl:grid-cols-12">
     <section class="space-y-6 xl:col-span-4">
-      <DebugPanel />
+      <MachineGate label="Telemetry debug">
+        <DebugPanel />
+      </MachineGate>
     </section>
 
     <section class="space-y-6 xl:col-span-8">

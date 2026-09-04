@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from typing import Any
 
 from hardware.mock.factory.MockToolFactory import MockToolFactory
 from hardware.mock.HalMock import HalMock
@@ -44,7 +45,7 @@ class LinuxCNCMock:
             self.internal_state.update(self.hal)
             time.sleep(0.1)
 
-    def register_hardware(self, payload: dict):
+    def register_hardware(self, payload: dict[str, Any]):
         """Parses a hardware.json payload and registers the active components."""
 
         for tool_record in payload.get("tools", []):

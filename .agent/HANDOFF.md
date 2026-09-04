@@ -14,6 +14,104 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
+### 1.0c Rewrote `.agent/` for the current architecture; added a typing-discipline gate
+
+- **Context.** Two related asks: (1) sweep every `.agent/` doc for
+  staleness — the backend-split (§ 1.0) and compiler-removal (§ 1.0b)
+  work above had left docs describing a frontend module registry
+  that no longer exists at all, plus assorted stale paths from the
+  pre-split flat `backend/` layout — and add a rule that Python code
+  should not use a bare `dict` and TypeScript should not use `any`;
+  (2) once that rule was documented, actually enforce it: fix every
+  existing violation and wire an automated gate into
+  [.agent/TEST.md](.agent/TEST.md) so a new one can't land silently.
+
+- **Docs.** Every file under `.agent/` was checked against the real
+  filesystem (not assumed from memory) and rewritten where stale:
+  `AGENT.md`, `README.md`, `TEST.md`, `context/hub.md`,
+  `context/ARCHITECTURE.md`, `context/BACKEND_LAYERS.md`,
+  `contracts/backend-router.md`, `contracts/settings-module.md`,
+  `STATE.md` (retitled from "Frontend Module System" — that system
+  is gone, the file now holds operational notes that are still
+  true), `context/VISION.md`, `context/MOCK_ARCHITECTURE.md`, and
+  `context/LESSONS_LEARNED.md` (module-registry lessons marked
+  retired-history rather than deleted, since the general lessons —
+  e.g. "a lazy-loading system can hide missing dependencies" — still
+  apply even though the specific system is gone). All markdown
+  links were re-verified against `backend/common/tests/test_doc_links.py`'s
+  repo-root-relative-only rule (self-caught mistake: sibling-relative
+  links — bracketed text pointing at a bare sibling filename instead
+  of the full repo-root path — crept back in twice during the
+  rewrite — always re-run the test after editing any required doc).
+
+- **Typing gate — TypeScript.** `npm run typecheck` (`vue-tsc
+  --build`, already an existing but unwired `package.json` script)
+  is now step 1 of `.agent/TEST.md`'s frontend verification, before
+  `npm run build`. It passed cleanly with zero changes needed, but
+  passing `vue-tsc` doesn't mean "no `any`" — TypeScript allows
+  explicit `any` without a type error. Every real `any` usage in
+  `frontend/src/` (42 grep matches, ~30 real after excluding prose
+  comments) was fixed by hand: `catch (err: any)` → `catch (err:
+  unknown)` + the existing `describeError()`/`errorStatus()`
+  helpers from `core/error-format.ts`; mapper functions parsing raw
+  wire JSON (`baseThreadMapper.ts`, `progressMapper.ts`,
+  `temperatureMapper.ts`, `toolsMapper.ts`) → `unknown` narrowed via
+  a local `Record<string, unknown>` cast; the (currently unused,
+  zero call sites) `EventBus`/`telemetry-bus` payload types → the
+  bus's own `unknown`; a couple of ECharts callback params and a
+  CodeMirror `clike()` keyword-table helper → concrete types instead
+  of `any`. No lint bans a *new* `any` yet (that needs ESLint +
+  `typescript-eslint`, not installed) — this is a code-review rule
+  until then.
+
+- **Typing gate — Python.** New `backend/mypy.ini` (repo-wide config,
+  run once per app — same "no shared package root" reason pytest is
+  split three ways) with `disallow_any_generics = True`, which is
+  precisely the "no bare `dict`" rule (also catches bare `list`,
+  `Callable`, `HalPin`, `MachineHalPin`, `tuple`, etc.). Fixed all 88
+  violations across `backend/common` (39), `backend/machine` (72,
+  overlapping counts before dedup), and `backend/system` (42) —
+  mostly `dict` → `dict[str, Any]`, and the two custom HAL-pin
+  generics (`HalPin[T]`, `MachineHalSignal[T]`) → `[Any]` where the
+  pin's value is genuinely polymorphic (bit/float/int) or a concrete
+  type (`HalPin[float]`, `HalPin[bool]`) where the DTO's paired
+  `StateDTO` already pinned it down. `mypy` is dev-only
+  (`backend/requirements-dev.txt`, installed alongside the machine +
+  system requirements in `.agent/TEST.md` step 1) — never shipped to
+  production. See § 2.2 below for what's still `disable_error_code`d
+  and why.
+
+- **Bugs found and fixed along the way** (surfaced only because
+  properly typing a `get_halpins()`/`get_states()` return value made
+  a previously-invisible mismatch visible to mypy): `StateService
+  .turn_machine_on()` called `stat.poll()` without the `if stat is
+  None: ...` guard every sibling method in the same file already
+  has — a real crash risk if the stat channel isn't connected, now
+  raises `RuntimeError` like the rest of the file. A `pin_slots:
+  tuple[str, str]` annotation in `machineconfig_parser.py` was
+  actually a tuple of four `(str, str)` pairs, not one pair — fixed
+  to `tuple[tuple[str, str], ...]`. `remora_signal_map.py` did
+  `t.get("id") + "_fan"` without a fallback for a missing key. A
+  dead helper in `test_temperature_router.py` referenced an
+  undefined `app` name (never called, so never crashed). None of
+  these showed up as test failures — they were latent, caught only
+  by the stricter static analysis.
+
+- **Verified no regressions.** `git stash`-based baseline comparison
+  (stash everything, run the frontend `node --test` suite cold,
+  compare pass/fail counts against the working tree) confirmed the
+  113 pre-existing frontend test failures are unrelated to this
+  work — they exist identically on a clean checkout. All three
+  backend pytest suites were re-run after every batch of type fixes;
+  the pre-existing failure sets (documented in § 2.1) never changed
+  in membership, only total-passed ticked up slightly as a side
+  effect of unrelated fixes. One self-inflicted regression *was*
+  caught this way: a batch-fix script inserted `from typing import
+  Any` *before* `from __future__ import annotations` in six test
+  files, which is a `SyntaxError` (`__future__` imports must be
+  first) — caught immediately by re-running `pytest` right after,
+  fixed by reordering.
+
 ### 1.0b Removed the deprecated compiler/Remora pipeline; upgraded the template system to live, loadable output
 
 - **Context.** The user identified `backend/system/services/machineconfig/`'s
@@ -906,57 +1004,174 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 2. Open work / known gaps
 
-1. **`frontend/src/components/CompilerPanel.vue` (legacy).** Now
-   unused. The new
-   `frontend/src/modules/machineconfig/components/CompilerPanel.vue`
-   replaces it. The legacy component is still on disk and still
-   imports the legacy `CompilerService`. Safe to delete; the test
-   suite does not reference it. Wait for an explicit human
-   confirm before removing in case the file is referenced by a
-   branch the orchestrator has not seen.
+Rewritten from scratch — the previous version of this section
+referenced components and services that no longer exist
+(`ConfigurationService`, `ConfigEditor.vue`, the legacy
+`CompilerPanel.vue`/`CompilerService`, `backend/routers/config.py`,
+a MiniMax-proxy-based "GraphLLM orchestrator" reading path). All of
+that was retired by the backend split (Arc 2) and the compiler
+removal + template system (Arc 3). What follows is current as of
+the docs pass that removed the last mentions of the frontend module
+registry and the old compiler (see the dated entries above).
 
-2. **`frontend/src/components/ConfigEditor.vue`.** Currently only
-   used as a read-only modal inside `ActivePanel.vue` and
-   `CompiledOutputViewer.vue`. The URL-driven editor (via
-   `?editor=` on `App.vue`) still routes through the legacy
-   `ConfigurationService.readConfig` / `saveConfig`. Two options:
-   - Retire the URL-driven editor entirely; `ProfilesExplorer.vue`
-     already provides in-app editing.
-   - Keep the URL route and replace the manual `ConfigurationService`
-     calls with the new
-     `ModulesMachineconfigService.readProfile` / `saveProfile`.
+### 2.1 Pre-existing test failures (not caused by the docs pass)
 
-3. **`ConfigView.vue` rename.** The legacy `ConfigView.vue` was
-   renamed to `EditorView.vue`. Any documentation, comments, or
-   older PR descriptions that still mention `ConfigView.vue` should
-   be updated to `EditorView.vue`. The new file is at
-   `frontend/src/views/EditorView.vue`.
+Running each suite separately today:
 
-4. **`backend/routers/config.py` (legacy).** Still mounted
-   (slimmed profile + read / save endpoints) for the URL-driven
-   editor. If the editor route is retired, the entire file can be
-   deleted alongside `ConfigurationService`.
+- `backend/common/tests` — **30 passed**, 0 failed.
+- `backend/machine/tests` — **33 failed**, 343 passed. Almost all of
+  the failures are in `test_machine_state_facade.py` (~24 cases): the
+  tests patch `get_machine_stat` on the hardware connection module,
+  but the current `backend/common/hardware/Connection.py` does not
+  expose a function by that name — the test file is aspirational
+  relative to the actual module surface, not a real regression from
+  recent work. The remainder
+  (`test_machine_state_module.py::test_state_endpoints_are_mounted`,
+  two `test_program_module.py` cases, one
+  `test_servo_thread_mapper.py` case, one `test_telemetry_offline.py`
+  case) look like smaller, independent pre-existing gaps.
+- `backend/system/tests` — **8 failed**, 206 passed, 1 skipped, all
+  in `test_macros_module.py`. The visible failure mode is a
+  `size_bytes` mismatch (test expects a smaller byte count than the
+  actual UTF-8-encoded payload), suggesting the test's expected
+  value assumes different newline/encoding handling than the current
+  `MacroStorage`/`MacroService` implementation produces.
 
-5. **`scripts/minimax_local.py`.** The local MiniMax M3 proxy
-   referenced by the GraphLLM orchestrator's editor scripts. It
-   works on `127.0.0.1:8001` with the `MINIMAX_API_KEY` from
-   `.env`. No known issues; mention it here so the next agent
-   doesn't accidentally delete it during a `scripts/` cleanup.
+None of these were introduced by the `.agent/` documentation pass, or
+by the typing-discipline pass in § 2.2 below (both were verified
+against this exact failure list before and after) — verify with
+`git log` before assuming otherwise regardless, since this count was
+taken at a point in time. Worth a dedicated debugging session: fix
+or delete `test_machine_state_facade.py` (it looks like it was
+written against a planned API that was never finished, or against
+an older `Connection` module shape), and investigate the macros
+byte-count assumption.
 
-6. **GraphLLM orchestrator reading path.** The agent docs were
-   simplified back to a single canonical doc. The orchestrator's
-   reading path is now `.agent/AGENT.md` (the repository agent
-   guide). If the orchestrator's runtime config still references
-   the previous loop-agent / architect / graph_agent split, it
-   must be updated to read `.agent/AGENT.md`. See
-   `.agent/README.md` for the index.
+### 2.2 Typing discipline — now gated, but not `--strict`
 
-7. **`backend/tests/test_doc_links.py` `REQUIRED_DOCS`.** The
-   structural test pins `.agent/AGENT.md` as a required doc. The
-   simplified layout (one Repository Agent Guide) is consistent
-   with the existing `REQUIRED_DOCS` tuple — no change required.
-   The previous follow-up suggestion (adding graph_agent.md and
-   ARCHITECT.md) is now obsolete since both files were deleted.
+`.agent/AGENT.md` states the "no bare `dict` in Python, no `any` in
+TypeScript" rule. Both languages now have an automated gate wired
+into [.agent/TEST.md](.agent/TEST.md):
+
+- **TypeScript**: `npm run typecheck` (`vue-tsc --build`) runs as
+  its own step before `npm run build`. Every explicit `any` in
+  `frontend/src/` has been removed (verified by
+  `grep -rn ": any\b|<any>|as any\b" frontend/src` returning only
+  prose-comment false-positives). There is still no lint rule
+  banning a *new* `any` from being added — `vue-tsc` only catches
+  actual type errors, not the mere presence of `any`. A
+  `@typescript-eslint/no-explicit-any` rule (which needs installing
+  ESLint + `typescript-eslint` — neither exists in the repo today)
+  would close that gap; until then it's a code-review check.
+- **Python**: `backend/mypy.ini` runs once per app (mirroring the
+  pytest three-invocation split, for the same "no shared package
+  root" reason) with `disallow_any_generics = True`, which is
+  exactly the "no bare `dict`" rule (it also catches bare `list`,
+  `Callable`, `tuple`, and any other unparameterized generic). All
+  88 pre-existing violations across the three apps were fixed in the
+  same pass that added the config — see the diff for the pattern
+  (mostly `dict` → `dict[str, Any]`, `HalPin` → `HalPin[Any]` /
+  `HalPin[float]` depending on whether the pin's value type was
+  knowable). `mypy` is a dev-only dependency
+  (`backend/requirements-dev.txt`), never installed in production.
+
+**What's deliberately still off**: `backend/mypy.ini` has a
+`disable_error_code` list (`return-value`, `arg-type`, `override`,
+`assignment`, `call-arg`, `attr-defined`) covering ~90 remaining
+pre-existing type errors that are real design-level issues — not
+bare-generic violations — surfaced by turning mypy on at all. Each
+needs individual review rather than a blind fix (see § 2.8 for a
+sample of what's in there: `HalPin` subclass `get_direction()`
+override mismatches, `ToolPinTypeFactory`'s generic bound, a few
+`Literal` vs `str` argument mismatches in `machineconfig_parser.py`).
+Re-enable a code in that list once its backlog is cleared, not
+before — re-enabling with errors still present just breaks the gate
+for everyone.
+
+A few genuine runtime bugs were found and fixed opportunistically
+while wiring the gate (each was a variable reused across two
+incompatible types, or a missing `None` guard before a HAL/stat
+channel call) — see the commit(s) around this HANDOFF entry's date
+for the specifics; they were small, low-risk, and directly caused by
+the type annotations that fixing `type-arg` required adding.
+
+### 2.3 Machine.hal / webgui_connections.hal — no real wiring generation
+
+`backend/system/services/machinetemplates/generator.py`'s
+`WEBGUI_CONNECTIONS_STARTER` (the seed content for
+`webgui_connections.hal`, preserved across regenerates) is a
+comment-only placeholder — it tells the operator where to wire
+spindle/VFD/override connections, but doesn't generate any actual
+`net`/`sets` HAL commands from `hardware.json`. `pin_catalog.py`
+supplies connection *hints* (comment text), not generated wiring.
+Turning specific `hardware.json` tool entries (e.g. a
+`spindle_digital` tool's `signal_*` fields) into real generated HAL
+`net` lines in `Machine.hal` is the natural next step, but it's
+nontrivial: the mapping from a tool's abstract signal names to
+concrete HAL pin names depends on which driver/board is in play.
+
+### 2.4 `Stepper.section_name` is a fragile computed property
+
+`backend/common/models/machineconfig/linuxcnc_models.py` and
+`klipper_models.py` both still define a `.section_name` property
+on their stepper-like models (`f"stepper_{self.axis}"`). This
+property assumes one motor per axis letter — it was the root cause
+of a real joint-id collision bug on multi-motor axes (fixed by
+building ids from the dict key instead, see
+`backend/system/services/machineconfig/hardware_json_generator.py`
+around the `_stepper_payload` call). Nothing calls `.section_name`
+in a way that reproduces the bug today, but the property itself is
+still there and still wrong for multi-motor axes — a future caller
+that reaches for the "obvious" `stepper.section_name` instead of the
+dict key will reintroduce the same class of bug. Consider removing
+the property entirely and forcing callers to use the dict key, or
+renaming it loudly (`unsafe_single_motor_section_name`) to make the
+footgun visible at the call site.
+
+### 2.5 `requirements-machine.txt` / `requirements-system.txt` are placeholders
+
+Both files are just `-r requirements.txt` today — there is no real
+per-app dependency split yet (see the comments in each file). This
+is fine while the two apps' dependencies are identical, but the
+files exist specifically so a future machine-only (e.g. a camera
+library) or system-only (e.g. a template/compiler library)
+dependency has an obvious home. Don't let a new dependency default
+into the shared `requirements.txt` just because that's the path of
+least resistance.
+
+### 2.6 Deploy scripts are syntax-checked only
+
+`install.sh`, `scripts/update.sh`, and `rebuild_ui.sh` were updated
+for the two-systemd-unit / two-backend split (Arc 2) but have only
+been syntax-checked (`bash -n`), never run against a real Linux
+host with `systemd` and `nginx`. The two-backend nginx routing table
+in particular (`§ 1.4` of `ARCHITECTURE.md`) has never been
+exercised against a real nginx config reload. Flag this explicitly
+to whoever does the first real-hardware deploy after this split.
+
+### 2.7 No automated guard against a stray `fetch()` in a domain store
+
+`.agent/context/LESSONS_LEARNED.md` § 2.7 documents the "use the
+generated OpenAPI client, not hand-rolled `fetch`" rule.
+`frontend/tests/test-tools-module.ts` checks some of the tools
+domain's structural conventions but does not regex-ban a stray
+`fetch(` call — a new store could still hand-roll HTTP and nothing
+would catch it before code review. The retired
+`check-no-lazy-imports.mjs` / `check-store-ids.mjs` scripts are not
+a template for this (they checked a system that no longer exists);
+a new, purpose-built lint would need to start from scratch.
+
+### 2.8 Backend layering gaps (tracked, not urgent)
+
+See [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md)
+§ 7 for the full list of routers that don't follow the canonical
+Router → Service → DTO → Mapper → Storage split
+(`state`/`program`'s inline Pydantic models, the `camera` router's
+co-located `UstreamerSupervisor`, and the cross-cutting
+`FilesRouter`/`SystemRouter`/`BaseThreadRouter`/`ServoThreadRouter`
+exceptions). None of these block a feature today; they're listed
+here so "clean up the `state` router's inline models" doesn't need
+re-discovering from scratch.
 
 ---
 

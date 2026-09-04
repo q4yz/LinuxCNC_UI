@@ -15,6 +15,8 @@ dashboard widget subscribes to.
 """
 
 from __future__ import annotations
+
+from typing import Any
 from tests._module_app_factory import build_module_app
 
 import time
@@ -69,7 +71,7 @@ def _program_app(tmp_data_root, clean_env=None):
 
 
 
-def _state_snapshot() -> dict:
+def _state_snapshot() -> dict[str, Any]:
     """Read the mock's program lifecycle fields under the lock."""
     from hardware import connection
 

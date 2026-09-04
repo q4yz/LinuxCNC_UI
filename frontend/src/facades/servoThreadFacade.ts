@@ -1,6 +1,7 @@
 // services/ServoThreadService.ts
 import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
+import { describeError } from '../core/error-format';
 import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; // Adjust path if needed
 import {
     formatLinuxCNCError,
@@ -46,6 +47,15 @@ export class ServoThreadService {
     private ws: WebSocket | null = null;
     private reconnectTimer: number | null = null;
 
+    // Set by ``disconnect()`` and cleared by ``connect()``. While
+    // true, ``onclose`` must NOT schedule a reconnect — the app
+    // shell closes the socket deliberately when the machine-online
+    // heartbeat reports the backend down (see
+    // ``composables/useMachineOnline.ts`` + ``App.vue``), and an
+    // auto-reconnect loop against a dead port would recreate the
+    // exact reconnect spam the gating is meant to eliminate.
+    private manualClose = false;
+
     // Track active keep-alive timers for continuous jogging
     private jogIntervals: Record<number, number> = {};
 
@@ -53,6 +63,7 @@ export class ServoThreadService {
         const store = useServoThreadStore();
         const consoleStore = useConsoleStore();
 
+        this.manualClose = false;
         store.setConnectionStatus('connecting');
         this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry`);
 
@@ -66,6 +77,12 @@ export class ServoThreadService {
         };
 
         this.ws.onmessage = (event) => {
+            // Stamp liveness FIRST — before any parsing. Every frame
+            // (delta, full_state, error or the ~1 Hz backend
+            // heartbeat) proves the transport is delivering; the
+            // base-thread freeze watchdog reads this timestamp.
+            store.noteWsMessage();
+
             try {
                 const envelope = WSEnvelope.fromTelemetryJSON(event.data);
 
@@ -115,6 +132,14 @@ export class ServoThreadService {
                             "Unknown telemetry error payload",
                         );
                         break;
+                    case 'heartbeat':
+                        // Liveness-only frame (~1 Hz from the
+                        // backend's telemetry loop). The timestamp
+                        // was already stamped above; nothing to
+                        // apply to state. Without this case every
+                        // heartbeat would hit ``default`` and spam
+                        // the console.
+                        break;
                     default:
                         console.warn('Unknown telemetry type:', envelope.type);
                 }
@@ -129,6 +154,11 @@ export class ServoThreadService {
 
             // Clear all active jog timers if the connection drops!
             this.clearAllJogIntervals();
+
+            // A deliberate close (machine went offline) must not
+            // arm the reconnect loop — ``App.vue`` reconnects when
+            // the machine-online heartbeat says the backend is back.
+            if (this.manualClose) return;
 
             this.scheduleReconnect();
         };
@@ -168,8 +198,8 @@ export class ServoThreadService {
                 this.send({ type: "jog_keepalive", axes: [axis] });
             }, intervalMs);
 
-        } catch (err: any) {
-            consoleStore.error(`Failed to start continuous jog: ${err.message}`);
+        } catch (err: unknown) {
+            consoleStore.error(`Failed to start continuous jog: ${describeError(err)}`);
             console.error("Failed to start continuous jog", err);
         }
     }
@@ -190,8 +220,8 @@ export class ServoThreadService {
             this.send({ type: "jog_stop", axes: [axis] });
             consoleStore.info(`${axisName} Jog stopped`);
 
-        } catch (err: any) {
-            consoleStore.error(`Failed to stop jog: ${err.message}`);
+        } catch (err: unknown) {
+            consoleStore.error(`Failed to stop jog: ${describeError(err)}`);
             console.error("Failed to stop jog", err);
         }
     }
@@ -241,6 +271,7 @@ export class ServoThreadService {
     }
 
     disconnect() {
+        this.manualClose = true;
         if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
         this.clearAllJogIntervals();
         if (this.ws) this.ws.close();

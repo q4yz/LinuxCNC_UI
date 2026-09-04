@@ -7,6 +7,8 @@ re-exported through :mod:`temperature_config_mapper` as
 ``active_path``) and returns a list of normalised sensor dicts.
 """
 from __future__ import annotations
+
+from typing import Any
 from tests._module_app_factory import build_module_app
 
 import json
@@ -20,14 +22,14 @@ from temperature_config_mapper import get_temperature_sensors
 # ---------------------------------------------------------------------- #
 
 
-def _write_hardware_json(path: Path, payload: dict) -> Path:
+def _write_hardware_json(path: Path, payload: dict[str, Any]) -> Path:
     """Write a ``hardware.json`` at ``path`` and return the file path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
-def _v2_payload() -> dict:
+def _v2_payload() -> dict[str, Any]:
     """A v2-shape ``hardware.json`` with two temperature sensors."""
     return {
         "version": "2.0",

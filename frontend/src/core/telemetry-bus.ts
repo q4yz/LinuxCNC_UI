@@ -3,7 +3,7 @@
 // cost per tick. Subscribers must clone before storing. See
 // ``.agent/STATE.md`` § 3.
 
-type TelemetryHandler = (topic: string, payload: any) => void;
+type TelemetryHandler = (topic: string, payload: unknown) => void;
 
 export class TelemetryBus {
   private _subscribers: Map<string, Set<TelemetryHandler>>;
@@ -48,9 +48,9 @@ export class TelemetryBus {
    * well-behaved consumers in the same process.
    *
    * @param {string} topic
-   * @param {any} payload
+   * @param {unknown} payload
    */
-  publish(topic: string, payload: any): void {
+  publish(topic: string, payload: unknown): void {
     const set = this._subscribers.get(topic);
     if (!set || set.size === 0) return;
     for (const handler of set) {

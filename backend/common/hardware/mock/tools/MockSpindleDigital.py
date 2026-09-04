@@ -113,7 +113,7 @@ class MockSpindleDigital(MockComponent):
         else:
             self.spindle_at_speed = False
 
-    def get_legacy_state(self) -> dict:
+    def get_legacy_state(self) -> dict[str, Any]:
         """Used if old UI components still query the stat channel directly."""
         return {
             "target_rpm": self.target_rpm,

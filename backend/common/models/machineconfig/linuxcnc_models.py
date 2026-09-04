@@ -19,7 +19,7 @@ never sees the raw Klipper ``stepper_*`` sections directly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 JointType = Literal["LINEAR", "ANGULAR"]
@@ -144,7 +144,7 @@ class IniConfig:
     joints_count: int = 0
     coordinates: str = "X Y Z"
     kinematics_name: str = "trivkins"
-    heaters: dict = field(default_factory=dict)
+    heaters: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [

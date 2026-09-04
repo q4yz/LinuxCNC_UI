@@ -6,6 +6,8 @@ canonical settings endpoints. They mirror the issue § 4.1 test
 list (``test_jog_keepalive.py``).
 """
 from __future__ import annotations
+
+from typing import Any
 from tests._module_app_factory import build_module_app
 
 import asyncio
@@ -41,7 +43,7 @@ def machine_app(tmp_data_root, clean_env=None):
 # ────────────────────────────────────────────────────────────────────── #
 
 
-def _ws_dispatch(msg: dict) -> None:
+def _ws_dispatch(msg: dict[str, Any]) -> None:
     """Helper: drive the service's ``dispatch_inbound`` with a fake socket.
 
     The helper doesn't need a real ``WebSocket`` because the

@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from hardware.mock.tools.MockExtruder import MockExtruder
 from hardware.mock.tools.MockHeater import MockHeater
@@ -11,7 +12,7 @@ class MockToolFactory:
     """Factory to instantiate the correct OOP mock component from a hardware payload."""
 
     @staticmethod
-    def create(tool_record: dict):
+    def create(tool_record: dict[str, Any]):
         """Creates a mock component based on the tool's configured type."""
 
         tool_type = tool_record.get("type", "")

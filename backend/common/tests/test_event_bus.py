@@ -12,7 +12,7 @@ from core.event_bus import EventBus
 
 class _Sample(BaseModel):
     name: str
-    counters: list
+    counters: list[int]
 
 
 def test_payload_mutation_in_one_subscriber_does_not_affect_another():

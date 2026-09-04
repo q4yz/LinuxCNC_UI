@@ -6,6 +6,7 @@ import configparser
 import logging
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 from models.machineconfig import (
     EndstopSwitch,
@@ -59,7 +60,7 @@ class ConfigValidationError(ValueError):
     #: when the error spans the whole section.
     key: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Return the structured representation the HTTP layer ships.
 
         The shape is the contract surface for the frontend toast
@@ -519,7 +520,7 @@ class MachineConfigParser:
         )
         # Klipper's PID names use a capital K (pid_Kp/Ki/Kd). Preserving case
         # lets the schema reject misspellings instead of silently normalising.
-        parser.optionxform = str
+        parser.optionxform = str  # documented configparser case-sensitivity idiom
         return parser
 
     def _build_graph(self, parser: configparser.ConfigParser) -> MachineConfigGraph:
@@ -646,7 +647,7 @@ class MachineConfigParser:
         the parser is the right place to enforce that.
         """
 
-        pin_slots: tuple[str, str] = (
+        pin_slots: tuple[tuple[str, str], ...] = (
             ("step_pin", "step_pin"),
             ("dir_pin", "dir_pin"),
             ("enable_pin", "enable_pin"),
@@ -1172,7 +1173,7 @@ def _option_present(section: configparser.SectionProxy, key: str) -> bool:
 
 def _find_section_name_for_mcu(
     name: str,
-    mcus: dict,
+    mcus: dict[str, MCU],
 ) -> str | None:
     """Best-effort recovery of the source section header for an MCU.
 

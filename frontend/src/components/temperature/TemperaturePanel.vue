@@ -6,7 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {HeaterControlRequest} from "../../entities/tools/Heater";
-import {TemperatureUnit} from "../../entities";
+import {TemperatureUnit, isTemperatureUnit} from "../../entities";
 import { BaseButton } from '../../ui/index.ts'
 import BaseCard from '../../ui/BaseCard.vue'
 import BaseInput from '../../ui/BaseInput.vue'
@@ -72,7 +72,7 @@ const turnOff = async (name: string) => {
 }
 
 const turnOffAll = async () => {
-  const promises: Promise<any>[] = []
+  const promises: Promise<void>[] = []
   for (const [name, data] of Object.entries(sensors.value)) {
     if (data.target !== undefined) {
       promises.push(turnOff(name))
@@ -98,7 +98,7 @@ const chartOptions = computed(() => {
   const renderTime = now - 1000
 
   const legendData: string[] = []
-  const series: any[] = []
+  const series: Record<string, unknown>[] = []
   const temps = sensors.value || {}
   const buffer = history.value || []
   const visibility = visibleSensors.value || {}
@@ -184,7 +184,7 @@ const chartOptions = computed(() => {
   })
 
   const unitLabel =  store.unit === TemperatureUnit.KELVIN ? 'K' : '°C'
-  const axisFormatter = (value: any) => {
+  const axisFormatter = (value: number | string) => {
     const num = Number(value)
     if (!Number.isFinite(num)) return ''
     const v =  store.unit ===TemperatureUnit.KELVIN ? num + 273.15 : num
@@ -195,7 +195,7 @@ const chartOptions = computed(() => {
     animation: false,
     tooltip: {
       trigger: 'axis',
-      valueFormatter: (value: any) =>
+      valueFormatter: (value: number | string) =>
           `${roundTo(store.unit === TemperatureUnit.KELVIN ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
     },
     legend: {
@@ -214,7 +214,7 @@ const chartOptions = computed(() => {
       minInterval: 10000,
       axisLabel: {
         color: '#9CA3AF',
-        formatter: (value: any) => {
+        formatter: (value: number | string) => {
           const d = new Date(value)
           const pad = (n: number) => n.toString().padStart(2, '0')
           return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
@@ -246,7 +246,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
         <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Unit</span>
         <BaseSelect
             :model-value="unit"
-            @update:model-value="(v) => store.setUnit(v as any)"
+            @update:model-value="(v) => { if (isTemperatureUnit(v)) store.setUnit(v) }"
         >
           <option :value="TemperatureUnit.CELSIUS">°C</option>
           <option :value="TemperatureUnit.KELVIN">K</option>

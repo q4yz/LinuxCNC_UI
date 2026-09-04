@@ -13,7 +13,7 @@ The router owns the decision of *which* sub-snapshots to compute
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional, Union
 
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
 from models.axis_model import AxisStateResponse
@@ -39,9 +39,9 @@ class BaseThreadSnapshotMapper:
         cls,
         *,
         progress: Optional[ProgramProgressResponse] = None,
-        sensors: Optional[dict] = None,
-        tools: Optional[dict] = None,
-        axis: Optional[dict] = None,
+        sensors: Optional[Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]]] = None,
+        tools: Optional[Dict[str, ToolStateResponseModel]] = None,
+        axis: Optional[Dict[str, AxisStateResponse]] = None,
     ) -> BaseThreadSnapshotResponse:
         """Return a snapshot whose ``None`` sub-snapshots will be
         stripped by the route's ``response_model_exclude_none=True``.

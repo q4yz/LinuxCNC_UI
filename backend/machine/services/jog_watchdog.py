@@ -38,7 +38,7 @@ WATCHDOG_TIMEOUT_S = WATCHDOG_TIMEOUT_MS / 1000.0
 DEFAULT_WATCHDOG_TIMEOUT_MS = WATCHDOG_TIMEOUT_MS
 
 
-_task: "Optional[asyncio.Task]" = None
+_task: "Optional[asyncio.Task[None]]" = None
 # Cached timeout. ``_task`` is reset by ``start_watchdog`` so the
 # loop re-reads its settings on every restart, which is exactly
 # the v1 contract.

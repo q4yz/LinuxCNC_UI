@@ -3,6 +3,7 @@ import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 import ToolPanel from "../components/tools/ToolPanel.vue";
 import CameraViewer from "../components/camera/CameraViewer.vue";
 import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
+import MachineGate from "../components/machine/MachineGate.vue";
 </script>
 
 <template>
@@ -12,7 +13,9 @@ import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
       <!-- Left Column: Job Status & Machine State -->
       <div class="lg:col-span-6 xl:col-span-6 flex flex-col space-y-6">
 
-        <AxisSpeedControl />
+        <MachineGate label="Axis speed">
+          <AxisSpeedControl />
+        </MachineGate>
 
       </div>
 
@@ -20,7 +23,9 @@ import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
       <div class="lg:col-span-5 xl:col-span-5 flex flex-col space-y-6">
 
 
-      <ToolPanel />
+      <MachineGate label="Tools">
+        <ToolPanel />
+      </MachineGate>
 
 
       </div>

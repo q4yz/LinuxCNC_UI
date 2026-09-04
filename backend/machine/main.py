@@ -298,6 +298,20 @@ def read_root():
     return {"status": "ok", "service": "LinuxCNC UI Machine Backend"}
 
 
+@app.get("/api/v1/health")
+def machine_health():
+    """Liveness probe for the frontend's machine-online heartbeat.
+
+    The browser can only reach this service through the ``/api`` proxy
+    (dev: vite, prod: nginx), so the root ``/`` endpoint above is not
+    usable as a ping target from the SPA. ``composables/useMachineOnline.ts``
+    polls this route every 3 s with a 2 s ``AbortSignal.timeout``; any
+    non-200 or timeout counts as "machine offline" and the UI gates all
+    machine-level traffic on that verdict.
+    """
+    return {"status": "ok", "service": "machine"}
+
+
 if __name__ == "__main__":
     import uvicorn
 

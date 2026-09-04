@@ -59,7 +59,7 @@ class MockExtruder(MockComponent):
 
         return handled
 
-    def get_legacy_state(self) -> dict:
+    def get_legacy_state(self) -> dict[str, Any]:
         # Combine the states for legacy UI support
         state = {"position": self.position}
         state.update(self._heater.get_legacy_state())

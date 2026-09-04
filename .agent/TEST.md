@@ -18,7 +18,7 @@ if [ ! -f ".venv/bin/activate" ]; then
     python3 -m venv .venv --system-site-packages
     . .venv/bin/activate
     python -m pip install -q --upgrade pip
-    python -m pip install -q -r backend/requirements-machine.txt -r backend/requirements-system.txt
+    python -m pip install -q -r backend/requirements-machine.txt -r backend/requirements-system.txt -r backend/requirements-dev.txt
 else
     . .venv/bin/activate
 fi
@@ -28,9 +28,17 @@ if [ ! -d "frontend/node_modules" ]; then
     npm --prefix frontend install --no-audit --prefer-offline
 fi
 
-# 3. Backend Verification — byte-compile everything, then run each
-# app's pytest suite separately (see the note above).
+# 3. Backend Verification — byte-compile everything, typecheck each
+# app separately (mypy has the same no-shared-package-root
+# constraint as pytest — see the note above), then run each app's
+# pytest suite separately. backend/mypy.ini enables only the
+# bare-dict/any rule (`disallow_any_generics`) plus a couple of
+# other cheap checks; a `disable_error_code` list defers the rest
+# of the pre-existing type debt — see .agent/HANDOFF.md § 2.
 python -m compileall -q backend
+python -m mypy --config-file backend/mypy.ini backend/common
+python -m mypy --config-file backend/mypy.ini backend/machine
+python -m mypy --config-file backend/mypy.ini backend/system
 python -m pytest backend/common/tests -v
 python -m pytest backend/machine/tests -v
 python -m pytest backend/system/tests -v
@@ -57,11 +65,15 @@ timeout 15 bash -c 'until curl -s http://127.0.0.1:8001/openapi.json > /dev/null
 # Generate the API client schema
 npm --prefix frontend run generate-api
 
-# 5. Frontend Verification — production build + tests.
+# 5. Frontend Verification — typecheck, production build, tests.
 # (The old module-registry lints, check-no-lazy-imports.mjs and
 # check-store-ids.mjs, were retired along with the dynamic frontend
-# module registry they checked — there is no replacement lint step
-# today; see the technical-debt list in .agent/HANDOFF.md § 2.)
+# module registry they checked — there is still no lint step banning
+# `any` specifically, see the technical-debt list in .agent/HANDOFF.md
+# § 2, but `vue-tsc --build` catches everything TypeScript itself can
+# verify: type errors, unsafe casts, and any implicit `any` that
+# `strict` mode would otherwise let through.)
+npm --prefix frontend run typecheck
 npm --prefix frontend run build
 npm --prefix frontend run test
 ```

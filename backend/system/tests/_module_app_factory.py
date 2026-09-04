@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from core.settings_store import SettingsStore
 from module_settings_router import build_module_settings_router
@@ -51,7 +51,7 @@ def build_module_app(
     module_id: str,
     data_root: Path,
     *,
-    extra_routers: Optional[Iterable] = None,
+    extra_routers: Optional[Iterable[APIRouter]] = None,
     settings_model=None,
 ) -> FastAPI:
     """Build a FastAPI app that mounts one module's routers + settings."""

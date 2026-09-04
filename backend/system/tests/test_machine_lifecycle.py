@@ -80,7 +80,7 @@ class _FakePopen:
     """Stand-in for ``subprocess.Popen`` — records the launch command
     and reports whatever exit state the test asks for."""
 
-    last_command: list | None = None
+    last_command: list[str] | None = None
 
     def __init__(self, command, *, exit_code=None, pid=4242, **_kwargs):
         _FakePopen.last_command = command

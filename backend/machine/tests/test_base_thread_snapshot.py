@@ -18,6 +18,8 @@ These tests pin the contract the dashboard depends on:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import importlib
 import time
 from pathlib import Path
@@ -155,7 +157,7 @@ def test_snapshot_timestamp_is_iso8601_utc(
 # ---------------------------------------------------------------------- #
 
 
-def _write_v2_hardware_json(tmp_path: Path, payload: dict) -> Path:
+def _write_v2_hardware_json(tmp_path: Path, payload: dict[str, Any]) -> Path:
     """Drop a v2-shape ``hardware.json`` into ``tmp_path`` and
     return the directory the loader reads from."""
     import json

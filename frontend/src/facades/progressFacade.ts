@@ -30,9 +30,8 @@ export class ProgressFacade {
       const listing = await ProgramFilesService.listFiles();
       // Delegate to the robust mapper we just built
       return toProgramFileListing(listing);
-    } catch (err: any) {
-      const status = err?.status ?? err?.response?.status;
-      if (status === 404) return [];
+    } catch (err: unknown) {
+      if (errorStatus(err) === 404) return [];
       throw err;
     }
   }

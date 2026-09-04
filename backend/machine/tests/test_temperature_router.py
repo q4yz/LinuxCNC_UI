@@ -23,6 +23,7 @@ def _build_router_app() -> FastAPI:
     test exercises the tombstone in isolation.
     """
     from routers.temperature import router as temperature_router
+    app = FastAPI()
     app.include_router(temperature_router, prefix="/api/v1/modules/temperature")
     return app
 

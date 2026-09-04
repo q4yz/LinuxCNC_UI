@@ -11,7 +11,7 @@ import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
 import {progressFacade} from "../facades/progressFacade";
 import {CommandResult} from "../entities/common/CommandResult";
-import {reportCommandFailure} from "../core/error-format";
+import {reportCommandFailure, describeError} from "../core/error-format";
 
 // Axis index → letter mapping (matches ``gcodes.js`` conventions).
 const AXIS_NAMES = ["X", "Y", "Z", "A", "B", "C", "U", "V", "W"];
@@ -253,8 +253,8 @@ export const useMachineStore = defineStore(STORE_ID, () => {
                 velocities: {[axis]: velocity},
                 distance,
             });
-        } catch (err: any) {
-            consoleStore.error(`Failed to jog ${axisName}: ${err.message}`);
+        } catch (err: unknown) {
+            consoleStore.error(`Failed to jog ${axisName}: ${describeError(err)}`);
             console.error("Failed to jog axis", axis, err);
         }
     }

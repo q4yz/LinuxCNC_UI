@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import httpx
 import pytest
@@ -214,9 +214,9 @@ class _FakeAsyncClient:
         self._fake_stream = fake_stream
         self._fake_streams = list(fake_streams) if fake_streams else None
         self._raise_on_send = raise_on_send
-        self.client_kwargs: dict = {}
+        self.client_kwargs: dict[str, Any] = {}
         self.last_send_request = None
-        self.send_calls: List[dict] = []
+        self.send_calls: List[dict[str, Any]] = []
 
     async def __aenter__(self):
         return self

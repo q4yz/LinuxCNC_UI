@@ -32,5 +32,5 @@ class MockSensor(MockComponent):
         """A passive sensor does not change its own temperature over time."""
         pass
 
-    def get_legacy_state(self) -> dict:
+    def get_legacy_state(self) -> dict[str, Any]:
         return {"actual": self.actual}

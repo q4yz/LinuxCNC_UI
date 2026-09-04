@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -55,7 +55,7 @@ class ServoThreadService:
         self._last_broadcast_state = current_dto
         return envelope.model_dump_json(exclude_none=True)
 
-    def get_current_state(self) -> dict:
+    def get_current_state(self) -> Dict[str, Any]:
         """Return the full ``full_state`` payload as a dict."""
         stat = self.state_service.get_polled_stat()
         history = self.state_service.get_error_history()
@@ -64,7 +64,7 @@ class ServoThreadService:
         full_response = ServoThreadStateMapper.to_response(current_dto)
         return full_response.model_dump(exclude_none=True)
 
-    async def dispatch_inbound(self, websocket: WebSocket, msg: dict) -> None:
+    async def dispatch_inbound(self, websocket: WebSocket, msg: Dict[str, Any]) -> None:
         """Route a JSON command received over the telemetry socket."""
 
         # Pass the message to the AxisService.
@@ -84,8 +84,15 @@ class ServoThreadService:
         """
         Background loop that continuously polls the CNC machine at 10Hz
         and broadcasts the state diff to all connected WebSockets.
+
+        Every ~1 s (every 10th tick) a ``{"type": "heartbeat"}``
+        envelope is broadcast even when no state changed. The
+        frontend's freeze watchdog (``frontend/src/stores/baseThread.ts``)
+        treats a silent socket as a dead one — without the heartbeat
+        an idle machine (no deltas) would look frozen to the UI.
         """
         console_logger = get_console_logger()
+        tick = 0
 
         while True:
             try:
@@ -119,6 +126,17 @@ class ServoThreadService:
                     console_logger.log_telemetry(payload_json)
 
                     self._last_broadcast_state = current_dto
+
+                # 4. Heartbeat — one frame per second regardless of
+                # deltas, so the client can distinguish "idle machine"
+                # from "dead socket".
+                tick += 1
+                if tick % 10 == 0 and self.active_connections:
+                    heartbeat_json = json.dumps({
+                        "type": "heartbeat",
+                        "data": {"server_time": now_iso()},
+                    })
+                    await self.broadcast(heartbeat_json)
 
             except Exception as e:
                 logger.error(f"Error in telemetry loop: {e}")

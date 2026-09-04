@@ -6,10 +6,10 @@ from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 @dataclass(frozen=True, slots=True)
 class SpindleAnalogPins:
     id: str
-    analog_out: HalPin = UnconnectedHalPin()
-    target_rpm: HalPin = UnconnectedHalPin()
-    min_rpm: HalPin = UnconnectedHalPin()
-    max_rpm: HalPin = UnconnectedHalPin()
+    analog_out: HalPin[float] = UnconnectedHalPin()
+    target_rpm: HalPin[float] = UnconnectedHalPin()
+    min_rpm: HalPin[float] = UnconnectedHalPin()
+    max_rpm: HalPin[float] = UnconnectedHalPin()
 
 @dataclass(frozen=True, slots=True)
 class SpindleAnalogStateDTO:

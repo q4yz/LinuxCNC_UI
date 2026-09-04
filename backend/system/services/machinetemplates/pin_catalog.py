@@ -162,7 +162,7 @@ def _describe_leaf(
     container: str,
     owner_id: str,
     field_name: str,
-    pin: HalPin,
+    pin: HalPin[Any],
 ) -> PinDescriptor:
     """Build one descriptor from a concrete (non-container) HalPin value."""
     if isinstance(pin, UnconnectedHalPin):
@@ -300,7 +300,7 @@ def build_catalog_from_containers(
     return PinCatalog(containers=containers)
 
 
-def _build_default_containers() -> tuple:
+def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
     """Build the pin containers straight from the active ``hardware.json``.
 
     The pre-two-service-split version pulled the cached containers
@@ -339,9 +339,9 @@ def _build_default_containers() -> tuple:
     for sensor in get_temperature_sensors():
         if sensor.get("id") in used_sensor_ids:
             continue
-        pin_map = TemperatureSensorMapper.from_dict_to_TemperaturePins(sensor)
-        if pin_map is not None:
-            sensors.append(pin_map)
+        sensor_pin_map = TemperatureSensorMapper.from_dict_to_TemperaturePins(sensor)
+        if sensor_pin_map is not None:
+            sensors.append(sensor_pin_map)
 
     state = [EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT, ""))]
     return tools, sensors, state

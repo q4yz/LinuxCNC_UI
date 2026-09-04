@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Optional
 
 
 class NonRepeatingLogger:
@@ -11,8 +12,8 @@ class NonRepeatingLogger:
 
     def __init__(self, name: str):
         self._logger = logging.getLogger(name)
-        self._last_message = None
-        self._last_level = None
+        self._last_message: Optional[str] = None
+        self._last_level: Optional[int] = None
         self._repeat_count = 0
         self._last_print_time = 0.0
 

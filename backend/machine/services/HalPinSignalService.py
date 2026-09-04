@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from dtos.pins.HalPin import HalDirection
 from dtos.pins.MachineHalPin import MachineHalPin
@@ -33,7 +33,7 @@ from models.hal import HalLayoutResponse
 logger = logging.getLogger("backend.services.hal_pin_signal")
 
 
-def _mock_pin(name: str, comp: str, value, direction: HalDirection, doc: str = "") -> MachineHalPin:
+def _mock_pin(name: str, comp: str, value, direction: HalDirection, doc: str = "") -> MachineHalPin[Any]:
     """Shorthand for building a mock :class:`MachineHalPin`.
 
     Used as the dev/test fallback when ``halcmd`` isn't on ``PATH``
@@ -50,7 +50,7 @@ def _mock_pin(name: str, comp: str, value, direction: HalDirection, doc: str = "
     )
 
 
-def _mock_pins() -> List[MachineHalPin]:
+def _mock_pins() -> List[MachineHalPin[Any]]:
     """A realistic, hardcoded mix of bit/float pins in both directions."""
     return [
         # OUT pins (writers) — right-hand palette
@@ -69,7 +69,7 @@ def _mock_pins() -> List[MachineHalPin]:
     ]
 
 
-def _mock_signals(pins: List[MachineHalPin]) -> List[MachineHalSignal]:
+def _mock_signals(pins: List[MachineHalPin[Any]]) -> List[MachineHalSignal[Any]]:
     """Two pre-wired signals matching :func:`_mock_pins`, so the
     editor's middle column renders meaningful content in dev/test."""
     pins_by_name = {p.get_pin_name(): p for p in pins}
@@ -141,7 +141,7 @@ class HalPinSignalService:
     # LinuxCNC introspection stubs                                        #
     # ------------------------------------------------------------------ #
 
-    def _read_pins_from_linuxcnc(self) -> List[MachineHalPin]:
+    def _read_pins_from_linuxcnc(self) -> List[MachineHalPin[Any]]:
         """Reads all pins, types, directions, and values from LinuxCNC via halcmd.
 
         Falls back to a hardcoded mock pin set when ``halcmd`` isn't
@@ -149,7 +149,7 @@ class HalPinSignalService:
         case in dev and in tests), mirroring how the rest of the app
         degrades to its mock hardware layer.
         """
-        pins: List[MachineHalPin] = []
+        pins: List[MachineHalPin[Any]] = []
 
         try:
             raw = subprocess.check_output(
@@ -176,6 +176,7 @@ class HalPinSignalService:
             raw_val = d["val"]
 
             # Parse value
+            val: bool | float | int | str
             if raw_type == "bit":
                 val = raw_val.upper() in ("TRUE", "1")
             elif raw_type == "float":
@@ -210,8 +211,8 @@ class HalPinSignalService:
         return pins
 
     def _read_signals_from_linuxcnc(
-            self, pins: Optional[List[MachineHalPin]] = None
-    ) -> List[MachineHalSignal]:
+            self, pins: Optional[List[MachineHalPin[Any]]] = None
+    ) -> List[MachineHalSignal[Any]]:
         """Reads all signals and their connected source/target pins."""
         if pins is None:
             pins = self._read_pins_from_linuxcnc()
@@ -238,10 +239,10 @@ class HalPinSignalService:
         except (subprocess.SubprocessError, FileNotFoundError):
             return _mock_signals(pins)
 
-        signals: List[MachineHalSignal] = []
+        signals: List[MachineHalSignal[Any]] = []
         current_sig_name: Optional[str] = None
-        source_pin: Optional[MachineHalPin] = None
-        target_pins: List[MachineHalPin] = []
+        source_pin: Optional[MachineHalPin[Any]] = None
+        target_pins: List[MachineHalPin[Any]] = []
 
         def _flush():
             nonlocal current_sig_name, source_pin, target_pins

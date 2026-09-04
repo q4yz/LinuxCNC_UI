@@ -38,7 +38,7 @@ try:
     logger.info("Successfully imported real linuxcnc module.")
     USE_MOCK = False
 except ImportError:
-    from hardware.mock.LinuxCNCMock import linuxcnc  # type: ignore
+    from hardware.mock.LinuxCNCMock import linuxcnc
 
     logger.warning("Could not import real linuxcnc. Falling back to mock facade.")
     USE_MOCK = True
@@ -48,7 +48,7 @@ try:
 
     HAS_HAL = True
 except ImportError:
-    from hardware.mock.LinuxCNCMock import hal  # type: ignore[no-redef]
+    from hardware.mock.LinuxCNCMock import hal
 
     HAS_HAL = False
     logger.warning("HAL module unavailable; HAL pin polling will run in mock mode.")

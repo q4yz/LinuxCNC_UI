@@ -1,13 +1,13 @@
 import logging
-from typing import Optional
+from typing import List, Optional, Union
 
-from dtos.sensors.TemperatureDto import TemperatureStateDto
+from dtos.sensors.TemperatureDto import TemperatureStateDto, TemperaturePin
 from temperature_config_mapper import get_temperature_sensors
 
 from factories.temperature.TemperatureStateFactory import TemperatureStateFactory
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 from tools_config_mapper import get_all_heater
-from dtos.tools import HeaterStateDTO
+from dtos.tools import HeaterStateDTO, HeaterPins
 from mappers.tools.HeaterMapper import HeaterMapper
 
 
@@ -15,7 +15,7 @@ class TemperatureService:
 
 
     def __init__(self):
-        self._halpins_cache = None
+        self._halpins_cache: Optional[List[Union[HeaterPins, TemperaturePin]]] = None
 
     def preload_hal_pins(self) -> None:
         """
@@ -26,7 +26,7 @@ class TemperatureService:
         if self._halpins_cache is not None:
             return
 
-        out = []
+        out: List[Union[HeaterPins, TemperaturePin]] = []
         used_sensor_ids = set()
 
         heaters = get_all_heater()
@@ -45,23 +45,24 @@ class TemperatureService:
             if sensor_id in used_sensor_ids:
                 continue
 
-            pin_map = TemperatureSensorMapper.from_dict_to_TemperaturePins(sensor)
-            if pin_map is not None:
-                out.append(pin_map)
+            sensor_pin_map = TemperatureSensorMapper.from_dict_to_TemperaturePins(sensor)
+            if sensor_pin_map is not None:
+                out.append(sensor_pin_map)
 
         self._halpins_cache = out
         logging.info("Preloaded %d temperature HAL pin mappings.", len(out))
 
-    def get_halpins(self) -> list:
+    def get_halpins(self) -> List[Union[HeaterPins, TemperaturePin]]:
         """Returns the pre-built DTOs for your API routes."""
         if self._halpins_cache is None:
             logging.warning("get_halpins() called before preload! Forcing late initialization.")
             self.preload_hal_pins()
 
-        return self._halpins_cache
+        return self._halpins_cache or []
 
     def get_states(self) -> list[HeaterStateDTO | TemperatureStateDto]:
-        return [TemperatureStateFactory.create(halpin) for halpin in self.get_halpins()]
+        states = (TemperatureStateFactory.create(halpin) for halpin in self.get_halpins())
+        return [state for state in states if state is not None]
 
 
 _temperature_service: Optional[TemperatureService] = None

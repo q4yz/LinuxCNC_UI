@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
   if (scene) {
     scene.traverse((object: THREE.Object3D) => {
       const mesh = object as THREE.Mesh
-      if (!mesh.isMesh && !(object as any).isLine && !(object as any).isLineSegments) return
+      if (!mesh.isMesh && !(object instanceof THREE.Line) && !(object instanceof THREE.LineSegments)) return
       if (mesh.geometry) mesh.geometry.dispose()
       if (mesh.material) {
         if (Array.isArray(mesh.material)) mesh.material.forEach(cleanMaterial)
@@ -308,8 +308,10 @@ onBeforeUnmount(() => {
 const cleanMaterial = (material: THREE.Material) => {
   material.dispose()
   for (const key of Object.keys(material)) {
-    const value = (material as any)[key]
-    if (value && typeof value === 'object' && 'minFilter' in value) value.dispose()
+    const value = (material as unknown as Record<string, unknown>)[key]
+    if (value && typeof value === 'object' && 'minFilter' in value && 'dispose' in value) {
+      (value as unknown as { dispose: () => void }).dispose()
+    }
   }
 }
 

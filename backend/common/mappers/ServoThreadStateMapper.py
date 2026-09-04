@@ -41,7 +41,7 @@ class ServoThreadStateMapper:
         return normalized
 
     @staticmethod
-    def from_stat(machine_stat: Any, errors: List[Any] = None) -> ServoThreadStateDTO:
+    def from_stat(machine_stat: Any, errors: Optional[List[Any]] = None) -> ServoThreadStateDTO:
         """
         Creates a FULL state DTO directly from the raw hardware stat.
         (We populate all fields so we have a complete baseline to diff against).

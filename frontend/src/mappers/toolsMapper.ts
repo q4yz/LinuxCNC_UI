@@ -37,10 +37,11 @@ export type AnyToolWire =
 /**
  * Dispatch a single wire row to the right entity using the strict `type` discriminator.
  */
-export function toToolState(wire: AnyToolWire | Record<string, any> | null | undefined): ToolItem | null {
+export function toToolState(wire: unknown): ToolItem | null {
   if (!wire || typeof wire !== "object" || !("type" in wire)) return null;
+  const w = wire as Record<string, unknown>;
 
-  switch (wire.type) {
+  switch (w.type) {
     case "extruder":
       return toExtruderState(wire as ExtruderStateResponse);
 
@@ -54,7 +55,7 @@ export function toToolState(wire: AnyToolWire | Record<string, any> | null | und
       return toSpindleAnalogState(wire as AnalogSpindleWire);
 
     default:
-      console.warn(`[toolsMapper] Unknown tool type received: ${wire.type}`);
+      console.warn(`[toolsMapper] Unknown tool type received: ${String(w.type)}`);
       return null;
   }
 }

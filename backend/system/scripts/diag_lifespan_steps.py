@@ -49,6 +49,7 @@ from __future__ import annotations
 import sys
 import traceback
 from pathlib import Path
+from typing import Callable
 
 # Make the backend/ root importable regardless of where the script
 # is invoked from. The probes use absolute imports
@@ -115,7 +116,7 @@ def _probe_openapi_schema() -> None:
     print(f"  paths={paths} components={schemas}", flush=True)
 
 
-PROBES: list[tuple[str, callable]] = [
+PROBES: list[tuple[str, Callable[[], None]]] = [
     ("1_pydantic_core_import", _probe_pydantic_core),
     ("2_hardware_json_model_rebuild_force", _probe_model_rebuild),
     ("3_machineconfig_router_import", _probe_machineconfig_router),

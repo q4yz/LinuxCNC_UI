@@ -25,7 +25,7 @@ import {useMachineStore, SystemState} from "../stores/stateFacade";
 import {useBaseThreadStore} from "../stores/baseThread";
 import {useConsoleStore} from "../stores/console";
 import {progressFacade} from "../facades/progressFacade";
-import {reportCommandFailure} from "../core/error-format";
+import {reportCommandFailure, describeErrorOr} from "../core/error-format";
 import {ProgramFile} from "../entities/progress";
 import {BaseButton} from "../ui/index.ts";
 import BaseCard from "../ui/BaseCard.vue";
@@ -53,8 +53,8 @@ async function fetchFiles() {
   try {
     const listing = await progressFacade.listProgramFiles();
     files.value = Array.isArray(listing) ? listing : [];
-  } catch (err: any) {
-    const detail = err?.body?.detail || err?.message || "unknown error";
+  } catch (err: unknown) {
+    const detail = describeErrorOr(err, "unknown error");
     consoleStore.error(`[ActivePrintWidget] Failed to load file list: ${detail}`);
     loadError.value = detail;
     files.value = [];

@@ -13,35 +13,36 @@ export type AnyTemperatureWire = HeaterStateResponse | TemperatureStateResponse;
  * Convert a single wire entry into the appropriate entity.
  * Uses the explicit `type` field discriminator.
  */
-export function toReading(wire: AnyTemperatureWire | Record<string, any> | null | undefined): AnyReading | null {
+export function toReading(wire: unknown): AnyReading | null {
   if (!wire || typeof wire !== "object") return null;
-  if (typeof wire.id !== "string" || wire.id.length === 0) return null;
+  const w = wire as Record<string, unknown>;
+  if (typeof w.id !== "string" || w.id.length === 0) return null;
 
   // 1. Primary path: Use the explicit type discriminator
-  if ("type" in wire) {
-    switch (wire.type) {
+  if ("type" in w) {
+    switch (w.type) {
       case "heater":
-        return toHeaterReading(wire as HeaterStateResponse);
+        return toHeaterReading(w);
       case "sensor":
-        return toSensorReading(wire as TemperatureStateResponse);
+        return toSensorReading(w);
       default:
-        console.warn(`[temperatureMapper] Unknown temperature type received: ${wire.type}`);
+        console.warn(`[temperatureMapper] Unknown temperature type received: ${String(w.type)}`);
         return null;
     }
   }
 
   // 2. Legacy fallback: Duck-typing for older payloads that don't have a `type`
-  const isHeater = "target" in wire && wire.target !== undefined && wire.target !== null;
+  const isHeater = "target" in w && w.target !== undefined && w.target !== null;
   if (isHeater) {
-    return toHeaterReading(wire as HeaterStateResponse);
+    return toHeaterReading(w);
   }
-  
-  return toSensorReading(wire as TemperatureStateResponse);
+
+  return toSensorReading(w);
 }
 
-function toHeaterReading(wire: HeaterStateResponse | Record<string, any>): HeaterReading {
+function toHeaterReading(wire: Record<string, unknown>): HeaterReading {
   return new HeaterReading({
-    id: wire.id,
+    id: wire.id as string,
     actualCelsius: Number(wire.actual) || 0,
     targetCelsius: Number(wire.target) || 0,
     minTemp: Number.isFinite(Number(wire.min_temp)) ? Number(wire.min_temp) : null,
@@ -49,9 +50,9 @@ function toHeaterReading(wire: HeaterStateResponse | Record<string, any>): Heate
   });
 }
 
-function toSensorReading(wire: TemperatureStateResponse | Record<string, any>): SensorReading {
+function toSensorReading(wire: Record<string, unknown>): SensorReading {
   return new SensorReading({
-    id: wire.id,
+    id: wire.id as string,
     actualCelsius: Number(wire.actual) || 0,
   });
 }
@@ -59,17 +60,17 @@ function toSensorReading(wire: TemperatureStateResponse | Record<string, any>): 
 /**
  * Convert the snapshot's `sensors` dict into a `ReadingSet`.
  */
-export function toReadingSet(dict: Record<string, AnyTemperatureWire | Record<string, any>> | null | undefined): ReadingSet {
+export function toReadingSet(dict: unknown): ReadingSet {
   if (!dict || typeof dict !== "object") {
     return new ReadingSet([]);
   }
-  
+
   const readings: AnyReading[] = [];
-  for (const wire of Object.values(dict)) {
+  for (const wire of Object.values(dict as Record<string, unknown>)) {
     const r = toReading(wire);
     if (r) readings.push(r);
   }
-  
+
   return new ReadingSet(readings);
 }
 
