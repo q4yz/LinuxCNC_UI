@@ -14,30 +14,63 @@ jobs:
   frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./frontend
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # 1. Set up Node
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Matching your install.sh
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: ./frontend/package-lock.json
 
-      - name: Install Dependencies
+      # 2. Set up Python (Needed to boot the backends)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: ./backend/requirements*.txt
+
+      # 3. Install ALL Dependencies
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
         run: npm install
 
-      # Addresses your HANDOFF.md gap: "typing-discipline enforcement"
-      # Assuming you have a "type-check": "vue-tsc --noEmit" script in package.json
-      - name: Vue Type Check (vue-tsc)
-        run: npm run type-check || echo "vue-tsc not wired up yet, skipping"
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-system.txt -r requirements-machine.txt
+
+      # 4. Boot backends in the background and generate API
+      - name: Generate API Client
+        run: |
+          # Start Machine Backend
+          cd backend/machine
+          uvicorn main:app --port 8000 &
+          
+          # Start System Backend
+          cd ../system
+          uvicorn main:app --port 8001 &
+          
+          # Wait for them to be ready
+          sleep 5 
+          
+          # Generate the client
+          cd ../../frontend
+          npm run generate-api
+
+      # 5. Finally, build
+      - name: Vue Type Check
+        working-directory: ./frontend
+        run: npm run type-check || true
 
       - name: Build Vite App
+        working-directory: ./frontend
         run: npm run build
 
 
@@ -77,7 +110,7 @@ jobs:
         run: ruff check . || true
 
       - name: Type Check with Mypy
-        run: mypy . || true
+        run: mypy .
 
       - name: Run Tests
         # Runs any files starting with test_*.py
