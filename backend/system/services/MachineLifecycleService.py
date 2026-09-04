@@ -334,6 +334,7 @@ class MachineLifecycleService:
                 # against the machine's own config folder — the
                 # deprecated active/ dir is no longer part of the
                 # start path.
+                stdin=subprocess.PIPE,
                 cwd=str(ini.parent),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,

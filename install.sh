@@ -148,6 +148,7 @@ WorkingDirectory=$PROJECT_DIR/backend/system
 ExecStart=$PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=5
+LimitMEMLOCK=infinity
 # MachineLifecycleService spawns the LinuxCNC GUI, which needs a
 # display; it already defaults to :0 if DISPLAY is unset, but a
 # systemd unit has no environment of its own, so make it explicit.
