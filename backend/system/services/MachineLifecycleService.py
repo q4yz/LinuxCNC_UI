@@ -14,26 +14,31 @@ deploy flow is deprecated and no longer part of the start path.
 
 Starting literally runs the console command::
 
-    linuxcnc <machine_config/machines/<default>/config/machine.ini>
+    linuxcnc -r <machine_config/machines/<default>/config/machine.ini>
 
-The process is spawned detached (``start_new_session=True``) with its
-console output tee'd into ``logs/linuxcnc_console.log`` at the
-repository root and ``DISPLAY`` inherited (defaulting to ``:0`` so the
-LinuxCNC GUI opens on the machine's console display). The launch
-command can be overridden with the ``LINUXCNC_START_COMMAND`` env var
-using a ``{ini}`` placeholder, e.g. ``"xterm -e linuxcnc {ini}"``.
-``_build_command`` also prefixes ``stdbuf -oL -eL`` when available —
-see its docstring for why a hard LinuxCNC abort would otherwise lose
-its error text entirely instead of reaching the log.
+The ``-r`` flag (see ``linuxcnc(1)``) disables LinuxCNC's own default
+behaviour of redirecting its stdout/stderr to
+``~/linuxcnc_print.txt`` / ``~/linuxcnc_debug.txt`` whenever stdin
+isn't a tty — true for every detached session we spawn — so its
+output (including a crash's error text) actually reaches the fds we
+gave it instead of vanishing into those two files. The process is
+spawned detached (``start_new_session=True``) with its stdout+stderr
+tee'd into ``logs/linuxcnc_console.log`` at the repository root and
+``DISPLAY`` inherited (defaulting to ``:0`` so the LinuxCNC GUI opens
+on the machine's console display). The launch command can be
+overridden with the ``LINUXCNC_START_COMMAND`` env var using a
+``{ini}`` placeholder, e.g. ``"xterm -e linuxcnc -r {ini}"`` — an
+override that drops ``-r`` falls back on
+:meth:`MachineLifecycleService.console_log` also reading those two
+home-directory files directly. ``_build_command`` additionally
+prefixes ``stdbuf -oL -eL`` when available — see its docstring for
+why a hard LinuxCNC abort can still lose buffered output even with
+``-r`` in place.
 
 :meth:`MachineLifecycleService.console_log` surfaces the tail of
-*every* known LinuxCNC log to the UI (``GET
+every known LinuxCNC log to the UI (``GET
 /api/v1/system/machine/log``) so an operator can see why a session
-failed without shell access — not just our own tee, but also
-``~/linuxcnc_print.txt`` / ``~/linuxcnc_debug.txt``, which is where
-LinuxCNC's own launcher redirects once it decides it isn't talking to
-an interactive terminal (true for every detached session we spawn);
-see :meth:`console_log`'s docstring. An immediate crash (``start()``
+failed without shell access. An immediate crash (``start()``
 returning within the 0.5s poll window) folds the merged tail straight
 into the raised error, since that is the most common "it just won't
 start" case.
@@ -371,21 +376,32 @@ class MachineLifecycleService:
     def _build_command(self, ini: Path) -> List[str]:
         """Resolve the launch command (``LINUXCNC_START_COMMAND`` override).
 
-        Prefixed with ``stdbuf -oL -eL`` when available: LinuxCNC's
-        own startup (halcmd, milltask, ...) is written against plain
-        C stdio, which switches from line-buffered to fully block
-        buffered as soon as stdout isn't a tty — i.e. the moment we
-        redirect it into ``_CONSOLE_LOG``. A clean exit still flushes
-        that buffer, but a hard abort (realtime error, segfault, a
-        signal from a bad HAL/INI parse) does not — the operator
-        sees the failure in LinuxCNC's own on-screen error dialog
-        (which talks to X11 directly, bypassing stdio) while our log
-        stays empty, because the buffered text was never written out.
-        ``stdbuf`` forces line buffering regardless of the
-        destination, so every line lands in the log as it's printed.
+        The default command is ``linuxcnc -r <ini>``. Per ``linuxcnc(1)``,
+        ``-r`` "disable[s] redirection of stdout and stderr to
+        ``~/linuxcnc_print.txt`` and ``~/linuxcnc_debug.txt`` when
+        stdin is not a tty" — which is exactly our case, since every
+        session we spawn is detached. Without ``-r`` that redirect
+        happens *inside* the child, downstream of our own
+        ``stdout=log_handle`` on ``Popen``, so a crash's error text
+        lands in those two home-directory files instead of
+        ``_CONSOLE_LOG`` and our tee stays empty — LinuxCNC's on-screen
+        error dialog still shows it (X11, not stdio), which is how
+        the gap surfaces: visible on the machine's monitor, invisible
+        to the UI. ``-r`` keeps everything flowing through the fds we
+        actually captured. (``console_log()`` still also reads those
+        two files as a fallback, for an ``LINUXCNC_START_COMMAND``
+        override that omits ``-r``.)
+
+        Also prefixed with ``stdbuf -oL -eL`` when available: with
+        the redirect gone, LinuxCNC's plain-C-stdio output is now
+        flowing into our file, but stdio still switches from
+        line-buffered to fully block buffered once it's not a tty —
+        so a hard abort (realtime error, segfault) can still lose
+        whatever sat in that buffer unflushed. ``stdbuf`` forces line
+        buffering regardless of the destination.
         """
         template = os.environ.get("LINUXCNC_START_COMMAND", "").strip()
-        command = shlex.split(template.format(ini=str(ini))) if template else ["linuxcnc", str(ini)]
+        command = shlex.split(template.format(ini=str(ini))) if template else ["linuxcnc", "-r", str(ini)]
         if shutil.which("stdbuf"):
             command = ["stdbuf", "-oL", "-eL"] + command
         return command

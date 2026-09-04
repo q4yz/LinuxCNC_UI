@@ -292,7 +292,7 @@ def test_start_persists_and_launches_the_requested_machine(
     # start implies main: the selection is persisted and the INI at
     # machines/<machine>/config/machine.ini is what gets launched.
     assert _service().default_machine() == "PrintNC"
-    assert _FakePopen.last_command == ["linuxcnc", str(ini)]
+    assert _FakePopen.last_command == ["linuxcnc", "-r", str(ini)]
     assert result["started_pid"] == 1234
     assert result["default_machine"] == "PrintNC"
 
@@ -306,7 +306,7 @@ def test_start_without_machine_launches_the_default(
 
     result = _service().start()
 
-    assert _FakePopen.last_command == ["linuxcnc", str(ini)]
+    assert _FakePopen.last_command == ["linuxcnc", "-r", str(ini)]
     assert result["started_pid"] == 1234
 
 
@@ -351,17 +351,23 @@ def test_build_command_prefers_stdbuf_when_available(monkeypatch):
     command = _service()._build_command(ini)
 
     assert command[:3] == ["stdbuf", "-oL", "-eL"]
-    assert command[3:] == ["linuxcnc", str(ini)]
+    assert command[3:] == ["linuxcnc", "-r", str(ini)]
 
 
 def test_build_command_skips_stdbuf_when_not_on_path(monkeypatch):
+    """Also covers the default command shape: ``-r`` per linuxcnc(1)
+    disables LinuxCNC's own redirect of stdout/stderr to
+    ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt (which fires whenever
+    stdin isn't a tty — true for every detached session we spawn),
+    so a crash's error text reaches our own tee instead of vanishing
+    into those two files."""
     ini = Path("PrintNC") / "config" / "machine.ini"
     monkeypatch.setattr(mls_module.shutil, "which", lambda name: None)
     monkeypatch.delenv("LINUXCNC_START_COMMAND", raising=False)
 
     command = _service()._build_command(ini)
 
-    assert command == ["linuxcnc", str(ini)]
+    assert command == ["linuxcnc", "-r", str(ini)]
 
 
 def test_build_command_prefixes_stdbuf_before_an_override_too(monkeypatch):

@@ -139,16 +139,21 @@ backend or the machine itself is down:
   `linuxcnc`/`emc`/`milltask`/`linuxcncsvr` session, plus whether a
   generated INI exists under `machine_config/active/`.
 - `POST /api/v1/system/machine/start` — runs the console command
-  `linuxcnc <machine_config/active/machine.ini>` as a detached
-  process (`start_new_session=True`), console output tee'd into
-  `logs/linuxcnc_console.log`. The command is overridable via the
-  `LINUXCNC_START_COMMAND` env var (a `{ini}`-templated string) for
-  setups that need e.g. `xterm -e linuxcnc {ini}`. Prefixed with
-  `stdbuf -oL -eL` when available — LinuxCNC's own stdio is fully
-  block-buffered once redirected to a file, so a hard abort (bad
-  HAL/INI parse, realtime error) can lose its error text entirely
-  instead of reaching the log, even though the operator still sees
-  it in LinuxCNC's own on-screen error dialog.
+  `linuxcnc -r <machine_config/active/machine.ini>` as a detached
+  process (`start_new_session=True`), stdout+stderr tee'd into
+  `logs/linuxcnc_console.log`. `-r` (`linuxcnc(1)`) disables
+  LinuxCNC's own default of redirecting stdout/stderr to
+  `~/linuxcnc_print.txt` / `~/linuxcnc_debug.txt` whenever stdin
+  isn't a tty — true for every detached session we spawn — so a
+  crash's error text actually reaches the fds we captured instead of
+  vanishing into those two files (LinuxCNC's on-screen error dialog
+  still shows it either way, since that talks to X11, not stdio).
+  The command is overridable via the `LINUXCNC_START_COMMAND` env
+  var (a `{ini}`-templated string, e.g. `"xterm -e linuxcnc -r {ini}"`
+  — keep `-r` in a custom override too). Also prefixed with
+  `stdbuf -oL -eL` when available, since stdio still block-buffers
+  once it's not a tty and a hard abort can lose whatever sat
+  unflushed in that buffer.
 - `GET /api/v1/system/machine/log` (`?lines=N`) — merged, labelled
   tail of every known LinuxCNC log: this UI's own tee
   (`logs/linuxcnc_console.log`) plus `~/linuxcnc_print.txt` /
