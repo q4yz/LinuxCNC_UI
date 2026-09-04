@@ -6,23 +6,27 @@ Endpoint groups (mounted by the registry under
 * **Profiles CRUD** — full hierarchical read/write of
   ``machine_config/profiles`` (list, read, write, create folder,
   create file, delete, rename). Backed by
-  :class:`ConfigFileService`.
-* **Compilers** — ``GET /compilers`` returns the registered compilers
-  plus a marker probe (``has_marker``) per file under ``profiles``.
-* **Compile** — ``POST /compile`` runs the selected compiler against
-  a chosen profile and stages the artifacts into
-  ``machine_config/ready_for_deploy``. Backed by
-  :class:`StagedFileService.clear_and_stage`.
-* **Staged / Active read-only** — ``GET /staged`` and
-  ``GET /active`` plus per-file content endpoints. Operators can
-  inspect the staged and active payloads but cannot edit them
-  through this surface. Backed by :class:`StagedFileService` and
+  :class:`ConfigFileService`. Each listed file also carries
+  ``has_marker`` — whether it contains the ``#Start`` token, a purely
+  cosmetic readiness badge in the frontend explorer.
+* **Machines (template generation + CRUD)** — ``POST
+  /machines/generate`` parses a profile and writes the per-machine
+  template set (``machine.cfg``, ``hardware.json``, ``machine.ini``,
+  ``machine.hal``, ``custom.hal``, ``webgui_connections.hal``,
+  ``tool.tbl``) under ``machine_config/machines/<name>/configs/``;
+  the remaining ``/machines/...`` endpoints mirror the profiles CRUD
+  surface for hand-editing the generated templates. Backed by
+  :mod:`services.machinetemplates`.
+* **Staged / Active read-only** — ``GET /active`` plus per-file
+  content endpoints report what's currently deployed. Backed by
   :class:`ActiveFileService`.
-* **Deploy** — ``POST /deploy`` promotes the staged payload into
-  ``machine_config/active`` via
-  :meth:`StagedFileService.deploy_to_active`. Accepts
-  ``confirm_flash`` to satisfy remote-controller (e.g. Remora)
-  workflows.
+* **Deploy** — ``POST /deploy`` promotes a generated machine's
+  templates (``machine_config/machines/<name>/configs/``) into
+  ``machine_config/active`` via :meth:`ActiveFileService.deploy_from`.
+  This only stages files on disk — it does not touch the running
+  ``linuxcnc`` process; use ``POST /api/v1/system/machine/switch``
+  (in the system service's machine-lifecycle router) to deploy *and*
+  restart in one call.
 * **Machine name** — ``GET /machine-name`` reads the current machine
   name out of the active INI so the Active dashboard can render
   the "currently running machine" header. Backed by
@@ -35,16 +39,22 @@ Endpoint groups (mounted by the registry under
   ``?kind=mcode`` path uses).
 
 The router is intentionally a thin HTTP wrapper: every filesystem
-operation is delegated to the corresponding service. The
-``_build_compiler_marker_probe`` helper stays here because
-mapping compilers to marker detection is a compiler-registry
-concern, not a filesystem concern.
+operation is delegated to the corresponding service.
+
+A previous revision of this router also exposed a pluggable
+``Compiler`` framework (``GET /compilers``, ``POST /compile``,
+``GET /staged`` + content) that translated a profile into a Remora
+``config.txt`` flash payload staged under
+``machine_config/ready_for_deploy``. That framework — and the
+Remora-specific flashing concept generally — has been retired in
+favour of the template generator above; see ``.agent/HANDOFF.md``
+for the removal notes.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Path, Query, Request, Response, UploadFile, File
 from fastapi.responses import JSONResponse
@@ -56,15 +66,16 @@ from services import (
     ConfigFileService,
     MCodeFileService,
     MachineFileService,
-    StagedFileService,
     get_active_service,
     get_config_service,
     get_machine_service,
     get_mcode_service,
-    get_staged_service,
 )
-from services.machineconfig import registry as compiler_registry
-from services.machinetemplates import MachineExistsError, generate_machine_templates
+from services.machinetemplates import (
+    MachineExistsError,
+    generate_machine_templates,
+    resolve_machine_configs_dir,
+)
 from machineconfig_parser import ConfigValidationError
 
 logger = logging.getLogger("backend.machineconfig_service")
@@ -266,69 +277,6 @@ class RenameRequest(BaseModel):
     destination: str = Field(..., description="New relative path")
 
 
-class CompilerSummary(BaseModel):
-    """Single compiler entry in the registry listing."""
-
-    id: str = Field(..., description="Stable compiler id (kebab-case)")
-    title: str = Field(..., description="Display title for the dropdown")
-    source_marker: Optional[str] = Field(
-        default=None,
-        description="Marker substring this compiler looks for, or null",
-    )
-    deprecated: bool = Field(
-        default=False,
-        description=(
-            "True when the compiler is deprecated (kept functional during "
-            "the transition to the machine template generator)."
-        ),
-    )
-
-
-class CompilerListResponse(BaseModel):
-    """Response of ``GET /compilers``."""
-
-    compilers: List[CompilerSummary] = Field(default_factory=list)
-
-
-class CompileRequest(BaseModel):
-    """Body of ``POST /compile``."""
-
-    profile_path: str = Field(
-        ..., description="Forward-slash path relative to profiles/"
-    )
-    compiler_id: str = Field(..., description="Registered compiler id")
-
-
-class StagedFile(BaseModel):
-    """One file currently sitting in ``ready_for_deploy``."""
-
-    name: str = Field(..., description="Basename of the staged file")
-    size_bytes: int = Field(..., description="File size in bytes")
-
-
-class CompileResponse(BaseModel):
-    """Response of ``POST /compile``."""
-
-    status: str = Field(..., description="Outcome summary (e.g. 'ok')")
-    compiler: str = Field(..., description="Compiler id that produced the staged payload")
-    profile: str = Field(..., description="Source profile path that was compiled")
-    artifacts: List[str] = Field(default_factory=list, description="Filenames written under ready_for_deploy")
-    staged: List[StagedFile] = Field(
-        default_factory=list, description="Resulting listing of ready_for_deploy"
-    )
-
-
-class StagedContent(BaseModel):
-    """Payload returned by ``GET /staged/content/{name}``."""
-
-    name: str = Field(..., description="Filename inside ready_for_deploy")
-    content: str = Field(..., description="Raw text content")
-    read_only: bool = Field(
-        default=True,
-        description="Always true; staged files are write-protected after compile",
-    )
-
-
 class ActiveFile(BaseModel):
     """One file currently sitting in ``active``."""
 
@@ -355,11 +303,12 @@ class ActiveContent(BaseModel):
 class DeployRequest(BaseModel):
     """Body of ``POST /deploy``."""
 
-    confirm_flash: bool = Field(
-        default=False,
+    machine_path: str = Field(
+        ...,
         description=(
-            "Set to true to acknowledge that any remote controllers (e.g. "
-            "Remora) have been flashed with the new payload."
+            "Path under machine_config/machines to a generated machine "
+            "(e.g. 'PrintNC' or 'PrintNC/configs') — generate it first "
+            "with POST /machines/generate."
         ),
     )
 
@@ -435,50 +384,26 @@ class GenerateResponse(BaseModel):
 # ---------------------------------------------------------------------- #
 
 
-def _build_compiler_marker_probe():
-    """Return a callable ``(path) -> bool`` that uses the default compiler's marker.
+#: Marker substring flagging a profile as "ready" — purely a cosmetic
+#: badge in the frontend explorer (``ProfilesExplorer.vue``) today;
+#: no endpoint gates on it. Matches the historical compiler default.
+PROFILE_MARKER = "#Start"
 
-    Stays in the router because mapping compilers to marker
-    detection is a compiler-registry concern, not a filesystem
-    one. The probe is passed to :class:`ConfigFileService` so the
-    ``has_marker`` flag is computed alongside the listing.
+
+def _has_marker(path, *, max_bytes: int = 8192) -> bool:
+    """Return ``True`` when ``path`` contains :data:`PROFILE_MARKER`.
+
+    Reads only the first ``max_bytes`` of the file so a large config
+    doesn't pay a full scan.
     """
+    if not path.is_file() or path.suffix.lower() != ".cfg":
+        return False
     try:
-        default_compiler = compiler_registry.get(
-            compiler_registry.ids()[0] if compiler_registry.ids() else ""
-        )
-    except (IndexError, KeyError):
-        return None
-    return default_compiler.has_source_marker
-
-
-def _require_compiler(compiler_id: str):
-    if compiler_id not in compiler_registry:
-        raise NotFoundError(f"Unknown compiler '{compiler_id}'. Known: {compiler_registry.ids()}")
-    return compiler_registry.get(compiler_id)
-
-
-def _resolve_profile_path(profile_path: str, service: ConfigFileService):
-    """Validate ``profile_path`` and return an absolute path under profiles/."""
-    if not profile_path:
-        raise BadRequestError("profile_path is required.")
-    try:
-        return service.safe_join(profile_path)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-
-def _require_settings_overrides() -> Dict[str, bool]:
-    """Return module settings overrides used by the endpoints.
-
-    The router reads via the registry-mounted settings surface when
-    available; the v1 stub keeps the defaults reachable as a fallback
-    so the module is functional without a populated settings store.
-    """
-    from models.machineconfig_settings import MachineConfigSettings
-
-    defaults = MachineConfigSettings().model_dump()
-    return defaults  # type: ignore[return-value]
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            head = handle.read(max_bytes)
+    except OSError:
+        return False
+    return PROFILE_MARKER in head
 
 
 # ---------------------------------------------------------------------- #
@@ -495,20 +420,16 @@ def _require_settings_overrides() -> Dict[str, bool]:
 def get_profiles_tree() -> DirectoryListing:
     """Return the entire ``profiles/`` tree as a flat list."""
     service: ConfigFileService = get_config_service()
-    probe = _build_compiler_marker_probe()
     entries = service.list_files()
-    if probe is not None:
-        for entry in entries:
-            if entry.kind == "file":
-                try:
-                    target = service.safe_join(entry.path)
-                except ValueError:
-                    entry.has_marker = False
-                    continue
-                try:
-                    entry.has_marker = bool(probe(target))
-                except Exception:  # noqa: BLE001 - intentional broad catch
-                    entry.has_marker = False
+    for entry in entries:
+        if entry.kind != "file":
+            continue
+        try:
+            target = service.safe_join(entry.path)
+        except ValueError:
+            entry.has_marker = False
+            continue
+        entry.has_marker = _has_marker(target)
     return DirectoryListing(
         root="profiles",
         entries=[DirectoryEntryModel(**e.to_dict()) for e in entries],
@@ -905,147 +826,8 @@ def delete_machine_entry(path: str) -> StatusMessage:
 
 
 # ---------------------------------------------------------------------- #
-# Compilers                                                               #
+# Active (read-only)                                                      #
 # ---------------------------------------------------------------------- #
-
-
-@router.get(
-    "/compilers",
-    summary="List registered compilers",
-    description="Return every compiler currently registered in the machineconfig registry.",
-    response_model=CompilerListResponse,
-)
-def list_compilers() -> CompilerListResponse:
-    """Return every registered compiler in stable (id-sorted) order."""
-    compilers = [
-        CompilerSummary(
-            id=c.id,
-            title=c.title,
-            source_marker=c.source_marker,
-            deprecated=bool(getattr(c, "deprecated", False)),
-        )
-        for c in compiler_registry.all()
-    ]
-    return CompilerListResponse(compilers=compilers)
-
-
-# ---------------------------------------------------------------------- #
-# Compile                                                                 #
-# ---------------------------------------------------------------------- #
-
-
-@router.post(
-    "/compile",
-    summary="Compile a profile",
-    description=(
-        "Run the named compiler against the given profile and stage the "
-        "resulting artifacts into machine_config/ready_for_deploy."
-    ),
-    response_model=CompileResponse,
-)
-def compile_profile(payload: CompileRequest) -> CompileResponse:
-    """Compile a profile and refresh the staged payload."""
-    compiler = _require_compiler(payload.compiler_id)
-    config_service: ConfigFileService = get_config_service()
-    staged_service: StagedFileService = get_staged_service()
-    source = _resolve_profile_path(payload.profile_path, config_service)
-    if not source.exists() or not source.is_file():
-        raise NotFoundError(f"Profile not found: {payload.profile_path}")
-
-    try:
-        artifact_paths = staged_service.clear_and_stage(compiler, source)
-    except FileNotFoundError as exc:
-        raise NotFoundError(str(exc)) from exc
-    except ConfigValidationError:
-        # Parser-level validation errors are routed through the
-        # global exception handler registered in ``on_load``
-        # (``register_exception_handlers``). The structured envelope
-        # shape is the contract the frontend toast channel depends
-        # on (issue #99). ``ConfigValidationError`` is a subclass of
-        # ``ValueError`` so it MUST be caught before the
-        # ``ValueError`` branch below — reordering the clauses would
-        # silently swallow the structured response.
-        raise
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - last-resort guard
-        # ``logger.exception`` writes the full traceback so the next
-        # compile failure surfaces the offending frame instead of a
-        # single Python error string. Including ``type(exc).__name__``
-        # in the HTTP body tells the operator (and the test) whether
-        # this is a TypeError, OSError, etc. - diagnostic-only change
-        # to the response envelope.
-        logger.exception("Compile failed for %s", payload.profile_path)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Compile failed: {type(exc).__name__}: {exc}",
-        ) from exc
-
-    settings = _require_settings_overrides()
-    if settings.get("auto_readonly_after_stage", True):
-        # ``mark_read_only`` is a documented no-op now that
-        # read-only state is enforced via the service-level
-        # ``default_read_only`` policy instead of POSIX mode
-        # bits. Kept here for API parity with the legacy
-        # ``auto_readonly_after_stage`` toggle so future
-        # builds can wire it back to a meaningful behaviour
-        # without changing the router shape.
-        staged_service.mark_read_only()
-
-    staged_files = [
-        StagedFile(name=entry.name, size_bytes=entry.size_bytes)
-        for entry in staged_service.list_files()
-        if entry.kind == "file"
-    ]
-    staged_files.sort(key=lambda s: s.name)
-
-    return CompileResponse(
-        status="ok",
-        compiler=compiler.id,
-        profile=payload.profile_path,
-        artifacts=[p.name for p in artifact_paths],
-        staged=staged_files,
-    )
-
-
-# ---------------------------------------------------------------------- #
-# Staged / Active (read-only)                                             #
-# ---------------------------------------------------------------------- #
-
-
-@router.get(
-    "/staged",
-    summary="List staged artifacts",
-    description="Return every file currently sitting in machine_config/ready_for_deploy.",
-    response_model=List[StagedFile],
-)
-def list_staged() -> List[StagedFile]:
-    """Return the staged artifact list."""
-    service: StagedFileService = get_staged_service()
-    files = [
-        StagedFile(name=entry.name, size_bytes=entry.size_bytes)
-        for entry in service.list_files()
-        if entry.kind == "file"
-    ]
-    return files
-
-
-@router.get(
-    "/staged/content/{name}",
-    summary="Read a staged file",
-    description="Return the raw text content of a file in machine_config/ready_for_deploy.",
-    response_model=StagedContent,
-)
-def read_staged(name: str) -> StagedContent:
-    """Return the content of a single staged file. Read-only."""
-    service: StagedFileService = get_staged_service()
-    try:
-        content = service.read_file(name)
-    except FileNotFoundError as exc:
-        raise NotFoundError(f"Staged file not found: {name}") from exc
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-    return StagedContent(name=name, content=content, read_only=True)
 
 
 @router.get(
@@ -1092,34 +874,30 @@ def read_active(name: str) -> ActiveContent:
 
 @router.post(
     "/deploy",
-    summary="Deploy staged artifacts",
+    summary="Deploy a generated machine",
     description=(
-        "Promote the staged artifacts from machine_config/ready_for_deploy "
-        "into machine_config/active. When ``require_confirm_flash`` is "
-        "enabled in module settings, the request must include "
-        "``confirm_flash=true`` (used by Remora and similar remote "
-        "controllers to acknowledge that the board has been flashed)."
+        "Promote a generated machine's templates from "
+        "machine_config/machines/<name>/configs into machine_config/active. "
+        "This only stages files on disk — it does not touch the running "
+        "linuxcnc process; use POST /api/v1/system/machine/switch to "
+        "deploy and restart in one call."
     ),
     response_model=DeployResponse,
+    responses={404: {"description": "Machine not found."}},
 )
-def deploy_staged(payload: DeployRequest) -> DeployResponse:
-    """Deploy the staged payload into the active directory."""
-    settings = _require_settings_overrides()
-    require_flash = bool(settings.get("require_confirm_flash", True))
-    if require_flash and not payload.confirm_flash:
-        raise BadRequestError(
-            "confirm_flash must be true to deploy. Acknowledge that any "
-            "remote controllers (e.g. Remora) have been flashed first."
-        )
-
-    staged_service: StagedFileService = get_staged_service()
+def deploy_machine(payload: DeployRequest) -> DeployResponse:
+    """Deploy a generated machine's templates into the active directory."""
+    machine_service: MachineFileService = get_machine_service()
     active_service: ActiveFileService = get_active_service()
 
     try:
-        deployed = staged_service.deploy_to_active(active_service)
-    except FileNotFoundError as exc:
+        configs_dir = resolve_machine_configs_dir(machine_service, payload.machine_path)
+    except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
+    if not configs_dir.exists() or not configs_dir.is_dir():
+        raise NotFoundError(f"Machine not found: {payload.machine_path}")
 
+    deployed = active_service.deploy_from(configs_dir)
     machine_name = active_service.machine_name()
 
     return DeployResponse(

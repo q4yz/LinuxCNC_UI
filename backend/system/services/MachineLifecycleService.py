@@ -3,8 +3,11 @@
 The system service is the always-running half of the backend split,
 so it owns the LinuxCNC *process* lifecycle: detecting whether a
 ``linuxcnc`` session is alive, starting the generated INI, stopping
-the session again, and switching the active machine (compile →
-deploy → restart).
+the session again, and switching the active machine (deploy a
+generated machine's templates → restart). Generating the templates
+themselves (profile → ``machine_config/machines/<name>/configs/``)
+is a separate step — see
+``POST /api/v1/modules/machineconfig/machines/generate``.
 
 Starting literally runs the console command::
 
@@ -30,11 +33,7 @@ from typing import List, Optional
 
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
-from domain_file_services import (
-    get_active_service,
-    get_config_service,
-    get_staged_service,
-)
+from domain_file_services import get_active_service, get_machine_service
 from domain_file_services.paths import ACTIVE_DIR
 
 logger = logging.getLogger("backend.system.machine_lifecycle")
@@ -124,7 +123,7 @@ class MachineLifecycleService:
         if ini is None:
             raise NotFoundError(
                 "No generated INI found in machine_config/active — "
-                "compile and deploy a machine first."
+                "generate and deploy a machine first."
             )
 
         command = self._build_command(ini)
@@ -240,31 +239,27 @@ class MachineLifecycleService:
     # Switch machine                                                      #
     # ------------------------------------------------------------------ #
 
-    def switch(self, profile: Optional[str] = None, start_machine: bool = True) -> dict:
-        """Switch the active machine: stop → (compile) → deploy → start.
+    def switch(self, machine: Optional[str] = None, start_machine: bool = True) -> dict:
+        """Switch the active machine: stop → (deploy) → start.
 
         Args:
-            profile: Optional profile path under ``machine_config/profiles``
-                (e.g. ``"starter.cfg"``). When given, the profile is
-                compiled with the default compiler before deploying;
-                when omitted, the already-staged artifacts in
-                ``machine_config/ready_for_deploy`` are deployed.
+            machine: Optional path under ``machine_config/machines``
+                to a generated machine (e.g. ``"PrintNC"`` or
+                ``"PrintNC/configs"`` — see
+                :func:`resolve_machine_configs_dir`). Generate it
+                first with ``POST /modules/machineconfig/machines/generate``.
+                When given, that machine's templates are deployed
+                into ``machine_config/active`` before starting; when
+                omitted, the machine currently in ``active/`` is
+                simply restarted.
             start_machine: Start the new machine session after the
                 deploy (default ``True``).
         """
         if self.is_running():
             self.stop()
 
-        if profile:
-            self._compile_profile(profile)
-
-        staged_service = get_staged_service()
-        active_service = get_active_service()
-        try:
-            deployed = staged_service.deploy_to_active(active_service)
-        except FileNotFoundError as exc:
-            raise BadRequestError(str(exc)) from exc
-        logger.info("Switched active machine: deployed %d artifacts.", len(deployed))
+        if machine:
+            self._deploy_machine(machine)
 
         if not start_machine:
             return self.status()
@@ -276,27 +271,24 @@ class MachineLifecycleService:
         reset_service_cache()
         return self.start()
 
-    def _compile_profile(self, profile: str) -> None:
-        """Compile ``profile`` with the default compiler into staging."""
-        from services.machineconfig import registry as compiler_registry
+    def _deploy_machine(self, machine: str) -> None:
+        """Deploy a generated machine's templates into ``active/``."""
+        from services.machinetemplates import resolve_machine_configs_dir
 
-        ids = compiler_registry.ids()
-        if not ids:
-            raise ConflictError("No compiler registered — cannot compile profile.")
-        compiler = compiler_registry.get(ids[0])
-
-        source = self._resolve_profile_path(profile)
-        if not source.exists() or not source.is_file():
-            raise NotFoundError(f"Profile not found: {profile}")
-
-        get_staged_service().clear_and_stage(compiler, source)
-
-    def _resolve_profile_path(self, profile: str) -> Path:
-        config_service = get_config_service()
+        machine_service = get_machine_service()
         try:
-            return config_service.safe_join(profile)
+            configs_dir = resolve_machine_configs_dir(machine_service, machine)
         except ValueError as exc:
             raise BadRequestError(str(exc)) from exc
+        if not configs_dir.exists() or not configs_dir.is_dir():
+            raise NotFoundError(f"Machine not found: {machine}")
+
+        deployed = get_active_service().deploy_from(configs_dir)
+        logger.info(
+            "Switched active machine to '%s': deployed %d artifacts.",
+            machine,
+            len(deployed),
+        )
 
 
 # Singleton provider

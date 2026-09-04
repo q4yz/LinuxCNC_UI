@@ -31,7 +31,7 @@ function onDismiss() {
   <div
       v-if="visible"
       data-test="https-inline-banner"
-      class="mt-4 relative w-full max-w-3xl p-4 md:p-5 bg-yellow-400 text-black rounded-xl shadow-lg border border-yellow-500 flex flex-col md:flex-row md:items-center gap-4 pr-12"
+      class=" relative w-full max-w-3xl p-4 md:p-5 bg-yellow-400 text-black rounded-xl shadow-lg border border-yellow-500 flex flex-col md:flex-row md:items-center gap-4 pr-12"
   >
     <!-- Close BaseButton (Top Right) -->
     <button

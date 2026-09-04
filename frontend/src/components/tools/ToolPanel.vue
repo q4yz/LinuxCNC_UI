@@ -24,7 +24,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
   <BaseCard title="Tools" class="min-w-[400px]">
     <template #header-actions>
       <!-- Use toolList.size and iterate over toolList.all() -->
-      <div v-if="toolList.size > 0" class="flex flex-wrap gap-2 justify-end">
+      <div v-if="toolList.size > 0" class="flex flex-wrap justify-end">
         <button
             v-for="tool in toolList.all()"
             :key="tool.id"

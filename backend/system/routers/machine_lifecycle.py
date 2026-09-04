@@ -43,12 +43,15 @@ class MachineStartResponse(MachineStatusResponse):
 
 
 class MachineSwitchRequest(BaseModel):
-    profile: Optional[str] = Field(
+    machine: Optional[str] = Field(
         None,
         description=(
-            "Optional profile path under machine_config/profiles to compile "
-            "before deploying (e.g. 'starter.cfg'). When omitted, the staged "
-            "artifacts in machine_config/ready_for_deploy are deployed."
+            "Optional path under machine_config/machines to a generated "
+            "machine (e.g. 'PrintNC' or 'PrintNC/configs') — generate it "
+            "first with POST /modules/machineconfig/machines/generate. "
+            "When given, that machine's templates are deployed into "
+            "machine_config/active before starting; when omitted, the "
+            "machine currently in active/ is simply restarted."
         ),
     )
     start: bool = Field(
@@ -114,21 +117,22 @@ def stop_machine() -> MachineStatusResponse:
     summary="Switch the active machine",
     description=(
         "Switch machines in one action: stop the running session, optionally "
-        "compile the given profile (default compiler), deploy the staged "
-        "artifacts into machine_config/active, and start the new machine."
+        "deploy a generated machine's templates into machine_config/active "
+        "(see POST /modules/machineconfig/machines/generate to produce them "
+        "first), and start the new machine."
     ),
     operation_id="switchMachine",
     response_model=MachineStartResponse,
     responses={
-        404: {"description": "Profile or generated INI not found."},
-        400: {"description": "Staging area empty or the machine failed to start."},
+        404: {"description": "Machine or generated INI not found."},
+        400: {"description": "Invalid machine path or the machine failed to start."},
     },
 )
 def switch_machine(
     payload: MachineSwitchRequest = Body(default=MachineSwitchRequest()),
 ) -> MachineStartResponse:
     result = get_machine_lifecycle_service().switch(
-        profile=payload.profile,
+        machine=payload.machine,
         start_machine=payload.start,
     )
     return MachineStartResponse(**result)

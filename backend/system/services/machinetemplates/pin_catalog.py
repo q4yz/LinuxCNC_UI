@@ -26,9 +26,12 @@ derives a flat, human-readable catalog:
 * ``UnconnectedHalPin`` slots are placeholders the runtime mappers
   deliberately left blank — listed for completeness.
 
-The DTO dataclasses stay dumb; all introspection lives here. Remora
-connection suggestions are a pure data table
-(:data:`REMORA_CONNECT_HINTS`) — documentation only, no runtime effect.
+The DTO dataclasses stay dumb; all introspection lives here.
+Connection suggestions are a pure data table
+(:data:`CONNECT_HINTS`) — documentation only, no runtime effect —
+and name generic LinuxCNC HAL components (``stepgen.N.*``,
+``pid.N.*``, ...), not the Remora-specific firmware pin space the
+now-retired compiler pipeline used.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ GROUP_STATE = "state"
 #: Values are short operator-facing sentences; the rendered template
 #: turns them into the ``net`` line shown next to each pin. Purely
 #: documentation — nothing here executes at runtime.
-REMORA_CONNECT_HINTS: Dict[str, Dict[str, str]] = {
+CONNECT_HINTS: Dict[str, Dict[str, str]] = {
     "SpindleDigitalPins": {
         "target_rpm": "drive from the commanded speed source (PID output / speed target)",
         "actual_rpm": "drive from the VFD tachometer feedback (vfdmod.spindle-rpm-fb)",
@@ -72,15 +75,15 @@ REMORA_CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "target_rpm": "drive from the commanded speed source",
     },
     "HeaterPins": {
-        "target_temperature": "net as the PID setpoint; PID output -> heater drive (remora.SP.<n>)",
-        "actual_temperature": "net as the PID feedback from the thermistor input (remora.PV.<n>)",
+        "target_temperature": "net as the PID setpoint; PID output -> heater drive (pid.N.command)",
+        "actual_temperature": "net as the PID feedback from the thermistor input (pid.N.feedback)",
         "fan": "sink into the heater cooling-fan output",
     },
     "ExtruderPins": {
-        "position": "net as the extruder stepgen position command (remora.joint.<n>.pos-cmd)",
+        "position": "net as the extruder stepgen position command (stepgen.N.position-cmd)",
     },
     "TemperaturePin": {
-        "actual_temperature": "drive from the thermistor input (remora.PV.<n>)",
+        "actual_temperature": "drive from the thermistor input (your ADC/thermistor reader's output)",
     },
     "EStopPin": {
         "pressed": "sink into halui.estop.request (webgui raises/lowers the estop)",
@@ -151,7 +154,7 @@ def _type_label(hal_type: Optional[HalDataType]) -> str:
 
 
 def _hint_for(container: str, field_name: str) -> str:
-    return REMORA_CONNECT_HINTS.get(container, {}).get(field_name, _DEFAULT_HINT)
+    return CONNECT_HINTS.get(container, {}).get(field_name, _DEFAULT_HINT)
 
 
 def _describe_leaf(
@@ -389,7 +392,7 @@ __all__ = [
     "PinCatalog",
     "PinContainerDescriptor",
     "PinDescriptor",
-    "REMORA_CONNECT_HINTS",
+    "CONNECT_HINTS",
     "build_catalog_from_containers",
     "build_pin_catalog",
 ]

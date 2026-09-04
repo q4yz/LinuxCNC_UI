@@ -1,18 +1,27 @@
 """Machine template generation package.
 
-This package is the *replacement* for the ambitious Klipper compiler:
-instead of translating a profile into a fully wired LinuxCNC
-configuration it emits a per-machine **template** set that an operator
-finishes by hand:
+This is the machine-config pipeline: a profile ``.cfg`` produces a
+per-machine **template** set under ``machine_config/machines/<name>/configs/``
+that an operator can hand-finish and deploy:
 
-* ``machine.cfg``   — verbatim copy of the source profile (provenance).
-* ``hardware.json`` — the real runtime contract, produced by the same
-  generator the (now deprecated) compiler used.
-* ``machine.ini``   — a LinuxCNC INI skeleton (placeholders, not runable).
-* ``machine.hal``   — the full HAL pin catalog of the ``webgui``
+* ``machine.cfg``             — verbatim copy of the source profile (provenance).
+* ``hardware.json``           — the real runtime contract.
+* ``machine.ini``             — a LinuxCNC INI populated with known-good
+  defaults plus every axis/joint section derived from ``hardware.json``
+  (see :mod:`.ini_template_generator`).
+* ``machine.hal``             — the full HAL pin catalog of the ``webgui``
   userspace component with per-pin connection suggestions.
+* ``custom.hal``              — always loads the ``webgui`` HAL component
+  and sources ``webgui_connections.hal``.
+* ``webgui_connections.hal``  — starter file for the operator's own
+  ``webgui.*`` pin wiring; only written once (never overwritten on a
+  regenerate) so hand edits survive.
+* ``tool.tbl``                — minimal empty tool table so the
+  generated INI's ``[EMCIO] TOOL_TABLE`` reference resolves.
 
-Remora flash payload (``config.txt``) is intentionally NOT generated.
+The Remora ``config.txt`` flash payload and the pluggable-compiler
+framework that used to live alongside this package have been
+retired — see ``.agent/HANDOFF.md``.
 
 The HAL pin catalog is sourced from the preloaded services
 (:func:`ToolsService.get_halpins` / :func:`TemperatureService.get_halpins`
@@ -28,6 +37,7 @@ from .generator import (
     GenerateResult,
     MachineExistsError,
     generate_machine_templates,
+    resolve_machine_configs_dir,
 )
 from .hal_template_generator import render_hal_template
 from .ini_template_generator import render_ini_template
@@ -49,4 +59,5 @@ __all__ = [
     "generate_machine_templates",
     "render_hal_template",
     "render_ini_template",
+    "resolve_machine_configs_dir",
 ]

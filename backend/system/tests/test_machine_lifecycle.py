@@ -33,13 +33,25 @@ def isolated_active_dir(monkeypatch, tmp_path):
     ``MachineLifecycleService`` imports ``ACTIVE_DIR`` by name
     (``from domain_file_services.paths import ACTIVE_DIR``), so the
     module-level name inside ``services.MachineLifecycleService`` —
-    not ``domain_file_services.paths.ACTIVE_DIR`` — is what must be
-    patched for the service to see the isolated tree.
+    not ``domain_file_services.paths.ACTIVE_DIR`` — is what
+    :meth:`active_ini` / :meth:`status` see.
+
+    ``machine_name()`` goes through a *different*, cached path —
+    ``get_active_service()`` — so the module attribute alone isn't
+    enough: without also repointing ``domain_file_services.paths``
+    and dropping the service cache, a cached ``ActiveFileService``
+    from an earlier test (or this repo's own real
+    ``machine_config/active/``) leaks into this test's assertions.
     """
+    from services import domain_file_services, reset_service_cache
+
     active = tmp_path / "active"
     active.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(mls_module, "ACTIVE_DIR", active)
-    return active
+    monkeypatch.setattr(domain_file_services.paths, "ACTIVE_DIR", active)
+    reset_service_cache()
+    yield active
+    reset_service_cache()
 
 
 @pytest.fixture()
@@ -271,27 +283,58 @@ def test_stop_escalates_to_sigterm_then_sigkill(isolated_active_dir, monkeypatch
 # --------------------------------------------------------------------- #
 
 
-def test_switch_raises_bad_request_when_staging_is_empty(no_processes, monkeypatch, tmp_path):
+def _isolated_machine_dirs(monkeypatch, tmp_path, request):
     from services import domain_file_services, reset_service_cache
 
     mc = tmp_path / "machine_config"
     profiles = mc / "profiles"
-    staged = mc / "ready_for_deploy"
+    machines = mc / "machines"
     active = mc / "active"
-    for d in (profiles, staged, active):
+    for d in (profiles, machines, active):
         d.mkdir(parents=True, exist_ok=True)
 
     paths_mod = domain_file_services.paths
     monkeypatch.setattr(paths_mod, "MACHINE_CONFIG_DIR", mc)
     monkeypatch.setattr(paths_mod, "PROFILES_DIR", profiles)
-    monkeypatch.setattr(paths_mod, "MACHINES_DIR", mc / "machines")
-    monkeypatch.setattr(paths_mod, "STAGED_DIR", staged)
+    monkeypatch.setattr(paths_mod, "MACHINES_DIR", machines)
     monkeypatch.setattr(paths_mod, "ACTIVE_DIR", active)
     monkeypatch.setattr(mls_module, "ACTIVE_DIR", active)
     reset_service_cache()
+    # The cached ActiveFileService singleton outlives monkeypatch's own
+    # teardown (which only reverts the setattr calls above, not the
+    # cache built from them) — without dropping it here too, the next
+    # test to call get_active_service() inherits this test's (by then
+    # deleted) tmp path instead of a fresh, correctly-pointed instance.
+    request.addfinalizer(reset_service_cache)
+    return {"machine_config": mc, "profiles": profiles, "machines": machines, "active": active}
 
-    with pytest.raises(BadRequestError):
-        _service().switch(profile=None, start_machine=False)
+
+def test_switch_raises_not_found_for_unknown_machine(no_processes, monkeypatch, tmp_path, request):
+    _isolated_machine_dirs(monkeypatch, tmp_path, request)
+
+    with pytest.raises(NotFoundError):
+        _service().switch(machine="no-such-machine", start_machine=False)
+
+
+def test_switch_without_a_machine_just_returns_status(no_processes, monkeypatch, tmp_path, request):
+    """Omitting ``machine`` restarts whatever is already in active/ — no
+    deploy step, so it never raises even with nothing generated yet."""
+    _isolated_machine_dirs(monkeypatch, tmp_path, request)
+
+    result = _service().switch(machine=None, start_machine=False)
+    assert result["running"] is False
+
+
+def test_switch_deploys_generated_machine_then_reports_status(no_processes, monkeypatch, tmp_path, request):
+    dirs = _isolated_machine_dirs(monkeypatch, tmp_path, request)
+    machine_dir = dirs["machines"] / "PrintNC" / "configs"
+    machine_dir.mkdir(parents=True)
+    (machine_dir / "machine.ini").write_text("[EMC]\nMACHINE = PrintNC\n")
+
+    result = _service().switch(machine="PrintNC", start_machine=False)
+
+    assert (dirs["active"] / "machine.ini").exists()
+    assert result["ini_exists"] is True
 
 
 # --------------------------------------------------------------------- #

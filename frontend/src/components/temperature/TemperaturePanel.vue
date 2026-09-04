@@ -238,7 +238,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 </script>
 
 <template>
-  <BaseCard title="🔥 Temperatures" class="mt-6">
+  <BaseCard title="🔥 Temperatures" >
     <!-- Global unit toggle and Cool All -->
     <div class="mb-3 flex items-center justify-between">
 

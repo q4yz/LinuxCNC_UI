@@ -527,6 +527,14 @@ enable_pin: !PA11
 
     graph = MachineConfigParser().parse_string(config)
     assert sorted(graph.steppers.keys()) == ["x", "y", "y1", "z"]
+    # Each motor keeps its own dict entry (distinct section names),
+    # but "y1" shares axis "y" with "y" — that's what lets
+    # AxisBuilder(policy=SPLIT_INTO_MULTIPLE_JOINTS) group them onto
+    # one AXIS_Y with two [JOINT_N] blocks instead of treating "y1"
+    # as its own bogus axis letter.
+    assert graph.steppers["y"].axis == "y"
+    assert graph.steppers["y1"].axis == "y"
+    assert graph.steppers["x"].axis == "x"
 
 # ---------------------------------------------------------------------- #
 # Fan section parsing (Phase 1)                                          #

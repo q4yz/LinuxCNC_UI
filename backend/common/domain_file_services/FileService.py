@@ -416,7 +416,14 @@ class FileService:
         if not candidates:
             return None
 
-        parser = configparser.ConfigParser()
+        # ``strict=False``: LinuxCNC INIs routinely repeat a key
+        # within one section (e.g. two ``HALFILE =`` lines under
+        # ``[HAL]``, one per HAL file to load) — valid LinuxCNC
+        # syntax that the stdlib parser's default strict mode
+        # rejects as a ``DuplicateOptionError``. Non-strict mode lets
+        # the last occurrence win for ``.get()``, which is all this
+        # probe needs.
+        parser = configparser.ConfigParser(strict=False)
         try:
             parser.read(candidates[0], encoding="utf-8")
         except (configparser.Error, OSError):

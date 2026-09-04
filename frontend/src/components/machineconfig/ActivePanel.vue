@@ -3,8 +3,7 @@
 // machine name (extracted from the active INI's [EMC] section) plus
 // the list of files currently in ``machine_config/active``.
 //
-// UX mirrors ``CompiledOutputViewer``: read-only, downloadable
-// individually or as a ZIP. The active files are post-deploy
+// Read-only, downloadable individually or as a ZIP. The active files are post-deploy
 // snapshots — operators can download them as a failure-recovery
 // record or to inspect what the controller is actually running.
 
@@ -111,7 +110,7 @@ async function downloadZip() {
   saveBlob(new Blob([createZip(files)], { type: "application/zip" }), "active-output.zip");
 }
 
-// --- ZIP helpers (intentionally duplicated with CompiledOutputViewer) ---
+// --- ZIP helpers ---
 
 function createZip(files: ZipEntry[]) {
   const chunks = [];

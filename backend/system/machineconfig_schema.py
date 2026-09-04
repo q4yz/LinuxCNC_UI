@@ -11,9 +11,9 @@ from enum import Enum
 #:
 #: ``rs485`` / ``remora-spi`` / ``remora-eth`` / ``parallelport`` /
 #: ``dummy``. Anything else raises :class:`InvalidConnectionError`.
-#: The list is the runtime contract the :mod:`config_txt_generator`
-#: branches on, so adding a value here is the single source-of-truth
-#: change required for a new transport.
+#: :func:`hardware_json_generator.build_hardware_json` reads this to
+#: flag ``McuInfo.is_remora``, so adding a value here is the single
+#: source-of-truth change required for a new transport.
 ALLOWED_CONNECTION_TYPES: frozenset[str] = frozenset(
     {"rs485", "remora-spi", "remora-eth", "parallelport", "dummy"}
 )

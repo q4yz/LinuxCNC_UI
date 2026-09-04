@@ -429,6 +429,28 @@ def derive_fan_name(section_name: str) -> str:
     return f"{kind}_{instance.replace(' ', '_')}"
 
 
+def derive_axis_letter(stepper_object_name: str) -> str:
+    """Return the base axis letter for a ``[stepper_<name>]`` section.
+
+    A profile with more than one motor on the same axis (e.g. a
+    dual-motor gantry) declares the extra motor as ``[stepper_y1]``,
+    ``[stepper_z2]``, etc. — the trailing digits mark it as "another
+    motor on axis <letter>", mirroring Klipper's own dual-Z
+    convention. Stripping them recovers the axis letter every motor
+    on that axis shares (``AxisBuilder`` groups joints by this
+    value); ``graph.steppers`` still keys each motor by its full,
+    distinct section name (``"y"``, ``"y1"``, ...), so two motors on
+    one axis never collide there.
+
+    Examples:
+        "x"  -> "x"
+        "y1" -> "y"
+        "z2" -> "z"
+    """
+    stripped = stepper_object_name.rstrip("0123456789")
+    return stripped or stepper_object_name
+
+
 def derive_spindle_name(section_name: str) -> str:
     """Return the canonical digital-spindle id for a Klipper section header.
 
@@ -542,7 +564,7 @@ class MachineConfigParser:
                 graph.printer = self._parse_printer(section_name, section)
             elif section_schema.kind is SectionKind.STEPPER:
                 graph.steppers[section_schema.object_name] = self._parse_stepper(
-                    section_schema.object_name,
+                    derive_axis_letter(section_schema.object_name),
                     section_name,
                     section,
                 )
@@ -1206,6 +1228,7 @@ __all__ = [
     "UndefinedMcuError",
     "UnknownStepperError",
     "UnsupportedSectionError",
+    "derive_axis_letter",
     "derive_fan_name",
     "derive_heater_name",
     "derive_spindle_name",

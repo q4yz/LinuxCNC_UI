@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Machine Config → Macros management panel. Lives inside
-// ``EditorView`` next to ``ProfilesExplorer`` / ``CompilerPanel``.
+// ``ConfigView`` next to ``ProfilesExplorer`` / ``MachinesExplorer``.
 //
 // Surface:
 //   * List of ``macro`` + ``ngc`` files (kind-tagged) with body

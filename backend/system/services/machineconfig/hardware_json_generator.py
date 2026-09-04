@@ -53,10 +53,16 @@ from models.machineconfig.hardware_json_models import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
 )
-from .config_txt_generator import REMORA_CONNECTION_TYPES
 from .axis_builder import AxisBuilder, stepgen_scale
 
 logger = logging.getLogger("backend.services.machineconfig.hardware_json_generator")
+
+#: Connection types that identify a Remora SPI/Ethernet board MCU.
+#: Used only to set ``McuInfo.is_remora`` — a transparency flag on
+#: the hardware.json MCU inventory, not a code path of its own (the
+#: dedicated Remora ``config.txt`` flash-payload generator was
+#: retired along with the deprecated compiler; see HANDOFF.md).
+REMORA_CONNECTION_TYPES: frozenset[str] = frozenset({"remora-spi", "remora-eth"})
 
 
 # ---------------------------------------------------------------------- #
@@ -459,14 +465,17 @@ def build_hardware_json(
     # ``steppers``; the field was renamed to match LinuxCNC's joint
     # vocabulary since the payload already mirrors the per-motor
     # ``[JOINT_N]`` granularity).
-    # ``graph.steppers`` is keyed by axis letter (``x``, ``y``, ``z``);
-    # the section name lives on the Stepper object as
-    # ``section_name``. The id is derived from the section name so
-    # naming stays consistent across the joints / drivers lists.
+    # ``graph.steppers`` is keyed by section suffix (``x``, ``y``,
+    # ``y1``, ...) — NOT by axis letter, since a dual-motor axis has
+    # more than one entry sharing the same ``stepper.axis``. The id
+    # is built from that dict key (not ``stepper.section_name``,
+    # which reconstructs ``f"stepper_{stepper.axis}"`` and would
+    # collide for every extra motor on one axis) so naming stays
+    # unique across the joints / drivers lists.
     joint_records: list[dict[str, Any]] = []
     joint_id_by_letter: dict[str, str] = {}
     for letter, stepper in graph.steppers.items():
-        payload = _stepper_payload(stepper.section_name, stepper)
+        payload = _stepper_payload(f"stepper_{letter}", stepper)
         joint_records.append(payload)
         joint_id_by_letter[letter.lower()] = payload["id"]
 

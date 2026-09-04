@@ -14,10 +14,6 @@ class StagedFileService(FileService):
     def __init__(self, root: Optional[Path] = None) -> None:
         super().__init__(root or paths.STAGED_DIR)
 
-    def clear_and_stage(self, compiler, source: Path) -> List[Path]:
-        self.clear_directory()
-        return list(compiler.compile(source, self.root))
-
     def mark_read_only(self) -> int:
         return 0
 

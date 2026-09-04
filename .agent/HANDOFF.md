@@ -14,6 +14,208 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
+### 1.0b Removed the deprecated compiler/Remora pipeline; upgraded the template system to live, loadable output
+
+- **Context.** The user identified `backend/system/services/machineconfig/`'s
+  pluggable `Compiler` framework (`base.py`, `klipper_linuxcnc.py`,
+  `config_txt_generator.py` — the Klipper→LinuxCNC+Remora
+  `config.txt` flash-payload pipeline) plus its three frontend
+  panels (`CompilerPanel.vue`, `DeploymentPanel.vue`,
+  `CompiledOutputViewer.vue`) as deprecated and asked for full
+  removal, then for the replacement — the machine **template**
+  system (`services/machinetemplates/`) — to be improved so a
+  generated machine can actually reach LinuxCNC's `linuxcnc <ini>`
+  without erroring (not "a fully tuned machine", just "it loads").
+
+- **Removal — turned out narrower than it looked.** The three
+  frontend panels were already fully dead code (zero imports
+  anywhere — `ConfigView.vue` only uses `ProfilesExplorer` /
+  `MachinesExplorer` / `ActivePanel`), so deleting them was a no-op
+  on behavior. On the backend, `machineconfig_parser.py` (cfg
+  parsing), `axis_builder.py` (Klipper stepper → LinuxCNC Axis/Joint),
+  `heater_extractor.py`, and `hardware_json_generator.py` were **not**
+  compiler-specific — `machinetemplates/generator.py` already
+  depended on the parser + hardware.json builder, so those stayed;
+  only `base.py` (the `Compiler`/`CompilerRegistry` abstraction),
+  `klipper_linuxcnc.py` (the concrete compiler), `config_txt_generator.py`
+  (Remora `config.txt`), and the OLD, superseded `ini_generator.py`
+  / `hal_generator.py` were deleted. `REMORA_CONNECTION_TYPES`
+  (needed by `hardware_json_generator.py` to set `McuInfo.is_remora`
+  — a legitimate "what MCU transport did the profile declare"
+  transparency field, not a flashing feature) moved into
+  `hardware_json_generator.py` itself rather than being deleted.
+  Router surface removed: `GET /compilers`, `POST /compile`,
+  `GET /staged` + content. `MachineConfigSettings` (4
+  compiler/flash-specific fields: `default_compiler_id`,
+  `confirm_flash_default`, `require_confirm_flash`,
+  `auto_readonly_after_stage`) is now an empty model — the module id
+  still needs a settings class for the canonical
+  `/api/v1/modules/<id>/settings` surface, but there's nothing to
+  tune today.
+- **`/deploy` repurposed, not removed.** It used to promote
+  `machine_config/ready_for_deploy/` (populated only by `/compile`)
+  into `active/`. Nothing populates `ready_for_deploy` anymore, so
+  `/deploy`'s body changed from `{confirm_flash}` to
+  `{machine_path}` — it now copies a **generated** machine's
+  `machines/<name>/configs/` straight into `active/`
+  (`ActiveFileService.deploy_from`, new method). Same story for
+  `MachineLifecycleService.switch()`: `profile` (compile-then-deploy)
+  became `machine` (deploy-an-already-generated-machine-then-start);
+  `_compile_profile`/`_resolve_profile_path` deleted,
+  `_deploy_machine` added. Both routes share one resolver —
+  `services.machinetemplates.resolve_machine_configs_dir` — so
+  "PrintNC" and "PrintNC/configs" both work as the `machine`/
+  `machine_path` value.
+- **Test isolation bug surfaced (and fixed) along the way.**
+  Running the full `backend/system/tests` suite (not just the file
+  in isolation) intermittently leaked a **real, pre-existing** file
+  at `machine_config/active/linuxcnc.ini` (`MACHINE = Remora-XY`,
+  dated Aug 24 — predates this session, not something either
+  session wrote) into `test_machine_lifecycle.py`'s assertions.
+  Root cause: `get_active_service()` is a **cached singleton**;
+  `test_machine_lifecycle.py`'s `isolated_active_dir` fixture only
+  patched `MachineLifecycleService`'s own `ACTIVE_DIR` name-import,
+  not `domain_file_services.paths.ACTIVE_DIR` — so whichever test
+  ran first (in the whole process) permanently decided which
+  directory that singleton pointed at for every later test that
+  never called `reset_service_cache()`. Fixed by having the fixture
+  (and the `switch()` tests' local helper) also patch
+  `domain_file_services.paths.ACTIVE_DIR` and call
+  `reset_service_cache()` on both setup **and** teardown. Generalize
+  this pattern to any future fixture that touches
+  `domain_file_services` state: patching a module-level name-import
+  is not enough on its own if a cached factory elsewhere reads the
+  *original* module attribute.
+- **Separately, found and fixed a real (if latent) bug**:
+  `FileService.parse_machine_name()` used `configparser.ConfigParser()`
+  in its default `strict=True` mode, which raises
+  `DuplicateOptionError` — silently swallowed by the existing
+  `except (configparser.Error, OSError): return None` — for any INI
+  with a **repeated key in one section**. That's completely valid,
+  common LinuxCNC syntax (e.g. two `HALFILE =` lines under `[HAL]`,
+  one per file to load — every generated `machine.ini` now does
+  this). Fixed with `strict=False`.
+
+- **Multi-motor axis support — this needed a real parser fix, not
+  just an ini-generator change.** `axis_builder.py`'s docstrings
+  already described "`[stepper_y]` + `[stepper_y1]` → one axis, two
+  joints" as the intended design, and `AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS`
+  already existed to produce that shape — but `machineconfig_parser.py`
+  never actually normalized the axis: `[stepper_y1]`'s captured
+  section suffix ("y1") was passed straight through as
+  `Stepper.axis`, so `AxisBuilder` (which groups by `stepper.axis`)
+  created a bogus, separate "Y1" axis instead of a second joint on
+  "Y". Added `derive_axis_letter()` (strips trailing digits: "y1" ->
+  "y", "z2" -> "z") and used it when constructing each `Stepper`;
+  `graph.steppers` keeps the *full* suffix ("y1") as its dict key so
+  two motors on one axis still coexist without collision. This one
+  surfaces a **second**, downstream bug: `hardware_json_generator.py`
+  built each joint's `id` from `stepper.section_name` — a *computed*
+  property (`f"stepper_{self.axis}"`) that, once `axis` correctly
+  became shared ("y") across both motors, collided into one
+  duplicate id and left the second joint's `joint_number`
+  permanently `None` (a Pydantic validation error). Fixed by
+  building the id from the actual dict key (`f"stepper_{letter}"`)
+  instead of the now-lossy computed property — `Stepper.section_name`
+  itself was left alone since nothing else calls it, but a future
+  cleanup should probably delete or fix that property so this class
+  of bug can't recur elsewhere. Verified end-to-end (real
+  `generate_machine_templates()` call, not just unit-level): a
+  `[stepper_y]` + `[stepper_y1]` profile now renders exactly one
+  `[AXIS_Y]` with `[JOINT_1]` **and** `[JOINT_2]`, and
+  `trivkins coordinates=XYYZ` (repeated Y) — matching
+  `machine_config/example/PrintNC-WEBGUI/Machine.ini`, the
+  real, working reference machine the user pointed at.
+
+- **`ini_template_generator.py` rewritten from a fully-commented
+  skeleton to a live, loadable INI.** Signature changed from
+  `render_ini_template(machine_name, hardware_json_dict)` to
+  `render_ini_template(machine_name, axes: list[Axis])` — it now
+  consumes `AxisBuilder`'s rich in-memory objects directly (velocity/
+  accel/scale/home/ferror per joint) rather than the wire
+  hardware.json shape, which never carried those fields and would
+  have needed a schema extension to. `[EMC]`/`[DISPLAY]` are the
+  user's known-good PrintNC-WEBGUI defaults verbatim (PROGRAM_PREFIX
+  / USER_M_PATH / `[APPLICATIONS] APP` are computed absolute paths
+  via the new `domain_file_services.paths.PROJECT_ROOT`, so they're
+  correct regardless of where the repo is checked out — not literal
+  `/home/printnc/...` paths). `[KINS]`/`[TRAJ]` coordinates and
+  `[AXIS_*]`/`[JOINT_N]` sections are fully derived from the axes
+  list (assumes `trivkins` per the user's instruction; multi-joint
+  axes repeat their letter). `[HAL]` keeps `HALFILE = machine.hal` +
+  `HALFILE = custom.hal` + `POSTGUI_HALFILE = postgui_call_list.hal`
+  + `HALUI = halui` verbatim as instructed — which meant also
+  generating an (empty) `postgui_call_list.hal` and `tool.tbl` (for
+  `[EMCIO] TOOL_TABLE`), since a referenced-but-missing file would
+  break "it should compile" for a block the user explicitly said to
+  keep.
+
+- **New artifacts: `custom.hal` + `webgui_connections.hal`.**
+  `custom.hal` is regenerated every time (so a repo-layout change is
+  never stale) and always ends with `source webgui_connections.hal`,
+  per the instruction; it also `loadusr -W -n webgui <venv-python>
+  <machine/main.py>` — verified this actually works today:
+  `HalPin.initialize_component()` (called from `machine/main.py`'s
+  `__main__` block before `uvicorn.run`) already does
+  `hal.component("webgui")` + registers every queued pin + `.ready()`,
+  which is exactly what `loadusr -W -n webgui` waits on. `custom.hal`
+  now correctly points at the **post-split** path
+  (`backend/machine/main.py`), not the old flat `backend/main.py`.
+  `webgui_connections.hal` (the file where actual spindle/VFD wiring
+  like the reference machine's `net spindle-cmd-rpm ...` lines
+  belongs — genuinely machine-specific, not something a generic
+  template can author) is the one file `generate_machine_templates`
+  does **not** overwrite on a regenerate: its bytes are read before
+  `clear_directory()` wipes the configs folder and written back
+  after, or seeded with a starter comment on first generation.
+  Covered by a dedicated regression test
+  (`test_generate_preserves_hand_edited_webgui_connections`).
+
+- **Also genericized `pin_catalog.py`'s wiring-hint text**
+  (`REMORA_CONNECT_HINTS` → `CONNECT_HINTS`): three hints named
+  Remora firmware pins (`remora.SP.<n>`, `remora.PV.<n>`,
+  `remora.joint.<n>.pos-cmd`) that don't exist in the generic
+  LinuxCNC target this template system now serves; replaced with
+  the actual generic HAL component names (`pid.N.*`,
+  `stepgen.N.position-cmd`). The rest of the hint table already used
+  generic names (`vfdmod.*`, `halui.*`) matching the real reference
+  machine.
+
+- **Explicitly NOT done / left for later** (flag before assuming
+  otherwise): `machine.hal`'s pin-catalog template still only lists
+  the `webgui` component's own pins as commented `net` suggestions —
+  it does not attempt to generate a full, hardware-specific wiring
+  (parport pin assignments, stepgen `net`/`setp` lines, estop chain,
+  homing switches) the way `machine_config/example/PrintNC-WEBGUI/Machine.hal`
+  has, because that requires knowing the actual physical pin-out,
+  which nothing in the current `hardware.json` schema captures for
+  a HAL-generic (non-Remora) target — the user's own instructions
+  acknowledged this ("it must not be a full working machine"). A
+  real next step, if wanted: extend `hardware.json`'s `Driver`/`Axis`
+  concept (or a new schema) to carry a parport/mesa pin-out so
+  `machine.hal` could emit live `net`/`setp` lines the way
+  `machine.ini` now does for the INI side.
+
+- **Status.** Compiler/Remora removal: complete, zero net test
+  regressions (baseline-diffed the same way as the backend split
+  above — 0 new failures across 3 suites, 2 tests fixed). Template
+  system improvements: INI is live/loadable with real defaults,
+  multi-joint axes work end-to-end (parser → hardware.json →
+  machine.ini), `custom.hal`/`webgui_connections.hal` generate
+  correctly and the latter survives a regenerate. `machine.hal`'s
+  actual per-machine wiring is still a documentation-only template,
+  as noted above — that's the natural "improve the template system"
+  follow-up.
+- **Verification.** `pytest backend/{common,machine,system}/tests`
+  (206/338/27 passed respectively, same 44 pre-existing failures as
+  baseline across all three, 0 new). Both apps import-and-boot.
+  Manually ran `generate_machine_templates()` end-to-end against a
+  synthetic dual-Y-gantry profile (not just through the test suite)
+  and inspected every generated file by hand — `machine.ini`'s
+  `[KINS]`/`[TRAJ]`/`[AXIS_Y]`/`[JOINT_1]`/`[JOINT_2]` sections,
+  `hardware.json`'s `axes`/`joints`, and `custom.hal`'s `loadusr`
+  line all matched expectations.
+
 ### 1.0 Finished the backend/machine + backend/system split; started a PascalCase file-naming pass
 
 - **Context.** A previous session ran out of budget ~90% through a

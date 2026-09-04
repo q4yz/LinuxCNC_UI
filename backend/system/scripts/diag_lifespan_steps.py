@@ -30,9 +30,7 @@ Probes execute in the order they would be exercised at lifespan boot:
    first-use.
 3. ``from routers.machineconfig import setup`` + ``setup()`` —
    machineconfig module on_load cycle without FastAPI boot.
-4. ``KlipperToLinuxCNCCompiler()`` and ``.id`` — the concrete
-   compiler class that registers in the global registry.
-5. ``from main import app; len(app.openapi())`` — full OpenAPI
+4. ``from main import app; len(app.openapi())`` — full OpenAPI
    schema, the endpoint the codegen script fetches.
 
 The camera module no longer requires its own probe. The previous
@@ -104,16 +102,6 @@ def _probe_machineconfig_router() -> None:
     _ = len(machineconfig_router.routes)
 
 
-def _probe_compiler_discovery() -> None:
-    from services.machineconfig.klipper_linuxcnc import (
-        KlipperToLinuxCNCCompiler,
-    )
-
-    compiler = KlipperToLinuxCNCCompiler()
-    _ = compiler.id
-    _ = compiler.title
-
-
 def _probe_openapi_schema() -> None:
     from main import app
 
@@ -131,8 +119,7 @@ PROBES: list[tuple[str, callable]] = [
     ("1_pydantic_core_import", _probe_pydantic_core),
     ("2_hardware_json_model_rebuild_force", _probe_model_rebuild),
     ("3_machineconfig_router_import", _probe_machineconfig_router),
-    ("4_compiler_discovery", _probe_compiler_discovery),
-    ("5_openapi_schema_generation", _probe_openapi_schema),
+    ("4_openapi_schema_generation", _probe_openapi_schema),
 ]
 
 

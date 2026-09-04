@@ -1,66 +1,24 @@
 """Pydantic defaults for the machineconfig module.
 
-The four keys are the only knobs the operator needs to tune:
-
-* ``default_compiler_id`` — preselects a compiler in the frontend
-  dropdown so a fresh install lands on the canonical Klipper →
-  LinuxCNC translator rather than ``None``.
-* ``confirm_flash_default`` — initial state of the "Confirm Flash"
-  toggle on the deploy panel. The UI lets the operator change it
-  per-deploy, but the setting exists so a deployment can be
-  pre-flagged as "flash required" by an admin profile.
-* ``require_confirm_flash`` — when ``True`` (default), the deploy
-  endpoint rejects the request unless the operator ticks the box.
-  Useful for environments where Remora boards are in the loop and
-  a missing flash acknowledgement could brick a remote machine.
-* ``auto_readonly_after_stage`` — when ``True`` (default), the
-  compile step marks the staged artifacts read-only. Set to
-  ``False`` for lab setups where the operator routinely hand-edits
-  the staged INI before deploying.
+No operator-tunable knobs today. The four flags that used to live
+here (``default_compiler_id``, ``confirm_flash_default``,
+``require_confirm_flash``, ``auto_readonly_after_stage``) were all
+specific to the deprecated pluggable-compiler / Remora-flash
+pipeline (see ``.agent/HANDOFF.md``) and were removed along with it.
+The model still exists (rather than dropping the module entirely)
+because every module id needs a settings class for the canonical
+``/api/v1/modules/<id>/settings`` surface — a future template-system
+knob (e.g. a default profile, or a deploy confirmation toggle) has
+somewhere to land without re-plumbing the router.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class MachineConfigSettings(BaseModel):
-    """User-tunable knobs for the machineconfig module."""
-
-    default_compiler_id: str = Field(
-        default="klipper-to-linuxcnc",
-        description=(
-            "Compiler id selected by default in the frontend compiler "
-            "dropdown. Must match a registered Compiler.id."
-        ),
-    )
-    confirm_flash_default: bool = Field(
-        default=False,
-        description=(
-            "Initial state of the 'Confirm Flash' toggle on the "
-            "deployment panel."
-        ),
-    )
-    require_confirm_flash: bool = Field(
-        default=True,
-        description=(
-            "When True, the deploy endpoint rejects requests unless the "
-            "operator supplies confirm_flash=true. Useful when the "
-            "deployment target is a remote controller such as Remora."
-        ),
-    )
-    auto_readonly_after_stage: bool = Field(
-        default=True,
-        description=(
-            "Currently advisory only. The compile step no longer flips "
-            "POSIX write bits on the staged artifacts - read-only state "
-            "is enforced via the file-service policy "
-            "(``StagedFileService.default_read_only``) and surfaced in "
-            "the UI by the editor's source-level read-only state. Kept "
-            "in the settings schema so operators do not lose a knob "
-            "they may have already persisted."
-        ),
-    )
+    """User-tunable knobs for the machineconfig module (currently none)."""
 
 
 __all__ = ["MachineConfigSettings"]

@@ -4,8 +4,8 @@ Renders the complete HAL pin catalog of the ``webgui`` userspace
 component (see :mod:`.pin_catalog`) as a commented wiring guide:
 
 * every pin with its HAL type and direction,
-* a copy-paste-ready ``net`` suggestion line per pin
-  (Remora-flavoured where the catalog has a hint),
+* a copy-paste-ready ``net`` suggestion line per pin (naming generic
+  LinuxCNC HAL components where the catalog has a hint),
 * static configuration constants documented inline (never wired),
 * unconnected placeholder slots listed for completeness.
 
@@ -106,7 +106,7 @@ def render_hal_template(machine_name: str, catalog: PinCatalog) -> str:
             "# Next steps",
             "#" + "-" * 74,
             "# 1. Wire each pin above with a named signal (un-comment the net lines).",
-            "# 2. Load the realtime components your machine needs (remora / motmod / vfdmod).",
+            "# 2. Load the realtime components your machine needs (motmod / stepgen / vfdmod / ...).",
             "# 3. Reference this file from machine.ini ([HAL] HALFILE = machine.hal).",
             "# 4. Do NOT flash config.txt - it is intentionally not generated for templates.",
             "",

@@ -1,4 +1,4 @@
-"""Tests for the machine template generator (compiler replacement).
+"""Tests for the machine template generator.
 
 Covers:
 
@@ -8,7 +8,6 @@ Covers:
 * ``generate_machine_templates``: artifact set, machine-exists guard,
   confirm_override, nested target folders, path-safety.
 * The ``/machines/*`` router surface (tree, generate + 409 flow, CRUD).
-* The ``deprecated`` flag on the compiler registry listing.
 """
 
 from __future__ import annotations
@@ -212,21 +211,66 @@ def test_render_hal_template_is_inert_documentation():
     assert "config.txt" in text  # the do-not-flash note
 
 
-def test_render_ini_template_skeleton():
+def _axis(letter, *joint_numbers, max_velocity=50.0, max_limit=300.0):
+    from models.machineconfig.linuxcnc_models import Axis, Joint
+
+    joints = [
+        Joint(joint_number=n, axis_letter=letter, max_velocity=max_velocity, max_limit=max_limit)
+        for n in joint_numbers
+    ]
+    return Axis(
+        letter=letter,
+        joints=joints,
+        max_velocity=max_velocity,
+        max_acceleration=400.0,
+        min_limit=0.0,
+        max_limit=max_limit,
+    )
+
+
+def test_render_ini_template_is_live_and_loadable():
+    """The rendered INI is a real, loadable config — not a commented
+    skeleton — with every axis/joint section populated live."""
     from services.machinetemplates import render_ini_template
 
-    payload = {"axes": [{"id": "x", "joint_numbers": [0]}], "joints": [{"id": "stepper_x", "joint_number": 0}]}
-    text = render_ini_template("my_machine", payload)
+    axes = [_axis("X", 0), _axis("Y", 1), _axis("Z", 2)]
+    text = render_ini_template("my_machine", axes)
 
     assert "MACHINE = my_machine" in text
-    assert "# [AXIS_X]" in text
-    assert "# [JOINT_0]" in text
-    assert "# [HAL]" in text
-    # Only the EMC section is live.
-    live_sections = [
-        l for l in text.splitlines() if l.startswith("[")
-    ]
-    assert live_sections == ["[EMC]"]
+    assert "DEBUG = 0" in text
+    assert "VERSION = 1.1" in text
+    assert "[KINS]" in text
+    assert "JOINTS = 3" in text
+    assert "KINEMATICS = trivkins coordinates=XYZ" in text
+    assert "[HAL]" in text
+    assert "HALFILE = machine.hal" in text
+    assert "HALFILE = custom.hal" in text
+    assert "POSTGUI_HALFILE = postgui_call_list.hal" in text
+    assert "[APPLICATIONS]" in text
+    assert "[EMCIO]" in text
+    assert "TOOL_TABLE = tool.tbl" in text
+
+    # Axis/joint sections are live (uncommented) with real values.
+    assert "[AXIS_X]" in text
+    assert "[JOINT_0]" in text
+    assert "MAX_VELOCITY = 50.0" in text
+    for line in text.splitlines():
+        assert not line.startswith("# ["), f"section line is commented out: {line!r}"
+
+
+def test_render_ini_template_multi_joint_axis_repeats_letter():
+    """A dual-motor axis (e.g. a gantry Y) emits one [JOINT_N] per
+    motor and repeats its letter in the trivkins coordinates string."""
+    from services.machinetemplates import render_ini_template
+
+    axes = [_axis("X", 0), _axis("Y", 1, 2), _axis("Z", 3)]
+    text = render_ini_template("gantry", axes)
+
+    assert "JOINTS = 4" in text
+    assert "KINEMATICS = trivkins coordinates=XYYZ" in text
+    assert "COORDINATES = XYYZ" in text
+    assert "[JOINT_1]" in text
+    assert "[JOINT_2]" in text
 
 
 # ---------------------------------------------------------------------- #
@@ -267,6 +311,87 @@ def test_generate_writes_full_template_set(isolated_roots):
     # No Remora flash payload.
     assert not (configs / "config.txt").exists()
 
+    # machine.ini is live and loadable — not the old commented skeleton.
+    ini = (configs / "machine.ini").read_text(encoding="utf-8")
+    assert "MACHINE = my_machine" in ini
+    assert "[AXIS_X]" in ini
+    assert "[JOINT_0]" in ini
+
+    # custom.hal always loads webgui and sources webgui_connections.hal.
+    custom_hal = (configs / "custom.hal").read_text(encoding="utf-8")
+    assert "loadusr -W -n webgui" in custom_hal
+    assert custom_hal.strip().endswith("source webgui_connections.hal")
+
+    # webgui_connections.hal ships as a starter file.
+    assert (configs / "webgui_connections.hal").exists()
+    assert (configs / "tool.tbl").exists()
+    assert (configs / "postgui_call_list.hal").exists()
+
+
+def test_generate_preserves_hand_edited_webgui_connections(isolated_roots):
+    """Regenerating a machine must not clobber the operator's own
+    webgui_connections.hal wiring — every other file is regenerated,
+    this one is the deliberate exception (see the generator's
+    module docstring)."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", **kwargs)
+
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    hand_wiring = "# hand-wired VFD net lines\nnet spindle-cmd => vfdmod.speed\n"
+    (configs / "webgui_connections.hal").write_text(hand_wiring, encoding="utf-8")
+
+    generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
+
+    assert (configs / "webgui_connections.hal").read_text(encoding="utf-8") == hand_wiring
+    # Everything else really was regenerated (sanity check the swap
+    # isn't a no-op skip of the whole directory).
+    assert "MACHINE = my_machine" in (configs / "machine.ini").read_text(encoding="utf-8")
+
+
+def test_generate_multi_motor_axis_emits_one_joint_per_motor(isolated_roots):
+    """A dual-motor axis (``[stepper_y]`` + ``[stepper_y1]``) must
+    render as one AXIS_Y with two [JOINT_N] blocks — not as two
+    separate (bogus) axes — in both hardware.json and machine.ini."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    (isolated_roots["profiles"] / "gantry.cfg").write_text(
+        "[stepper_x]\nstep_pin: PA0\ndir_pin: PA1\nposition_max: 300\n\n"
+        "[stepper_y]\nstep_pin: PA2\ndir_pin: PA3\nposition_max: 400\n\n"
+        "[stepper_y1]\nstep_pin: PA4\ndir_pin: PA5\nposition_max: 400\n\n"
+        "[stepper_z]\nstep_pin: PA6\ndir_pin: PA7\nposition_max: 100\n",
+        encoding="utf-8",
+    )
+
+    result = generate_machine_templates(
+        "gantry.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    configs = isolated_roots["machines"] / result.machine / "configs"
+
+    import json
+
+    payload = json.loads((configs / "hardware.json").read_text(encoding="utf-8"))
+    axes_by_id = {a["id"]: a for a in payload["axes"]}
+    assert sorted(axes_by_id) == ["x", "y", "z"]  # "y1" is NOT its own axis
+    assert len(axes_by_id["y"]["joint_numbers"]) == 2
+    joint_ids = {j["id"] for j in payload["joints"]}
+    assert {"stepper_y", "stepper_y1"} <= joint_ids
+
+    ini = (configs / "machine.ini").read_text(encoding="utf-8")
+    assert "[AXIS_Y]" in ini
+    assert "[AXIS_Y1]" not in ini
+    assert "coordinates=XYYZ" in ini
+    assert "JOINTS = 4" in ini
+
 
 def test_generate_existing_machine_raises_without_confirm(isolated_roots):
     from domain_file_services import ConfigFileService, MachineFileService
@@ -279,14 +404,16 @@ def test_generate_existing_machine_raises_without_confirm(isolated_roots):
     )
     generate_machine_templates("my_machine.cfg", **kwargs)
 
+    from services.machinetemplates import GENERATED_FILES
+
     with pytest.raises(MachineExistsError) as excinfo:
         generate_machine_templates("my_machine.cfg", **kwargs)
     assert excinfo.value.machine == "my_machine"
-    assert len(excinfo.value.existing_files) == 4
+    assert len(excinfo.value.existing_files) == len(GENERATED_FILES)
 
-    # confirm_override replaces the set (still exactly 4 files).
+    # confirm_override replaces the set (still the full artifact set).
     result = generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
-    assert len(result.files) == 4
+    assert len(result.files) == len(GENERATED_FILES)
 
 
 def test_generate_into_nested_target_folder(isolated_roots):
@@ -350,12 +477,9 @@ def test_machines_tree_and_generate_roundtrip(machine_app, isolated_roots):
     body = resp.json()
     assert body["status"] == "ok"
     assert body["machine"] == "my_machine"
-    assert sorted(f["name"] for f in body["files"]) == [
-        "hardware.json",
-        "machine.cfg",
-        "machine.hal",
-        "machine.ini",
-    ]
+    from services.machinetemplates import GENERATED_FILES
+
+    assert sorted(f["name"] for f in body["files"]) == sorted(GENERATED_FILES)
 
     resp = client.get("/api/v1/modules/machineconfig/machines/tree")
     paths = [e["path"] for e in resp.json()["entries"]]
@@ -378,7 +502,9 @@ def test_generate_machine_exists_conflict_flow(machine_app, isolated_roots):
     detail = conflict.json()["detail"]
     assert detail["kind"] == "machine_exists"
     assert detail["machine"] == "my_machine"
-    assert len(detail["existing"]) == 4
+    from services.machinetemplates import GENERATED_FILES
+
+    assert len(detail["existing"]) == len(GENERATED_FILES)
 
     override = client.post(
         "/api/v1/modules/machineconfig/machines/generate",
@@ -430,12 +556,3 @@ def test_machines_crud_roundtrip(machine_app, isolated_roots):
     client.post(f"{base}/file", json={"path": "busy/child.cfg"})
     resp = client.delete(f"{base}/entry", params={"path": "busy"})
     assert resp.status_code == 400
-
-
-def test_compilers_listing_marks_klipper_deprecated(machine_app, isolated_roots):
-    client = TestClient(machine_app)
-    resp = client.get("/api/v1/modules/machineconfig/compilers")
-    assert resp.status_code == 200
-    compilers = resp.json()["compilers"]
-    entry = next(c for c in compilers if c["id"] == "klipper-to-linuxcnc")
-    assert entry["deprecated"] is True
