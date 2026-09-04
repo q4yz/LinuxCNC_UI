@@ -67,7 +67,7 @@ jobs:
       # 5. Finally, build
       - name: Vue Type Check
         working-directory: ./frontend
-        run: npm run type-check
+        run: npm run typecheck
 
       - name: Run Frontend Tests
         working-directory: ./frontend
