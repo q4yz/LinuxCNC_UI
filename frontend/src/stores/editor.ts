@@ -21,6 +21,7 @@
 //     'm_codes'    →  GET/PUT /api/v1/modules/machineconfig/m-codes/content
 //     'programs'   →  GET/PUT /api/v1/programs/content/{filename}
 //     'macros'     →  GET/PUT /api/v1/modules/macros/{name}/content
+//     'machine_log' → GET    /api/v1/system/machine/log (read-only)
 //
 // ``source`` is decided by the caller (typically ``openInEditor``)
 // based on **where the file lives**, never by its filename extension.
@@ -39,6 +40,7 @@ import {
   ModulesMacrosService,
 } from '../../generated/api/index'
 import { ApiError } from '../../generated/api/core/ApiError'
+import { MachineLifecycleFacade } from '../facades/machineLifecycleFacade'
 
 // ---------------------------------------------------------------------- //
 // Source enum                                                              //
@@ -52,6 +54,7 @@ export const EDITOR_SOURCES = Object.freeze({
   M_CODES: 'm_codes',
   PROGRAMS: 'programs',
   MACROS: 'macros',
+  MACHINE_LOG: 'machine_log',
 } as const)
 export type EditorSource = (typeof EDITOR_SOURCES)[keyof typeof EDITOR_SOURCES]
 
@@ -68,13 +71,18 @@ export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Obje
   [EDITOR_SOURCES.M_CODES]:  'M-codes',
   [EDITOR_SOURCES.PROGRAMS]: 'G-code Programs',
   [EDITOR_SOURCES.MACROS]:   'Macros',
+  [EDITOR_SOURCES.MACHINE_LOG]: 'Console Log',
 })
 
 export function sourceLabel(source: string): string {
   return EDITOR_SOURCE_LABELS[source as EditorSource] ?? source
 }
 
-const READ_ONLY_SOURCES = new Set<string>([EDITOR_SOURCES.ACTIVE, EDITOR_SOURCES.STAGED])
+const READ_ONLY_SOURCES = new Set<string>([
+  EDITOR_SOURCES.ACTIVE,
+  EDITOR_SOURCES.STAGED,
+  EDITOR_SOURCES.MACHINE_LOG,
+])
 
 // ---------------------------------------------------------------------- //
 // Syntax-highlighting overlay                                              //
@@ -248,6 +256,13 @@ function _macroSplitName(name: string): { baseName: string; kind: string } {
   return { baseName: name, kind: 'macro' }
 }
 
+async function readMachineLogContent(): Promise<string> {
+  const result = await MachineLifecycleFacade.getConsoleLog()
+  return result.exists
+    ? result.log || '(log file is empty — nothing has been written to it yet)'
+    : 'No console log yet — start the machine to generate one.'
+}
+
 async function dispatchRead(source: EditorSource, name: string): Promise<string> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
@@ -257,6 +272,7 @@ async function dispatchRead(source: EditorSource, name: string): Promise<string>
     case EDITOR_SOURCES.M_CODES:  return readMCodeContent(name)
     case EDITOR_SOURCES.PROGRAMS: return readProgramContent(name)
     case EDITOR_SOURCES.MACROS:   return readMacroContent(name)
+    case EDITOR_SOURCES.MACHINE_LOG: return readMachineLogContent()
     default:
       throw new Error(`Unknown editor source: ${JSON.stringify(source)}`)
   }

@@ -14,6 +14,8 @@
 //   * ``setDefaultMachine(machine)`` — "Select as main": persist the
 //     default without starting anything.
 //   * ``stopMachine()`` — SIGINT → SIGTERM → SIGKILL, idempotent.
+//   * ``getConsoleLog(lines?)`` — tail of logs/linuxcnc_console.log,
+//     so the UI can show why a session crashed without shell access.
 //
 // Raw ``fetch`` instead of the generated client: ``generated/api/``
 // is regenerated from the live backends and still carries the old
@@ -31,6 +33,12 @@ export interface MachineStatus {
   ini_path: string | null;
   ini_exists: boolean;
   started_pid?: number | null;
+}
+
+export interface MachineConsoleLog {
+  path: string;
+  exists: boolean;
+  log: string;
 }
 
 /**
@@ -92,6 +100,12 @@ export class MachineLifecycleFacade {
     return machineRequest<MachineStatus>("/api/v1/system/machine/stop", {
       method: "POST",
     });
+  }
+
+  static getConsoleLog(lines = 200): Promise<MachineConsoleLog> {
+    return machineRequest<MachineConsoleLog>(
+      `/api/v1/system/machine/log?lines=${lines}`,
+    );
   }
 }
 

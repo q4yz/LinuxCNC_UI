@@ -13,6 +13,7 @@ import { useConsoleStore } from "../../stores/console";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
 import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
+import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
 
@@ -88,7 +89,15 @@ async function startMachine(entry: DirectoryEntryModel): Promise<void> {
         `Cannot start ${entry.name}: no machines/${entry.name}/config/machine.ini`,
       );
     } else {
+      // Most likely a crash-on-launch (bad INI, realtime error, ...)
+      // — open the console log so the operator sees why without
+      // shell access.
       consoleStore.error(`Failed to start ${entry.name}: ${lifecycleError(err)}`);
+      void openInEditor({
+        source: EDITOR_SOURCES.MACHINE_LOG,
+        name: "linuxcnc_console.log",
+        readOnly: true,
+      });
     }
   } finally {
     startingPath.value = null;

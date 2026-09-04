@@ -318,6 +318,51 @@ def test_start_raises_bad_request_when_process_exits_immediately(
         _service().start()
 
 
+def test_start_crash_error_includes_console_log_tail(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    """The immediate-crash error is the most common "why won't it
+    start" case — the console log's tail rides along in the message
+    so the UI shows the real problem without a follow-up request."""
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _service().set_default_machine("PrintNC")
+    _patch_launch(monkeypatch, tmp_path, exit_code=1)
+
+    console_log = tmp_path / "console.log"
+    console_log.write_text("realtime delay error: max is 63684, expected < 1000\n", encoding="utf-8")
+
+    with pytest.raises(BadRequestError) as excinfo:
+        _service().start()
+
+    assert "realtime delay error" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------- #
+# console_log()                                                          #
+# --------------------------------------------------------------------- #
+
+
+def test_console_log_reports_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "nope.log")
+
+    result = _service().console_log()
+
+    assert result["exists"] is False
+    assert result["log"] == ""
+
+
+def test_console_log_returns_the_requested_tail(monkeypatch, tmp_path):
+    log_path = tmp_path / "console.log"
+    log_path.write_text("\n".join(f"line {i}" for i in range(1, 11)) + "\n", encoding="utf-8")
+    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", log_path)
+
+    result = _service().console_log(lines=3)
+
+    assert result["exists"] is True
+    assert result["path"] == str(log_path)
+    assert result["log"] == "line 8\nline 9\nline 10"
+
+
 # --------------------------------------------------------------------- #
 # stop()                                                                  #
 # --------------------------------------------------------------------- #
@@ -528,3 +573,27 @@ def test_stop_endpoint_returns_200_when_already_stopped(no_processes, isolated_a
     response = _client().post("/api/v1/system/machine/stop")
     assert response.status_code == 200
     assert response.json()["running"] is False
+
+
+def test_log_endpoint_returns_the_tail(monkeypatch, tmp_path):
+    log_path = tmp_path / "console.log"
+    log_path.write_text("boom: config error\n", encoding="utf-8")
+    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", log_path)
+
+    response = _client().get("/api/v1/system/machine/log")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exists"] is True
+    assert body["log"] == "boom: config error"
+
+
+def test_log_endpoint_reports_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(mls_module, "_CONSOLE_LOG", tmp_path / "nope.log")
+
+    response = _client().get("/api/v1/system/machine/log")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exists"] is False
+    assert body["log"] == ""

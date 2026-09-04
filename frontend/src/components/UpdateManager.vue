@@ -7,6 +7,7 @@ import { SystemService } from '../../generated/api/services/SystemService'
 import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
 import { BaseButton } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
+import { openInEditor, EDITOR_SOURCES } from '../helpers/openInEditor'
 
 const store = useMachineStore()
 const consoleStore = useConsoleStore()
@@ -21,6 +22,19 @@ const latestVersion = ref('unknown')
 const machineStatus = ref<MachineStatus | null>(null)
 const isStartingMachine = ref(false)
 const isStoppingMachine = ref(false)
+
+// The console log (logs/linuxcnc_console.log — tee'd stdout+stderr
+// of the last LinuxCNC session) opens in the universal read-only
+// editor, same as "Active Config" / "Compiled Output". "View log"
+// opens it on demand; a start failure opens it automatically so the
+// operator sees why without shell access.
+function openConsoleLog() {
+  void openInEditor({
+    source: EDITOR_SOURCES.MACHINE_LOG,
+    name: 'linuxcnc_console.log',
+    readOnly: true,
+  })
+}
 
 const fetchVersion = async () => {
   try {
@@ -83,7 +97,11 @@ async function startDefaultMachine() {
     } else if (status === 404) {
       consoleStore.error('No default machine selected — pick one with "Set main" in the Machines explorer')
     } else {
+      // Most likely a crash-on-launch (bad INI, realtime error, ...) —
+      // the console log has the real reason, so pop it open directly
+      // instead of leaving the operator to go find it.
       consoleStore.error(`Failed to start machine: ${error instanceof Error ? error.message : String(error)}`)
+      openConsoleLog()
     }
   } finally {
     isStartingMachine.value = false
@@ -174,6 +192,13 @@ onMounted(() => {
           @click="stopMachine"
         >
           ⏹ Stop machine
+        </BaseButton>
+        <BaseButton
+          variant="secondary"
+          data-testid="machine-view-log"
+          @click="openConsoleLog"
+        >
+          📜 View log
         </BaseButton>
       </div>
     </div>

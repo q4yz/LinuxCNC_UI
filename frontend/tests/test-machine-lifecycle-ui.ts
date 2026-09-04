@@ -35,7 +35,7 @@ test("machineLifecycleFacade wraps the system lifecycle routes", () => {
   assert.ok(existsSync(path), "facades/machineLifecycleFacade.ts must exist");
   const text = readFileSync(path, "utf-8");
 
-  for (const fn of ["getStatus", "startMachine", "setDefaultMachine", "stopMachine"]) {
+  for (const fn of ["getStatus", "startMachine", "setDefaultMachine", "stopMachine", "getConsoleLog"]) {
     assert.match(text, new RegExp(`static ${fn}\\(`), `facade must define ${fn}()`);
   }
 
@@ -47,6 +47,11 @@ test("machineLifecycleFacade wraps the system lifecycle routes", () => {
   ]) {
     assert.match(text, new RegExp(route.replace(/\//g, "\\$&")), `facade must call ${route}`);
   }
+  assert.match(
+    text,
+    /\/api\/v1\/system\/machine\/log/,
+    "facade must call the console-log tail route",
+  );
 
   // The generated client is stale (no machine body) — the facade
   // must pass the machine name itself.
@@ -123,6 +128,47 @@ test("UpdateManager adds Start-default-machine and Stop-machine controls", () =>
   assert.match(text, /No default machine selected/, "404 must explain how to fix it");
 });
 
+test("UpdateManager opens the console log in the universal read-only editor on start failure", () => {
+  const text = read("components/UpdateManager.vue");
+
+  assert.match(text, /data-testid="machine-view-log"/, "must offer an explicit View log button");
+  assert.match(
+    text,
+    /openInEditor\(\{\s*source:\s*EDITOR_SOURCES\.MACHINE_LOG/,
+    "View log must open the machine_log source in the universal editor",
+  );
+  assert.match(text, /readOnly:\s*true/, "the log view must be read-only");
+  // A start failure that isn't the well-understood 409/404 cases is
+  // most likely a crash — pop the log open automatically instead of
+  // leaving the operator to go find it.
+  assert.match(
+    text,
+    /Failed to start machine[\s\S]*?openConsoleLog\(\)/,
+    "an unrecognised start failure must auto-open the console log",
+  );
+});
+
+test("editor store wires machine_log as a read-only source fed by getConsoleLog()", () => {
+  const text = read("stores/editor.ts");
+
+  assert.match(text, /MACHINE_LOG:\s*['"]machine_log['"]/, "EDITOR_SOURCES.MACHINE_LOG must be 'machine_log'");
+  assert.match(
+    text,
+    /READ_ONLY_SOURCES = new Set<string>\(\[[\s\S]*?EDITOR_SOURCES\.MACHINE_LOG[\s\S]*?\]\)/,
+    "machine_log must be read-only — there is no write endpoint for it",
+  );
+  assert.match(
+    text,
+    /case EDITOR_SOURCES\.MACHINE_LOG: return readMachineLogContent\(\)/,
+    "dispatchRead must route machine_log to readMachineLogContent",
+  );
+  assert.match(
+    text,
+    /MachineLifecycleFacade\.getConsoleLog\(\)/,
+    "readMachineLogContent must call the facade's getConsoleLog()",
+  );
+});
+
 // ------------------------------------------------------------------ //
 // Backend contract                                                       //
 // ------------------------------------------------------------------ //
@@ -149,5 +195,15 @@ test("backend persists a default machine and starts machines/<name>/config/machi
     service,
     /def set_default_machine\(/,
     "service must expose the default-machine setter",
+  );
+  assert.match(
+    router,
+    /@router\.get\(\s*"\/log"/,
+    "GET /log endpoint must exist so the UI can fetch the console-log tail",
+  );
+  assert.match(
+    service,
+    /def console_log\(/,
+    "service must expose the console-log tail reader",
   );
 });

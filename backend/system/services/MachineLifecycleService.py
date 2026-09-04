@@ -22,6 +22,13 @@ repository root and ``DISPLAY`` inherited (defaulting to ``:0`` so the
 LinuxCNC GUI opens on the machine's console display). The launch
 command can be overridden with the ``LINUXCNC_START_COMMAND`` env var
 using a ``{ini}`` placeholder, e.g. ``"xterm -e linuxcnc {ini}"``.
+
+:meth:`MachineLifecycleService.console_log` surfaces that same file's
+tail to the UI (``GET /api/v1/system/machine/log``) so an operator can
+see why a session failed without shell access. An immediate crash
+(``start()`` returning within the 0.5s poll window) folds the tail
+straight into the raised error, since that is the most common "it
+just won't start" case.
 """
 from __future__ import annotations
 
@@ -50,6 +57,15 @@ PROCESS_PATTERNS: tuple[str, ...] = ("linuxcnc", "emc", "milltask", "linuxcncsvr
 #: Console log for started LinuxCNC sessions (repository root).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CONSOLE_LOG = _REPO_ROOT / "logs" / "linuxcnc_console.log"
+
+#: Bytes read from the tail of the console log per request — caps
+#: memory when the log has accumulated many sessions' worth of output.
+_LOG_TAIL_MAX_BYTES = 512 * 1024
+
+#: Lines of console-log tail folded into the crash error message so
+#: an immediate failure (bad INI, realtime error, ...) is visible in
+#: the UI without a separate log request.
+_CRASH_LOG_LINES = 30
 
 #: Persisted default-machine selection, stored as
 #: ``machine_config/default_machine.json`` (sibling of ``machines/``).
@@ -169,6 +185,36 @@ class MachineLifecycleService:
         logger.info("Default machine set to '%s' (%s).", machine, ini)
         return ini
 
+    def console_log(self, lines: int = 200) -> Dict[str, Any]:
+        """Tail of ``logs/linuxcnc_console.log``.
+
+        Reads at most the last ``_LOG_TAIL_MAX_BYTES`` bytes of the
+        file (seeking from the end) before splitting into lines, so a
+        log that has grown across many sessions is never loaded into
+        memory in full — only the most recent output, which is what a
+        "why didn't it start" investigation needs.
+        """
+        exists = _CONSOLE_LOG.is_file()
+        text = ""
+        if exists:
+            try:
+                with open(_CONSOLE_LOG, "rb") as fh:
+                    fh.seek(0, os.SEEK_END)
+                    size = fh.tell()
+                    fh.seek(max(0, size - _LOG_TAIL_MAX_BYTES))
+                    raw = fh.read()
+                text = raw.decode("utf-8", errors="replace")
+            except OSError as exc:
+                logger.warning("Could not read console log %s: %s", _CONSOLE_LOG, exc)
+                exists = False
+
+        tail_lines = text.splitlines()[-max(1, lines):] if text else []
+        return {
+            "path": str(_CONSOLE_LOG),
+            "exists": exists,
+            "log": "\n".join(tail_lines),
+        }
+
     def status(self) -> Dict[str, Any]:
         ini = self.default_ini()
         name = self.default_machine()
@@ -263,10 +309,13 @@ class MachineLifecycleService:
         # a phantom "running" status.
         time.sleep(0.5)
         if process.poll() is not None:
-            raise BadRequestError(
-                f"LinuxCNC exited immediately (code {process.returncode}). "
-                f"See {_CONSOLE_LOG} for the console output."
-            )
+            tail = self.console_log(lines=_CRASH_LOG_LINES)["log"]
+            detail = f"LinuxCNC exited immediately (code {process.returncode})."
+            if tail:
+                detail += f"\n\n--- last {_CRASH_LOG_LINES} lines of {_CONSOLE_LOG.name} ---\n{tail}"
+            else:
+                detail += f" See {_CONSOLE_LOG} for the console output."
+            raise BadRequestError(detail)
 
         status = self.status()
         status["started_pid"] = process.pid
