@@ -23,13 +23,25 @@ echo "Pulling latest changes from git..."
 git pull origin main
 
 echo "Updating backend dependencies..."
-# Using the standard venv path for this project
-if [ -f "backend/venv/bin/pip" ]; then
-    backend/venv/bin/pip install -r backend/requirements.txt
-elif [ -f "backend/venv/Scripts/pip" ]; then
-    backend/venv/Scripts/pip install -r backend/requirements.txt
+# One venv shared by both services (backend/machine + backend/system)
+# — each service's own requirements file is installed into it. Falls
+# back to the combined requirements.txt on an older checkout that
+# predates the machine/system split.
+if [ -f "backend/requirements-machine.txt" ] && [ -f "backend/requirements-system.txt" ]; then
+    REQ_ARGS="-r backend/requirements-machine.txt -r backend/requirements-system.txt"
 else
-    pip install -r backend/requirements.txt
+    REQ_ARGS="-r backend/requirements.txt"
 fi
+
+if [ -f "backend/venv/bin/pip" ]; then
+    backend/venv/bin/pip install $REQ_ARGS
+elif [ -f "backend/venv/Scripts/pip" ]; then
+    backend/venv/Scripts/pip install $REQ_ARGS
+else
+    pip install $REQ_ARGS
+fi
+
+echo "Restarting backend services..."
+sudo systemctl restart linuxcnc-ui-machine linuxcnc-ui-system
 
 echo "Update Complete"

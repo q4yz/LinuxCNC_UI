@@ -2,22 +2,36 @@
 
 ## Overview
 
-A monorepo with two services:
+A monorepo with three services:
 
-- **`backend/`** — Python 3 FastAPI + Uvicorn. REST endpoints, a
-  high-frequency WebSocket telemetry stream, and per-domain routers
-  mounted from `main.py:_MODULE_DOMAINS`. There is no plugin
-  registry; see `.agent/contracts/backend-router.md` for the
-  canonical contract.
+- **`backend/machine/`** — Python 3 FastAPI + Uvicorn, port 8000.
+  Everything that needs a *live* LinuxCNC session: the
+  high-frequency WebSocket telemetry stream, NML state/MDI/jogging,
+  program execution, tools/temperature/camera HAL interactions, and
+  the Visual HAL editor feed. Per-domain routers are mounted from
+  `main.py:_MODULE_DOMAINS`, same flat-table pattern as before the
+  split. See `.agent/contracts/backend-router.md` for the canonical
+  router contract.
+- **`backend/system/`** — Python 3 FastAPI + Uvicorn, port 8001. The
+  **always-running** half: machine-config profile CRUD/compile/deploy,
+  NGC program uploads, macro/M-code CRUD, version/update, and the
+  LinuxCNC *process* lifecycle (start/stop/switch — see `§ 1.3`).
+  Stays reachable even when the machine backend or LinuxCNC itself
+  is down.
+- **`backend/common/`** — shared library imported by both apps
+  (settings store, event bus, DTOs, domain file services, hardware
+  abstraction, exceptions, …). Not a running service — see `§ 1.1`.
 - **`frontend/`** — Vue 3 + Vite + Pinia SPA. Reactive UI, a
   Three.js 3D toolpath viewer, and a single-file lazy module
   registry that mirrors the backend.
 
-The two services run in separate processes and communicate over
-HTTP + WebSocket. The Vite dev server proxies `/api` and `/ws` to
-the backend on port 8000 so the SPA sees a single origin.
+The frontend never talks to `backend/machine` or `backend/system`
+directly — nginx (production) / the Vite dev proxy (dev) route each
+`/api/v1/...` path prefix to whichever service owns it, so the SPA
+sees a single origin. See `§ 1.4` for the routing table. WebSocket
+traffic (`/ws/`) always goes to the machine backend.
 
-The **GraphLLM orchestrator** sits above both: it is the AI agent
+The **GraphLLM orchestrator** sits above all of it: it is the AI agent
 runtime that drives code changes, runs the verification pipeline
 defined in `.agent/TEST.md`, and produces the audits / PRs. The
 orchestrator is not part of the application code — it lives in
@@ -29,45 +43,77 @@ registry graph** (see `§ 4`) and the **event bus** (see `§ 5`).
 
 ```
 backend/
-├── main.py                     # FastAPI app + lifespan + router includes
-├── core/                       # Hardware-agnostic: settings store, event bus, field masking
-│   ├── event_bus.py            # Frozen-payload pub/sub
-│   ├── field_masking.py        # ResponseTier helpers (STATIC / BASE / ALL)
-│   ├── models.py               # Pydantic config models (heater / stepper / axis / ...)
-│   └── settings_store.py       # atomic-write settings persistence
-├── dtos/                       # Frozen dataclass domain DTOs + HalPin handles
-├── mappers/                    # DTO ↔ Pydantic Response translation (per domain)
-├── mapper/                     # Singleton mappers for cross-domain aggregates
-├── models/                     # Pydantic request/response + per-module settings
-├── routers/                    # Per-domain FastAPI routers (one file per module id)
-│                               # + four legacy flat routers (Files/System/Base/Servo)
-├── services/                   # Per-domain service singletons + cross-domain facades
-├── storage/                    # Filesystem-backed persistence (MacroStorage, …)
-├── factories/                  # DTO / Response assembly helpers
-├── hardware/                   # Hardware abstraction layer
-│   ├── connection.py           # Singleton connection; falls back to mock
-│   └── mock/                   # In-memory simulation for dev
-└── tests/                      # pytest: 240+ tests for module contracts + watchdogs
+├── common/                     # Shared library — imported by both apps, never run directly
+│   ├── core/                   # settings_store.py, event_bus.py, field_masking.py, models.py
+│   ├── dtos/                   # Frozen dataclass domain DTOs + HalPin handles
+│   ├── mappers/, factories/    # DTO ↔ Pydantic Response translation
+│   ├── models/                 # Pydantic request/response + per-module settings
+│   ├── domain_file_services/   # File-tree services shared by both apps + paths.py
+│   │                           # (single source of truth for machine_config/, nc_files/, macros/)
+│   ├── hardware/                # Hardware abstraction layer (see § 1.1)
+│   ├── storage/                # Filesystem-backed persistence (MacroStorage, …)
+│   ├── exceptions/, module_settings_router.py
+│   └── tests/                  # Tests for the shared library itself
+├── machine/                    # Machine backend — port 8000 (see Overview)
+│   ├── main.py                 # FastAPI app + lifespan (telemetry loop, mock seed, watchdog)
+│   ├── routers/                # axis, camera, hal, program, state, temperature, tools,
+│   │                           # BaseThreadRouter/ServoThreadRouter (legacy flat + WS),
+│   │                           # macro_start (POST /{name}/start only — CRUD lives in system)
+│   ├── services/                # Per-domain service singletons + cross-domain facades
+│   ├── hal_service/, dtos/, mappers/, factories/  (machine-only)
+│   └── tests/
+├── system/                     # System service — port 8001 (see Overview)
+│   ├── main.py                 # Minimal lifespan; always-on
+│   ├── routers/                # machineconfig, FilesRouter (programs), SystemRouter,
+│   │                           # macros (CRUD only), machine_lifecycle
+│   ├── services/                # machineconfig/ (compiler), machinetemplates/,
+│   │                           # MachineLifecycleService (start/stop/switch — § 1.3)
+│   └── tests/
+├── requirements.txt             # Shared dependency set (one venv for both apps)
+├── requirements-machine.txt     # -r requirements.txt (machine-only deps go here later)
+└── requirements-system.txt      # -r requirements.txt (system-only deps go here later)
 ```
 
-There is **no `backend/modules/` directory**. The previous
-`PluggableModule` plugin system was retired; routers live directly
-under `backend/routers/<id>.py` and are mounted in `main.py` via
-the `_MODULE_DOMAINS` table. See
-[`.agent/contracts/backend-router.md`](../contracts/backend-router.md)
+Each app's own imports stay **flat** (`from services.X import Y`,
+`from core.settings_store import ...`) — every entrypoint
+(`main.py`, and each app's `tests/conftest.py`) pushes
+`backend/common` onto `sys.path` ahead of its own directory, so a
+shared module and an app-local module never need different import
+syntax. A module id owned by one process is *never* imported by the
+other (the routing table in `§ 1.4` doubles as the ownership map,
+since each path prefix belongs to the app that owns the module
+behind it) — that's what makes the split safe: no in-memory
+`SettingsStore` cache can ever go stale across processes.
+
+**Running tests.** Each app's suite must be run as a **separate**
+pytest invocation — `pytest backend/common/tests`,
+`pytest backend/machine/tests`, `pytest backend/system/tests` — not
+combined in one command. All three directories are named `tests`
+with no `__init__.py`-rooted common package, so pytest's module
+cache collides (`ImportPathMismatchError`) if it tries to collect
+more than one of them in the same process.
+
+There is **no `backend/modules/` directory** in either app. The
+previous `PluggableModule` plugin system was retired; routers live
+directly under `<app>/routers/<id>.py` and are mounted in that
+app's `main.py` via its own `_MODULE_DOMAINS` table. See
+[`.agent/contracts/backend-router.md`](.agent/contracts/backend-router.md)
 for the canonical contract, and
-[`.agent/context/BACKEND_LAYERS.md`](BACKEND_LAYERS.md) for the
+[`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md) for the
 Router → Service → DTO → Mapper → Storage split every per-domain
 module follows.
 
 ### 1.1 Hardware Abstraction Layer
 
-`backend/hardware/connection.py` exposes a singleton `connection`
-object. On a real LinuxCNC box it imports the official `linuxcnc`
+`backend/common/hardware/Connection.py` exposes the hardware
+abstraction (imported as `from hardware import ...` by machine-side
+code). On a real LinuxCNC box it imports the official `linuxcnc`
 Python API; on a developer machine it falls back to
-`backend/hardware/linuxcnc_mock.py` automatically. Feature code
-never imports `linuxcnc` directly — it calls `execute_sync_cmd(...)`
-on the connection, so the backend stays portable.
+`backend/common/hardware/mock/` automatically. Feature code never
+imports `linuxcnc` directly — it calls `execute_sync_cmd(...)` on
+the connection, so the backend stays portable. Only the **machine**
+backend uses this at runtime (it owns the live NML/HAL session);
+the system service never touches it.
 
 ### 1.2 Safety watchdogs
 
@@ -78,6 +124,53 @@ axis whose last keep-alive ping is older than
 schedules its keep-alive at `keepalive_interval_ms` (default
 **250 ms**). The 2:1 cadence is the documented contract; breaking
 the cadence is a safety regression.
+
+### 1.3 Machine process lifecycle
+
+`backend/system/services/MachineLifecycleService.py` owns the
+**LinuxCNC process** (distinct from HAL "machine power" — that's
+`MachineService.py` in the machine backend, an NML-level on/off
+toggle on an already-running session). It's mounted at
+`/api/v1/system/machine` in the system service specifically so the
+machine can be started/stopped/switched even while the machine
+backend or the machine itself is down:
+
+- `GET /api/v1/system/machine` — `pgrep`-based detection of a live
+  `linuxcnc`/`emc`/`milltask`/`linuxcncsvr` session, plus whether a
+  generated INI exists under `machine_config/active/`.
+- `POST /api/v1/system/machine/start` — runs the console command
+  `linuxcnc <machine_config/active/machine.ini>` as a detached
+  process (`start_new_session=True`), console output tee'd into
+  `logs/linuxcnc_console.log`. The command is overridable via the
+  `LINUXCNC_START_COMMAND` env var (a `{ini}`-templated string) for
+  setups that need e.g. `xterm -e linuxcnc {ini}`.
+- `POST /api/v1/system/machine/stop` — SIGINT → (grace period) →
+  SIGTERM → SIGKILL escalation.
+- `POST /api/v1/system/machine/switch` — stop → optionally compile a
+  profile → deploy staged artifacts into `active/` → start.
+
+### 1.4 Two-backend routing (nginx / Vite dev proxy)
+
+Both `install.sh` (nginx, production) and `frontend/vite.config.mjs`
+(`DEV_PROXY`, dev/preview) implement the same routing table, mapping
+path prefixes to whichever service owns that domain:
+
+| Path | Owner |
+|------|-------|
+| `/api/v1/modules/macros/{name}/start` (regex — wins over the prefixes below) | machine :8000 |
+| `/api/v1/system/` | system :8001 |
+| `/api/v1/programs/` | system :8001 |
+| `/api/v1/modules/machineconfig/` | system :8001 |
+| `/api/v1/modules/macros/` (CRUD) | system :8001 |
+| `/api/` (everything else) | machine :8000 |
+| `/ws/` | machine :8000 |
+
+The frontend's typed API client is generated from **both** services'
+merged OpenAPI schema — `frontend/scripts/generate-api.mjs` fetches
+`:8000/openapi.json` and `:8001/openapi.json` and
+`frontend/scripts/merge-openapi.mjs` combines them (failing loudly on
+a genuine path collision; each app's own bare `/` health check is
+the one expected, intentionally-ignored collision).
 
 ## 2. Frontend layout
 
@@ -185,9 +278,9 @@ contract — including how to add a new stream — is in
 
 | Source | Consumers |
 |--------|-----------|
-| `machine_config/machine.cfg` | Frontend parses for axis counts, limits, capabilities. Backend `services/HardwareConfigService.py` (via `backend/models/machineconfig/linuxcnc_models.py`) parses for the same. |
+| `machine_config/machine.cfg` | Frontend parses for axis counts, limits, capabilities. Backend `backend/common/HardwareConfigService.py` (via `backend/common/models/machineconfig/linuxcnc_models.py`) parses for the same. |
 | `frontend/src/config/gcodes.js` | Every `.vue` component / Pinia action that emits G-code. Helpers like `generateSetOffset(axis, value)` keep MDI strings out of components. |
-| `backend/models/<id>_settings.py` | Pydantic defaults for module settings. `main.py:_MODULE_DOMAINS` builds a `SettingsStore` from each defaults instance and falls back to it on read. |
+| `backend/{machine,system}/models/<id>_settings.py` | Pydantic defaults for module settings. Each app's own `main.py:_MODULE_DOMAINS` builds a `SettingsStore` from each defaults instance and falls back to it on read — a module id is owned by exactly one app (§ 4), never both. |
 
 ## 4. Module registry graph
 
@@ -216,28 +309,35 @@ contract — but the implementation shapes differ.
 The registry walks `frontend/src/modules/<id>/index.ts` via a
 **static, eager** glob and consumes each module's default export.
 The matching TS types live in
-[`frontend/src/core/modules/protocols.ts`](../../frontend/src/core/modules/protocols.ts).
+[`frontend/src/core/modules/protocols.ts`](frontend/src/core/modules/protocols.ts).
 
-### Backend — flat `_MODULE_DOMAINS` mount table
+### Backend — flat `_MODULE_DOMAINS` mount table (one per app)
 
-There is no backend registry. `backend/main.py` declares the eight
-module ids in a flat tuple and mounts each router directly:
+There is no backend registry. **Each app** (`backend/machine/main.py`,
+`backend/system/main.py`) declares its own flat tuple of the module
+ids it owns and mounts each router directly — a module id belongs to
+exactly one app, never both (see the ownership split in `§ 1.4`'s
+routing table and the Overview):
 
 ```python
-# backend/main.py:88-97
+# backend/machine/main.py — module ids owned by the machine backend
 _MODULE_DOMAINS = [
     ("axis", AxisSettings, axis_router.router),
     ("machine_state", StateSettings, state_router.router),
     ("program", ProgramSettings, program_router.router),
     ("temperature", TemperatureSettings, temperature_router.router),
     ("tools", ToolsSettings, tools_router.router),
-    ("macros", MacrosSettings, macros_router.router),
     ("camera", CameraSettings, camera_router.router),
+]
+
+# backend/system/main.py — module ids owned by the system service
+_MODULE_DOMAINS = [
     ("machineconfig", MachineConfigSettings, machineconfig_router.router),
+    ("macros", MacrosSettings, macros_router.router),
 ]
 ```
 
-`main.py:308-321` then iterates the table to mount each per-domain
+Each `main.py` iterates its own table to mount each per-domain
 router under `/api/v1/modules/<id>` and the four canonical settings
 endpoints under `/api/v1/modules/<id>/settings` (settings first,
 so a module's bare `/{name}` cannot shadow them).
@@ -245,9 +345,9 @@ so a module's bare `/{name}` cannot shadow them).
 **Eager boot.** Both surfaces use eager loading: the frontend
 glob is `import.meta.glob(..., { eager: true })` and components are
 imported statically inside `App.vue` and `DashboardView.vue`.
-The backend imports each router module at the top of `main.py`
-(`from routers import …`) — `importlib.import_module` runs the
-module's top-level code at boot. There is no "module disabled at
+Each backend app imports its own router modules at the top of its
+`main.py` (`from routers import …`) — `importlib.import_module` runs
+the module's top-level code at boot. There is no "module disabled at
 build time" path — every module that ships is a hard dependency.
 
 **Modules are mandatory.** The previous nullable-module
@@ -255,16 +355,17 @@ guarantee (deleting a module folder leaves the app booting and
 building) has been retired on **both** sides. On the frontend,
 every entry under `frontend/src/modules/<id>/` ships its code in
 the bundle and runs `onLoad` at boot. On the backend, every entry
-in `_MODULE_DOMAINS` is mounted via `app.include_router(_router)`.
-The contract forbids `None` returns from `FrontendModule`'s
-default export and from the per-domain routers' module-level
-`router` binding. See `.agent/STATE.md` § 7 and § 13, plus
-[`.agent/contracts/backend-router.md`](../contracts/backend-router.md)
+in each app's `_MODULE_DOMAINS` is mounted via
+`app.include_router(_router)`. The contract forbids `None` returns
+from `FrontendModule`'s default export and from the per-domain
+routers' module-level `router` binding. See `.agent/STATE.md` § 7
+and § 13, plus
+[`.agent/contracts/backend-router.md`](.agent/contracts/backend-router.md)
 for the canonical backend contract.
 
 ## 5. Event bus
 
-`backend/core/event_bus.py` and `frontend/src/core/modules/event-bus.js`
+`backend/common/core/event_bus.py` and `frontend/src/core/modules/event-bus.js`
 share the same contract:
 
 - **Frozen payload.** Every `publish` re-instantiates a deep-cloned,
@@ -279,13 +380,13 @@ share the same contract:
 
 | Concern | Where it lives |
 |---------|----------------|
-| Generated OpenAPI client | `frontend/generated/api/` (gitignored, regenerated by `scripts/generate-api.mjs`) |
+| Generated OpenAPI client | `frontend/generated/api/` (gitignored; regenerated from both apps' merged spec by `frontend/scripts/generate-api.mjs` + `merge-openapi.mjs`, see `§ 1.4`) |
 | Backend module contract | `.agent/contracts/backend-router.md` (per-domain routers) |
 | Frontend module contract | `.agent/contracts/frontend-module.md` |
 | Settings contract | `.agent/contracts/settings-module.md` |
-| Settings persistence | `backend/core/settings_store.py` (atomic write per module) |
+| Settings persistence | `backend/common/core/settings_store.py` (atomic write per module; one `SettingsStore` instance per module id, owned by exactly one app) |
 | Backend layered pattern | `.agent/context/BACKEND_LAYERS.md` |
-| Test scripts | `frontend/tests/*.mjs`, `backend/tests/test_*.py` |
+| Test scripts | `frontend/tests/*.mjs`, `backend/{common,machine,system}/tests/test_*.py` (run each app's suite separately — see `§ 1` note below) |
 | Repository agent guide | `.agent/AGENT.md` |
 | Test run script | `.agent/TEST.md` (the orchestrator runs this) |
 | Current as-built state | `.agent/STATE.md` |
@@ -302,7 +403,7 @@ shape is rejected on load (no backcompat).
 The model is flat with explicit `id` fields and string
 references. Cross-references are validated by a single
 `HardwareJson` Pydantic model in
-[`backend/models/machineconfig/hardware_json_models.py`](../../backend/models/machineconfig/hardware_json_models.py)
+[`backend/common/models/machineconfig/hardware_json_models.py`](backend/common/models/machineconfig/hardware_json_models.py)
 that walks the graph once and fails fast with the full error list
 when any link is unresolved.
 

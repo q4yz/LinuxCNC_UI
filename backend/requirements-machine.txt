@@ -1,0 +1,9 @@
+# Dependencies for the machine backend (backend/machine, port 8000).
+#
+# Today the machine backend and the system service share the exact
+# same third-party dependency set (FastAPI/uvicorn/pydantic — nothing
+# HAL/LinuxCNC-specific is a pip package, it's system-installed), so
+# this simply pulls in the shared base list. When a machine-only
+# dependency shows up (e.g. a camera or telemetry library), add it
+# here rather than to requirements.txt.
+-r requirements.txt

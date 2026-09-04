@@ -6,22 +6,29 @@ UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
 
 echo "Rebuilding UI in: $PROJECT_DIR"
 
-# --- 1. Spin up temporary backend ---
-echo "Temporarily starting backend to generate API schema..."
-cd "$PROJECT_DIR/backend"
+# --- 1. Spin up both temporary backends ---
+# The frontend's typed API client is generated from BOTH services'
+# merged OpenAPI schema (frontend/scripts/generate-api.mjs +
+# merge-openapi.mjs), so both need to be briefly reachable here.
+echo "Temporarily starting both backends to generate API schemas..."
 
-# Activate the virtual environment
-source venv/bin/activate
+# Activate the shared virtual environment
+source "$PROJECT_DIR/backend/venv/bin/activate"
 
-# Start uvicorn in the background
-uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend.log" 2>&1 &
-BACKEND_PID=$!
+cd "$PROJECT_DIR/backend/machine"
+uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend-machine.log" 2>&1 &
+MACHINE_BACKEND_PID=$!
 
-# CRITICAL: Ensure the backend is killed when this script exits, even if npm build fails
-trap "kill $BACKEND_PID 2>/dev/null; wait $BACKEND_PID 2>/dev/null || true" EXIT
+cd "$PROJECT_DIR/backend/system"
+uvicorn main:app --host 127.0.0.1 --port 8001 > "$PROJECT_DIR/backend-system.log" 2>&1 &
+SYSTEM_BACKEND_PID=$!
 
-echo "Waiting for backend to expose OpenAPI schema..."
+# CRITICAL: Ensure both backends are killed when this script exits, even if npm build fails
+trap "kill $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID 2>/dev/null; wait $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID 2>/dev/null || true" EXIT
+
+echo "Waiting for both backends to expose their OpenAPI schemas..."
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
+timeout 15 bash -c 'until curl -s http://127.0.0.1:8001/openapi.json > /dev/null; do sleep 1; done'
 # ------------------------------------
 
 # --- 2. Build the Frontend ---

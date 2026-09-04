@@ -1,5 +1,8 @@
-// Fetch the FastAPI OpenAPI schema from the running backend and regenerate the
-// strongly-typed client under `generated/api/` (gitignored — never committed).
+// Fetch the FastAPI OpenAPI schemas from BOTH running backends (the
+// machine backend on :8000 and the system service on :8001 — see
+// backend/machine/main.py / backend/system/main.py) and regenerate a
+// single strongly-typed client under `generated/api/` (gitignored —
+// never committed) from their merged spec.
 //
 // Why a wrapper instead of pointing openapi-typescript-codegen directly at the
 // URL: the generator's underlying json-schema-ref-parser chokes when handed a
@@ -13,13 +16,15 @@
 // successful regen never produces a noisy diff.
 //
 // Usage:
-//   npm run generate-api                       # uses http://127.0.0.1:8000
-//   OPENAPI_URL=http://host:8000 npm run generate-api
+//   npm run generate-api                       # uses :8000 (machine) + :8001 (system)
+//   OPENAPI_URL=http://host:8000 OPENAPI_URL_SYSTEM=http://host:8001 npm run generate-api
 
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { mergeOpenApiSpecs } from './merge-openapi.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
@@ -44,6 +49,7 @@ const installMode =
   process.env.npm_lifecycle_event === 'postinstall';
 
 const openApiUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8000/openapi.json';
+const openApiUrlSystem = process.env.OPENAPI_URL_SYSTEM ?? 'http://127.0.0.1:8001/openapi.json';
 const generatedDir = path.join(projectRoot, 'generated');
 const outputDir = path.join(generatedDir, 'api');
 const cacheDir = path.join(generatedDir, '.openapi-cache');
@@ -60,18 +66,26 @@ const generatorArgs = [
   '--exportSchemas', 'false',
 ];
 
-async function downloadSpec() {
-  console.log(`[generate-api] Fetching OpenAPI schema from ${openApiUrl}`);
-  const response = await fetch(openApiUrl);
+async function fetchSpec(url) {
+  console.log(`[generate-api] Fetching OpenAPI schema from ${url}`);
+  const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Failed to download OpenAPI schema: HTTP ${response.status}`);
+    throw new Error(`Failed to download OpenAPI schema from ${url}: HTTP ${response.status}`);
   }
-  const text = await response.text();
   // Sanity check: must be parseable JSON, otherwise the generator will fail.
-  JSON.parse(text);
+  return JSON.parse(await response.text());
+}
+
+async function downloadSpec() {
+  const [machineSpec, systemSpec] = await Promise.all([
+    fetchSpec(openApiUrl),
+    fetchSpec(openApiUrlSystem),
+  ]);
+  const merged = mergeOpenApiSpecs(machineSpec, systemSpec);
+  const text = JSON.stringify(merged, null, 2);
   await mkdir(cacheDir, { recursive: true });
   await writeFile(specPath, text, 'utf-8');
-  console.log(`[generate-api] Wrote ${specPath} (${text.length} bytes)`);
+  console.log(`[generate-api] Wrote merged spec to ${specPath} (${text.length} bytes)`);
 }
 
 function runGenerator() {
@@ -107,13 +121,13 @@ async function main() {
   } catch (error) {
     if (installMode) {
       console.warn(`[generate-api] Skipped (install mode): ${error.message}`);
-      console.warn('[generate-api] Backend is not reachable — generated client was not regenerated.');
-      console.warn('[generate-api] Once the FastAPI backend is running on', openApiUrl, 'run:');
+      console.warn('[generate-api] A backend is not reachable — generated client was not regenerated.');
+      console.warn(`[generate-api] Once both backends are running (${openApiUrl}, ${openApiUrlSystem}) run:`);
       console.warn('    npm run generate-api');
       process.exit(0);
     }
     console.error(`[generate-api] ${error.message}`);
-    console.error('[generate-api] Is the FastAPI backend running on the expected port?');
+    console.error('[generate-api] Are both backends (machine :8000, system :8001) running on the expected ports?');
     process.exit(1);
   }
 

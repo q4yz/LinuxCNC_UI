@@ -14,6 +14,133 @@ into the canonical docs (`.agent/context/`, `.agent/contracts/`,
 
 ## 1. Recent attempted work (newest first)
 
+### 1.0 Finished the backend/machine + backend/system split; started a PascalCase file-naming pass
+
+- **Context.** A previous session ran out of budget ~90% through a
+  large, pre-planned refactor: splitting the monolithic `backend/`
+  FastAPI app into `backend/machine/` (port 8000 — everything that
+  needs a live LinuxCNC session), `backend/system/` (port 8001 — the
+  always-running config/CRUD/lifecycle half), and `backend/common/`
+  (shared library, not a running service). All the file moves
+  (`git mv`) and most of the import-path fixups were already done
+  and staged when this session picked it up.
+
+- **What was actually broken vs. done.** Ran the pre-split `main`
+  branch's full test suite in a `git worktree` as a baseline
+  (62 known-failing tests, confirmed pre-existing — mostly
+  `hardware.connection` mock plumbing and machineconfig snapshot
+  tests unrelated to the split). Diffing the split branch's per-app
+  suites against that baseline found exactly **16 real regressions**,
+  all fixed:
+  - `MachineHalPin.component_name` had been renamed to `.component`
+    during the move, breaking `test_hal_mapper.py` (6 tests) and the
+    one production call site in `HalPinSignalService.py` — reverted
+    to `component_name` (matches `main`).
+  - `hal_pin_signal_service.py`'s `_read_pins_from_linuxcnc` /
+    `_read_signals_from_linuxcnc` had been rewritten mid-flight to
+    shell out to real `halcmd show pin`/`show sig` (a separate,
+    legitimate piece of forward work, unrelated to the split) but
+    had no mock fallback, so on any dev/CI machine without `halcmd`
+    it silently returned empty pins/signals — broke
+    `test_hal_layout_endpoint.py` (2 tests). Added a `_mock_pins()` /
+    `_mock_signals()` fallback (the old hardcoded stub data) for
+    when `halcmd` isn't on `PATH`, so real hardware still uses real
+    introspection and dev/test still gets the mock palette.
+  - `test_tools_module.py` (8 tests) imported the settings-router
+    helper via the pre-move path
+    (`from routers import _module_settings_router as msr`); it now
+    lives flat at `backend/common/module_settings_router.py` — fixed
+    to `import module_settings_router as msr`.
+  - Verified via `python -c "import main"` (with `sys.path` primed
+    the same way each app's own `main.py` primes it) that both apps
+    actually boot end-to-end, not just that pytest collects cleanly.
+
+- **Genuinely missing pieces (plan said "NEW" or wasn't written yet)
+  that this session added:**
+  - `backend/system/tests/test_machine_lifecycle.py` — the plan
+    explicitly called out `MachineLifecycleService` as "testable
+    with dummy processes, no hardware needed" but no test file
+    existed. Added 16 tests (1 skipped on non-POSIX dev machines —
+    `SIGKILL` doesn't exist on Windows) covering status/start/stop
+    (including the `LINUXCNC_START_COMMAND` override) /switch, both
+    at the service layer (dummy `pgrep`/`Popen`/`os.kill`) and
+    through the mounted router.
+  - `frontend/scripts/merge-openapi.mjs` (new) +
+    `frontend/scripts/generate-api.mjs` (updated) — the frontend's
+    typed client is now generated from **both** backends' merged
+    OpenAPI spec (`:8000` + `:8001`), failing loudly on a genuine
+    path collision; each app's own bare `/` health check is the one
+    expected, intentionally-ignored collision. Verified end-to-end
+    by booting both real uvicorn processes and running
+    `npm run generate-api` — confirmed services from both apps
+    (e.g. `ModulesAxisService`, `SystemMachineLifecycleService`) land
+    in one generated client.
+  - `frontend/vite.config.mjs` — `DEV_PROXY` now mirrors the nginx
+    routing table below for both `server.proxy` and `preview.proxy`.
+  - `install.sh` / `scripts/update.sh` / `rebuild_ui.sh` — two
+    systemd units (`linuxcnc-ui-machine`, `linuxcnc-ui-system`, both
+    `Restart=always`), the nginx routing split, both temp backends
+    spun up for OpenAPI codegen, a consolidated
+    `/etc/sudoers.d/linuxcnc-ui` (nginx reload + restarting both
+    units), and `backend/requirements-{machine,system}.txt` (today
+    both just `-r requirements.txt` — genuinely identical dependency
+    sets, no fake differentiation invented). **Not runtime-verified**
+    — no Linux/systemd/nginx box available in this session; verified
+    by `bash -n` syntax-check and manual heredoc-expansion simulation
+    only. The routing table (regex macro-start exception → system
+    prefixes → machine fallback → `/ws/`) is in
+    `.agent/context/ARCHITECTURE.md` § 1.4.
+  - `.agent/context/ARCHITECTURE.md` — rewrote the Overview and § 1
+    (backend layout) for the three-part split, added § 1.3 (machine
+    process lifecycle) and § 1.4 (two-backend routing table), and
+    fixed the stale `backend/routers/`, `backend/core/`, etc. path
+    references + several relative (`../foo`) links elsewhere in the
+    same file (repo-root-relative is the doc convention;
+    `test_no_relative_link_segments` now passes for this file).
+    One pre-existing broken link remains
+    (`frontend/src/core/modules/protocols.ts` — the file doesn't
+    exist anywhere in the tree; unrelated to the split, left alone).
+    `.agent/README.md` and `.agent/context/hub.md` each have one
+    pre-existing broken link too (a missing
+    `.agent/contracts/frontend-module.md`) — also pre-existing on
+    `main`, also left alone.
+
+- **File-naming convention (separate, follow-on request).** The user
+  asked for a uniform convention: PascalCase filenames for
+  class/component modules (`ExampleService.py`, not
+  `example_service.py`). Surveyed `backend/{common,machine,system}`
+  (~65 lowercase-named `.py` files) and found the **vast majority
+  already follow this** (`AxisService.py`, `ToolHalPinFactory.py`,
+  etc.) — the true violators were exactly two:
+  `backend/machine/services/hal_pin_signal_service.py` →
+  `HalPinSignalService.py` and
+  `backend/machine/hal_service/jog_service.py` → `JogService.py`
+  (fixed every import site, including the several
+  `from hal_service import jog_service as jog` test imports —
+  aliased to `from hal_service import JogService as jog` so the rest
+  of each test file's `jog_service.X` references needed no further
+  changes). **Deliberately did NOT** rename: routers (filename =
+  module id, e.g. `routers/axis.py` — a different, load-bearing
+  convention), `*_settings.py`/`*_model.py` model modules (also a
+  consistent existing convention, and usually hold several classes,
+  not one), or core infra (`settings_store.py`, `event_bus.py` —
+  each has 30-50+ import sites; a rename is high-blast-radius for a
+  style-only change and wasn't what the user's own example pointed
+  at). If a full sweep of those is actually wanted, flag it as its
+  own task — don't assume this handoff entry means it's done.
+
+- **Status.** The split itself: complete, zero net test
+  regressions (confirmed by baseline diff, not just "tests pass").
+  Deploy scripts: written, syntax-checked, **not** live-tested.
+  Naming convention: two real violators fixed; broader repo-wide
+  PascalCase sweep explicitly out of scope for this pass.
+- **Verification.** `pytest backend/{common,machine,system}/tests`
+  (run separately — see the note added to `ARCHITECTURE.md` § 1
+  about why they can't be collected in one pytest invocation), both
+  apps import-and-boot via `python -c "import main"`, both apps
+  serve `/openapi.json` and `npm run generate-api` succeeds against
+  the pair.
+
 ### 1.1 Wire spindle HAL pin polling + add GET /spindle/{tool_id} endpoint
 
 - **Operator-visible symptom.** The dashboard's

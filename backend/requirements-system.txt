@@ -1,0 +1,8 @@
+# Dependencies for the system service (backend/system, port 8001).
+#
+# Today the system service and the machine backend share the exact
+# same third-party dependency set (FastAPI/uvicorn/pydantic), so this
+# simply pulls in the shared base list. When a system-only dependency
+# shows up (e.g. a compiler/template library), add it here rather
+# than to requirements.txt.
+-r requirements.txt

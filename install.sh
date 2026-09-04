@@ -34,20 +34,37 @@ else
 fi
 
 # 3. Set up the Python Backend Virtual Environment
+#
+# One venv shared by both services (backend/machine and
+# backend/system) — see .agent/context/ARCHITECTURE.md for why the
+# backend is split into two processes. Each service's own
+# requirements file (today identical; they'll diverge if a
+# service-only dependency shows up) is installed into it.
 echo -e "\n---> Setting up Python virtual environment (with system-site-packages)..."
 cd "$PROJECT_DIR/backend"
 sudo -u "$REAL_USER" python3 -m venv venv --system-site-packages
-if [ -f "requirements.txt" ]; then
+if [ -f "requirements-machine.txt" ] && [ -f "requirements-system.txt" ]; then
+    sudo -u "$REAL_USER" ./venv/bin/pip install -r requirements-machine.txt -r requirements-system.txt
+elif [ -f "requirements.txt" ]; then
     sudo -u "$REAL_USER" ./venv/bin/pip install -r requirements.txt
 fi
 
-# --- Temporary Backend Spin-up ---
-echo -e "\n---> Temporarily starting backend to generate API schema..."
-sudo -u "$REAL_USER" ./venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend.log" 2>&1 &
-BACKEND_PID=$!
+# --- Temporary Backend Spin-up (both services, for OpenAPI codegen) ---
+# The frontend's typed API client is generated from BOTH services'
+# merged OpenAPI schema (frontend/scripts/generate-api.mjs +
+# merge-openapi.mjs), so both need to be briefly reachable here.
+echo -e "\n---> Temporarily starting both backends to generate API schemas..."
+cd "$PROJECT_DIR/backend/machine"
+sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/uvicorn" main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend-machine.log" 2>&1 &
+MACHINE_BACKEND_PID=$!
 
-echo "Waiting for backend to expose OpenAPI schema..."
+cd "$PROJECT_DIR/backend/system"
+sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/uvicorn" main:app --host 127.0.0.1 --port 8001 > "$PROJECT_DIR/backend-system.log" 2>&1 &
+SYSTEM_BACKEND_PID=$!
+
+echo "Waiting for both backends to expose their OpenAPI schemas..."
 timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
+timeout 15 bash -c 'until curl -s http://127.0.0.1:8001/openapi.json > /dev/null; do sleep 1; done'
 
 # 4. Set up the Frontend and Build
 echo -e "\n---> Installing Frontend dependencies and building production app..."
@@ -60,10 +77,10 @@ sudo -u "$REAL_USER" npm run generate-api
 echo "Building Vite application..."
 sudo -u "$REAL_USER" npm run build
 
-# --- CRITICAL: Clean up temporary Backend ---
-echo "Tearing down temporary backend..."
-kill $BACKEND_PID >/dev/null 2>&1
-wait $BACKEND_PID >/dev/null 2>&1 || true
+# --- CRITICAL: Clean up temporary backends ---
+echo "Tearing down temporary backends..."
+kill $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID >/dev/null 2>&1
+wait $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID >/dev/null 2>&1 || true
 # --------------------------------------------
 
 # 5. Set up mkcert and the Root CA
@@ -108,6 +125,58 @@ systemctl daemon-reload
 systemctl enable ustreamer
 systemctl restart ustreamer
 
+# 7b. Configure the two backend services (machine + system split —
+# see .agent/context/ARCHITECTURE.md). The system service owns every
+# config/CRUD domain and must always be reachable, even while the
+# machine backend or LinuxCNC itself is down, so both units run
+# continuously with Restart=always; nginx (below) routes each path
+# prefix to the service that owns it.
+echo -e "\n---> Configuring backend services (machine :8000, system :8001)..."
+
+MACHINE_SERVICE="/etc/systemd/system/linuxcnc-ui-machine.service"
+cat << EOF > "$MACHINE_SERVICE"
+[Unit]
+Description=LinuxCNC UI Machine Backend (telemetry, NML, HAL — port 8000)
+After=network.target
+
+[Service]
+Type=simple
+User=$REAL_USER
+WorkingDirectory=$PROJECT_DIR/backend/machine
+ExecStart=$PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+SYSTEM_SERVICE="/etc/systemd/system/linuxcnc-ui-system.service"
+cat << EOF > "$SYSTEM_SERVICE"
+[Unit]
+Description=LinuxCNC UI System Service (machine config, programs, macros, lifecycle — port 8001)
+After=network.target
+
+[Service]
+Type=simple
+User=$REAL_USER
+WorkingDirectory=$PROJECT_DIR/backend/system
+ExecStart=$PROJECT_DIR/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+# MachineLifecycleService spawns the LinuxCNC GUI, which needs a
+# display; it already defaults to :0 if DISPLAY is unset, but a
+# systemd unit has no environment of its own, so make it explicit.
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable linuxcnc-ui-machine linuxcnc-ui-system
+systemctl restart linuxcnc-ui-machine linuxcnc-ui-system
+
 # 8. Fix Directory Permissions for Nginx
 echo -e "\n---> Fixing directory permissions so Nginx can serve files..."
 # Nginx (www-data user) needs traverse (execute) permissions up the entire directory tree
@@ -140,6 +209,38 @@ server {
     }
 
     # Proxy API and WebSockets so the app works on HTTP too
+    # Two-backend routing (machine :8000 / system :8001 — see
+    # .agent/context/ARCHITECTURE.md). A regex location always wins
+    # over a prefix location in nginx regardless of file order, so
+    # the macro-start exception is safe to declare anywhere; the
+    # remaining plain-prefix locations are matched by longest prefix,
+    # so the system-owned prefixes correctly win over the "/api/"
+    # fallback without needing "^~".
+    location ~ ^/api/v1/modules/macros/[^/]+/start\$ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/system/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/programs/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/modules/machineconfig/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/modules/macros/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
@@ -171,6 +272,38 @@ server {
     location / {
         try_files \$uri \$uri/ /index.html;
     }
+    # Two-backend routing (machine :8000 / system :8001 — see
+    # .agent/context/ARCHITECTURE.md). A regex location always wins
+    # over a prefix location in nginx regardless of file order, so
+    # the macro-start exception is safe to declare anywhere; the
+    # remaining plain-prefix locations are matched by longest prefix,
+    # so the system-owned prefixes correctly win over the "/api/"
+    # fallback without needing "^~".
+    location ~ ^/api/v1/modules/macros/[^/]+/start\$ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/system/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/programs/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/modules/machineconfig/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/modules/macros/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
@@ -191,12 +324,22 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 systemctl restart nginx
 
-# 10. Configure sudoers for passwordless Nginx reload
-echo -e "\n---> Configuring passwordless Nginx reloads for $REAL_USER..."
-SUDOERS_FILE="/etc/sudoers.d/linuxcnc-nginx-reload"
+# 10. Configure sudoers for passwordless service management
+#
+# scripts/update.sh runs as $REAL_USER (not root) and needs to
+# restart both backend units after pulling new code, plus reload
+# nginx if its config changed.
+echo -e "\n---> Configuring passwordless service management for $REAL_USER..."
+SUDOERS_FILE="/etc/sudoers.d/linuxcnc-ui"
+# Superseded by the consolidated rule below (re-running install.sh
+# on an already-installed machine would otherwise leave this stale).
+rm -f "/etc/sudoers.d/linuxcnc-nginx-reload"
 
-# Write the rule dynamically using the detected user
-echo "$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx" > "$SUDOERS_FILE"
+cat << EOF > "$SUDOERS_FILE"
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-machine
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-system
+EOF
 
 # Sudoers files must have strict permissions or the system will ignore them
 chmod 0440 "$SUDOERS_FILE"
