@@ -1,19 +1,19 @@
 # Backend Module Contract — Per-Domain Routers
 
 Authoritative contract every backend module **must** satisfy. Living
-document. The matching implementation lives under
-[`backend/`](../../backend/) — all file references below use
-`path:line` form so a reader can jump straight to the cited code.
+document. The backend is split into two FastAPI apps —
+`backend/machine/` (port 8000) and `backend/system/` (port 8001) —
+each with its **own** `_MODULE_DOMAINS` table, its own settings-store
+data root, and its own module ids; a module id belongs to exactly
+one app, never both. See
+[`.agent/context/ARCHITECTURE.md`](../context/ARCHITECTURE.md) for
+the process-level picture.
 
-> **What replaced `PluggableModule`.** The previous protocol used a
-> `PluggableModule` class with `on_load` / `on_unload` hooks, a
-> `ModuleManifest`, a `ModuleContext`, and a `SidebarEntry`. The
-> `ModuleRegistry` that walked `backend/modules/<id>/` has been
-> retired. There is **no `backend/modules/` directory** — the
-> per-domain routers live directly under
-> [`backend/routers/<id>.py`](../../backend/routers/) and are mounted
-> in [`backend/main.py:88-321`](../../backend/main.py) via the
-> `_MODULE_DOMAINS` table.
+> **No `backend/modules/` plugin directory.** There is no
+> `ModuleRegistry`, `PluggableModule`, `ModuleManifest`, or
+> `on_load`/`on_unload` lifecycle hook. Per-domain routers live
+> directly under `backend/<app>/routers/<id>.py` and are mounted in
+> that app's own `main.py` via its `_MODULE_DOMAINS` table.
 
 > **Modules are mandatory.** Every module that ships in
 > `/api/v1/modules/<id>/` is a hard dependency: its router is
@@ -26,62 +26,78 @@ document. The matching implementation lives under
 
 ## 1. The router contract
 
-File: [`backend/routers/<id>.py`](../../backend/routers/)
+File: `backend/<app>/routers/<id>.py`
 
 A module exports a **module-level** `router = APIRouter(...)` with:
 
-- `prefix="/api/v1/modules/<id>"` — same `<id>` as the manifest.
+- `prefix="/api/v1/modules/<id>"` — same `<id>` used in `_MODULE_DOMAINS`.
 - `tags=["modules:<id>"]` — drives the OpenAPI tag.
 - One or more `@router.<verb>(...)` handlers.
 
-The router is the only thing `main.py` imports from the module.
-There are no `on_load` / `on_unload` lifecycle hooks; lifespan
-work that used to live in `ModuleRegistry` has moved to plain
-helpers in [`backend/main.py:138-258`](../../backend/main.py)
-(`start_watchdog_if_configured`, `bind_camera_settings_store`,
-`register_machineconfig_exception_handlers`, etc.).
+The router is the only thing `main.py` imports from the module for
+mounting purposes. There are no `on_load` / `on_unload` lifecycle
+hooks; any boot-time work a module needs is a plain helper function
+called from that app's `lifespan()` (see `§ 5`).
 
 ```python
-# backend/routers/tools.py:65-68
+# backend/machine/routers/tools.py (sketch)
 router = APIRouter(
     prefix="/api/v1/modules/tools",
     tags=["modules:tools"],
 )
 ```
 
-## 2. The eight canonical module ids
+## 2. The module ids, split by app
 
-Taken directly from the `_MODULE_DOMAINS` table at
-[`backend/main.py:88-97`](../../backend/main.py):
+### 2.1 Machine backend (`backend/machine/main.py`, port 8000)
 
-| `module_id`        | Router file                                                            | Tag                       | Notes |
-|--------------------|------------------------------------------------------------------------|---------------------------|-------|
-| `axis`             | [`routers/axis.py`](../../backend/routers/axis.py)                     | `modules:axis`            | Homing facade — single endpoint. |
-| `machine_state`    | [`routers/state.py`](../../backend/routers/state.py)                   | `modules:machine_state`   | State / mode / MDI. Lives separately from `axis`. |
-| `program`          | [`routers/program.py`](../../backend/routers/program.py)               | `modules:program`         | Lifecycle (load / run / stop / pause / resume / unload / parse). |
-| `temperature`      | [`routers/temperature.py`](../../backend/routers/temperature.py)       | `modules:temperature`     | **Deprecated** — returns `410 GONE` for legacy callers. Real work lives in `tools`. |
-| `tools`            | [`routers/tools.py`](../../backend/routers/tools.py)                   | `modules:tools`           | Spindle / extruder / heater — canonical DDD example. |
-| `macros`           | [`routers/macros.py`](../../backend/routers/macros.py)                 | `modules:macros`          | `.macro` / `.ngc` / `mcode` CRUD + execute. |
-| `camera`           | [`routers/camera.py`](../../backend/routers/camera.py)                 | `modules:camera`          | `ustreamer` supervisor co-located with router. |
-| `machineconfig`    | [`routers/machineconfig.py`](../../backend/routers/machineconfig.py)   | `modules:machineconfig`   | Profiles / compilers / staged / active / deploy / m-codes. |
+| `module_id`        | Router file                                                                    | Tag                       | Notes |
+|--------------------|---------------------------------------------------------------------------------|---------------------------|-------|
+| `axis`             | [`routers/axis.py`](../../backend/machine/routers/axis.py)                     | `modules:axis`            | Homing facade — single endpoint. |
+| `machine_state`    | [`routers/state.py`](../../backend/machine/routers/state.py)                   | `modules:machine_state`   | State / mode / MDI. Lives separately from `axis`. |
+| `program`          | [`routers/program.py`](../../backend/machine/routers/program.py)               | `modules:program`         | Lifecycle (load / run / stop / pause / resume / unload / parse). |
+| `temperature`      | [`routers/temperature.py`](../../backend/machine/routers/temperature.py)       | `modules:temperature`     | **Deprecated** — returns `410 GONE` for legacy callers. Real work lives in `tools`. |
+| `tools`            | [`routers/tools.py`](../../backend/machine/routers/tools.py)                   | `modules:tools`           | Spindle / extruder / heater — canonical DDD example. |
+| `camera`           | [`routers/camera.py`](../../backend/machine/routers/camera.py)                 | `modules:camera`          | `ustreamer` supervisor co-located with router. |
 
-Plus four **legacy flat routers** that pre-date the split — see § 5
-of [`.agent/context/BACKEND_LAYERS.md`](../context/BACKEND_LAYERS.md)
-for the "Exceptions to the rule" list.
+Plus routers mounted directly (no per-module settings, so they sit
+outside `_MODULE_DOMAINS`): `BaseThreadRouter`, `ServoThreadRouter`
+(telemetry, WebSocket), the Visual HAL editor's `hal` router, and
+`macro_start` (the `/{name}/start` execution endpoint — CRUD for
+macros lives in the system app's `macros` module).
 
-## 3. Mount order in `main.py`
+### 2.2 System service (`backend/system/main.py`, port 8001)
 
-The settings router is mounted **before** the module router so a
-module that exposes a bare `/{name}` path cannot shadow
-`/api/v1/modules/<id>/settings` — Starlette matches in registration
-order
-([`backend/main.py:308-321`](../../backend/main.py)):
+| `module_id`        | Router file                                                                     | Tag                       | Notes |
+|--------------------|------------------------------------------------------------------------------------|---------------------------|-------|
+| `machineconfig`    | [`routers/machineconfig.py`](../../backend/system/routers/machineconfig.py)   | `modules:machineconfig`   | Profile CRUD, template generation (`hardware.json` + generated INI/HAL, see `ARCHITECTURE.md` § 7), deploy. |
+| `macros`           | [`routers/macros.py`](../../backend/system/routers/macros.py)                 | `modules:macros`          | `.macro` / `.ngc` / `mcode` CRUD (the `/start` execution endpoint lives in the machine app). |
+
+Plus routers mounted directly (no per-module settings):
+`SystemRouter` (version/update), `machine_lifecycle` (start/stop/
+switch the LinuxCNC process, see `ARCHITECTURE.md` § 1.3), and
+`FilesRouter` (NGC program uploads for `nc_files/`).
+
+Four routers are flagged as **exceptions to the classical
+Router → Service → DTO → Mapper → Storage split** — see
+[`.agent/context/BACKEND_LAYERS.md`](../context/BACKEND_LAYERS.md) § 7
+(`BaseThreadRouter`, `ServoThreadRouter`, `FilesRouter`,
+`SystemRouter`), plus the `state`/`program`/`camera` gaps noted
+there.
+
+## 3. Mount order in each app's `main.py`
+
+In **both** apps, the settings router is mounted **before** the
+module router so a module that exposes a bare `/{name}` path cannot
+shadow `/api/v1/modules/<id>/settings` — Starlette matches in
+registration order:
 
 ```python
-# backend/main.py:313-321
+# backend/machine/main.py (sketch — backend/system/main.py mirrors
+# this with its own _MODULE_DOMAINS)
 for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
     app.include_router(
-        _module_settings_router.build_module_settings_router(
+        module_settings_router.build_module_settings_router(
             _settings_stores[_module_id],
         ),
         prefix=f"/api/v1/modules/{_module_id}/settings",
@@ -90,14 +106,15 @@ for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
     app.include_router(_router)
 ```
 
-The `SettingsStore` is built once at import time per module so the
-lifespan manager can hand the same instance to the watchdog, the
-camera supervisor, etc.
-([`backend/main.py:290-298`](../../backend/main.py)):
+The `SettingsStore` is built once at import time per module, from a
+`data_root` that is **per app** —
+`Path(__file__).resolve().parents[1] / "data"` resolves to
+`backend/machine/data/` inside `backend/machine/main.py` and
+`backend/system/data/` inside `backend/system/main.py`:
 
 ```python
 _settings_stores: dict[str, SettingsStore] = {}
-_DATA_ROOT = Path("data")
+_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
     _settings_stores[_module_id] = SettingsStore(
         module_id=_module_id,
@@ -108,17 +125,19 @@ for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
 
 ## 4. The settings contract
 
-File: [`backend/models/<id>_settings.py`](../../backend/models/)
+File: [`backend/common/models/<id>_settings.py`](../../backend/common/models/)
+(shared location — both apps import their own modules' settings
+classes from here)
 
 A Pydantic `BaseModel` subclass that documents the canonical shape
-the [`SettingsStore`](../../backend/core/settings_store.py) will
-serve on `GET /api/v1/modules/<id>/settings`. New keys can be added
-in later releases without breaking existing deployments — the store
-merges the defaults underneath the persisted payload so a missing
-key is filled in from this schema's defaults on every read.
+the [`SettingsStore`](../../backend/common/core/settings_store.py)
+will serve on `GET /api/v1/modules/<id>/settings`. New keys can be
+added in later releases without breaking existing deployments — the
+store merges the defaults underneath the persisted payload so a
+missing key is filled in from this schema's defaults on every read.
 
 ```python
-# backend/models/tools_settings.py:37-64
+# backend/common/models/tools_settings.py (sketch)
 class ToolsSettings(BaseModel):
     confirm_spindle_start: bool = Field(default=False, description=...)
     max_spindle_rpm: int = Field(default=12000, ge=0, le=200_000, description=...)
@@ -129,64 +148,73 @@ The full contract for the four canonical settings endpoints lives in
 
 ## 5. Lifespan hooks
 
-There is no `on_load` / `on_unload` per module. Instead, the
-lifespan manager in
-[`backend/main.py:106-169`](../../backend/main.py) runs a flat
-sequence of helpers that handle the cross-cutting boot work the
-old per-module hooks used to do:
+There is no `on_load` / `on_unload` per module. Each app's
+`lifespan()` runs a flat sequence of plain helper functions instead:
 
-| Helper | Module | Source line |
-|--------|--------|-------------|
-| `tool_service.preload_hal_pins()` | `tools` | `main.py:123` |
-| `sensor_service.preload_hal_pins()` | `temperature` | `main.py:124` |
-| `HalPin.initialize_component()` | (shared) | `main.py:125` |
-| `reseed_from_hardware_json()` | (mock seed) | `main.py:127` |
-| `mock_system.start_simulation()` | (mock seed) | `main.py:128` |
-| `get_servo_thread_service().telemetry_loop()` | (telemetry) | `main.py:131-133` |
-| `reseed_temperature_defaults()` | `temperature` | `main.py:138` |
-| `start_watchdog_if_configured()` | `axis` | `main.py:139` |
-| `bind_camera_settings_store()` | `camera` | `main.py:140` |
-| `register_machineconfig_exception_handlers(app)` | `machineconfig` | `main.py:141` |
+**Machine backend** (`backend/machine/main.py`):
 
-Shutdown reverses the same hooks symmetrically.
+| Helper | Module |
+|--------|--------|
+| `tool_service.preload_hal_pins()`, `sensor_service.preload_hal_pins()`, `state_service.preload_hal_pins()` | `tools`, `temperature`, `machine_state` |
+| `HalPin.initialize_component()` | (shared HAL bootstrap) |
+| `reseed_from_hardware_json()`, `mock_system.start_simulation()` | (mock hardware seed, only when `HAS_HAL` is false) |
+| `get_servo_thread_service().telemetry_loop()` | (telemetry, launched as a background `asyncio.Task`) |
+| `reseed_temperature_defaults()` | `temperature` |
+| `start_watchdog_if_configured()` / `stop_watchdog_if_running()` | `axis` (jog safety watchdog, § 1.2 of `ARCHITECTURE.md`) |
+| `bind_camera_settings_store()` | `camera` |
+| `get_console_logger().close()` | (shutdown — flush persistent console history) |
+
+**System service** (`backend/system/main.py`):
+
+| Helper | Module |
+|--------|--------|
+| `register_machineconfig_exception_handlers(app)` | `machineconfig` — attaches the structured `ConfigValidationError` handler, covering both `machineconfig`'s and `machine_lifecycle`'s switch/generate endpoints |
+
+Both apps probe `app.openapi()` at startup and log a loud traceback
+if schema generation fails, rather than silently serving an empty
+`/openapi.json`.
 
 ## 6. Router hard rules
 
 Rules enforced by code review:
 
-- **No `import backend.hardware.*`** from a router. Feature code
-  must go through a service facade so the mock layer stays
-  portable.
+- **No `import hardware.*`** from a router. Feature code must go
+  through a service facade so the mock layer stays portable.
 - **Pydantic `*Command` / `*Response` models** live under
-  [`backend/models/`](../../backend/models/) — see the worked
-  example in [`BACKEND_LAYERS.md`](../context/BACKEND_LAYERS.md) § 2.
-- **No imports of `backend.modules`** — that path does not exist.
-- **No `router = None`** returns. The registry refuses to mount a
-  router that returns `None`.
-- **Status codes** use [`backend/exceptions/http.py`](../../backend/exceptions/http.py):
+  [`backend/common/models/`](../../backend/common/models/) — see the
+  worked example in [`BACKEND_LAYERS.md`](../context/BACKEND_LAYERS.md) § 2.
+- **No cross-app imports.** A router in `backend/machine/` never
+  imports a service, DTO, or router from `backend/system/` (or vice
+  versa) — only `backend/common/` is shared.
+- **No `router = None`** returns. A router that returns `None`
+  cannot be mounted.
+- **Status codes** use [`backend/common/exceptions/http.py`](../../backend/common/exceptions/http.py):
   `BadRequestError` → 400, `NotFoundError` → 404, `ConflictError`
   → 409. Anything outside that triple is a direct
   `raise HTTPException(...)`.
+- **No bare `dict` in a signature/field, no untyped payload.** See
+  the typing discipline in [`.agent/AGENT.md`](../AGENT.md).
 
 ## 7. Acceptance checklist
 
 A backend module is "ready" when:
 
-- [ ] `backend/routers/<id>.py` exists and exports a module-level
-      `router = APIRouter(prefix="/api/v1/modules/<id>",
+- [ ] `backend/<app>/routers/<id>.py` exists and exports a
+      module-level `router = APIRouter(prefix="/api/v1/modules/<id>",
       tags=["modules:<id>"])`.
-- [ ] `backend/models/<id>_settings.py` exists and exports a
+- [ ] `backend/common/models/<id>_settings.py` exists and exports a
       non-null Pydantic `BaseModel` subclass.
-- [ ] The module appears in `main.py:_MODULE_DOMAINS`.
-- [ ] The router does not import `backend.hardware.*` directly.
-- [ ] The router does not import from `backend.modules.*` (the
-      path does not exist).
+- [ ] The module appears in the owning app's `main.py:_MODULE_DOMAINS`
+      — and only that app's.
+- [ ] The router does not import `hardware.*` directly.
+- [ ] The router does not import a service, DTO, or router from the
+      other app.
 - [ ] Each handler returns a Pydantic response model declared in
-      `backend/models/`.
+      `backend/common/models/`.
 - [ ] Status codes use `BadRequestError` / `NotFoundError` /
       `ConflictError` for the standard triple.
-- [ ] Any HAL pin preload / subscription runs in the lifespan
-      helpers in `main.py`, not in the router.
+- [ ] Any HAL pin preload / subscription runs in a lifespan helper
+      in the owning app's `main.py`, not in the router.
 
 ---
 

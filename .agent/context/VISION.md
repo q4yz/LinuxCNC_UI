@@ -27,19 +27,17 @@ runs on a developer laptop.
    live. The frontend and backend both parse it at startup; nothing
    else hardcodes those values.
 2. **Hardware-agnostic core.** A clean separation between
-   `backend/core/` (no `linuxcnc` imports), `backend/hardware/`
-   (singleton `connection` that swaps in `linuxcnc_mock` on
-   non-Linux dev machines), and the routers/UI layers (orchestrators
-   only) keeps the system testable on any laptop.
-3. **Modular by feature.** Every user-visible feature lives
-   under `frontend/src/modules/<id>/` on the frontend, with a
-   matching per-domain router under `backend/routers/<id>.py` on
-   the backend. The frontend registry walks the `modules/`
-   folder via a static eager glob; the backend mounts each
-   router in `main.py:_MODULE_DOMAINS`. Adding a feature is
-   "drop a folder on each side, declare a manifest on the
-   frontend, wire the router on the backend" — no plugin
-   runtime, no `setup()` factory.
+   `backend/common/core/` (no `linuxcnc` imports), `backend/common/hardware/`
+   (singleton `connection` that swaps in a mock hardware layer on
+   non-Linux dev machines), and the routers/services layers
+   (orchestrators only) keeps the system testable on any laptop.
+3. **Modular by feature, on the backend.** Every user-visible
+   backend feature lives behind its own per-domain router under
+   `backend/<app>/routers/<id>.py`, mounted via that app's flat
+   `_MODULE_DOMAINS` table — no plugin runtime, no `setup()`
+   factory. The frontend has no equivalent dynamic registry;
+   components and views are imported directly where they're used
+   (see [`.agent/context/ARCHITECTURE.md`](ARCHITECTURE.md) § 2).
 4. **Safety is non-negotiable.** Continuous jogging requires a 250 ms
    frontend keep-alive and a 500 ms backend watchdog. E-Stop is a
    single tap. The dashboard defaults to `ESTOP` when no telemetry
@@ -60,13 +58,13 @@ runs on a developer laptop.
 - An operator powers on the controller, opens a browser, sees the
   webcam, the DRO, the temperature graph, and the jog controls
   within a second of page load.
-- Adding a new feature is "drop a folder under
-  `frontend/src/modules/<id>/`, declare a `manifest.ts`, write
-  the component; on the backend add a row to
-  `backend/main.py:_MODULE_DOMAINS` plus the matching
-  `backend/routers/<id>.py` and `backend/models/<id>_settings.py`."
-  No plugin runtime, no `App.vue` surgery, no broken Pinia
-  store ids.
+- Adding a new backend feature is "add a row to the owning app's
+  `main.py:_MODULE_DOMAINS` plus the matching
+  `backend/<app>/routers/<id>.py` and
+  `backend/common/models/<id>_settings.py`." No plugin runtime.
+  On the frontend, add a view/component where it belongs and wire
+  it into `frontend/src/router/index.ts` if it needs a route — no
+  manifest, no registry to satisfy.
 - The test suite (frontend `node --test` + backend `pytest`) runs
   in seconds on a laptop and is a hard gate before any code lands.
 
@@ -88,5 +86,5 @@ runs on a developer laptop.
 |----------|---------------------|
 | **Human developer** | [`README.md`](README.md) (run/build/contribute) |
 | **AI agent** | [`.agent/context/hub.md`](.agent/context/hub.md) (then spokes `VISION.md`, `ARCHITECTURE.md`, `LESSONS_LEARNED.md`) |
-| **Module author** | [`.agent/contracts/`](.agent/contracts/) (backend + frontend + settings) |
+| **Backend module author** | [`.agent/contracts/`](.agent/contracts/) (per-domain router + settings) |
 | **Operations reviewer** | `VISION.md` (this file) + [`.agent/context/ARCHITECTURE.md`](.agent/context/ARCHITECTURE.md) |

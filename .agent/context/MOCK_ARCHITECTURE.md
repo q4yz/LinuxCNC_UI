@@ -1,13 +1,13 @@
 # Mock Architecture
 
-The mock layer lives under `backend/hardware/mock/`. It is the
+The mock layer lives under `backend/common/hardware/mock/`. It is the
 fallback the `hardware.Connection` module picks when the real
 `linuxcnc` C extension is unavailable (typically: any Windows
 dev host). The FastAPI app must boot and every test must run
 without LinuxCNC installed, so the mock has to be a faithful
 substitute for the production NML + HAL surface.
 
-> **Read this before editing anything under `hardware/mock/`.** The
+> **Read this before editing anything under `backend/common/hardware/mock/`.** The
 > layered split below is load-bearing — feature code talks to the
 > facades, facades talk to the `HalMock` + `StateMachineMock`
 > singletons, those singletons own the lifecycle. Skipping a layer
@@ -63,17 +63,17 @@ test rig against real LinuxCNC, not in the mock test surface.
 ```
 
 * **Top (facades)** — `HalModuleFacade` and `LinuxcncModuleFacade`
-  in `hardware/mock/facade/`. These are drop-in replacements for
+  in `backend/common/hardware/mock/facade/`. These are drop-in replacements for
   the real `hal` and `linuxcnc` Python modules. They are what
   `hardware.Connection` exposes to feature code.
 * **Middle (singletons)** — `HalMock` (pin registry) and
   `StateMachineMock` (NML state). Constructed once by
   `LinuxCNCMock.__init__` and reused for the process lifetime.
 * **Bottom (per-feature)** — `MockComponent` subclasses in
-  `hardware/mock/tools/` (and a few directly under `hardware/mock/`
+  `backend/common/hardware/mock/tools/` (and a few directly under `backend/common/hardware/mock/`
   for the always-on ones). Each owns a slice of the pin namespace.
 
-The `LinuxCNCMock` top-level singleton in `hardware/mock/LinuxCNCMock.py`
+The `LinuxCNCMock` top-level singleton in `backend/common/hardware/mock/LinuxCNCMock.py`
 wires the three layers together and exposes `hal`, `linuxcnc`, and
 the two raw singletons (`internal_hal`, `internal_state`) for tests
 that need to introspect or seed state.
@@ -120,7 +120,7 @@ Step by step, regardless of whether the component is **always-on**
 or **tool-derived** (see § 5):
 
 1. **Pick the layer.** Per-feature components subclass
-   `MockComponent` from `hardware/mock/tools/MockComponent.py`.
+   `MockComponent` from `backend/common/hardware/mock/tools/MockComponent.py`.
    The base class defines four overridable hooks:
    `read_pin`, `set_pin`, `execute_mdi`, `update`. The default
    implementations are no-ops returning `None` / `False`.
@@ -148,7 +148,7 @@ or **tool-derived** (see § 5):
    `LinuxCNCMock.__init__`. Tool-derived: extend
    `MockToolFactory.create` to recognise your tool type.
 
-6. **Add a test** under `backend/tests/test_mock_<name>.py` that
+6. **Add a test** under `backend/machine/tests/test_mock_<name>.py` that
    builds a `StateMachineMock`, instantiates the component,
    registers it on a fresh `HalMock`, and exercises the
    `set_pin` / `read_pin` / `update` contract.
@@ -163,8 +163,8 @@ tools to appear before a hardware.json has been reseeded.
 
 | Lifetime | Where it lives | When registered | When torn down |
 |----------|---------------|-----------------|----------------|
-| **Always-on** | `hardware/mock/MockEStopComponent.py` (and any future core safety component) | `LinuxCNCMock.__init__` | Never — exists for the process lifetime |
-| **Tool-derived** | `hardware/mock/tools/MockHeater.py`, `MockExtruder.py`, `MockSensor.py`, `MockSpindleDigital.py` | `MockToolFactory.create(payload_record)` inside `LinuxCNCMock.register_hardware` | Cleared by `reset_simulator_state()` between tests |
+| **Always-on** | `backend/common/hardware/mock/MockEStopComponent.py` (and any future core safety component) | `LinuxCNCMock.__init__` | Never — exists for the process lifetime |
+| **Tool-derived** | `backend/common/hardware/mock/tools/MockHeater.py`, `MockExtruder.py`, `MockSensor.py`, `MockSpindleDigital.py` | `MockToolFactory.create(payload_record)` inside `LinuxCNCMock.register_hardware` | Cleared by `reset_simulator_state()` between tests |
 
 **Always-on** components are reserved for things that are not
 operator-configurable and that a service can rely on at any tick.
@@ -205,7 +205,7 @@ mock's `MockEStopComponent` short-circuits that wire and calls
 `state_machine.trigger_estop()` on **any truthy write**.
 
 The 0 -> 1 dance performed by `EStopPin` (the pin wrapper in
-`backend/dtos/EStopDto.py`) is what preserves the operator-visible
+`backend/common/dtos/EStopDto.py`) is what preserves the operator-visible
 contract: each button press produces a 0-write followed by a
 1-write across a 2 ms sleep. In the mock, both writes are
 processed instantly by the same thread, so the net effect is one
@@ -221,7 +221,7 @@ thread semantics at the mock layer — the mock is synchronous.
 
 ## 7. Test helpers
 
-`backend/hardware/mock/test_helpers/mock_helpers.py` exposes the
+`backend/common/hardware/mock/test_helpers/mock_helpers.py` exposes the
 shortcuts used by integration tests. Use them in this order of
 preference:
 

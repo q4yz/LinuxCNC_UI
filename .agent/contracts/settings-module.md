@@ -2,9 +2,12 @@
 
 Authoritative contract for the per-module persistent settings layer.
 The matching implementation lives in
-[`backend/core/settings_store.py`](backend/core/settings_store.py)
-and is mounted by
-[`backend/main.py:_MODULE_DOMAINS`](../../backend/main.py).
+[`backend/common/core/settings_store.py`](../../backend/common/core/settings_store.py)
+(shared by both backend apps) and is mounted by each app's own
+`_MODULE_DOMAINS` table — `backend/machine/main.py` (port 8000) and
+`backend/system/main.py` (port 8001). See
+[`.agent/contracts/backend-router.md`](backend-router.md) for which
+module id belongs to which app.
 
 > **Modules are mandatory.** Every backend module exposes the four
 > canonical settings endpoints through this contract. A module
@@ -19,10 +22,13 @@ Settings are persisted per module at:
 <data_root>/modules/<module_id>/settings.json
 ```
 
-The default `data_root` is `./data` (relative to the backend's
-working directory). Each module owns exactly one file — no shared
-schemas, no migrations. Modules that want richer layouts (multiple
-files, schemas, validation) wrap this store rather than replace it.
+`data_root` is **per app**, not shared: each app's `main.py` resolves
+it as `Path(__file__).resolve().parents[1] / "data"`, which lands at
+`backend/machine/data/` for modules owned by the machine backend and
+`backend/system/data/` for modules owned by the system service. Each
+module owns exactly one file — no shared schemas, no migrations.
+Modules that want richer layouts (multiple files, schemas,
+validation) wrap this store rather than replace it.
 
 ## 2. The Four Canonical Endpoints
 
@@ -56,7 +62,7 @@ leaves the previous `settings.json` intact. The temp file is
 cleaned up on failure (`os.unlink(tmp)`).
 
 The contract is exercised by the test
-`backend/tests/test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`
+`backend/common/tests/test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`
 which monkey-patches `os.replace` to raise and asserts the original
 file is unchanged.
 
@@ -103,9 +109,10 @@ single source of truth for the schema; modules validate on the
 endpoint boundary (using the Pydantic model) and reject bad input
 before it reaches the store.
 
-The frontend settings client (see
-[`.agent/contracts/frontend-module.md`](.agent/contracts/frontend-module.md) § 4) treats the payload
-as opaque JSON and does no validation.
+The frontend has no dedicated settings client abstraction — components
+call the generated OpenAPI client directly against the four endpoints
+above and treat the payload as opaque JSON; they do no validation of
+their own.
 
 ## 7. Failure Modes
 
@@ -123,8 +130,8 @@ A settings surface is "ready" when:
 
 - [ ] `get_settings_model()` returns a non-null Pydantic `BaseModel`
       instance.
-- [ ] Module manifest declares `settingsPanel=true` if the module
-      wants a UI tab on the frontend.
+- [ ] The module id appears in the owning app's `main.py:_MODULE_DOMAINS`
+      — and only that app's (see `.agent/contracts/backend-router.md`).
 - [ ] All persisted values flow through `read_all` / `write_all` /
       `write_key`.
 - [ ] Defaults are Pydantic models so new keys can be added later.
