@@ -1,8 +1,9 @@
 import logging
 import subprocess
+import sys
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("backend.routers.system")
@@ -45,33 +46,46 @@ def _current_commit_hash() -> str:
         return "unknown"
 
 
-def _run_update_script() -> None:
-    """Execute scripts/update.sh in the background (git pull + pip install).
+def _launch_update_script() -> bool:
+    """Detach scripts/update.sh from this Uvicorn process (git pull + pip install).
 
-    This is the real update routine — it was previously replaced by a placeholder
-    that merely slept. The frontend expects this to perform an actual update.
+    The script stops and restarts linuxcnc-ui-system — the very service serving
+    this request — so it must not run inside our session/process group and must
+    not be awaited. A blocking run (or a BackgroundTask thread) deadlocks the
+    shutdown until systemd's stop timeout SIGKILLs the whole cgroup, killing the
+    script mid-update. start_new_session=True promotes it to its own process
+    leader, and with KillMode=process in the unit file systemd signals only the
+    main Uvicorn PID, so the script survives the restart. Output is appended to
+    update.log in the repo root (same convention as rebuild_ui.sh).
     """
     script_path = _project_root() / "scripts" / "update.sh"
     if not script_path.exists():
         logger.error("Update script not found at %s", script_path)
-        return
+        return False
+
+    log_path = _project_root() / "update.log"
+    popen_kwargs: dict = {}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
 
     try:
-        result = subprocess.run(
-            ["bash", str(script_path)],
-            cwd=str(_project_root()),
-            capture_output=True,
-            text=True,
-        )
-        logger.info("Update script finished with code %s", result.returncode)
-        if result.stdout:
-            logger.info("Update script stdout:\n%s", result.stdout)
-        if result.stderr:
-            logger.error("Update script stderr:\n%s", result.stderr)
+        with log_path.open("ab") as log_file:
+            subprocess.Popen(
+                ["bash", str(script_path)],
+                cwd=str(_project_root()),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                **popen_kwargs,
+            )
     except FileNotFoundError:
         logger.error("bash executable not found; cannot run update.sh")
+        return False
     except Exception:  # noqa: BLE001
-        logger.exception("Failed to run update script")
+        logger.exception("Failed to launch update script")
+        return False
+    logger.info("Update script launched detached; output appending to %s", log_path)
+    return True
 
 
 @router.get(
@@ -93,11 +107,12 @@ def get_version() -> VersionInfoResponse:
 @router.post(
     "/update",
     summary="Trigger System Update",
-    description="Schedule scripts/update.sh (git pull + pip install) to run after the response is returned.",
+    description="Launch scripts/update.sh (git pull + pip install) as a detached process so it survives the service restart it performs.",
     operation_id="triggerSystemUpdate",
     response_model=SystemUpdateResponse,
 )
-def trigger_update(background_tasks: BackgroundTasks) -> SystemUpdateResponse:
+def trigger_update() -> SystemUpdateResponse:
     logger.warning("System update initiated via API.")
-    background_tasks.add_task(_run_update_script)
-    return SystemUpdateResponse(status="update started")
+    if not _launch_update_script():
+        raise HTTPException(status_code=500, detail="Failed to launch update script")
+    return SystemUpdateResponse(status="update initiated; system is restarting")

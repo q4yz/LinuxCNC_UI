@@ -155,6 +155,7 @@ LimitMEMLOCK=infinity
 # display; it already defaults to :0 if DISPLAY is unset, but a
 # systemd unit has no environment of its own, so make it explicit.
 Environment=DISPLAY=:0
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
