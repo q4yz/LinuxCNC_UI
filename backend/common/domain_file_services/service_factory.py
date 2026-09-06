@@ -9,13 +9,11 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from .FileService import FileService
-from .ActiveFileService import ActiveFileService
 from .ConfigFileService import ConfigFileService
 from .MachineFileService import MachineFileService
 from .MCodeFileService import MCodeFileService
 from .MacroFileService import MacroFileService
 from .ProgramFileService import ProgramFileService
-from .StagedFileService import StagedFileService
 
 _SERVICE_CACHE: Dict[str, FileService] = {}
 
@@ -32,18 +30,6 @@ def get_program_service(root: Optional[Path] = None) -> ProgramFileService:
     key = _cache_key(ProgramFileService, root)
     if key not in _SERVICE_CACHE:
         _SERVICE_CACHE[key] = ProgramFileService(root=root)
-    return _SERVICE_CACHE[key]
-
-def get_staged_service(root: Optional[Path] = None) -> StagedFileService:
-    key = _cache_key(StagedFileService, root)
-    if key not in _SERVICE_CACHE:
-        _SERVICE_CACHE[key] = StagedFileService(root=root)
-    return _SERVICE_CACHE[key]
-
-def get_active_service(root: Optional[Path] = None) -> ActiveFileService:
-    key = _cache_key(ActiveFileService, root)
-    if key not in _SERVICE_CACHE:
-        _SERVICE_CACHE[key] = ActiveFileService(root=root)
     return _SERVICE_CACHE[key]
 
 def get_mcode_service(root: Optional[Path] = None) -> MCodeFileService:
@@ -68,19 +54,15 @@ def reset_service_cache() -> None:
     _SERVICE_CACHE.clear()
 
 __all__ = [
-    "ActiveFileService",
     "ConfigFileService",
     "MCodeFileService",
     "MachineFileService",
     "MacroFileService",
     "ProgramFileService",
-    "StagedFileService",
-    "get_active_service",
     "get_config_service",
     "get_machine_service",
     "get_mcode_service",
     "get_program_service",
-    "get_staged_service",
     "reset_service_cache",
     "get_macro_service",
 ]

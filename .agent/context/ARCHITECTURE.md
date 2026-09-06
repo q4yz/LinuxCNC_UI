@@ -136,10 +136,12 @@ machine can be started/stopped/switched even while the machine
 backend or the machine itself is down:
 
 - `GET /api/v1/system/machine` — `pgrep`-based detection of a live
-  `linuxcnc`/`emc`/`milltask`/`linuxcncsvr` session, plus whether a
-  generated INI exists under `machine_config/active/`.
+  `linuxcnc`/`emc`/`milltask`/`linuxcncsvr` session, plus whether the
+  persisted default machine's INI exists under
+  `machine_config/machines/<name>/`.
 - `POST /api/v1/system/machine/start` — runs the console command
-  `linuxcnc -r <machine_config/active/machine.ini>` as a detached
+  `linuxcnc -r <machine_config/machines/<default>/config/machine.ini>`
+  as a detached
   process (`start_new_session=True`), stdout+stderr tee'd into
   `logs/linuxcnc_console.log`. `-r` (`linuxcnc(1)`) disables
   LinuxCNC's own default of redirecting stdout/stderr to
@@ -166,9 +168,9 @@ backend or the machine itself is down:
   straight into its 400 response.
 - `POST /api/v1/system/machine/stop` — SIGINT → (grace period) →
   SIGTERM → SIGKILL escalation.
-- `POST /api/v1/system/machine/switch` — stop → deploy the selected
-  machine's generated templates into `active/`
-  (`ActiveFileService.deploy_from`, see `§ 7`) → start.
+- `POST /api/v1/system/machine/switch` — stop → persist the selected
+  machine as the default (no copy step — `start()` already reads
+  `machines/<name>/` directly) → start.
 
 ### 1.4 Two-backend routing (nginx / Vite dev proxy)
 
@@ -384,8 +386,9 @@ files into `machine_config/<name>/`:
 - `<name>.tbl` — the tool table.
 - (plus the profile's own `machine.cfg`, unchanged).
 
-`MachineLifecycleService.switch()` (§ 1.3) deploys these generated
-files into `machine_config/active/` via `ActiveFileService.deploy_from`.
+`MachineLifecycleService.switch()` (§ 1.3) persists the selected
+machine as the default — there is no copy step; `start()` reads
+these generated files directly out of `machine_config/machines/<name>/`.
 Only trivkins-based kinematics are assumed today; multiple joints
 per axis letter are supported (see `AxisMappingPolicy` above), but
 non-trivial kinematics (e.g. real gantry coupling) are not yet
@@ -442,10 +445,14 @@ Key relationships:
   to a Remora stepgen channel (`remora.joint.{N}.*`), independent of
   the source Klipper config's declaration order.
 
-The frontend reads `hardware.json` via
-`GET /active/content/hardware.json` for display; the schema itself is
-enforced at generation time by the Pydantic model, not at the HTTP
-boundary.
+The machine backend reads the *default* machine's `hardware.json`
+via `HardwareConfigService` / `domain_file_services.paths.
+default_machine_hardware_json` (resolves
+`machine_config/machines/<default>/config/hardware.json`, falling
+back to `configs/hardware.json`, from the persisted
+`machine_config/default_machine.json` pointer — a plain filesystem
+read, no cross-app import); the schema itself is enforced at
+generation time by the Pydantic model, not at the HTTP boundary.
 
 ## 8. What the orchestrator actually does
 

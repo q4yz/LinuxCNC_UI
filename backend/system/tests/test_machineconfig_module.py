@@ -7,10 +7,6 @@ Covers:
 * The profiles CRUD endpoints support list/read/create/rename/delete
   on a per-test isolated ``profiles/`` tree (we monkeypatch the
   constants for the duration of each test).
-* ``POST /deploy`` promotes a generated machine's templates
-  (``machine_config/machines/<name>/configs``) into ``active/``.
-* ``GET /active`` + ``GET /active/content/{name}`` surface what's
-  deployed.
 * ``hardware.json`` v2 payload shape, built directly via
   :func:`build_hardware_json` (independent of any HTTP endpoint).
 * The structured ``ConfigValidationError`` envelope surfaces through
@@ -19,7 +15,11 @@ Covers:
 
 The pluggable ``Compiler`` framework (``GET /compilers``,
 ``POST /compile``, ``GET /staged`` + content, Remora
-``config.txt``) was removed — see ``.agent/HANDOFF.md``.
+``config.txt``) was removed, and so was the later ``active/`` deploy
+step (``GET /active`` + content, ``POST /deploy``,
+``GET /machine-name``) — a machine's config now lives directly under
+``machine_config/machines/<name>/`` and is addressed by name; see
+``MachineLifecycleService`` and ``HardwareConfigService``.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ def isolated_machine_config(monkeypatch, tmp_path):
     """Re-point every machineconfig service at a fresh ``tmp_path`` tree.
 
     The test never touches the real ``machine_config/`` directory;
-    we give each test a fresh profiles / machines / active subtree so
-    the CRUD assertions are deterministic.
+    we give each test a fresh profiles / machines subtree so the CRUD
+    assertions are deterministic.
 
     The FileService layer keeps the canonical roots in
     :mod:`domain_file_services`. The fixture rewrites those
@@ -54,8 +54,7 @@ def isolated_machine_config(monkeypatch, tmp_path):
     mc = tmp_path / "machine_config"
     profiles = mc / "profiles"
     machines = mc / "machines"
-    active = mc / "active"
-    for d in (profiles, machines, active):
+    for d in (profiles, machines):
         d.mkdir(parents=True, exist_ok=True)
 
     from services import domain_file_services, reset_service_cache
@@ -64,7 +63,6 @@ def isolated_machine_config(monkeypatch, tmp_path):
     monkeypatch.setattr(paths_mod, "MACHINE_CONFIG_DIR", mc)
     monkeypatch.setattr(paths_mod, "PROFILES_DIR", profiles)
     monkeypatch.setattr(paths_mod, "MACHINES_DIR", machines)
-    monkeypatch.setattr(paths_mod, "ACTIVE_DIR", active)
     # Drop the service-instance cache so the next ``get_*_service``
     # call picks up the freshly-monkeypatched roots.
     reset_service_cache()
@@ -80,7 +78,6 @@ def isolated_machine_config(monkeypatch, tmp_path):
         "machine_config": mc,
         "profiles": profiles,
         "machines": machines,
-        "active": active,
     }
 
     # Make sure a follow-up test (in the same process) starts from a
@@ -253,108 +250,6 @@ def test_profiles_outside_root_rejected(
     client = TestClient(app)
     resp = _generate(client, profile_path="../escape.cfg")
     assert resp.status_code == 400
-
-# ---------------------------------------------------------------------- #
-# Deploy                                                                  #
-# ---------------------------------------------------------------------- #
-
-def test_deploy_promotes_generated_machine_into_active(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """``POST /deploy`` copies a generated machine's configs/ into active/."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-
-    gen = _generate(client)
-    assert gen.status_code == 200, gen.text
-    machine = gen.json()["machine"]
-
-    resp = client.post(
-        "/api/v1/modules/machineconfig/deploy",
-        json={"machine_path": f"{machine}/configs"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert sorted(body["deployed"]) == sorted(
-        p.name for p in isolated_machine_config["active"].iterdir()
-    )
-    assert "machine.ini" in body["deployed"]
-    assert body["machine_name"] == machine
-
-def test_deploy_accepts_bare_machine_name(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """``machine_path`` may be the machine folder itself, not just .../configs."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-
-    gen = _generate(client)
-    machine = gen.json()["machine"]
-
-    resp = client.post(
-        "/api/v1/modules/machineconfig/deploy",
-        json={"machine_path": machine},
-    )
-    assert resp.status_code == 200, resp.text
-
-def test_deploy_unknown_machine_returns_404(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """Deploying a machine that was never generated fails fast."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-    resp = client.post(
-        "/api/v1/modules/machineconfig/deploy",
-        json={"machine_path": "no-such-machine"},
-    )
-    assert resp.status_code == 404
-
-def test_active_endpoint_lists_running_files(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """``GET /active`` returns the deployed file list and the machine name."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-    gen = _generate(client)
-    machine = gen.json()["machine"]
-    client.post(
-        "/api/v1/modules/machineconfig/deploy",
-        json={"machine_path": machine},
-    )
-    resp = client.get("/api/v1/modules/machineconfig/active")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["machine_name"] == machine
-    assert "machine.ini" in [f["name"] for f in body["files"]]
-
-def test_active_content_endpoint_returns_text(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """``GET /active/content/{name}`` returns the raw text content."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-    gen = _generate(client)
-    machine = gen.json()["machine"]
-    client.post(
-        "/api/v1/modules/machineconfig/deploy",
-        json={"machine_path": machine},
-    )
-    resp = client.get("/api/v1/modules/machineconfig/active/content/machine.ini")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["name"] == "machine.ini"
-    assert "[EMC]" in body["content"]
-
-def test_machine_name_empty_active_returns_null(
-    tmp_data_root, clean_env, isolated_machine_config
-):
-    """With no active files, the machine-name endpoint returns null."""
-    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
-    client = TestClient(app)
-    resp = client.get("/api/v1/modules/machineconfig/machine-name")
-    assert resp.status_code == 200
-    assert resp.json()["machine_name"] is None
 
 # ---------------------------------------------------------------------- #
 # hardware.json v2 payload (issue: dynamic heater hardware.json)          #

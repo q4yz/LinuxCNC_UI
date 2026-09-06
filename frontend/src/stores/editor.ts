@@ -16,7 +16,6 @@
 // carries an explicit ``source`` from this enum:
 //
 //     'profiles'   →  GET/PUT /api/v1/modules/machineconfig/profiles/content
-//     'active'     →  GET    /api/v1/modules/machineconfig/active/content/{name}
 //     'm_codes'    →  GET/PUT /api/v1/modules/machineconfig/m-codes/content
 //     'programs'   →  GET/PUT /api/v1/programs/content/{filename}
 //     'macros'     →  GET/PUT /api/v1/modules/macros/{name}/content
@@ -48,7 +47,6 @@ import { MachineLifecycleFacade } from '../facades/machineLifecycleFacade'
 export const EDITOR_SOURCES = Object.freeze({
   PROFILES: 'profiles',
   MACHINES: 'machines',
-  ACTIVE: 'active',
   M_CODES: 'm_codes',
   PROGRAMS: 'programs',
   MACROS: 'macros',
@@ -64,7 +62,6 @@ export type EditorSource = (typeof EDITOR_SOURCES)[keyof typeof EDITOR_SOURCES]
 export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Object.freeze({
   [EDITOR_SOURCES.PROFILES]: 'Profiles',
   [EDITOR_SOURCES.MACHINES]: 'Machine Templates',
-  [EDITOR_SOURCES.ACTIVE]:   'Active Config',
   [EDITOR_SOURCES.M_CODES]:  'M-codes',
   [EDITOR_SOURCES.PROGRAMS]: 'G-code Programs',
   [EDITOR_SOURCES.MACROS]:   'Macros',
@@ -76,7 +73,6 @@ export function sourceLabel(source: string): string {
 }
 
 const READ_ONLY_SOURCES = new Set<string>([
-  EDITOR_SOURCES.ACTIVE,
   EDITOR_SOURCES.MACHINE_LOG,
 ])
 
@@ -185,12 +181,6 @@ async function writeMachineContent(name: string, content: string): Promise<void>
     .saveMachineFileApiV1ModulesMachineconfigMachinesContentPut(name, { content })
 }
 
-async function readActiveContent(name: string): Promise<string> {
-  const envelope = await ModulesMachineconfigService
-    .readActiveApiV1ModulesMachineconfigActiveContentNameGet(name)
-  return envelope?.content ?? ''
-}
-
 async function readMCodeContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService.readMCode(name)
   return envelope?.content ?? ''
@@ -257,7 +247,6 @@ async function dispatchRead(source: EditorSource, name: string): Promise<string>
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
     case EDITOR_SOURCES.MACHINES: return readMachineContent(name)
-    case EDITOR_SOURCES.ACTIVE:   return readActiveContent(name)
     case EDITOR_SOURCES.M_CODES:  return readMCodeContent(name)
     case EDITOR_SOURCES.PROGRAMS: return readProgramContent(name)
     case EDITOR_SOURCES.MACROS:   return readMacroContent(name)

@@ -227,7 +227,7 @@ preference:
 
 | Helper | Use when |
 |--------|---------|
-| `reseed_from_hardware_json(path=None)` | Test needs the full tool set from `machine_config/active/hardware.json` (or a fixture path). Loads every tool-derived component. |
+| `reseed_from_hardware_json(path=None)` | Test needs the full tool set from the default machine's `hardware.json` (resolved via `domain_file_services.paths.default_machine_hardware_json`, or a fixture path). Loads every tool-derived component. |
 | `seed_temperature(sensor_id, actual, target=0)` | Test needs a temperature reading on a specific sensor without waiting for the heater ramp. Registers a fresh `MockHeater` on the fly. |
 | `seed_spindle(spindle_id, actual_rpm, is_connected, error_count)` | Test needs spindle telemetry without waiting for VFD spool-up. Registers a fresh `MockSpindleDigital` on the fly. |
 | `force_hal_pin(pin_name, value)` | Test needs to drive an arbitrary HAL pin directly. Bypasses the broadcast — only useful for pins whose owners don't validate writes. |

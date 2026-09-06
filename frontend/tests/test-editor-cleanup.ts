@@ -145,7 +145,6 @@ test("EDITOR_SOURCE_LABELS covers every EDITOR_SOURCES entry", () => {
   assert.match(storeText, /EDITOR_SOURCE_LABELS\b/)
   for (const source of [
     "PROFILES",
-    "ACTIVE",
     "M_CODES",
     "PROGRAMS",
     "MACROS",

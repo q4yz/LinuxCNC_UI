@@ -1,15 +1,16 @@
 // Machineconfig facade. CRUD for profiles + machines (template
-// generation) + the active listing. Wraps the generated
-// ``ModulesMachineconfigService``. Every write returns a
-// ``CommandResult`` so the store can route its failure log through
-// ``reportCommandFailure``.
+// generation). Wraps the generated ``ModulesMachineconfigService``.
+// Every write returns a ``CommandResult`` so the store can route its
+// failure log through ``reportCommandFailure``.
 //
-// The compile / staged / confirm-flash deploy pipeline this facade
-// used to wrap no longer exists on the backend — ``machineconfig.py``
-// only exposes ``active`` (list/read) and ``deploy`` (promote a
-// *generated* machine's templates into ``active``). The corresponding
-// wrapper functions were deleted rather than patched to call
-// endpoints that no longer exist.
+// Two things this facade used to wrap no longer exist on the
+// backend: the compile / staged / confirm-flash deploy pipeline, and
+// the later ``active/`` copy step (``GET /active`` + content,
+// ``POST /deploy``) — a machine's config now lives directly under
+// ``machine_config/machines/<name>/`` and is addressed by name
+// (see ``MachineLifecycleService``). The corresponding wrapper
+// functions were deleted rather than patched to call endpoints that
+// no longer exist.
 
 import { ModulesMachineconfigService, ApiError } from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
@@ -284,18 +285,6 @@ async function deleteMachine(path: string): Promise<CommandResult> {
   );
 }
 
-// --- Active -------------------------------------------------------------
-
-async function listActive() {
-  return ModulesMachineconfigService.listActiveApiV1ModulesMachineconfigActiveGet();
-}
-
-async function readActiveContent(name: string) {
-  return ModulesMachineconfigService.readActiveApiV1ModulesMachineconfigActiveContentNameGet(
-    name,
-  );
-}
-
 export const machineconfigFacade = Object.freeze({
   listProfiles,
   readProfile,
@@ -314,8 +303,6 @@ export const machineconfigFacade = Object.freeze({
   uploadMachine,
   renameMachine,
   deleteMachine,
-  listActive,
-  readActiveContent,
 });
 
 export default machineconfigFacade;

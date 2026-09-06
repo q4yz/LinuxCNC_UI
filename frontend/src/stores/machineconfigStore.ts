@@ -1,16 +1,16 @@
-// Machineconfig module Pinia store. Owns the profiles tree, the
-// machines tree (template generation), and the active listing. The
-// backend is the source of truth — we re-fetch per action rather
-// than caching, so operators always see current values after a
-// refetch. See ``.agent/STATE.md`` § 2.
+// Machineconfig module Pinia store. Owns the profiles tree and the
+// machines tree (template generation). The backend is the source of
+// truth — we re-fetch per action rather than caching, so operators
+// always see current values after a refetch. See ``.agent/STATE.md``
+// § 2.
 //
-// The compiler / staged / confirm-flash deploy pipeline this store
-// used to own was removed from the backend (there is no longer a
-// compile step — ``machineconfig.py`` only exposes ``active`` and
-// ``deploy``, which promotes a *generated* machine's templates
-// straight into ``active``, see ``MachineLifecycleService.switch()``)
-// and from the UI (`ProfilesExplorer` generates + `MachinesExplorer`
-// edits templates instead). The corresponding store state/actions
+// Two things this store used to own were removed from the backend
+// and from the UI: the compiler / staged / confirm-flash deploy
+// pipeline (`ProfilesExplorer` generates + `MachinesExplorer` edits
+// templates instead), and the later ``active/`` copy step — a
+// machine's config now lives directly under
+// ``machine_config/machines/<name>/`` and is addressed by name (see
+// ``MachineLifecycleService``). The corresponding store state/actions
 // were deleted rather than patched to match a contract that no
 // longer exists.
 //
@@ -34,19 +34,12 @@ import {
 import { CommandResult } from "../entities/common/CommandResult";
 import { machineconfigFacade } from "../facades/machineconfigFacade";
 import type { DirectoryEntryModel } from "../../generated/api/models/DirectoryEntryModel";
-import type { ActiveListing } from "../../generated/api/models/ActiveListing";
-import type { ActiveFile } from "../../generated/api/models/ActiveFile";
 
 const STORE_ID = "machineconfig";
 
 interface ProfilesTree {
   root: string;
   entries: DirectoryEntryModel[];
-}
-
-interface ActiveListingState {
-  machine_name: string | null;
-  files: ActiveFile[];
 }
 
 export interface MachineGenerateOutcome {
@@ -65,12 +58,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   const machinesTree = reactive<ProfilesTree>({ root: "machines", entries: [] });
 
-  const activeListing = reactive<ActiveListingState>({
-    machine_name: null,
-    files: [],
-  });
-  const activeContents = reactive<Record<string, string>>({});
-
   const isBusy = ref<boolean>(false);
 
   // --- Derived state ----------------------------------------------- //
@@ -84,13 +71,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       ) || null
     );
   });
-
-  const activeTotalSize = computed<number>(() =>
-    activeListing.files.reduce(
-      (sum: number, f: ActiveFile) => sum + (f.size_bytes || 0),
-      0,
-    ),
-  );
 
   // --- Error-mapping helper --------------------------------------- //
   //
@@ -146,28 +126,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
-  async function loadActive(): Promise<void> {
-    try {
-      const response = (await machineconfigFacade.listActive()) as ActiveListing;
-      activeListing.machine_name = response.machine_name ?? null;
-      activeListing.files.splice(0, activeListing.files.length);
-      for (const file of response.files || []) {
-        activeListing.files.push(file);
-      }
-      for (const key of Object.keys(activeContents)) {
-        delete activeContents[key];
-      }
-    } catch (error: unknown) {
-      const result = commandResultFromCaught(error, "load-active");
-      reportCommandFailure("load active artifacts", result);
-    }
-  }
-
   async function loadAll(): Promise<void> {
     await Promise.all([
       loadProfilesTree(),
       loadMachinesTree(),
-      loadActive(),
     ]);
   }
 
@@ -412,20 +374,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
-  // --- Active ------------------------------------------------------- //
-
-  async function readActiveFileContent(name: string): Promise<string | null> {
-    try {
-      const response = await machineconfigFacade.readActiveContent(name);
-      const content = response.content || "";
-      activeContents[name] = content;
-      return content;
-    } catch (error: unknown) {
-      consoleStore.error(`Failed to read active ${name}: ${describeError(error)}`);
-      return null;
-    }
-  }
-
   // --- Public surface --------------------------------------------- //
 
   return {
@@ -433,13 +381,9 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     selectedProfilePath,
     selectedProfile,
     machinesTree,
-    activeListing,
-    activeContents,
     isBusy,
-    activeTotalSize,
     loadProfilesTree,
     loadMachinesTree,
-    loadActive,
     loadAll,
     selectProfile,
     readProfileContent,
@@ -457,6 +401,5 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     uploadMachines,
     renameMachine,
     deleteMachine,
-    readActiveFileContent,
   };
 });

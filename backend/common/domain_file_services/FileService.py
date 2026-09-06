@@ -4,9 +4,10 @@ Issue #49 funnels every router-level filesystem call through a small
 family of service objects so the routers can stay thin HTTP wrappers.
 The base class is the generic, reusable primitive; the domain
 subclasses (:class:`ConfigFileService`, :class:`ProgramFileService`,
-:class:`StagedFileService`, :class:`ActiveFileService`) live in
-sibling modules and add the small bits of policy (read-only mode,
-profile filtering, G-code extensions) that each root needs.
+:class:`MachineFileService`, :class:`MCodeFileService`,
+:class:`MacroFileService`) live in sibling modules and add the small
+bits of policy (read-only mode, profile filtering, G-code
+extensions) that each root needs.
 
 Scope (mirrors the original ``backend/modules/machineconfig/filesystem.py``
 helpers that this class replaces):
@@ -34,7 +35,6 @@ issue #49 (and explicitly so for issue #41).
 
 from __future__ import annotations
 
-import configparser
 import logging
 import os
 from dataclasses import dataclass, field
@@ -91,13 +91,14 @@ class FileService:
     the four domain roots. The HTTP surface never instantiates a
     bare :class:`FileService`; routers get a domain service via
     :func:`get_config_service` / :func:`get_program_service` /
-    :func:`get_staged_service` / :func:`get_active_service`.
+    :func:`get_machine_service` / :func:`get_mcode_service` /
+    :func:`get_macro_service`.
     """
 
     #: Default value for ``read_only`` when the root is brand new and
     #: no per-file flag has been computed. Subclasses flip this to
-    #: ``True`` for staged / active roots so the frontend renders the
-    #: "write-protected" badge even before any compile has run.
+    #: ``True`` when a root should render the frontend's
+    #: "write-protected" badge by default.
     default_read_only: bool = False
 
     #: Optional filter ``(name) -> bool`` that restricts the
@@ -403,43 +404,6 @@ class FileService:
             raise PermissionError(f"Refusing to rename read-only entry: {source}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
-
-    # ------------------------------------------------------------------ #
-    # INI helpers                                                         #
-    # ------------------------------------------------------------------ #
-
-    def parse_machine_name(self) -> Optional[str]:
-        """Best-effort detection of the current machine name.
-
-        Reads ``[EMC] MACHINE`` from the first ``.ini`` file in the
-        root. Returns ``None`` when the directory is empty or the
-        key is missing — the frontend renders a friendly
-        placeholder in that case.
-        """
-        if not self.root.exists():
-            return None
-        candidates = sorted(self.root.glob("*.ini"))
-        if not candidates:
-            return None
-
-        # ``strict=False``: LinuxCNC INIs routinely repeat a key
-        # within one section (e.g. two ``HALFILE =`` lines under
-        # ``[HAL]``, one per HAL file to load) — valid LinuxCNC
-        # syntax that the stdlib parser's default strict mode
-        # rejects as a ``DuplicateOptionError``. Non-strict mode lets
-        # the last occurrence win for ``.get()``, which is all this
-        # probe needs.
-        parser = configparser.ConfigParser(strict=False)
-        try:
-            parser.read(candidates[0], encoding="utf-8")
-        except (configparser.Error, OSError):
-            return None
-
-        if parser.has_option("EMC", "MACHINE"):
-            value = parser.get("EMC", "MACHINE").strip()
-            return value or None
-        return None
-
 
 __all__ = [
     "FileMetadata",

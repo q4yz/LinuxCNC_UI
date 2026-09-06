@@ -19,14 +19,13 @@ class HeaterMapper:
     def from_dict_to_HeaterPins(cls, data: Dict[str, Any]) -> HeaterPins:
         tool_id = str(data["id"])
         suffix = tool_id.replace("heater", "")
-        print(suffix)
         fan_val = data.get("fan")
 
         return HeaterPins(
             id=tool_id,
             target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT, ""),
             actual_temperature=ReadWriteDynamicHalPin(f"actual-temperature{suffix}", HalDataType.FLOAT, ""),
-            fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT) if fan_val else UnconnectedHalPin(),
+            fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT, "") if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),
         )

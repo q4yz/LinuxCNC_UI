@@ -18,8 +18,6 @@ These tests pin the contract the dashboard depends on:
 """
 from __future__ import annotations
 
-from typing import Any
-
 import importlib
 import time
 from pathlib import Path
@@ -134,12 +132,13 @@ def _import_setup(module_name: str):
 
 
 def test_snapshot_timestamp_is_iso8601_utc(
-    tmp_data_root, clean_env, monkeypatch
+    tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """The snapshot's ``timestamp`` must be an ISO-8601 UTC string
     ending in ``Z`` so the frontend can use it to detect a stalled
     poll without parsing locale-dependent formats.
     """
+    _point_hardware_config_at(monkeypatch, tmp_path)
     _reset_mock_program_state()
     _reset_line_count_cache()
 
@@ -157,27 +156,13 @@ def test_snapshot_timestamp_is_iso8601_utc(
 # ---------------------------------------------------------------------- #
 
 
-def _write_v2_hardware_json(tmp_path: Path, payload: dict[str, Any]) -> Path:
-    """Drop a v2-shape ``hardware.json`` into ``tmp_path`` and
-    return the directory the loader reads from."""
-    import json
-
-    target = tmp_path / "machine_config" / "active"
-    target.mkdir(parents=True, exist_ok=True)
-    (target / "hardware.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
-    return tmp_path
-
-
 def _bare_base_thread_app(tmp_data_root) -> FastAPI:
     """Minimal helper used by the snapshot-mode tests below.
 
     Mirrors :func:`_base_thread_app` minus the ``program`` /
-    ``temperature`` / ``tools`` module boot — those modules trigger
-    broken mock-helper paths on the current tree. We only need the
-    ``base_thread`` flat router for these tests, since they assert on
-    the *presence* of fields, not their contents.
+    ``temperature`` / ``tools`` module boot — those tests only assert
+    on the *presence* of fields, not their contents, so the flat
+    ``base_thread`` router alone is enough.
     """
     from routers import BaseThreadRouter
 
@@ -187,11 +172,12 @@ def _bare_base_thread_app(tmp_data_root) -> FastAPI:
 
 
 def test_snapshot_default_mode_returns_all_fields(
-    tmp_data_root, clean_env, monkeypatch
+    tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """Omitting ``?mode=`` (legacy default) returns every field —
     backward compatibility for the dashboard's existing 1 Hz poll.
     """
+    _point_hardware_config_at(monkeypatch, tmp_path)
     _reset_mock_program_state()
     _reset_line_count_cache()
 
@@ -209,12 +195,13 @@ def test_snapshot_default_mode_returns_all_fields(
 
 
 def test_snapshot_mode_all_equivalent_to_default(
-    tmp_data_root, clean_env, monkeypatch
+    tmp_data_root, clean_env, monkeypatch, tmp_path
 ):
     """``?mode=all`` must produce the same key set as the legacy
     default — the explicit form for callers that want to advertise
     they want the full payload.
     """
+    _point_hardware_config_at(monkeypatch, tmp_path)
     _reset_mock_program_state()
     _reset_line_count_cache()
 

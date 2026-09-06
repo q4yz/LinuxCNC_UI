@@ -9,8 +9,13 @@ stopping the session again, and remembering which machine is the
 The default machine is persisted in
 ``machine_config/default_machine.json`` and points at a machine
 folder under ``machine_config/machines/`` whose INI lives at
-``<machine>/config/machine.ini`` — the ``machine_config/active/``
-deploy flow is deprecated and no longer part of the start path.
+``<machine>/config/machine.ini`` (or ``configs/machine.ini`` for
+generator output). ``machine_config/active/`` and
+``machine_config/ready_for_deploy/`` are gone entirely — every
+consumer (this service, ``HardwareConfigService``, the mock hardware
+layer) reads a machine's files directly out of its own
+``machines/<name>/`` folder now, addressed by name, not by a
+separate copy step.
 
 Starting literally runs the console command::
 
@@ -58,8 +63,7 @@ from typing import Any, Dict, List, Optional
 
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
-from domain_file_services import get_active_service, get_machine_service
-from domain_file_services.paths import ACTIVE_DIR
+from domain_file_services import get_machine_service
 
 logger = logging.getLogger("backend.system.machine_lifecycle")
 
@@ -463,39 +467,50 @@ class MachineLifecycleService:
     # ------------------------------------------------------------------ #
 
     def switch(self, machine: Optional[str] = None, start_machine: bool = True) -> Dict[str, Any]:
-        """Switch the active machine: stop → (deploy) → start.
+        """Switch machines: stop → (select) → start.
 
         Args:
             machine: Optional path under ``machine_config/machines``
                 to a generated machine (e.g. ``"PrintNC"`` or
-                ``"PrintNC/configs"`` — see
-                :func:`resolve_machine_configs_dir`). Generate it
-                first with ``POST /modules/machineconfig/machines/generate``.
-                When given, that machine's templates are deployed
-                into ``machine_config/active`` before starting; when
-                omitted, the machine currently in ``active/`` is
+                ``"PrintNC/configs"`` — both resolve to the same
+                folder). Generate it first with ``POST
+                /modules/machineconfig/machines/generate``. When
+                given, it's persisted as the default machine (there
+                is no separate deploy/copy step — ``start()`` already
+                reads ``machines/<name>/config/machine.ini``
+                directly); when omitted, the persisted default is
                 simply restarted.
-            start_machine: Start the new machine session after the
-                deploy (default ``True``).
+            start_machine: Start the new machine session after
+                selecting it (default ``True``).
         """
         if self.is_running():
             self.stop()
 
         if machine:
-            self._deploy_machine(machine)
+            self._select_generated_machine(machine)
 
         if not start_machine:
             return self.status()
 
-        # A fresh deploy always means a fresh INI — drop the cached
-        # service instances so ``start()`` sees the new file.
+        # A fresh selection always means a fresh INI — drop the
+        # cached service instances so ``start()`` sees the new file.
         from domain_file_services import reset_service_cache
 
         reset_service_cache()
         return self.start()
 
-    def _deploy_machine(self, machine: str) -> None:
-        """Deploy a generated machine's templates into ``active/``."""
+    def _select_generated_machine(self, machine: str) -> None:
+        """Validate ``machine`` and persist it as the default.
+
+        ``machine`` may be either a machine's own folder
+        (``"PrintNC"``) or its ``configs/`` folder directly
+        (``"PrintNC/configs"``) — :func:`resolve_machine_configs_dir`
+        accepts both so callers don't need to know the generator's
+        internal nesting convention. Either way, what gets persisted
+        via :meth:`set_default_machine` is the plain path relative to
+        ``machines/`` (the ``configs/`` suffix stripped), since that's
+        what :meth:`machine_ini` expects.
+        """
         from services.machinetemplates import resolve_machine_configs_dir
 
         machine_service = get_machine_service()
@@ -506,12 +521,11 @@ class MachineLifecycleService:
         if not configs_dir.exists() or not configs_dir.is_dir():
             raise NotFoundError(f"Machine not found: {machine}")
 
-        deployed = get_active_service().deploy_from(configs_dir)
-        logger.info(
-            "Switched active machine to '%s': deployed %d artifacts.",
-            machine,
-            len(deployed),
-        )
+        relative_name = str(
+            configs_dir.parent.relative_to(machine_service.root)
+        ).replace("\\", "/")
+        self.set_default_machine(relative_name)
+        logger.info("Switched default machine to '%s'.", relative_name)
 
 
 # Singleton provider

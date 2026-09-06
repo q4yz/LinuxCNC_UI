@@ -106,18 +106,20 @@ test("Profiles explorer generates machines with an override confirm", () => {
   );
 });
 
-test("view renders Profiles / Machines / Active without compiler panels", () => {
+test("view renders Profiles / Machines without compiler or active panels", () => {
   // MachineConfigView.vue was folded into ConfigView.vue — the Config
   // page is now the single home for the machine-config explorers.
+  // ActivePanel (and the machine_config/active/ deploy step it
+  // rendered) was removed — a machine's config lives directly under
+  // machine_config/machines/<name>/ and is addressed by name now.
   const text = read("views/ConfigView.vue");
 
   assert.match(text, /ProfilesExplorer/, "Profiles section required");
   assert.match(text, /MachinesExplorer/, "Machines section required");
-  assert.match(text, /ActivePanel/, "Active section required");
   assert.doesNotMatch(
     text,
-    /CompilerPanel|CompiledOutputViewer|DeploymentPanel/,
-    "deprecated compiler panels must not render",
+    /CompilerPanel|CompiledOutputViewer|DeploymentPanel|ActivePanel/,
+    "deprecated compiler and active panels must not render",
   );
   assert.doesNotMatch(
     text,

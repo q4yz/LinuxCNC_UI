@@ -1,21 +1,4 @@
 
-
-_PROJECT_ROOT = None
-
-def _get_project_root():
-    global _PROJECT_ROOT
-    if _PROJECT_ROOT is None:
-        from pathlib import Path
-        _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-    return _PROJECT_ROOT
-
-def _default_hardware_paths():
-    root = _get_project_root()
-    return [
-        root / "machine_config" / "active" / "hardware.json",
-        root / "machine_config" / "ready_for_deploy" / "hardware.json",
-    ]
-
 # --- LinuxCNC Constants ---
 STATE_ESTOP, STATE_ESTOP_RESET, STATE_OFF, STATE_ON = 1, 2, 3, 4
 MODE_MANUAL, MODE_AUTO, MODE_MDI = 1, 2, 3

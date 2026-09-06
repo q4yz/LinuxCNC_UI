@@ -6,10 +6,10 @@
 //     openInEditor({ source, name, readOnly = false })
 //
 //     source   →  one of EDITOR_SOURCES:
-//                   'profiles' | 'active' | 'machines'
+//                   'profiles' | 'machines'
 //                 | 'm_codes' | 'programs' | 'macros' | 'machine_log'
 //     name     →  filename (or path under ``profiles``)
-//     readOnly →  optional; ``active`` / ``machine_log`` default true
+//     readOnly →  optional; ``machine_log`` defaults to true
 //
 // The helper validates ``source`` against the enum so a typo does
 // not silently navigate to a route the editor cannot serve.

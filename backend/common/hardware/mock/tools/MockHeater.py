@@ -11,7 +11,6 @@ class MockHeater(MockComponent):
 
         # Calculate the suffix exactly as the ConfigMapper expects
         suffix = self.id.replace("heater", "")
-        print(suffix)
         self._pin_map = {}
         # Exact dictionary mapping of HAL pin strings to internal state attributes
         self._pin_map = {

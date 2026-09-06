@@ -17,20 +17,6 @@ Endpoint groups (mounted by the registry under
   the remaining ``/machines/...`` endpoints mirror the profiles CRUD
   surface for hand-editing the generated templates. Backed by
   :mod:`services.machinetemplates`.
-* **Staged / Active read-only** — ``GET /active`` plus per-file
-  content endpoints report what's currently deployed. Backed by
-  :class:`ActiveFileService`.
-* **Deploy** — ``POST /deploy`` promotes a generated machine's
-  templates (``machine_config/machines/<name>/configs/``) into
-  ``machine_config/active`` via :meth:`ActiveFileService.deploy_from`.
-  This only stages files on disk — it does not touch the running
-  ``linuxcnc`` process; use ``POST /api/v1/system/machine/switch``
-  (in the system service's machine-lifecycle router) to deploy *and*
-  restart in one call.
-* **Machine name** — ``GET /machine-name`` reads the current machine
-  name out of the active INI so the Active dashboard can render
-  the "currently running machine" header. Backed by
-  :meth:`ActiveFileService.machine_name`.
 * **M-codes** — ``GET/PUT/DELETE /m-codes/...`` exposes the bare
   ``M<num>`` files under ``machine_config/m_codes/`` so the
   universal editor can edit them the same way it edits
@@ -47,8 +33,20 @@ A previous revision of this router also exposed a pluggable
 ``config.txt`` flash payload staged under
 ``machine_config/ready_for_deploy``. That framework — and the
 Remora-specific flashing concept generally — has been retired in
-favour of the template generator above; see ``.agent/HANDOFF.md``
-for the removal notes.
+favour of the template generator above.
+
+A later revision also had a ``machine_config/active`` deploy step
+(``GET /active`` + content, ``POST /deploy``, ``GET /machine-name``)
+that copied a generated machine's templates into a fixed ``active/``
+folder before starting. That's gone too: a machine's config now
+lives directly under ``machine_config/machines/<name>/`` and is
+addressed by name — see
+``MachineLifecycleService.start()``/``machine_ini()`` (system
+service) and ``HardwareConfigService`` /
+``domain_file_services.paths.default_machine_hardware_json``
+(shared) for how the machine backend resolves the *current* machine's
+``hardware.json`` without either app depending on the other's
+process being up.
 """
 
 from __future__ import annotations
@@ -62,11 +60,9 @@ from pydantic import BaseModel, Field
 
 from exceptions import BadRequestError, ConflictError, NotFoundError
 from services import (
-    ActiveFileService,
     ConfigFileService,
     MCodeFileService,
     MachineFileService,
-    get_active_service,
     get_config_service,
     get_machine_service,
     get_mcode_service,
@@ -74,7 +70,6 @@ from services import (
 from services.machinetemplates import (
     MachineExistsError,
     generate_machine_templates,
-    resolve_machine_configs_dir,
 )
 from machineconfig_parser import ConfigValidationError
 
@@ -275,63 +270,6 @@ class RenameRequest(BaseModel):
 
     source: str = Field(..., description="Existing relative path")
     destination: str = Field(..., description="New relative path")
-
-
-class ActiveFile(BaseModel):
-    """One file currently sitting in ``active``."""
-
-    name: str = Field(..., description="Basename of the active file")
-    size_bytes: int = Field(..., description="File size in bytes")
-
-
-class ActiveListing(BaseModel):
-    """Response of ``GET /active``."""
-
-    machine_name: Optional[str] = Field(
-        default=None, description="Machine name from the active INI's [EMC] section"
-    )
-    files: List[ActiveFile] = Field(default_factory=list)
-
-
-class ActiveContent(BaseModel):
-    """Payload returned by ``GET /active/content/{name}``."""
-
-    name: str = Field(..., description="Filename inside active")
-    content: str = Field(..., description="Raw text content")
-
-
-class DeployRequest(BaseModel):
-    """Body of ``POST /deploy``."""
-
-    machine_path: str = Field(
-        ...,
-        description=(
-            "Path under machine_config/machines to a generated machine "
-            "(e.g. 'PrintNC' or 'PrintNC/configs') — generate it first "
-            "with POST /machines/generate."
-        ),
-    )
-
-
-class DeployResponse(BaseModel):
-    """Response of ``POST /deploy``."""
-
-    status: str = Field(..., description="Outcome summary")
-    message: str = Field(..., description="Human-readable deployment summary")
-    deployed: List[str] = Field(
-        default_factory=list, description="Filenames copied into active/"
-    )
-    machine_name: Optional[str] = Field(
-        default=None, description="Machine name detected after deployment"
-    )
-
-
-class MachineNameResponse(BaseModel):
-    """Response of ``GET /machine-name``."""
-
-    machine_name: Optional[str] = Field(
-        default=None, description="Machine name from active/<first>.ini's [EMC] section"
-    )
 
 
 class GenerateRequest(BaseModel):
@@ -823,105 +761,6 @@ def delete_machine_entry(path: str) -> StatusMessage:
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
     return StatusMessage(status="ok", message=f"Deleted {path}")
-
-
-# ---------------------------------------------------------------------- #
-# Active (read-only)                                                      #
-# ---------------------------------------------------------------------- #
-
-
-@router.get(
-    "/active",
-    summary="List active artifacts",
-    description=(
-        "Return every file in machine_config/active plus the current "
-        "machine name extracted from the active INI."
-    ),
-    response_model=ActiveListing,
-)
-def list_active() -> ActiveListing:
-    """Return the active artifact list + machine name."""
-    service: ActiveFileService = get_active_service()
-    files = [
-        ActiveFile(name=entry.name, size_bytes=entry.size_bytes)
-        for entry in service.list_active_files()
-    ]
-    return ActiveListing(machine_name=service.machine_name(), files=files)
-
-
-@router.get(
-    "/active/content/{name}",
-    summary="Read an active file",
-    description="Return the raw text content of a file in machine_config/active.",
-    response_model=ActiveContent,
-)
-def read_active(name: str) -> ActiveContent:
-    """Return the content of a single active file."""
-    service: ActiveFileService = get_active_service()
-    try:
-        content = service.read_file(name)
-    except FileNotFoundError as exc:
-        raise NotFoundError(f"Active file not found: {name}") from exc
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-    return ActiveContent(name=name, content=content)
-
-
-# ---------------------------------------------------------------------- #
-# Deploy                                                                  #
-# ---------------------------------------------------------------------- #
-
-
-@router.post(
-    "/deploy",
-    summary="Deploy a generated machine",
-    description=(
-        "Promote a generated machine's templates from "
-        "machine_config/machines/<name>/configs into machine_config/active. "
-        "This only stages files on disk — it does not touch the running "
-        "linuxcnc process; use POST /api/v1/system/machine/switch to "
-        "deploy and restart in one call."
-    ),
-    response_model=DeployResponse,
-    responses={404: {"description": "Machine not found."}},
-)
-def deploy_machine(payload: DeployRequest) -> DeployResponse:
-    """Deploy a generated machine's templates into the active directory."""
-    machine_service: MachineFileService = get_machine_service()
-    active_service: ActiveFileService = get_active_service()
-
-    try:
-        configs_dir = resolve_machine_configs_dir(machine_service, payload.machine_path)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-    if not configs_dir.exists() or not configs_dir.is_dir():
-        raise NotFoundError(f"Machine not found: {payload.machine_path}")
-
-    deployed = active_service.deploy_from(configs_dir)
-    machine_name = active_service.machine_name()
-
-    return DeployResponse(
-        status="ok",
-        message=f"Deployed {len(deployed)} artifacts into machine_config/active.",
-        deployed=deployed,
-        machine_name=machine_name,
-    )
-
-
-@router.get(
-    "/machine-name",
-    summary="Read current machine name",
-    description=(
-        "Best-effort detection of the current machine name from the first "
-        "INI file under machine_config/active. Returns null when the "
-        "active directory is empty."
-    ),
-    response_model=MachineNameResponse,
-)
-def get_machine_name() -> MachineNameResponse:
-    """Return the current machine name, or ``None``."""
-    service: ActiveFileService = get_active_service()
-    return MachineNameResponse(machine_name=service.machine_name())
 
 
 # ---------------------------------------------------------------------- #

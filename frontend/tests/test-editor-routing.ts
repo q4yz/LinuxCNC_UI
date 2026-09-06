@@ -54,8 +54,8 @@ test("EDITOR_SOURCES exposes every surface the universal editor dispatches", () 
   );
   assert.match(
     editorText,
-    /ACTIVE:\s*['"]active['"]/,
-    "EDITOR_SOURCES.ACTIVE must be 'active'",
+    /MACHINE_LOG:\s*['"]machine_log['"]/,
+    "EDITOR_SOURCES.MACHINE_LOG must be 'machine_log'",
   );
   assert.match(
     editorText,
@@ -78,7 +78,7 @@ test("source-driven dispatch table covers the core sources", () => {
   // Every source must appear as a switch arm in dispatchRead.
   for (const source of [
     "PROFILES",
-    "ACTIVE",
+    "MACHINE_LOG",
     "M_CODES",
     "PROGRAMS",
     "MACROS",
@@ -92,13 +92,13 @@ test("source-driven dispatch table covers the core sources", () => {
       `dispatchRead must handle EDITOR_SOURCES.${source}`,
     )
   }
-  // Read-only sources (active) MUST NOT appear in dispatchWrite's
-  // switch — saving them would silently 500 against the backend
-  // because the endpoint is GET-only.
+  // Read-only sources (machine_log) MUST NOT appear in
+  // dispatchWrite's switch — saving them would silently 500 against
+  // the backend because the endpoint is GET-only.
   assert.doesNotMatch(
     editorText,
-    /case\s+EDITOR_SOURCES\.ACTIVE:[^]*?writeActiveContent/,
-    "dispatchWrite must not write to the active source",
+    /case\s+EDITOR_SOURCES\.MACHINE_LOG:[^]*?writeMachineLogContent/,
+    "dispatchWrite must not write to the machine_log source",
   )
 });
 
@@ -295,7 +295,7 @@ test("modeForFilename still returns 'text' for .txt — but no router reads it",
 
 test("Save buttons are hidden when readOnly=true", () => {
   // The ``Save`` and ``Save & Close`` controls are write-only
-  // affordances. When the store is read-only (``active`` / any
+  // affordances. When the store is read-only (``machine_log`` / any
   // source the caller pinned read-only) the editor hides
   // them entirely instead of rendering greyed-out buttons the
   // operator cannot use.
@@ -318,5 +318,5 @@ test("Save buttons are hidden when readOnly=true", () => {
 // "router registers the /config route" and "AppSidebar exposes a
 // config entry"). EditorView.vue's ``closeEditor()`` legitimately
 // routes back to ``{ name: 'config' }`` after closing a
-// profiles/macros/m_codes/active file — that's correct current
-// behaviour, not a leftover bug.
+// profiles/macros/m_codes file — that's correct current behaviour,
+// not a leftover bug.

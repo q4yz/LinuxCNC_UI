@@ -19,8 +19,10 @@ def reseed_from_hardware_json(path: "Path | None" = None) -> None:
 
     Accepts an optional ``path`` argument:
 
-    * ``None`` (default) — resolve against the project's
-      ``<repo>/machine_config/active/hardware.json``.
+    * ``None`` (default) — resolve the persisted default machine's
+      ``machine_config/machines/<name>/config/hardware.json`` (there
+      is no more ``machine_config/active/``; see
+      :func:`domain_file_services.paths.default_machine_hardware_json`).
     * A directory — look up ``hardware.json`` inside it.
     * A file — use it directly.
 
@@ -28,8 +30,9 @@ def reseed_from_hardware_json(path: "Path | None" = None) -> None:
     doesn't break tests that don't depend on the config.
     """
     if path is None:
-        project_root = Path(__file__).resolve().parents[5]
-        path = project_root / "machine_config" / "active" / "hardware.json"
+        from domain_file_services.paths import default_machine_hardware_json
+
+        path = default_machine_hardware_json()
     elif path.is_dir():
         path = path / "hardware.json"
 

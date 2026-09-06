@@ -39,21 +39,28 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from domain_file_services.paths import default_machine_hardware_json
+
 logger = logging.getLogger("backend.services.remora_signal_map")
 
 
 # ---------------------------------------------------------------------------
 # Path resolution — same convention as config_mapper.py
 # ---------------------------------------------------------------------------
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_ACTIVE_DIR = _PROJECT_ROOT / "machine_config" / "active"
-_DEFAULT_HARDWARE_JSON = _DEFAULT_ACTIVE_DIR / "hardware.json"
+#
+# There is no more ``machine_config/active/`` — the default resolves
+# to the persisted default machine's own folder,
+# ``machine_config/machines/<name>/config/`` (or ``configs/`` for
+# generator output), via the shared, cross-app-safe resolver in
+# ``domain_file_services.paths``.
 
 
 def _resolve_active_dir(active_dir: Path | None) -> Path:
-    """Return the active root, defaulting to ``<repo>/machine_config/active``."""
-    return Path(active_dir) if active_dir is not None else _DEFAULT_ACTIVE_DIR
+    """Return the hardware.json's directory, defaulting to the
+    persisted default machine's config folder."""
+    if active_dir is not None:
+        return Path(active_dir)
+    return default_machine_hardware_json().parent
 
 
 # ---------------------------------------------------------------------------

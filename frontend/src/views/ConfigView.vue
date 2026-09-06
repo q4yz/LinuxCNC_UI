@@ -8,7 +8,6 @@
 // when the operator is already on the secure origin.
 
 import HttpsBanner from '../components/HttpsBanner.vue'
-import ActivePanel from "../components/machineconfig/ActivePanel.vue";
 import MacroManagerPanel from "../components/macros/MacroManagerPanel.vue";
 import McodeManagerPanel from "../components/macros/McodeManagerPanel.vue";
 import UpdateManager from "../components/UpdateManager.vue";
@@ -59,8 +58,6 @@ onMounted(() => {
         <UpdateManager />
         <ProfilesExplorer @edit="(path) => openEditor('profiles', path)" />
         <MachinesExplorer @edit="(path) => openEditor('machines', path)" />
-        <ActivePanel />
-
       </section>
 
     </div>

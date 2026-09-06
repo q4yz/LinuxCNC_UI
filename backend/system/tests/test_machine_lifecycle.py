@@ -28,34 +28,6 @@ from services.MachineLifecycleService import MachineLifecycleService
 
 
 @pytest.fixture()
-def isolated_active_dir(monkeypatch, tmp_path):
-    """Point ``ACTIVE_DIR`` at an isolated, empty tmp tree.
-
-    ``MachineLifecycleService`` imports ``ACTIVE_DIR`` by name
-    (``from domain_file_services.paths import ACTIVE_DIR``), so the
-    module-level name inside ``services.MachineLifecycleService`` —
-    not ``domain_file_services.paths.ACTIVE_DIR`` — is what
-    :meth:`active_ini` / :meth:`status` see.
-
-    ``machine_name()`` goes through a *different*, cached path —
-    ``get_active_service()`` — so the module attribute alone isn't
-    enough: without also repointing ``domain_file_services.paths``
-    and dropping the service cache, a cached ``ActiveFileService``
-    from an earlier test (or this repo's own real
-    ``machine_config/active/``) leaks into this test's assertions.
-    """
-    from services import domain_file_services, reset_service_cache
-
-    active = tmp_path / "active"
-    active.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(mls_module, "ACTIVE_DIR", active)
-    monkeypatch.setattr(domain_file_services.paths, "ACTIVE_DIR", active)
-    reset_service_cache()
-    yield active
-    reset_service_cache()
-
-
-@pytest.fixture()
 def isolated_logs(monkeypatch, tmp_path):
     """Point every log source :class:`MachineLifecycleService` reads
     at an isolated tmp tree — otherwise ``console_log()`` would also
@@ -131,7 +103,7 @@ def _client() -> TestClient:
 # --------------------------------------------------------------------- #
 
 
-def test_status_reports_not_running(no_processes, isolated_active_dir):
+def test_status_reports_not_running(no_processes, isolated_machines_root):
     status = _service().status()
     assert status["running"] is False
     assert status["pids"] == []
@@ -139,7 +111,7 @@ def test_status_reports_not_running(no_processes, isolated_active_dir):
     assert status["ini_path"] is None
 
 
-def test_status_reports_running_with_pids(running_process, isolated_active_dir):
+def test_status_reports_running_with_pids(running_process, isolated_machines_root):
     status = _service().status()
     assert status["running"] is True
     assert status["pids"] == [4242]
@@ -158,8 +130,7 @@ def isolated_machines_root(monkeypatch, tmp_path, request):
     The default-machine helpers read ``MACHINE_CONFIG_DIR`` at call
     time (import inside the method), so patching the paths module is
     enough. The machine file service is a cached singleton, so the
-    cache must be dropped both before and after — same pattern as
-    :func:`isolated_active_dir`.
+    cache must be dropped both before and after.
     """
     from services import domain_file_services, reset_service_cache
 
@@ -248,7 +219,7 @@ def test_machine_ini_rejects_path_escape(no_processes, isolated_machines_root):
 # --------------------------------------------------------------------- #
 
 
-def test_start_raises_conflict_when_already_running(running_process, isolated_active_dir):
+def test_start_raises_conflict_when_already_running(running_process):
     with pytest.raises(ConflictError):
         _service().start()
 
@@ -480,7 +451,7 @@ def test_console_log_labels_each_present_source(isolated_logs):
 # --------------------------------------------------------------------- #
 
 
-def test_stop_is_a_noop_when_nothing_running(no_processes, isolated_active_dir, monkeypatch):
+def test_stop_is_a_noop_when_nothing_running(no_processes, monkeypatch):
     calls = []
     monkeypatch.setattr(mls_module.os, "kill", lambda *a: calls.append(a))
 
@@ -490,7 +461,7 @@ def test_stop_is_a_noop_when_nothing_running(no_processes, isolated_active_dir, 
     assert calls == []
 
 
-def test_stop_sends_sigint_and_succeeds(isolated_active_dir, monkeypatch):
+def test_stop_sends_sigint_and_succeeds(monkeypatch):
     state = {"alive": True}
 
     def fake_run(cmd, **kwargs):
@@ -515,7 +486,7 @@ def test_stop_sends_sigint_and_succeeds(isolated_active_dir, monkeypatch):
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGKILL"), reason="SIGKILL is POSIX-only; the deploy target is always Linux")
-def test_stop_escalates_to_sigterm_then_sigkill(isolated_active_dir, monkeypatch):
+def test_stop_escalates_to_sigterm_then_sigkill(monkeypatch):
     # Ignores SIGINT and SIGTERM, only "dies" on SIGKILL.
     state = {"alive": True}
 
@@ -553,24 +524,22 @@ def _isolated_machine_dirs(monkeypatch, tmp_path, request):
     mc = tmp_path / "machine_config"
     profiles = mc / "profiles"
     machines = mc / "machines"
-    active = mc / "active"
-    for d in (profiles, machines, active):
+    for d in (profiles, machines):
         d.mkdir(parents=True, exist_ok=True)
 
     paths_mod = domain_file_services.paths
     monkeypatch.setattr(paths_mod, "MACHINE_CONFIG_DIR", mc)
     monkeypatch.setattr(paths_mod, "PROFILES_DIR", profiles)
     monkeypatch.setattr(paths_mod, "MACHINES_DIR", machines)
-    monkeypatch.setattr(paths_mod, "ACTIVE_DIR", active)
-    monkeypatch.setattr(mls_module, "ACTIVE_DIR", active)
     reset_service_cache()
-    # The cached ActiveFileService singleton outlives monkeypatch's own
-    # teardown (which only reverts the setattr calls above, not the
-    # cache built from them) — without dropping it here too, the next
-    # test to call get_active_service() inherits this test's (by then
-    # deleted) tmp path instead of a fresh, correctly-pointed instance.
+    # The cached MachineFileService singleton outlives monkeypatch's
+    # own teardown (which only reverts the setattr calls above, not
+    # the cache built from them) — without dropping it here too, the
+    # next test to call get_machine_service() inherits this test's
+    # (by then deleted) tmp path instead of a fresh, correctly-pointed
+    # instance.
     request.addfinalizer(reset_service_cache)
-    return {"machine_config": mc, "profiles": profiles, "machines": machines, "active": active}
+    return {"machine_config": mc, "profiles": profiles, "machines": machines}
 
 
 def test_switch_raises_not_found_for_unknown_machine(no_processes, monkeypatch, tmp_path, request):
@@ -581,15 +550,17 @@ def test_switch_raises_not_found_for_unknown_machine(no_processes, monkeypatch, 
 
 
 def test_switch_without_a_machine_just_returns_status(no_processes, monkeypatch, tmp_path, request):
-    """Omitting ``machine`` restarts whatever is already in active/ — no
-    deploy step, so it never raises even with nothing generated yet."""
+    """Omitting ``machine`` restarts whatever is already the persisted
+    default — no selection step, so it never raises even with no
+    default machine set yet (``start_machine=False`` short-circuits
+    before ``start()`` would raise ``NotFoundError``)."""
     _isolated_machine_dirs(monkeypatch, tmp_path, request)
 
     result = _service().switch(machine=None, start_machine=False)
     assert result["running"] is False
 
 
-def test_switch_deploys_generated_machine_then_reports_status(no_processes, monkeypatch, tmp_path, request):
+def test_switch_selects_generated_machine_then_reports_status(no_processes, monkeypatch, tmp_path, request):
     dirs = _isolated_machine_dirs(monkeypatch, tmp_path, request)
     machine_dir = dirs["machines"] / "PrintNC" / "configs"
     machine_dir.mkdir(parents=True)
@@ -597,11 +568,12 @@ def test_switch_deploys_generated_machine_then_reports_status(no_processes, monk
 
     result = _service().switch(machine="PrintNC", start_machine=False)
 
-    # The deploy itself still lands in active/ (legacy switch flow).
-    assert (dirs["active"] / "machine.ini").exists()
-    # But status() reports the *default machine*, not active/ — the
-    # default was never set in this test, so no INI is reported.
-    assert result["ini_exists"] is False
+    # No copy step — switch() just persists "PrintNC" as the default
+    # machine (start() already reads machines/<name>/ directly), so
+    # status() reports it immediately.
+    assert result["default_machine"] == "PrintNC"
+    assert result["ini_exists"] is True
+    assert _service().default_machine() == "PrintNC"
 
 
 # --------------------------------------------------------------------- #
@@ -628,7 +600,7 @@ def test_start_endpoint_returns_404_without_default_machine(no_processes, isolat
     assert response.status_code == 404
 
 
-def test_start_endpoint_returns_409_when_already_running(running_process, isolated_active_dir):
+def test_start_endpoint_returns_409_when_already_running(running_process):
     response = _client().post("/api/v1/system/machine/start")
     assert response.status_code == 409
 
@@ -681,7 +653,7 @@ def test_set_default_endpoint_returns_404_for_missing_ini(
     assert response.status_code == 404
 
 
-def test_stop_endpoint_returns_200_when_already_stopped(no_processes, isolated_active_dir):
+def test_stop_endpoint_returns_200_when_already_stopped(no_processes, isolated_machines_root):
     response = _client().post("/api/v1/system/machine/stop")
     assert response.status_code == 200
     assert response.json()["running"] is False
