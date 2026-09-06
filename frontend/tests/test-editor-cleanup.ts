@@ -146,10 +146,10 @@ test("EDITOR_SOURCE_LABELS covers every EDITOR_SOURCES entry", () => {
   for (const source of [
     "PROFILES",
     "ACTIVE",
-    "STAGED",
     "M_CODES",
     "PROGRAMS",
     "MACROS",
+    "MACHINE_LOG",
   ]) {
     const quoted = source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     // Match ``[EDITOR_SOURCES.X]: 'Label'`` (enum-keyed form).

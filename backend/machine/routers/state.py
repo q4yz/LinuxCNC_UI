@@ -27,13 +27,18 @@ stays inside ``ModulesAxisService`` on the frontend side.
 from __future__ import annotations
 
 import logging
-from typing import List
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 
 from services.StateService import get_state_service
 from services.ConsoleLogger import LogLevel, get_console_logger
+from models.state.state_models import (
+    MdiCommand,
+    ModeCommand,
+    StateCommand,
+    StateSnapshotResponse,
+    StatusResponse,
+)
 
 
 logger = logging.getLogger("backend.state_service")
@@ -43,72 +48,6 @@ router = APIRouter(
     prefix="/api/v1/modules/machine_state",
     tags=["modules:machine_state"],
 )
-
-
-# ---------------------------------------------------------------------------
-# Pydantic request / response models (kept private to the module)
-# ---------------------------------------------------------------------------
-
-
-class _StateCommand(BaseModel):
-    state: str = Field(
-        ...,
-        description=(
-            "Target machine state: 'on', 'off', 'estop', or 'estop_reset'"
-        ),
-    )
-
-
-class _ModeCommand(BaseModel):
-    mode: str = Field(
-        ...,
-        description="Target task mode: 'manual', 'auto', or 'mdi'",
-    )
-
-
-class _MdiCommand(BaseModel):
-    command: str = Field(..., description="G-code / MDI command string to execute")
-
-
-class _StateSnapshot(BaseModel):
-    """Clean + diagnostic machine-state snapshot for ``GET /state``.
-
-    ``state`` is the operator-facing :class:`MachineState` enum
-    value (lowercase string). ``raw_*`` fields are diagnostic
-    only — they are intentionally prefixed so a future refactor
-    can drop them without breaking the wire format.
-    """
-
-    state: str = Field(
-        ...,
-        description=(
-            "Clean MachineState enum value (e.g. 'idle', 'running')."
-        ),
-    )
-    raw_task_state: int = Field(
-        ...,
-        description="linuxcnc NML task_state (diagnostic only).",
-    )
-    raw_estop: int = Field(
-        ...,
-        description="linuxcnc NML estop bit (diagnostic only).",
-    )
-    raw_interp_state: int = Field(
-        ...,
-        description="linuxcnc NML interp_state (diagnostic only).",
-    )
-    file: str = Field(
-        default="",
-        description="Loaded G-code file path; empty when none.",
-    )
-    homed: List[int] = Field(
-        ...,
-        description="Per-axis homed flags (one entry per axis).",
-    )
-
-
-class _StatusResponse(BaseModel):
-    status: str = Field(..., description="Outcome summary (e.g., 'ok')")
 
 
 # ---------------------------------------------------------------------------
@@ -124,25 +63,23 @@ class _StatusResponse(BaseModel):
         "diagnostic only and may be dropped in a future release."
     ),
     operation_id="getMachineState",
-    response_model=_StateSnapshot,
+    response_model=StateSnapshotResponse,
 )
-def _get_state_endpoint() -> _StateSnapshot:
+def _get_state_endpoint() -> StateSnapshotResponse:
     """Read-side facade — delegates to
-    :meth:`StateService.get_state_snapshot` and lets
-    FastAPI's response-model coercion turn the dict into the
-    documented :class:`_StateSnapshot` shape.
+    :meth:`StateService.get_state_snapshot`, which already returns
+    the documented :class:`StateSnapshotResponse` shape.
     """
-    snapshot = get_state_service().get_state_snapshot()
-    return _StateSnapshot(**snapshot.model_dump())
+    return get_state_service().get_state_snapshot()
 
 
 @router.post(
     "/state",    summary="Set Machine State",
     description="Toggle machine E-Stop or Power state.",
     operation_id="setMachineState",
-    response_model=_StatusResponse,
+    response_model=StatusResponse,
 )
-def _set_state_endpoint(cmd: _StateCommand) -> _StatusResponse:
+def _set_state_endpoint(cmd: StateCommand) -> StatusResponse:
     """Translate ``state`` via the facade and dispatch.
 
     ``ValueError`` from the service (unknown state name) is
@@ -153,22 +90,22 @@ def _set_state_endpoint(cmd: _StateCommand) -> _StatusResponse:
         get_state_service().set_state(cmd.state)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid state")
-    return _StatusResponse(status="success")
+    return StatusResponse(status="success")
 
 
 @router.post(
     "/mode",    summary="Set Machine Mode",
     description="Change the machine task mode (manual, auto, mdi).",
     operation_id="setMachineMode",
-    response_model=_StatusResponse,
+    response_model=StatusResponse,
 )
-def _set_mode_endpoint(cmd: _ModeCommand) -> _StatusResponse:
+def _set_mode_endpoint(cmd: ModeCommand) -> StatusResponse:
     """Translate ``mode`` via the facade and dispatch."""
     try:
         get_state_service().set_mode(cmd.mode)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid mode")
-    return _StatusResponse(status="success")
+    return StatusResponse(status="success")
 
 
 @router.post(
@@ -179,9 +116,9 @@ def _set_mode_endpoint(cmd: _ModeCommand) -> _StatusResponse:
         "command to the hardware layer."
     ),
     operation_id="runMdiCommand",
-    response_model=_StatusResponse,
+    response_model=StatusResponse,
 )
-def _run_mdi_endpoint(cmd: _MdiCommand) -> _StatusResponse:
+def _run_mdi_endpoint(cmd: MdiCommand) -> StatusResponse:
     """Dispatch a single MDI command via the facade.
 
     The handler mirrors the command + response to the persistent
@@ -207,7 +144,7 @@ def _run_mdi_endpoint(cmd: _MdiCommand) -> _StatusResponse:
         f"Executed: {cmd.command}",
         level=LogLevel.INFO,
     )
-    return _StatusResponse(status="success")
+    return StatusResponse(status="success")
 
 
 @router.post(
@@ -222,9 +159,9 @@ def _run_mdi_endpoint(cmd: _MdiCommand) -> _StatusResponse:
         "active is a no-op semantically."
     ),
     operation_id="activateEstop",
-    response_model=_StatusResponse,
+    response_model=StatusResponse,
 )
-def _activate_estop_endpoint() -> _StatusResponse:
+def _activate_estop_endpoint() -> StatusResponse:
     """Drive ``halui.estop.activate`` directly.
 
     Used only by the global E-Stop header button (``EStopHeader.vue``).
@@ -239,7 +176,7 @@ def _activate_estop_endpoint() -> _StatusResponse:
         # propagate so the operator sees the wiring fault instead of
         # a misleading 200 OK.
         raise
-    return _StatusResponse(status="success")
+    return StatusResponse(status="success")
 
 
 __all__ = ["router"]

@@ -101,13 +101,14 @@ is deliberately hand-rolled `fetch` so callers keep working when
 endpoint, not the data endpoints.
 
 **Tripwire.** No `fetch(...)` call in a store file outside of
-`createModuleSettings.ts`. `frontend/tests/test-tools-module.ts`
-is the closest thing to an automated guard today — it asserts the
-tools store consumes `useBaseThreadStore()` rather than its own
-polling/fetch, and it does not currently regex-ban a stray `fetch(`
-call directly, so a new hand-rolled `fetch` in a different store
-would not be caught automatically. Treat this as a code-review
-check until a dedicated lint exists (see `.agent/HANDOFF.md` § 2).
+`createModuleSettings.ts`. Enforced by
+`frontend/tests/test-no-hand-rolled-fetch.ts`, which regex-bans a
+stray `fetch(` across every file in `frontend/src/stores/` (read via
+`readdirSync`, not a hardcoded list, so a brand-new store is covered
+automatically). This test caught `cameraStore.ts` hand-rolling
+`fetch()` against three endpoints (`/devices`, `/status`,
+`/stream/diagnostic`) that already had generated-client counterparts
+— migrated to `ModulesCameraService` alongside adding the guard.
 
 ### 2.5 Strict-null idempotency gate silently disables the poll
 

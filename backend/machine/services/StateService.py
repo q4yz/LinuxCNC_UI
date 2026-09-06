@@ -1,10 +1,13 @@
-"""State module service — :class:`StateService` + :class:`MachineState`.
+"""State module service — :class:`StateService`.
 
 This is the canonical home for the machine-state / mode / MDI facade
 that used to live on ``backend.services.machine_service.MachineControlService``.
 The HTTP edge (``backend/modules/state/router.py``) is a thin wrapper
-around :func:`get_state_service`; this module owns all business logic
-and the operator-facing :class:`MachineState` enum.
+around :func:`get_state_service`; this module owns all business
+logic. The operator-facing :class:`MachineState` enum lives in
+``dtos.state.MachineStateDto`` (pure Python, per the DTO-layer
+convention) and is re-exported here since ``SpindleDigitalService``
+and this module's own tests already import it from this path.
 
 The HTTP router imports only :func:`get_state_service` — never the
 class directly — so the singleton lifecycle mirrors the historical
@@ -16,56 +19,22 @@ from __future__ import annotations
 import logging
 import time
 import warnings
-from enum import Enum
 from typing import List, Optional, Any, Tuple
 
 from fastapi import HTTPException
-from pydantic import BaseModel
 
 from dtos.EStopDto import EStopPin
 from dtos.LinuxCNCError import now_iso
 from dtos.pins.HalPin import HalDataType, HalPin
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
+from dtos.state.MachineStateDto import MachineState
 from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
     get_error_channel
 from hardware.Connection import read_error_history
+from models.state.state_models import StateSnapshotResponse
 
 logger = logging.getLogger("backend.services.StateService")
-
-
-# ---------------------------------------------------------------------------
-# Data Models
-# ---------------------------------------------------------------------------
-
-class MachineState(str, Enum):
-    """Operator-facing machine state.
-
-    Mirrors ``frontend/src/stores/stateFacade.js::SystemState``.
-    Values are lowercase strings rather than the LinuxCNC NML
-    integer constants so the facade never leaks the underlying
-    wire protocol. ``str``-mixin keeps the enum JSON-serialisable
-    out of the box (``json.dumps(MachineState.IDLE) == '"idle"'``).
-    """
-
-    OFFLINE = "offline"
-    ESTOP = "estop"
-    POWER_OFF = "power_off"
-    IDLE = "idle"
-    LOADED = "loaded"
-    RUNNING = "running"
-    PAUSED = "paused"
-    FAILURE = "failure"
-
-
-class StateSnapshot(BaseModel):
-    """JSON-serialisable snapshot for the API / WebSocket."""
-    state: MachineState
-    raw_task_state: int
-    raw_estop: int
-    raw_interp_state: int
-    file: str
-    homed: List[int]
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +182,7 @@ class StateService:
 
         return MachineState.FAILURE
 
-    def get_state_snapshot(self) -> StateSnapshot:
+    def get_state_snapshot(self) -> StateSnapshotResponse:
         """Return a strictly-typed snapshot of the current machine state."""
         empty_defaults = {
             "state": MachineState.OFFLINE,
@@ -226,11 +195,11 @@ class StateService:
 
         stat = get_stat_channel()
         if stat is None:
-            return StateSnapshot(**empty_defaults)
+            return StateSnapshotResponse(**empty_defaults)
 
         try:
             stat.poll()
-            return StateSnapshot(
+            return StateSnapshotResponse(
                 state=self.get_state(),
                 raw_task_state=int(getattr(stat, "task_state", 0)),
                 raw_estop=int(getattr(stat, "estop", 0)),
@@ -239,7 +208,7 @@ class StateService:
                 homed=list(getattr(stat, "homed", [0, 0, 0]))
             )
         except Exception:  # noqa: BLE001
-            return StateSnapshot(**empty_defaults)
+            return StateSnapshotResponse(**empty_defaults)
 
     def get_machine_stat(self):
         warnings.warn(
@@ -350,7 +319,7 @@ def get_state_service() -> StateService:
 
 __all__ = [
     "MachineState",
-    "StateSnapshot",
+    "StateSnapshotResponse",
     "StateService",
     "get_state_service",
 ]

@@ -1,16 +1,23 @@
-from typing import List, Literal
+from typing import List
 from pydantic import BaseModel, Field
 
+# ``state`` / ``mode`` are plain ``str`` rather than a ``Literal`` —
+# an unrecognised value must reach ``StateService._resolve`` and come
+# back as the router's hand-translated ``400 Invalid state`` /
+# ``400 Invalid mode`` (pinned by test_machine_state_module.py). A
+# ``Literal`` would make FastAPI reject it at the validation layer
+# with a ``422`` before the handler ever runs, silently changing the
+# documented contract.
 class StateCommand(BaseModel):
-    state: Literal["on", "off", "estop", "estop_reset"] = Field(
+    state: str = Field(
         ...,
-        description="Target machine state.",
+        description="Target machine state: 'on', 'off', 'estop', or 'estop_reset'.",
     )
 
 class ModeCommand(BaseModel):
-    mode: Literal["manual", "auto", "mdi"] = Field(
+    mode: str = Field(
         ...,
-        description="Target task mode.",
+        description="Target task mode: 'manual', 'auto', or 'mdi'.",
     )
 
 class MdiCommand(BaseModel):

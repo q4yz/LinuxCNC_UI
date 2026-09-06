@@ -1,7 +1,15 @@
-// Machineconfig facade. CRUD for profiles + compile / deploy
-// pipeline. Wraps the generated ``ModulesMachineconfigService``.
-// Every write returns a ``CommandResult`` so the store can route
-// its failure log through ``reportCommandFailure``.
+// Machineconfig facade. CRUD for profiles + machines (template
+// generation) + the active listing. Wraps the generated
+// ``ModulesMachineconfigService``. Every write returns a
+// ``CommandResult`` so the store can route its failure log through
+// ``reportCommandFailure``.
+//
+// The compile / staged / confirm-flash deploy pipeline this facade
+// used to wrap no longer exists on the backend — ``machineconfig.py``
+// only exposes ``active`` (list/read) and ``deploy`` (promote a
+// *generated* machine's templates into ``active``). The corresponding
+// wrapper functions were deleted rather than patched to call
+// endpoints that no longer exist.
 
 import { ModulesMachineconfigService, ApiError } from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
@@ -31,10 +39,6 @@ async function _commandResultFrom(
 
 async function listProfiles() {
   return ModulesMachineconfigService.getProfilesTreeApiV1ModulesMachineconfigProfilesTreeGet();
-}
-
-async function listCompilers() {
-  return ModulesMachineconfigService.listCompilersApiV1ModulesMachineconfigCompilersGet();
 }
 
 async function readProfile(path: string) {
@@ -123,24 +127,6 @@ async function deleteProfile(path: string): Promise<CommandResult> {
       path,
     ),
     `delete-profile:${path}`,
-  );
-}
-
-// --- Compile / deploy -------------------------------------------------
-
-async function compileProfile({
-  profile_path,
-  compiler_id,
-}: {
-  profile_path: string;
-  compiler_id: string;
-}): Promise<CommandResult> {
-  return _commandResultFrom(
-    ModulesMachineconfigService.compileProfileApiV1ModulesMachineconfigCompilePost({
-      profile_path,
-      compiler_id,
-    }),
-    `compile:${profile_path}:${compiler_id}`,
   );
 }
 
@@ -298,31 +284,10 @@ async function deleteMachine(path: string): Promise<CommandResult> {
   );
 }
 
-async function deployStaged({
-  confirm_flash = false,
-}: { confirm_flash?: boolean } = {}): Promise<CommandResult> {
-  return _commandResultFrom(
-    ModulesMachineconfigService.deployStagedApiV1ModulesMachineconfigDeployPost({
-      confirm_flash,
-    }),
-    "deploy",
-  );
-}
-
-// --- Staged / active --------------------------------------------------
-
-async function listStaged() {
-  return ModulesMachineconfigService.listStagedApiV1ModulesMachineconfigStagedGet();
-}
+// --- Active -------------------------------------------------------------
 
 async function listActive() {
   return ModulesMachineconfigService.listActiveApiV1ModulesMachineconfigActiveGet();
-}
-
-async function readStagedContent(name: string) {
-  return ModulesMachineconfigService.readStagedApiV1ModulesMachineconfigStagedContentNameGet(
-    name,
-  );
 }
 
 async function readActiveContent(name: string) {
@@ -333,7 +298,6 @@ async function readActiveContent(name: string) {
 
 export const machineconfigFacade = Object.freeze({
   listProfiles,
-  listCompilers,
   readProfile,
   writeProfile,
   createFolder,
@@ -341,7 +305,6 @@ export const machineconfigFacade = Object.freeze({
   uploadProfile,
   renameProfile,
   deleteProfile,
-  compileProfile,
   generateMachine,
   listMachines,
   readMachine,
@@ -351,10 +314,7 @@ export const machineconfigFacade = Object.freeze({
   uploadMachine,
   renameMachine,
   deleteMachine,
-  deployStaged,
-  listStaged,
   listActive,
-  readStagedContent,
   readActiveContent,
 });
 

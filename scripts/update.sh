@@ -5,7 +5,8 @@
 set -e
 
 echo "Starting update process..."
-cd "$(dirname "$0")/.." || exit 1
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_DIR" || exit 1
 
 # Safety Check 1: Ensure we are inside a valid git repository
 if [ ! -d ".git" ]; then
@@ -20,7 +21,8 @@ if pgrep -x "linuxcnc" > /dev/null || pgrep -x "emc" > /dev/null; then
 fi
 
 echo "Pulling latest changes from git..."
-git pull origin main
+# Just 'git pull' so it updates whichever branch is currently checked out (e.g., dev or main)
+git pull
 
 echo "Updating backend dependencies..."
 # One venv shared by both services (backend/machine + backend/system)
@@ -41,7 +43,14 @@ else
     pip install $REQ_ARGS
 fi
 
-echo "Restarting backend services..."
-sudo systemctl restart linuxcnc-ui-machine linuxcnc-ui-system
+echo "Stopping the system service to prevent port collisions during schema generation..."
+# Only the system service (:8001) is a systemd unit — the machine
+# backend (:8000) is spawned by the system service like a program,
+# so there is no linuxcnc-ui-machine unit to stop here.
+sudo /bin/systemctl stop linuxcnc-ui-system
 
-echo "Update Complete"
+echo "Triggering UI rebuild and service restarts..."
+# Call the rebuild script (which handles the frontend build, API generation, restarts, and nginx reload)
+bash "$PROJECT_DIR/rebuild_ui.sh"
+
+echo "Update Complete!"

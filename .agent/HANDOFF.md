@@ -1249,29 +1249,49 @@ in particular (`§ 1.4` of `ARCHITECTURE.md`) has never been
 exercised against a real nginx config reload. Flag this explicitly
 to whoever does the first real-hardware deploy after this split.
 
-### 2.7 No automated guard against a stray `fetch()` in a domain store
+### 2.7 Resolved — guard against a stray `fetch()` in a domain store
 
 `.agent/context/LESSONS_LEARNED.md` § 2.7 documents the "use the
 generated OpenAPI client, not hand-rolled `fetch`" rule.
-`frontend/tests/test-tools-module.ts` checks some of the tools
-domain's structural conventions but does not regex-ban a stray
-`fetch(` call — a new store could still hand-roll HTTP and nothing
-would catch it before code review. The retired
-`check-no-lazy-imports.mjs` / `check-store-ids.mjs` scripts are not
-a template for this (they checked a system that no longer exists);
-a new, purpose-built lint would need to start from scratch.
+`frontend/tests/test-no-hand-rolled-fetch.ts` now enforces it: it
+reads every file in `frontend/src/stores/` via `readdirSync` (not a
+hardcoded list, so a new store is covered automatically) and fails
+if any contains a `fetch(` call. Writing the guard immediately
+surfaced a real violation — `cameraStore.ts` was hand-rolling
+`fetch()` against `/devices`, `/status`, and `/stream/diagnostic`,
+all three of which already had generated-client counterparts
+(`ModulesCameraService`); migrated as part of adding the test rather
+than allow-listing the file.
 
-### 2.8 Backend layering gaps (tracked, not urgent)
+### 2.8 Resolved — `state`/`program`/`camera` layering gaps
 
 See [`.agent/context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md)
-§ 7 for the full list of routers that don't follow the canonical
-Router → Service → DTO → Mapper → Storage split
-(`state`/`program`'s inline Pydantic models, the `camera` router's
-co-located `UstreamerSupervisor`, and the cross-cutting
-`FilesRouter`/`SystemRouter`/`BaseThreadRouter`/`ServoThreadRouter`
-exceptions). None of these block a feature today; they're listed
-here so "clean up the `state` router's inline models" doesn't need
-re-discovering from scratch.
+§ 7.4 / § 7.5 for the details. What changed:
+
+* `state.py` / `program.py`'s inline Pydantic models moved to
+  `backend/common/models/state/state_models.py` and
+  `backend/common/models/program/program_models.py`. `state.py`'s
+  duplicate `MachineState` enum was consolidated into the
+  already-existing (previously unused) `backend/common/dtos/state/MachineStateDto.py`.
+  One behavior-preserving catch along the way: the shared
+  `state_models.py` had `state`/`mode` typed as `Literal[...]`,
+  which would have turned the router's pinned `400 Invalid state`
+  into a `422` from FastAPI's own validation — reverted to plain
+  `str` so `test_machine_state_module.py`'s contract holds.
+* `camera.py`'s `UstreamerSupervisor` (subprocess lifecycle) moved
+  to `backend/machine/services/camera/ustreamer_supervisor.py`,
+  cutting the router file from ~960 to ~380 lines. Five dead
+  placeholder response classes (never wired to any
+  `response_model=`, referenced nowhere) were deleted rather than
+  moved. Camera still has no DTO/Mapper layer — deliberately; there
+  is no domain data to map, only a process to supervise and bytes to
+  proxy, so forcing the classical split would be ceremony, not
+  clarity.
+
+The `FilesRouter`/`SystemRouter`/`BaseThreadRouter`/`ServoThreadRouter`
+exceptions in § 7.1–7.3 were left alone — those are documented
+**won't-fix** (cross-domain aggregate, WebSocket lifecycle,
+cross-cutting filesystem/system concerns), not gaps.
 
 ---
 

@@ -23,8 +23,8 @@ test("store exposes a probe action that hits /stream/diagnostic", () => {
 
   assert.match(
     text,
-    /DIAGNOSTIC_URL.*stream\/diagnostic/,
-    "store must declare the new diagnostic endpoint URL",
+    /ModulesCameraService\.diagnoseCameraStream\(/,
+    "store must call the generated diagnostic-endpoint method",
   );
   assert.match(
     text,
@@ -49,18 +49,23 @@ test("probe is single-flight and passes the camera id as a query param", () => {
     /probeInFlight/,
     "probeStreamFailure must guard against concurrent invocations",
   );
-  // ``fetch`` has no ``params`` option — the id must be encoded into
-  // the URL via URLSearchParams (regression: the id was silently
-  // dropped and the probe always ran against the default device).
+  // The original regression was a naive ``fetch(url, { params })`` —
+  // ``fetch`` has no ``params`` option, so the id was silently
+  // dropped and the probe always ran against the default device.
+  // The generated client's ``diagnoseCameraStream(id)`` encodes it
+  // as a real query parameter (see generated/api/core/request.ts's
+  // ``getQueryString``/``isDefined``), which makes that whole class
+  // of mistake impossible — assert the id is actually passed through
+  // rather than dropped (e.g. via a hardcoded call with no argument).
   assert.match(
     text,
-    /URLSearchParams\(\{\s*id\s*\}\)/,
-    "the camera id must be encoded into the diagnostic URL query",
+    /ModulesCameraService\.diagnoseCameraStream\(id \|\| undefined\)/,
+    "the camera id must be passed through to diagnoseCameraStream, not dropped",
   );
   assert.doesNotMatch(
     text,
-    /fetch\(DIAGNOSTIC_URL,\s*\{[^}]*params:/,
-    "fetch must not rely on a non-existent params option",
+    /fetch\(/,
+    "must use the generated client, not a hand-rolled fetch — see LESSONS_LEARNED.md § 2.7",
   );
 });
 

@@ -17,7 +17,6 @@
 //
 //     'profiles'   →  GET/PUT /api/v1/modules/machineconfig/profiles/content
 //     'active'     →  GET    /api/v1/modules/machineconfig/active/content/{name}
-//     'staged'     →  GET    /api/v1/modules/machineconfig/staged/content/{name}
 //     'm_codes'    →  GET/PUT /api/v1/modules/machineconfig/m-codes/content
 //     'programs'   →  GET/PUT /api/v1/programs/content/{filename}
 //     'macros'     →  GET/PUT /api/v1/modules/macros/{name}/content
@@ -50,7 +49,6 @@ export const EDITOR_SOURCES = Object.freeze({
   PROFILES: 'profiles',
   MACHINES: 'machines',
   ACTIVE: 'active',
-  STAGED: 'staged',
   M_CODES: 'm_codes',
   PROGRAMS: 'programs',
   MACROS: 'macros',
@@ -67,7 +65,6 @@ export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Obje
   [EDITOR_SOURCES.PROFILES]: 'Profiles',
   [EDITOR_SOURCES.MACHINES]: 'Machine Templates',
   [EDITOR_SOURCES.ACTIVE]:   'Active Config',
-  [EDITOR_SOURCES.STAGED]:   'Compiled Output',
   [EDITOR_SOURCES.M_CODES]:  'M-codes',
   [EDITOR_SOURCES.PROGRAMS]: 'G-code Programs',
   [EDITOR_SOURCES.MACROS]:   'Macros',
@@ -80,7 +77,6 @@ export function sourceLabel(source: string): string {
 
 const READ_ONLY_SOURCES = new Set<string>([
   EDITOR_SOURCES.ACTIVE,
-  EDITOR_SOURCES.STAGED,
   EDITOR_SOURCES.MACHINE_LOG,
 ])
 
@@ -195,12 +191,6 @@ async function readActiveContent(name: string): Promise<string> {
   return envelope?.content ?? ''
 }
 
-async function readStagedContent(name: string): Promise<string> {
-  const envelope = await ModulesMachineconfigService
-    .readStagedApiV1ModulesMachineconfigStagedContentNameGet(name)
-  return envelope?.content ?? ''
-}
-
 async function readMCodeContent(name: string): Promise<string> {
   const envelope = await ModulesMachineconfigService.readMCode(name)
   return envelope?.content ?? ''
@@ -268,7 +258,6 @@ async function dispatchRead(source: EditorSource, name: string): Promise<string>
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
     case EDITOR_SOURCES.MACHINES: return readMachineContent(name)
     case EDITOR_SOURCES.ACTIVE:   return readActiveContent(name)
-    case EDITOR_SOURCES.STAGED:   return readStagedContent(name)
     case EDITOR_SOURCES.M_CODES:  return readMCodeContent(name)
     case EDITOR_SOURCES.PROGRAMS: return readProgramContent(name)
     case EDITOR_SOURCES.MACROS:   return readMacroContent(name)

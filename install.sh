@@ -125,13 +125,15 @@ systemctl daemon-reload
 systemctl enable ustreamer
 systemctl restart ustreamer
 
-# 7b. Configure the two backend services (machine + system split —
-# see .agent/context/ARCHITECTURE.md). The system service owns every
-# config/CRUD domain and must always be reachable, even while the
-# machine backend or LinuxCNC itself is down, so both units run
-# continuously with Restart=always; nginx (below) routes each path
+# 7b. Configure the system backend service (machine + system split —
+# see .agent/context/ARCHITECTURE.md). ONLY the system service (:8001)
+# is a systemd unit: it owns every config/CRUD domain and must always
+# be reachable, even while the machine backend or LinuxCNC itself is
+# down. The machine backend (:8000) is deliberately NOT a unit — it is
+# a program that gets started and shut off by the system service, like
+# the LinuxCNC session it drives. Nginx (below) routes each path
 # prefix to the service that owns it.
-echo -e "\n---> Configuring backend services (machine :8000, system :8001)..."
+echo -e "\n---> Configuring backend services (system :8001 unit; machine :8000 is spawned by the system service)..."
 
 
 
@@ -159,8 +161,39 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable linuxcnc-ui-machine linuxcnc-ui-system
-systemctl restart linuxcnc-ui-machine linuxcnc-ui-system
+systemctl enable linuxcnc-ui-system
+systemctl restart linuxcnc-ui-system
+
+# 7c. Boot-time TLS certificate renewal.
+#
+# DHCP boxes get a new IP on every boot; an mkcert certificate that
+# does not list the current IP makes browsers reject the HTTPS UI.
+# start_network.sh re-mints the certificate for the current IPs and
+# reloads nginx (passwordless via the sudoers rule in section 10), so
+# run it as a oneshot on every boot once the network is up. Section 6
+# already minted the initial certificate during this install — this
+# unit keeps it fresh afterwards.
+echo -e "\n---> Configuring boot-time certificate renewal (linuxcnc-ui-cert)..."
+CERT_SERVICE="/etc/systemd/system/linuxcnc-ui-cert.service"
+cat << EOF > "$CERT_SERVICE"
+[Unit]
+Description=LinuxCNC UI - re-mint TLS certificate for current IPs (start_network.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$REAL_USER
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$PROJECT_DIR/start_network.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chmod +x "$PROJECT_DIR/start_network.sh"
+systemctl daemon-reload
+systemctl enable linuxcnc-ui-cert
 
 # 8. Fix Directory Permissions for Nginx
 echo -e "\n---> Fixing directory permissions so Nginx can serve files..."
@@ -312,8 +345,8 @@ systemctl restart nginx
 # 10. Configure sudoers for passwordless service management
 #
 # scripts/update.sh runs as $REAL_USER (not root) and needs to
-# restart both backend units after pulling new code, plus reload
-# nginx if its config changed.
+# restart the system unit after pulling new code; start_network.sh
+# (boot-time cert renewal) needs the nginx reload.
 echo -e "\n---> Configuring passwordless service management for $REAL_USER..."
 SUDOERS_FILE="/etc/sudoers.d/linuxcnc-ui"
 # Superseded by the consolidated rule below (re-running install.sh
@@ -322,7 +355,6 @@ rm -f "/etc/sudoers.d/linuxcnc-nginx-reload"
 
 cat << EOF > "$SUDOERS_FILE"
 $REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
-$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-machine
 $REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-system
 EOF
 

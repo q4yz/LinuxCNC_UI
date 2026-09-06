@@ -59,11 +59,6 @@ test("EDITOR_SOURCES exposes every surface the universal editor dispatches", () 
   );
   assert.match(
     editorText,
-    /STAGED:\s*['"]staged['"]/,
-    "EDITOR_SOURCES.STAGED must be 'staged'",
-  );
-  assert.match(
-    editorText,
     /M_CODES:\s*['"]m_codes['"]/,
     "EDITOR_SOURCES.M_CODES must be 'm_codes'",
   );
@@ -79,12 +74,11 @@ test("EDITOR_SOURCES exposes every surface the universal editor dispatches", () 
   );
 });
 
-test("source-driven dispatch table covers all six sources", () => {
+test("source-driven dispatch table covers the core sources", () => {
   // Every source must appear as a switch arm in dispatchRead.
   for (const source of [
     "PROFILES",
     "ACTIVE",
-    "STAGED",
     "M_CODES",
     "PROGRAMS",
     "MACROS",
@@ -98,18 +92,13 @@ test("source-driven dispatch table covers all six sources", () => {
       `dispatchRead must handle EDITOR_SOURCES.${source}`,
     )
   }
-  // Read-only sources (active / staged) MUST NOT appear in
-  // dispatchWrite's switch — saving them would silently 500
-  // against the backend because the endpoints are GET-only.
+  // Read-only sources (active) MUST NOT appear in dispatchWrite's
+  // switch — saving them would silently 500 against the backend
+  // because the endpoint is GET-only.
   assert.doesNotMatch(
     editorText,
     /case\s+EDITOR_SOURCES\.ACTIVE:[^]*?writeActiveContent/,
     "dispatchWrite must not write to the active source",
-  )
-  assert.doesNotMatch(
-    editorText,
-    /case\s+EDITOR_SOURCES\.STAGED:[^]*?writeStagedContent/,
-    "dispatchWrite must not write to the staged source",
   )
 });
 
@@ -306,8 +295,8 @@ test("modeForFilename still returns 'text' for .txt — but no router reads it",
 
 test("Save buttons are hidden when readOnly=true", () => {
   // The ``Save`` and ``Save & Close`` controls are write-only
-  // affordances. When the store is read-only (``active`` / ``staged``
-  // / any source the caller pinned read-only) the editor hides
+  // affordances. When the store is read-only (``active`` / any
+  // source the caller pinned read-only) the editor hides
   // them entirely instead of rendering greyed-out buttons the
   // operator cannot use.
   const editorViewBody = readText(
@@ -329,5 +318,5 @@ test("Save buttons are hidden when readOnly=true", () => {
 // "router registers the /config route" and "AppSidebar exposes a
 // config entry"). EditorView.vue's ``closeEditor()`` legitimately
 // routes back to ``{ name: 'config' }`` after closing a
-// profiles/macros/m_codes/active/staged file — that's correct
-// current behaviour, not a leftover bug.
+// profiles/macros/m_codes/active file — that's correct current
+// behaviour, not a leftover bug.

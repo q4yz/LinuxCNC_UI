@@ -3,6 +3,8 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
+# Update this variable with the exact name of your systemd service
+BACKEND_SYSTEM_SERVICE="linuxcnc-ui-system.service"
 
 echo "Rebuilding UI in: $PROJECT_DIR"
 
@@ -52,4 +54,13 @@ else
     echo "Warning: Root CA not found at $CA_ROOT. The download button may not work."
 fi
 
-echo "Build complete! Nginx will now serve the updated files."
+# --- 4. Restart Backend System Service ---
+echo "Restarting the backend system service..."
+# Note: You may need to run this script with sudo or ensure your user has NOPASSWD sudo rights for systemctl
+sudo systemctl restart "$BACKEND_SYSTEM_SERVICE"
+
+# --- 5. Reload Nginx ---
+echo "Reloading Nginx..."
+sudo systemctl reload nginx
+
+echo "Build and reload complete! Nginx is now serving the updated frontend and proxying to the fresh backend."

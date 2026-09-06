@@ -543,11 +543,14 @@ test("cameraStore exposes streamMessage and refreshStreamMessage for operator di
     /refreshStreamMessage[\s\S]*\}\s*;/m,
     "refreshStreamMessage must be returned from the setup function",
   );
-  // The action must hit the same /status URL the supervisor documents.
+  // The action must hit the same /status endpoint the supervisor
+  // documents, via the generated client (see LESSONS_LEARNED.md
+  // § 2.7 / test-no-hand-rolled-fetch.ts — a raw fetch() here would
+  // be banned).
   assert.match(
     text,
-    /\/api\/v1\/modules\/camera\/status/,
-    "cameraStore must fetch the /api/v1/modules/camera/status endpoint",
+    /ModulesCameraService\.getCameraStatus\(\)/,
+    "cameraStore must call ModulesCameraService.getCameraStatus()",
   );
   // Console-store reporting must dedup so a periodic refresh does
   // not spam the operator console. The store now imports

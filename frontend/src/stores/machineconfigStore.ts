@@ -1,16 +1,26 @@
 // Machineconfig module Pinia store. Owns the profiles tree, the
-// compilers, the staged / active listings, the selected compiler,
-// and the deployment toggles. The backend is the source of truth —
-// we re-fetch per action rather than caching, so operators always
-// see current values after a refetch. See ``.agent/STATE.md`` § 2.
+// machines tree (template generation), and the active listing. The
+// backend is the source of truth — we re-fetch per action rather
+// than caching, so operators always see current values after a
+// refetch. See ``.agent/STATE.md`` § 2.
+//
+// The compiler / staged / confirm-flash deploy pipeline this store
+// used to own was removed from the backend (there is no longer a
+// compile step — ``machineconfig.py`` only exposes ``active`` and
+// ``deploy``, which promotes a *generated* machine's templates
+// straight into ``active``, see ``MachineLifecycleService.switch()``)
+// and from the UI (`ProfilesExplorer` generates + `MachinesExplorer`
+// edits templates instead). The corresponding store state/actions
+// were deleted rather than patched to match a contract that no
+// longer exists.
 //
 // All HTTP calls go through ``machineconfigFacade`` (which wraps
 // the OpenAPI-generated ``ModulesMachineconfigService``). Reads
 // keep their legacy return shapes; every manual-write action —
 // saveProfile, createFolder, createFile, uploadProfiles,
-// renameProfile, deleteProfile, compile, deploy — returns
-// ``Promise<CommandResult>`` so the UI layer has a uniform response
-// and failures channel through ``reportCommandFailure``.
+// renameProfile, deleteProfile — returns ``Promise<CommandResult>``
+// so the UI layer has a uniform response and failures channel
+// through ``reportCommandFailure``.
 
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
@@ -23,12 +33,9 @@ import {
 } from "../core/error-format";
 import { CommandResult } from "../entities/common/CommandResult";
 import { machineconfigFacade } from "../facades/machineconfigFacade";
-import type { CompilerSummary } from "../../generated/api/models/CompilerSummary";
 import type { DirectoryEntryModel } from "../../generated/api/models/DirectoryEntryModel";
-import type { StagedFile } from "../../generated/api/models/StagedFile";
 import type { ActiveListing } from "../../generated/api/models/ActiveListing";
 import type { ActiveFile } from "../../generated/api/models/ActiveFile";
-import type { CompilerListResponse } from "../../generated/api/models/CompilerListResponse";
 
 const STORE_ID = "machineconfig";
 
@@ -42,10 +49,6 @@ interface ActiveListingState {
   files: ActiveFile[];
 }
 
-interface DeploySummary {
-  message: string;
-}
-
 export interface MachineGenerateOutcome {
   status: "ok" | "conflict" | "error";
   machine: string | null;
@@ -57,16 +60,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   // --- Reactive state ---------------------------------------------- //
 
-  const compilers = ref<CompilerSummary[]>([]);
-  const selectedCompilerId = ref<string>("");
-
   const profilesTree = reactive<ProfilesTree>({ root: "profiles", entries: [] });
   const selectedProfilePath = ref<string>("");
 
   const machinesTree = reactive<ProfilesTree>({ root: "machines", entries: [] });
-
-  const stagedFiles = ref<StagedFile[]>([]);
-  const stagedContents = reactive<Record<string, string>>({});
 
   const activeListing = reactive<ActiveListingState>({
     machine_name: null,
@@ -74,15 +71,9 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   });
   const activeContents = reactive<Record<string, string>>({});
 
-  const confirmFlash = ref<boolean>(false);
   const isBusy = ref<boolean>(false);
-  const lastDeploySummary = ref<DeploySummary | null>(null);
 
   // --- Derived state ----------------------------------------------- //
-
-  const selectedCompiler = computed<CompilerSummary | null>(() =>
-    compilers.value.find((c: CompilerSummary) => c.id === selectedCompilerId.value) || null,
-  );
 
   const selectedProfile = computed<DirectoryEntryModel | null>(() => {
     const path = selectedProfilePath.value;
@@ -93,13 +84,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
       ) || null
     );
   });
-
-  const stagedTotalSize = computed<number>(() =>
-    stagedFiles.value.reduce(
-      (sum: number, f: StagedFile) => sum + (f.size_bytes || 0),
-      0,
-    ),
-  );
 
   const activeTotalSize = computed<number>(() =>
     activeListing.files.reduce(
@@ -136,24 +120,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // failure is informational (background refetch), not an operator
   // action.
 
-  async function loadCompilers(): Promise<void> {
-    try {
-      const response: CompilerListResponse = await machineconfigFacade.listCompilers() as CompilerListResponse;
-      compilers.value = Array.isArray(
-        (response as { compilers?: CompilerSummary[] }).compilers,
-      )
-        ? (response as { compilers: CompilerSummary[] }).compilers
-        : [];
-      if (!selectedCompilerId.value && compilers.value.length > 0) {
-        selectedCompilerId.value = compilers.value[0].id;
-      }
-    } catch (error: unknown) {
-      consoleStore.error(
-        `Failed to list compilers: ${describeError(error)}`,
-      );
-    }
-  }
-
   async function loadProfilesTree(): Promise<void> {
     try {
       const response = await machineconfigFacade.listProfiles();
@@ -180,21 +146,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     }
   }
 
-  async function loadStaged(): Promise<void> {
-    try {
-      const response = await machineconfigFacade.listStaged();
-      stagedFiles.value = Array.isArray(response) ? (response as StagedFile[]) : [];
-      // Wipe the cached content map so a fresh staging run doesn't
-      // serve stale previews.
-      for (const key of Object.keys(stagedContents)) {
-        delete stagedContents[key];
-      }
-    } catch (error: unknown) {
-      const result = commandResultFromCaught(error, "load-staged");
-      reportCommandFailure("load staged artifacts", result);
-    }
-  }
-
   async function loadActive(): Promise<void> {
     try {
       const response = (await machineconfigFacade.listActive()) as ActiveListing;
@@ -214,10 +165,8 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   async function loadAll(): Promise<void> {
     await Promise.all([
-      loadCompilers(),
       loadProfilesTree(),
       loadMachinesTree(),
-      loadStaged(),
       loadActive(),
     ]);
   }
@@ -463,82 +412,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
-  // --- Compile / Deploy ------------------------------------------- //
-
-  async function compile(
-    profilePath: string,
-  ): Promise<CommandResult | undefined> {
-    if (!profilePath) return undefined;
-    if (!selectedCompilerId.value) {
-      consoleStore.warning("Pick a compiler before staging.");
-      const result = CommandResult.failure("Pick a compiler before staging.");
-      reportCommandFailure("compile", result);
-      return result;
-    }
-    isBusy.value = true;
-    const result = await machineconfigFacade.compileProfile({
-      profile_path: profilePath,
-      compiler_id: selectedCompilerId.value,
-    });
-    if (result.failed) {
-      // Issue #99: the structured-error response from the compile
-      // endpoint must surface as a toast so the operator sees the
-      // reason without hunting in the console panel. The console
-      // row is still written for the historical scrollback; the
-      // popup is the new affordance.
-      reportCommandFailure("compile", result);
-    } else {
-      // The compile response body is the typed ``CompileResponse``
-      // (artifacts + compiler). Surface the count through the
-      // console so the operator sees something happened even though
-      // ``result.message`` only carries the wire status.
-      // ``stagedFiles`` is repopulated below.
-      // (The detailed artifact list is in ``result.message`` when
-      // surfaced via ``commandId``; the original "Staged N
-      // artifact(s) using C" line is preserved as an info row.)
-      consoleStore.info(
-        `Compile of ${profilePath} (${selectedCompilerId.value}) completed.`,
-      );
-      await loadStaged();
-    }
-    isBusy.value = false;
-    return result;
-  }
-
-  async function deploy(): Promise<CommandResult | undefined> {
-    if (stagedFiles.value.length === 0) {
-      consoleStore.warning("Nothing to deploy — stage a profile first.");
-      const result = CommandResult.failure("Nothing to deploy");
-      reportCommandFailure("deploy", result);
-      return result;
-    }
-    isBusy.value = true;
-    const result = await machineconfigFacade.deployStaged({
-      confirm_flash: confirmFlash.value,
-    });
-    if (result.failed) {
-      reportCommandFailure("deploy", result);
-    } else {
-      const message = result.message || "Deploy complete.";
-      lastDeploySummary.value = { message };
-      consoleStore.success(message);
-      await loadActive();
-    }
-    isBusy.value = false;
-    return result;
-  }
-
-  async function readStagedFileContent(name: string): Promise<string | null> {
-    try {
-      const response = await machineconfigFacade.readStagedContent(name);
-      const content = response.content || "";
-      stagedContents[name] = content;
-      return content;
-    } catch (error: unknown) {
-      consoleStore.error(`Failed to read staged ${name}: ${describeError(error)}`);
-      return null;
-    }
-  }
+  // --- Active ------------------------------------------------------- //
 
   async function readActiveFileContent(name: string): Promise<string | null> {
     try {
@@ -555,26 +429,16 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
   // --- Public surface --------------------------------------------- //
 
   return {
-    compilers,
-    selectedCompilerId,
-    selectedCompiler,
     profilesTree,
     selectedProfilePath,
     selectedProfile,
     machinesTree,
-    stagedFiles,
-    stagedContents,
     activeListing,
     activeContents,
-    confirmFlash,
     isBusy,
-    lastDeploySummary,
-    stagedTotalSize,
     activeTotalSize,
-    loadCompilers,
     loadProfilesTree,
     loadMachinesTree,
-    loadStaged,
     loadActive,
     loadAll,
     selectProfile,
@@ -593,9 +457,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     uploadMachines,
     renameMachine,
     deleteMachine,
-    compile,
-    deploy,
-    readStagedFileContent,
     readActiveFileContent,
   };
 });

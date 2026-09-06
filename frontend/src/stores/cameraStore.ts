@@ -32,6 +32,7 @@ import { ref } from "vue";
 import type { Ref } from "vue";
 
 import { createModuleSettings } from "../core/settings/createModuleSettings";
+import { ModulesCameraService } from "../../generated/api/services/ModulesCameraService";
 import { useConsoleStore } from "./console";
 import type {
   CameraDevice,
@@ -43,9 +44,6 @@ import type {
 
 const STORE_ID = "camera";
 const CAMERA_ID = STORE_ID;
-const DEVICES_URL = "/api/v1/modules/camera/devices";
-const STATUS_URL = "/api/v1/modules/camera/status";
-const DIAGNOSTIC_URL = "/api/v1/modules/camera/stream/diagnostic";
 
 // Field set the frontend lets operators touch. ``custom_name`` matches
 // the backend snake_case schema; the local ref keeps it as
@@ -218,14 +216,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     error.value = "";
 
     try {
-      const response = await fetch(DEVICES_URL);
-      if (!response.ok) {
-        throw new Error(
-          `Camera device request failed: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      const payload = (await response.json()) as { devices?: unknown };
+      const payload = (await ModulesCameraService.listCameraDevices()) as { devices?: unknown };
       if (!Array.isArray(payload?.devices)) {
         throw new Error("Camera device response did not contain a devices list");
       }
@@ -309,13 +300,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    */
   async function refreshStreamMessage(): Promise<string> {
     try {
-      const response = await fetch(STATUS_URL);
-      if (!response.ok) {
-        throw new Error(
-          `Camera status request failed: ${response.status} ${response.statusText}`,
-        );
-      }
-      const payload = (await response.json()) as { message?: unknown };
+      const payload = (await ModulesCameraService.getCameraStatus()) as { message?: unknown };
       const message = typeof payload?.message === "string" ? payload.message : "";
       streamMessage.value = message;
       if (message && message !== lastReportedStreamMessage) {
@@ -367,16 +352,13 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       const id = activeCameraId.value || "";
       let message = "";
       try {
-        const url = id
-          ? `${DIAGNOSTIC_URL}?${new URLSearchParams({ id }).toString()}`
-          : DIAGNOSTIC_URL;
-        const response = await fetch(url, { method: "GET" });
-        if (!response.ok) {
-          throw new Error(
-            `Camera diagnostic request failed: ${response.status} ${response.statusText}`,
-          );
-        }
-        const payload = (await response.json()) as {
+        // The generated client encodes ``id`` as a real query
+        // parameter (see ``core/request.ts``'s ``getQueryString`` /
+        // ``isDefined``) — unlike a naive hand-rolled request with a
+        // non-existent ``params`` option, which would silently drop
+        // it, always probing the default device instead of the
+        // selected one.
+        const payload = (await ModulesCameraService.diagnoseCameraStream(id || undefined)) as {
           ok?: unknown;
           message?: unknown;
         };

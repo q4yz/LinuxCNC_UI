@@ -19,7 +19,7 @@ Coverage:
   ``get_machine_cmd`` / ``get_machine_error`` /
   ``is_linuxcnc_connected`` passthroughs.
 * No ``STATE_*`` / ``INTERP_*`` integer leaks in the public
-  Pydantic schema (``_StateSnapshot``).
+  Pydantic schema (``StateSnapshotResponse``).
 """
 
 from __future__ import annotations
@@ -374,15 +374,15 @@ class TestGetStateEndpoint:
         ``STATE_*`` / ``INTERP_*`` integer field to the public
         Pydantic schema — those belong on ``raw_*`` fields only.
         """
-        from routers.state import _StateSnapshot
+        from models.state.state_models import StateSnapshotResponse
 
-        fields = _StateSnapshot.model_fields.keys()
+        fields = StateSnapshotResponse.model_fields.keys()
         leaked = [
             name for name in fields
             if name.startswith("STATE_") or name.startswith("INTERP_")
         ]
         assert leaked == [], (
-            f"_StateSnapshot must not leak linuxcnc constants: {leaked}"
+            f"StateSnapshotResponse must not leak linuxcnc constants: {leaked}"
         )
 
 

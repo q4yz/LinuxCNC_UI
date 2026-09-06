@@ -32,12 +32,9 @@ const ALLOWED_READ_NAMES = new Set([
   "loadAll",
   "readMacro",
   "ensureMacroContent",
-  "loadCompilers",
   "loadProfilesTree",
-  "loadStaged",
   "loadActive",
   "readProfileContent",
-  "readStagedFileContent",
   "readActiveFileContent",
   "list",
   // Selectors / sub-state accessors.

@@ -40,8 +40,6 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-
 
 from domain_file_services import get_program_service
 from services.line_count_cache import (
@@ -50,43 +48,19 @@ from services.line_count_cache import (
     unregister_all as clear_line_count_cache,
 )
 from services.ProgramService import get_program_lifecycle_service
+from models.program.program_models import (
+    LoadProgramRequest,
+    ParseResponse,
+    StatusResponse,
+)
+
 logger = logging.getLogger("backend.program_service")
-
-
-
-
-
-
-
-class StatusResponse(BaseModel):
-    """Generic response model for endpoints that return a status string."""
-
-    status: str = Field(
-        ...,
-        description=(
-            "Outcome reported by the hardware layer (e.g., 'success')"
-        ),
-    )
-
-
-
-
-
-class ParseResponse(BaseModel):
-    """Response model for the Klipper-to-LinuxCNC parser trigger."""
-
-    status: str = Field(..., description="Outcome of the parser trigger")
-    message: str = Field(..., description="Human-readable status message")
 
 
 router = APIRouter(
     prefix="/api/v1/modules/program",
     tags=["modules:program"],
 )
-
-class LoadProgramRequest(BaseModel):
-    filename: str
-
 
 @router.post(
     "/load",
