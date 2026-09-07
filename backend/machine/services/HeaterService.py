@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from exceptions.http import BadRequestError, NotFoundError
-from tools_config_mapper import get_heater
+from services.tools_config_mapper import get_heater
 from dtos.tools.HeaterDto import HeaterSettingsDTO, HeaterStateDTO, HeaterPins
 from mappers.tools.HeaterMapper import HeaterMapper
 from services.ToolsService import get_tools_service

@@ -258,8 +258,8 @@ def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, An
     record so the runtime can address them independently.
 
     The ``signal_*`` key names mirror the
-    :class:`backend.tools_config_mapper.SpindleDigitalPins`
-    fields (``target_rpm``, ``actual_out``, ``is_connected``,
+    ``SpindleDigitalPins`` fields in the machine backend's
+    ``services/tools_config_mapper.py`` (``target_rpm``, ``actual_out``, ``is_connected``,
     ``error_count``, ``last_error``, ``spindle_at_speed``). Fields
     with no source on the underlying ``[spindle]`` model
     (``actual_out``, ``error_count``) are emitted as ``None`` so the

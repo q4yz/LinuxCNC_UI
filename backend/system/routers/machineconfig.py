@@ -38,15 +38,15 @@ favour of the template generator above.
 A later revision also had a ``machine_config/active`` deploy step
 (``GET /active`` + content, ``POST /deploy``, ``GET /machine-name``)
 that copied a generated machine's templates into a fixed ``active/``
-folder before starting. That's gone too: a machine's config now
-lives directly under ``machine_config/machines/<name>/`` and is
-addressed by name — see
-``MachineLifecycleService.start()``/``machine_ini()`` (system
-service) and ``HardwareConfigService`` /
-``domain_file_services.paths.default_machine_hardware_json``
-(shared) for how the machine backend resolves the *current* machine's
-``hardware.json`` without either app depending on the other's
-process being up.
+    folder before starting. That's gone too: a machine's config now
+    lives directly under ``machine_config/machines/<name>/`` and is
+    addressed by name — see
+    ``MachineLifecycleService.start()``/``machine_ini()`` (system
+    service) and ``HardwareConfigService`` (machine backend) /
+    ``domain_file_services.paths.default_machine_hardware_json``
+    (shared) for how the machine backend resolves the *current* machine's
+    ``hardware.json`` without either app depending on the other's
+    process being up.
 """
 
 from __future__ import annotations

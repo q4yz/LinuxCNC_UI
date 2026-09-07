@@ -48,7 +48,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 
-from HardwareConfigService import HardwareConfigService
+from services.HardwareConfigService import HardwareConfigService
 
 logger = logging.getLogger("backend.temperature_service")
 

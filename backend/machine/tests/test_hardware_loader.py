@@ -1,10 +1,10 @@
 """Tests for the hardware config loader.
 
-The loader lives in :mod:`services.hardware_config_service` and is
-re-exported through :mod:`temperature_config_mapper` as
-:func:`get_temperature_sensors`. The helper resolves the canonical
-``machine_config/active/hardware.json`` path (overridable via
-``active_path``) and returns a list of normalised sensor dicts.
+The loader lives in :mod:`services.HardwareConfigService` and is
+re-exported through :mod:`services.temperature_config_mapper` as
+:func:`get_temperature_sensors`. The helper resolves the default
+machine's ``hardware.json`` path (overridable via ``active_path``)
+and returns a list of normalised sensor dicts.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from tests._module_app_factory import build_module_app
 import json
 from pathlib import Path
 
-from temperature_config_mapper import get_temperature_sensors
+from services.temperature_config_mapper import get_temperature_sensors
 
 
 # ---------------------------------------------------------------------- #

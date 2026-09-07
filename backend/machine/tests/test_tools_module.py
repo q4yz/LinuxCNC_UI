@@ -42,7 +42,7 @@ def _point_config_at_tmp(monkeypatch, tmp_path):
     ``_PROJECT_ROOT``; the seam is now the
     :class:`HardwareConfigService` constructor's ``repo_root`` arg.
     """
-    from HardwareConfigService import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     original_init = HardwareConfigService.__init__
 
@@ -127,7 +127,7 @@ def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
                 encoding="utf-8",
             )
 
-        from HardwareConfigService import HardwareConfigService
+        from services.HardwareConfigService import HardwareConfigService
         original_init = HardwareConfigService.__init__
 
         def _init(self, active_path=None, repo_root=None):

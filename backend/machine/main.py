@@ -183,7 +183,7 @@ def start_watchdog_if_configured() -> None:
 def reseed_temperature_defaults() -> None:
     """Re-seed the temperature settings defaults with sensor colours."""
     from models.temperature_settings import seed_colors
-    from temperature_config_mapper import get_temperature_sensors
+    from services.temperature_config_mapper import get_temperature_sensors
 
     sensor_ids = [
         str(sensor["id"])

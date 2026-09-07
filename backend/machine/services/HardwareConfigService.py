@@ -38,7 +38,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from domain_file_services.paths import default_machine_hardware_json
+from domain_file_services.paths import default_machine_hardware_json  # noqa: E402 - common lives on sys.path
 
 logger = logging.getLogger(__name__)
 

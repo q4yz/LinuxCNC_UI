@@ -4,7 +4,7 @@ from typing import Optional
 from exceptions.http import BadRequestError, NotFoundError
 
 # Adjust import paths based on your actual structure
-from tools_config_mapper import get_extruder
+from services.tools_config_mapper import get_extruder
 from dtos.tools.ExtruderDto import ExtruderSettingsDTO, ExtruderStateDTO, ExtruderPins
 from dtos.tools.HeaterDto import HeaterSettingsDTO
 from mappers.tools.ExtruderMapper import ExtruderMapper

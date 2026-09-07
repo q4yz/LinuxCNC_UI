@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from HardwareConfigService import HardwareConfigService
+from services.HardwareConfigService import HardwareConfigService
 
 
 from tools_constants import ToolType

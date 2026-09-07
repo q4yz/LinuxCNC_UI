@@ -2,6 +2,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -64,7 +65,7 @@ def _launch_update_script() -> bool:
         return False
 
     log_path = _project_root() / "update.log"
-    popen_kwargs: dict = {}
+    popen_kwargs: dict[str, Any] = {}
     if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
 

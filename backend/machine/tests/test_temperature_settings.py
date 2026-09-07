@@ -39,7 +39,7 @@ def _app(tmp_data_root):
     """
     from fastapi import FastAPI
     from models.temperature_settings import TemperatureSettings, seed_colors
-    from temperature_config_mapper import get_temperature_sensors
+    from services.temperature_config_mapper import get_temperature_sensors
 
     app = FastAPI()
     sensor_ids = [
@@ -71,7 +71,7 @@ def _point_config_at(monkeypatch, active_dir):
     constructor's ``active_path`` arg (which expects the path to
     ``hardware.json`` itself, not its parent directory).
     """
-    from HardwareConfigService import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     hardware_json = Path(active_dir) / "hardware.json"
     original_init = HardwareConfigService.__init__

@@ -2,11 +2,11 @@ import logging
 from typing import List, Optional, Union
 
 from dtos.sensors.TemperatureDto import TemperatureStateDto, TemperaturePin
-from temperature_config_mapper import get_temperature_sensors
+from services.temperature_config_mapper import get_temperature_sensors
 
 from factories.temperature.TemperatureStateFactory import TemperatureStateFactory
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
-from tools_config_mapper import get_all_heater
+from services.tools_config_mapper import get_all_heater
 from dtos.tools import HeaterStateDTO, HeaterPins
 from mappers.tools.HeaterMapper import HeaterMapper
 

@@ -61,7 +61,7 @@ def _point_hardware_config_at(monkeypatch, tmp_path) -> None:
     level ``_PROJECT_ROOT``; the seam is the
     :class:`HardwareConfigService` constructor's ``repo_root`` arg.
     """
-    from HardwareConfigService import HardwareConfigService
+    from services.HardwareConfigService import HardwareConfigService
 
     original_init = HardwareConfigService.__init__
 

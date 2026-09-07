@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from "../ui/index.ts";
-import useMachineOnline from "../composables/useMachineOnline.ts";
+import { useMachineOnline } from "../composables/useMachineOnline.ts";
 
 const route = useRoute()
 const router = useRouter()
@@ -14,12 +14,9 @@ const router = useRouter()
 const activeId = computed(() => route.name || 'dashboard')
 const { isMachineOnline, isStarting, wakeMachine } = useMachineOnline();
 
-// const machineStore = useMachineStore() // <-- Hook up your store
-
-// TODO: Replace this with your actual machine state check (e.g., machineStore.isMachineOn)
-const isMachineOn = computed(() => false)
-
-const isDisabled = (item: any) => item.activeMachineOnly && !isMachineOnline ;
+// 2. FIXED: Added .value because isMachineOnline is a reactive ref in the script block.
+// If it is null (loading) or false (offline), !isMachineOnline.value will be true, disabling the item.
+const isDisabled = (item: any) => item.activeMachineOnly && !isMachineOnline.value;
 
 
 function navigate(view: string) {

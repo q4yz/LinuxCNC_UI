@@ -301,15 +301,22 @@ def build_catalog_from_containers(
 
 
 def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
-    """Build the pin containers straight from the active ``hardware.json``.
+    """Build the pin containers straight from the default machine's
+    ``hardware.json``.
 
     The pre-two-service-split version pulled the cached containers
     from the machine services (``ToolsService`` / ``TemperatureService``
     / ``StateService``); those now live in the machine backend and are
-    not importable from the system service. The same factories and
-    mappers they use at preload time are part of the shared layer, so
-    the catalog rebuilds the containers here — same DTOs, same logic.
+    not importable from the system service. ``HardwareConfigService``
+    and the ``tools_config_mapper`` / ``temperature_config_mapper``
+    modules moved to the machine backend too (2026-09), so this reads
+    the default machine's ``hardware.json`` directly — the same
+    payload, filtered with the same rules the mappers used — and maps
+    it with the same shared DTO factories as before.
     """
+    import json
+
+    from domain_file_services.paths import default_machine_hardware_json
     from dtos.EStopDto import EStopPin
     from dtos.pins.HalPin import HalDataType
     from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
@@ -318,25 +325,53 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
         TemperatureSensorMapper,
     )
     from mappers.tools.HeaterMapper import HeaterMapper
-    from temperature_config_mapper import get_temperature_sensors
-    from tools_config_mapper import get_all_heater, get_tools
+    from tools_constants import ToolType
 
+    # Same swallow-errors semantics the mappers had: a missing or
+    # corrupt hardware.json yields an empty catalog, never a crash.
+    try:
+        payload = json.loads(
+            default_machine_hardware_json().read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    def _valid_dicts(key: str) -> List[Dict[str, Any]]:
+        entries = payload.get(key)
+        if not isinstance(entries, list):
+            return []
+        return [
+            entry
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("id"), str)
+            and entry["id"]
+        ]
+
+    all_tools = _valid_dicts("tools")
     tools = [
         pin_map
-        for pin_map in (ToolHalPinFactory.create(tool) for tool in get_tools())
+        for pin_map in (ToolHalPinFactory.create(tool) for tool in all_tools)
         if pin_map is not None
     ]
 
+    heaters = [
+        tool
+        for tool in all_tools
+        if tool.get("type") in (ToolType.EXTRUDER.value, ToolType.HEATED_BED.value)
+    ]
     sensors: List[Any] = []
     used_sensor_ids = set()
-    for heater in get_all_heater():
+    for heater in heaters:
         pin_map = HeaterMapper.from_dict_to_HeaterPins(heater)
         if pin_map is not None:
             sensors.append(pin_map)
             sensor_id = heater.get("sensor") or heater.get("id")
             if sensor_id:
                 used_sensor_ids.add(sensor_id)
-    for sensor in get_temperature_sensors():
+    for sensor in _valid_dicts("temperature_sensors"):
         if sensor.get("id") in used_sensor_ids:
             continue
         sensor_pin_map = TemperatureSensorMapper.from_dict_to_TemperaturePins(sensor)

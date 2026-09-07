@@ -17,7 +17,7 @@ from typing import Optional, List, Dict, Any, Literal
 from dtos.axis.AxisDto import AxisStateDTO
 from hardware.Connection import execute_sync_cmd, linuxcnc
 from mappers.axis.axis_mapper import AxisMapper
-from HardwareConfigService import HardwareConfigService
+from services.HardwareConfigService import HardwareConfigService
 from hal_service.JogService import jog_keepalive, jog_axis, jog_stop
 
 logger = logging.getLogger("backend.services.AxisService")
