@@ -228,44 +228,39 @@ server {
     }
 
     # Proxy API and WebSockets so the app works on HTTP too
-    # Two-backend routing (machine :8000 / system :8001 — see
-    # .agent/context/ARCHITECTURE.md). A regex location always wins
-    # over a prefix location in nginx regardless of file order, so
-    # the macro-start exception is safe to declare anywhere; the
-    # remaining plain-prefix locations are matched by longest prefix,
-    # so the system-owned prefixes correctly win over the "/api/"
-    # fallback without needing "^~".
     location ~ ^/api/v1/modules/macros/[^/]+/start\$ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/system/ {
+
+    # trailing slashes removed from the location paths below
+    location /api/v1/system {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/programs/ {
+    location /api/v1/programs {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/modules/machineconfig/ {
+    location /api/v1/modules/machineconfig {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/modules/macros/ {
+    location /api/v1/modules/macros {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/ {
+    location /api {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /ws/ {
+    location /ws {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -291,44 +286,40 @@ server {
     location / {
         try_files \$uri \$uri/ /index.html;
     }
-    # Two-backend routing (machine :8000 / system :8001 — see
-    # .agent/context/ARCHITECTURE.md). A regex location always wins
-    # over a prefix location in nginx regardless of file order, so
-    # the macro-start exception is safe to declare anywhere; the
-    # remaining plain-prefix locations are matched by longest prefix,
-    # so the system-owned prefixes correctly win over the "/api/"
-    # fallback without needing "^~".
+
     location ~ ^/api/v1/modules/macros/[^/]+/start\$ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/system/ {
+
+    # trailing slashes removed from the location paths below
+    location /api/v1/system {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/programs/ {
+    location /api/v1/programs {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/modules/machineconfig/ {
+    location /api/v1/modules/machineconfig {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/v1/modules/macros/ {
+    location /api/v1/modules/macros {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /api/ {
+    location /api {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
-    location /ws/ {
+    location /ws {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
