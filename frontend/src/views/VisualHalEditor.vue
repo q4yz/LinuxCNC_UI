@@ -1,30 +1,72 @@
 <script setup lang="ts">
-// Visual HAL editor — canvas-based logic wiring board (concept pass).
+// Visual HAL editor — canvas-based logic wiring board.
 //
-// This is a ground-up redesign of the editor UI: a blank pan/scroll
-// canvas, a single "+" FAB (bottom-right) for placing blocks
-// (Signal / logic gates / latches), drag-to-wire chaining between
-// blocks, and left/right slide-over drawers for picking the real
-// HAL pin a block's input/output connects to.
+// A live, READ-ONLY view over the real HAL world: pins and signals
+// come from `GET /api/v1/hal/layout` (./hal-visual-editor/loadHalData.ts
+// → facades/halFacade.ts). Existing backend signals are seeded onto
+// the canvas as pre-wired pin nodes (wire labels = signal names);
+// the drawers list the real IN/OUT pins. Blocks added in-session and
+// any re-wiring are FRONTEND-ONLY state — nothing in this editor
+// ever sends anything back to the backend; the Refresh button
+// re-fetches and resets the canvas to backend truth.
 //
-// Deliberately frontend-only for now: all HAL pins come from
-// ./hal-visual-editor/mockPins.ts and all wiring rules live in
-// ./hal-visual-editor/useHalCanvas.ts. Nothing here touches the
-// backend, the router, or the older three-column `halVisual` store —
-// this view owns its own self-contained state so the interaction
-// model can be iterated on before any real wiring happens.
+// The whole editor is wrapped in MachineGate: HAL data lives on the
+// machine backend (:8000), so the offline card shows when the
+// machine is down and the layout re-fetches when it comes back.
 
-import { computed, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import { Drawer, Icon } from "../ui/index.ts";
+import MachineGate from "../components/machine/MachineGate.vue";
+import { useMachineOnline } from "../composables/useMachineOnline";
 import { useToast } from "../core/toast";
 import { BLOCK_DEFINITIONS, BLOCK_MENU } from "./hal-visual-editor/blockDefinitions";
 import { nodeHeight, portAnchor, NODE_WIDTH } from "./hal-visual-editor/layout";
+import { loadHalLayout } from "./hal-visual-editor/loadHalData";
 import { useHalCanvas } from "./hal-visual-editor/useHalCanvas";
-import type { BlockKind, HalNode, MockPin, PinType, Port } from "./hal-visual-editor/types";
+import type { BlockKind, HalNode, HalPin, PinType, Port } from "./hal-visual-editor/types";
 
 const canvas = useHalCanvas();
 const toast = useToast();
+const { isMachineOnline } = useMachineOnline();
+
+// --- layout loading (real data, read-only) ---------------------------------
+
+const loading = ref(false);
+const loadError = ref<string | null>(null);
+const pinCount = ref(0);
+const signalCount = ref(0);
+
+async function refresh(): Promise<void> {
+  if (loading.value) return;
+  loading.value = true;
+  loadError.value = null;
+  try {
+    const data = await loadHalLayout();
+    if (!data) {
+      loadError.value = "Failed to load the HAL layout from the backend.";
+      return;
+    }
+    // Reset to backend truth: in-session blocks/wires are discarded.
+    canvas.reset();
+    canvas.setPins(data.pins);
+    canvas.seedSignals(data.signals);
+    pinCount.value = data.pins.length;
+    signalCount.value = data.signals.length;
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  if (isMachineOnline.value) void refresh();
+});
+
+// The gate unmounts the editor while the machine is offline; when it
+// comes back online, pull a fresh layout.
+watch(isMachineOnline, (next) => {
+  if (next) void refresh();
+});
 
 // --- canvas geometry ------------------------------------------------------
 
@@ -169,21 +211,29 @@ function bezierPath(from: { x: number; y: number }, to: { x: number; y: number }
   return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
 }
 
-const wireGeometry = computed(() => {
-  return canvas.wires
-    .map((wire) => {
-      const from = canvas.findPort(wire.fromPortId);
-      const to = canvas.findPort(wire.toPortId);
-      if (!from || !to) return null;
-      const fromAnchor = portAnchor(from.node, from.port);
-      const toAnchor = portAnchor(to.node, to.port);
-      return {
+interface WireGeometry {
+  id: string;
+  d: string;
+  mid: { x: number; y: number };
+  label?: string;
+}
+
+const wireGeometry = computed<WireGeometry[]>(() => {
+  return canvas.wires.flatMap((wire): WireGeometry[] => {
+    const from = canvas.findPort(wire.fromPortId);
+    const to = canvas.findPort(wire.toPortId);
+    if (!from || !to) return [];
+    const fromAnchor = portAnchor(from.node, from.port);
+    const toAnchor = portAnchor(to.node, to.port);
+    return [
+      {
         id: wire.id,
         d: bezierPath(fromAnchor, toAnchor),
         mid: { x: (fromAnchor.x + toAnchor.x) / 2, y: (fromAnchor.y + toAnchor.y) / 2 },
-      };
-    })
-    .filter((w): w is { id: string; d: string; mid: { x: number; y: number } } => w !== null);
+        ...(wire.label ? { label: wire.label } : {}),
+      },
+    ];
+  });
 });
 
 const pendingWireGeometry = computed(() => {
@@ -217,8 +267,33 @@ function closeOutputDrawer() {
   activeOutputPortId.value = null;
 }
 
-const inputDrawerPins = computed<MockPin[]>(() => (activeInputPortId.value ? canvas.compatibleSourcePins(activeInputPortId.value) : []));
-const outputDrawerPins = computed<MockPin[]>(() => (activeOutputPortId.value ? canvas.compatibleTargetPins(activeOutputPortId.value) : []));
+// Real machines expose hundreds of pins — both drawers filter on a
+// free-text query over full name / component / description.
+const inputSearch = ref("");
+const outputSearch = ref("");
+
+function matchesSearch(pin: HalPin, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    pin.fullName.toLowerCase().includes(q) ||
+    (pin.componentName ?? "").toLowerCase().includes(q) ||
+    (pin.description ?? "").toLowerCase().includes(q)
+  );
+}
+
+const inputDrawerPins = computed<HalPin[]>(() => {
+  if (!activeInputPortId.value) return [];
+  return canvas
+    .compatibleSourcePins(activeInputPortId.value)
+    .filter((pin) => matchesSearch(pin, inputSearch.value));
+});
+const outputDrawerPins = computed<HalPin[]>(() => {
+  if (!activeOutputPortId.value) return [];
+  return canvas
+    .compatibleTargetPins(activeOutputPortId.value)
+    .filter((pin) => matchesSearch(pin, outputSearch.value));
+});
 
 // Where to drop a HAL pin's stand-in node the first time it's
 // picked: hugging the requesting port's side of its block, so the
@@ -230,7 +305,7 @@ function pinPlacementNear(node: HalNode, port: Port): { x: number; y: number } {
   return { x: Math.max(0, node.x + dx), y: Math.max(0, anchor.y - 22) };
 }
 
-function onPickSourcePin(pin: MockPin) {
+function onPickSourcePin(pin: HalPin) {
   const found = activeInput.value;
   if (!found) return;
   const currentPinId = canvas.inputSourcePinId(found.port.id);
@@ -249,7 +324,7 @@ function onPickSourcePin(pin: MockPin) {
   closeInputDrawer();
 }
 
-function onToggleTargetPin(pin: MockPin) {
+function onToggleTargetPin(pin: HalPin) {
   const found = activeOutput.value;
   if (!found) return;
   if (canvas.outputTargetPinIds(found.port.id).includes(pin.id)) {
@@ -360,248 +435,298 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
 
 <template>
   <div class="relative h-full w-full min-h-[70vh] overflow-hidden rounded-lg border border-gray-700 bg-gray-950" data-test="visual-hal-editor">
-    <!-- Empty-state hint — pinned to the viewport, not the (larger) scrollable canvas -->
-    <p
-      v-if="canvas.nodes.length === 0"
-      class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-gray-600 whitespace-nowrap"
-    >
-      Click the <span class="text-blue-400 font-semibold mx-1">+</span> button to place your first block.
-    </p>
+    <MachineGate label="Visual HAL Editor">
+      <div class="relative h-full min-h-[70vh] w-full">
+        <!-- Toolbar: refresh (re-fetch + reset to backend truth) + counts -->
+        <div class="absolute left-3 top-3 z-20 flex items-center gap-2">
+          <button
+            class="flex items-center gap-1.5 rounded-md border border-gray-600 bg-gray-800 px-2.5 py-1.5 text-xs font-semibold text-gray-200 hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+            data-test="hal-refresh"
+            :disabled="loading"
+            title="Re-fetch the HAL layout from the backend — in-session blocks and wires are discarded"
+            @click="refresh()"
+          >
+            <span aria-hidden="true" :class="loading ? 'animate-spin' : ''">↻</span>
+            {{ loading ? "Loading…" : "Refresh" }}
+          </button>
+          <span
+            class="rounded border border-gray-700 bg-gray-800/80 px-2 py-1 font-mono text-[11px] text-gray-400"
+            data-test="hal-counts"
+          >{{ pinCount }} pins · {{ signalCount }} signals</span>
+          <span
+            v-if="loadError"
+            class="flex items-center gap-2 rounded border border-red-800 bg-red-950/60 px-2 py-1 text-xs text-red-300"
+            data-test="hal-load-error"
+          >
+            {{ loadError }}
+            <button class="font-semibold underline hover:text-red-200" @click="refresh()">Retry</button>
+          </span>
+        </div>
 
-    <!-- Scrollable canvas -->
-    <div class="absolute inset-0 overflow-auto hal-canvas-bg" @mousedown="onCanvasBackgroundMouseDown">
-      <div ref="contentEl" class="relative" :style="canvasSizeStyle">
-        <!-- Wires -->
-        <svg class="absolute inset-0 pointer-events-none" :width="CANVAS_WIDTH" :height="CANVAS_HEIGHT">
-          <path
-            v-for="w in wireGeometry"
-            :key="w.id"
-            :d="w.d"
-            fill="none"
-            class="stroke-blue-400/70"
-            stroke-width="2"
-          />
-          <path
-            v-if="pendingWireGeometry"
-            :d="pendingWireGeometry"
-            fill="none"
-            class="stroke-blue-300"
-            stroke-width="2"
-            stroke-dasharray="6 4"
-          />
-        </svg>
-
-        <!-- Wire remove buttons -->
-        <button
-          v-for="w in wireGeometry"
-          :key="`rm-${w.id}`"
-          class="absolute -translate-x-1/2 -translate-y-1/2 z-10 h-4 w-4 rounded-full bg-gray-800 border border-gray-600 text-gray-400 text-[10px] leading-none hover:bg-red-900 hover:text-red-300 hover:border-red-600"
-          :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
-          title="Remove wire"
-          @click="canvas.removeWire(w.id)"
-        >×</button>
-
-        <!-- Nodes -->
-        <div
-          v-for="node in canvas.nodes"
-          :key="node.id"
-          class="absolute rounded-lg bg-gray-800 border border-gray-700 shadow-lg select-none"
-          :style="nodeStyle(node)"
-          :data-test-node="node.label"
+        <!-- Empty-state hint — pinned to the viewport, not the (larger) scrollable canvas -->
+        <p
+          v-if="!loading && !loadError && canvas.nodes.length === 0"
+          class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-gray-600 whitespace-nowrap"
         >
-          <header
-            class="flex h-11 items-center justify-between gap-2 rounded-t-lg px-3 text-xs font-semibold uppercase tracking-wide cursor-grab active:cursor-grabbing"
-            :class="headerClass(node)"
-            @mousedown="onNodeHeaderMouseDown($event, node)"
-          >
-            <span class="truncate" :title="node.label">{{ node.label }}</span>
-            <span
-              v-if="pinNodeType(node)"
-              class="shrink-0 rounded px-1 py-0.5 text-[10px] normal-case font-mono"
-              :class="typeBadgeClass(pinNodeType(node))"
-            >{{ pinNodeType(node) }}</span>
-            <button class="opacity-70 hover:opacity-100 shrink-0" title="Delete block" @mousedown.stop @click.stop="canvas.removeNode(node.id)">
-              <Icon name="close" class="h-3.5 w-3.5" />
-            </button>
-          </header>
-
-          <div class="flex justify-between px-2 py-2 gap-2">
-            <!-- Inputs -->
-            <div class="flex flex-col flex-1 min-w-0">
-              <div
-                v-for="port in node.inputs"
-                :key="port.id"
-                class="flex items-center gap-1.5 h-[30px] px-1 rounded cursor-pointer hover:bg-gray-700/50 min-w-0"
-                :title="portTitle(port)"
-                @click="openInputDrawer(node, port)"
-              >
-                <span :class="portDotClass(port)"></span>
-                <span v-if="port.name" class="text-xs font-mono text-gray-300 shrink-0">{{ port.name }}</span>
-              </div>
-              <button
-                v-if="canvas.canAddInput(node.id)"
-                class="h-[30px] rounded border border-dashed border-gray-600 text-[11px] text-gray-500 hover:text-gray-300 hover:border-gray-400"
-                title="Add input"
-                @mousedown.stop
-                @click.stop="canvas.addInputPort(node.id)"
-              >+ input</button>
-            </div>
-
-            <!-- Outputs -->
-            <div class="flex flex-col flex-1 min-w-0 items-end">
-              <div
-                v-for="port in node.outputs"
-                :key="port.id"
-                class="flex items-center gap-1.5 h-[30px] px-1 rounded cursor-pointer hover:bg-gray-700/50 min-w-0 justify-end"
-                :title="portTitle(port)"
-                @click="openOutputDrawer(node, port)"
-              >
-                <span v-if="port.name" class="text-xs font-mono text-gray-300 shrink-0">{{ port.name }}</span>
-                <span
-                  :class="portDotClass(port)"
-                  @mousedown.stop="onOutputDotMouseDown($event, node, port)"
-                  @click.stop
-                ></span>
-              </div>
-              <div v-if="canvas.canAddInput(node.id)" class="h-[30px]"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- FAB -->
-    <div class="absolute bottom-6 right-6 z-30 flex flex-col items-end gap-2">
-      <Transition
-        enter-active-class="transition duration-150 ease-out"
-        leave-active-class="transition duration-100 ease-in"
-        enter-from-class="opacity-0 translate-y-2"
-        leave-to-class="opacity-0 translate-y-2"
-      >
-        <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 shadow-2xl overflow-hidden w-48" data-test="hal-block-menu">
-          <button
-            v-for="kind in BLOCK_MENU"
-            :key="kind"
-            class="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 border-b border-gray-700/60 last:border-b-0"
-            :data-test-add-block="kind"
-            @click="onAddBlock(kind)"
-          >
-            <span>{{ BLOCK_DEFINITIONS[kind].label }}</span>
-            <span class="text-[10px] uppercase tracking-wide text-gray-500">{{ BLOCK_DEFINITIONS[kind].category }}</span>
-          </button>
-        </div>
-      </Transition>
-
-      <button
-        class="h-14 w-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900 transition-transform"
-        :class="{ 'rotate-45': menuOpen }"
-        data-test="hal-fab"
-        title="Add block"
-        @click="menuOpen = !menuOpen"
-      >
-        <Icon name="plus" class="h-7 w-7" />
-      </button>
-    </div>
-
-    <!-- Left drawer: pick the source (OUT) pin for an input port -->
-    <Drawer :open="!!activeInput" side="left" width="w-80" @close="closeInputDrawer">
-      <template #header>
-        <header v-if="activeInput" class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700">
-          <div class="min-w-0">
-            <p class="text-xs uppercase tracking-wide text-gray-500">Source for</p>
-            <p class="text-sm font-semibold text-gray-100 truncate">{{ activeInput.node.label }} · {{ activeInput.port.name }}</p>
-          </div>
-          <button class="text-gray-400 hover:text-gray-200" @click="closeInputDrawer">
-            <Icon name="close" class="h-4 w-4" />
-          </button>
-        </header>
-      </template>
-
-      <div v-if="activeInput" class="p-3 space-y-2" data-test="hal-input-drawer">
-        <div v-if="inputGateDriver" class="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-400">
-          Driven from the canvas by <span class="font-mono text-gray-200">{{ inputGateDriver }}</span>.
-          <button class="mt-2 block text-red-400 hover:text-red-300" @click="canvas.disconnectPort(activeInput.port.id)">Disconnect</button>
-        </div>
-        <template v-else>
-          <p class="text-xs text-gray-500 px-1">
-            Pick a writer pin (OUT) to drive this input — it's placed on the canvas as its own block. Only compatible types are shown.
-          </p>
-          <button
-            v-for="pin in inputDrawerPins"
-            :key="pin.id"
-            class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
-            :class="canvas.inputSourcePinId(activeInput.port.id) === pin.id
-              ? 'border-green-600 bg-green-950/40'
-              : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
-            :title="pin.description"
-            @click="onPickSourcePin(pin)"
-          >
-            <span class="min-w-0">
-              <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
-              <span v-if="pin.description" class="block text-[11px] text-gray-500 truncate">{{ pin.description }}</span>
-            </span>
-            <span class="shrink-0 flex items-center gap-1.5">
-              <Icon v-if="canvas.inputSourcePinId(activeInput.port.id) === pin.id" name="check" class="h-3.5 w-3.5 text-green-400" />
-              <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
-            </span>
-          </button>
-          <p v-if="inputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible writer pins.</p>
-        </template>
-      </div>
-    </Drawer>
-
-    <!-- Right drawer: pick target (IN) pins for an output port -->
-    <Drawer :open="!!activeOutput" side="right" width="w-80" @close="closeOutputDrawer">
-      <template #header>
-        <header v-if="activeOutput" class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700">
-          <div class="min-w-0">
-            <p class="text-xs uppercase tracking-wide text-gray-500">Targets for</p>
-            <p class="text-sm font-semibold text-gray-100 truncate">{{ activeOutput.node.label }} · {{ activeOutput.port.name }}</p>
-          </div>
-          <button class="text-gray-400 hover:text-gray-200" @click="closeOutputDrawer">
-            <Icon name="close" class="h-4 w-4" />
-          </button>
-        </header>
-      </template>
-
-      <div v-if="activeOutput" class="p-3 space-y-2" data-test="hal-output-drawer">
-        <div v-if="outputWires.length > 0" class="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-400 space-y-1">
-          <p class="text-gray-500">Chained on the canvas to:</p>
-          <div v-for="w in outputWires" :key="w.id" class="flex items-center justify-between gap-2">
-            <span class="font-mono text-gray-200">{{ w.label }}</span>
-            <button class="text-red-400 hover:text-red-300" @click="canvas.removeWire(w.id)">Remove</button>
-          </div>
-        </div>
-
-        <p class="text-xs text-gray-500 px-1">
-          This output can drive any number of reader pins (IN) — each is placed on the canvas as its own block. Only compatible types are shown.
+          Click the <span class="text-blue-400 font-semibold mx-1">+</span> button to place your first block.
         </p>
-        <button
-          v-for="pin in outputDrawerPins"
-          :key="pin.id"
-          class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
-          :class="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)
-            ? 'border-green-600 bg-green-950/40'
-            : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
-          :title="pin.description"
-          @click="onToggleTargetPin(pin)"
-        >
-          <span class="min-w-0">
-            <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
-            <span v-if="pin.description" class="block text-[11px] text-gray-500 truncate">{{ pin.description }}</span>
-          </span>
-          <span class="shrink-0 flex items-center gap-1.5">
-            <Icon
-              v-if="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)"
-              name="check"
-              class="h-3.5 w-3.5 text-green-400"
+
+        <!-- Scrollable canvas -->
+        <div class="absolute inset-0 overflow-auto hal-canvas-bg" @mousedown="onCanvasBackgroundMouseDown">
+          <div ref="contentEl" class="relative" :style="canvasSizeStyle">
+            <!-- Wires -->
+            <svg class="absolute inset-0 pointer-events-none" :width="CANVAS_WIDTH" :height="CANVAS_HEIGHT">
+              <path
+                v-for="w in wireGeometry"
+                :key="w.id"
+                :d="w.d"
+                fill="none"
+                class="stroke-blue-400/70"
+                stroke-width="2"
+              />
+              <path
+                v-if="pendingWireGeometry"
+                :d="pendingWireGeometry"
+                fill="none"
+                class="stroke-blue-300"
+                stroke-width="2"
+                stroke-dasharray="6 4"
+              />
+            </svg>
+
+            <!-- Wire labels (seeded backend signals) + remove buttons -->
+            <template v-for="w in wireGeometry" :key="w.id">
+              <span
+                v-if="w.label"
+                class="pointer-events-none absolute -translate-x-1/2 translate-y-1 z-10 rounded bg-gray-900/80 px-1.5 py-0.5 font-mono text-[10px] text-gray-400"
+                :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
+              >{{ w.label }}</span>
+              <button
+                class="absolute -translate-x-1/2 -translate-y-1/2 z-10 h-4 w-4 rounded-full bg-gray-800 border border-gray-600 text-gray-400 text-[10px] leading-none hover:bg-red-900 hover:text-red-300 hover:border-red-600"
+                :class="w.label ? 'mt-[-14px]' : ''"
+                :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
+                title="Remove wire"
+                @click="canvas.removeWire(w.id)"
+              >×</button>
+            </template>
+
+            <!-- Nodes -->
+            <div
+              v-for="node in canvas.nodes"
+              :key="node.id"
+              class="absolute rounded-lg bg-gray-800 border border-gray-700 shadow-lg select-none"
+              :style="nodeStyle(node)"
+              :data-test-node="node.label"
+            >
+              <header
+                class="flex h-11 items-center justify-between gap-2 rounded-t-lg px-3 text-xs font-semibold uppercase tracking-wide cursor-grab active:cursor-grabbing"
+                :class="headerClass(node)"
+                @mousedown="onNodeHeaderMouseDown($event, node)"
+              >
+                <span class="truncate" :title="node.label">{{ node.label }}</span>
+                <span
+                  v-if="pinNodeType(node)"
+                  class="shrink-0 rounded px-1 py-0.5 text-[10px] normal-case font-mono"
+                  :class="typeBadgeClass(pinNodeType(node))"
+                >{{ pinNodeType(node) }}</span>
+                <button class="opacity-70 hover:opacity-100 shrink-0" title="Delete block" @mousedown.stop @click.stop="canvas.removeNode(node.id)">
+                  <Icon name="close" class="h-3.5 w-3.5" />
+                </button>
+              </header>
+
+              <div class="flex justify-between px-2 py-2 gap-2">
+                <!-- Inputs -->
+                <div class="flex flex-col flex-1 min-w-0">
+                  <div
+                    v-for="port in node.inputs"
+                    :key="port.id"
+                    class="flex items-center gap-1.5 h-[30px] px-1 rounded cursor-pointer hover:bg-gray-700/50 min-w-0"
+                    :title="portTitle(port)"
+                    @click="openInputDrawer(node, port)"
+                  >
+                    <span :class="portDotClass(port)"></span>
+                    <span v-if="port.name" class="text-xs font-mono text-gray-300 shrink-0">{{ port.name }}</span>
+                  </div>
+                  <button
+                    v-if="canvas.canAddInput(node.id)"
+                    class="h-[30px] rounded border border-dashed border-gray-600 text-[11px] text-gray-500 hover:text-gray-300 hover:border-gray-400"
+                    title="Add input"
+                    @mousedown.stop
+                    @click.stop="canvas.addInputPort(node.id)"
+                  >+ input</button>
+                </div>
+
+                <!-- Outputs -->
+                <div class="flex flex-col flex-1 min-w-0 items-end">
+                  <div
+                    v-for="port in node.outputs"
+                    :key="port.id"
+                    class="flex items-center gap-1.5 h-[30px] px-1 rounded cursor-pointer hover:bg-gray-700/50 min-w-0 justify-end"
+                    :title="portTitle(port)"
+                    @click="openOutputDrawer(node, port)"
+                  >
+                    <span v-if="port.name" class="text-xs font-mono text-gray-300 shrink-0">{{ port.name }}</span>
+                    <span
+                      :class="portDotClass(port)"
+                      @mousedown.stop="onOutputDotMouseDown($event, node, port)"
+                      @click.stop
+                    ></span>
+                  </div>
+                  <div v-if="canvas.canAddInput(node.id)" class="h-[30px]"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FAB -->
+        <div class="absolute bottom-6 right-6 z-30 flex flex-col items-end gap-2">
+          <Transition
+            enter-active-class="transition duration-150 ease-out"
+            leave-active-class="transition duration-100 ease-in"
+            enter-from-class="opacity-0 translate-y-2"
+            leave-to-class="opacity-0 translate-y-2"
+          >
+            <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 shadow-2xl overflow-hidden w-48" data-test="hal-block-menu">
+              <button
+                v-for="kind in BLOCK_MENU"
+                :key="kind"
+                class="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 border-b border-gray-700/60 last:border-b-0"
+                :data-test-add-block="kind"
+                @click="onAddBlock(kind)"
+              >
+                <span>{{ BLOCK_DEFINITIONS[kind].label }}</span>
+                <span class="text-[10px] uppercase tracking-wide text-gray-500">{{ BLOCK_DEFINITIONS[kind].category }}</span>
+              </button>
+            </div>
+          </Transition>
+
+          <button
+            class="h-14 w-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900 transition-transform"
+            :class="{ 'rotate-45': menuOpen }"
+            data-test="hal-fab"
+            title="Add block"
+            @click="menuOpen = !menuOpen"
+          >
+            <Icon name="plus" class="h-7 w-7" />
+          </button>
+        </div>
+
+        <!-- Left drawer: pick the source (OUT) pin for an input port -->
+        <Drawer :open="!!activeInput" side="left" width="w-80" @close="closeInputDrawer">
+          <template #header>
+            <header v-if="activeInput" class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700">
+              <div class="min-w-0">
+                <p class="text-xs uppercase tracking-wide text-gray-500">Source for</p>
+                <p class="text-sm font-semibold text-gray-100 truncate">{{ activeInput.node.label }} · {{ activeInput.port.name }}</p>
+              </div>
+              <button class="text-gray-400 hover:text-gray-200" @click="closeInputDrawer">
+                <Icon name="close" class="h-4 w-4" />
+              </button>
+            </header>
+          </template>
+
+          <div v-if="activeInput" class="p-3 space-y-2" data-test="hal-input-drawer">
+            <input
+              v-model="inputSearch"
+              type="text"
+              placeholder="Filter pins…"
+              class="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1.5 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+              data-test="hal-input-search"
             />
-            <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
-          </span>
-        </button>
-        <p v-if="outputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible reader pins.</p>
+            <div v-if="inputGateDriver" class="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-400">
+              Driven from the canvas by <span class="font-mono text-gray-200">{{ inputGateDriver }}</span>.
+              <button class="mt-2 block text-red-400 hover:text-red-300" @click="canvas.disconnectPort(activeInput.port.id)">Disconnect</button>
+            </div>
+            <template v-else>
+              <p class="text-xs text-gray-500 px-1">
+                Pick a writer pin (OUT) to drive this input — it's placed on the canvas as its own block. Only compatible types are shown.
+              </p>
+              <button
+                v-for="pin in inputDrawerPins"
+                :key="pin.id"
+                class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
+                :class="canvas.inputSourcePinId(activeInput.port.id) === pin.id
+                  ? 'border-green-600 bg-green-950/40'
+                  : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
+                :title="pin.description"
+                @click="onPickSourcePin(pin)"
+              >
+                <span class="min-w-0">
+                  <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
+                  <span v-if="pin.description || pin.componentName" class="block text-[11px] text-gray-500 truncate">{{ pin.componentName ? pin.componentName + ' · ' : '' }}{{ pin.description }}</span>
+                </span>
+                <span class="shrink-0 flex items-center gap-1.5">
+                  <Icon v-if="canvas.inputSourcePinId(activeInput.port.id) === pin.id" name="check" class="h-3.5 w-3.5 text-green-400" />
+                  <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
+                </span>
+              </button>
+              <p v-if="inputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible writer pins.</p>
+            </template>
+          </div>
+        </Drawer>
+
+        <!-- Right drawer: pick target (IN) pins for an output port -->
+        <Drawer :open="!!activeOutput" side="right" width="w-80" @close="closeOutputDrawer">
+          <template #header>
+            <header v-if="activeOutput" class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-700">
+              <div class="min-w-0">
+                <p class="text-xs uppercase tracking-wide text-gray-500">Targets for</p>
+                <p class="text-sm font-semibold text-gray-100 truncate">{{ activeOutput.node.label }} · {{ activeOutput.port.name }}</p>
+              </div>
+              <button class="text-gray-400 hover:text-gray-200" @click="closeOutputDrawer">
+                <Icon name="close" class="h-4 w-4" />
+              </button>
+            </header>
+          </template>
+
+          <div v-if="activeOutput" class="p-3 space-y-2" data-test="hal-output-drawer">
+            <input
+              v-model="outputSearch"
+              type="text"
+              placeholder="Filter pins…"
+              class="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1.5 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+              data-test="hal-output-search"
+            />
+            <div v-if="outputWires.length > 0" class="rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-400 space-y-1">
+              <p class="text-gray-500">Chained on the canvas to:</p>
+              <div v-for="w in outputWires" :key="w.id" class="flex items-center justify-between gap-2">
+                <span class="font-mono text-gray-200">{{ w.label }}</span>
+                <button class="text-red-400 hover:text-red-300" @click="canvas.removeWire(w.id)">Remove</button>
+              </div>
+            </div>
+
+            <p class="text-xs text-gray-500 px-1">
+              This output can drive any number of reader pins (IN) — each is placed on the canvas as its own block. Only compatible types are shown.
+            </p>
+            <button
+              v-for="pin in outputDrawerPins"
+              :key="pin.id"
+              class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
+              :class="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)
+                ? 'border-green-600 bg-green-950/40'
+                : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
+              :title="pin.description"
+              @click="onToggleTargetPin(pin)"
+            >
+              <span class="min-w-0">
+                <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
+                <span v-if="pin.description || pin.componentName" class="block text-[11px] text-gray-500 truncate">{{ pin.componentName ? pin.componentName + ' · ' : '' }}{{ pin.description }}</span>
+              </span>
+              <span class="shrink-0 flex items-center gap-1.5">
+                <Icon
+                  v-if="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)"
+                  name="check"
+                  class="h-3.5 w-3.5 text-green-400"
+                />
+                <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
+              </span>
+            </button>
+            <p v-if="outputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible reader pins.</p>
+          </div>
+        </Drawer>
       </div>
-    </Drawer>
+    </MachineGate>
   </div>
 </template>
 

@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from "../ui/index.ts";
+import useMachineOnline from "../composables/useMachineOnline.ts";
 
 const route = useRoute()
 const router = useRouter()
@@ -11,21 +12,30 @@ const router = useRouter()
 // built-in entries and per-domain entries are declared inline here
 // (no registry — modules are hard dependencies in this build).
 const activeId = computed(() => route.name || 'dashboard')
+const { isMachineOnline, isStarting, wakeMachine } = useMachineOnline();
+
+// const machineStore = useMachineStore() // <-- Hook up your store
+
+// TODO: Replace this with your actual machine state check (e.g., machineStore.isMachineOn)
+const isMachineOn = computed(() => false)
+
+const isDisabled = (item: any) => item.activeMachineOnly && !isMachineOnline ;
+
 
 function navigate(view: string) {
   router.push({ name: view })
 }
 
 const builtinItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', order: 1 },
-  { id: 'jogging', label: 'Jogging', icon: 'jogging', order: 1 },
-  { id: 'running', label: 'Running', icon: 'running', order: 1 },
-  { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2 },
-  { id: 'camera', label: 'Camera', icon: 'camera', order: 3 },
-  { id: 'settings', label: 'Settings', icon: 'settings', order: 7 },
-  { id: 'config', label: 'Config', icon: 'config', order: 5 },
-  { id: 'hal-editor', label: 'HAL Editor', icon: 'config', order: 5 },
-  { id: 'debug', label: 'Debug', icon: 'debug', order: 6 },
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', order: 1, activeMachineOnly: true },
+  { id: 'jogging', label: 'Jogging', icon: 'jogging', order: 1, activeMachineOnly: true  },
+  { id: 'running', label: 'Running', icon: 'running', order: 1, activeMachineOnly: true  },
+  { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2, activeMachineOnly: false },
+  { id: 'camera', label: 'Camera', icon: 'camera', order: 3 , activeMachineOnly: true },
+  { id: 'settings', label: 'Settings', icon: 'settings', order: 7, activeMachineOnly: false },
+  { id: 'config', label: 'Config', icon: 'config', order: 5, activeMachineOnly: false },
+  { id: 'hal-editor', label: 'HAL Editor', icon: 'config', order: 5, activeMachineOnly: true  },
+  { id: 'debug', label: 'Debug', icon: 'debug', order: 6, activeMachineOnly: true  },
 ];
 
 const navItems = computed(() =>
@@ -60,15 +70,18 @@ const isCollapsed = ref(false);
       <button
         v-for="item in navItems"
         :key="item.id"
+        :disabled="isDisabled(item)"
         @click="navigate(item.id)"
-        class="w-full flex items-center px-4 py-3 transition-colors outline-none"
+        class="w-full flex items-center px-4 py-3 transition-colors outline-none border-r-4"
         :class="[
-          activeId === item.id
-            ? 'bg-blue-600 text-white border-r-4 border-blue-400'
-            : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-r-4 border-transparent',
+          isDisabled(item)
+            ? 'text-gray-600 cursor-not-allowed opacity-40 bg-gray-800 border-transparent'
+            : activeId === item.id
+              ? 'bg-blue-600 text-white border-blue-400'
+              : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-transparent',
           isCollapsed ? 'justify-center' : 'justify-start'
         ]"
-        :title="isCollapsed ? item.label : ''"
+        :title="isDisabled(item) ? 'Requires Machine to be ON' : (isCollapsed ? item.label : '')"
       >
         <!-- Render the shared Icon component -->
         <Icon :name="item.icon" size="h-6 w-6" />

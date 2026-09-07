@@ -1,9 +1,11 @@
-// State + rules engine for the Visual HAL Editor canvas concept.
+// State + rules engine for the Visual HAL Editor canvas.
 //
-// Everything here is in-memory / mock-backed on purpose (see
-// ./mockPins.ts) — the goal of this pass is to nail the interaction
-// model (place blocks, chain them, wire them to HAL pins, enforce
-// HAL's connection rules) before any of it talks to a real backend.
+// Pins come from the real backend (`setPins`, fed by ./loadHalData.ts
+// → `GET /api/v1/hal/layout`); signals seeded via `seedSignals` render
+// the operator's existing HAL wiring as pre-wired pin nodes. Blocks
+// placed in-session and any re-wiring are FRONTEND-ONLY state —
+// nothing here ever writes back to the backend; a refresh (re-fetch +
+// re-seed) resets the canvas to backend truth.
 //
 // Connection rules enforced here mirror HAL signals:
 //   - An input port has at most ONE driver: one incoming `Wire`.
@@ -23,12 +25,8 @@
 import { reactive } from "vue";
 
 import { BLOCK_DEFINITIONS } from "./blockDefinitions";
-import { MOCK_PINS } from "./mockPins";
-import type { BlockKind, HalNode, MockPin, PinType, Port, Wire } from "./types";
-
-function pinsWithDirection(direction: "in" | "out"): MockPin[] {
-  return MOCK_PINS.filter((pin) => pin.direction === direction);
-}
+import type { SeedSignal } from "./loadHalData";
+import type { BlockKind, HalNode, HalPin, PinType, Port, Wire } from "./types";
 
 let idCounter = 0;
 function nextId(prefix: string): string {
@@ -48,6 +46,18 @@ export interface ConnectResult {
 export function useHalCanvas() {
   const nodes = reactive<HalNode[]>([]);
   const wires = reactive<Wire[]>([]);
+
+  // The real HAL pin palette, injected by the view once
+  // `loadHalLayout()` resolves (see ./loadHalData.ts).
+  let pins: HalPin[] = [];
+
+  function setPins(next: HalPin[]): void {
+    pins = next;
+  }
+
+  function pinsWithDirection(direction: "in" | "out"): HalPin[] {
+    return pins.filter((pin) => pin.direction === direction);
+  }
 
   let placementCounter = 0;
   function nextPlacement(): { x: number; y: number } {
@@ -95,7 +105,7 @@ export function useHalCanvas() {
   // writer (direction "out") pin gets a node with a single OUTPUT
   // port (it drives things); a reader ("in") pin gets a single INPUT
   // port (it consumes a value). `at` only matters on first creation.
-  function getOrCreatePinNode(pin: MockPin, at?: { x: number; y: number }): HalNode {
+  function getOrCreatePinNode(pin: HalPin, at?: { x: number; y: number }): HalNode {
     const existing = findPinNode(pin.id);
     if (existing) return existing;
     const id = nextId("pin-node");
@@ -269,23 +279,25 @@ export function useHalCanvas() {
 
   // --- HAL pin palette lookups -----------------------------------------------
 
-  function compatibleSourcePins(portId: string): MockPin[] {
+  function compatibleSourcePins(portId: string): HalPin[] {
     const found = findPort(portId);
     if (!found) return [];
     const wanted = resolveType(found.port);
-    return pinsWithDirection("out").filter((pin) => typesCompatible(wanted, pin.type));
+    const matches = pinsWithDirection("out").filter((pin) => typesCompatible(wanted, pin.type));
+    return [...matches].sort((a, b) => a.fullName.localeCompare(b.fullName));
   }
 
-  function compatibleTargetPins(portId: string): MockPin[] {
+  function compatibleTargetPins(portId: string): HalPin[] {
     const found = findPort(portId);
     if (!found) return [];
     const wanted = resolveType(found.port);
-    return pinsWithDirection("in").filter((pin) => typesCompatible(wanted, pin.type));
+    const matches = pinsWithDirection("in").filter((pin) => typesCompatible(wanted, pin.type));
+    return [...matches].sort((a, b) => a.fullName.localeCompare(b.fullName));
   }
 
   // --- wires (gate-to-gate chaining AND gate-to-HAL-pin) ----------------------
 
-  function connectWire(fromPortId: string, toPortId: string): ConnectResult {
+  function connectWire(fromPortId: string, toPortId: string, label?: string): ConnectResult {
     const from = findPort(fromPortId);
     const to = findPort(toPortId);
     if (!from || !to) return { ok: false, message: "Unknown port." };
@@ -303,7 +315,7 @@ export function useHalCanvas() {
     if (!typesCompatible(fromType, toType)) {
       return { ok: false, message: `Type mismatch: ${fromType ?? "auto"} → ${toType ?? "auto"}.` };
     }
-    wires.push({ id: nextId("wire"), fromPortId, toPortId });
+    wires.push(label ? { id: nextId("wire"), fromPortId, toPortId, label } : { id: nextId("wire"), fromPortId, toPortId });
     return { ok: true };
   }
 
@@ -327,7 +339,7 @@ export function useHalCanvas() {
   // pin's singleton node and wiring to/from it depending on which
   // side `portId` is on. `at` is only used the first time the pin is
   // placed. This is the single entry point the drawers call.
-  function connectToPin(portId: string, pin: MockPin, at?: { x: number; y: number }): ConnectResult {
+  function connectToPin(portId: string, pin: HalPin, at?: { x: number; y: number }): ConnectResult {
     const found = findPort(portId);
     if (!found) return { ok: false, message: "Unknown port." };
     if (found.port.direction === "in" && pin.direction !== "out") {
@@ -349,9 +361,62 @@ export function useHalCanvas() {
     return result;
   }
 
+  // --- seeding the real backend signals ---------------------------------------
+
+  /**
+   * Render the backend's existing signals as pre-wired connections:
+   * each signal's source OUT pin node gets a labeled wire to every
+   * target IN pin node. Deterministic grid placement (8 signals per
+   * column, sources left, targets stacked right) — nodes stay
+   * draggable afterwards. Real HAL cannot double-drive an input, but
+   * a rejected seed wire is skipped silently rather than surfacing a
+   * toast: seeding mirrors backend truth, it doesn't edit it.
+   *
+   * Signals whose pins were filtered out by the adapter (unknown
+   * type tokens) simply don't appear — the canvas always shows the
+   * subset it could resolve.
+   */
+  function seedSignals(signals: SeedSignal[]): void {
+    const COLUMN_PITCH = 760;
+    const ROW_PITCH = 300;
+    const TARGET_PITCH = 70;
+    const PER_COLUMN = 8;
+
+    signals.forEach((signal, index) => {
+      // A signal with no source OUT pin has nothing to draw — target
+      // nodes would sit permanently unwired.
+      if (!signal.source) return;
+      const col = Math.floor(index / PER_COLUMN);
+      const row = index % PER_COLUMN;
+      const baseX = 100 + col * COLUMN_PITCH;
+      const baseY = 100 + row * ROW_PITCH;
+
+      const sourceNode = getOrCreatePinNode(signal.source, { x: baseX, y: baseY });
+
+      signal.targets.forEach((target, targetIndex) => {
+        const targetNode = getOrCreatePinNode(target, {
+          x: baseX + 460,
+          y: baseY + targetIndex * TARGET_PITCH,
+        });
+        // Mirroring backend truth: failures (already driven, etc.)
+        // are expected no-ops, not user errors.
+        connectWire(sourceNode.outputs[0]?.id ?? "", targetNode.inputs[0]?.id ?? "", signal.name);
+      });
+    });
+  }
+
+  /** Drop every node/wire — used by the view's Refresh, which
+   * re-fetches the layout and re-seeds from backend truth. */
+  function reset(): void {
+    nodes.splice(0, nodes.length);
+    wires.splice(0, wires.length);
+    placementCounter = 0;
+  }
+
   return {
     nodes,
     wires,
+    setPins,
     findNode,
     findPort,
     findPinNode,
@@ -374,5 +439,7 @@ export function useHalCanvas() {
     disconnectPort,
     connectWire,
     removeWire,
+    seedSignals,
+    reset,
   };
 }

@@ -1,24 +1,28 @@
-// Shared types for the canvas-based Visual HAL Editor concept.
+// Shared types for the Visual HAL Editor.
 //
-// This is a from-scratch prototype UI (node canvas + FAB + side
-// drawers) and is intentionally decoupled from the real backend and
-// from the older three-column `halVisual` store. Everything here
-// operates on mock data so the interaction model can be nailed down
-// before any wiring to LinuxCNC HAL happens for real.
+// The canvas is a live, read-only view over the real HAL world: pins
+// and signals come from `GET /api/v1/hal/layout` (via
+// ../..//facades/halFacade.ts, adapted in ./loadHalData.ts). Blocks,
+// in-session wires and pin placements are FRONTEND-ONLY state —
+// nothing in this editor ever writes back to the backend; a refresh
+// resets the canvas to backend truth.
 
 export type PinType = "bit" | "float" | "s32" | "u32" | "auto";
 
 export type PortDirection = "in" | "out";
 
 // A pin on a real (external) HAL component — the palettes rendered
-// in the left/right drawers. `direction` follows the same
-// convention as the old editor: "out" pins *write* a value (drive a
-// signal), "in" pins *read* a value (consume a signal).
-export interface MockPin {
+// in the left/right drawers, adapted from the backend's
+// `HalPinResource`. `direction` follows HAL semantics: "out" pins
+// *write* a value (drive a signal), "in" pins *read* a value
+// (consume a signal).
+export interface HalPin {
   id: string;
   fullName: string;
   type: Exclude<PinType, "auto">;
   direction: PortDirection;
+  /** HAL component that owns the pin (e.g. "parport.0"). */
+  componentName?: string;
   description?: string;
 }
 
@@ -62,7 +66,7 @@ export interface HalNode {
   y: number;
   inputs: Port[];
   outputs: Port[];
-  // Set only on `kind: "hal-pin"` nodes: which MockPin this node
+  // Set only on `kind: "hal-pin"` nodes: which HalPin this node
   // stands in for. Picking the same pin again from a drawer reuses
   // the node with this id instead of placing a duplicate.
   pinId?: string;
@@ -71,8 +75,12 @@ export interface HalNode {
 // A wire: connects one node's output port to another node's input
 // port. This is how gates chain together (NOT -> AND -> ...) *and*
 // how a gate connects to a real HAL pin (via that pin's node).
+// `label` is set on wires seeded from a real backend signal (the
+// signal's name) so the pre-wired canvas reads like the HAL world it
+// mirrors.
 export interface Wire {
   id: string;
   fromPortId: string;
   toPortId: string;
+  label?: string;
 }
