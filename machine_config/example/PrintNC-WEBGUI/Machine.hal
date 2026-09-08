@@ -3,25 +3,28 @@
 # overwritten when you run stepconf again
 loadrt [KINS]KINEMATICS
 loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
+
+
 loadrt hal_parport cfg="0 out"
-
-
 setp parport.0.reset-time 2500
 loadrt stepgen step_type=0,0,0,0
-loadrt estop_latch
-#loadrt pwmgen output_type=1
 
 addf parport.0.read base-thread
 addf stepgen.make-pulses base-thread
-#addf pwmgen.make-pulses base-thread
 addf parport.0.write base-thread
 addf parport.0.reset base-thread
+
+
+
 
 addf stepgen.capture-position servo-thread
 addf motion-command-handler servo-thread
 addf motion-controller servo-thread
 addf stepgen.update-freq servo-thread
-addf estop-latch.0 servo-thread
+
+
+#loadrt pwmgen output_type=1
+#addf pwmgen.make-pulses base-thread
 #addf pwmgen.update servo-thread
 
 #net spindle-cmd-rpm => pwmgen.0.value
@@ -32,14 +35,36 @@ addf estop-latch.0 servo-thread
 #setp pwmgen.0.offset 5.6
 #setp pwmgen.0.dither-pwm true
 
+#net spindle-on      => parport.0.pin-17-out
+
+
+loadrt estop_latch
+addf estop-latch.0 servo-thread
+net estop-out       => parport.0.pin-14-out
+
+# 1. Connect the physical pin directly to the latch's fault input
+net estop-fault <= parport.0.pin-10-in
+net estop-fault => estop-latch.0.fault-in
+
+# 2. Connect your GUI's reset button to unlatch the software block
+net estop-reset <= iocontrol.0.user-request-enable
+net estop-reset => estop-latch.0.reset
+
+# 3. Send the latched safe signal to LinuxCNC's master enable
+net estop-ext <= estop-latch.0.ok-out
+net estop-ext => iocontrol.0.emc-enable-in
+
+net estop-out <= iocontrol.0.user-enable-out
+#net estop-out => iocontrol.0.emc-enable-in
+
+
+
 net spindle-cmd-rpm     <= spindle.0.speed-out
-#net spindle-cmd-rpm-abs <= spindle.0.speed-out-abs
 net spindle-cmd-rps     <= spindle.0.speed-out-rps
 net spindle-cmd-rps-abs <= spindle.0.speed-out-rps-abs
 net spindle-at-speed    => spindle.0.at-speed
 
-# net estop-out       => parport.0.pin-01-out
-#net spindle-pwm     => parport.0.pin-01-out
+
 net ystep           => parport.0.pin-02-out
 setp parport.0.pin-02-out-reset 1
 setp parport.0.pin-03-out-invert 1
@@ -59,22 +84,6 @@ setp parport.0.pin-08-out-reset 1
 setp parport.0.pin-09-out-invert 1
 net xdir            => parport.0.pin-09-out
 
-net estop-out       => parport.0.pin-14-out
-
-#net spindle-on      => parport.0.pin-17-out
-
-
-# 1. Connect the physical pin directly to the latch's fault input
-net estop-fault <= parport.0.pin-10-in
-net estop-fault => estop-latch.0.fault-in
-
-# 2. Connect your GUI's reset button to unlatch the software block
-net estop-reset <= iocontrol.0.user-request-enable
-net estop-reset => estop-latch.0.reset
-
-# 3. Send the latched safe signal to LinuxCNC's master enable
-net estop-ext <= estop-latch.0.ok-out
-net estop-ext => iocontrol.0.emc-enable-in
 
 net home-y          <= parport.0.pin-12-in
 net home-y2         <= parport.0.pin-11-in
@@ -137,9 +146,6 @@ net zstep <= stepgen.3.step
 net zdir <= stepgen.3.dir
 net zenable joint.3.amp-enable-out => stepgen.3.enable
 net home-xz => joint.3.home-sw-in
-
-net estop-out <= iocontrol.0.user-enable-out
-#net estop-out => iocontrol.0.emc-enable-in
 
 #loadusr -W hal_manualtoolchange
 #net tool-change iocontrol.0.tool-change => hal_manualtoolchange.change

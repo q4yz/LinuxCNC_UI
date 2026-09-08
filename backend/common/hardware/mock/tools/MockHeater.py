@@ -2,7 +2,7 @@ from typing import Optional, Any
 from hardware.mock.tools.MockComponent import MockComponent
 
 class MockHeater(MockComponent):
-    def __init__(self, id: str):
+    def __init__(self, id: str, sensor_id: Optional[str] = None):
         self.id = id
 
         # Internal State
@@ -11,10 +11,15 @@ class MockHeater(MockComponent):
 
         # Calculate the suffix exactly as the ConfigMapper expects
         suffix = self.id.replace("heater", "")
-        self._pin_map = {}
-        # Exact dictionary mapping of HAL pin strings to internal state attributes
+        # Exact dictionary mapping of HAL pin strings to internal state
+        # attributes. The reading is published on the SENSOR's pin
+        # (``webgui.<sensor_id>``) because that is what HeaterMapper
+        # makes the heater read — a heater carries a sensor, it does
+        # not own a second copy of the reading. Sensor-less heaters
+        # keep the derived name.
+        actual_pin = sensor_id if sensor_id else f"actual-temperature{suffix}"
         self._pin_map = {
-            f"webgui.actual-temperature{suffix}": "actual",
+            f"webgui.{actual_pin}": "actual",
             f"webgui.target-temperature{suffix}": "target",
         }
 

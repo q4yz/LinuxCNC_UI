@@ -14,16 +14,20 @@ class TemperatureSensorMapper:
 
     @classmethod
     def from_dict_to_TemperaturePins(cls, data: Dict[str, Any]) -> TemperaturePin:
-        """Translates the hardware.json dictionary into a SensorPin dataclass."""
+        """Translates the hardware.json dictionary into a SensorPin dataclass.
+
+        The HAL pin is named after the sensor's id (``webgui.<id>``),
+        never after ``temperature_sensors[].pin``. That field holds the
+        *MCU* pin the thermistor is physically wired to (``"PA1"``) —
+        it belongs to the compiler, which routes ``webgui.<id>`` to
+        ``<mcu>.PA1``. Reading it here produced HAL pins literally
+        called ``webgui.PA1``.
+        """
         sensor_id = str(data["id"])
-
-        suffix = sensor_id.replace("sensor", "")
-
-        pin_name = data.get("pin", f"actual-temperature{suffix}")
 
         return TemperaturePin(
             id=sensor_id,
-            actual_temperature=ReadWriteDynamicHalPin[float](pin_name, HalDataType.FLOAT, "")
+            actual_temperature=ReadWriteDynamicHalPin[float](sensor_id, HalDataType.FLOAT, "")
         )
 
     @classmethod

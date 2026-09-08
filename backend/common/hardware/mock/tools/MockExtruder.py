@@ -5,14 +5,16 @@ from hardware.mock.tools.MockHeater import MockHeater
 
 
 class MockExtruder(MockComponent):
-    def __init__(self, tool_id: str):
+    def __init__(self, tool_id: str, sensor_id: Optional[str] = None):
         self.id = tool_id
         self.position = 0.0
         self.is_relative = False
 
         # The hidden hotend!
         # It perfectly reuses all the heating/cooling physics we already wrote.
-        self._heater = MockHeater(tool_id)
+        # The sensor id rides along so the hotend publishes its reading on
+        # the same pin the mapper reads (see MockHeater).
+        self._heater = MockHeater(tool_id, sensor_id=sensor_id)
 
     def read_pin(self, pin_name: str) -> Optional[Any]:
         # 1. Check if it's an extruder-specific pin

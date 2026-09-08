@@ -11,8 +11,12 @@ class MockSensor(MockComponent):
 
         self.actual = 25.0
 
+        # ``webgui.<sensor_id>`` — the name TemperatureSensorMapper
+        # reads. Only registered for sensors NO tool references; a
+        # heater's own sensor is published by that heater's MockHeater,
+        # which owns the ramp physics (see LinuxCNCMock.register_hardware).
         self._pin_map = {
-            f"webgui.actual-temperature-{self.id}": "actual",
+            f"webgui.{self.id}": "actual",
         }
 
     def read_pin(self, pin_name: str) -> Optional[Any]:

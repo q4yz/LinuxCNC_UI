@@ -17,14 +17,29 @@ class HeaterMapper:
 
     @classmethod
     def from_dict_to_HeaterPins(cls, data: Dict[str, Any]) -> HeaterPins:
+        """Build the heater's HAL surface from its ``hardware.json`` entry.
+
+        The heater does not own its reading — it *carries a sensor*. The
+        ``sensor`` field names a ``temperature_sensors[]`` entry, and that
+        sensor's pin (``webgui.<sensor_id>``, see
+        :class:`TemperatureSensorMapper`) is what the heater reads. One
+        thermistor is therefore one HAL pin with two readers (the heater
+        tool and the sensor entity) instead of two pins carrying the same
+        value, which had to be wired twice and could disagree.
+
+        A heater with no ``sensor`` keeps the derived
+        ``actual-temperature<suffix>`` name so sensor-less configs still work.
+        """
         tool_id = str(data["id"])
         suffix = tool_id.replace("heater", "")
         fan_val = data.get("fan")
+        sensor_id = data.get("sensor")
+        actual_pin = str(sensor_id) if sensor_id else f"actual-temperature{suffix}"
 
         return HeaterPins(
             id=tool_id,
             target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT, ""),
-            actual_temperature=ReadWriteDynamicHalPin(f"actual-temperature{suffix}", HalDataType.FLOAT, ""),
+            actual_temperature=ReadWriteDynamicHalPin(actual_pin, HalDataType.FLOAT, ""),
             fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT, "") if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),

@@ -52,13 +52,26 @@ def reseed_mock_from_json(json_path: Path) -> None:
     mock_system.register_hardware(payload)
 
 
-def seed_temperature(sensor_id: str, actual: float, target: float = 0.0) -> None:
-    """Instantly forces a temperature into the HAL pins (bypassing the slow ramp-up)."""
+def seed_temperature(
+    sensor_id: str,
+    actual: float,
+    target: float = 0.0,
+    heater_id: "str | None" = None,
+) -> None:
+    """Instantly forces a temperature into the HAL pins (bypassing the slow ramp-up).
 
-    mock_system.internal_hal.register_component(MockHeater(sensor_id))
-    suffix = sensor_id.replace("heater", "")
+    ``sensor_id`` is the *sensor* — the reading is published on
+    ``webgui.<sensor_id>``, which is what both the heater and the
+    sensor entity read (see ``HeaterMapper``). Pass ``heater_id`` when
+    the test also needs the heater's own ``target-temperature<suffix>``
+    pin under a different name; it defaults to ``sensor_id`` so the
+    historical single-tool call shape keeps working.
+    """
+    heater = heater_id or sensor_id
+    mock_system.internal_hal.register_component(MockHeater(heater, sensor_id=sensor_id))
+    suffix = heater.replace("heater", "")
 
-    hal.set_p(f"actual-temperature{suffix}", actual)
+    hal.set_p(sensor_id, actual)
     hal.set_p(f"target-temperature{suffix}", target)
 
 
