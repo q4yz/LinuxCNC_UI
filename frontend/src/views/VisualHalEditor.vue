@@ -17,7 +17,7 @@
 // machine backend (:8000), so the offline card shows when the
 // machine is down and the layout re-fetches when it comes back.
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { ModalButtonStyle, useConfirm } from "../core/confirm";
@@ -33,6 +33,8 @@ import { BLOCK_DEFINITIONS, BLOCK_MENU } from "./hal-visual-editor/blockDefiniti
 import { nodeHeight, portAnchor, NODE_WIDTH } from "./hal-visual-editor/layout";
 import { loadHalLayout } from "./hal-visual-editor/loadHalData";
 import { useHalCanvas } from "./hal-visual-editor/useHalCanvas";
+import { buildPinTree, collectAutoExpandPaths, lastSegment } from "./hal-visual-editor/pinTree";
+import PinTreeItem from "./hal-visual-editor/PinTreeItem.vue";
 import type { BlockKind, HalNode, HalPin, PinType, Port } from "./hal-visual-editor/types";
 
 const canvas = useHalCanvas();
@@ -400,10 +402,12 @@ const activeOutput = computed(() => (activeOutputPortId.value ? canvas.findPort(
 function openInputDrawer(node: HalNode, port: Port) {
   activeOutputPortId.value = null;
   activeInputPortId.value = port.id;
+  inputExpanded.clear();
 }
 function openOutputDrawer(node: HalNode, port: Port) {
   activeInputPortId.value = null;
   activeOutputPortId.value = port.id;
+  outputExpanded.clear();
 }
 function closeInputDrawer() {
   activeInputPortId.value = null;
@@ -438,6 +442,81 @@ const outputDrawerPins = computed<HalPin[]>(() => {
   return canvas
     .compatibleTargetPins(activeOutputPortId.value)
     .filter((pin) => matchesSearch(pin, outputSearch.value));
+});
+
+// --- pin picker: folder tree + name-match highlighting -------------------------
+//
+// Every `.` in a pin's full name is a folder boundary (./hal-visual-editor/pinTree.ts)
+// — hundreds of pins become a drill-down instead of one flat list.
+// "Selected" only ever means one side of THIS block's signal is
+// already wired and the other is missing — the drawer only shows up
+// in that situation. When that's the case, pins whose last name
+// segment matches the wired pin's are highlighted and their folders
+// pop open: wire `axis.z.step` as the source, and every other
+// `...step` pin lights up while picking the target.
+
+const inputExpanded = reactive(new Set<string>());
+const outputExpanded = reactive(new Set<string>());
+
+function toggleInputFolder(path: string) {
+  if (inputExpanded.has(path)) inputExpanded.delete(path);
+  else inputExpanded.add(path);
+}
+function toggleOutputFolder(path: string) {
+  if (outputExpanded.has(path)) outputExpanded.delete(path);
+  else outputExpanded.add(path);
+}
+
+// The real pin already wired to `port`'s sibling (the other side of
+// the same block) — read straight off the hal-pin node's label,
+// which IS the pin's full name. Never the net's own name: a signal
+// can go unnamed until the moment it's saved (auto-named then), so
+// it can't be used as a match key here.
+function siblingWiredPinName(port: Port): string | null {
+  const node = canvas.findNode(port.nodeId);
+  if (!node) return null;
+  const sibling = port.direction === "in" ? node.outputs[0] : node.inputs[0];
+  if (!sibling) return null;
+  const wire =
+    sibling.direction === "out"
+      ? canvas.wires.find((w) => w.fromPortId === sibling.id)
+      : canvas.wires.find((w) => w.toPortId === sibling.id);
+  if (!wire) return null;
+  const otherPortId = sibling.direction === "out" ? wire.toPortId : wire.fromPortId;
+  const other = canvas.findPort(otherPortId);
+  return other && other.node.kind === "hal-pin" ? other.node.label : null;
+}
+
+const inputMatchSuffix = computed(() => {
+  const found = activeInput.value;
+  const wired = found ? siblingWiredPinName(found.port) : null;
+  return wired ? lastSegment(wired) : null;
+});
+const outputMatchSuffix = computed(() => {
+  const found = activeOutput.value;
+  const wired = found ? siblingWiredPinName(found.port) : null;
+  return wired ? lastSegment(wired) : null;
+});
+
+const inputTree = computed(() => buildPinTree(inputDrawerPins.value));
+const outputTree = computed(() => buildPinTree(outputDrawerPins.value));
+
+const inputAutoExpand = computed(() =>
+  collectAutoExpandPaths(inputDrawerPins.value, inputMatchSuffix.value, inputSearch.value.trim().length > 0),
+);
+const outputAutoExpand = computed(() =>
+  collectAutoExpandPaths(outputDrawerPins.value, outputMatchSuffix.value, outputSearch.value.trim().length > 0),
+);
+
+const inputSelectedIds = computed(() => {
+  const found = activeInput.value;
+  if (!found) return new Set<string>();
+  const id = canvas.inputSourcePinId(found.port.id);
+  return id ? new Set([id]) : new Set<string>();
+});
+const outputSelectedIds = computed(() => {
+  const found = activeOutput.value;
+  return found ? new Set(canvas.outputTargetPinIds(found.port.id)) : new Set<string>();
 });
 
 // Where to drop a HAL pin's stand-in node the first time it's
@@ -828,25 +907,22 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
               <p class="text-xs text-gray-500 px-1">
                 Pick a writer pin (OUT) to drive this input — it's placed on the canvas as its own block. Only compatible types are shown.
               </p>
-              <button
-                v-for="pin in inputDrawerPins"
-                :key="pin.id"
-                class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
-                :class="canvas.inputSourcePinId(activeInput.port.id) === pin.id
-                  ? 'border-green-600 bg-green-950/40'
-                  : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
-                :title="pin.description"
-                @click="onPickSourcePin(pin)"
-              >
-                <span class="min-w-0">
-                  <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
-                  <span v-if="pin.description || pin.componentName" class="block text-[11px] text-gray-500 truncate">{{ pin.componentName ? pin.componentName + ' · ' : '' }}{{ pin.description }}</span>
-                </span>
-                <span class="shrink-0 flex items-center gap-1.5">
-                  <Icon v-if="canvas.inputSourcePinId(activeInput.port.id) === pin.id" name="check" class="h-3.5 w-3.5 text-green-400" />
-                  <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
-                </span>
-              </button>
+              <p v-if="inputMatchSuffix" class="flex items-center gap-1.5 px-1 text-[11px] text-amber-400">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                Highlighting pins ending in <span class="font-mono">{{ inputMatchSuffix }}</span> — matches the target already wired.
+              </p>
+              <PinTreeItem
+                v-for="child in inputTree.children"
+                :key="child.kind === 'folder' ? `f:${child.path}` : `p:${child.pin.id}`"
+                :node="child"
+                :expanded="inputExpanded"
+                :auto-expand="inputAutoExpand"
+                :match-suffix="inputMatchSuffix"
+                :selected-ids="inputSelectedIds"
+                :depth="0"
+                @pick="onPickSourcePin"
+                @toggle="toggleInputFolder"
+              />
               <p v-if="inputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible writer pins.</p>
             </template>
           </div>
@@ -885,29 +961,22 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             <p class="text-xs text-gray-500 px-1">
               This output can drive any number of reader pins (IN) — each is placed on the canvas as its own block. Only compatible types are shown.
             </p>
-            <button
-              v-for="pin in outputDrawerPins"
-              :key="pin.id"
-              class="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors"
-              :class="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)
-                ? 'border-green-600 bg-green-950/40'
-                : 'border-gray-700 bg-gray-900 hover:border-gray-500'"
-              :title="pin.description"
-              @click="onToggleTargetPin(pin)"
-            >
-              <span class="min-w-0">
-                <span class="block text-sm font-mono truncate">{{ pin.fullName }}</span>
-                <span v-if="pin.description || pin.componentName" class="block text-[11px] text-gray-500 truncate">{{ pin.componentName ? pin.componentName + ' · ' : '' }}{{ pin.description }}</span>
-              </span>
-              <span class="shrink-0 flex items-center gap-1.5">
-                <Icon
-                  v-if="canvas.outputTargetPinIds(activeOutput.port.id).includes(pin.id)"
-                  name="check"
-                  class="h-3.5 w-3.5 text-green-400"
-                />
-                <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="typeBadgeClass(pin.type)">{{ pin.type }}</span>
-              </span>
-            </button>
+            <p v-if="outputMatchSuffix" class="flex items-center gap-1.5 px-1 text-[11px] text-amber-400">
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Highlighting pins ending in <span class="font-mono">{{ outputMatchSuffix }}</span> — matches the source already wired.
+            </p>
+            <PinTreeItem
+              v-for="child in outputTree.children"
+              :key="child.kind === 'folder' ? `f:${child.path}` : `p:${child.pin.id}`"
+              :node="child"
+              :expanded="outputExpanded"
+              :auto-expand="outputAutoExpand"
+              :match-suffix="outputMatchSuffix"
+              :selected-ids="outputSelectedIds"
+              :depth="0"
+              @pick="onToggleTargetPin"
+              @toggle="toggleOutputFolder"
+            />
             <p v-if="outputDrawerPins.length === 0" class="text-xs text-gray-500 px-1 py-4 text-center">No compatible reader pins.</p>
           </div>
         </Drawer>

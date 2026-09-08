@@ -93,6 +93,23 @@ test("loadHalData adapts the real backend resources for a specific file", () => 
 });
 
 // ------------------------------------------------------------------ //
+// Pin picker tree                                                        //
+// ------------------------------------------------------------------ //
+
+test("PinTreeItem is a recursive folder/leaf row with match highlighting", () => {
+  const path = resolve(editorDir, "PinTreeItem.vue");
+  assert.ok(existsSync(path), "hal-visual-editor/PinTreeItem.vue must exist");
+  const text = readFileSync(path, "utf-8");
+
+  assert.match(text, /defineOptions\(\{\s*name:\s*"PinTreeItem"\s*\}\)/, "explicit name required for Vue SFC recursion");
+  assert.match(text, /<PinTreeItem/, "a folder must render itself recursively for its children");
+  assert.match(text, /emit\(.toggle./, "folders must emit toggle so the drawer can track expand state");
+  assert.match(text, /emit\(.pick./, "leaves must emit pick so the drawer can wire the chosen pin");
+  assert.match(text, /isSuffixMatch/, "a leaf must know whether it matches the sibling's suffix");
+  assert.match(text, /hasMatch/, "a folder must know whether a match is inside it, to pop open / light up");
+});
+
+// ------------------------------------------------------------------ //
 // Canvas engine                                                          //
 // ------------------------------------------------------------------ //
 
@@ -161,6 +178,46 @@ test("VisualHalEditor requires a file, is machine-gated, and offers Refresh", ()
   // Real machines have hundreds of pins — both drawers filter.
   assert.match(text, /data-test="hal-input-search"/, "input drawer search");
   assert.match(text, /data-test="hal-output-search"/, "output drawer search");
+});
+
+test("both pin drawers render the folder tree, not a flat list", () => {
+  const text = read("views/VisualHalEditor.vue");
+
+  assert.match(text, /import PinTreeItem from "\.\/hal-visual-editor\/PinTreeItem\.vue"/);
+  assert.match(text, /import \{[^}]*buildPinTree[^}]*\} from "\.\/hal-visual-editor\/pinTree"/);
+
+  // The old flat `v-for="pin in inputDrawerPins"` / `outputDrawerPins`
+  // button lists must be gone — both drawers walk the tree instead.
+  assert.doesNotMatch(text, /v-for="pin in inputDrawerPins"/);
+  assert.doesNotMatch(text, /v-for="pin in outputDrawerPins"/);
+  assert.match(text, /v-for="child in inputTree\.children"/, "input drawer must render the tree");
+  assert.match(text, /v-for="child in outputTree\.children"/, "output drawer must render the tree");
+  assert.match(text, /@toggle="toggleInputFolder"/, "input drawer must handle folder toggling");
+  assert.match(text, /@toggle="toggleOutputFolder"/, "output drawer must handle folder toggling");
+});
+
+test("drawer name-matching reads the real pin, never the signal's own name", () => {
+  const text = read("views/VisualHalEditor.vue");
+
+  // "Selected" only means one side of a block's signal is already
+  // wired — matching is scoped to that same block's sibling port,
+  // not some global most-recently-picked tracker.
+  assert.match(text, /function siblingWiredPinName\(port: Port\)/, "match source must be the sibling port on the SAME block");
+  assert.match(
+    text,
+    /other && other\.node\.kind === "hal-pin" \? other\.node\.label/,
+    "must read the hal-pin node's label (the pin's real full name)",
+  );
+  // A signal can go unnamed until the moment it's saved (auto-named
+  // then) — the match key must never come from wire.label.
+  const matchFn = text.match(/function siblingWiredPinName\([^)]*\)[^{]*\{[\s\S]*?\n\}/);
+  assert.ok(matchFn, "siblingWiredPinName must exist");
+  assert.doesNotMatch(matchFn[0], /wire\.label/, "must not use the net's own (possibly empty) name");
+
+  assert.match(text, /const inputMatchSuffix = computed/, "input drawer must expose the current match suffix");
+  assert.match(text, /const outputMatchSuffix = computed/, "output drawer must expose the current match suffix");
+  assert.match(text, /:match-suffix="inputMatchSuffix"/);
+  assert.match(text, /:match-suffix="outputMatchSuffix"/);
 });
 
 test("VisualHalEditor offers Save / Save & Close / Close, mirroring EditorView", () => {
