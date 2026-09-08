@@ -85,3 +85,28 @@ class HalLayoutResponse(BaseModel):
         default_factory=list,
         description="Every existing signal (wire) for the middle column.",
     )
+
+
+class HalFileSignalWrite(BaseModel):
+    """One signal as submitted by the editor when saving to a ``.hal`` file.
+
+    Pins are referenced by their plain ``full_name`` string (e.g.
+    ``"vfdmod.spindle.at-speed"``) rather than a full
+    :class:`HalPinResource` — the file writer only ever needs the name to
+    render a ``net`` line.
+    """
+
+    name: str = Field(..., description="Signal name to write as the ``net`` name.")
+    source: Optional[str] = Field(
+        None, description="Full name of the single OUT pin driving this signal."
+    )
+    targets: List[str] = Field(
+        default_factory=list,
+        description="Full names of every IN pin reading this signal.",
+    )
+
+
+class HalFileSaveRequest(BaseModel):
+    """Body of ``PUT /api/v1/hal/layout`` — the editor's current signal set."""
+
+    signals: List[HalFileSignalWrite] = Field(default_factory=list)

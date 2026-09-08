@@ -1,25 +1,33 @@
 <script setup lang="ts">
-// Visual HAL editor — canvas-based logic wiring board.
+// Visual HAL editor — canvas-based logic wiring board, scoped to one
+// `.hal` file.
 //
-// A live, READ-ONLY view over the real HAL world: pins and signals
-// come from `GET /api/v1/hal/layout` (./hal-visual-editor/loadHalData.ts
-// → facades/halFacade.ts). Existing backend signals are seeded onto
-// the canvas as pre-wired pin nodes (wire labels = signal names);
-// the drawers list the real IN/OUT pins. Blocks added in-session and
-// any re-wiring are FRONTEND-ONLY state — nothing in this editor
-// ever sends anything back to the backend; the Refresh button
-// re-fetches and resets the canvas to backend truth.
+// Opened from a `.hal` file's row in the machine file browser
+// (`MachinesExplorer.vue`) as `/hal-editor?file=<path>` — `file` is
+// required; pins (live HAL introspection) and that file's `net`
+// signals come from `GET /api/v1/hal/layout?file=...`
+// (./hal-visual-editor/loadHalData.ts → facades/halFacade.ts). Signals
+// are editable (rename, rewire) and Save writes them back into the
+// file's delimited signals section — see `useHalCanvas.ts`'s
+// `serializeSignals`. Gate blocks placed in-session are frontend-only
+// and are never included in what gets saved. Canvas layout (node
+// x/y) is session-local and never persisted.
 //
-// The whole editor is wrapped in MachineGate: HAL data lives on the
+// The whole editor is wrapped in MachineGate: HAL pins live on the
 // machine backend (:8000), so the offline card shows when the
 // machine is down and the layout re-fetches when it comes back.
 
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-import { Drawer, Icon } from "../ui/index.ts";
+import { ModalButtonStyle, useConfirm } from "../core/confirm";
+import { UNSAVED_PROMPT, useUnsavedChangesGuard } from "../router/guards/unsavedChangesGuard";
+import { useConsoleStore } from "../stores/console";
+import { BaseButton, Drawer, Icon } from "../ui/index.ts";
 import MachineGate from "../components/machine/MachineGate.vue";
 import { useMachineOnline } from "../composables/useMachineOnline";
 import { useToast } from "../core/toast";
+import HalVisualService from "../facades/halFacade";
 import { BLOCK_DEFINITIONS, BLOCK_MENU } from "./hal-visual-editor/blockDefinitions";
 import { nodeHeight, portAnchor, NODE_WIDTH } from "./hal-visual-editor/layout";
 import { loadHalLayout } from "./hal-visual-editor/loadHalData";
@@ -28,21 +36,33 @@ import type { BlockKind, HalNode, HalPin, PinType, Port } from "./hal-visual-edi
 
 const canvas = useHalCanvas();
 const toast = useToast();
+const consoleStore = useConsoleStore();
+const route = useRoute();
+const router = useRouter();
 const { isMachineOnline } = useMachineOnline();
 
-// --- layout loading (real data, read-only) ---------------------------------
+// --- target file (required) --------------------------------------------------
+
+const file = computed(() => {
+  const raw = route.query.file;
+  return typeof raw === "string" && raw ? raw : null;
+});
+const hasValidTarget = computed(() => file.value !== null);
+
+// --- layout loading -----------------------------------------------------------
 
 const loading = ref(false);
+const saving = ref(false);
 const loadError = ref<string | null>(null);
 const pinCount = ref(0);
 const signalCount = ref(0);
 
 async function refresh(): Promise<void> {
-  if (loading.value) return;
+  if (loading.value || !file.value) return;
   loading.value = true;
   loadError.value = null;
   try {
-    const data = await loadHalLayout();
+    const data = await loadHalLayout(file.value);
     if (!data) {
       loadError.value = "Failed to load the HAL layout from the backend.";
       return;
@@ -50,22 +70,127 @@ async function refresh(): Promise<void> {
     // Reset to backend truth: in-session blocks/wires are discarded.
     canvas.reset();
     canvas.setPins(data.pins);
-    canvas.seedSignals(data.signals);
+    const { incomplete } = canvas.seedSignals(data.signals);
+    canvas.clearDirty();
     pinCount.value = data.pins.length;
     signalCount.value = data.signals.length;
+    if (incomplete > 0) {
+      // The file drives the same pin from more than one net (or names
+      // a pin that can't be resolved). The canvas can't show it, so
+      // saving would drop it — say so instead of losing it quietly.
+      consoleStore.warning(
+        `${incomplete} connection(s) in '${file.value}' could not be drawn (a pin is already driven by another net). Saving will drop them.`,
+        { popup: true },
+      );
+    }
   } finally {
     loading.value = false;
   }
 }
 
+async function confirmDiscardIfDirty(): Promise<boolean> {
+  if (!canvas.dirty.value) return true;
+  return useConfirm({
+    title: UNSAVED_PROMPT.title,
+    question: UNSAVED_PROMPT.question,
+    confirmButtonText: UNSAVED_PROMPT.confirmText,
+    confirmButtonStyle: ModalButtonStyle.DANGER,
+    rejectButtonText: UNSAVED_PROMPT.rejectText,
+    rejectButtonStyle: ModalButtonStyle.SECONDARY,
+    showDismissCrossButton: false,
+  });
+}
+
+async function onRefreshClick(): Promise<void> {
+  if (!(await confirmDiscardIfDirty())) return;
+  await refresh();
+}
+
+// --- save / close --------------------------------------------------------------
+
+async function saveEditor(): Promise<void> {
+  if (!file.value || saving.value) return;
+  saving.value = true;
+  try {
+    // A net with no name can't be written as a `net` line. Rather
+    // than dropping it, name it after the pins it connects — the
+    // names land on the canvas first, so what the operator sees is
+    // what reaches the file.
+    const autoNamed = canvas.autoNameUnnamedSignals();
+
+    const result = await HalVisualService.saveLayout(file.value, canvas.serializeSignals());
+    if (!result) {
+      consoleStore.error(`Failed to save '${file.value}'.`, { popup: true });
+      return;
+    }
+    // Re-seed from the freshly-written file so the canvas reflects
+    // exactly what landed on disk (backend truth, same as Refresh).
+    await refresh();
+    consoleStore.success(`File '${file.value}' saved successfully!`, { popup: true });
+    if (autoNamed > 0) {
+      consoleStore.info(
+        `${autoNamed} unnamed signal(s) were named after the pins they connect. Rename them any time.`,
+        { popup: true },
+      );
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    consoleStore.error(`Failed to save file: ${detail}`, { popup: true });
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function saveAndCloseEditor(): Promise<void> {
+  await saveEditor();
+  closeEditor();
+}
+
+async function confirmClose(): Promise<void> {
+  if (await confirmDiscardIfDirty()) closeEditor();
+}
+
+function closeEditor(): void {
+  router.push({ name: "config" }).catch((err) => console.error("Router error on close:", err));
+}
+
+useUnsavedChangesGuard(() => canvas.dirty.value);
+
+function onSaveShortcut(event: KeyboardEvent): void {
+  const isSaveChord = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s";
+  if (!isSaveChord) return;
+  event.preventDefault();
+  if (!canvas.dirty.value) return;
+  void saveEditor();
+}
+
 onMounted(() => {
   if (isMachineOnline.value) void refresh();
+  document.addEventListener("keydown", onSaveShortcut);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onSaveShortcut);
 });
 
 // The gate unmounts the editor while the machine is offline; when it
 // comes back online, pull a fresh layout.
 watch(isMachineOnline, (next) => {
   if (next) void refresh();
+});
+
+// Vue Router reuses this component when only the query changes (same
+// route name) — e.g. navigating from one .hal file's editor straight
+// to another's. `onMounted` alone would miss that; this watcher picks
+// it up. Guarded by the same unsaved-changes confirm as Refresh/Close,
+// reverting the URL on decline so the canvas and address bar agree.
+watch(file, async (next, prev) => {
+  if (next === prev) return;
+  if (!(await confirmDiscardIfDirty())) {
+    if (prev) void router.replace({ name: "hal-editor", query: { file: prev } });
+    return;
+  }
+  await refresh();
 });
 
 // --- canvas geometry ------------------------------------------------------
@@ -213,9 +338,14 @@ function bezierPath(from: { x: number; y: number }, to: { x: number; y: number }
 
 interface WireGeometry {
   id: string;
+  fromPortId: string;
   d: string;
   mid: { x: number; y: number };
   label?: string;
+  // Both endpoints are real HAL pins — a "signal" wire whose label is
+  // the editable, savable signal name. A wire touching a gate/latch
+  // block keeps its label read-only (gates aren't part of what saves).
+  isSignal: boolean;
 }
 
 const wireGeometry = computed<WireGeometry[]>(() => {
@@ -228,13 +358,20 @@ const wireGeometry = computed<WireGeometry[]>(() => {
     return [
       {
         id: wire.id,
+        fromPortId: wire.fromPortId,
         d: bezierPath(fromAnchor, toAnchor),
         mid: { x: (fromAnchor.x + toAnchor.x) / 2, y: (fromAnchor.y + toAnchor.y) / 2 },
+        isSignal: from.node.kind === "hal-pin" && to.node.kind === "hal-pin",
         ...(wire.label ? { label: wire.label } : {}),
       },
     ];
   });
 });
+
+function onSignalNameChange(w: WireGeometry, event: Event): void {
+  const value = (event.target as HTMLInputElement).value;
+  canvas.renameSignal(w.fromPortId, value);
+}
 
 const pendingWireGeometry = computed(() => {
   if (!pendingWire.value) return null;
@@ -434,7 +571,21 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
 </script>
 
 <template>
-  <div class="relative h-full w-full min-h-[70vh] overflow-hidden rounded-lg border border-gray-700 bg-gray-950" data-test="visual-hal-editor">
+  <div v-if="!hasValidTarget" class="flex h-full min-h-[70vh] w-full items-center justify-center text-sm text-gray-500">
+    Open a <span class="mx-1 font-mono text-gray-300">.hal</span> file from a machine's file browser (Config → Machines) to use the Visual HAL Editor.
+  </div>
+  <div v-else class="flex h-full min-h-[70vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-950" data-test="visual-hal-editor">
+    <!-- Header: filename + Save / Save & Close / Close, mirroring EditorView.vue -->
+    <div class="flex items-center justify-between border-b border-gray-700 bg-gray-800 px-4 py-3">
+      <span class="truncate font-mono text-blue-300" :title="file ?? undefined">Editing {{ file }} (Visual HAL Editor)</span>
+      <div class="flex gap-2">
+        <BaseButton variant="primary" :disabled="saving" @click="saveAndCloseEditor">Save &amp; Close</BaseButton>
+        <BaseButton variant="success" :disabled="saving || !canvas.dirty.value" @click="saveEditor">Save</BaseButton>
+        <BaseButton variant="secondary" class="mr-30" @click="confirmClose">Close</BaseButton>
+      </div>
+    </div>
+
+    <div class="relative min-h-0 flex-1">
     <MachineGate label="Visual HAL Editor">
       <div class="relative h-full min-h-[70vh] w-full">
         <!-- Toolbar: refresh (re-fetch + reset to backend truth) + counts -->
@@ -444,7 +595,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             data-test="hal-refresh"
             :disabled="loading"
             title="Re-fetch the HAL layout from the backend — in-session blocks and wires are discarded"
-            @click="refresh()"
+            @click="onRefreshClick()"
           >
             <span aria-hidden="true" :class="loading ? 'animate-spin' : ''">↻</span>
             {{ loading ? "Loading…" : "Refresh" }}
@@ -494,16 +645,30 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
               />
             </svg>
 
-            <!-- Wire labels (seeded backend signals) + remove buttons -->
+            <!-- Wire labels: editable signal name for hal-pin <-> hal-pin
+                 wires (this is what gets saved), read-only for wires
+                 touching a gate/latch block. -->
             <template v-for="w in wireGeometry" :key="w.id">
+              <input
+                v-if="w.isSignal"
+                :value="w.label ?? ''"
+                placeholder="named on save"
+                class="pointer-events-auto absolute z-10 -translate-x-1/2 translate-y-1 rounded border border-gray-700 bg-gray-900/90 px-1.5 py-0.5 text-center font-mono text-[10px] text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+                style="width: 132px"
+                :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
+                :title="w.label ? `Signal name: ${w.label}` : 'Left empty, this signal is named after the pins it connects when you save'"
+                data-test="hal-signal-name"
+                @mousedown.stop
+                @change="onSignalNameChange(w, $event)"
+              />
               <span
-                v-if="w.label"
+                v-else-if="w.label"
                 class="pointer-events-none absolute -translate-x-1/2 translate-y-1 z-10 rounded bg-gray-900/80 px-1.5 py-0.5 font-mono text-[10px] text-gray-400"
                 :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
               >{{ w.label }}</span>
               <button
                 class="absolute -translate-x-1/2 -translate-y-1/2 z-10 h-4 w-4 rounded-full bg-gray-800 border border-gray-600 text-gray-400 text-[10px] leading-none hover:bg-red-900 hover:text-red-300 hover:border-red-600"
-                :class="w.label ? 'mt-[-14px]' : ''"
+                :class="w.label || w.isSignal ? 'mt-[-14px]' : ''"
                 :style="{ left: `${w.mid.x}px`, top: `${w.mid.y}px` }"
                 title="Remove wire"
                 @click="canvas.removeWire(w.id)"
@@ -523,7 +688,20 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
                 :class="headerClass(node)"
                 @mousedown="onNodeHeaderMouseDown($event, node)"
               >
-                <span class="truncate" :title="node.label">{{ node.label }}</span>
+                <!-- A signal block IS a HAL net: its label is the net
+                     name and is edited in place. Pins and gates keep a
+                     fixed, read-only label. -->
+                <input
+                  v-if="node.kind === 'signal'"
+                  :value="node.label"
+                  placeholder="named on save"
+                  class="min-w-0 flex-1 rounded border border-gray-600 bg-gray-900/70 px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal text-gray-100 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+                  :title="node.label ? `Signal name: ${node.label}` : 'Left empty, this signal is named after the pins it connects when you save'"
+                  data-test="hal-signal-block-name"
+                  @mousedown.stop
+                  @change="canvas.renameNode(node.id, ($event.target as HTMLInputElement).value)"
+                />
+                <span v-else class="truncate" :title="node.label">{{ node.label }}</span>
                 <span
                   v-if="pinNodeType(node)"
                   class="shrink-0 rounded px-1 py-0.5 text-[10px] normal-case font-mono"
@@ -727,6 +905,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
         </Drawer>
       </div>
     </MachineGate>
+    </div>
   </div>
 </template>
 

@@ -1,11 +1,13 @@
 // Shared types for the Visual HAL Editor.
 //
-// The canvas is a live, read-only view over the real HAL world: pins
-// and signals come from `GET /api/v1/hal/layout` (via
-// ../..//facades/halFacade.ts, adapted in ./loadHalData.ts). Blocks,
-// in-session wires and pin placements are FRONTEND-ONLY state —
-// nothing in this editor ever writes back to the backend; a refresh
-// resets the canvas to backend truth.
+// Pins come from `GET /api/v1/hal/layout` (live HAL introspection, via
+// ../../facades/halFacade.ts, adapted in ./loadHalData.ts) and stay
+// fixed/unrenameable. Signals are seeded from the specific `.hal` file
+// being edited and are editable — renaming or rewiring one and saving
+// writes real `net` declarations back into that file (see
+// `useHalCanvas.ts`'s `serializeSignals`/`renameSignal`). Node
+// positions (x/y) are session-local canvas layout only and are never
+// persisted.
 
 export type PinType = "bit" | "float" | "s32" | "u32" | "auto";
 

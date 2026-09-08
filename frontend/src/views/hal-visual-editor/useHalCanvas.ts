@@ -1,11 +1,15 @@
 // State + rules engine for the Visual HAL Editor canvas.
 //
 // Pins come from the real backend (`setPins`, fed by ./loadHalData.ts
-// → `GET /api/v1/hal/layout`); signals seeded via `seedSignals` render
-// the operator's existing HAL wiring as pre-wired pin nodes. Blocks
-// placed in-session and any re-wiring are FRONTEND-ONLY state —
-// nothing here ever writes back to the backend; a refresh (re-fetch +
-// re-seed) resets the canvas to backend truth.
+// → `GET /api/v1/hal/layout`) and stay fixed/unrenameable — they are
+// the "system" side of the world. Signals (named wires between two
+// `hal-pin` nodes) are seeded via `seedSignals` from the specific
+// `.hal` file being edited, and ARE editable: `renameSignal` renames
+// one, `serializeSignals` reads the current signal set back out for
+// saving. Only the wiring information is persisted — canvas layout
+// (node x/y) is session-local and never sent to the backend. Gate
+// blocks placed in-session are frontend-only and are never part of
+// what gets saved (see `serializeSignals`).
 //
 // Connection rules enforced here mirror HAL signals:
 //   - An input port has at most ONE driver: one incoming `Wire`.
@@ -22,7 +26,8 @@
 // singleton: picking the same pin again reuses that node (and just
 // adds another wire to/from it) instead of placing a duplicate.
 
-import { reactive } from "vue";
+import { reactive, ref } from "vue";
+import type { HalFileSignalWrite } from "../../../generated/api";
 
 import { BLOCK_DEFINITIONS } from "./blockDefinitions";
 import type { SeedSignal } from "./loadHalData";
@@ -47,6 +52,18 @@ export function useHalCanvas() {
   const nodes = reactive<HalNode[]>([]);
   const wires = reactive<Wire[]>([]);
 
+  // Set whenever the operator changes something that would affect a
+  // save (renaming/rewiring a signal). Cleared by `clearDirty()`,
+  // which the view calls after `reset()` (fresh backend truth) and
+  // after a successful save.
+  const dirty = ref(false);
+  function markDirty(): void {
+    dirty.value = true;
+  }
+  function clearDirty(): void {
+    dirty.value = false;
+  }
+
   // The real HAL pin palette, injected by the view once
   // `loadHalLayout()` resolves (see ./loadHalData.ts).
   let pins: HalPin[] = [];
@@ -57,6 +74,10 @@ export function useHalCanvas() {
 
   function pinsWithDirection(direction: "in" | "out"): HalPin[] {
     return pins.filter((pin) => pin.direction === direction);
+  }
+
+  function pinForNode(node: HalNode): HalPin | undefined {
+    return node.pinId ? pins.find((p) => p.id === node.pinId) : undefined;
   }
 
   let placementCounter = 0;
@@ -91,7 +112,11 @@ export function useHalCanvas() {
     const node: HalNode = {
       id,
       kind,
-      label: def.label,
+      // A "signal" block IS a HAL net, so its label is the net's name
+      // and starts empty for the operator to fill in (the header
+      // renders an input with a placeholder). Gates keep their fixed
+      // type name ("AND", "NOT", …) as a label.
+      label: kind === "signal" ? "" : def.label,
       x: pos.x,
       y: pos.y,
       inputs: def.inputNames.map((name) => makePort(id, name, def.portType, "in")),
@@ -99,6 +124,18 @@ export function useHalCanvas() {
     };
     nodes.push(node);
     return node;
+  }
+
+  // Renames a signal block — i.e. the HAL net it stands for. Only
+  // "signal" nodes are renameable: gates carry their type name and
+  // "hal-pin" nodes carry the real, fixed pin name.
+  function renameNode(nodeId: string, label: string): void {
+    const node = findNode(nodeId);
+    if (!node || node.kind !== "signal") return;
+    const next = label.trim();
+    if (node.label === next) return;
+    node.label = next;
+    markDirty();
   }
 
   // Singleton lookup-or-create for a HAL pin's stand-in node. A
@@ -315,7 +352,17 @@ export function useHalCanvas() {
     if (!typesCompatible(fromType, toType)) {
       return { ok: false, message: `Type mismatch: ${fromType ?? "auto"} → ${toType ?? "auto"}.` };
     }
-    wires.push(label ? { id: nextId("wire"), fromPortId, toPortId, label } : { id: nextId("wire"), fromPortId, toPortId });
+    // A brand-new fan-out wire from a source that already drives a
+    // named signal inherits that name — otherwise "add another
+    // target to this signal" would silently start a second, unnamed
+    // signal from the same source pin.
+    const inheritedLabel = label ?? wires.find((w) => w.fromPortId === fromPortId && w.label)?.label;
+    wires.push(
+      inheritedLabel
+        ? { id: nextId("wire"), fromPortId, toPortId, label: inheritedLabel }
+        : { id: nextId("wire"), fromPortId, toPortId },
+    );
+    markDirty();
     return { ok: true };
   }
 
@@ -326,8 +373,27 @@ export function useHalCanvas() {
     const fromNodeId = findPort(wire.fromPortId)?.node.id;
     const toNodeId = findPort(wire.toPortId)?.node.id;
     wires.splice(idx, 1);
+    markDirty();
     if (fromNodeId) pruneOrphanPinNode(fromNodeId);
     if (toNodeId) pruneOrphanPinNode(toNodeId);
+  }
+
+  // Renames the whole signal a wire belongs to: every wire sharing
+  // the same source port gets the same label, since a HAL signal's
+  // name is a property of the source pin's fan-out group, not of one
+  // individual wire.
+  function renameSignal(fromPortId: string, name: string): void {
+    const trimmed = name.trim();
+    let changed = false;
+    for (const wire of wires) {
+      if (wire.fromPortId !== fromPortId) continue;
+      const next = trimmed || undefined;
+      if (wire.label !== next) {
+        wire.label = next;
+        changed = true;
+      }
+    }
+    if (changed) markDirty();
   }
 
   function disconnectPort(portId: string) {
@@ -364,45 +430,54 @@ export function useHalCanvas() {
   // --- seeding the real backend signals ---------------------------------------
 
   /**
-   * Render the backend's existing signals as pre-wired connections:
-   * each signal's source OUT pin node gets a labeled wire to every
-   * target IN pin node. Deterministic grid placement (8 signals per
-   * column, sources left, targets stacked right) — nodes stay
-   * draggable afterwards. Real HAL cannot double-drive an input, but
-   * a rejected seed wire is skipped silently rather than surfacing a
-   * toast: seeding mirrors backend truth, it doesn't edit it.
+   * Render each `net` from the file exactly the way the operator
+   * builds one by hand: a named **signal block** fed by its source
+   * OUT pin and driving every target IN pin. Seeding and hand-wiring
+   * therefore produce the same shape, so a saved signal comes back
+   * looking (and renaming) like the one that was just drawn.
    *
-   * Signals whose pins were filtered out by the adapter (unknown
-   * type tokens) simply don't appear — the canvas always shows the
-   * subset it could resolve.
+   * Deterministic grid placement (8 signals per column: source pin
+   * left, signal block centre, targets stacked right) — nodes stay
+   * draggable afterwards.
+   *
+   * Returns how many target connections could NOT be drawn (a pin
+   * already driven by another net, an unresolvable pin). Those are
+   * real HAL conflicts the file already contains; the view surfaces
+   * the count so nothing silently disappears on the next save.
    */
-  function seedSignals(signals: SeedSignal[]): void {
-    const COLUMN_PITCH = 760;
+  function seedSignals(signals: SeedSignal[]): { incomplete: number } {
+    const COLUMN_PITCH = 900;
     const ROW_PITCH = 300;
     const TARGET_PITCH = 70;
     const PER_COLUMN = 8;
+    let incomplete = 0;
 
     signals.forEach((signal, index) => {
-      // A signal with no source OUT pin has nothing to draw — target
-      // nodes would sit permanently unwired.
-      if (!signal.source) return;
       const col = Math.floor(index / PER_COLUMN);
       const row = index % PER_COLUMN;
       const baseX = 100 + col * COLUMN_PITCH;
       const baseY = 100 + row * ROW_PITCH;
 
-      const sourceNode = getOrCreatePinNode(signal.source, { x: baseX, y: baseY });
+      const signalNode = addNode("signal", { x: baseX + 380, y: baseY });
+      signalNode.label = signal.name;
+
+      if (signal.source) {
+        const sourceNode = getOrCreatePinNode(signal.source, { x: baseX, y: baseY });
+        const wired = connectWire(sourceNode.outputs[0]?.id ?? "", signalNode.inputs[0]?.id ?? "");
+        if (!wired.ok) incomplete += 1;
+      }
 
       signal.targets.forEach((target, targetIndex) => {
         const targetNode = getOrCreatePinNode(target, {
-          x: baseX + 460,
+          x: baseX + 700,
           y: baseY + targetIndex * TARGET_PITCH,
         });
-        // Mirroring backend truth: failures (already driven, etc.)
-        // are expected no-ops, not user errors.
-        connectWire(sourceNode.outputs[0]?.id ?? "", targetNode.inputs[0]?.id ?? "", signal.name);
+        const wired = connectWire(signalNode.outputs[0]?.id ?? "", targetNode.inputs[0]?.id ?? "");
+        if (!wired.ok) incomplete += 1;
       });
     });
+
+    return { incomplete };
   }
 
   /** Drop every node/wire — used by the view's Refresh, which
@@ -413,9 +488,236 @@ export function useHalCanvas() {
     placementCounter = 0;
   }
 
+  // --- saving: canvas -> file-write payload -----------------------------
+
+  /** The HAL pin feeding a signal block's input, if a pin drives it. */
+  function sourcePinOf(signalNode: HalNode): HalPin | undefined {
+    const inputPortId = signalNode.inputs[0]?.id;
+    if (!inputPortId) return undefined;
+    const wire = wires.find((w) => w.toPortId === inputPortId);
+    if (!wire) return undefined;
+    const from = findPort(wire.fromPortId);
+    // A gate driving the signal is out of scope this pass — only a
+    // real pin counts as the net's writer.
+    if (!from || from.node.kind !== "hal-pin") return undefined;
+    return pinForNode(from.node);
+  }
+
+  /** Every HAL pin a signal block's output drives. */
+  function targetPinsOf(signalNode: HalNode): HalPin[] {
+    const outputPortId = signalNode.outputs[0]?.id;
+    if (!outputPortId) return [];
+    const pinsOut: HalPin[] = [];
+    for (const wire of wires) {
+      if (wire.fromPortId !== outputPortId) continue;
+      const to = findPort(wire.toPortId);
+      if (!to || to.node.kind !== "hal-pin") continue;
+      const pin = pinForNode(to.node);
+      if (pin) pinsOut.push(pin);
+    }
+    return pinsOut;
+  }
+
+  interface DirectWireGroup {
+    sourcePortId: string;
+    label?: string;
+    sourcePin: HalPin;
+    targetPins: HalPin[];
+    wireIds: string[];
+  }
+
+  /**
+   * Connections drawn straight from one pin to another without a
+   * signal block, grouped by source port — one net = one writer plus
+   * its fan-out. The name lives on the wires themselves.
+   */
+  function directPinWireGroups(): DirectWireGroup[] {
+    const bySource = new Map<string, DirectWireGroup>();
+    for (const wire of wires) {
+      const from = findPort(wire.fromPortId);
+      const to = findPort(wire.toPortId);
+      if (!from || !to) continue;
+      if (from.node.kind !== "hal-pin" || to.node.kind !== "hal-pin") continue;
+      const sourcePin = pinForNode(from.node);
+      const targetPin = pinForNode(to.node);
+      if (!sourcePin || !targetPin) continue;
+
+      const existing = bySource.get(wire.fromPortId);
+      if (existing) {
+        existing.targetPins.push(targetPin);
+        existing.wireIds.push(wire.id);
+        existing.label = existing.label ?? wire.label;
+      } else {
+        bySource.set(wire.fromPortId, {
+          sourcePortId: wire.fromPortId,
+          label: wire.label,
+          sourcePin,
+          targetPins: [targetPin],
+          wireIds: [wire.id],
+        });
+      }
+    }
+    return [...bySource.values()];
+  }
+
+  // --- default names for unnamed nets ------------------------------------
+
+  // LinuxCNC refuses a HAL name longer than HAL_NAME_LEN, so a derived
+  // name that would overflow is truncated and given a short hash of the
+  // full pin list to keep it unique and stable.
+  const HAL_NAME_MAX = 47;
+
+  /** `motion.spindle-on` -> `motion-spindle-on` (HAL-name-safe). */
+  function namePart(fullName: string): string {
+    return fullName
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  function shortHash(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(36).slice(0, 4);
+  }
+
+  /**
+   * Build a net name out of the pins it connects — writer first, then
+   * its readers — so an auto-named signal still reads like what it
+   * does and can't collide with another net's pins. `taken` carries
+   * the names already in use (and gains the one returned).
+   */
+  function deriveSignalName(pinFullNames: string[], taken: Set<string>): string {
+    const base = pinFullNames.map(namePart).filter(Boolean).join("-") || "signal";
+
+    let candidate = base;
+    if (candidate.length > HAL_NAME_MAX) {
+      const hash = shortHash(base);
+      candidate = `${base.slice(0, HAL_NAME_MAX - hash.length - 1)}-${hash}`;
+    }
+
+    // Only reachable when two nets touch the same pins in the same
+    // order, or when a hand-typed name already claimed this string.
+    let unique = candidate;
+    let n = 2;
+    while (taken.has(unique)) {
+      const suffix = `-${n}`;
+      unique = `${candidate.slice(0, HAL_NAME_MAX - suffix.length)}${suffix}`;
+      n += 1;
+    }
+    taken.add(unique);
+    return unique;
+  }
+
+  /**
+   * Name every wired-but-unnamed net after the pins it connects, so
+   * saving never drops one for lacking a name. Runs just before a
+   * save: the generated names land on the canvas too, so what the
+   * operator sees is what reaches the file (and stays editable).
+   *
+   * Returns how many nets were named.
+   */
+  function autoNameUnnamedSignals(): number {
+    const taken = new Set<string>();
+    for (const node of nodes) {
+      if (node.kind === "signal" && node.label.trim()) taken.add(node.label.trim());
+    }
+    for (const wire of wires) {
+      if (wire.label?.trim()) taken.add(wire.label.trim());
+    }
+
+    let named = 0;
+
+    for (const node of nodes) {
+      if (node.kind !== "signal" || node.label.trim()) continue;
+      const source = sourcePinOf(node);
+      const targets = targetPinsOf(node);
+      // A block with nothing wired to it isn't a net yet — leave it be.
+      if (!source && targets.length === 0) continue;
+      const pinNames = [source?.fullName, ...targets.map((p) => p.fullName)].filter(
+        (n): n is string => Boolean(n),
+      );
+      node.label = deriveSignalName(pinNames, taken);
+      named += 1;
+    }
+
+    for (const group of directPinWireGroups()) {
+      if (group.label?.trim()) continue;
+      const name = deriveSignalName(
+        [group.sourcePin.fullName, ...group.targetPins.map((p) => p.fullName)],
+        taken,
+      );
+      for (const wire of wires) {
+        if (group.wireIds.includes(wire.id)) wire.label = name;
+      }
+      named += 1;
+    }
+
+    if (named > 0) markDirty();
+    return named;
+  }
+
+  /**
+   * Read the canvas back out as the payload the backend writes into
+   * the `.hal` file. Two shapes count as a net:
+   *
+   *   1. a **signal block** — the canonical one, and what `seedSignals`
+   *      builds — named by its label, fed by one source pin, driving
+   *      any number of target pins;
+   *   2. a direct **pin -> pin** wire carrying a name on the wire
+   *      itself, for connections drawn without a signal block.
+   *
+   * Anything touching a gate/latch/flip-flop is skipped: gate logic
+   * isn't part of what gets saved this pass. A net with no name at
+   * all can't be written as a `net` line — `autoNameUnnamedSignals`
+   * runs first (on save) so that case doesn't arise in practice.
+   */
+  function serializeSignals(): HalFileSignalWrite[] {
+    const signals: HalFileSignalWrite[] = [];
+    const claimedSourcePorts = new Set<string>();
+
+    for (const node of nodes) {
+      if (node.kind !== "signal") continue;
+      const name = node.label.trim();
+      const sourcePin = sourcePinOf(node);
+      const targetPins = targetPinsOf(node);
+      if (!name || (!sourcePin && targetPins.length === 0)) continue;
+
+      // A pin feeding a signal block is spoken for; don't also emit
+      // it as a bare pin -> pin wire below.
+      const inputPortId = node.inputs[0]?.id;
+      const driver = inputPortId ? wires.find((w) => w.toPortId === inputPortId) : undefined;
+      if (driver) claimedSourcePorts.add(driver.fromPortId);
+
+      signals.push({
+        name,
+        source: sourcePin?.fullName,
+        targets: targetPins.map((p) => p.fullName),
+      });
+    }
+
+    for (const group of directPinWireGroups()) {
+      if (claimedSourcePorts.has(group.sourcePortId)) continue;
+      const name = group.label?.trim();
+      if (!name) continue;
+      signals.push({
+        name,
+        source: group.sourcePin.fullName,
+        targets: group.targetPins.map((p) => p.fullName),
+      });
+    }
+
+    return signals;
+  }
+
   return {
     nodes,
     wires,
+    dirty,
+    clearDirty,
     setPins,
     findNode,
     findPort,
@@ -439,6 +741,10 @@ export function useHalCanvas() {
     disconnectPort,
     connectWire,
     removeWire,
+    renameNode,
+    renameSignal,
+    autoNameUnnamedSignals,
+    serializeSignals,
     seedSignals,
     reset,
   };

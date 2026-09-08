@@ -17,6 +17,19 @@ class ProgramFileService(FileService):
         super().__init__(root or paths.NC_FILES_DIR)
         self.filename_filter = self.gcode_filter
 
+    def read_head(self, filename: str, max_bytes: int = 524_288) -> bytes:
+        """Read at most ``max_bytes`` raw bytes from the file's start.
+
+        Slicer-embedded thumbnails (the ``; thumbnail begin/end``
+        base64 comment blocks Cura / PrusaSlicer / Orca write) always
+        live at the top of a program file, so the thumbnail endpoint
+        can avoid loading multi-megabyte programs just to render a
+        list icon.
+        """
+        path = self.resolve_program_path(filename)
+        with path.open("rb") as fp:
+            return fp.read(max_bytes)
+
     def save_upload(self, filename: str, data: bytes) -> None:
         self.write_bytes(filename, data, overwrite=True)
 

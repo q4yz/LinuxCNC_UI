@@ -1,17 +1,18 @@
-// Read-only data loading for the Visual HAL Editor.
+// Data loading for the Visual HAL Editor.
 //
 // Adapts the backend's real HAL world (`GET /api/v1/hal/layout` via
 // [../../facades/halFacade.ts](../../facades/halFacade.ts)) into the
 // shapes the canvas consumes:
 //
 //   * `HalPinResource` → `HalPin` (pins for the picker drawers)
-//   * `HalSignalResource` → `SeedSignal` (existing signals, seeded
-//     onto the canvas as pre-wired pin nodes)
+//   * `HalSignalResource` → `SeedSignal` (the target file's existing
+//     signals, seeded onto the canvas as pre-wired, editable pin nodes)
 //
-// THIS MODULE IS READ-ONLY BY CONTRACT: the facade exposes a single
-// `fetchLayout()` and nothing here (or anywhere in the editor) ever
-// performs a write against the backend. In-session canvas edits are
-// frontend state only; refreshing re-fetches and resets the canvas.
+// `file` is the `.hal` file's path relative to `machine_config/machines/`
+// (the same shape `MachinesExplorer.vue` already emits) — omitting it
+// loads pins only, with an empty signal set (nothing to seed from).
+// Saving is a separate call — see `HalVisualService.saveLayout` in
+// ../../facades/halFacade.ts.
 
 import HalVisualService from "../../facades/halFacade";
 import type { HalPinResource, HalSignalResource } from "../../../generated/api";
@@ -74,20 +75,38 @@ function seedSignalFromResource(res: HalSignalResource): SeedSignal | null {
  * Fetch the real HAL world for the canvas. Returns `null` on any
  * transport failure (caller renders an error state with a Retry).
  */
-export async function loadHalLayout(): Promise<HalLayoutData | null> {
-  const layout = await HalVisualService.fetchLayout();
+export async function loadHalLayout(file?: string): Promise<HalLayoutData | null> {
+  const layout = await HalVisualService.fetchLayout(file);
   if (!layout) return null;
 
   const pins: HalPin[] = [];
+  const seenPinIds = new Set<string>();
+  function addPin(pin: HalPin | null): void {
+    if (!pin || seenPinIds.has(pin.id)) return;
+    seenPinIds.add(pin.id);
+    pins.push(pin);
+  }
   for (const raw of [...(layout.in_pins ?? []), ...(layout.out_pins ?? [])]) {
-    const pin = halPinFromResource(raw);
-    if (pin) pins.push(pin);
+    addPin(halPinFromResource(raw));
   }
 
   const signals: SeedSignal[] = [];
   for (const raw of layout.signals ?? []) {
     const signal = seedSignalFromResource(raw);
     if (signal) signals.push(signal);
+  }
+
+  // A signal's source/target pins aren't guaranteed to already be in
+  // the live in/out catalog above — a pin token from the file that
+  // doesn't match any known pin comes back from the backend as a
+  // placeholder resource embedded only in the signal itself. Fold
+  // those into the same flat `pins` list so `useHalCanvas`'s
+  // `serializeSignals()` (which looks pins up by id from this list)
+  // can resolve every hal-pin node, not just the ones already in the
+  // catalog.
+  for (const signal of signals) {
+    addPin(signal.source);
+    for (const target of signal.targets) addPin(target);
   }
 
   return { pins, signals };

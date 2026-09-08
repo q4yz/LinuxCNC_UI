@@ -2,11 +2,14 @@
 // MachinesExplorer — browse the generated machine template sets under
 // ``machine_config/machines/`` (``<machine>/configs/...``). Mirrors
 // ProfilesExplorer one-for-one (folders at every depth, rename /
-// move / delete, drag-drop upload, download) with two differences:
-// files are templates and therefore editable, and there is no
-// per-file action button — generation is started from the Profiles
-// explorer.
+// move / delete, drag-drop upload, download) with a couple of
+// differences: files are templates and therefore editable, generation
+// is started from the Profiles explorer, and ``.hal`` files get one
+// extra per-file action — opening the Visual HAL Editor scoped to
+// that file (mirrors the ``.cfg`` -> Generate button pattern in
+// ProfilesExplorer.vue).
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { useConsoleStore } from "../../stores/console";
@@ -16,6 +19,16 @@ import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
+
+const router = useRouter();
+
+function isHalFile(entry: DirectoryEntryModel): boolean {
+  return entry.kind === "file" && entry.name.toLowerCase().endsWith(".hal");
+}
+
+function openHalEditor(entry: DirectoryEntryModel): void {
+  router.push({ name: "hal-editor", query: { file: entry.path } });
+}
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
@@ -306,6 +319,14 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
               @click.stop="selectAsMain(entry)"
             >★</BaseButton>
           </template>
+          <BaseButton
+            v-if="isHalFile(entry)"
+            variant="ghost"
+            size="sm"
+            title="Open in Visual HAL Editor"
+            aria-label="Open in Visual HAL Editor"
+            @click.stop="openHalEditor(entry)"
+          >⚡</BaseButton>
           <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadMachineFile(entry)">↓</BaseButton>
           <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
         </div>

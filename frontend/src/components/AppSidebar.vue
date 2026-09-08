@@ -31,7 +31,6 @@ const builtinItems = [
   { id: 'camera', label: 'Camera', icon: 'camera', order: 3 , activeMachineOnly: true },
   { id: 'settings', label: 'Settings', icon: 'settings', order: 7, activeMachineOnly: false },
   { id: 'config', label: 'Config', icon: 'config', order: 5, activeMachineOnly: false },
-  { id: 'hal-editor', label: 'HAL Editor', icon: 'config', order: 5, activeMachineOnly: true  },
   { id: 'debug', label: 'Debug', icon: 'debug', order: 6, activeMachineOnly: true  },
 ];
 

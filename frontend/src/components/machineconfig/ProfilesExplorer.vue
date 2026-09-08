@@ -219,7 +219,7 @@ function onDrop(e: DragEvent) {
     </ul>
     <div v-else class="flex-1 p-8 text-center text-sm text-gray-500">This folder is empty. Drop files here or use + to create one.</div>
 
-    <button type="button" class="sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white shadow-lg hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
+    <button type="button" class=" block sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white shadow-lg hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
 
     <div v-if="createOpen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4" @click.self="createOpen = false">
       <form class="w-full max-w-sm space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl" @submit.prevent="onCreate">

@@ -26,16 +26,21 @@ module:
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from services import ProgramFileService, get_program_service
+from services.gcode_thumbnail import extract_thumbnail
 
 logger = logging.getLogger("backend.routers.files")
 
 router = APIRouter(prefix="/api/v1/programs", tags=["Program Files"])
+
+# Slicer thumbnails always live in the first few KB of the file, well
+# below this cap — the head-scan never loads multi-MB programs.
+THUMBNAIL_HEAD_BYTES = 512 * 1024
 
 
 class FileInfo(BaseModel):
@@ -59,6 +64,21 @@ class StatusMessageResponse(BaseModel):
 
     status: str = Field(..., description="Outcome summary (e.g., 'success')")
     message: str = Field(..., description="Human-readable confirmation message")
+
+
+class FileThumbnailResponse(BaseModel):
+    """Largest slicer-embedded thumbnail found in a G-code file.
+
+    ``data_url`` is ``None`` when the file carries no embedded
+    thumbnail (the frontend then shows a generic icon).
+    """
+
+    data_url: Optional[str] = Field(
+        None,
+        description="'data:image/png;base64,…' URL for an <img> tag, or None when the file has no embedded thumbnail.",
+    )
+    width: Optional[int] = Field(None, description="Embedded thumbnail width in pixels.")
+    height: Optional[int] = Field(None, description="Embedded thumbnail height in pixels.")
 
 
 @router.get(
@@ -147,6 +167,44 @@ def delete_file(filename: str) -> StatusMessageResponse:
         logger.error("Failed to delete file %s: %s", filename, exc)
         raise HTTPException(status_code=500, detail="Failed to delete file.") from exc
     return StatusMessageResponse(status="success", message=f"Deleted {filename}")
+
+
+@router.get(
+    "/thumbnail/{filename}",
+    summary="Get File Thumbnail",
+    description=(
+        "Extracts the largest slicer-embedded thumbnail (the "
+        "'; thumbnail begin/end' base64 comment block that Cura / "
+        "PrusaSlicer / OrcaSlicer write at the top of the file). Only "
+        "the first 512 KB of the file is scanned, so multi-megabyte "
+        "programs cost nothing to preview. Returns data_url=None for "
+        "files without an embedded thumbnail."
+    ),
+    operation_id="getFileThumbnail",
+    response_model=FileThumbnailResponse,
+)
+def get_file_thumbnail(filename: str) -> FileThumbnailResponse:
+    """Extract the slicer-embedded thumbnail via head-scan.
+
+    Errors map to actionable HTTP statuses:
+
+    * ``ValueError`` (path-safety violation) → ``400``
+    * ``FileNotFoundError`` → ``404``
+    * any other unexpected error → ``500``
+    """
+    service: ProgramFileService = get_program_service()
+    try:
+        head = service.read_head(filename, THUMBNAIL_HEAD_BYTES)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file path.") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="File not found.") from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to read file head %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail="Failed to read file.") from exc
+
+    thumb = extract_thumbnail(head.decode("utf-8", errors="ignore"))
+    return FileThumbnailResponse(**(thumb or {}))
 
 
 @router.get(

@@ -73,7 +73,9 @@ def test_layout_endpoint_returns_three_sections():
     assert set(body.keys()) == {"in_pins", "out_pins", "signals"}
     assert len(body["in_pins"]) > 0
     assert len(body["out_pins"]) > 0
-    assert len(body["signals"]) > 0
+    # Without a `file` param there's nothing to seed signals from —
+    # signals are now file-scoped (see test_hal_file_signals.py).
+    assert body["signals"] == []
 
 
 def test_layout_endpoint_direction_and_type_tokens():
@@ -92,16 +94,12 @@ def test_layout_endpoint_direction_and_type_tokens():
 
 
 def test_layout_endpoint_signal_shape():
+    # Signals are file-scoped now (empty without `file`); shape is
+    # covered end-to-end in test_hal_file_signals.py. This test just
+    # pins that the field survives on a signal-less response.
     client = _client()
     body = client.get("/api/v1/hal/layout").json()
-
-    for signal in body["signals"]:
-        assert "name" in signal
-        assert "type" in signal
-        assert isinstance(signal["targets"], list)
-        # HAL semantics: a signal's source must be an OUT (writer) pin.
-        if signal["source"] is not None:
-            assert signal["source"]["direction"] == "out"
+    assert body["signals"] == []
 
 
 def test_layout_is_cached_after_first_read():
