@@ -89,6 +89,53 @@ test("MachinesExplorer exists and mirrors the explorer contract", () => {
   );
 });
 
+test("both explorers keep their open folder in the URL", () => {
+  // Opening a file unmounts the explorers, so local state would drop
+  // the operator back at the root on return. The directory lives in
+  // the query string instead, which also makes browser back/forward
+  // and bookmarks work on a folder.
+  for (const [file, key] of [
+    ["components/machineconfig/ProfilesExplorer.vue", "profilesDir"],
+    ["components/machineconfig/MachinesExplorer.vue", "machinesDir"],
+  ]) {
+    const text = read(file);
+    assert.match(
+      text,
+      new RegExp(`useDirectoryQuery\\(["']${key}["']\\)`),
+      `${file} must bind currentDirectory to the ${key} query param`,
+    );
+    assert.doesNotMatch(
+      text,
+      /const currentDirectory = ref\(/,
+      `${file} must not hold the directory in local-only state`,
+    );
+  }
+});
+
+test("closing an editor steps back instead of pushing a fixed route", () => {
+  // A hard-coded push drops the explorer's folder (it lives in the
+  // URL) and ignores which page actually opened the editor. Scoped to
+  // the closeEditor body — pushes elsewhere (e.g. the no-target
+  // empty state's "open Machine Config" link) are fine.
+  for (const file of ["views/EditorView.vue", "views/VisualHalEditor.vue"]) {
+    const text = read(file);
+    const body = text.match(/function closeEditor\([^)]*\)[^{]*\{[\s\S]*?\n\}/);
+    assert.ok(body, `${file} must declare closeEditor()`);
+    assert.match(body[0], /closeToPrevious\(/, `${file}'s closeEditor must use closeToPrevious`);
+    assert.doesNotMatch(
+      body[0],
+      /router\.push\(/,
+      `${file}'s closeEditor must not hard-code a route push`,
+    );
+  }
+  // The helper only falls back to a route when there is no history to
+  // return to (deep link / fresh tab).
+  const helper = read("helpers/closeToPrevious.ts");
+  assert.match(helper, /history\.state/, "must consult the router's history state");
+  assert.match(helper, /router\.back\(\)/, "must step back when there is somewhere to go");
+  assert.match(helper, /fallbackName/, "must fall back for a directly-opened editor");
+});
+
 test("Profiles explorer generates machines with an override confirm", () => {
   const text = read("components/machineconfig/ProfilesExplorer.vue");
 

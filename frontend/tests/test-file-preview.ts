@@ -72,6 +72,59 @@ test("FileManager shows thumbnails and opens the preview modal", () => {
   assert.match(text, /@click\.stop/, "action buttons stop propagation");
 });
 
+test("row actions offer Download instead of Load; Load lives in the preview", () => {
+  const text = read("components/FileManager.vue");
+
+  // The row-level Load button is gone; only the preview modal's
+  // survives (guarded further below).
+  assert.doesNotMatch(
+    text,
+    /data-test="`file-load-\$\{file\.filename\}`"/,
+    "the per-row Load button must be removed",
+  );
+  assert.match(text, /data-test="`file-download-\$\{file\.filename\}`"/, "row must offer Download");
+  assert.match(text, /downloadFile\(file\.filename\)/, "download button calls downloadFile");
+  assert.match(text, /createObjectURL/, "download must build a Blob URL");
+});
+
+test("Load only works while the machine service is up", () => {
+  const text = read("components/FileManager.vue");
+
+  assert.match(text, /useMachineOnline/, "machine-online composable must be wired");
+  // Load lives in the preview modal now, keyed to the previewed file.
+  assert.match(
+    text,
+    /data-test="`file-load-\$\{previewFile\.filename\}`"/,
+    "the preview modal must offer Load for the previewed file",
+  );
+  assert.match(
+    text,
+    /:disabled="!isMachineOnline"[\s\S]{0,200}loadFile\(previewFile\.filename\)/,
+    "the preview's Load button must be disabled while the machine service is offline",
+  );
+  // Defense in depth: the handler itself refuses even if a disabled
+  // button is somehow clicked (keyboard, race with the heartbeat).
+  assert.match(
+    text,
+    /async function loadFile\([^)]*\)\s*\{\s*if \(!isMachineOnline\.value\) return/,
+    "loadFile must refuse to run while the machine service is offline",
+  );
+});
+
+test("file list shows an upload date and sorts newest-first", () => {
+  const text = read("components/FileManager.vue");
+
+  assert.match(text, />\s*Uploaded\s*</, "table must have an Uploaded column header");
+  assert.match(text, /formatDate\(file\.modified\)/, "row must render the upload date");
+  assert.match(text, /sortedFiles/, "list must be sorted before rendering");
+  assert.match(
+    text,
+    /Date\.parse\(b\.modified\)\s*-\s*Date\.parse\(a\.modified\)/,
+    "sort must be newest-first by modified",
+  );
+  assert.match(text, /v-for="file in sortedFiles"/, "table body must iterate the sorted list");
+});
+
 test("thumbnail helper targets the thumbnail endpoint and caches per file", () => {
   const text = read("helpers/fileThumbnails.ts");
   assert.match(

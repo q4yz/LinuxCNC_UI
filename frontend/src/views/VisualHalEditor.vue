@@ -28,6 +28,7 @@ import MachineGate from "../components/machine/MachineGate.vue";
 import { useMachineOnline } from "../composables/useMachineOnline";
 import { useToast } from "../core/toast";
 import HalVisualService from "../facades/halFacade";
+import { closeToPrevious } from "../helpers/closeToPrevious";
 import { BLOCK_DEFINITIONS, BLOCK_MENU } from "./hal-visual-editor/blockDefinitions";
 import { nodeHeight, portAnchor, NODE_WIDTH } from "./hal-visual-editor/layout";
 import { loadHalLayout } from "./hal-visual-editor/loadHalData";
@@ -151,7 +152,14 @@ async function confirmClose(): Promise<void> {
 }
 
 function closeEditor(): void {
-  router.push({ name: "config" }).catch((err) => console.error("Router error on close:", err));
+  // The caller already settled any unsaved work (confirmClose prompts,
+  // saveAndClose persists). Clearing the flag first keeps the
+  // route-leave guard from asking a second time on the way out.
+  canvas.clearDirty();
+  // Step back so the machine file browser keeps the folder it was on
+  // (it lives in the URL); fall back to Config when the editor was
+  // opened directly.
+  closeToPrevious(router, "config");
 }
 
 useUnsavedChangesGuard(() => canvas.dirty.value);

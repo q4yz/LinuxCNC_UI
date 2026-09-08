@@ -39,6 +39,7 @@ import {
   sourceLabel,
 } from '../stores/editor';
 import { openInEditor } from '../helpers/openInEditor';
+import { closeToPrevious } from '../helpers/closeToPrevious';
 import {useConsoleStore} from "../stores/console";
 import { BaseButton } from '../ui/index.ts';
 
@@ -195,17 +196,17 @@ async function confirmClose() {
   if (await promptUnsavedClose()) closeEditor()
 }
 
-// Close clears the store and routes the operator back to the
-// surface that owns the file kind. Programs land on the programs
-// dashboard; profiles and macros land on the machineconfig surface;
-// everything else (active/staged/m_codes) goes back to machineconfig
-// too since that view owns both the deployed artifact viewer and
-// the M-code manager.
+// Close clears the store and steps back to whatever opened the
+// editor, so an explorer keeps the folder it was browsing (that
+// folder lives in the URL). Opened directly — deep link, fresh tab —
+// there is nothing behind us, so fall back to the surface that owns
+// the file kind: programs land on the programs dashboard, everything
+// else on the machineconfig surface.
 function closeEditor() {
   editorContent.value = ''
   editorStore.close()
-  const target = currentSource.value === EDITOR_SOURCES.PROGRAMS ? 'programs' : 'config'
-  router.push({ name: target }).catch(err => console.error("Router error on close:", err))
+  const fallback = currentSource.value === EDITOR_SOURCES.PROGRAMS ? 'programs' : 'config'
+  closeToPrevious(router, fallback)
 }
 
 // Mirror local edits into the store so ``saveFile`` uses the

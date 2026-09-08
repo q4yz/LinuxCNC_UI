@@ -12,6 +12,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
+import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { useConsoleStore } from "../../stores/console";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
@@ -144,7 +145,8 @@ onMounted(() => {
   void refreshLifecycleStatus();
 });
 
-const currentDirectory = ref("");
+// Lives in the URL so opening a file and coming back keeps the folder.
+const currentDirectory = useDirectoryQuery("machinesDir");
 const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");

@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
+import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
 import { BaseButton, Icon } from "../../ui/index.ts";
@@ -12,7 +13,8 @@ const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
 const { profilesTree, selectedProfilePath, isBusy } = storeToRefs(store);
 
-const currentDirectory = ref("");
+// Lives in the URL so opening a file and coming back keeps the folder.
+const currentDirectory = useDirectoryQuery("profilesDir");
 const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");

@@ -5,7 +5,7 @@
 // schema. Routes the user to ``EditorView`` on Edit so the page
 // chrome (sidebar / header) stays visible while editing.
 
-import {ref, onMounted, watch} from 'vue'
+import {ref, computed, onMounted, watch} from 'vue'
 
 import {
   ModulesProgramService,
@@ -19,6 +19,7 @@ import type {FileInfo} from '../../generated/api/models/FileInfo'
 import {BaseButton} from '../ui/index.ts'
 import {Icon} from "../ui";
 import { useFileThumbnails } from '../composables/useFileThumbnails'
+import { useMachineOnline } from '../composables/useMachineOnline'
 import ToolpathViewer from './ToolpathViewer.vue'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
@@ -29,6 +30,19 @@ const consoleStore = useConsoleStore()
 const files = ref<FileInfo[]>([])
 const isUploading = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+
+// Newest upload first — ``modified`` doubles as "uploaded at" since
+// nc_files are write-once (Upload creates them, Edit rewrites the
+// same timestamp forward, there's no separate "created" field).
+const sortedFiles = computed(() =>
+  [...files.value].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified))
+)
+
+// Load only works while the machine service (:8000) is up — the
+// system service (:8001, always up) can list/edit/delete files but
+// has no LinuxCNC interpreter to load a program into.
+const { isMachineOnline } = useMachineOnline()
+const loadBlockedTitle = 'Machine service is offline — start the machine to load a program.'
 
 // ---- Slicer thumbnails + 3D toolpath preview ------------------- //
 //
@@ -173,12 +187,37 @@ async function deleteFile(filename: string) {
 // dashboard widget to begin execution.
 
 async function loadFile(filename: string) {
+  if (!isMachineOnline.value) return
   try {
     consoleStore.command(`Loading file ${filename}...`)
     await ModulesProgramService.loadProgram({filename})
     consoleStore.success(`Loaded ${filename} — press Start to begin.`)
   } catch (error) {
     consoleStore.error(`Failed to load ${filename}: ${describeError(error)}`)
+  }
+}
+
+// ---- Download -------------------------------------------------- //
+//
+// The programs router has no dedicated download endpoint — reuse the
+// same content read the editor/preview already use and hand the
+// browser a Blob, mirroring MachinesExplorer.vue's downloadMachineFile.
+
+async function downloadFile(filename: string) {
+  try {
+    const content = await readFileContent(filename)
+    const blob = new Blob([content], {type: 'text/plain;charset=utf-8'})
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    consoleStore.error(`Failed to download ${filename}: ${describeError(error)}`)
   }
 }
 
@@ -199,6 +238,12 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return bytes + ' B'
   else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
   else return (bytes / 1048576).toFixed(1) + ' MB'
+}
+
+function formatDate(iso: string) {
+  const parsed = new Date(iso)
+  if (Number.isNaN(parsed.getTime())) return '—'
+  return parsed.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'})
 }
 
 onMounted(() => {
@@ -243,12 +288,13 @@ onMounted(() => {
           <th class="py-2 px-2">Preview</th>
           <th class="py-2 px-2">Filename</th>
           <th class="py-2 px-2">Size</th>
+          <th class="py-2 px-2">Uploaded</th>
           <th class="py-2 px-2 text-right">Actions</th>
         </tr>
         </thead>
         <tbody>
         <tr
-            v-for="file in files"
+            v-for="file in sortedFiles"
             :key="file.filename"
             class="border-b border-gray-700/50 hover:bg-gray-700/40 cursor-pointer"
             @click="openPreview(file)"
@@ -270,18 +316,17 @@ onMounted(() => {
           </td>
           <td class="py-2 px-2 font-mono">{{ file.filename }}</td>
           <td class="py-2 px-2">{{ formatSize(file.size_bytes || 0) }}</td>
+          <td class="py-2 px-2 text-gray-400">{{ formatDate(file.modified) }}</td>
           <td class="py-2 px-2 text-right space-x-2" @click.stop>
 
             <BaseButton
-                variant="success"
+                variant="ghost"
                 size="sm"
-                @click="loadFile(file.filename)"
-                :data-test="`file-load-${file.filename}`"
-            >
-              <Icon name="refresh"/>
-              Load
-
-            </BaseButton>
+                @click="downloadFile(file.filename)"
+                :data-test="`file-download-${file.filename}`"
+                title="Download"
+                aria-label="Download"
+            >↓</BaseButton>
             <BaseButton
                 variant="primary"
                 size="sm"
@@ -336,9 +381,25 @@ onMounted(() => {
                 </template>
               </p>
             </div>
-            <button class="text-gray-400 hover:text-gray-200" aria-label="Close preview" @click="closePreview">
-              <Icon name="close" class="h-5 w-5" />
-            </button>
+            <div class="flex shrink-0 items-center gap-3">
+              <span v-if="!isMachineOnline" class="text-xs text-gray-500" data-test="preview-load-offline-hint">
+                Machine offline
+              </span>
+              <BaseButton
+                  variant="success"
+                  size="sm"
+                  :disabled="!isMachineOnline"
+                  :title="isMachineOnline ? undefined : loadBlockedTitle"
+                  @click="loadFile(previewFile.filename)"
+                  :data-test="`file-load-${previewFile.filename}`"
+              >
+                <Icon name="refresh"/>
+                Load
+              </BaseButton>
+              <button class="text-gray-400 hover:text-gray-200" aria-label="Close preview" @click="closePreview">
+                <Icon name="close" class="h-5 w-5" />
+              </button>
+            </div>
           </header>
 
           <div class="grid grid-cols-1 gap-4 p-4 md:grid-cols-3">
