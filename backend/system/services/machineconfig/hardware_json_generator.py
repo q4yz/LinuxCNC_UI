@@ -34,9 +34,10 @@ switch may be referenced by multiple axes.
 The ``tools`` list is the operator-facing view: every ``[extruder]``,
 ``[heater_bed]``, ``[heater_generic]``, ``[spindle]``, and
 ``[spindle_analog]`` becomes one Tool entry with the appropriate
-``type`` discriminator. SpindleDigital tools expose their HAL hooks
-(signal aliases for the digital path, ``pwm_pin`` / ``enable_pin``
-for the analog path); extruder / heated_bed tools expose their
+``type`` discriminator. SpindleDigital tools expose the pins the HAL
+compiler routes (``run_pin`` / ``speed_pin`` / ... for the digital
+path, ``pwm_pin`` / ``enable_pin`` for the analog path); extruder /
+heated_bed tools expose their
 heater fields plus references into the separate ``temperature_sensors``
 and ``fans`` lists.
 """
@@ -56,13 +57,6 @@ from models.machineconfig.hardware_json_models import (
 from .axis_builder import AxisBuilder, stepgen_scale
 
 logger = logging.getLogger("backend.services.machineconfig.hardware_json_generator")
-
-#: Connection types that identify a Remora SPI/Ethernet board MCU.
-#: Used only to set ``McuInfo.is_remora`` — a transparency flag on
-#: the hardware.json MCU inventory, not a code path of its own (the
-#: dedicated Remora ``config.txt`` flash-payload generator was
-#: retired along with the deprecated compiler; see HANDOFF.md).
-REMORA_CONNECTION_TYPES: frozenset[str] = frozenset({"remora-spi", "remora-eth"})
 
 
 # ---------------------------------------------------------------------- #
@@ -221,6 +215,13 @@ def _tool_payload_from_heater(heater_section: str, h) -> dict[str, Any]:
         "control": h.control,
         "min_temp": h.min_temp,
         "max_temp": h.max_temp,
+        # Carried for the HAL compiler (heater.md § 3 emits these as
+        # the loop's INI section); the UI ignores them.
+        "pid_kp": _fmt_float(getattr(h, "pid_Kp", None)),
+        "pid_ki": _fmt_float(getattr(h, "pid_Ki", None)),
+        "pid_kd": _fmt_float(getattr(h, "pid_Kd", None)),
+        "filament_diameter": _fmt_float(getattr(h, "filament_diameter", None)),
+        "nozzle_diameter": _fmt_float(getattr(h, "nozzle_diameter", None)),
     }
 
 
@@ -246,24 +247,20 @@ def _tool_payload_from_spindle_analog(spindle) -> dict[str, Any]:
 def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, Any]:
     """Build a Tool entry for one ``[spindle ...]`` section.
 
-    Digital spindle — carries the HAL signal aliases the vfdmod
-    driver expects. The ToolPanel renders the digital card
-    (Actual RPM + Target RPM + Forward / Reverse / Stop) and the
-    HAL generator emits the live net lines for populated signals,
-    with ``# TODO: manual hookup`` placeholders for empty ones.
+    Digital spindle — declares **pins**, not a protocol
+    (`.agent/component/digital_spindle.md` § 2): the `<mcu_id>:`
+    prefix on each pin says which controller (a VFD on RS-485, an
+    EtherCAT drive, ...) carries it, and only that MCU's router
+    mapper — not this component — knows how the pin becomes real
+    HAL. The runtime's own ``SpindleDigitalMapper`` addresses this
+    tool by a fixed naming convention off its ``id`` suffix
+    (``spindle-at-speed<suffix>`` etc.) and never reads these pin
+    fields; they exist purely as routing data for the HAL compiler.
 
     ``spindle_id`` is the canonical id (``spindle_digital`` for the
     bare ``[spindle]`` form, ``spindle_digital_test`` for
     ``[spindle test]``, ...). Each instance gets its own tool
     record so the runtime can address them independently.
-
-    The ``signal_*`` key names mirror the
-    ``SpindleDigitalPins`` fields in the machine backend's
-    ``services/tools_config_mapper.py`` (``target_rpm``, ``actual_out``, ``is_connected``,
-    ``error_count``, ``last_error``, ``spindle_at_speed``). Fields
-    with no source on the underlying ``[spindle]`` model
-    (``actual_out``, ``error_count``) are emitted as ``None`` so the
-    operator can wire them by hand.
     """
     return {
         "id": spindle_id,
@@ -271,12 +268,16 @@ def _tool_payload_from_spindle_digital(spindle_id: str, spindle) -> dict[str, An
         "type": "spindle_digital",
         "min_rpm": spindle.min_rpm,
         "max_rpm": spindle.max_rpm,
-        "signal_spindle_at_speed": spindle.at_speed1_signal,
-        "signal_target_rpm": spindle.target_frequency_signal,
-        "signal_actual_out": None,
-        "signal_is_connected": spindle.is_connected_signal,
-        "signal_error_count": None,
-        "signal_last_error": spindle.last_error_signal,
+        "spindle_number": spindle.spindle_number,
+        "rpm_scale": spindle.rpm_scale,
+        "run_pin": spindle.run_pin,
+        "reverse_pin": spindle.reverse_pin,
+        "speed_pin": spindle.speed_pin,
+        "speed_fb_pin": spindle.speed_fb_pin,
+        "at_speed_pin": spindle.at_speed_pin,
+        "fault_pin": spindle.fault_pin,
+        "is_connected_pin": spindle.is_connected_pin,
+        "error_count_pin": spindle.error_count_pin,
     }
 
 
@@ -357,6 +358,7 @@ def _stepper_payload(stepper_section: str, stepper) -> dict[str, Any]:
         "enable_pin": stepper.enable_pin,
         "microsteps": stepper.microsteps,
         "rotation_distance": _fmt_float(stepper.rotation_distance),
+        "full_steps_per_rotation": getattr(stepper, "full_steps_per_rotation", None),
         "homing_speed": _fmt_float(getattr(stepper, "homing_speed", None)),
     }
 
@@ -373,24 +375,27 @@ def _fmt_float(value: float | None) -> float | None:
 # ---------------------------------------------------------------------- #
 
 
-def _driver_payload(driver_id: str, stepper) -> dict[str, Any]:
+def _driver_payload(driver_id: str, stepper, tmc=None) -> dict[str, Any]:
     """Build a driver entry.
 
-    A driver is the chip-level wiring (TMC2209, etc.). The runtime
-    driver settings live in the parser output (``graph.tmc2209s``)
-    and are looked up by the stepper this driver drives. Future
-    parser support for other driver types will extend this helper.
+    A driver is the chip-level wiring (TMC2209, etc.). ``tmc`` is the
+    matching ``[tmc2209 stepper_x]`` record from ``graph.tmc2209s``
+    (keyed by stepper *section* name) when the profile declares one;
+    its settings are copied through so nothing the operator wrote is
+    lost. Profiles with no driver section still emit the record with
+    every field ``None`` — the id is what the joint references.
+    Future parser support for other driver types extends this helper.
     """
     return {
         "id": driver_id,
         "type": "TMC2209",
-        "uart_pin": None,
-        "run_current": None,
-        "microsteps": None,
-        "stealthchop_threshold": None,
-        "interpolate": None,
-        "hold_current": None,
-        "sense_resistor": None,
+        "uart_pin": getattr(tmc, "uart_pin", None),
+        "run_current": _fmt_float(getattr(tmc, "run_current", None)),
+        "microsteps": getattr(tmc, "microsteps", None),
+        "stealthchop_threshold": getattr(tmc, "stealthchop_threshold", None),
+        "interpolate": getattr(tmc, "interpolate", None),
+        "hold_current": _fmt_float(getattr(tmc, "hold_current", None)),
+        "sense_resistor": _fmt_float(getattr(tmc, "sense_resistor", None)),
     }
 
 
@@ -405,6 +410,7 @@ def _axis_payload(
     endstop_id: str | None,
     position_max: float | None,
     position_endstop: float | None,
+    position_min: float | None = None,
 ) -> dict[str, Any]:
     """Build an axis entry.
 
@@ -420,14 +426,16 @@ def _axis_payload(
     ``position_endstop`` carries ``stepper.position_endstop`` (or
     the ``[endstop_switch] position`` override) so the runtime can
     validate the homing sequence without re-reading the source
-    profile. ``position_max`` carries the axis travel limit (from
-    the primary stepper's ``position_max``). Fields with ``None``
-    values are dropped during serialisation.
+    profile. ``position_min`` / ``position_max`` carry the axis
+    travel limits (from the primary stepper's fields of the same
+    name). Fields with ``None`` values are dropped during
+    serialisation.
     """
     return {
         "id": letter.lower(),
         "joint_numbers": joint_numbers,
         "endstop": endstop_id,
+        "position_min": position_min,
         "position_max": position_max,
         "position_endstop": position_endstop,
     }
@@ -481,9 +489,15 @@ def build_hardware_json(
 
     # Driver records — one per joint. When the parser learns
     # about other driver types we extend the lookup.
+    # ``graph.tmc2209s`` is keyed by stepper *section* name
+    # ("stepper_x"); ``graph.steppers`` by letter ("x").
     driver_records: list[dict[str, Any]] = [
-        _driver_payload(payload["driver"], stepper)
-        for payload, stepper in zip(joint_records, graph.steppers.values())
+        _driver_payload(
+            payload["driver"],
+            stepper,
+            graph.tmc2209s.get(f"stepper_{letter}"),
+        )
+        for payload, (letter, stepper) in zip(joint_records, graph.steppers.items())
     ]
 
     # Axis records — one per unique axis letter. Multi-motor axes
@@ -499,6 +513,7 @@ def build_hardware_json(
     axis_state: dict[str, dict[str, Any]] = {
         letter: {
             "endstop_id": None,
+            "position_min": None,
             "position_max": None,
             "position_endstop": None,
         }
@@ -516,6 +531,7 @@ def build_hardware_json(
     for letter in letters_in_order:
         stepper = graph.steppers.get(letter)
         if stepper is not None:
+            axis_state[letter]["position_min"] = getattr(stepper, "position_min", None)
             axis_state[letter]["position_max"] = stepper.position_max
             axis_state[letter]["position_endstop"] = (
                 stepper.position_endstop
@@ -631,6 +647,7 @@ def build_hardware_json(
                 state["endstop_id"],
                 state["position_max"],
                 state["position_endstop"],
+                state["position_min"],
             )
         )
 
@@ -740,30 +757,40 @@ def build_hardware_json(
     if primary_mcu is not None:
         hal_type = getattr(primary_mcu, "hal_type", "remora")
     # Multi-MCU inventory — every declared section becomes an
-    # :class:`McuInfo` record. The list is empty when the profile
-    # declares no MCU at all (back-compat: a v2 consumer that never
-    # added the field sees ``[]``).
+    # :class:`McuInfo` record. ``connection`` is the discriminator
+    # consumers branch on (no derived ``is_remora`` flag). ``board``
+    # and the RS-485 serial trio are surfaced exactly as declared —
+    # absent serial keys stay out of the payload so the vfdmod
+    # router applies its documented defaults. The list is empty when
+    # the profile declares no MCU at all (back-compat: a v2 consumer
+    # that never added the field sees ``[]``).
     mcu_records: list[dict[str, Any]] = []
     for name, mcu in graph.mcus.items():
-        mcu_records.append(
-            {
-                "id": name,
-                "connection": mcu.connection,
-                "interface": mcu.interface,
-                "board": mcu.board,
-                "is_remora": mcu.connection in REMORA_CONNECTION_TYPES,
-            }
-        )
+        record: dict[str, Any] = {
+            "id": name,
+            "connection": mcu.connection,
+            "interface": mcu.interface,
+            "board": mcu.board,
+        }
+        if mcu.baud_rate is not None:
+            record["baud_rate"] = mcu.baud_rate
+        if mcu.node_id is not None:
+            record["node_id"] = mcu.node_id
+        if mcu.parity is not None:
+            record["parity"] = mcu.parity
+        mcu_records.append(record)
 
     # Validate the structured payload against the strict model.
     # The cross-reference validator runs here and surfaces any
     # unresolved id as a single ValueError with the full list.
     payload = {
-        "version": "2.1",
+        "version": "2.2",
         "machine": machine_name,
         "source": "KlipperToLinuxCNCCompiler",
         "kinematics": graph.printer.kinematics if graph.printer else "cartesian",
         "hal_type": hal_type,
+        "max_velocity": _fmt_float(getattr(graph.printer, "max_velocity", None)),
+        "max_accel": _fmt_float(getattr(graph.printer, "max_accel", None)),
         "axes": axes_records,
         "joints": joint_records,
         "drivers": driver_records,

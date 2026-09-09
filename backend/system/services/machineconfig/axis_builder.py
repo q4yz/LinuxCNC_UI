@@ -33,11 +33,13 @@ from models.machineconfig import (
 
 logger = logging.getLogger("backend.services.machineconfig.axis_builder")
 
-# Standard 1.8° stepper motors have 200 full steps per revolution.
+# Standard 1.8° stepper motors have 200 full steps per revolution —
+# the fallback when the profile doesn't say. A 0.9° motor is 400, and
+# a profile that declares ``full_steps_per_rotation`` overrides this.
 # ``rotation_distance`` from Klipper (mm / full revolution) becomes
 # LinuxCNC ``SCALE`` (steps / unit) via:
 #
-#     SCALE = (microsteps * 200) / rotation_distance
+#     SCALE = (microsteps * full_steps_per_rotation) / rotation_distance
 FULL_STEPS_PER_REVOLUTION = 200
 
 
@@ -73,7 +75,8 @@ def stepgen_scale(stepper: Stepper) -> float:
     """
     if stepper.rotation_distance in (None, 0) or stepper.microsteps is None:
         return 0.0
-    return (stepper.microsteps * FULL_STEPS_PER_REVOLUTION) / stepper.rotation_distance
+    full_steps = getattr(stepper, "full_steps_per_rotation", None) or FULL_STEPS_PER_REVOLUTION
+    return (stepper.microsteps * full_steps) / stepper.rotation_distance
 
 
 # --------------------------------------------------------------------- #

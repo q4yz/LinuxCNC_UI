@@ -21,7 +21,16 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-ConnectionType = Literal["rs485", "remora-spi", "remora-eth", "parallelport", "dummy"]
+ConnectionType = Literal[
+    "rs485",
+    "vfd_rs485",
+    "remora-spi",
+    "remora-eth",
+    "parallelport",
+    "ethercat",
+    "usb_arduino",
+    "dummy",
+]
 
 
 def connection_to_hal_type(connection: ConnectionType) -> str:
@@ -34,7 +43,8 @@ def connection_to_hal_type(connection: ConnectionType) -> str:
     HAL generator keeps working without changes.
 
     * ``remora-spi`` / ``remora-eth`` -> ``"remora"``
-    * ``parallelport`` / ``rs485`` / ``dummy`` -> ``"parallel"``
+    * ``parallelport`` / ``rs485`` / ``vfd_rs485`` / ``ethercat`` /
+      ``usb_arduino`` / ``dummy`` -> ``"parallel"``
       (the legacy generator only knew "parallel"; the new
       transports land in the parallel-mode template until a
       dedicated renderer is added).
@@ -72,9 +82,14 @@ class Stepper:
     enable_pin: str | None = None
     rotation_distance: float | None = None
     microsteps: int | None = None
+    # Motor steps per revolution. Overrides the 200-step assumption in
+    # AxisBuilder's SCALE formula — a 0.9deg motor is 400.
+    full_steps_per_rotation: int | None = None
     endstop_pin: str | None = None
     position_endstop: float | None = None
+    position_min: float | None = None
     position_max: float | None = None
+    homing_speed: float | None = None
     endstops: list["EndstopSwitch"] = field(default_factory=list, repr=False)
 
     @property
@@ -158,28 +173,30 @@ class SpindleAnalog:
 
 @dataclass(slots=True)
 class SpindleDigital:
-    """Digital (RS-485 / Modbus / vfdmod) spindle — hooks only.
+    """Digital (RS-485 / EtherCAT / vfdmod) spindle — pins, not a protocol.
 
-    The compiler does not wire any RS-485 transport. The
-    ``*_signal`` fields carry the symbolic HAL signal names the
-    vfdmod component and the pyvcp panel exchange (defaults
-    match the names the user already uses in vfd.ini + pyvcp).
-    Any signal left ``None`` is rendered as a ``# TODO: manual
-    hookup`` placeholder in the generated HAL so an operator can
-    wire it by hand.
+    Declares **pins** like any other component
+    (`.agent/component/digital_spindle.md`); the `<mcu_id>:` prefix on
+    each pin says which controller carries it (a VFD on RS-485, an
+    EtherCAT drive, ...) and that MCU's router mapper is the only
+    place that knows how the pin becomes real HAL. This replaced the
+    earlier ``*_signal`` shape, which named already-resolved HAL
+    signals directly and so could never be routed to an MCU.
     """
 
     max_rpm: float | None = None
     min_rpm: float | None = None
+    spindle_number: int | None = None
+    rpm_scale: float | None = None
 
-    target_rpm_signal: str | None = None
-    target_frequency_signal: str | None = None
-    rpm_out_signal: str | None = None
-    at_speed1_signal: str | None = None
-    at_speed2_signal: str | None = None
-    is_connected_signal: str | None = None
-    error_count_signal: str | None = None
-    last_error_signal: str | None = None
+    run_pin: str | None = None
+    reverse_pin: str | None = None
+    speed_pin: str | None = None
+    speed_fb_pin: str | None = None
+    at_speed_pin: str | None = None
+    fault_pin: str | None = None
+    is_connected_pin: str | None = None
+    error_count_pin: str | None = None
 
 
 @dataclass(slots=True)
@@ -224,25 +241,34 @@ class Fan:
 
 @dataclass(slots=True)
 class MCU:
-    """One MCU configuration (transport settings + board identity).
+    """One MCU configuration (transport settings + optional identity).
 
     A Klipper profile may declare any number of ``[mcu]`` /
     ``[mcu NAME]`` sections; each one becomes an :class:`MCU`
     record on :attr:`MachineConfigGraph.mcus`. The fields mirror
     the source keywords:
 
-    * ``connection`` — the transport type, one of
-      ``"rs485" | "remora-spi" | "remora-eth" | "parallelport" | "dummy"``.
+    * ``connection`` — the transport type. The single source of
+      truth for MCU behaviour: the capability class and the HAL
+      router both branch on it (a derived ``is_remora`` boolean was
+      removed — it couldn't scale past two transport families).
       Defaults to ``"remora-spi"`` for back-compat with the
       historical single-MCU flow.
-    * ``interface`` — a free-form transport selector (e.g. ``"com0"``
-      for RS-485). Optional.
-    * ``board`` — the operator-visible board name (e.g. ``"BIGTREETECH OCTOPUS"``).
-      Optional; the firmware-side :mod:`config_txt_generator`
-      uses this to populate ``Board`` in the Remora payload.
+    * ``interface`` — a free-form transport selector (e.g. a
+      ``/dev/serial/by-id/...`` path for RS-485). Optional.
+    * ``board`` — the operator-visible board name (e.g.
+      ``"BIGTREETECH OCTOPUS"``). Optional and **never autofilled**:
+      HAL generation cares about protocols and device paths, not PCB
+      names — the firmware-side config generator surfaces it only
+      when the profile actually declares it.
+    * ``baud_rate`` / ``node_id`` / ``parity`` — the Modbus serial
+      trio, only valid on ``vfd_rs485`` (or legacy ``rs485``)
+      sections. ``parity`` is normalised to ``none``/``even``/
+      ``odd``; all three stay ``None`` when undeclared so the
+      router applies its documented defaults (9600 / 1 / none).
 
-    The ``hal_type`` property collapses :attr:`connection` to the
-    legacy two-value discriminator the original HAL generator
+    The ``hal_type`` property collapses :attr:`connection` to
+    the legacy two-value discriminator the original HAL generator
     consumed (it remains the only transport ever loaded by the
     generated HALFILE).
     """
@@ -250,6 +276,9 @@ class MCU:
     connection: ConnectionType = "remora-spi"
     interface: str | None = None
     board: str | None = None
+    baud_rate: int | None = None
+    node_id: int | None = None
+    parity: str | None = None
 
     @property
     def hal_type(self) -> str:

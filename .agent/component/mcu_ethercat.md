@@ -6,7 +6,7 @@
 **Expected Syntax:**
 ```cfg
 [mcu <identifier>]
-    type: string // Must be "ethercat"
+    connection: string // Must be "ethercat"
     master: integer // (Optional) EtherCAT master index, default 0
     servo_period: integer // (Optional) ns per servo cycle, default 1000000
     config_file: string // (Optional) slave XML path, default "ethercat-conf.xml"
@@ -181,7 +181,7 @@ net <owner.id>-<field>     => not-<owner.id>-<field>.in
 net <owner.id>-<field>-inv not-<owner.id>-<field>.out => lcec.<master>.<slave>.<channel>
 ```
 
-### Analog output (0–10 V spindle, see `digital_spindle_ethercat.md`)
+### Analog output (0–10 V spindle, see `digital_spindle.md`)
 
 ```hal
 net <owner.id>-<field> => lcec.<master>.<slave>.<channel>

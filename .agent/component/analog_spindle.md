@@ -112,7 +112,8 @@ setp spindle.<spindle_number>.at-speed true
 `pwmgen` needs a `base-thread`, so an analog spindle is only valid on a
 class A machine (`README.md` § 2). On a class B MCU the drive takes a
 speed word over the fieldbus instead — use
-`digital_spindle_ethercat.md`; on Remora, use its own PWM module.
+`digital_spindle.md` with a fieldbus pin; on Remora, use its own
+PWM module.
 Emit `E_PWM_WITHOUT_BASE_THREAD` if no base thread exists.
 
 webgui_connections.hal
@@ -146,7 +147,7 @@ net spindle-override webgui.override => halui.spindle.0.override.counts
 > version — `halui.spindle.N.override.counts` vs `.count`, and the
 > unindexed `halui.spindle-override.*` form on older releases. The
 > three lines above match the convention already used in
-> `digital_spindle_rs485.md`; fix both files together if it turns out
+> `digital_spindle.md`; fix both files together if it turns out
 > the target release disagrees.
 
 ## 4. ROUTING NOTES

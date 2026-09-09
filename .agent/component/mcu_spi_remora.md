@@ -6,10 +6,12 @@
 **Expected Syntax:**
 ```cfg
 [mcu <identifier>]
-    type: string // Must be "remora-spi"
-    board: string // Firmware target, e.g. "BIGTREETECH OCTOPUS" / "SKR v1.4"
-    spi_clk_div: integer // (Optional) SPI clock divider, default 64
-    chip: string // (Optional) "stm32" | "lpc17xx" — selects the component variant
+    connection: string // Must be "remora-spi" (the default when a bare [mcu] omits it)
+    board: string // (Optional) firmware target, e.g. "BIGTREETECH OCTOPUS" / "SKR v1.4".
+                   // Never autofilled — an absent board stays absent; HAL generation
+                   // cares about protocols and device paths, not PCB names. Klipper
+                   // needs a board to compile firmware; this HAL pipeline does not.
+    interface: string // (Optional) transport selector, e.g. a spidev path
     servo_period: integer // (Optional) ns per servo cycle, default 1000000
 ```
 
@@ -25,30 +27,24 @@ stepgen` for a Remora machine is `E_UNNEEDED_STEPGEN`.
 
 ## 2. UI ABSTRACTION (hardware.json)
 
+The implemented MCU record is flat and keyed entirely off
+`connection` — there is no `is_remora` flag (a boolean cannot scale
+past two transport families; Mesa cards and EtherCAT would need a
+third value). Optional keys appear only when the profile declared
+them:
+
 ```json
 {"mcus": [{
-  "id": "mcu_<identifier>",
-  "type": "remora-spi",
-  "ui_group": "Controllers",
-  "capability_class": "B",
-  "is_remora": true,
-  "parameters": {
-    "board": { "type": "string", "value": "<parsed_value>" },
-    "spi_clk_div": { "type": "integer", "value": "<parsed_value || 64>" },
-    "chip": { "type": "string", "value": "<parsed_value || 'stm32'>" },
-    "servo_period": { "type": "integer", "value": "<parsed_value || 1000000>" }
-  },
-  "computed": {
-    "component": { "type": "string", "formula": "chip == 'lpc17xx' ? 'remora_lpc' : 'remora-spi'" },
-    "joint_count": { "type": "integer", "formula": "count(joints where joint.mcu_id == this.id)" },
-    "firmware_config": { "type": "object", "formula": "see § 4 — the board-side config.txt" }
-  }
+  "id": "<identifier>",
+  "connection": "remora-spi",
+  "board": "BIGTREETECH OCTOPUS"
 }]}
 ```
 
 The repo's own example machine is this shape —
 `machine_config/machines/example/configs/hardware.json` carries
-`"hal_type": "remora"`, `"connection": "remora-spi"`, `"is_remora": true`.
+`"connection": "remora-spi"` (with `"board"` only when the profile
+declared one).
 
 ## 3. COMPILATION (INI & HAL)
 

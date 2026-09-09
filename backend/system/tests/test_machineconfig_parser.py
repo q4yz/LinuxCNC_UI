@@ -15,7 +15,9 @@ from machineconfig_parser import (
     DuplicateMcuSectionError,
     DuplicateStepperPinError,
     InvalidConnectionError,
+    InvalidValueError,
     MachineConfigParser,
+    MalformedConfigError,
     MissingRequiredKeywordError,
     MultipleExtrudersError,
     UndefinedKeywordError,
@@ -134,53 +136,58 @@ max_rpm: 24000
 # SpindleDigital sections (analog + digital)                                     #
 # ---------------------------------------------------------------------- #
 
-def test_spindle_digital_section_parses_all_signal_aliases() -> None:
-    """A `[spindle]` block with the full set of signal aliases
-    round-trips into :class:`SpindleDigital` with each field
-    populated and ``spindle_analog`` left None."""
+def test_spindle_digital_section_parses_all_pins() -> None:
+    """A `[spindle]` block with the full pin set round-trips into
+    :class:`SpindleDigital` with each field populated and
+    ``spindle_analog`` left None."""
     config = """
 [spindle]
 max_rpm: 24000
 min_rpm: 5000
-target_rpm_signal: TargetRpm
-target_frequency_signal: TargetFrequency
-rpm_out_signal: rpm-out
-at_speed1_signal: at-speed1
-at_speed2_signal: at-speed2
-is_connected_signal: is-connected
-error_count_signal: error-count
-last_error_signal: last-error
+spindle_number: 0
+rpm_scale: 1.0
+run_pin: vfd0:run-forward
+reverse_pin: vfd0:run-reverse
+speed_pin: vfd0:rpm-in
+speed_fb_pin: vfd0:rpm-out
+at_speed_pin: vfd0:at-speed
+fault_pin: vfd0:fault
+is_connected_pin: vfd0:is-connected
+error_count_pin: vfd0:error-count
 """
     machine = MachineConfigParser().parse_string(config)
     assert machine.spindle_digital is not None
     assert machine.spindle_digital.max_rpm == 24000.0
     assert machine.spindle_digital.min_rpm == 5000.0
-    assert machine.spindle_digital.target_rpm_signal == "TargetRpm"
-    assert machine.spindle_digital.target_frequency_signal == "TargetFrequency"
-    assert machine.spindle_digital.rpm_out_signal == "rpm-out"
-    assert machine.spindle_digital.at_speed1_signal == "at-speed1"
-    assert machine.spindle_digital.at_speed2_signal == "at-speed2"
-    assert machine.spindle_digital.is_connected_signal == "is-connected"
-    assert machine.spindle_digital.error_count_signal == "error-count"
-    assert machine.spindle_digital.last_error_signal == "last-error"
+    assert machine.spindle_digital.spindle_number == 0
+    assert machine.spindle_digital.rpm_scale == 1.0
+    assert machine.spindle_digital.run_pin == "vfd0:run-forward"
+    assert machine.spindle_digital.reverse_pin == "vfd0:run-reverse"
+    assert machine.spindle_digital.speed_pin == "vfd0:rpm-in"
+    assert machine.spindle_digital.speed_fb_pin == "vfd0:rpm-out"
+    assert machine.spindle_digital.at_speed_pin == "vfd0:at-speed"
+    assert machine.spindle_digital.fault_pin == "vfd0:fault"
+    assert machine.spindle_digital.is_connected_pin == "vfd0:is-connected"
+    assert machine.spindle_digital.error_count_pin == "vfd0:error-count"
     assert machine.spindle_analog is None
 
 def test_spindle_digital_section_with_no_keys_is_valid() -> None:
     """An empty `[spindle]` block produces a default
-    :class:`SpindleDigital` (every field None). All signal fields
-    are optional — the digital section is hooks-only."""
+    :class:`SpindleDigital` (every field None). All pin fields
+    are optional — an operator can wire them incrementally."""
     config = """
 [spindle]
 """
     machine = MachineConfigParser().parse_string(config)
     assert machine.spindle_digital is not None
-    assert machine.spindle_digital.target_rpm_signal is None
+    assert machine.spindle_digital.run_pin is None
     assert machine.spindle_digital.max_rpm is None
     assert machine.spindle_analog is None
 
-def test_spindle_digital_rejects_physical_pin_keys() -> None:
-    """`[spindle]` is the digital hooks section — physical pins
-    belong in `[spindle_analog]` and must be rejected here."""
+def test_spindle_digital_rejects_pwm_pin():
+    """`[spindle]` is the pin-routed digital section — the analog
+    section's PWM key belongs in `[spindle_analog]` and must be
+    rejected here."""
     config = """
 [spindle]
 pwm_pin: PA6
@@ -189,16 +196,16 @@ pwm_pin: PA6
         MachineConfigParser().parse_string(config)
     assert exc_info.value.key == "pwm_pin"
 
-def test_spindle_analog_rejects_signal_alias_keys() -> None:
-    """`[spindle_analog]` is the PWM section — signal aliases
-    belong in `[spindle]` and must be rejected here."""
+def test_spindle_analog_rejects_digital_pin_keys():
+    """`[spindle_analog]` is the PWM section — the digital section's
+    pin keys belong in `[spindle]` and must be rejected here."""
     config = """
 [spindle_analog]
-target_rpm_signal: TargetRpm
+run_pin: vfd0:run-forward
 """
     with pytest.raises(UndefinedKeywordError) as exc_info:
         MachineConfigParser().parse_string(config)
-    assert exc_info.value.key == "target_rpm_signal"
+    assert exc_info.value.key == "run_pin"
 
 @pytest.mark.parametrize(
     "header",
@@ -226,13 +233,13 @@ min_rpm: 5000
 [spindle]
 max_rpm: 24000
 min_rpm: 5000
-target_rpm_signal: TargetRpm
+run_pin: vfd0:run-forward
 """
     machine = MachineConfigParser().parse_string(config)
     assert machine.spindle_analog is not None
     assert machine.spindle_analog.pwm_pin == "PA6"
     assert machine.spindle_digital is not None
-    assert machine.spindle_digital.target_rpm_signal == "TargetRpm"
+    assert machine.spindle_digital.run_pin == "vfd0:run-forward"
 
 def test_endstop_unknown_target_is_rejected() -> None:
     config = """
@@ -281,19 +288,22 @@ class TestMultiExtruderSupport:
         assert "extruder_hotend" in graph.heaters
 
     def test_two_bare_extruders_rejected(self) -> None:
-        """Multiple bare [extruder] sections are rejected by ConfigParser.
+        """Multiple bare [extruder] sections are rejected at parse time.
 
-        The strict configparser catches the duplicate section at
-        parse time, before our custom validation runs. The
+        The strict configparser catches the duplicate section before
+        our custom validation runs; since the malformed-config
+        wrapping, that surfaces as :class:`MalformedConfigError`
+        (a :class:`ConfigValidationError`) so the HTTP layer ships
+        the structured 400 envelope instead of a raw 500. The
         ``MultipleExtrudersError`` class is preserved as a documented
         contract for the parser's intent, but is unreachable from a
         well-formed Klipper config.
         """
-        import configparser
-
         config = _full_block("extruder") + _full_block("extruder")
-        with pytest.raises(configparser.DuplicateSectionError):
+        with pytest.raises(MalformedConfigError) as exc_info:
             MachineConfigParser().parse_string(config)
+        assert exc_info.value.kind == "malformed_config"
+        assert exc_info.value.section == "extruder"
 
     def test_duplicate_heater_name_rejected(self) -> None:
         """[extruder 1] and [extruder1] both compile to extruder_1 → error."""
@@ -301,6 +311,52 @@ class TestMultiExtruderSupport:
         with pytest.raises(DuplicateHeaterError) as exc_info:
             MachineConfigParser().parse_string(config)
         assert exc_info.value.name == "extruder_1"
+
+
+class TestMalformedConfigWrapping:
+    """Raw configparser syntax errors become ConfigValidationError envelopes.
+
+    A hand-edited profile can violate INI syntax itself (a repeated
+    key, a line with no ``key: value`` separator). Those raise
+    ``configparser.Error`` subclasses, which are NOT ``ValueError`` s
+    — without wrapping they escape the FastAPI exception handler and
+    crash the request with a raw 500 instead of the structured 400
+    the frontend toast channel reads (``body.error.message``).
+    """
+
+    def test_duplicate_option_becomes_structured_error(self) -> None:
+        config = "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nstep_pin: PF14\n"
+        with pytest.raises(MalformedConfigError) as exc_info:
+            MachineConfigParser().parse_string(config)
+        assert exc_info.value.kind == "malformed_config"
+        assert exc_info.value.section == "stepper_x"
+        assert exc_info.value.key == "step_pin"
+        assert "already exists" in str(exc_info.value)
+
+    def test_line_without_separator_becomes_structured_error(self) -> None:
+        config = "[mcu]\nconnection parallelport\n"
+        with pytest.raises(MalformedConfigError) as exc_info:
+            MachineConfigParser().parse_string(config)
+        assert exc_info.value.kind == "malformed_config"
+
+    def test_wrapped_error_is_a_config_validation_error(self) -> None:
+        """The contract the HTTP layer relies on: subclass of the
+        base the global exception handler is registered against."""
+        config = "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nstep_pin: PF14\n"
+        with pytest.raises(ConfigValidationError):
+            MachineConfigParser().parse_string(config)
+
+    def test_to_dict_shape_is_json_safe(self) -> None:
+        config = "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nstep_pin: PF14\n"
+        with pytest.raises(MalformedConfigError) as exc_info:
+            MachineConfigParser().parse_string(config)
+        payload = exc_info.value.to_dict()
+        assert payload["kind"] == "malformed_config"
+        assert payload["section"] == "stepper_x"
+        assert payload["key"] == "step_pin"
+        # DuplicateOptionError carries the source line — the wrapper
+        # forwards it so the toast can point at the offending line.
+        assert payload["line"] == 4
 
 class TestHeaterGenericSupport:
     """heater_generic and named heater_generic sections are parsed."""
@@ -623,11 +679,13 @@ off_below: 0.1
     assert graph.fans["fan"].pin == "PA8"
 
 def test_duplicate_fan_canonical_id_raises() -> None:
-    """Identical fan section names raise configparser's DuplicateSectionError
-    before our canonical-id check ever runs. The check is still wired
-    (see ``_validate_fan_uniqueness``) and is exercised in tests that
-    go around configparser via ``parse_string`` synthetic sections; we
-    only assert the configparser-level guard here.
+    """Identical fan section names are rejected at parse time
+    before our canonical-id check ever runs — wrapped into
+    :class:`MalformedConfigError` so the HTTP layer ships the
+    structured envelope. The canonical-id check is still wired
+    (see ``_validate_fan_uniqueness``) and is exercised in tests
+    that go around configparser via ``parse_string`` synthetic
+    sections; we only assert the configparser-level guard here.
     """
     config = """
 [fan_generic part_cooling]
@@ -636,15 +694,20 @@ pin: PA8
 [fan_generic part_cooling]
 pin: PB0
 """
-    with pytest.raises(configparser.DuplicateSectionError):
+    with pytest.raises(MalformedConfigError) as exc_info:
         MachineConfigParser().parse_string(config)
+    assert exc_info.value.kind == "malformed_config"
+    assert exc_info.value.section == "fan_generic part_cooling"
 
 # ---------------------------------------------------------------------- #
 # Multi-MCU sections                                                      #
 # ---------------------------------------------------------------------- #
 
-def test_empty_mcu_defaults_to_remora_spi_and_octopus() -> None:
-    """An empty ``[mcu]`` section defaults to the legacy single-MCU contract."""
+def test_empty_mcu_defaults_to_remora_spi_without_board() -> None:
+    """An empty ``[mcu]`` section defaults to the legacy single-MCU
+    transport — and to **no** board: HAL generation cares about
+    protocols and device paths, not PCB names, so the board is never
+    autofilled."""
 
     config = """
 [mcu]
@@ -654,7 +717,10 @@ def test_empty_mcu_defaults_to_remora_spi_and_octopus() -> None:
     mcu = graph.mcus["mcu"]
     assert mcu.connection == "remora-spi"
     assert mcu.interface is None
-    assert mcu.board == "BIGTREETECH OCTOPUS"
+    assert mcu.board is None
+    assert mcu.baud_rate is None
+    assert mcu.node_id is None
+    assert mcu.parity is None
     # Legacy back-compat property returns the same record.
     assert graph.mcu is mcu
     # ``hal_type`` collapses to the two-value discriminator the HAL
@@ -750,6 +816,69 @@ def test_mcu_keywords_are_strict() -> None:
     assert "connection" in MCU_KEYS
     assert "interface" in MCU_KEYS
     assert "board" in MCU_KEYS
+    assert {"baud_rate", "node_id", "parity"} <= MCU_KEYS
+
+
+# ---------------------------------------------------------------------- #
+# RS-485 serial trio (vfd_rs485 only)                                     #
+# ---------------------------------------------------------------------- #
+
+def test_vfd_mcu_parses_the_modbus_serial_trio() -> None:
+    """``baud_rate`` / ``node_id`` / ``parity`` land on the MCU record."""
+
+    config = """
+[mcu vfd0]
+connection: vfd_rs485
+interface: /dev/serial/by-id/usb-VFD0-if00-port0
+baud_rate: 19200
+node_id: 3
+parity: even
+"""
+    graph = MachineConfigParser().parse_string(config)
+    mcu = graph.mcus["vfd0"]
+    assert mcu.baud_rate == 19200
+    assert mcu.node_id == 3
+    assert mcu.parity == "even"
+
+
+def test_vfd_parity_single_letter_is_normalised() -> None:
+    """Datasheet-style ``N`` / ``E`` / ``O`` maps onto vfdmod's vocabulary."""
+
+    for raw, expected in (("N", "none"), ("e", "even"), ("O", "odd")):
+        config = f"""
+[mcu vfd0]
+connection: vfd_rs485
+parity: {raw}
+"""
+        graph = MachineConfigParser().parse_string(config)
+        assert graph.mcus["vfd0"].parity == expected, raw
+
+
+def test_vfd_parity_unknown_value_rejected() -> None:
+    config = """
+[mcu vfd0]
+connection: vfd_rs485
+parity: mark
+"""
+    with pytest.raises(InvalidValueError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu vfd0"
+    assert exc_info.value.key == "parity"
+
+
+def test_serial_trio_rejected_on_non_rs485_mcu() -> None:
+    """``baud_rate`` on a parport MCU is a typo, not a tuning knob."""
+
+    config = """
+[mcu]
+connection: parallelport
+baud_rate: 9600
+"""
+    with pytest.raises(InvalidValueError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu"
+    assert exc_info.value.key == "baud_rate"
+    assert "vfd_rs485" in str(exc_info.value)
 
 def test_orphan_mcu_pin_qualifier_raises_undefined_mcu_error() -> None:
     """A ``mcu_missing:PF13`` pin reference must point at a declared section."""

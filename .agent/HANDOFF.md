@@ -14,57 +14,215 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.6 (2026-09-09) MCU record slimmed: no is_remora, board never autofilled, Modbus trio added
+
+User-directed schema cleanup, matching the architecture review:
+
+- **`is_remora` deleted everywhere** (McuInfo model, generator
+  emission, doc examples). `connection` is the single discriminator:
+  the capability class and the HAL router both branch on it, and a
+  boolean couldn't scale past two transport families. No runtime
+  consumer read it (grepped backend + frontend before deleting).
+- **`board` kept but optional, never autofilled.** The parser no
+  longer substitutes "BIGTREETECH OCTOPUS" for a bare `[mcu]` — HAL
+  generation cares about protocols and device paths, not PCB names;
+  an absent board stays absent in hardware.json.
+- **Modbus serial trio** `baud_rate` / `node_id` / `parity` now
+  ingests from `[mcu]` sections (parser + MCU_KEYS + MCU dataclass +
+  McuInfo), is **rejected on non-RS485 connections**
+  (`InvalidValueError`), and flows through the generator into the
+  compiled `vfd_vfd0.ini` `[common]` block. Parity normalises
+  datasheet-style `N`/`E`/`O` to vfdmod's `none`/`even`/`odd`.
+  `VfdRs485RouterMapper` dropped its dead `mcus[].parameters`
+  fallback (never populated by any real cfg) and reads the real
+  fields; register maps (`model`) remain not-yet-ingested, `vfd.ini`
+  register lines stay empty.
+- **Docs** (`mcu_vfd_rs485.md`, `mcu_spi_remora.md`): § 1/§ 2 now
+  document the implemented flat record shape and the real key names;
+  the other MCU docs' `type:` ingestion key renamed to
+  `connection:` for consistency.
+- **Machine folders regenerated from profiles** (not their own stale
+  `machine.cfg` copies — regenerating from the copy resurrected
+  pre-pin spindle sections and broke
+  `test_the_shipped_example_machine_is_compilable`). All nine
+  machines validate clean. `machines/new_config_example/` is now an
+  orphan: the user deleted its source profile
+  (`new_config_example.cfg`) — left in place, flagged here.
+- 391 system + 55 common tests passing; mypy not in the venv
+  (orchestrator's gate).
+
+### 1.5 (2026-09-09) Per-MCU example profiles + malformed-cfg 500 crash fix
+
+Two related pieces, one session:
+
+- **Example profiles for every documented MCU transport** — five new
+  files under `machine_config/profiles/`: `mcu_parallelport.cfg`
+  (class A), `mcu_remora_spi.cfg` (class B), `mcu_vfd_rs485.cfg`
+  (class C, VFD-only — valid precisely because a spindle controller
+  is a machine on its own bus), `mcu_ethercat.cfg` and
+  `mcu_usb_arduino.cfg` (skeletons: parse/validate/compile today,
+  routers pending). Each header states its capability class and
+  compile status honestly. All five verified through the real
+  pipeline (parse → hardware.json → validator → assembler).
+
+- **Transport registration** — `ethercat` and `usb_arduino` were
+  documented (`.agent/component/`) but unparseable: added to
+  `ALLOWED_CONNECTION_TYPES`, `CapabilityClass.for_connection`
+  (ethercat=B, usb_arduino=C), both `Literal`s and
+  `HARDWARE_MCU_CONNECTION_TYPES`. No router claims them yet — an
+  unroutable pin still raises `UnsupportedMcuError`, same honest gap
+  as `remora-eth`.
+
+- **The crash the user actually hit** — `POST /machines/generate`
+  500-crashed on `connection: ethercat`. Direct cause: a stale
+  server process (its expected-connection list predated even
+  `vfd_rs485`; traceback source lines didn't match the files).
+  Restart required — fixes cannot reach a running uvicorn. But the
+  report exposed a real gap: `configparser.Error` (duplicate key,
+  missing `:`) is NOT a `ValueError`, so it escaped every handler
+  and crashed the ASGI app raw. Fixed by wrapping `read_file` in
+  `parse`/`parse_string` into a new `MalformedConfigError`
+  (ConfigValidationError subclass, `kind: "malformed_config"`,
+  carries configparser's section/option/lineno) — it now rides the
+  existing global handler → structured 400 → frontend toast
+  (`describeError` already reads `body.error.message`). Also fixed
+  en route: `MotionSystemHalMapper` no longer emits a class-A
+  `stepgen` bank for a zero-joint machine (the VFD-only profile
+  exposed it). 387 system + 55 common tests passing; mypy not
+  installed in the venv this session — orchestrator's gate owns it.
+
+- **Next:** Phase 3 (heaters/fans as HAL components) unlocks the
+  Arduino I/O half of `mcu_usb_arduino.cfg`; Phase 4 (lcec router +
+  `[ethercat_slave]` parsing) unlocks real EtherCAT machines.
+
+### 1.4 (2026-09-09) `[spindle]` parser migrated off `*_signal` fields onto pins
+
+The gap flagged in 1.1/1.3 as blocking Phase 3: `SpindleDigital`
+(`klipper_models.py`) carried `target_rpm_signal`/`rpm_out_signal`/etc.
+— already-resolved HAL signal names that could never be routed to an
+MCU. Replaced with the pin fields `digital_spindle.md` § 1 documents
+(`run_pin`, `reverse_pin`, `speed_pin`, `speed_fb_pin`, `at_speed_pin`,
+`fault_pin`, `is_connected_pin`, `error_count_pin`, plus
+`spindle_number`/`rpm_scale`) across `SPINDLE_KEYS`
+(`machineconfig_schema.py`), `_parse_spindle_digital`
+(`machineconfig_parser.py`), `_tool_payload_from_spindle_digital`
+(`hardware_json_generator.py`), and the `Tool` model
+(`hardware_json_models.py`).
+
+**Verified before touching anything:** grepped the whole runtime
+(`backend/machine`, the mock hardware layer, `SpindleDigitalMapper`)
+for every `signal_*` field name — zero matches. The runtime addresses
+a digital spindle by a fixed HAL naming convention off its `id` suffix
+(`spindle-at-speed<suffix>` etc.) and never read these fields at all;
+they were pure dead weight in `hardware.json`, the same class of bug
+already fixed for `temperature_sensors[].pin` this session. This is
+what kept the migration to compile-time files only — no runtime risk,
+despite the field touching 24 files by name.
+
+No shipped `.cfg` profile used the old `*_signal` keys (checked all
+four with a `[spindle]` section — only `max_rpm`/`min_rpm` are set),
+so nothing broke on the ingestion side either. **792 backend tests
+passing, mypy clean** (same count as 1.3 — this only renamed fields
+inside existing tests, no new ones needed since
+`test_hardware_json_lossless.py`'s generic walk already covers it).
+
+- **Next:** Phase 3 — heaters/fans/spindles as HAL components, no
+  longer blocked. `digital_spindle.md`'s router notes (§ 4) are ready
+  to implement against `mcu_vfd_rs485.md`.
+
+### 1.3 (2026-09-09) HAL compiler — Phase 2 (Remora / class B) landed
+
+**Status: class A (parport) and class B (Remora SPI) both compile
+end-to-end, both golden-file verified against real machines. Phase 3+
+(heaters/spindles/fans as HAL components) not started.** Builds on 1.2
+below — read that first.
+
+- **New:** `components/RemoraStepperHalMapper.py` (position loop only —
+  no `stepgen`, no step/dir/enable HAL nets at all: those become
+  firmware `config.txt` entries via a new `FirmwareModuleRequest` DTO,
+  since the board owns the pulses), `mcus/RemoraRouterMapper.py`
+  (`loadrt remora-spi`/`remora_lpc`, the SPI-enable/E-stop watchdog
+  chain, `remora.input.NN` allocation for endstops). `HalFragment`
+  gained `firmware_modules: list[FirmwareModuleRequest]`; the assembler
+  aggregates them per-MCU into a `config_<mcu_id>.txt` JSON sidecar
+  (`HalFragment.files`, not part of the rendered `.hal` text).
+
+- **Real structural difference caught against the reference machine:**
+  Remora's endstop wiring targets **both** `home-sw-in` and
+  `neg-lim-sw-in` (`3Dprinter.hal`: `net X-stop remora.input.00 =>
+  joint.0.home-sw-in joint.0.neg-lim-sw-in`) — genuinely different from
+  the parport reference, which wires `home-sw-in` alone. Class A's
+  mapper was correctly left untouched; only `RemoraStepperHalMapper`
+  emits the second target.
+
+- **Capability-class resolution moved before dispatch.** Phase 1 derived
+  the machine's capability class *after* building fragments, by
+  scanning emitted step/dir `PinRequest`s — works for class A, but
+  class B emits none (Remora has no HAL step/dir pin to route), so
+  `HalAssembler._capability_class()` now reads a joint's raw `step_pin`
+  directly, up front, and that decides which stepper mapper
+  (`StepperHalMapper` vs `RemoraStepperHalMapper`) gets dispatched to
+  per axis.
+
+- **Golden test:** `tests/test_hal_compiler_golden_remora.py`, built
+  from `ender3.hal` + `3Dprinter.hal`'s real 4-joint layout (X/Y/Z/
+  extruder, only X/Y/Z have endstops). One deliberate wiring-shape
+  difference from the source text, noted in the test docstring: the
+  reference combines endstop writer+reader on one `net` line; this
+  compiler splits them across two statements (component emits the
+  reader, router emits the writer) — the same split Phase 1 already
+  uses for parport, and HAL lets a net name accumulate targets across
+  statements, so it's functionally identical.
+
+- `remora-spi` is now routed; `remora-eth` deliberately is not (no
+  reference machine exists for it) — still an honest `UnsupportedMcuError`.
+  **792 backend tests passing** (`common`+`machine`=449, `system`=343),
+  mypy clean across all three packages.
+
+- **Next:** Phase 3 — heaters/fans/spindles as HAL components. See 1.4
+  above — its blocking prerequisite has since landed.
+
+### 1.2 (2026-09-09) HAL compiler — Phase 1 (first real emitter) landed
+
+Compressed 2026-09-09 (superseded by 1.3's fuller Remora work) — full
+detail in git history around this window. Summary: first real HAL
+emitter, class A (parport) only — `assembler.py`'s two-pass
+component/router join, `StepperHalMapper`, `MotionSystemHalMapper`,
+`ParportRouterMapper`, the `HalFragment`/`PinRequest`/`Addf` DTOs. Real
+catch: an endstop's HAL signal must be named after the **endstop's own
+id**, not the axis, so two axes sharing one physical switch
+(PrintNC-WEBGUI's X/Z) collapse onto one writer instead of two fighting
+over one pin. Golden-tested against `PrintNC-WEBGUI/Machine.hal`.
+
+### 1.1 (2026-09-09) HAL compiler — spec finished, Phase 0 (validation gate) landed
+
+Compressed 2026-09-09 (superseded by 1.2-1.4) — full detail in git
+history around this window and in saved memory
+(`project-hal-compiler-design`, `small-classes-layered-dto` —
+auto-loads for this project). Summary: wrote the 13-file component
+spec (`.agent/component/`, `README.md` is the shared contract — pin
+grammar, MCU capability classes A/B/C, validation rules, emission
+order), agreed the entity + small-per-component-mapper architecture
+(user-directed, mirrors the runtime's `dict → Pins → StateDTO →
+Response` layering), and landed Phase 0 (`services/halcompiler/
+validator.py`, ~16 rules, no HAL emission yet) plus the
+`hardware.json` v2.2 losslessness bump (`test_hardware_json_lossless.py`).
+718 backend tests passing at the time.
+
 ### 1.0 (2026-09) Machine-online gating, default-machine lifecycle, install.sh cleanup
 
-- **Machine-online gating (replaces the freeze watchdog).** The old
-  pending-snapshot watchdog / "Connection appears stuck" modal was
-  removed entirely (it false-positived on the split backend's
-  snapshot service answering 502). Replacement: a global heartbeat in
-  [frontend/src/composables/useMachineOnline.ts](frontend/src/composables/useMachineOnline.ts)
-  probing `GET /api/v1/health` (new route in `backend/machine/main.py`)
-  every 3 s with a 2 s `AbortSignal.timeout`; `App.vue` starts/stops
-  the 1 Hz snapshot poll and the telemetry WebSocket on its verdict
-  (750 ms settle debounce on connect; a `manualClose` flag in
-  [frontend/src/facades/servoThreadFacade.ts](frontend/src/facades/servoThreadFacade.ts)
-  prevents reconnect loops). `MachineGate.vue` renders
-  skeleton / offline-card-with-Start / slot; machine-level widgets in
-  Dashboard, Running, Jogging, Debug, Files and Settings views are
-  gated, which also kills a hung camera MJPEG stream on unmount.
-
-- **Default-machine lifecycle (system service).**
-  [backend/system/services/MachineLifecycleService.py](backend/system/services/MachineLifecycleService.py)
-  persists `machine_config/default_machine.json`; `POST
-  /api/v1/system/machine/start` accepts an optional `{machine}` body
-  (persist-as-default + start) and `POST /default` selects without
-  starting. The INI resolver accepts BOTH layouts:
-  `machines/<name>/config/machine.ini` and
-  `machines/<name>/configs/machine.ini` (the generator output all real
-  machines use — the first cut only looked for `config/` and 404'd on
-  every real machine). UI: `MachinesExplorer.vue` Start (▶) / Set-main
-  (★) buttons on root-level machine folders, `UpdateManager.vue`
-  Start-default/Stop controls with a live status line.
-
-- **install.sh cleanup.** The phantom `linuxcnc-ui-machine` unit is
-  gone (enable/restart/sudoers references removed — the machine
-  backend is a program started/stopped by the system service, NOT a
-  unit; the spawn feature itself is still missing, see issue #121).
-  Added a `linuxcnc-ui-cert.service` oneshot that runs
-  `start_network.sh` at boot to re-mint the TLS certificate for the
-  current IPs + reload nginx. `scripts/update.sh` and
-  `rebuild_ui.sh` unit-name fixes landed in the same pass.
-
-- **Backend WS heartbeat.** `ServoThreadService.telemetry_loop`
-  broadcasts a ~1 Hz `{"type": "heartbeat"}` envelope even when idle
-  (an idle machine previously sent no frames at all); the facade
-  stamps `lastMessageAt` on every frame. Kept as diagnostics — the
-  freeze watchdog that consumed it was removed.
-
-- **Known breakage from the same window.** The mypy-packaging pass
-  added `backend/__init__.py`, which broke machine-suite pytest
-  collection (bare-name `tests` package shadowing) and re-exposed ~33
-  pre-existing failures — the conftest fix landed but the session was
-  interrupted before re-verifying. See issue #118 before trusting
-  `pytest backend/machine/tests` results.
+Compressed 2026-09-09 — full detail is in git history around this
+window; the concrete follow-ups are tracked in § 2 (issues #118, #121).
+Summary: replaced the freeze-watchdog with a heartbeat-driven
+`useMachineOnline` gate (`frontend/src/composables/useMachineOnline.ts`,
+`MachineGate.vue`); added default-machine persistence
+(`MachineLifecycleService.py`) with dual `config/`/`configs/` INI
+resolution; `install.sh` cleanup (removed a phantom systemd unit,
+added a cert-remint oneshot). **The "machine-suite pytest collection
+broken" note this entry used to carry is stale** — `pytest
+backend/machine` now collects and passes cleanly (verified 2026-09-09,
+449 tests across common+machine); issue #118 should be re-checked
+before assuming it's still open.
 
 ---
 

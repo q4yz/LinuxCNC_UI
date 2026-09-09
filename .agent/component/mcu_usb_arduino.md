@@ -6,7 +6,7 @@
 **Expected Syntax:**
 ```cfg
 [mcu <identifier>]
-    type: string // Must be "usb_arduino"
+    connection: string // Must be "usb_arduino"
     serial: string // Device path, e.g. "/dev/ttyACM0" or a by-id path
     baud: integer // (Optional) default 115200
     board: string // (Optional) "uno" | "mega2560" | "nano" — sets the pin count

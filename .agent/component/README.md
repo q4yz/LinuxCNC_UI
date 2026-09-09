@@ -23,11 +23,11 @@ capability classes, and the validation rules a compiler must enforce.
 | `heater.md` | `[heater_*]`, `[temperature_sensor]` | Bed / hot end. |
 | `fan.md` | `[fan_*]` | Part, hot-end, controller, exhaust. |
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
-| `digital_spindle_rs485.md` | `[spindle_digital]` `protocol: vfdmod` | Modbus VFD. |
-| `digital_spindle_ethercat.md` | `[spindle_digital]` `protocol: ethercat` | Fieldbus VFD. |
+| `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
+| `mcu_vfd_rs485.md` | `[mcu]` `type: vfd_rs485` | **Class C** — carries a spindle, never a joint. |
 | `mcu_usb_arduino.md` | `[mcu]` `type: usb_arduino` | **Class C — I/O only.** |
 
 Reference machines used to ground these: `machine_config/example/ender3/`
@@ -78,7 +78,16 @@ important branch in the compiler.
 |---|---|---|---|
 | **A — step/dir realtime** | LinuxCNC software `stepgen` makes pulses; the MCU is a dumb pin driver. | `parallelport` | Needs a `base-thread` (`BASE_PERIOD`). Stepper exports `<joint>-step` / `-dir` / `-enable` for the router to bind. |
 | **B — position command** | The MCU/drive runs its own motion engine; LinuxCNC sends a position (or velocity) setpoint per servo cycle. | `remora-spi`, `ethercat` | **No `stepgen`, no `base-thread`.** `joint.N.motor-pos-cmd` is wired straight to the MCU's position pin. Physical step/dir pins live in the MCU's *own* config (Remora `config.txt`, EtherCAT slave XML) — they never appear as HAL nets. |
-| **C — I/O only** | None. | `usb_arduino` | Must **reject** any joint/stepper pin. Only endstops, buttons, relays, lamps, non-critical sensors. Userspace latency: `servo-thread` only, never `base-thread`. |
+| **C — I/O only** | None. | `usb_arduino`, `vfd_rs485` | Must **reject** any joint/stepper pin. Only endstops, buttons, relays, lamps, spindles, non-critical sensors. Userspace latency: `servo-thread` only, never `base-thread`. |
+
+**Every controller is an MCU — including a VFD.** A spindle drive sits
+on its own bus and owns addressable signals, so it is modelled the same
+way a parallel port or a Remora board is, and components reach it by
+naming its pins (`run_pin: vfd0:run-forward`). That is what keeps
+`digital_spindle.md` a single template: the transport lives in the MCU,
+never in the component. A component that names a protocol instead of a
+pin cannot be routed, and is the one shape to avoid when adding to this
+folder.
 
 A joint's `step_pin` / `dir_pin` therefore mean two different things
 depending on the class it resolves to:

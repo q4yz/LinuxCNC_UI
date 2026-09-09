@@ -55,7 +55,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 #: so the hardware.json consumer can branch on the same vocabulary
 #: the parser enforces.
 HARDWARE_MCU_CONNECTION_TYPES = frozenset(
-    {"rs485", "remora-spi", "remora-eth", "parallelport", "dummy"}
+    {
+        "vfd_rs485",
+        "rs485",
+        "remora-spi",
+        "remora-eth",
+        "parallelport",
+        "ethercat",
+        "usb_arduino",
+        "dummy",
+    }
 )
 
 
@@ -106,6 +115,7 @@ class Axis(BaseModel):
     joint_numbers: list[int] = Field(default_factory=list)
     endstop: str | None = None
     endstop_pin: str | None = None
+    position_min: float | None = None
     position_max: float | None = None
     position_endstop: float | None = None
 
@@ -158,6 +168,10 @@ class Stepper(BaseModel):
     enable_pin: str | None = None
     microsteps: int | None = None
     rotation_distance: float | None = None
+    # Motor steps per revolution (200 for a 1.8deg motor, 400 for a
+    # 0.9deg one). Carried so the SCALE formula is reproducible from
+    # this file alone instead of assuming the 200-step default.
+    full_steps_per_rotation: int | None = None
     homing_speed: float | None = None
 
 
@@ -265,15 +279,23 @@ class McuInfo(BaseModel):
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     connection: Literal[
-        "rs485", "remora-spi", "remora-eth", "parallelport", "dummy"
+        "vfd_rs485",
+        "rs485",
+        "remora-spi",
+        "remora-eth",
+        "parallelport",
+        "ethercat",
+        "usb_arduino",
+        "dummy",
     ]
     interface: str | None = None
     board: str | None = None
-    # True for MCUs that the Remora board firmware addresses
-    # (``remora-spi`` / ``remora-eth``). Computed at payload-build
-    # time so the consumer can show which transports are candidates
-    # for a ``config.txt`` flash.
-    is_remora: bool = False
+    # Modbus serial settings — present only on vfd_rs485/rs485 MCUs
+    # that declared them. The vfdmod router applies the documented
+    # defaults (9600 / 1 / none) when these are absent.
+    baud_rate: int | None = None
+    node_id: int | None = None
+    parity: Literal["none", "even", "odd"] | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -304,8 +326,8 @@ class Tool(BaseModel):
     (``heater_pin``, ``control``, ``min_temp``, ``max_temp``) plus
     string references into the separate ``temperature_sensors`` and
     ``fans`` lists. ``spindle_digital`` and ``spindle_analog``
-    entries carry their own HAL-facing fields (signal aliases for
-    the digital path, ``pwm_pin`` / ``enable_pin`` for the analog
+    entries carry their own HAL-facing pin fields (``run_pin`` etc.
+    for the digital path, ``pwm_pin`` / ``enable_pin`` for the analog
     path) plus the shared ``min_rpm`` / ``max_rpm`` clamps.
 
     The ``name`` field is the operator-facing label (chip text in
@@ -315,8 +337,11 @@ class Tool(BaseModel):
     Cross-references resolve into the matching top-level list by
     parent-list discriminator — ``sensor`` into
     ``temperature_sensors[].id``, ``fan`` into ``fans[].id``. No
-    cross-reference exists for the spindle HAL pins (those are
-    literal ``host:pin`` strings, not ids).
+    cross-reference exists for the spindle HAL pins — a digital
+    spindle's pins (``run_pin`` etc.) are ``[modifiers][mcu:]pin``
+    strings the HAL compiler routes, exactly like a stepper's
+    ``step_pin`` (`.agent/component/README.md` § 1), not ids into
+    another list.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -334,21 +359,22 @@ class Tool(BaseModel):
     enable_pin: str | None = None
 
     # ---- SpindleDigital digital only -------------------------------------- #
-    # The HAL signal aliases the vfdmod driver expects. Populated
-    # fields are wired live in the compiled ``machine.hal``; empty
-    # fields fall back to ``# TODO`` placeholders so the operator
-    # sees exactly which hooks still need manual configuration. Keys
-    # are named after the runtime field they populate on
-    # :class:`backend.tools_config_mapper.SpindleDigitalPins`
-    # (target_rpm, actual_out, is_connected, error_count, last_error,
-    # spindle_at_speed) rather than the underlying LinuxCNC HAL pin
-    # suffix.
-    signal_spindle_at_speed: str | None = None
-    signal_target_rpm: str | None = None
-    signal_actual_out: str | None = None
-    signal_is_connected: str | None = None
-    signal_error_count: str | None = None
-    signal_last_error: str | None = None
+    # Pins, not a protocol (`.agent/component/digital_spindle.md`):
+    # the `<mcu_id>:` prefix on each pin says which controller (a VFD
+    # on RS-485, an EtherCAT drive, ...) carries it. The runtime never
+    # reads these — ``SpindleDigitalMapper`` addresses the tool by a
+    # fixed HAL naming convention off its ``id`` suffix instead; these
+    # exist purely as routing data for the HAL compiler.
+    spindle_number: int | None = None
+    rpm_scale: float | None = None
+    run_pin: str | None = None
+    reverse_pin: str | None = None
+    speed_pin: str | None = None
+    speed_fb_pin: str | None = None
+    at_speed_pin: str | None = None
+    fault_pin: str | None = None
+    is_connected_pin: str | None = None
+    error_count_pin: str | None = None
 
     # ---- Heating (extruder + heated_bed) --------------------------- #
     # ``sensor`` resolves into ``temperature_sensors[].id``;
@@ -362,6 +388,19 @@ class Tool(BaseModel):
     control: str | None = None
     min_temp: float | None = None
     max_temp: float | None = None
+
+    # PID gains for ``control: "pid"``. Carried for the HAL compiler,
+    # which emits them as the loop's INI section
+    # (``[EXT0] PID_KP`` etc. — see .agent/component/heater.md). The UI
+    # never shows them; they are here so no information is lost between
+    # the source .cfg and this file.
+    pid_kp: float | None = None
+    pid_ki: float | None = None
+    pid_kd: float | None = None
+
+    # ---- Extruder-only, informational ------------------------------ #
+    filament_diameter: float | None = None
+    nozzle_diameter: float | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -387,11 +426,19 @@ class HardwareJson(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["2.1"] = "2.1"
+    # "2.1" stays accepted so machines generated before the
+    # losslessness pass still validate; new output is tagged "2.2".
+    version: Literal["2.1", "2.2"] = "2.2"
     machine: str
     source: str
     kinematics: str
     hal_type: str
+
+    # Machine-wide motion envelope from the profile's ``[printer]``
+    # section. Feeds ``[TRAJ] MAX_LINEAR_VELOCITY`` /
+    # ``MAX_LINEAR_ACCELERATION``; previously parsed and discarded.
+    max_velocity: float | None = None
+    max_accel: float | None = None
 
     axes: list[Axis] = Field(default_factory=list)
     joints: list[Stepper] = Field(default_factory=list)

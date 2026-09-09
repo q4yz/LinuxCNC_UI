@@ -337,8 +337,9 @@ max_temp: 130
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "test")
 
-    # Top-level shape.
-    assert payload["version"] == "2.1"
+    # Top-level shape. 2.2 added the losslessness fields (PID gains,
+    # motion envelope, driver settings); 2.1 files still validate.
+    assert payload["version"] == "2.2"
     assert payload["machine"] == "test"
     assert payload["hal_type"] == "remora"
 
@@ -493,3 +494,33 @@ def test_generate_duplicate_stepper_pin_returns_structured_error(
         or "PG1" in error["message"]
         or "!PF15" in error["message"]
     )
+
+
+def test_generate_malformed_syntax_returns_structured_error(
+    tmp_data_root, clean_env, isolated_machine_config
+):
+    """A profile that violates INI syntax itself still returns the
+    structured envelope, not a raw 500.
+
+    Raw ``configparser.Error`` subclasses (duplicate key, line with
+    no ``key: value`` separator) are not ``ValueError`` s, so before
+    the :class:`MalformedConfigError` wrapping they escaped every
+    handler and crashed the ASGI app. This is the HTTP-level guard
+    for that regression.
+    """
+    profiles = isolated_machine_config["profiles"]
+    (profiles / "malformed.cfg").write_text(
+        "#Start\n[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nstep_pin: PF14\n",
+        encoding="utf-8",
+    )
+
+    app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
+    client = TestClient(app)
+    resp = _generate(client, profile_path="malformed.cfg")
+
+    assert resp.status_code == 400, resp.text
+    error = resp.json()["error"]
+    assert error["kind"] == "malformed_config"
+    assert error["section"] == "stepper_x"
+    assert error["key"] == "step_pin"
+    assert "already exists" in error["message"]

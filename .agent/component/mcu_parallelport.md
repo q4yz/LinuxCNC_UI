@@ -6,7 +6,7 @@
 **Expected Syntax:**
 ```cfg
  [mcu <identifier>] 
-    type: string // Must be "parallelport"
+    connection: string // Must be "parallelport"
     step_time: 5000 ns
     step_space: 5000 ns
     direction_hold: 20000 ns

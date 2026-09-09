@@ -344,6 +344,45 @@ class DuplicateMcuSectionError(ConfigValidationError):
         )
 
 
+class MalformedConfigError(ConfigValidationError):
+    """Raised when the source text violates INI syntax itself.
+
+    ``configparser.Error`` subclasses (duplicate key, duplicate
+    section, a line with no ``key: value`` separator) are not
+    :class:`ValueError` s, so without this wrapper they escape every
+    HTTP-layer handler and surface as a raw 500 instead of the
+    structured 400 envelope the frontend toast channel reads.
+    """
+
+    kind = "malformed_config"
+
+    def __init__(
+        self,
+        message: str,
+        section: str | None = None,
+        key: str | None = None,
+        line: int | None = None,
+    ) -> None:
+        self.section = section
+        self.key = key
+        self.line = line
+        super().__init__(message)
+
+
+def _wrap_configparser_error(exc: configparser.Error) -> MalformedConfigError:
+    """Map a raw :class:`configparser.Error` onto the toast envelope.
+
+    configparser attaches ``section`` / ``option`` / ``lineno`` to
+    whichever subclass it raised; ``getattr`` with defaults keeps one
+    code path for all of them instead of an isinstance chain.
+    """
+
+    section = getattr(exc, "section", None)
+    key = getattr(exc, "option", None)
+    line = getattr(exc, "lineno", None)
+    return MalformedConfigError(str(exc), section=section, key=key, line=line)
+
+
 def split_pin(pin: str | None) -> tuple[str | None, str | None]:
     """Split a Klipper multi-MCU pin reference into ``(mcu_name, raw)``.
 
@@ -495,7 +534,10 @@ class MachineConfigParser:
 
         parser = self._new_ini_parser()
         with path.open(encoding="utf-8") as handle:
-            parser.read_file(handle, source=str(path))
+            try:
+                parser.read_file(handle, source=str(path))
+            except configparser.Error as exc:
+                raise _wrap_configparser_error(exc) from exc
         return self._build_graph(parser)
 
     def parse_string(
@@ -507,7 +549,10 @@ class MachineConfigParser:
         """Validate in-memory configuration text; useful for API/tests."""
 
         parser = self._new_ini_parser()
-        parser.read_file(StringIO(content), source=source)
+        try:
+            parser.read_file(StringIO(content), source=source)
+        except configparser.Error as exc:
+            raise _wrap_configparser_error(exc) from exc
         return self._build_graph(parser)
 
     @staticmethod
@@ -833,11 +878,16 @@ class MachineConfigParser:
                 section_name, section, "rotation_distance"
             ),
             microsteps=self._optional_int(section_name, section, "microsteps"),
+            full_steps_per_rotation=self._optional_int(
+                section_name, section, "full_steps_per_rotation"
+            ),
             endstop_pin=self._optional_string(section, "endstop_pin"),
             position_endstop=self._optional_float(
                 section_name, section, "position_endstop"
             ),
+            position_min=self._optional_float(section_name, section, "position_min"),
             position_max=self._optional_float(section_name, section, "position_max"),
+            homing_speed=self._optional_float(section_name, section, "homing_speed"),
         )
 
     def _parse_endstop(
@@ -934,16 +984,16 @@ class MachineConfigParser:
         return SpindleDigital(
             max_rpm=self._optional_float(section_name, section, "max_rpm"),
             min_rpm=self._optional_float(section_name, section, "min_rpm"),
-            target_rpm_signal=self._optional_string(section, "target_rpm_signal"),
-            target_frequency_signal=self._optional_string(
-                section, "target_frequency_signal"
-            ),
-            rpm_out_signal=self._optional_string(section, "rpm_out_signal"),
-            at_speed1_signal=self._optional_string(section, "at_speed1_signal"),
-            at_speed2_signal=self._optional_string(section, "at_speed2_signal"),
-            is_connected_signal=self._optional_string(section, "is_connected_signal"),
-            error_count_signal=self._optional_string(section, "error_count_signal"),
-            last_error_signal=self._optional_string(section, "last_error_signal"),
+            spindle_number=self._optional_int(section_name, section, "spindle_number"),
+            rpm_scale=self._optional_float(section_name, section, "rpm_scale"),
+            run_pin=self._optional_string(section, "run_pin"),
+            reverse_pin=self._optional_string(section, "reverse_pin"),
+            speed_pin=self._optional_string(section, "speed_pin"),
+            speed_fb_pin=self._optional_string(section, "speed_fb_pin"),
+            at_speed_pin=self._optional_string(section, "at_speed_pin"),
+            fault_pin=self._optional_string(section, "fault_pin"),
+            is_connected_pin=self._optional_string(section, "is_connected_pin"),
+            error_count_pin=self._optional_string(section, "error_count_pin"),
         )
 
     def _parse_mcu(
@@ -953,13 +1003,15 @@ class MachineConfigParser:
     ) -> MCU:
         """Build an :class:`MCU` from an ``[mcu NAME]`` section.
 
-        The defaults preserve the historical single-MCU flow:
+        Only ``connection`` carries a default (``"remora-spi"``, the
+        historical single-MCU flow). ``board`` is **never** autofilled:
+        LinuxCNC HAL cares about protocols and device paths, not PCB
+        names — an absent board stays ``None`` so ``hardware.json``
+        doesn't carry a fabricated identity.
 
-        * ``connection`` defaults to ``"remora-spi"``.
-        * ``board`` defaults to ``"BIGTREETECH OCTOPUS"`` so a
-          back-compat empty ``[mcu]`` produces the same
-          ``config.txt`` it did before this section became
-          first-class (the snapshot test relies on it).
+        The RS-485 serial trio (``baud_rate`` / ``node_id`` /
+        ``parity``) is only accepted on a ``vfd_rs485`` (or legacy
+        ``rs485``) MCU — anywhere else it's a typo, not a tuning knob.
         """
         connection_raw = (
             self._optional_string(section, "connection") or "remora-spi"
@@ -968,12 +1020,47 @@ class MachineConfigParser:
             raise InvalidConnectionError(
                 section_name, connection_raw, ALLOWED_CONNECTION_TYPES
             )
-        board = self._optional_string(section, "board") or "BIGTREETECH OCTOPUS"
+        serial_keys = ("baud_rate", "node_id", "parity")
+        if connection_raw not in ("vfd_rs485", "rs485"):
+            for key in serial_keys:
+                if self._optional_string(section, key) is not None:
+                    raise InvalidValueError(
+                        section_name,
+                        key,
+                        section[key],
+                        "unset — this keyword is only valid on a "
+                        "'vfd_rs485' MCU section",
+                    )
         return MCU(
             connection=connection_raw,
             interface=self._optional_string(section, "interface"),
-            board=board,
+            board=self._optional_string(section, "board"),
+            baud_rate=self._optional_int(section_name, section, "baud_rate"),
+            node_id=self._optional_int(section_name, section, "node_id"),
+            parity=self._parse_parity(section_name, section),
         )
+
+    def _parse_parity(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> str | None:
+        """Normalise ``parity`` to vfdmod's ``none``/``even``/``odd``.
+
+        Accepts the single-letter Modbus convention (``N``/``E``/``O``)
+        case-insensitively so a datasheet value can be copied verbatim.
+        """
+        value = self._optional_string(section, "parity")
+        if value is None:
+            return None
+        normalized = {"n": "none", "e": "even", "o": "odd"}.get(
+            value.strip().lower(), value.strip().lower()
+        )
+        if normalized not in ("none", "even", "odd"):
+            raise InvalidValueError(
+                section_name, "parity", value, "one of 'none', 'even', 'odd' (or N/E/O)"
+            )
+        return normalized
 
     @staticmethod
     def _validate_pin_mcu(
@@ -1223,6 +1310,7 @@ __all__ = [
     "InvalidValueError",
     "KlipperConfigParser",
     "MachineConfigParser",
+    "MalformedConfigError",
     "MissingRequiredKeywordError",
     "MultipleExtrudersError",
     "UndefinedKeywordError",

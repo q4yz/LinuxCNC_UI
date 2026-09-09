@@ -21,7 +21,7 @@ operator re-plugs the thermistor. These tests pin the separation.
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 
 
-def _pin_name(data: dict) -> str:
+def _pin_name(data: dict[str, object]) -> str:
     return TemperatureSensorMapper.from_dict_to_TemperaturePins(data).actual_temperature.get_pin_name()
 
 

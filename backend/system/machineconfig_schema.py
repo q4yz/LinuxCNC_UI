@@ -11,11 +11,33 @@ from enum import Enum
 #:
 #: ``rs485`` / ``remora-spi`` / ``remora-eth`` / ``parallelport`` /
 #: ``dummy``. Anything else raises :class:`InvalidConnectionError`.
-#: :func:`hardware_json_generator.build_hardware_json` reads this to
-#: flag ``McuInfo.is_remora``, so adding a value here is the single
-#: source-of-truth change required for a new transport.
+#: ``connection`` is the single source of truth for MCU behaviour —
+#: the capability class and the HAL router both branch on it, with no
+#: derived boolean (``is_remora`` was removed for exactly this
+#: reason), so adding a value here is the one change a new transport
+#: needs at ingestion time.
+#: ``vfd_rs485`` is the canonical name for a VFD/spindle controller on
+#: a serial bus — a controller is an MCU like any other, which is what
+#: lets ``[spindle]`` declare pins instead of naming a protocol (see
+#: ``.agent/component/mcu_vfd_rs485.md``). ``rs485`` is kept as an
+#: alias so profiles written before the rename keep parsing.
+#:
+#: ``ethercat`` and ``usb_arduino`` are documented transports
+#: (``.agent/component/mcu_ethercat.md`` / ``mcu_usb_arduino.md``) that
+#: parse and validate today; their HAL routers are not implemented yet,
+#: so compiling a machine that routes pins onto them raises
+#: ``UnsupportedMcuError`` — the same honest gap ``remora-eth`` has.
 ALLOWED_CONNECTION_TYPES: frozenset[str] = frozenset(
-    {"rs485", "remora-spi", "remora-eth", "parallelport", "dummy"}
+    {
+        "vfd_rs485",
+        "rs485",
+        "remora-spi",
+        "remora-eth",
+        "parallelport",
+        "ethercat",
+        "usb_arduino",
+        "dummy",
+    }
 )
 
 
@@ -68,6 +90,7 @@ STEPPER_KEYS = frozenset(
         "enable_pin",
         "rotation_distance",
         "microsteps",
+        "full_steps_per_rotation",
         "endstop_pin",
         "position_endstop",
         "position_min",
@@ -108,14 +131,16 @@ SPINDLE_KEYS = frozenset(
     {
         "max_rpm",
         "min_rpm",
-        "target_rpm_signal",
-        "target_frequency_signal",
-        "rpm_out_signal",
-        "at_speed1_signal",
-        "at_speed2_signal",
-        "is_connected_signal",
-        "error_count_signal",
-        "last_error_signal",
+        "spindle_number",
+        "rpm_scale",
+        "run_pin",
+        "reverse_pin",
+        "speed_pin",
+        "speed_fb_pin",
+        "at_speed_pin",
+        "fault_pin",
+        "is_connected_pin",
+        "error_count_pin",
     }
 )
 SPINDLE_ANALOG_KEYS = frozenset({"pwm_pin", "enable_pin", "max_rpm", "min_rpm"})
@@ -138,13 +163,20 @@ TMC2209_KEYS = frozenset(
 FAN_KEYS = frozenset({"pin", "max_power", "cycle_time", "hardware_pwm", "off_below"})
 FAN_IGNORED_KEYS = frozenset({"cycle_time", "hardware_pwm", "off_below"})
 
-# MCU sections accept the three transport / board keywords. The
-# ``connection`` value is constrained via the parser to
-# :data:`ALLOWED_CONNECTION_TYPES`. ``interface`` is a free-form
-# transport selector (``com0`` for RS-485, ``socket://...`` for
-# Remora-Eth, etc.). ``board`` is the operator-visible board name
-# passed through to ``config.txt``'s ``Board`` field.
-MCU_KEYS = frozenset({"connection", "interface", "board"})
+# MCU sections accept the transport / board / serial keywords.
+# ``connection`` is the single source of truth for how the HAL
+# compiler routes this MCU (capability class, router choice) — no
+# derived boolean like ``is_remora``; consumers branch on the
+# connection value itself. ``interface`` is a free-form transport
+# selector (``/dev/serial/by-id/...`` for RS-485, ``socket://...``
+# for Remora-Eth, etc.). ``board`` is the operator-visible board
+# name, optional and **never autofilled** — HAL generation cares
+# about protocols and device paths, not PCB names. The RS-485 trio
+# (``baud_rate`` / ``node_id`` / ``parity``) is constrained by the
+# parser to ``vfd_rs485`` (and legacy ``rs485``) sections only.
+MCU_KEYS = frozenset(
+    {"connection", "interface", "board", "baud_rate", "node_id", "parity"}
+)
 
 SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.MCU: MCU_KEYS,

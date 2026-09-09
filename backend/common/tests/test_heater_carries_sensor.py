@@ -26,7 +26,7 @@ from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 from mappers.tools.HeaterMapper import HeaterMapper
 
 
-def _heater_actual(data: dict) -> str:
+def _heater_actual(data: dict[str, object]) -> str:
     return HeaterMapper.from_dict_to_HeaterPins(data).actual_temperature.get_pin_name()
 
 
