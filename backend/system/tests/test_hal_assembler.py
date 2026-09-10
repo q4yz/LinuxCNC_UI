@@ -17,7 +17,7 @@ from services.halcompiler.assembler import HalAssembler, UnsupportedMcuError
 
 def _machine(**overrides: Any) -> dict[str, Any]:
     base = {
-        "mcus": [{"id": "mcu", "connection": "parallelport", "parameters": {"address": "0"}}],
+        "mcus": [{"id": "mcu", "connection": "parallelport", "interface": "0"}],
         "axes": [{"id": "x", "joint_numbers": [0], "endstop": "endstop_xz"},
                  {"id": "z", "joint_numbers": [3], "endstop": "endstop_xz"}],
         "joints": [
@@ -44,7 +44,7 @@ def test_capability_class_ignores_an_unrelated_io_only_mcu():
     machine = _machine(
         mcus=[
             {"id": "vfd0", "connection": "vfd_rs485"},
-            {"id": "mcu", "connection": "parallelport", "parameters": {"address": "0"}},
+            {"id": "mcu", "connection": "parallelport", "interface": "0"},
         ]
     )
     fragment = HalAssembler(machine).assemble()
@@ -82,3 +82,57 @@ def test_router_base_setp_and_stepgen_setp_both_present():
     fragment = HalAssembler(_machine()).assemble()
     assert "setp parport.0.reset-time 2500" in fragment.setp
     assert "setp stepgen.0.position-scale [JOINT_0]SCALE" in fragment.setp
+
+
+def test_a_bare_class_b_machine_still_loads_its_own_mcu():
+    """A minimal Remora machine — one joint, no endstops, no heaters,
+    nothing else that would ever generate a routed `PinRequest` —
+    must still `loadrt remora-spi`. The board owns `remora.joint.0.*`,
+    which every joint net already references; skipping the board's own
+    load just because nothing *else* routes through it would produce
+    HAL that references pins nothing ever created.
+    """
+    machine = {
+        "mcus": [{"id": "mcu", "connection": "remora-spi"}],
+        "axes": [{"id": "x", "joint_numbers": [0]}],
+        "joints": [{"id": "stepper_x", "joint_number": 0, "step_pin": "mcu:PF13"}],
+        "endstops": [],
+    }
+    fragment = HalAssembler(machine).assemble()
+    assert any(line.startswith("loadrt remora-spi") for line in fragment.loadrt)
+    assert any("remora.SPI-enable" in n for n in fragment.nets)
+    assert any(a.func == "remora.read" for a in fragment.addf)
+
+
+def test_tmc2209_driver_produces_a_firmware_module_on_class_b_only():
+    """`config.txt` doesn't exist for a class-A machine — a driver's
+    UART tuning must not fabricate one for a board that will never
+    read it."""
+    remora_machine = {
+        "mcus": [{"id": "mcu", "connection": "remora-spi"}],
+        "axes": [{"id": "x", "joint_numbers": [0]}],
+        "joints": [
+            {"id": "stepper_x", "joint_number": 0, "step_pin": "mcu:PF13", "driver": "driver_x"}
+        ],
+        "drivers": [{"id": "driver_x", "type": "TMC2209", "uart_pin": "mcu:PC6"}],
+        "endstops": [],
+    }
+    fragment = HalAssembler(remora_machine).assemble()
+    config = fragment.files["config_mcu.txt"]
+    assert '"Type": "TMC2209"' in config
+
+    parport_machine = _machine(
+        joints=[
+            {
+                "id": "stepper_x",
+                "joint_number": 0,
+                "step_pin": "mcu:08",
+                "dir_pin": "mcu:!09",
+                "driver": "driver_x",
+            },
+            {"id": "stepper_z", "joint_number": 3, "step_pin": "mcu:06", "dir_pin": "mcu:07"},
+        ],
+        drivers=[{"id": "driver_x", "type": "TMC2209", "uart_pin": "mcu:PC6"}],
+    )
+    fragment = HalAssembler(parport_machine).assemble()
+    assert not any(k.startswith("config_") for k in fragment.files)

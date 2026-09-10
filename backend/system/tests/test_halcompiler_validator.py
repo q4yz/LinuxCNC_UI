@@ -117,6 +117,21 @@ def test_malformed_pin(machine):
     assert "E_MALFORMED_PIN" in _codes(machine)
 
 
+def test_duplicate_pin_override_suppresses_the_conflict(machine):
+    """An operator-declared exception — see `[duplicate_pin_override]`."""
+    machine["joints"][0]["dir_pin"] = "PF13"  # already the step pin
+    machine["duplicate_pin_overrides"] = ["mcu:PF13"]
+    assert "E_PIN_CONFLICT" not in _codes(machine)
+
+
+def test_duplicate_pin_override_only_covers_the_listed_pin(machine):
+    """Not a global bypass — an unrelated conflict still blocks."""
+    machine["joints"][0]["dir_pin"] = "PF13"
+    machine["endstops"][0]["pin"] = "PF13"  # a third, different claim
+    machine["duplicate_pin_overrides"] = ["mcu:PF14"]  # some other pin
+    assert "E_PIN_CONFLICT" in _codes(machine)
+
+
 def test_heater_and_its_own_fan_sharing_a_pin_warns_but_does_not_block(machine):
     """The generator derives the fan pin from the heater's own pin.
 

@@ -1,3 +1,14 @@
+> **Implemented status:** a fan a heater references compiles today —
+> `HeaterHalMapper` (`heater.md` § 3) requests its pin as a plain
+> `ANALOG_OUT`, routed through `RemoraRouterMapper` exactly like a
+> heater's own output. There is no standalone `FanHalMapper` yet: with
+> `kind`/`heater`/`max_power`/`off_below` absent from the real
+> `fans[]` schema (this file's own § 2 gap), the `part`/`heater`/
+> `controller` differentiation described in § 3 below is aspirational
+> — every fan compiles as an unconditional passthrough, matching what
+> `machine_config/example/ender3/3Dprinter.hal` actually does
+> (`ext0-cooling-SP => remora.SP.2`, no `wcomp` gating).
+
 ## 1. INGESTION (Hand-Written CFG)
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.

@@ -29,6 +29,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
 | `mcu_vfd_rs485.md` | `[mcu]` `type: vfd_rs485` | **Class C** — carries a spindle, never a joint. |
 | `mcu_usb_arduino.md` | `[mcu]` `type: usb_arduino` | **Class C — I/O only.** |
+| `duplicate_pin_override.md` | `[duplicate_pin_override]` | Global directive, not a component — emits no HAL. |
 
 Reference machines used to ground these: `machine_config/example/ender3/`
 (Remora printer: heaters, extruder, PID) and
@@ -112,6 +113,12 @@ template's § 4 adds its own local ones (`E_HEATER_ID_PREFIX`,
 * `E_UNKNOWN_REF` — every `axes[].endstop`, `joints[].driver`,
   `tools[].sensor` and `tools[].fan` resolves to a declared id.
 * `E_PIN_CONFLICT` — the same `(mcu_id, pin_id)` is claimed twice.
+  Two axes referencing the *same* `endstops[]` entity never trigger
+  this (they were always one claim, not two — see `stepper.md` § 3);
+  an operator can additionally allowlist a specific pin via
+  `[duplicate_pin_override]` (`duplicate_pin_override.md`) for the
+  rarer case of two genuinely independent entities sharing one pin on
+  purpose.
 
 **Motion**
 

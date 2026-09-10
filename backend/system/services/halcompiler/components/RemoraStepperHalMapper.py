@@ -9,9 +9,14 @@ mean structurally different things depending on class").
 
 **Joint pins never become HAL nets.** `step_pin`/`dir_pin`/`enable_pin`
 are firmware values — they go into the board's `config.txt` sidecar as
-one `Stepper` module per joint (`mcu_spi_remora.md` § 4), never a
+one `Stepgen` module per joint (`mcu_spi_remora.md` § 4), never a
 `net`. This mapper reports them as :class:`FirmwareModuleRequest`
 entries; the assembler aggregates them per MCU into the actual file.
+Module shape verified against the real, working
+`machine_config/example/ender3/config.txt` — `"Type": "Stepgen"`, a
+`"Name"` field, and pins spelled with Remora's underscore convention
+(`"PF_11"`, not Klipper's `"PF11"`) all come from that file, not from
+generic Remora documentation.
 
 The `remora.joint.N.enable` net, unlike class A's optional enable pin,
 is unconditional — every joint in the reference config
@@ -30,7 +35,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mappers.machineconfig import PinStringMapper
+from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
 from models.machineconfig.hal_fragment_models import (
     FirmwareModuleRequest,
     HalFragment,
@@ -81,6 +86,16 @@ class RemoraStepperHalMapper:
                 f"setp remora.joint.{n}.maxaccel [JOINT_{n}]STEPGEN_MAXACCEL",
             ]
         )
+        # Optional position-loop tuning — real, working values from
+        # the reference config, not invented
+        # (ender3.hal: `deadband` on joint 2, `pgain` on joint 3).
+        # `deadband` there is a literal; `pgain` is an ini-var
+        # reference, matching every gain elsewhere in this compiler
+        # (heater PID) being re-tunable without regenerating the HAL.
+        if joint.get("deadband") is not None:
+            fragment.setp.append(f"setp remora.joint.{n}.deadband {joint['deadband']}")
+        if joint.get("pgain") is not None:
+            fragment.setp.append(f"setp remora.joint.{n}.pgain [JOINT_{n}]PGAIN")
         fragment.nets.extend(
             [
                 f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => remora.joint.{n}.pos-cmd",
@@ -92,20 +107,27 @@ class RemoraStepperHalMapper:
         step_pin = joint.get("step_pin")
         if not step_pin:
             return
+        joint_id = str(joint["id"])
         parsed = PinStringMapper.from_string(step_pin)
         module: dict[str, Any] = {
+            "Name": joint_id,
             "Thread": "Base",
-            "Type": "Stepper",
-            "Comment": str(joint["id"]),
+            # "Stepgen", not "Stepper" — the real reference config
+            # (machine_config/example/ender3/config.txt) is the ground
+            # truth for every key/value in this module, verified
+            # against actual working firmware, not generic examples.
+            "Type": "Stepgen",
+            "Comment": f"{joint_id} step generator",
             "Joint Number": n,
-            "Step Pin": parsed.pin_id,
+            "Step Pin": RemoraFirmwarePinMapper.to_firmware_pin(parsed.pin_id),
         }
         for field, key in (("dir_pin", "Direction Pin"), ("enable_pin", "Enable Pin")):
             raw = joint.get(field)
             if not raw:
                 continue
             pin = PinStringMapper.from_string(raw)
-            module[key] = f"{'!' if pin.invert else ''}{pin.pin_id}"
+            firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(pin.pin_id)
+            module[key] = f"{'!' if pin.invert else ''}{firmware_pin}"
         fragment.firmware_modules.append(FirmwareModuleRequest(mcu_id=parsed.mcu_id, module=module))
 
 

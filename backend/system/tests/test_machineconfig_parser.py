@@ -515,8 +515,16 @@ enable_pin: !PA2
     assert exc.pin_key == "enable_pin"
     assert exc.axes == ["x", "y"]
 
-def test_duplicate_stepper_pin_endstop_pin_is_rejected() -> None:
-    """Two steppers sharing ``endstop_pin`` raise DuplicateStepperPinError."""
+def test_duplicate_stepper_pin_endstop_pin_is_shared() -> None:
+    """Two axes reading one ``endstop_pin`` is valid shared wiring.
+
+    This used to raise ``DuplicateStepperPinError`` — too strict: a
+    home switch is an input several axes can read (the reference
+    PrintNC shares one switch between X and Z), and the HAL compiler
+    models that as one endstop entity with one writer and two
+    readers. Motion pins (step/dir/enable) remain exclusive;
+    ``test_duplicate_stepper_pin_step_pin_is_rejected`` covers that.
+    """
 
     config = """
 [stepper_x]
@@ -532,13 +540,9 @@ enable_pin: !PA6
 endstop_pin: ^PA3
 """
 
-    with pytest.raises(DuplicateStepperPinError) as exc_info:
-        MachineConfigParser().parse_string(config)
-
-    exc = exc_info.value
-    assert exc.pin == "^PA3"
-    assert exc.pin_key == "endstop_pin"
-    assert exc.axes == ["x", "y"]
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["x"].endstop_pin == "^PA3"
+    assert graph.steppers["y"].endstop_pin == "^PA3"
 
 def test_duplicate_stepper_pin_is_a_config_validation_error() -> None:
     """DuplicateStepperPinError inherits from ConfigValidationError.
@@ -591,6 +595,35 @@ enable_pin: !PA11
     assert graph.steppers["y"].axis == "y"
     assert graph.steppers["y1"].axis == "y"
     assert graph.steppers["x"].axis == "x"
+
+
+def test_stepper_deadband_and_pgain_are_parsed() -> None:
+    """Class-B (Remora) position-loop tuning — real keys the reference
+    config uses (`ender3.hal`: `deadband` on joint 2, `pgain` on
+    joint 3), previously silently rejected as unknown keywords."""
+    config = """
+[stepper_z]
+step_pin: PA0
+dir_pin: PA1
+deadband: 0.005
+
+[stepper_a]
+step_pin: PB0
+dir_pin: PB1
+pgain: 1.0
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["z"].deadband == 0.005
+    assert graph.steppers["z"].pgain is None
+    assert graph.steppers["a"].pgain == 1.0
+    assert graph.steppers["a"].deadband is None
+
+
+def test_stepper_deadband_and_pgain_are_optional() -> None:
+    config = "[stepper_x]\nstep_pin: PA0\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["x"].deadband is None
+    assert graph.steppers["x"].pgain is None
 
 # ---------------------------------------------------------------------- #
 # Fan section parsing (Phase 1)                                          #
@@ -880,6 +913,58 @@ baud_rate: 9600
     assert exc_info.value.key == "baud_rate"
     assert "vfd_rs485" in str(exc_info.value)
 
+
+def test_shared_endstop_pin_across_axes_is_accepted() -> None:
+    """One physical home switch read by two axes is standard wiring.
+
+    The reference PrintNC wires a single NC switch on parport pin 13
+    shared by X and Z; the HAL compiler models that as one endstop
+    entity with one writer and two readers. Only motion pins
+    (step/dir/enable) are exclusive to one driver.
+    """
+    config = """
+[mcu par0]
+connection: parallelport
+
+[stepper_x]
+step_pin: par0:08
+dir_pin: !par0:09
+rotation_distance: 80.0
+endstop_pin: !par0:13
+position_max: 900.0
+position_endstop: 900.0
+
+[stepper_z]
+step_pin: par0:06
+dir_pin: par0:07
+rotation_distance: 32.0
+endstop_pin: !par0:13
+position_min: 0.0
+position_max: 135.0
+position_endstop: 135.0
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.steppers["x"].endstop_pin == "!par0:13"
+    assert graph.steppers["z"].endstop_pin == "!par0:13"
+
+
+def test_shared_motion_pin_across_axes_still_rejected() -> None:
+    """Two motors on one step pin remains a hard error."""
+    config = """
+[stepper_x]
+step_pin: PG0
+dir_pin: PG1
+rotation_distance: 40.0
+
+[stepper_y]
+step_pin: PG0
+dir_pin: PG3
+rotation_distance: 40.0
+"""
+    with pytest.raises(DuplicateStepperPinError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.pin_key == "step_pin"
+
 def test_orphan_mcu_pin_qualifier_raises_undefined_mcu_error() -> None:
     """A ``mcu_missing:PF13`` pin reference must point at a declared section."""
 
@@ -968,3 +1053,115 @@ def test_split_pin_handles_bare_qualified_and_empty_inputs() -> None:
     assert split_pin("") == (None, None)
     assert split_pin("a:") == ("a", None)
     assert split_pin(":PF13") == (None, "PF13")
+
+
+# -- quoted values -------------------------------------------------------- #
+
+
+def test_a_quoted_string_value_has_its_quotes_stripped():
+    """``configparser`` takes a value completely literally — it does not
+    unwrap quotes the way JSON/YAML do. An operator writing
+    ``interface: "0"`` out of JSON/Python habit must not get the
+    literal 3-character string ``'"0"'`` into hardware.json, since
+    that leaks straight into `hal_parport`'s `cfg=` line as literal
+    quote characters."""
+    config = """
+[mcu par0]
+connection: parallelport
+interface: "0"
+board: 'Octopus'
+"""
+    graph = MachineConfigParser().parse_string(config)
+    mcu = graph.mcus["par0"]
+    assert mcu.interface == "0"
+    assert mcu.board == "Octopus"
+
+
+def test_a_quoted_numeric_value_still_parses():
+    """The same habit on a numeric field must not raise ``InvalidValueError``."""
+    config = """
+[mcu vfd0]
+connection: vfd_rs485
+node_id: "3"
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.mcus["vfd0"].node_id == 3
+
+
+def test_an_unmatched_quote_is_left_alone():
+    """Only a fully-wrapped value is unwrapped — a stray quote is data,
+    not a formatting habit to guess at."""
+    config = """
+[mcu par0]
+connection: parallelport
+board: 6"-spindle
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.mcus["par0"].board == '6"-spindle'
+
+
+# -- [duplicate_pin_override] -------------------------------------------- #
+
+
+def test_duplicate_pin_override_parses_a_comma_separated_list() -> None:
+    config = """
+[duplicate_pin_override]
+pins: par0:13, par0:15
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.duplicate_pin_overrides == frozenset({"par0:13", "par0:15"})
+
+
+def test_duplicate_pin_override_strips_modifiers():
+    """A collision is a property of the raw pin, not of who inverts it."""
+    config = """
+[duplicate_pin_override]
+pins: !par0:13, ^par0:15
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.duplicate_pin_overrides == frozenset({"par0:13", "par0:15"})
+
+
+def test_duplicate_pin_override_bare_pin_defaults_to_mcu():
+    config = """
+[duplicate_pin_override]
+pins: PF13
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.duplicate_pin_overrides == frozenset({"mcu:PF13"})
+
+
+def test_duplicate_pin_override_absent_section_is_empty():
+    graph = MachineConfigParser().parse_string("[mcu]\n")
+    assert graph.duplicate_pin_overrides == frozenset()
+
+
+def test_duplicate_pin_override_rejects_unknown_keys():
+    config = """
+[duplicate_pin_override]
+pins: par0:13
+extra: 1
+"""
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.key == "extra"
+
+
+def test_duplicate_pin_override_tolerates_stray_commas():
+    """A trailing/double comma is a formatting slip, not a config error."""
+    config = """
+[duplicate_pin_override]
+pins: par0:13, , par0:15,
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.duplicate_pin_overrides == frozenset({"par0:13", "par0:15"})
+
+
+def test_duplicate_pin_override_rejects_a_bare_colon():
+    config = """
+[duplicate_pin_override]
+pins: par0:
+"""
+    with pytest.raises(InvalidValueError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.key == "pins"

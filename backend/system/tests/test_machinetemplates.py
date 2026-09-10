@@ -211,6 +211,27 @@ def test_render_hal_template_is_inert_documentation():
     assert "config.txt" in text  # the do-not-flash note
 
 
+def test_render_hal_template_appendix_mode_drops_the_standalone_framing():
+    """``standalone=False`` is what ``_render_machine_hal`` appends after
+    real compiled HAL — it must not claim the whole file is inert."""
+    from services.machinetemplates import build_pin_catalog, render_hal_template
+
+    spindle, estop = _spindle_container()
+    catalog = build_pin_catalog(
+        tool_containers=[spindle], sensor_containers=[], state_containers=[estop]
+    )
+    text = render_hal_template("my_machine", catalog, standalone=False)
+
+    assert "TEMPLATE - NOT FUNCTIONAL" not in text
+    assert "WEBGUI PIN REFERENCE" in text
+    assert "Next steps" not in text
+    # The per-pin catalog body itself is unaffected.
+    assert "net spindle_at_speed => webgui.spindle-at-speed" in text
+    # Still entirely inert — an appendix must never look executable.
+    live = [l for l in text.splitlines() if l and not l.startswith("#")]
+    assert live == []
+
+
 def _axis(letter, *joint_numbers, max_velocity=50.0, max_limit=300.0):
     from models.machineconfig.linuxcnc_models import Axis, Joint
 
@@ -326,6 +347,140 @@ def test_generate_writes_full_template_set(isolated_roots):
     assert (configs / "webgui_connections.hal").exists()
     assert (configs / "tool.tbl").exists()
     assert (configs / "postgui_call_list.hal").exists()
+
+
+def test_generate_falls_back_to_the_catalog_when_the_machine_does_not_compile(isolated_roots):
+    """`PROFILE_BODY` declares no `[mcu]` at all — `E_NO_MCU` blocks
+    compilation. The old catalog-only behaviour must survive exactly:
+    a fully-commented file, never a crash, never half-real HAL."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    generate_machine_templates(
+        "my_machine.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    hal = (isolated_roots["machines"] / "my_machine" / "configs" / "machine.hal").read_text(
+        encoding="utf-8"
+    )
+    assert "could not generate real wiring" in hal
+    assert "E_NO_MCU" in hal
+    assert "TEMPLATE - NOT FUNCTIONAL" in hal
+    live = [l for l in hal.splitlines() if l.strip() and not l.strip().startswith("#")]
+    assert live == []
+
+
+def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_roots):
+    """A profile with a real `[mcu]` compiles — `machine.hal` becomes
+    genuinely functional HAL, not a commented catalog, with the pin
+    catalog trailing as a reference appendix instead."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    profile = (
+        "[mcu]\n"
+        "connection: remora-spi\n\n"
+        "[printer]\n"
+        "kinematics: cartesian\n"
+        "max_velocity: 300\n\n"
+        "[stepper_x]\n"
+        "step_pin: PF13\n"
+        "dir_pin: PF12\n"
+        "enable_pin: !PF14\n"
+        "microsteps: 16\n"
+        "rotation_distance: 40\n"
+        "position_endstop: 0\n"
+        "position_max: 300\n"
+    )
+    (isolated_roots["profiles"] / "compilable.cfg").write_text(profile, encoding="utf-8")
+
+    generate_machine_templates(
+        "compilable.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    hal = (isolated_roots["machines"] / "compilable" / "configs" / "machine.hal").read_text(
+        encoding="utf-8"
+    )
+    assert "loadrt remora-spi" in hal
+    assert "remora.joint.0.scale" in hal
+    # Real, live lines exist now — not everything commented.
+    live = [l for l in hal.splitlines() if l.strip() and not l.strip().startswith("#")]
+    assert live
+    # The webgui pin reference still trails, in its appendix framing.
+    assert "WEBGUI PIN REFERENCE" in hal
+    assert "TEMPLATE - NOT FUNCTIONAL" not in hal
+
+    # The Remora firmware payload is written too, keyed by MCU id.
+    configs = isolated_roots["machines"] / "compilable" / "configs"
+    config_txt = (configs / "config_mcu.txt").read_text(encoding="utf-8")
+    assert '"Joint Number": 0' in config_txt
+
+
+def test_generate_gives_each_remora_board_its_own_config_txt(isolated_roots):
+    """Two Remora MCUs on one machine — a second board's firmware
+    payload must never overwrite the first's `config.txt`."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    profile = (
+        "[mcu mcu_a]\n"
+        "connection: remora-spi\n\n"
+        "[mcu mcu_b]\n"
+        "connection: remora-spi\n\n"
+        "[stepper_x]\n"
+        "step_pin: mcu_a:PF13\n"
+        "dir_pin: mcu_a:PF12\n"
+        "enable_pin: mcu_a:PF14\n"
+        "rotation_distance: 40\n"
+        "position_max: 300\n\n"
+        "[stepper_y]\n"
+        "step_pin: mcu_b:PG0\n"
+        "dir_pin: mcu_b:PG1\n"
+        "enable_pin: mcu_b:PF15\n"
+        "rotation_distance: 40\n"
+        "position_max: 300\n"
+    )
+    (isolated_roots["profiles"] / "dual_board.cfg").write_text(profile, encoding="utf-8")
+
+    result = generate_machine_templates(
+        "dual_board.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    configs = isolated_roots["machines"] / "dual_board" / "configs"
+    assert (configs / "config_mcu_a.txt").exists()
+    assert (configs / "config_mcu_b.txt").exists()
+
+    config_a = (configs / "config_mcu_a.txt").read_text(encoding="utf-8")
+    config_b = (configs / "config_mcu_b.txt").read_text(encoding="utf-8")
+    assert '"Name": "stepper_x"' in config_a
+    assert '"Name": "stepper_y"' not in config_a
+    assert '"Name": "stepper_y"' in config_b
+    assert '"Name": "stepper_x"' not in config_b
+
+    # Both sidecars are reported back to the caller too.
+    assert "dual_board/configs/config_mcu_a.txt" in result.files
+    assert "dual_board/configs/config_mcu_b.txt" in result.files
+
+
+def test_generate_writes_no_sidecars_when_the_machine_does_not_compile(isolated_roots):
+    """The fallback path must not leave a stale/half-assembled sidecar
+    behind — no real assembly happened, so no files should exist."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    generate_machine_templates(
+        "my_machine.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    assert not any(p.name.startswith("config_") for p in configs.iterdir())
 
 
 def test_generate_preserves_hand_edited_webgui_connections(isolated_roots):

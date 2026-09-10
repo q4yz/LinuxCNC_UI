@@ -38,6 +38,12 @@ class PinRole(Enum):
     SPINDLE_OUT = "spindle_out"
     #: Feedback coming in from a peripheral (spindle speed/at-speed/health).
     SPINDLE_IN = "spindle_in"
+    #: A duty/setpoint value going out to hardware (heater PID output,
+    #: a referenced fan's commanded speed) — `remora.SP.N` on class B.
+    ANALOG_OUT = "analog_out"
+    #: A measured value coming in from hardware (a thermistor reading)
+    #: — `remora.PV.N` on class B.
+    ANALOG_IN = "analog_in"
 
 
 @dataclass(frozen=True, slots=True)

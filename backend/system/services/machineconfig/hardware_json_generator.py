@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
+from machineconfig_parser import split_pin
 from models.machineconfig.hardware_json_models import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -360,6 +361,8 @@ def _stepper_payload(stepper_section: str, stepper) -> dict[str, Any]:
         "rotation_distance": _fmt_float(stepper.rotation_distance),
         "full_steps_per_rotation": getattr(stepper, "full_steps_per_rotation", None),
         "homing_speed": _fmt_float(getattr(stepper, "homing_speed", None)),
+        "deadband": _fmt_float(getattr(stepper, "deadband", None)),
+        "pgain": _fmt_float(getattr(stepper, "pgain", None)),
     }
 
 
@@ -544,10 +547,25 @@ def build_hardware_json(
     #    section overrides it. Each switch becomes one top-level
     #    record; the owning axis gains an ``endstop`` reference and
     #    a ``position_endstop``.
+    #
+    #    A pin shared by several steppers (the reference PrintNC
+    #    wires ONE switch read by both X and Z) collapses onto the
+    #    FIRST record: the record is keyed by physical pin, and every
+    #    sharing axis references that one id — mirroring how the HAL
+    #    compiler routes a shared switch (one writer, many readers)
+    #    and keeping the validator's E_PIN_CONFLICT gate honest.
     inline_endstop_names: set[str] = set()
+    inline_endstop_ids_by_pin: dict[tuple[str | None, str], str] = {}
     for letter, stepper in graph.steppers.items():
         if stepper.endstop_pin is None:
             continue
+        mcu_prefix, raw_pin = split_pin(stepper.endstop_pin)
+        if raw_pin is not None:
+            shared_id = inline_endstop_ids_by_pin.get((mcu_prefix, raw_pin))
+            if shared_id is not None:
+                if letter.lower() in axis_state:
+                    axis_state[letter.lower()]["endstop_id"] = shared_id
+                continue
         endstop_section = f"{letter.upper()}_MIN"
         if endstop_section in inline_endstop_names:
             continue
@@ -555,6 +573,10 @@ def build_hardware_json(
             _endstop_record(endstop_section, stepper.endstop_pin)
         )
         inline_endstop_names.add(endstop_section)
+        if raw_pin is not None:
+            inline_endstop_ids_by_pin[(mcu_prefix, raw_pin)] = _endstop_id(
+                endstop_section
+            )
         if letter.lower() in axis_state:
             axis_state[letter.lower()]["endstop_id"] = _endstop_id(
                 endstop_section
@@ -766,19 +788,19 @@ def build_hardware_json(
     # that never added the field sees ``[]``).
     mcu_records: list[dict[str, Any]] = []
     for name, mcu in graph.mcus.items():
-        record: dict[str, Any] = {
+        mcu_record: dict[str, Any] = {
             "id": name,
             "connection": mcu.connection,
             "interface": mcu.interface,
             "board": mcu.board,
         }
         if mcu.baud_rate is not None:
-            record["baud_rate"] = mcu.baud_rate
+            mcu_record["baud_rate"] = mcu.baud_rate
         if mcu.node_id is not None:
-            record["node_id"] = mcu.node_id
+            mcu_record["node_id"] = mcu.node_id
         if mcu.parity is not None:
-            record["parity"] = mcu.parity
-        mcu_records.append(record)
+            mcu_record["parity"] = mcu.parity
+        mcu_records.append(mcu_record)
 
     # Validate the structured payload against the strict model.
     # The cross-reference validator runs here and surfaces any
@@ -799,6 +821,7 @@ def build_hardware_json(
         "temperature_sensors": temperature_sensor_records,
         "fans": fan_records,
         "mcus": mcu_records,
+        "duplicate_pin_overrides": sorted(graph.duplicate_pin_overrides),
     }
 
     model = _HardwareJsonModel.model_validate(payload)

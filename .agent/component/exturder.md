@@ -4,6 +4,17 @@
 > component is `extruder`. Rename when convenient — nothing references
 > it by name yet.
 
+> **Implemented status:** the motion half was already covered — an
+> extruder's `[JOINT_N]`/`[AXIS_A]` compile through the same
+> `RemoraStepperHalMapper`/`StepperHalMapper` any other joint does,
+> since `hardware_json_generator` already emits it as an ordinary
+> joint + axis. `HeaterHalMapper` now covers the thermal half too
+> ("identical to `heater.md`" holds in code, not just in the spec).
+> **Not implemented:** the § 3 cold-extrusion guard (`wcomp`/`and2`
+> gating `enable-safe`) — an extruder's raw `j<n>enable` reaches the
+> hardware unconditionally today, so this is a real safety gap versus
+> what's documented here.
+
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.
 **Component ID Format:** `[extruder]` / `[extruder<index>]`, emitted as
 `tools[].id = "heater_<identifier>"` — an extruder *is* a heater plus a

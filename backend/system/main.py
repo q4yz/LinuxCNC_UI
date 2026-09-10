@@ -62,10 +62,16 @@ _MODULE_DOMAINS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Register the structured ``ConfigValidationError`` handler and
-    probe OpenAPI generation at startup."""
-    register_machineconfig_exception_handlers(app)
+    """Probe OpenAPI generation at startup.
 
+    Note: exception handlers must NOT be registered here. The
+    middleware stack is built from a snapshot of
+    ``app.exception_handlers`` before the lifespan body runs
+    (verified on FastAPI 0.136 / Starlette 1.0), so a handler added
+    at this point never intercepts anything — every parser error
+    then crashes the request as a raw 500. Registration happens at
+    app construction below instead.
+    """
     try:
         schema = app.openapi()
         logger.info(
@@ -81,16 +87,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down system service...")
 
 
-def register_machineconfig_exception_handlers(app) -> None:
+def register_machineconfig_exception_handlers(app: FastAPI) -> None:
     """Attach the structured ``ConfigValidationError`` handler.
 
-    Covers both the machineconfig router's compile endpoint and the
-    lifecycle router's switch endpoint (which compiles too).
+    Covers both the machineconfig router's generate endpoint and the
+    lifecycle router's switch endpoint (which compiles too). Must be
+    called BEFORE the first request — see the lifespan note above.
     """
-    try:
-        machineconfig_router.register_exception_handlers(app)
-    except Exception as exc:  # noqa: BLE001 - defensive
-        logger.warning("machineconfig.register_exception_handlers raised %s", exc)
+    machineconfig_router.register_exception_handlers(app)
 
 
 # Initialise FastAPI app
@@ -114,6 +118,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Structured 400 envelope for every ConfigValidationError the parser
+# raises (issue #99) — registered at construction so the middleware
+# stack's snapshot of exception handlers includes it. Registering in
+# lifespan is too late: the stack is built before the lifespan body
+# runs, and a late registration silently degrades every parser error
+# to a raw 500 crash (the exact bug seen on POST /machines/generate).
+register_machineconfig_exception_handlers(app)
 
 
 # --------------------------------------------------------------------------- #

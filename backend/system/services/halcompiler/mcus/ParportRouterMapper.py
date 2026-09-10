@@ -31,11 +31,17 @@ class ParportRouterMapper:
 
     @staticmethod
     def base_fragment(mcu: dict[str, Any]) -> HalFragment:
-        """§ 3 — the driver load, independent of what ends up wired to it."""
-        params = mcu.get("parameters") or {}
-        address = params.get("address", "0")
-        direction = params.get("direction", "out")
-        reset_time = params.get("reset_time", 2500)
+        """§ 3 — the driver load, independent of what ends up wired to it.
+
+        ``interface`` is the real ingested field (the port address —
+        ``"0"`` or a hex string like ``"0x378"``, `mcu_parallelport.md`
+        § 1); ``direction``/``reset_time`` have no `[mcu]` schema keys
+        yet (same file's "timing keys are not ingested yet" note), so
+        they stay the documented defaults until that lands.
+        """
+        address = mcu.get("interface") or "0"
+        direction = "out"
+        reset_time = 2500
 
         return HalFragment(
             loadrt=[f'loadrt hal_parport cfg="{address} {direction}"'],

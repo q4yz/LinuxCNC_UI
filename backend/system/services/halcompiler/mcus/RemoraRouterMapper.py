@@ -1,9 +1,8 @@
 """Remora SPI MCU: base emission + pin routing.
 
 `.agent/component/mcu_spi_remora.md` § 3 (base `loadrt`/E-stop chain/
-`addf`) and § 4 (the pin router — class B, digital input only; Phase 2
-carries no heater/fan/spindle components yet, so `remora.SP.N`/
-`remora.PV.N` routing has nothing to call it).
+`addf`) and § 4 (the pin router — endstops, plus `remora.SP.N`/
+`remora.PV.N` for heater/fan/spindle analog channels).
 
 The SPI link doubles as the watchdog (§ 3): `SPI-enable`/`SPI-reset`/
 `SPI-status` are wired unconditionally in ``base_fragment``, the same
@@ -15,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mappers.machineconfig import RemoraFirmwarePinMapper
 from models.machineconfig.hal_fragment_models import (
     SERVO_THREAD,
     Addf,
@@ -60,36 +60,78 @@ class RemoraRouterMapper:
 
     @staticmethod
     def route(requests: list[PinRequest]) -> HalFragment:
-        """§ 4 — digital inputs only; each gets a zero-padded `remora.input.NN`."""
+        """§ 4 — digital inputs (endstops) + analog SP/PV channels.
+
+        Each role gets its **own** index counter. Sharing one
+        `enumerate()` index across roles would leave gaps the moment a
+        machine mixes endstops with heaters (ender3 does exactly
+        this) — request 3 being an ``ANALOG_OUT`` must not burn
+        `remora.input.03` that request 4's endstop then never gets.
+        """
         fragment = HalFragment()
-        for index, request in enumerate(requests):
-            if request.role is not PinRole.ENDSTOP:
-                continue
-            nn = f"{index:02d}"
-            # Writer only — the component mapper already emitted the
-            # reader side (`net <signal> => joint.N....`) as a separate
-            # `net` line; HAL lets the same net name accumulate pins
-            # across statements, matching the reference file's split.
-            fragment.nets.append(f"net {request.signal} remora.input.{nn}")
-            # Inversion is firmware-side here (spec § 4), not a HAL
-            # `-not` twin as parport has — both modifiers fold into the
-            # pin string `config.txt` carries.
-            invert = "!" if request.pin.invert else ""
-            pullup = "^" if request.pin.pullup else ""
-            pin = f"{invert}{pullup}{request.pin.pin_id}"
-            fragment.firmware_modules.append(
-                FirmwareModuleRequest(
-                    mcu_id=request.pin.mcu_id,
-                    module={
-                        "Thread": "Servo",
-                        "Type": "DigitalPin",
-                        "Comment": request.owner,
-                        "Pin": pin,
-                        "Mode": "Input",
-                        "Data Bit": index,
-                    },
+        endstop_index = 0
+        sp_index = 0
+        pv_index = 0
+        for request in requests:
+            if request.role is PinRole.ENDSTOP:
+                nn = f"{endstop_index:02d}"
+                endstop_index += 1
+                # Writer only — the component mapper already emitted the
+                # reader side (`net <signal> => joint.N....`) as a separate
+                # `net` line; HAL lets the same net name accumulate pins
+                # across statements, matching the reference file's split.
+                fragment.nets.append(f"net {request.signal} remora.input.{nn}")
+                # Inversion is firmware-side here (spec § 4), not a HAL
+                # `-not` twin as parport has — both modifiers fold into the
+                # pin string `config.txt` carries.
+                invert = "!" if request.pin.invert else ""
+                pullup = "^" if request.pin.pullup else ""
+                firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
+                pin = f"{invert}{pullup}{firmware_pin}"
+                fragment.firmware_modules.append(
+                    FirmwareModuleRequest(
+                        mcu_id=request.pin.mcu_id,
+                        module={
+                            "Name": f"endstop_{request.owner}",
+                            "Thread": "Servo",
+                            # "Digital Pin" (with the space) — the real
+                            # reference config.txt's literal key; not a
+                            # guess (machine_config/example/ender3/config.txt).
+                            "Type": "Digital Pin",
+                            "Comment": request.owner,
+                            "Pin": pin,
+                            "Mode": "Input",
+                            "Data Bit": endstop_index - 1,
+                        },
+                    )
                 )
-            )
+            elif request.role is PinRole.ANALOG_OUT:
+                fragment.nets.append(f"net {request.signal} => remora.SP.{sp_index}")
+                firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
+                fragment.firmware_modules.append(
+                    FirmwareModuleRequest(
+                        mcu_id=request.pin.mcu_id,
+                        module={
+                            "Name": f"pwm_{request.owner}",
+                            "Thread": "Servo",
+                            "Type": "PWM",
+                            "Comment": request.owner,
+                            "SP[i]": sp_index,
+                            "PWM Pin": firmware_pin,
+                        },
+                    )
+                )
+                sp_index += 1
+            elif request.role is PinRole.ANALOG_IN:
+                fragment.nets.append(f"net {request.signal} <= remora.PV.{pv_index}")
+                # No "Temperature" module here — the real reference
+                # module (config.txt's temp_bed/temp_extruder entries)
+                # needs a thermistor curve (Sensor + beta/r0/t0) that
+                # temperature_sensors[] doesn't carry yet. Fabricating
+                # placeholder curve values would silently misreport
+                # real temperatures, which is worse than the honest
+                # gap — see .agent/HANDOFF.md.
+                pv_index += 1
         return fragment
 
 

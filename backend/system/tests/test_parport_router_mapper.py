@@ -11,18 +11,26 @@ def _request(signal: str, role: PinRole, pin_string: str, owner: str = "x") -> P
     return PinRequest(signal=signal, role=role, pin=PinStringMapper.from_string(pin_string), owner=owner)
 
 
-def test_base_fragment_uses_declared_parameters():
-    mcu = {"id": "mcu", "parameters": {"address": "0", "direction": "out", "reset_time": 3000}}
+def test_base_fragment_uses_the_declared_interface():
+    mcu = {"id": "mcu", "interface": "0x378"}
     fragment = ParportRouterMapper.base_fragment(mcu)
 
-    assert 'loadrt hal_parport cfg="0 out"' in fragment.loadrt
-    assert "setp parport.0.reset-time 3000" in fragment.setp
+    assert 'loadrt hal_parport cfg="0x378 out"' in fragment.loadrt
+    assert "setp parport.0.reset-time 2500" in fragment.setp
 
 
 def test_base_fragment_falls_back_to_documented_defaults():
     fragment = ParportRouterMapper.base_fragment({"id": "mcu"})
     assert 'loadrt hal_parport cfg="0 out"' in fragment.loadrt
     assert "setp parport.0.reset-time 2500" in fragment.setp
+
+
+def test_base_fragment_ignores_the_dead_parameters_shape():
+    """No real `.cfg` ever populates `mcus[].parameters` — reading it
+    would silently ignore a declared `interface` instead of using it."""
+    mcu = {"id": "mcu", "interface": "0x378", "parameters": {"address": "9"}}
+    fragment = ParportRouterMapper.base_fragment(mcu)
+    assert 'loadrt hal_parport cfg="0x378 out"' in fragment.loadrt
 
 
 def test_base_fragment_addf_order_is_read_write_reset():

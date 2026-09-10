@@ -7,61 +7,62 @@
 ```cfg
  [mcu <identifier>] 
     connection: string // Must be "parallelport"
-    step_time: 5000 ns
-    step_space: 5000 ns
-    direction_hold: 20000 ns
-    direction_setup: 20000 ns
-    base_period_max_jitter: 15000 ns
-    address: string // The port address, usually "0" or a hex value like "0x378"
-    direction: string // "out" or "in" (typically "out" for CNC stepper control)
-    reset_time: integer // Time in nanoseconds for pulse clearing (usually 2500)
+    interface: string // The port address, usually "0" or a hex value like "0x378"
+    board: string // (Optional) never autofilled — HAL cares about the port, not the PCB name
 
 ```
 
+**Timing keys are not ingested yet.** `step_time`, `step_space`,
+`direction_hold`, `direction_setup`, `base_period_max_jitter`,
+`direction` ("out"/"in") and `reset_time` describe real parport
+behaviour but have no `[mcu]` schema keys today — the compiler uses
+documented defaults (`StepperHalMapper`'s timing constants,
+`reset-time 2500`). They land when per-MCU timing moves into the
+schema; until then the parser rejects them with
+`UndefinedKeywordError` (surfaced to the UI as the structured 400
+envelope) rather than silently accepting values it cannot honour.
 ## 2. UI ABSTRACTION (hardware.json)
 
+The implemented MCU record is flat (no `parameters` wrapper, no
+`is_remora`-style derived flag — `connection` alone decides how every
+router behaves, same as every other MCU type). `interface` is the
+only field this router reads today; `direction` / `reset_time` /
+`step_time` / `step_space` / `direction_hold` / `direction_setup` /
+`base_period_max_jitter` are **not ingested yet** (§ 1's note) — the
+router uses documented defaults for all of them until per-MCU parport
+timing lands in the schema:
+
 ```json
- {"mcus": [{
-  "id": "mcu_<identifier>",
-  "type": "parallelport",
-  "ui_group": "Controllers",
-  "parameters": {
-    "address": { "type": "string", "value": "<parsed_value>" },
-    "direction": { "type": "string", "value": "<parsed_value>" },
-    "reset_time": { "type": "integer", "value": "<parsed_value>" },
-    "step_time": { "type": "integer", "value": "<parsed_value>" },
-    "step_space": { "type": "integer", "value": "<parsed_value>" },
-    "direction_hold": { "type": "integer", "value": "<parsed_value>" },
-    "direction_setup": { "type": "integer", "value": "<parsed_value>" },
-    "base_period_max_jitter": { "type": "integer", "value": "<parsed_value>" }
-  },
-  "computed": {
-    "cfg_string": { "type": "string", "formula": "address + ' ' + direction" },
-    "port_index": { "type": "integer", "formula": "0" },
-    "base_period": { "type": "integer", "formula": "base_period_max_jitter + max(step_time + step_space, direction_setup + direction_hold)" }
-  }
+{"mcus": [{
+  "id": "<identifier>",
+  "connection": "parallelport",
+  "interface": "0",
+  "board": null
 }]}
 ```
+
 ## 3. COMPILATION (INI & HAL)
 
 machine.ini
 ```ini
 [EMCMOT]
-# The master high-speed thread timing based on the MCU's jitter and stepper driver limits
-BASE_PERIOD = <computed.base_period>
+# Not yet computed from real timing (see § 1) — the documented default.
+BASE_PERIOD = 50000
 SERVO_PERIOD = 1000000
 ```
 
 machine.hal
 ```hal
 # Component: <id>
-loadrt hal_parport cfg="<computed.cfg_string>"
-setp parport.<computed.port_index>.reset-time <parameters.reset_time>
+# <interface> is the ingested port address; direction/reset-time are
+# the documented defaults ("out" / 2500 ns) until § 1's timing keys land.
+loadrt hal_parport cfg="<interface || '0'> out"
+setp parport.0.reset-time 2500
 
 # Thread Attachments (Must run in the high-speed base-thread)
-addf parport.<computed.port_index>.read base-thread
-addf parport.<computed.port_index>.write base-thread
-addf parport.<computed.port_index>.reset base-thread
+addf parport.0.read base-thread
+addf parport.0.write base-thread
+addf parport.0.reset base-thread
 ```
 webgui_connections.hal
 ```hal
@@ -81,8 +82,9 @@ sweep all pin-valued parameters (`step_pin`, `dir_pin`, `enable_pin`,
 2. Skip it unless `mcu_id` resolves to *this* `parallelport` block.
 3. Emit the matching template below, appended to the bottom of `machine.hal`.
 
-`<mcu_index>` is `computed.port_index`. `<pin_id>` is zero-padded to
-two digits (`2` → `02`) to match `parport.N.pin-NN-*`.
+`<mcu_index>` is always `0` — single-port only, the router never
+addresses a second `hal_parport` instance. `<pin_id>` is zero-padded
+to two digits (`2` → `02`) to match `parport.N.pin-NN-*`.
 
 **Pin ranges — `E_PIN_UNAVAILABLE` if violated.** A parport in `out`
 mode exposes: pins 1..9, 14, 16, 17 as outputs; pins 10..13, 15 as

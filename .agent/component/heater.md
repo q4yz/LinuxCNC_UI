@@ -1,3 +1,19 @@
+> **Implemented status:** `HeaterHalMapper` emits the § 3 PID and
+> watermark loops, the sensor `-PV` reading, and a referenced fan's
+> `-SP` as a plain passthrough (matching the reference machine exactly
+> — `ext0-cooling-SP => remora.SP.2`, no temperature gating). Routed
+> today only through `RemoraRouterMapper` (`remora.SP.N`/`remora.PV.N`
+> — class B). The watermark branch's `comp.out` (a HAL **bit**) is
+> converted to a float via `conv_bit_float` + `scale` before it
+> reaches `<id>-heater-SP` — linking a bit pin straight to
+> `remora.SP.N` (a float) is a HAL load-time type error, not shown in
+> the § 3 sketch above. Not yet implemented: class A `pwmgen` staging
+> (`E_PID_WITHOUT_PWM`), `E_NO_ANALOG_INPUT` on a parport-only machine,
+> and `W_NO_RUNAWAY_GUARD`. A heater pin routed to an MCU with no
+> analog handling is silently dropped by that router today rather than
+> erroring — same "honest gap" class as `remora-eth`, not yet a
+> validator rule.
+
 ## 1. INGESTION (Hand-Written CFG)
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.
@@ -151,14 +167,26 @@ net <id>-heater-SP <= PID-<id>.CV     # duty cycle, to the MCU
 # ------------------------------------------------------------------
 # CONTROL LOOP — control: watermark (bang-bang)
 # ------------------------------------------------------------------
-# For a binary heater output with no PWM available.
+# comp.out is a HAL BIT — <id>-heater-SP is routed straight into
+# remora.SP.N, a FLOAT duty-cycle channel. Linking a bit pin to a
+# float pin is a HAL load-time type error, so the bit is converted
+# through conv_bit_float + scale before it reaches the exported
+# signal, landing "on" at <parameters.max_power> percent (matching
+# the PID branch's own CVmax convention).
 loadrt comp names=comp-<id>
+loadrt conv_bit_float names=conv-<id>
+loadrt scale names=duty-<id>
 addf comp-<id> servo-thread
+addf conv-<id> servo-thread
+addf duty-<id> servo-thread
 setp comp-<id>.hyst <parameters.hysteresis>
+setp duty-<id>.gain <parameters.max_power || 100.0>
 
-net <sensor.id>-PV => comp-<id>.in0
-net <id>-SP        => comp-<id>.in1
-net <id>-heater-SP <= comp-<id>.out
+net <sensor.id>-PV    => comp-<id>.in0
+net <id>-SP           => comp-<id>.in1
+net <id>-heat-bit     comp-<id>.out => conv-<id>.in
+net <id>-heat-frac    conv-<id>.out => duty-<id>.in
+net <id>-heater-SP <= duty-<id>.out
 
 # ------------------------------------------------------------------
 # HARDWARE-AGNOSTIC SIGNAL EXPORTS

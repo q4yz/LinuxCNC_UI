@@ -56,20 +56,98 @@ def test_endstop_requests_get_zero_padded_input_indices_in_order():
 
 
 def test_endstop_firmware_module_carries_pullup_and_invert_as_pin_flags():
+    """Module shape verified against the real, working
+    `machine_config/example/ender3/config.txt` — `"Type": "Digital
+    Pin"` (with the space, not "DigitalPin"), a `"Name"` field, and
+    the pin underscore-formatted."""
     fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^!PC0")])
     module = fragment.firmware_modules[0].module
     assert module == {
+        "Name": "endstop_endstop_x",
         "Thread": "Servo",
-        "Type": "DigitalPin",
+        "Type": "Digital Pin",
         "Comment": "endstop_x",
-        "Pin": "!^PC0",
+        "Pin": "!^PC_0",
         "Mode": "Input",
         "Data Bit": 0,
     }
 
 
-def test_non_endstop_roles_are_ignored():
-    """Phase 2 is motion-only — no heater/spindle SP/PV routing yet."""
+def test_motion_roles_are_ignored():
+    """STEP/DIR never reach a Remora router — class B has no HAL step/dir
+    pin to route (the board owns the pulses)."""
     fragment = RemoraRouterMapper.route([_request("s-step", PinRole.STEP, "PF13")])
     assert fragment.nets == []
     assert fragment.firmware_modules == []
+
+
+def test_analog_out_requests_get_sequential_sp_channels():
+    requests = [
+        _request("heater_bed-heater-SP", PinRole.ANALOG_OUT, "PB7", owner="heater_bed"),
+        _request("heater_extruder-heater-SP", PinRole.ANALOG_OUT, "PE3", owner="heater_extruder"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net heater_bed-heater-SP => remora.SP.0" in fragment.nets
+    assert "net heater_extruder-heater-SP => remora.SP.1" in fragment.nets
+
+
+def test_analog_out_requests_get_a_pwm_firmware_module():
+    """Module shape verified against the real, working
+    `machine_config/example/ender3/config.txt`'s `pwm_extruder` /
+    `pwm_heater_bed` entries."""
+    fragment = RemoraRouterMapper.route(
+        [_request("heater_bed-heater-SP", PinRole.ANALOG_OUT, "PB7", owner="heater_bed")]
+    )
+    assert fragment.firmware_modules[0].module == {
+        "Name": "pwm_heater_bed",
+        "Thread": "Servo",
+        "Type": "PWM",
+        "Comment": "heater_bed",
+        "SP[i]": 0,
+        "PWM Pin": "PB_7",
+    }
+
+
+def test_analog_in_requests_get_no_firmware_module_yet():
+    """No Temperature module — `temperature_sensors[]` doesn't carry a
+    thermistor curve (beta/r0/t0) yet; fabricating one would silently
+    misreport real temperatures. See the router's own comment."""
+    fragment = RemoraRouterMapper.route(
+        [_request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed")]
+    )
+    assert fragment.firmware_modules == []
+
+
+def test_analog_in_requests_get_sequential_pv_channels():
+    requests = [
+        _request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed"),
+        _request("extruder-PV", PinRole.ANALOG_IN, "PA1", owner="extruder"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net bed-PV <= remora.PV.0" in fragment.nets
+    assert "net extruder-PV <= remora.PV.1" in fragment.nets
+
+
+def test_endstop_and_analog_indices_do_not_collide():
+    """Real ender3-shaped machine: endstops and heaters share one MCU.
+
+    Each role must count its own index — an ANALOG_OUT request sitting
+    between two ENDSTOP requests must not burn an endstop-input slot,
+    and vice versa.
+    """
+    requests = [
+        _request("endstop_x-sw", PinRole.ENDSTOP, "PC0", owner="endstop_x"),
+        _request("heater_bed-heater-SP", PinRole.ANALOG_OUT, "PB7", owner="heater_bed"),
+        _request("endstop_y-sw", PinRole.ENDSTOP, "PC1", owner="endstop_y"),
+        _request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net endstop_x-sw remora.input.00" in fragment.nets
+    assert "net endstop_y-sw remora.input.01" in fragment.nets
+    assert "net heater_bed-heater-SP => remora.SP.0" in fragment.nets
+    assert "net bed-PV <= remora.PV.0" in fragment.nets
+    # 2 endstops (Digital Pin) + 1 heater (PWM) — no module for the
+    # ANALOG_IN request (no Temperature module yet, see above).
+    digital_pins = [m for m in fragment.firmware_modules if m.module["Type"] == "Digital Pin"]
+    assert {m.module["Data Bit"] for m in digital_pins} == {0, 1}
+    assert len(fragment.firmware_modules) == 3

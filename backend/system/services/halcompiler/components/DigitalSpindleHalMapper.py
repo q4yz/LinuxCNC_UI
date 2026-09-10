@@ -43,154 +43,112 @@ _HEALTH_PINS: tuple[tuple[str, str], ...] = (
 )
 
 
+class _SpindleContext:
+    """Encapsulates state for a single spindle mapping pass to eliminate parameter bloat."""
+
+    def __init__(self, spindle: dict[str, Any]) -> None:
+        self.spindle = spindle
+        self.fragment = HalFragment()
+        self.spindle_id = str(spindle["id"])
+        self.n = int(spindle.get("spindle_number") or 0)
+
+    def request(self, field: str, signal: str, role: PinRole) -> None:
+        """Helper to conditionally append a PinRequest if the field exists."""
+        raw = self.spindle.get(field)
+        if raw:
+            self.fragment.requests.append(
+                PinRequest(
+                    signal=signal,
+                    role=role,
+                    pin=PinStringMapper.from_string(raw),
+                    owner=self.spindle_id
+                )
+            )
+
+    def build_speed_command(self) -> None:
+        """Generates speed scaling logic and routes the speed command pin."""
+        rpm_scale = self.spindle.get("rpm_scale")
+        scaled = rpm_scale is not None and rpm_scale != 1.0
+
+        if not scaled:
+            self.fragment.nets.append(f"net spindle-speed-cmd spindle.{self.n}.speed-out")
+            self.request("speed_pin", "spindle-speed-cmd", PinRole.SPINDLE_OUT)
+            return
+
+        self.fragment.nets.append(f"net spindle-speed-cmd spindle.{self.n}.speed-out => scale-{self.spindle_id}-cmd.in")
+        self.fragment.loadrt.append(f"loadrt scale names=scale-{self.spindle_id}-cmd")
+        self.fragment.addf.append(Addf(f"scale-{self.spindle_id}-cmd", SERVO_THREAD, order=2))
+        self.fragment.setp.append(f"setp scale-{self.spindle_id}-cmd.gain {rpm_scale}")
+
+        cmd_signal = f"{self.spindle_id}-speed-out"
+        self.fragment.nets.append(f"net {cmd_signal} scale-{self.spindle_id}-cmd.out")
+        self.request("speed_pin", cmd_signal, PinRole.SPINDLE_OUT)
+
+    def build_run_reverse(self) -> None:
+        self.fragment.nets.append(f"net spindle-forward spindle.{self.n}.forward")
+        self.request("run_pin", "spindle-forward", PinRole.SPINDLE_OUT)
+
+        if self.spindle.get("reverse_pin"):
+            self.fragment.nets.append(f"net spindle-reverse spindle.{self.n}.reverse")
+            self.request("reverse_pin", "spindle-reverse", PinRole.SPINDLE_OUT)
+
+    def build_feedback_and_at_speed(self) -> None:
+        has_speed_fb = bool(self.spindle.get("speed_fb_pin"))
+        has_at_speed = bool(self.spindle.get("at_speed_pin"))
+
+        if has_speed_fb:
+            rpm_scale = self.spindle.get("rpm_scale")
+            gain = (1.0 / rpm_scale) if rpm_scale not in (None, 0) else 1.0
+            fb_raw_signal = f"{self.spindle_id}-speed-fb-raw"
+
+            self.fragment.loadrt.append(f"loadrt scale names=scale-{self.spindle_id}-fb")
+            self.fragment.addf.append(Addf(f"scale-{self.spindle_id}-fb", SERVO_THREAD, order=0))
+            self.fragment.setp.append(f"setp scale-{self.spindle_id}-fb.gain {gain}")
+            self.fragment.nets.append(f"net {fb_raw_signal} => scale-{self.spindle_id}-fb.in")
+            self.fragment.nets.append(f"net spindle-speed-fb scale-{self.spindle_id}-fb.out => spindle.{self.n}.speed-in")
+
+            self.request("speed_fb_pin", fb_raw_signal, PinRole.SPINDLE_IN)
+
+        if has_at_speed:
+            self.fragment.nets.append(f"net spindle-at-speed => spindle.{self.n}.at-speed")
+            self.request("at_speed_pin", "spindle-at-speed", PinRole.SPINDLE_IN)
+        elif has_speed_fb:
+            min_rpm = self.spindle.get("min_rpm") or 0
+            near = f"near-{self.spindle_id}-at-speed"
+
+            self.fragment.loadrt.append(f"loadrt near names={near}")
+            self.fragment.addf.append(Addf(near, SERVO_THREAD, order=0))
+            self.fragment.setp.extend([
+                f"setp {near}.scale {_NEAR_SCALE}",
+                f"setp {near}.difference {min_rpm * _NEAR_DIFFERENCE_FRACTION}",
+            ])
+            self.fragment.nets.extend([
+                f"net spindle-speed-cmd => {near}.in1",
+                f"net spindle-speed-fb => {near}.in2",
+                f"net spindle-at-speed {near}.out => spindle.{self.n}.at-speed",
+            ])
+        else:
+            self.fragment.setp.append(f"setp spindle.{self.n}.at-speed true")
+
+    def build_health(self) -> None:
+        for field, suffix in _HEALTH_PINS:
+            if self.spindle.get(field):
+                self.request(field, f"{self.spindle_id}-{suffix}", PinRole.SPINDLE_IN)
+
+
 class DigitalSpindleHalMapper:
     """Speed command, run/reverse, feedback/at-speed, health — one spindle."""
 
     @staticmethod
     def to_fragment(spindle: dict[str, Any]) -> HalFragment:
-        fragment = HalFragment()
-        spindle_id = str(spindle["id"])
-        n = int(spindle.get("spindle_number") or 0)
-        rpm_scale = spindle.get("rpm_scale")
+        ctx = _SpindleContext(spindle)
 
-        cmd_signal = DigitalSpindleHalMapper._speed_command(fragment, spindle_id, n, rpm_scale)
-        DigitalSpindleHalMapper._request(fragment, spindle, "speed_pin", cmd_signal, PinRole.SPINDLE_OUT, spindle_id)
+        ctx.build_speed_command()
+        ctx.build_run_reverse()
+        ctx.build_feedback_and_at_speed()
+        ctx.build_health()
 
-        DigitalSpindleHalMapper._run_reverse(fragment, spindle, spindle_id, n)
-        DigitalSpindleHalMapper._feedback_and_at_speed(fragment, spindle, spindle_id, n)
-        DigitalSpindleHalMapper._health(fragment, spindle, spindle_id)
-
-        return fragment
-
-    # -- speed command ---------------------------------------------------- #
-
-    @staticmethod
-    def _speed_command(fragment: HalFragment, spindle_id: str, n: int, rpm_scale: float | None) -> str:
-        """Returns the signal the router should bind to `speed_pin`.
-
-        Scaled (`rpm_scale not in (None, 1.0)`): a `scale` block sits
-        between `spindle.N.speed-out` (RPM, the hardware-agnostic
-        `spindle-speed-cmd` per README § 5) and the physical pin (drive
-        units). Unscaled: no block to bridge, so the physical pin binds
-        directly to `spindle-speed-cmd` itself — emitting a second net
-        name for the same writer would be a HAL "already has writer"
-        error.
-        """
-        scaled = rpm_scale is not None and rpm_scale != 1.0
-        if not scaled:
-            fragment.nets.append(f"net spindle-speed-cmd spindle.{n}.speed-out")
-            return "spindle-speed-cmd"
-
-        fragment.nets.append(f"net spindle-speed-cmd spindle.{n}.speed-out => scale-{spindle_id}-cmd.in")
-        fragment.loadrt.append(f"loadrt scale names=scale-{spindle_id}-cmd")
-        fragment.addf.append(Addf(f"scale-{spindle_id}-cmd", SERVO_THREAD, order=2))
-        fragment.setp.append(f"setp scale-{spindle_id}-cmd.gain {rpm_scale}")
-        cmd_signal = f"{spindle_id}-speed-out"
-        fragment.nets.append(f"net {cmd_signal} scale-{spindle_id}-cmd.out")
-        return cmd_signal
-
-    # -- run / reverse ------------------------------------------------------ #
-
-    @staticmethod
-    def _run_reverse(fragment: HalFragment, spindle: dict[str, Any], spindle_id: str, n: int) -> None:
-        fragment.nets.append(f"net spindle-forward spindle.{n}.forward")
-        DigitalSpindleHalMapper._request(fragment, spindle, "run_pin", "spindle-forward", PinRole.SPINDLE_OUT, spindle_id)
-
-        if spindle.get("reverse_pin"):
-            fragment.nets.append(f"net spindle-reverse spindle.{n}.reverse")
-            DigitalSpindleHalMapper._request(
-                fragment, spindle, "reverse_pin", "spindle-reverse", PinRole.SPINDLE_OUT, spindle_id
-            )
-
-    # -- feedback + at-speed ------------------------------------------------ #
-
-    @staticmethod
-    def _feedback_and_at_speed(fragment: HalFragment, spindle: dict[str, Any], spindle_id: str, n: int) -> None:
-        has_speed_fb = bool(spindle.get("speed_fb_pin"))
-        has_at_speed = bool(spindle.get("at_speed_pin"))
-
-        if has_speed_fb:
-            rpm_scale = spindle.get("rpm_scale")
-            gain = (1.0 / rpm_scale) if rpm_scale not in (None, 0) else 1.0
-            fb_raw_signal = f"{spindle_id}-speed-fb-raw"
-            fragment.loadrt.append(f"loadrt scale names=scale-{spindle_id}-fb")
-            fragment.addf.append(Addf(f"scale-{spindle_id}-fb", SERVO_THREAD, order=0))
-            fragment.setp.append(f"setp scale-{spindle_id}-fb.gain {gain}")
-            fragment.nets.append(f"net {fb_raw_signal} => scale-{spindle_id}-fb.in")
-            fragment.nets.append(f"net spindle-speed-fb scale-{spindle_id}-fb.out => spindle.{n}.speed-in")
-            DigitalSpindleHalMapper._request(
-                fragment, spindle, "speed_fb_pin", fb_raw_signal, PinRole.SPINDLE_IN, spindle_id
-            )
-
-        if has_at_speed:
-            fragment.nets.append(f"net spindle-at-speed => spindle.{n}.at-speed")
-            DigitalSpindleHalMapper._request(
-                fragment, spindle, "at_speed_pin", "spindle-at-speed", PinRole.SPINDLE_IN, spindle_id
-            )
-        elif has_speed_fb:
-            # No direct at-speed bit — derive one inside a tolerance
-            # band around the commanded RPM (digital_spindle.md § 3).
-            min_rpm = spindle.get("min_rpm") or 0
-            near = f"near-{spindle_id}-at-speed"
-            fragment.loadrt.append(f"loadrt near names={near}")
-            fragment.addf.append(Addf(near, SERVO_THREAD, order=0))
-            fragment.setp.extend(
-                [
-                    f"setp {near}.scale {_NEAR_SCALE}",
-                    f"setp {near}.difference {min_rpm * _NEAR_DIFFERENCE_FRACTION}",
-                ]
-            )
-            # Always the RPM-domain `spindle-speed-cmd`, never the
-            # pin-routed command signal `_speed_command` returns — that
-            # one is in drive units when scaled, and comparing drive
-            # units against RPM feedback would compare the wrong thing.
-            fragment.nets.extend(
-                [
-                    f"net spindle-speed-cmd => {near}.in1",
-                    f"net spindle-speed-fb => {near}.in2",
-                    f"net spindle-at-speed {near}.out => spindle.{n}.at-speed",
-                ]
-            )
-        else:
-            # Nothing drives at-speed — force it so G-code doesn't block
-            # forever (W_NO_SPINDLE_FEEDBACK is the validator's warning
-            # that this is happening).
-            fragment.setp.append(f"setp spindle.{n}.at-speed true")
-
-    # -- health -------------------------------------------------------------- #
-
-    @staticmethod
-    def _health(fragment: HalFragment, spindle: dict[str, Any], spindle_id: str) -> None:
-        """One request per declared health pin — no net of its own here.
-
-        Nothing in this component consumes fault/is-connected/error-count
-        yet (the UI-bindings pass isn't built); the router's own `net`
-        supplies the writer. Registering only the request, not a net,
-        avoids emitting a target-less `net` statement.
-        """
-        for field, suffix in _HEALTH_PINS:
-            if not spindle.get(field):
-                continue
-            signal = f"{spindle_id}-{suffix}"
-            DigitalSpindleHalMapper._request(fragment, spindle, field, signal, PinRole.SPINDLE_IN, spindle_id)
-
-    # -- shared -------------------------------------------------------------- #
-
-    @staticmethod
-    def _request(
-        fragment: HalFragment,
-        spindle: dict[str, Any],
-        field: str,
-        signal: str,
-        role: PinRole,
-        owner: str,
-    ) -> None:
-        raw = spindle.get(field)
-        if not raw:
-            return
-        fragment.requests.append(
-            PinRequest(signal=signal, role=role, pin=PinStringMapper.from_string(raw), owner=owner)
-        )
+        return ctx.fragment
 
 
 __all__ = ["DigitalSpindleHalMapper"]

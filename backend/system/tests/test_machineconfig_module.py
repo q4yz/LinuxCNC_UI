@@ -524,3 +524,35 @@ def test_generate_malformed_syntax_returns_structured_error(
     assert error["section"] == "stepper_x"
     assert error["key"] == "step_pin"
     assert "already exists" in error["message"]
+
+
+def test_real_main_app_ships_the_parser_error_envelope(
+    tmp_data_root, clean_env, isolated_machine_config
+):
+    """The production ``main.app`` itself must return the structured
+    400, not only the test-built module app.
+
+    Regression guard for the FastAPI 0.136 / Starlette 1.0 ordering
+    bug: ``app.add_exception_handler`` called inside ``lifespan`` ran
+    AFTER the middleware stack snapshotted the handlers, so every
+    ``ConfigValidationError`` escaped as a raw 500 in the live server
+    while the module-app tests (which register at construction) kept
+    passing. This test imports the real app the way uvicorn does, so
+    a mis-timed registration fails here instead of in production.
+    """
+    import main as system_main  # the app uvicorn actually serves
+
+    profiles = isolated_machine_config["profiles"]
+    (profiles / "legacy_type_key.cfg").write_text(
+        "#Start\n[mcu par0]\ntype: parallelport\n",
+        encoding="utf-8",
+    )
+
+    with TestClient(system_main.app) as client:
+        resp = _generate(client, profile_path="legacy_type_key.cfg")
+
+    assert resp.status_code == 400, resp.text
+    error = resp.json()["error"]
+    assert error["kind"] == "undefined_keyword"
+    assert error["section"] == "mcu par0"
+    assert error["key"] == "type"

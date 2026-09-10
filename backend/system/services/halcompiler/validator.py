@@ -50,6 +50,13 @@ class MachineValidator:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
         self._found: list[Diagnostic] = []
+        # ``[duplicate_pin_override]``'s allowlist — an operator has
+        # explicitly said sharing this physical pin is intentional, so
+        # `_check_pin_conflict` must not flag it. Only this one check
+        # honours it; every other rule still runs normally.
+        self._duplicate_pin_overrides = frozenset(
+            str(p) for p in (payload.get("duplicate_pin_overrides") or [])
+        )
 
     # -- public surface ------------------------------------------------ #
 
@@ -165,6 +172,12 @@ class MachineValidator:
         field: str,
         claimed: dict[str, tuple[str, str]],
     ) -> None:
+        if pin.qualified in self._duplicate_pin_overrides:
+            # The operator has explicitly said sharing this physical
+            # pin is intentional — never record it, so it can never
+            # conflict with itself or anything else either.
+            return
+
         previous = claimed.get(pin.qualified)
         if previous is None:
             claimed[pin.qualified] = (owner, field)

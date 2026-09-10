@@ -54,6 +54,7 @@ class SectionKind(str, Enum):
     SPINDLE_ANALOG = "spindle_analog"
     TMC2209 = "tmc2209"
     FAN = "fan"
+    DUPLICATE_PIN_OVERRIDE = "duplicate_pin_override"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,14 @@ PRINTER_KEYS = frozenset(
 PRINTER_IGNORED_KEYS = frozenset(
     {"minimum_cruise_ratio", "square_corner_velocity"}
 )
+# A global, opt-in exception to the pin-conflict guard — not a
+# component, never emits HAL. See
+# `.agent/component/README.md` § 3: two independently-named signals
+# can legitimately share one physical *input* pin (the operator has
+# verified the real wiring), but the compiler can't tell that from a
+# collision an operator typo would also produce. Listing the pin here
+# is the explicit "yes, this one's on purpose."
+DUPLICATE_PIN_OVERRIDE_KEYS = frozenset({"pins"})
 STEPPER_KEYS = frozenset(
     {
         "step_pin",
@@ -96,6 +105,13 @@ STEPPER_KEYS = frozenset(
         "position_min",
         "position_max",
         "homing_speed",
+        # Class-B (Remora) per-joint position-loop tuning — real,
+        # optional `setp remora.joint.N.*` knobs the reference config
+        # actually uses (`machine_config/example/ender3/ender3.hal`:
+        # `deadband` on joint 2, `pgain` on joint 3). No effect on
+        # class A, which has no such loop to tune.
+        "deadband",
+        "pgain",
     }
 )
 ENDSTOP_SWITCH_KEYS = frozenset({"stepper", "pin", "position", "type"})
@@ -189,6 +205,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.SPINDLE_ANALOG: SPINDLE_ANALOG_KEYS,
     SectionKind.TMC2209: TMC2209_KEYS,
     SectionKind.FAN: FAN_KEYS,
+    SectionKind.DUPLICATE_PIN_OVERRIDE: DUPLICATE_PIN_OVERRIDE_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -247,6 +264,13 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "printer":
         return SectionSchema(SectionKind.PRINTER, PRINTER_KEYS, "printer")
+
+    if section == "duplicate_pin_override":
+        return SectionSchema(
+            SectionKind.DUPLICATE_PIN_OVERRIDE,
+            DUPLICATE_PIN_OVERRIDE_KEYS,
+            "duplicate_pin_override",
+        )
 
     stepper_match = _STEPPER_SECTION.fullmatch(section)
     if stepper_match:
@@ -329,6 +353,7 @@ def schema_for_section(section: str) -> SectionSchema | None:
 __all__ = [
     "ALLOWED_CONNECTION_TYPES",
     "ALLOWED_KEYS",
+    "DUPLICATE_PIN_OVERRIDE_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "EXTRUDER_KEYS",
     "FAN_KEYS",

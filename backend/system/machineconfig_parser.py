@@ -383,6 +383,12 @@ def _wrap_configparser_error(exc: configparser.Error) -> MalformedConfigError:
     return MalformedConfigError(str(exc), section=section, key=key, line=line)
 
 
+#: Pin-string modifier characters (`.agent/component/README.md` § 1):
+#: invert, pull-up, pull-down. They may sit before the whole string
+#: or directly after the ``<mcu>:`` prefix, in any combination.
+_PIN_MODIFIERS = frozenset("!^~")
+
+
 def split_pin(pin: str | None) -> tuple[str | None, str | None]:
     """Split a Klipper multi-MCU pin reference into ``(mcu_name, raw)``.
 
@@ -390,7 +396,15 @@ def split_pin(pin: str | None) -> tuple[str | None, str | None]:
 
         step_pin: PF13            -> (None, 'PF13')
         step_pin: a:PF13          -> ('a', 'PF13')
-        step_pin: rs485_com:RA    -> ('rs485_com', 'RA')
+        step_pin: !a:09           -> ('a', '09')   modifiers strip first
+        step_pin: a:!09           -> ('a', '09')   ...or after the colon
+
+    Modifiers are stripped from BOTH sides of the colon before the
+    split, matching the documented grammar (README § 1: "strip
+    modifiers first ... then split on the first ``:``") and the
+    compile-side :meth:`PinStringMapper.from_string`, which accepts
+    either spelling — accepting one but not the other would reject
+    valid machines (hand-written configs use both).
 
     Returns ``(None, None)`` for a falsy input so callers can chain
     ``if pin is None`` checks without special-casing the empty
@@ -398,16 +412,20 @@ def split_pin(pin: str | None) -> tuple[str | None, str | None]:
     colons are part of the raw pin (none of Klipper's standard pin
     formats contain a colon, but the convention keeps us future-safe).
     """
+
+    def _strip_modifiers(text: str) -> str:
+        return text.lstrip("".join(sorted(_PIN_MODIFIERS)))
+
     if pin is None:
         return (None, None)
-    text = pin.strip()
+    text = _strip_modifiers(pin.strip())
     if not text:
         return (None, None)
     if ":" not in text:
         return (None, text)
     mcu_part, _, rest = text.partition(":")
-    mcu_part = mcu_part.strip() or None
-    rest = rest.strip() or None
+    mcu_part = _strip_modifiers(mcu_part.strip()) or None
+    rest = _strip_modifiers(rest.strip()) or None
     return (mcu_part, rest)
 
 
@@ -649,6 +667,10 @@ class MachineConfigParser:
                 fan = self._parse_fan(section_name, section)
                 graph.fans[fan.name] = fan
                 fan_section_order.append(section_name)
+            elif section_schema.kind is SectionKind.DUPLICATE_PIN_OVERRIDE:
+                graph.duplicate_pin_overrides = self._parse_duplicate_pin_override(
+                    section_name, section
+                )
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -674,29 +696,35 @@ class MachineConfigParser:
 
     @staticmethod
     def _validate_stepper_pins(graph: MachineConfigGraph) -> None:
-        """Reject steppers that share any physical pin.
+        """Reject steppers that share any **motion** pin.
 
         Walks ``graph.steppers`` and tracks the first section that
-        claimed each pin across the four pin slots
+        claimed each pin across the motion slots
         (:attr:`Stepper.step_pin`, :attr:`Stepper.dir_pin`,
-        :attr:`Stepper.enable_pin`, :attr:`Stepper.endstop_pin`).
-        A second stepper claiming the same pin raises
-        :class:`DuplicateStepperPinError` with the offending pin,
-        pin-key, and the two conflicting axes.
+        :attr:`Stepper.enable_pin`). A second stepper claiming the
+        same pin raises :class:`DuplicateStepperPinError` with the
+        offending pin, pin-key, and the two conflicting axes.
+
+        ``endstop_pin`` is deliberately exempt: a home switch is an
+        *input* several axes can legitimately read — the reference
+        PrintNC wires one switch shared by X and Z, and the HAL
+        compiler models that as one endstop entity referenced by
+        both axes (one writer, two readers). One driver pin clocking
+        two motors is the actual error; one switch feeding two axes
+        is standard wiring.
 
         The check intentionally ignores ``None`` values (an unset pin
         is fine) and the extruder's own pins (extruders live on a
         different pin domain and do not participate in the stepper
         collision matrix). Multiple motors on one axis (e.g.
-        ``[stepper_y]`` + ``[stepper_y1]``) must use distinct pins;
-        the parser is the right place to enforce that.
+        ``[stepper_y]`` + ``[stepper_y1]``) must use distinct motion
+        pins; the parser is the right place to enforce that.
         """
 
         pin_slots: tuple[tuple[str, str], ...] = (
             ("step_pin", "step_pin"),
             ("dir_pin", "dir_pin"),
             ("enable_pin", "enable_pin"),
-            ("endstop_pin", "endstop_pin"),
         )
         # ``owners`` maps ``(pin_key, mcu_prefix, pin_value)`` ->
         # ``(axis_label, section_name)``. The MCU prefix is the
@@ -888,6 +916,8 @@ class MachineConfigParser:
             position_min=self._optional_float(section_name, section, "position_min"),
             position_max=self._optional_float(section_name, section, "position_max"),
             homing_speed=self._optional_float(section_name, section, "homing_speed"),
+            deadband=self._optional_float(section_name, section, "deadband"),
+            pgain=self._optional_float(section_name, section, "pgain"),
         )
 
     def _parse_endstop(
@@ -995,6 +1025,35 @@ class MachineConfigParser:
             is_connected_pin=self._optional_string(section, "is_connected_pin"),
             error_count_pin=self._optional_string(section, "error_count_pin"),
         )
+
+    def _parse_duplicate_pin_override(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> frozenset[str]:
+        """Build the ``[duplicate_pin_override]`` allowlist.
+
+        ``pins:`` is a comma-separated list of pin references, same
+        grammar as any other pin field (an MCU prefix, optional
+        modifiers). Stored normalised to ``"<mcu_id>:<pin_id>"`` —
+        modifiers are stripped because a physical-pin collision is a
+        property of the raw pin, not of how one particular caller
+        happens to invert it; a bare pin (no ``mcu:`` prefix) defaults
+        to ``"mcu"``, matching :class:`ParsedPin`'s own default.
+        """
+        raw = self._optional_string(section, "pins") or ""
+        overrides: set[str] = set()
+        for entry in raw.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            mcu_id, pin_id = split_pin(entry)
+            if not pin_id:
+                raise InvalidValueError(
+                    section_name, "pins", entry, "a pin reference (e.g. 'par0:13')"
+                )
+            overrides.add(f"{mcu_id or 'mcu'}:{pin_id}")
+        return frozenset(overrides)
 
     def _parse_mcu(
         self,
@@ -1192,9 +1251,25 @@ class MachineConfigParser:
         section: configparser.SectionProxy,
         key: str,
     ) -> str | None:
+        """Read ``key`` as a bare string.
+
+        ``configparser`` takes a value completely literally — it does
+        not unwrap quotes the way JSON/YAML/Python do, so an operator
+        writing ``interface: "0"`` out of habit gets the value
+        ``'"0"'``, quote characters and all. Left alone that leaks
+        straight into any string this feeds — e.g. `hal_parport`'s
+        `cfg=` line — as literal `"` characters, which is a HAL parse
+        error (or worse, a value that loads but is silently wrong)
+        rather than the harmless typo it should be. One matching pair
+        of surrounding quotes is stripped; anything not fully wrapped
+        (a stray leading/trailing quote) is left untouched rather than
+        guessed at.
+        """
         if key not in section:
             return None
         value = section[key].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1].strip()
         return value or None
 
     def _required_string(

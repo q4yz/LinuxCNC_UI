@@ -65,9 +65,32 @@ PAYLOAD: dict[str, Any] = {
         {"id": "extruder", "joint_number": 3, "step_pin": "mcu:PF9", "dir_pin": "mcu:PF10", "enable_pin": "mcu:PG2"},
     ],
     "drivers": [],
-    "fans": [],
-    "temperature_sensors": [],
-    "tools": [],
+    "fans": [{"id": "fan_heater_extruder", "pin": "mcu:PB1"}],
+    "temperature_sensors": [
+        {"id": "bed", "pin": "mcu:PA0"},
+        {"id": "extruder", "pin": "mcu:PA1"},
+    ],
+    "tools": [
+        {
+            "id": "heater_bed",
+            "type": "heated_bed",
+            "sensor": "bed",
+            "heater_pin": "mcu:PB7",
+            "control": "pid",
+            "min_temp": 0.0,
+            "max_temp": 130.0,
+        },
+        {
+            "id": "heater_extruder",
+            "type": "extruder",
+            "sensor": "extruder",
+            "heater_pin": "mcu:PE3",
+            "fan": "fan_heater_extruder",
+            "control": "pid",
+            "min_temp": 0.0,
+            "max_temp": 250.0,
+        },
+    ],
     "endstops": [
         {"id": "endstop_x", "pin": "mcu:PC0"},
         {"id": "endstop_y", "pin": "mcu:PC1"},
@@ -107,11 +130,18 @@ def test_addf_is_all_servo_thread_no_base_thread_at_all():
     fragment = HalAssembler(PAYLOAD).assemble()
     assert not any(a.thread == "base-thread" for a in fragment.addf)
 
+    # Order=1 tier: motion-command-handler/motion-controller (the
+    # `motion` fragment, always first into `combine()`), THEN each
+    # heater's PID compute (declared bed-before-extruder, same as the
+    # component-fragment concatenation order) — before `remora.write`
+    # ever runs, matching the real thread-attachment block.
     servo = [a.func for a in sorted(fragment.addf, key=lambda a: a.order)]
     assert servo == [
         "remora.read",
         "motion-command-handler",
         "motion-controller",
+        "PID-heater_bed.compute",
+        "PID-heater_extruder.compute",
         "remora.update-freq",
         "remora.write",
     ]
@@ -152,22 +182,37 @@ def test_endstop_writers_are_zero_padded_and_sequential(fragment):
 
 
 def test_firmware_config_carries_every_joint_and_endstop_module(fragment):
+    """Module shapes verified against the real, working
+    `machine_config/example/ender3/config.txt` — root is
+    `{"Board": ..., "Modules": [...]}` (no top-level frequency block),
+    steppers are `"Stepgen"`, endstops are `"Digital Pin"` (the space
+    matters), heater/fan outputs get a `"PWM"` module."""
     config_key = next(k for k in fragment.files if k.startswith("config_"))
     assert config_key == "config_mcu.txt"
 
     import json
 
     config = json.loads(fragment.files[config_key])
-    assert config["Thread"]["Base"]["Frequency"] > 0
-    assert config["Thread"]["Servo"]["Frequency"] > 0
+    assert config["Board"] == "BIGTREETECH OCTOPUS"
+    assert "Thread" not in config
 
-    steppers = [m for m in config["Modules"] if m["Type"] == "Stepper"]
+    steppers = [m for m in config["Modules"] if m["Type"] == "Stepgen"]
     assert len(steppers) == 4
     assert {m["Joint Number"] for m in steppers} == {0, 1, 2, 3}
+    assert all(m["Step Pin"].count("_") == 1 for m in steppers)  # underscore-formatted
 
-    digital_pins = [m for m in config["Modules"] if m["Type"] == "DigitalPin"]
+    digital_pins = [m for m in config["Modules"] if m["Type"] == "Digital Pin"]
     assert len(digital_pins) == 3
     assert {m["Comment"] for m in digital_pins} == {"endstop_x", "endstop_y", "endstop_z"}
+
+    # 2 heater outputs + 1 referenced fan, all ANALOG_OUT -> PWM.
+    pwm_modules = [m for m in config["Modules"] if m["Type"] == "PWM"]
+    assert len(pwm_modules) == 3
+    assert {m["SP[i]"] for m in pwm_modules} == {0, 1, 2}
+
+    # No Temperature module yet — see RemoraRouterMapper's own comment
+    # (temperature_sensors[] has no thermistor curve to put in one).
+    assert not any(m["Type"] == "Temperature" for m in config["Modules"])
 
 
 def test_full_render_is_well_formed_hal_text():
@@ -177,3 +222,57 @@ def test_full_render_is_well_formed_hal_text():
     assert all(
         l.startswith(("loadrt ", "addf ", "setp ", "net ", "#")) for l in lines
     ), [l for l in lines if not l.startswith(("loadrt ", "addf ", "setp ", "net ", "#"))]
+
+
+# -- heaters -------------------------------------------------------------- #
+#
+# `3Dprinter.hal`'s real "PID controllers for heaters" section:
+#
+#   loadrt PIDcontroller names=PID-bed,PID-ext0
+#   net bed-heater-SP  => remora.SP.0
+#   net ext0-heater-SP => remora.SP.1
+#   net ext0-cooling-SP => remora.SP.2
+#   net bed-PV  => remora.PV.0
+#   net ext0-PV => remora.PV.1
+#   net remora-status => PID-bed.auto / PID-ext0.auto
+#
+# `heater_bed`/`heater_extruder` here (not "bed"/"ext0") since ids
+# aren't required to match byte-for-byte — only the *shape* is.
+
+
+def test_both_pid_loops_are_loaded(fragment):
+    assert "loadrt PIDcontroller names=PID-heater_bed" in fragment.loadrt
+    assert "loadrt PIDcontroller names=PID-heater_extruder" in fragment.loadrt
+
+
+def test_analog_out_allocation_matches_the_reference_declaration_order(fragment):
+    """bed's heater-SP, then extruder's heater-SP, then its cooling
+    fan's SP — exactly the reference file's SP.0/SP.1/SP.2 order,
+    because `tools[]` here is declared bed-then-extruder like the
+    real machine's `PID-bed,PID-ext0`."""
+    assert "net heater_bed-heater-SP => remora.SP.0" in fragment.nets
+    assert "net heater_extruder-heater-SP => remora.SP.1" in fragment.nets
+    assert "net fan_heater_extruder-SP => remora.SP.2" in fragment.nets
+
+
+def test_analog_in_allocation_matches_the_reference_declaration_order(fragment):
+    assert "net bed-PV <= remora.PV.0" in fragment.nets
+    assert "net extruder-PV <= remora.PV.1" in fragment.nets
+
+
+def test_endstop_indices_are_unaffected_by_the_added_heaters(fragment):
+    """The index-scoping fix this phase needed: heaters sitting between
+    endstop requests must not shift `remora.input.NN` numbering."""
+    assert "net endstop_x-sw remora.input.00" in fragment.nets
+    assert "net endstop_y-sw remora.input.01" in fragment.nets
+    assert "net endstop_z-sw remora.input.02" in fragment.nets
+
+
+def test_pid_auto_is_wired_off_the_link_watchdog(fragment):
+    assert "net remora-status => PID-heater_bed.auto" in fragment.nets
+    assert "net remora-status => PID-heater_extruder.auto" in fragment.nets
+
+
+def test_heater_and_sensor_pins_never_become_hal_nets(fragment):
+    for pin in ("PB7", "PE3", "PA0", "PA1", "PB1"):
+        assert not any(pin in n for n in fragment.nets), pin

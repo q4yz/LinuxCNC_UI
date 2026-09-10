@@ -90,6 +90,13 @@ class Stepper:
     position_min: float | None = None
     position_max: float | None = None
     homing_speed: float | None = None
+    # Class-B (Remora) position-loop tuning: `setp remora.joint.N
+    # .deadband` / `.pgain`. Real reference values, not invented —
+    # `machine_config/example/ender3/ender3.hal` sets `deadband` on
+    # joint 2 and `pgain` on joint 3. No class-A equivalent (no such
+    # loop to tune).
+    deadband: float | None = None
+    pgain: float | None = None
     endstops: list["EndstopSwitch"] = field(default_factory=list, repr=False)
 
     @property
@@ -321,6 +328,12 @@ class MachineConfigGraph:
     # Multiple MCUs. The key is the section's object name
     # (``"mcu"`` for the bare ``[mcu]`` form, ``"a"`` for ``[mcu a]``).
     mcus: dict[str, MCU] = field(default_factory=dict)
+    # ``[duplicate_pin_override]``'s ``pins:`` list, normalised to
+    # ``"<mcu_id>:<pin_id>"`` (modifiers stripped — a collision is a
+    # property of the raw physical pin, not of how one caller happens
+    # to invert it). An operator-declared exception to the pin-conflict
+    # guard; see `.agent/component/README.md` § 3.
+    duplicate_pin_overrides: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def mcu(self) -> MCU | None:

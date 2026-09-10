@@ -173,6 +173,13 @@ class Stepper(BaseModel):
     # this file alone instead of assuming the 200-step default.
     full_steps_per_rotation: int | None = None
     homing_speed: float | None = None
+    # Class-B (Remora) position-loop tuning — `setp remora.joint.N
+    # .deadband` / `.pgain`. No class-A equivalent (no such loop to
+    # tune); real values from the reference config, not invented
+    # (`machine_config/example/ender3/ender3.hal`: `deadband` on
+    # joint 2, `pgain` on joint 3).
+    deadband: float | None = None
+    pgain: float | None = None
 
 
 class Driver(BaseModel):
@@ -456,6 +463,11 @@ class HardwareJson(BaseModel):
     # additive (no cross-reference resolution needed) and stays
     # inside the v2 envelope.
     mcus: list["McuInfo"] = Field(default_factory=list)
+    # ``[duplicate_pin_override]``'s allowlist, normalised to
+    # ``"<mcu_id>:<pin_id>"`` strings — an operator-declared exception
+    # to the HAL compiler's pin-conflict guard (`.agent/component/
+    # README.md` § 3). Empty for a profile that declares none.
+    duplicate_pin_overrides: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_references(self) -> "HardwareJson":

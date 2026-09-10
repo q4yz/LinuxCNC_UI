@@ -43,13 +43,7 @@ PAYLOAD: dict[str, Any] = {
     "source": "test",
     "kinematics": "cartesian",
     "hal_type": "parport",
-    "mcus": [
-        {
-            "id": "mcu",
-            "connection": "parallelport",
-            "parameters": {"address": "0", "direction": "out", "reset_time": 2500},
-        }
-    ],
+    "mcus": [{"id": "mcu", "connection": "parallelport", "interface": "0"}],
     "axes": [
         {"id": "x", "joint_numbers": [0], "endstop": "endstop_xz"},
         {"id": "y", "joint_numbers": [1], "endstop": "endstop_y"},

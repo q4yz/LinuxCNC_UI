@@ -47,20 +47,25 @@ def test_step_dir_enable_never_become_hal_nets_or_pin_requests():
     assert not any("stepgen" in n or "parport" in n for n in fragment.nets)
 
 
-def test_joint_pins_become_one_firmware_stepper_module():
+def test_joint_pins_become_one_firmware_stepgen_module():
+    """Module shape verified against the real, working
+    `machine_config/example/ender3/config.txt` — `"Type": "Stepgen"`
+    (not "Stepper"), a `"Name"` field, and pins underscore-formatted
+    (`"PF_13"`, not Klipper's `"PF13"`)."""
     fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [X_JOINT], None)
     assert len(fragment.firmware_modules) == 1
 
     request = fragment.firmware_modules[0]
     assert request.mcu_id == "mcu"
     assert request.module == {
+        "Name": "stepper_x",
         "Thread": "Base",
-        "Type": "Stepper",
-        "Comment": "stepper_x",
+        "Type": "Stepgen",
+        "Comment": "stepper_x step generator",
         "Joint Number": 0,
-        "Step Pin": "PF13",
-        "Direction Pin": "!PF12",
-        "Enable Pin": "PF14",
+        "Step Pin": "PF_13",
+        "Direction Pin": "!PF_12",
+        "Enable Pin": "PF_14",
     }
 
 
@@ -68,7 +73,7 @@ def test_dir_and_enable_pins_are_optional_in_the_firmware_module():
     joint = {"id": "stepper_x", "joint_number": 0, "step_pin": "mcu:PF13"}
     fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [joint], None)
     module = fragment.firmware_modules[0].module
-    assert module["Step Pin"] == "PF13"
+    assert module["Step Pin"] == "PF_13"
     assert "Direction Pin" not in module
     assert "Enable Pin" not in module
 
@@ -117,3 +122,27 @@ def test_a_dual_motor_axis_wires_the_shared_endstop_into_both_joints():
     assert "net endstop_y-sw => joint.1.home-sw-in joint.1.neg-lim-sw-in" in fragment.nets
     assert "net endstop_y-sw => joint.2.home-sw-in joint.2.neg-lim-sw-in" in fragment.nets
     assert sum(1 for r in fragment.requests if r.role is PinRole.ENDSTOP) == 1
+
+
+def test_deadband_is_emitted_as_a_literal_value():
+    """Real reference value, not invented — `ender3.hal` sets
+    `setp remora.joint.2.deadband 0.005`."""
+    joint = dict(X_JOINT, deadband=0.005)
+    fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [joint], None)
+    assert "setp remora.joint.0.deadband 0.005" in fragment.setp
+
+
+def test_pgain_is_emitted_as_an_ini_var_reference_not_a_literal():
+    """`ender3.hal` sets `setp remora.joint.3.pgain [JOINT_3]PGAIN` —
+    an ini-var reference, matching every other tunable gain in this
+    compiler (heater PID) being re-tunable without regenerating HAL."""
+    joint = dict(X_JOINT, pgain=1.0)
+    fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [joint], None)
+    assert "setp remora.joint.0.pgain [JOINT_0]PGAIN" in fragment.setp
+    assert not any("pgain 1.0" in s for s in fragment.setp)
+
+
+def test_deadband_and_pgain_are_independently_optional():
+    fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [X_JOINT], None)
+    assert not any("deadband" in s for s in fragment.setp)
+    assert not any("pgain" in s for s in fragment.setp)

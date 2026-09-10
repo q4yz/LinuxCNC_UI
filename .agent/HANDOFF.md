@@ -14,173 +14,276 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
-### 1.6 (2026-09-09) MCU record slimmed: no is_remora, board never autofilled, Modbus trio added
+### 1.14 (2026-09-10) A real `machine.hal` bug (bit->float), two more Gemini claims checked and rejected, `deadband`/`pgain` ingested
 
-User-directed schema cleanup, matching the architecture review:
+Second round of secondhand advice (Gemini, reviewing generated
+`machine.hal` this time), checked claim-by-claim against
+`machine_config/example/ender3/ender3.hal` before changing anything —
+same discipline as 1.13. Split roughly even this time:
 
-- **`is_remora` deleted everywhere** (McuInfo model, generator
-  emission, doc examples). `connection` is the single discriminator:
-  the capability class and the HAL router both branch on it, and a
-  boolean couldn't scale past two transport families. No runtime
-  consumer read it (grepped backend + frontend before deleting).
-- **`board` kept but optional, never autofilled.** The parser no
-  longer substitutes "BIGTREETECH OCTOPUS" for a bare `[mcu]` — HAL
-  generation cares about protocols and device paths, not PCB names;
-  an absent board stays absent in hardware.json.
-- **Modbus serial trio** `baud_rate` / `node_id` / `parity` now
-  ingests from `[mcu]` sections (parser + MCU_KEYS + MCU dataclass +
-  McuInfo), is **rejected on non-RS485 connections**
-  (`InvalidValueError`), and flows through the generator into the
-  compiled `vfd_vfd0.ini` `[common]` block. Parity normalises
-  datasheet-style `N`/`E`/`O` to vfdmod's `none`/`even`/`odd`.
-  `VfdRs485RouterMapper` dropped its dead `mcus[].parameters`
-  fallback (never populated by any real cfg) and reads the real
-  fields; register maps (`model`) remain not-yet-ingested, `vfd.ini`
-  register lines stay empty.
-- **Docs** (`mcu_vfd_rs485.md`, `mcu_spi_remora.md`): § 1/§ 2 now
-  document the implemented flat record shape and the real key names;
-  the other MCU docs' `type:` ingestion key renamed to
-  `connection:` for consistency.
-- **Machine folders regenerated from profiles** (not their own stale
-  `machine.cfg` copies — regenerating from the copy resurrected
-  pre-pin spindle sections and broke
-  `test_the_shipped_example_machine_is_compilable`). All nine
-  machines validate clean. `machines/new_config_example/` is now an
-  orphan: the user deleted its source profile
-  (`new_config_example.cfg`) — left in place, flagged here.
-- 391 system + 55 common tests passing; mypy not in the venv
-  (orchestrator's gate).
+**Real bug, fixed:** the watermark heater branch wired
+`comp-<id>.out` (a HAL **bit**) straight into `<id>-heater-SP`, which
+`RemoraRouterMapper` routes into `remora.SP.N` — a **float** duty
+channel. Linking a bit pin to a float pin is a genuine HAL load-time
+type error; confirmed correct against real HAL component semantics
+(`comp.out` is documented as `bit`), not just taken on faith. Fixed
+with `conv_bit_float` + a `scale` stage — the *same* bit->float idiom
+`fan.md`'s own `kind: heater` gating already uses, not Gemini's
+suggested `mux2` (functionally equivalent, but inconsistent with this
+codebase's own precedent). Landing "on" at `max_power` percent
+(default 100.0) matches the PID branch's `CVmax` convention. `heater.md`
+§ 3's watermark sketch corrected to match — it documented the buggy
+version.
 
-### 1.5 (2026-09-09) Per-MCU example profiles + malformed-cfg 500 crash fix
+**Two claims checked and rejected, with reasons:**
+- *"Insert a `not` component to un-invert `enable_pin` between
+  `joint.N.amp-enable-out` and `remora.joint.N.enable`."* Wrong
+  architecture: the `!` in a Klipper `enable_pin` describes physical
+  GPIO polarity, which belongs in — and already lives in — the
+  firmware `config.txt` Stepgen module's own `"Enable Pin"` field
+  (1.13's fix). `remora.joint.N.enable` is a *logical* board-protocol
+  signal with no relationship to GPIO polarity; inverting it would
+  flip LinuxCNC's enabled/disabled meaning rather than fix hardware
+  polarity — a regression, not a fix. Not implemented.
+- *"Add explicit `<=` before `remora.input.NN` for clarity."* The real
+  reference file uses the exact same arrow-less form this compiler
+  already emits (`net X-stop remora.input.00 => joint.0.home-sw-in
+  ...`) — both are valid HAL (an unprefixed pin binds by its own
+  declared direction), and matching the verified-working reference
+  syntax mattered more than adding a cosmetic arrow nothing was wrong
+  without. Not implemented.
+- *addf order* (`remora.read` -> motion -> `remora.update-freq` ->
+  `remora.write`, PID/heater logic strictly between) — already
+  correct; no change needed.
 
-Two related pieces, one session:
+**Genuine gap, closed:** `deadband`/`pgain` per-joint position-loop
+tuning — `ender3.hal` really does set `deadband` on joint 2 and
+`pgain` on joint 3, and neither was ingestible from a `.cfg` at all
+(flagged as a known Phase-2 limitation back in the original Remora
+work, never circled back to until now). Added to `STEPPER_KEYS`, the
+`Stepper` dataclass + hardware.json model, the parser, and
+`RemoraStepperHalMapper`. `deadband` emits as a literal (matching the
+reference exactly); `pgain` emits as an ini-var reference
+(`[JOINT_N]PGAIN`, also matching the reference) rather than a literal
+— consistent with every other tunable gain in this compiler (heater
+PID) being re-tunable without regenerating the HAL.
 
-- **Example profiles for every documented MCU transport** — five new
-  files under `machine_config/profiles/`: `mcu_parallelport.cfg`
-  (class A), `mcu_remora_spi.cfg` (class B), `mcu_vfd_rs485.cfg`
-  (class C, VFD-only — valid precisely because a spindle controller
-  is a machine on its own bus), `mcu_ethercat.cfg` and
-  `mcu_usb_arduino.cfg` (skeletons: parse/validate/compile today,
-  routers pending). Each header states its capability class and
-  compile status honestly. All five verified through the real
-  pipeline (parse → hardware.json → validator → assembler).
+**907 backend tests passing** (`common`+`machine`=452, `system`=455),
+mypy clean.
 
-- **Transport registration** — `ethercat` and `usb_arduino` were
-  documented (`.agent/component/`) but unparseable: added to
-  `ALLOWED_CONNECTION_TYPES`, `CapabilityClass.for_connection`
-  (ethercat=B, usb_arduino=C), both `Literal`s and
-  `HARDWARE_MCU_CONNECTION_TYPES`. No router claims them yet — an
-  unroutable pin still raises `UnsupportedMcuError`, same honest gap
-  as `remora-eth`.
+### 1.13 (2026-09-10) `config.txt`'s actual shape was wrong — fixed against the real reference, not generic advice
 
-- **The crash the user actually hit** — `POST /machines/generate`
-  500-crashed on `connection: ethercat`. Direct cause: a stale
-  server process (its expected-connection list predated even
-  `vfd_rs485`; traceback source lines didn't match the files).
-  Restart required — fixes cannot reach a running uvicorn. But the
-  report exposed a real gap: `configparser.Error` (duplicate key,
-  missing `:`) is NOT a `ValueError`, so it escaped every handler
-  and crashed the ASGI app raw. Fixed by wrapping `read_file` in
-  `parse`/`parse_string` into a new `MalformedConfigError`
-  (ConfigValidationError subclass, `kind: "malformed_config"`,
-  carries configparser's section/option/lineno) — it now rides the
-  existing global handler → structured 400 → frontend toast
-  (`describeError` already reads `body.error.message`). Also fixed
-  en route: `MotionSystemHalMapper` no longer emits a class-A
-  `stepgen` bank for a zero-joint machine (the VFD-only profile
-  exposed it). 387 system + 55 common tests passing; mypy not
-  installed in the venv this session — orchestrator's gate owns it.
+The user brought secondhand advice (Gemini, reviewing a generated
+`config.txt`) flagging six issues: missing top-level `"Threads"`
+frequencies, nested `"Thermistor"` should be flat, `"Stealth chop"`
+should be a JSON boolean not `"on"`, TMC2209 needs `"TX pin"` +
+`"Address"`, `"Name"`/`"Comment"` risk RAM exhaustion on the MCU,
+`"Sensor": "Generic 3950"` is invalid. **Checked every claim against
+`machine_config/example/ender3/config.txt` — a real config actually
+flashed to working firmware — before changing anything, per this
+project's standing rule of grounding compiler output in real
+machines, not generic documentation.** Every single claim was
+contradicted by that file: no `"Threads"` block exists at all;
+`"Thermistor"` genuinely is nested; `"Stealth chop": "on"` genuinely
+is a string; TMC2209 modules carry only `"RX pin"`, no TX/Address;
+`"Name"` and `"Comment"` appear on every module; `"Sensor": "Generic
+3950"` is exactly right. None of that advice landed.
 
-- **Next:** Phase 3 (heaters/fans as HAL components) unlocks the
-  Arduino I/O half of `mcu_usb_arduino.cfg`; Phase 4 (lcec router +
-  `[ethercat_slave]` parsing) unlocks real EtherCAT machines.
+**What actually needed fixing, found by the same comparison:** this
+compiler's own `config.txt` generation, built in 1.1–1.10 without a
+byte-level check against the reference file, had genuine bugs —
+wrong root shape (`{"Thread": {...}}` was invented, should be
+`{"Board": ...}`), wrong module `"Type"` strings (`"Stepper"` should
+be `"Stepgen"`; `"DigitalPin"` should be `"Digital Pin"`, with a
+space), no `"Name"` field on any module, and every pin spelled
+Klipper-style (`"PF13"`) instead of Remora's underscored convention
+(`"PF_13"`) — silent failures in real ArduinoJSON parsing, not
+cosmetic.
 
-### 1.4 (2026-09-09) `[spindle]` parser migrated off `*_signal` fields onto pins
+- **New:** `RemoraFirmwarePinMapper` (`backend/common/mappers/
+  machineconfig/`) — `"PF13"` -> `"PF_13"`, used everywhere a pin
+  reaches `config.txt` (never in `.hal` text, which doesn't care about
+  hardware pin-naming). `RemoraDriverFirmwareMapper` — one `TMC2209`
+  module per joint whose driver declares a `uart_pin`, gated to class
+  B only (a class-A machine with a stray `[tmc2209]` section must not
+  produce a `config_<mcu>.txt` for a board that will never read one).
+  The one real unit conversion in it — `run_current` (amps, Klipper's
+  native unit) -> `"Current"` (milliamps, the reference file's unit)
+  — is called out with an explicit "verify against real hardware"
+  comment, not asserted as fact.
+- **`RemoraRouterMapper.route()`** now also emits a `"PWM"` firmware
+  module for every `ANALOG_OUT` request (heater/fan outputs) —
+  previously only the HAL `net` line existed, with no `config.txt`
+  entry telling the board which physical pin `SP.N` drives.
+  Deliberately **not** emitting a `"Temperature"` module for
+  `ANALOG_IN` (sensor readings) yet — that needs a thermistor curve
+  (`beta`/`r0`/`t0`) `temperature_sensors[]` doesn't carry, and a
+  fabricated curve would silently misreport real temperatures.
+- `.agent/component/mcu_spi_remora.md` § 4 rewritten to match — it
+  documented the same wrong shape this compiler was built from.
+- **900 backend tests passing** (`common`+`machine`=452, `system`=448),
+  mypy clean.
 
-The gap flagged in 1.1/1.3 as blocking Phase 3: `SpindleDigital`
-(`klipper_models.py`) carried `target_rpm_signal`/`rpm_out_signal`/etc.
-— already-resolved HAL signal names that could never be routed to an
-MCU. Replaced with the pin fields `digital_spindle.md` § 1 documents
-(`run_pin`, `reverse_pin`, `speed_pin`, `speed_fb_pin`, `at_speed_pin`,
-`fault_pin`, `is_connected_pin`, `error_count_pin`, plus
-`spindle_number`/`rpm_scale`) across `SPINDLE_KEYS`
-(`machineconfig_schema.py`), `_parse_spindle_digital`
-(`machineconfig_parser.py`), `_tool_payload_from_spindle_digital`
-(`hardware_json_generator.py`), and the `Tool` model
-(`hardware_json_models.py`).
+- **Next:** the `temperature_sensors[]` schema gap (no thermistor
+  curve) blocks the `"Temperature"` firmware module — same shape as
+  the `fans[].kind` gap noted in 1.10. `TMC2209`'s `"Current"` unit
+  conversion should be verified against a real board before trusting
+  it unattended on hardware.
 
-**Verified before touching anything:** grepped the whole runtime
-(`backend/machine`, the mock hardware layer, `SpindleDigitalMapper`)
-for every `signal_*` field name — zero matches. The runtime addresses
-a digital spindle by a fixed HAL naming convention off its `id` suffix
-(`spindle-at-speed<suffix>` etc.) and never read these fields at all;
-they were pure dead weight in `hardware.json`, the same class of bug
-already fixed for `temperature_sensors[].pin` this session. This is
-what kept the migration to compile-time files only — no runtime risk,
-despite the field touching 24 files by name.
+### 1.12 (2026-09-10) `config.txt` / `vfd.ini` sidecars now write to disk — keyed by MCU id
 
-No shipped `.cfg` profile used the old `*_signal` keys (checked all
-four with a `[spindle]` section — only `max_rpm`/`min_rpm` are set),
-so nothing broke on the ingestion side either. **792 backend tests
-passing, mypy clean** (same count as 1.3 — this only renamed fields
-inside existing tests, no new ones needed since
-`test_hardware_json_lossless.py`'s generic walk already covers it).
+Closes 1.11's "Next" item. `HalFragment.files` (Remora `config_<id>
+.txt`, VFD `vfd_<id>.ini`) was already computed by the assembler but
+never reached disk. `generate_machine_templates` now writes one file
+per entry — user-flagged before landing: a machine with **two** Remora
+boards must not have the second board's firmware payload silently
+overwrite the first's.
 
-- **Next:** Phase 3 — heaters/fans/spindles as HAL components, no
-  longer blocked. `digital_spindle.md`'s router notes (§ 4) are ready
-  to implement against `mcu_vfd_rs485.md`.
+- Verified this was already correct at the assembler layer, not just
+  assumed: a two-`[mcu]` profile (`mcu_a`/`mcu_b`, one stepper on
+  each) produces `config_mcu_a.txt` and `config_mcu_b.txt`, each
+  containing only its own joint's `Stepper` module — because
+  `RemoraStepperHalMapper` already keys each `FirmwareModuleRequest`
+  by the joint's *own* `step_pin`'s MCU, and `_render_firmware_configs`
+  groups by that id. Locked in with a `generate_machine_templates`-
+  level test, not just an assembler-level one — the disk-writing loop
+  itself was the only genuinely new code.
+- Split `_render_machine_hal` into `_compile_machine` (returns
+  `(hal_text, sidecar_files)`) — validates and assembles once, so the
+  same `HalFragment` produces both the rendered text and its files
+  instead of assembling twice.
+- The fallback path (machine doesn't compile yet) correctly yields no
+  sidecar files — nothing was assembled, so nothing to write; a stale
+  sidecar from a *previous* successful generation is still cleared by
+  the existing `clear_directory` step before any file is written.
+- Sidecar filenames aren't in the static `GENERATED_FILES` tuple
+  (the set is as dynamic as the machine's own MCU list) — reported
+  back via `GenerateResult.files` alongside it instead.
+- **886 backend tests passing** (`common`+`machine`=449, `system`=437),
+  mypy clean.
 
-### 1.3 (2026-09-09) HAL compiler — Phase 2 (Remora / class B) landed
+### 1.11 (2026-09-10) The compiler is wired into `generate_machine_templates` — no longer test-only
 
-**Status: class A (parport) and class B (Remora SPI) both compile
-end-to-end, both golden-file verified against real machines. Phase 3+
-(heaters/spindles/fans as HAL components) not started.** Builds on 1.2
-below — read that first.
+Everything through 1.10 was real, tested code that nothing in
+production actually called — `POST /machines/generate` still wrote
+`machine.hal` as `render_hal_template`'s fully-commented pin catalog
+(the pre-compiler placeholder). This wires `services.halcompiler` into
+that real pipeline for the first time.
 
-- **New:** `components/RemoraStepperHalMapper.py` (position loop only —
-  no `stepgen`, no step/dir/enable HAL nets at all: those become
-  firmware `config.txt` entries via a new `FirmwareModuleRequest` DTO,
-  since the board owns the pulses), `mcus/RemoraRouterMapper.py`
-  (`loadrt remora-spi`/`remora_lpc`, the SPI-enable/E-stop watchdog
-  chain, `remora.input.NN` allocation for endstops). `HalFragment`
-  gained `firmware_modules: list[FirmwareModuleRequest]`; the assembler
-  aggregates them per-MCU into a `config_<mcu_id>.txt` JSON sidecar
-  (`HalFragment.files`, not part of the rendered `.hal` text).
+- **`generator._render_machine_hal`** (new): tries
+  `compile_machine_hal(payload)`; on success, `machine.hal` becomes
+  the real compiled wiring with the webgui pin catalog trailing as a
+  documentation-only appendix (`render_hal_template(..., standalone=
+  False)` — new parameter, existing standalone behavior/tests
+  untouched). On `ValueError` (validation errors) or
+  `UnsupportedMcuError` (no router for this connection yet), falls
+  back to the full catalog-only file it always wrote, with a comment
+  explaining why — **generation must never crash** just because a
+  profile doesn't compile yet; that would regress every profile the
+  old generator handled unconditionally. `[HAL] HALFILE = machine.hal`
+  then `custom.hal` (machine.ini) means this loads first, real or not.
 
-- **Real structural difference caught against the reference machine:**
-  Remora's endstop wiring targets **both** `home-sw-in` and
-  `neg-lim-sw-in` (`3Dprinter.hal`: `net X-stop remora.input.00 =>
-  joint.0.home-sw-in joint.0.neg-lim-sw-in`) — genuinely different from
-  the parport reference, which wires `home-sw-in` alone. Class A's
-  mapper was correctly left untouched; only `RemoraStepperHalMapper`
-  emits the second target.
+- **Real bug this surfaced, not hypothetical:** `HalAssembler._route()`
+  only called an MCU's `base_fragment()` for MCUs with at least one
+  routed `PinRequest`. Fine for class A (step/dir/enable always
+  generate requests) and every previous golden-test fixture (always
+  had endstops) — broken for a genuinely bare class B machine: Remora
+  generates *no* PinRequest for motion at all, so a machine with just
+  steppers and nothing else yet (no endstops, no heaters) would never
+  `loadrt remora-spi` — even though every joint's `net j0pos-cmd ...
+  => remora.joint.0.pos-cmd` line already depends on that load having
+  happened. First real profile run through the new pipeline hit this
+  immediately. Fixed: `_route()` now also forces `base_fragment()` for
+  every MCU any joint's `step_pin` resolves to, independent of whether
+  anything else routes through it — a board's own load was never
+  conditional on its I/O being used.
 
-- **Capability-class resolution moved before dispatch.** Phase 1 derived
-  the machine's capability class *after* building fragments, by
-  scanning emitted step/dir `PinRequest`s — works for class A, but
-  class B emits none (Remora has no HAL step/dir pin to route), so
-  `HalAssembler._capability_class()` now reads a joint's raw `step_pin`
-  directly, up front, and that decides which stepper mapper
-  (`StepperHalMapper` vs `RemoraStepperHalMapper`) gets dispatched to
-  per axis.
+- **884 backend tests passing** (`common`+`machine`=449, `system`=435),
+  mypy clean.
 
-- **Golden test:** `tests/test_hal_compiler_golden_remora.py`, built
-  from `ender3.hal` + `3Dprinter.hal`'s real 4-joint layout (X/Y/Z/
-  extruder, only X/Y/Z have endstops). One deliberate wiring-shape
-  difference from the source text, noted in the test docstring: the
-  reference combines endstop writer+reader on one `net` line; this
-  compiler splits them across two statements (component emits the
-  reader, router emits the writer) — the same split Phase 1 already
-  uses for parport, and HAL lets a net name accumulate targets across
-  statements, so it's functionally identical.
+- **Next:** see 1.12 above — the `config.txt`/`vfd.ini` sidecar gap
+  this entry flagged is closed. After that: the deferred items from
+  1.10 (cold-extrusion guard, class A heater support, fan `kind`
+  schema).
 
-- `remora-spi` is now routed; `remora-eth` deliberately is not (no
-  reference machine exists for it) — still an honest `UnsupportedMcuError`.
-  **792 backend tests passing** (`common`+`machine`=449, `system`=343),
-  mypy clean across all three packages.
+### 1.10 (2026-09-09) HAL compiler — heaters/extruders (Remora) landed
 
-- **Next:** Phase 3 — heaters/fans/spindles as HAL components. See 1.4
-  above — its blocking prerequisite has since landed.
+Phase 3 continues: `HeaterHalMapper` (`.agent/component/heater.md` § 3)
+covers the thermal half of every `heated_bed`/`extruder` tool — PID and
+watermark loops, the sensor `-PV` reading, a referenced fan's `-SP` as
+a plain passthrough. An extruder's *motion* half needed no new code —
+`hardware_json_generator` already emits it as an ordinary joint+axis,
+so the existing stepper mappers already handle it; this only adds the
+missing thermal piece `exturder.md` calls "identical to heater.md".
+
+- **New:** `components/HeaterHalMapper.py`. New `PinRole.ANALOG_OUT`/
+  `ANALOG_IN` (`hal_fragment_models.py`) — direction-based like
+  `SPINDLE_OUT`/`SPINDLE_IN`, covering `remora.SP.N`/`remora.PV.N`.
+  Wired into the assembler as `_heater_fragments()`, independent of
+  motion class (same reasoning as spindles).
+
+- **Real latent bug caught, not hypothetical:** `RemoraRouterMapper.route()`
+  indexed `remora.input.NN` off a single `enumerate(requests)` shared
+  across *every* role — harmless while only `ENDSTOP` requests ever
+  reached it (Phase 2), but the moment heaters share the same router
+  (ender3 does, for real: X/Y/Z endstops + bed/extruder heaters all on
+  one Remora board), an `ANALOG_OUT` request sitting between two
+  `ENDSTOP` ones would have burned an index and shifted every endstop
+  after it. Fixed with one counter per role
+  (`endstop_index`/`sp_index`/`pv_index`); golden-tested with a mixed
+  request list to lock it in.
+
+- **Golden test extended, not new:** `test_hal_compiler_golden_remora.py`'s
+  existing motion-only fixture gained the real bed + extruder-0
+  heaters from `3Dprinter.hal`'s "PID controllers for heaters" section
+  — `PID-bed,PID-ext0`, `SP.0`/`SP.1`/`SP.2`, `PV.0`/`PV.1`. Because
+  the fixture declares `tools[]` bed-then-extruder (matching the real
+  file's own declaration order) the SP/PV index allocation lands on
+  the *exact* real numbers, not just a plausible shape.
+
+- **Deliberately deferred** (documented as gaps in `heater.md`/
+  `fan.md`/`exturder.md` rather than silently missing): class A
+  (`pwmgen` staging, `E_PID_WITHOUT_PWM`, `E_NO_ANALOG_INPUT` — no
+  ADC on a bare parport); `fan.md`'s `kind: heater`/`controller`
+  differentiation (needs `fans[]` schema fields that don't exist yet —
+  every fan compiles as an unconditional passthrough today, matching
+  what the reference machine itself actually does); the extruder's
+  cold-extrusion guard (`wcomp`/`and2` gating `enable-safe` — a real
+  safety gap, `j<n>enable` reaches hardware unconditionally today).
+- **880 backend tests passing** (`common`+`machine`=449, `system`=431),
+  mypy clean.
+
+- **Next:** the cold-extrusion guard is the most safety-relevant of
+  the deferred items — worth doing before class A heater support.
+  Fans as their own component (not just a heater's passthrough) need
+  the `fans[]` schema extension `fan.md` § 2 already specifies.
+
+### 1.3–1.9 (2026-09-09) HAL compiler build-out — Phase 2 through the flat-MCU/quoting cleanup
+
+Compressed 2026-09-10 (fully superseded by 1.10–1.14's fuller,
+verified-against-reference work) — full detail in git history around
+this window. In order: **1.3** Phase 2, class B/Remora motion
+(`RemoraStepperHalMapper`, `RemoraRouterMapper`, the `config_<id>.txt`
+firmware sidecar). **1.4** `[spindle]` migrated off dead `*_signal`
+fields onto real pins. **1.5** per-MCU example profiles +
+`MalformedConfigError` for a raw `configparser.Error` that had been
+crashing the ASGI app. **1.6** `is_remora` deleted (connection is the
+sole discriminator), `board` made optional/never-autofilled, the
+Modbus serial trio (`baud_rate`/`node_id`/`parity`) ingested. **1.7**
+the real 500-crash root cause — `lifespan()`-registered exception
+handlers don't intercept in FastAPI/Starlette's actual request
+pipeline, only in tests that register at construction; moved
+registration to app construction. **1.8** `[duplicate_pin_override]`,
+including the assembler-side signal merge that makes an allowed
+shared pin emit *valid* HAL, not just a silenced diagnostic. **1.9**
+quoted `.cfg` values (`interface: "0"`) no longer leak literal quote
+characters into compiled output; `ParportRouterMapper` finished the
+flat-MCU-record cleanup 1.6 started.
+
+**Still open, not yet superseded:** `RemoraRouterMapper.base_fragment`
+still reads the dead `mcus[].parameters` shape for `spi_clk_div`/
+`chip` (never populated by a real `.cfg` — same gap 1.9 fixed for
+parport, not yet done for Remora).
 
 ### 1.2 (2026-09-09) HAL compiler — Phase 1 (first real emitter) landed
 
