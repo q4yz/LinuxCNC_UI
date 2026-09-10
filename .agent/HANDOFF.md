@@ -14,6 +14,78 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.21 (2026-09-11) Real HAL load crash on a heater/extruder machine: `webgui.<sensor>` registered as HAL_OUT, fighting the MCU router's own pin
+
+User ran a real generated machine (their own `printer.cfg`, rewritten
+with a real BIGTREETECH OCTOPUS Remora board — the file 1.19/1.20's
+demo content used to live in) against real LinuxCNC and hit:
+
+```
+webgui_connections.hal:20: Signal 'extruder-PV' can not add OUT pin
+'webgui.extruder', it already has OUT pin 'remora.PV.0'
+```
+
+plus six `HAL Pin double registration detected` warnings (every
+heater/extruder's three pins, doubled) during startup. Pasted with a
+Gemini analysis that turned out to be correct on both counts —
+verified against the actual code before acting, not taken on faith.
+
+- **The crash (real bug, fixed):** `HeaterMapper.from_dict_to_HeaterPins`
+  (`common/mappers/tools/HeaterMapper.py`) and `TemperatureSensorMapper.
+  from_dict_to_TemperaturePins` (`common/mappers/temperature/
+  TemperatureSensorMapper.py`) both registered their `actual_temperature`
+  field as `ReadWriteDynamicHalPin`, which registers `hal.HAL_OUT`
+  (`dtos/pins/ReadWriteDynamicHalPin.py`). But a sensor's reading is
+  *written by the MCU router* (`remora.PV.N` — a genuine HAL_OUT) and
+  only ever *read* by webgui — the correct class is
+  `ReadOnlyDynamicHalPin` (`hal.HAL_IN`). Two HAL_OUT writers on one
+  signal is a real load-time error, not cosmetic; this had been
+  latent since before this session (nothing ever loaded real compiled
+  heater wiring into a real HAL runtime until now — the halcompiler
+  work in earlier entries only ever unit-tested fragment *text*).
+  Fixed both call sites; confirmed empirically (a script preloading
+  both services against the real `example` machine's `hardware.json`
+  now shows `('bed', 2, 1)` / `('extruder_test', 2, 1)` in
+  `HalPin._pending_pins` — `hal_dir=1` is `HAL_IN`, was `2`/`HAL_OUT`
+  before the fix).
+
+- **The double-registration warnings (real bug, fixed, but harmless on
+  its own):** `TemperatureService.preload_hal_pins()`
+  (`machine/services/TemperatureService.py`) called `HeaterMapper.
+  from_dict_to_HeaterPins(tool)` a *second* time for every heater/
+  extruder — `ToolsService.preload_hal_pins()` had already built the
+  exact same `HeaterPins` moments earlier (`machine/main.py` always
+  preloads tools before temperature). `HalPin.check_and_register`'s
+  own dedup guard made this safe (the second registration is silently
+  dropped, so nothing was ever actually double-created in real HAL) —
+  but it built a wasted, independent second DTO object per heater and
+  logged a warning on every single startup. Fixed by having
+  `TemperatureService` source heater-linked pins from
+  `get_tools_service().get_halpins()` instead of rebuilding them
+  (unwrapping `ExtruderPins.heater` for extruders) — `used_sensor_ids`
+  is now read straight off the reused pin's own `get_pin_name()`
+  rather than re-derived from the raw tool dict, so `get_all_heater()`
+  and the direct `HeaterMapper` import are gone from this file
+  entirely.
+
+- **Fixture fallout, unrelated to the fix itself:** the user's own
+  rewrite of `printer.cfg` into a real hardware profile (real board,
+  real pins) removed the last MCU-less profile from
+  `machine_config/profiles/*.cfg`, breaking
+  `test_a_profile_without_an_mcu_is_rejected`'s invariant ("at least
+  one shipped profile has no `[mcu]`"). New dedicated fixture,
+  `motion_only_no_mcu.cfg`, restores it without touching anyone's real
+  config.
+
+- **976 backend tests passing** (`common`+`machine`=456, `system`=520),
+  mypy clean across 298 source files. New tests in
+  `test_heater_carries_sensor.py` (direction regression, both mapper
+  classes) and a new `test_temperature_service_preload.py` (identity
+  check proving `TemperatureService` reuses `ToolsService`'s
+  `HeaterPins` objects rather than rebuilding them, using tool ids
+  unique to that file so the assertion can't accidentally pass off
+  some other test's pin registration).
+
 ### 1.20 (2026-09-10) Estop UI wiring moved to `webgui_connections.hal`; backend now owns the pulse
 
 Direct follow-up to 1.19, prompted by two things happening together:

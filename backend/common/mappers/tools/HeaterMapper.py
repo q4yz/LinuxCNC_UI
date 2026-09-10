@@ -2,6 +2,7 @@ from typing import Dict, Any, TYPE_CHECKING
 
 from core.field_masking import ResponseTier, include_base, include_static
 from dtos.pins.HalPin import  HalDataType
+from dtos.pins.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from dtos.pins.StaticHalPin import StaticHalPin
 from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
@@ -39,7 +40,14 @@ class HeaterMapper:
         return HeaterPins(
             id=tool_id,
             target_temperature=ReadWriteDynamicHalPin(f"target-temperature{suffix}", HalDataType.FLOAT, ""),
-            actual_temperature=ReadWriteDynamicHalPin(actual_pin, HalDataType.FLOAT, ""),
+            # The heater doesn't drive this value — the MCU router's
+            # sensor pin (`remora.PV.N`) is the real HAL_OUT writer;
+            # webgui only reads it. Registering this as a
+            # ReadWriteDynamicHalPin (HAL_OUT) made `webgui.<sensor_id>`
+            # fight `remora.PV.N` for ownership of the same signal — a
+            # genuine HAL load error ("can not add OUT pin ... it
+            # already has OUT pin"), not a cosmetic one.
+            actual_temperature=ReadOnlyDynamicHalPin(actual_pin, HalDataType.FLOAT, ""),
             fan=ReadWriteDynamicHalPin(str(fan_val), HalDataType.FLOAT, "") if fan_val else UnconnectedHalPin(),
             min_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("min_temp"), float) or 0.0),
             max_temp=StaticHalPin(OptionalMappers.as_optional_number(data.get("max_temp"), float) or 300.0),

@@ -6,9 +6,8 @@ from services.temperature_config_mapper import get_temperature_sensors
 
 from factories.temperature.TemperatureStateFactory import TemperatureStateFactory
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
-from services.tools_config_mapper import get_all_heater
-from dtos.tools import HeaterStateDTO, HeaterPins
-from mappers.tools.HeaterMapper import HeaterMapper
+from dtos.tools import ExtruderPins, HeaterStateDTO, HeaterPins
+from services.ToolsService import get_tools_service
 
 
 class TemperatureService:
@@ -22,21 +21,28 @@ class TemperatureService:
         Forces the factory to build the DTOs.
         This queues the pins in HalPin._pending_pins.
         Must be called at startup BEFORE HalPin.initialize_component()
+
+        Heater-linked readings are sourced from :class:`ToolsService`'s
+        own cache (``machine/main.py`` always preloads it first) rather
+        than calling :class:`HeaterMapper` a second time here. Building
+        a second, independent set of ``HeaterPins`` used to re-register
+        the exact same HAL pin names — harmless (``HalPin``'s own dedup
+        guard silently drops the second registration) but noisy: every
+        startup logged a "double registration" warning for every
+        heater's three pins.
         """
         if self._halpins_cache is not None:
             return
 
         out: List[Union[HeaterPins, TemperaturePin]] = []
-        used_sensor_ids = set()
+        used_sensor_ids: set[str] = set()
 
-        heaters = get_all_heater()
-        for tool in heaters:
-            pin_map = HeaterMapper.from_dict_to_HeaterPins(tool)
-            if pin_map is not None:
-                out.append(pin_map)
-                sensor_id = tool.get("sensor") or tool.get("id")
-                if sensor_id:
-                    used_sensor_ids.add(sensor_id)
+        for tool_pins in get_tools_service().get_halpins():
+            heater_pins = tool_pins.heater if isinstance(tool_pins, ExtruderPins) else tool_pins
+            if not isinstance(heater_pins, HeaterPins):
+                continue
+            out.append(heater_pins)
+            used_sensor_ids.add(heater_pins.actual_temperature.get_pin_name())
 
         sensors = get_temperature_sensors()
         for sensor in sensors:

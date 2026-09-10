@@ -20,6 +20,7 @@ heater claims is never built as a separate entity, so the shared name
 can never double-register.
 """
 
+from dtos.pins.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
 from hardware.mock.factory.MockToolFactory import MockToolFactory
 from hardware.mock.tools.MockSensor import MockSensor
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
@@ -82,3 +83,29 @@ def test_mock_sensor_publishes_on_the_pin_the_mapper_reads():
     ).actual_temperature.get_pin_name()
 
     assert MockSensor("chamber").read_pin(expected) is not None
+
+
+def test_heater_actual_temperature_is_hal_in_not_hal_out():
+    """Real regression: this field was a ``ReadWriteDynamicHalPin``
+    (registers HAL_OUT), which made ``webgui.<sensor_id>`` fight the
+    MCU router's own sensor pin (``remora.PV.N``, the real HAL_OUT
+    writer) for ownership of the signal. LinuxCNC rejected the load
+    with "Signal '<id>-PV' can not add OUT pin 'webgui.<id>', it
+    already has OUT pin 'remora.PV.N'" — a crash on real hardware, not
+    a cosmetic issue. The reading is written by the MCU and only ever
+    read by webgui, so it must be HAL_IN (``ReadOnlyDynamicHalPin``).
+    """
+    pins = HeaterMapper.from_dict_to_HeaterPins({"id": "heater_bed", "sensor": "bed"})
+    assert isinstance(pins.actual_temperature, ReadOnlyDynamicHalPin)
+
+
+def test_sensorless_heater_actual_temperature_is_also_hal_in():
+    """No sensor reference doesn't change the direction — only the name."""
+    pins = HeaterMapper.from_dict_to_HeaterPins({"id": "heater_bed"})
+    assert isinstance(pins.actual_temperature, ReadOnlyDynamicHalPin)
+
+
+def test_temperature_sensor_pin_is_hal_in_not_hal_out():
+    """Same regression, the other mapper that names ``webgui.<id>``."""
+    pins = TemperatureSensorMapper.from_dict_to_TemperaturePins({"id": "bed", "pin": "PA0"})
+    assert isinstance(pins.actual_temperature, ReadOnlyDynamicHalPin)

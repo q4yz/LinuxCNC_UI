@@ -397,10 +397,12 @@ def test_profiles_with_an_mcu_pass_the_gate(profile: Path):
 def test_a_profile_without_an_mcu_is_rejected():
     """No board means nowhere to route pins — the gate must say so.
 
-    ``printer.cfg`` and ``tttt.cfg`` ship without an ``[mcu]`` section.
-    They are valid Klipper-ish profiles and valid hardware.json, but
-    they are not compilable machines, and the failure has to name that
-    rather than emitting HAL full of dangling signals.
+    ``motion_only_no_mcu.cfg`` ships without an ``[mcu]`` section (a
+    dedicated fixture — the profile it used to piggyback off of,
+    ``printer.cfg``, is now someone's real hardware profile and always
+    declares a board). It is a valid Klipper-ish profile and valid
+    hardware.json, but not a compilable machine, and the failure has
+    to name that rather than emitting HAL full of dangling signals.
     """
     without_mcu = [p for p in _profiles() if not _generated(p).get("mcus")]
     assert without_mcu, "expected at least one MCU-less profile in the repo"
