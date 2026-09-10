@@ -157,7 +157,14 @@ class AxisBuilder:
                     letter="A",
                     joints=[],
                 ))
-                joint = self._make_extruder_joint(heater, len(self._axes["A"].joints))
+                # Must continue the SAME global sequence every other
+                # joint uses (`self._next_joint()`), not restart from
+                # the A axis's own local joint count. A machine with
+                # X/Y/Z already claiming 0/1/2 previously got an
+                # extruder joint ALSO numbered 0 — a real collision:
+                # two different joints both wired as `[JOINT_0]` /
+                # `remora.joint.0.*`.
+                joint = self._make_extruder_joint(heater, self._next_joint())
                 self._axes["A"].joints.append(joint)
 
         ordered: list[Axis] = []

@@ -10,10 +10,19 @@
 > since `hardware_json_generator` already emits it as an ordinary
 > joint + axis. `HeaterHalMapper` now covers the thermal half too
 > ("identical to `heater.md`" holds in code, not just in the spec).
-> **Not implemented:** the § 3 cold-extrusion guard (`wcomp`/`and2`
-> gating `enable-safe`) — an extruder's raw `j<n>enable` reaches the
-> hardware unconditionally today, so this is a real safety gap versus
-> what's documented here.
+> **Real bug, fixed:** `AxisBuilder` (the *other*, `machine.ini`-facing
+> joint-numbering pass — `hardware_json_generator`'s own was already
+> correct) numbered the extruder joint off the A axis's own local
+> joint count instead of the shared sequential allocator every other
+> joint uses, so it always came out `[JOINT_0]` — colliding with X's
+> own joint 0 on any machine with both. Now continues the same
+> sequence (`[JOINT_3]` after X/Y/Z claim 0/1/2). The matching
+> `[<HEATER_SECTION>]` PID block for the thermal half was also missing
+> from `machine.ini` entirely until now — see `heater.md`'s own status
+> note. **Not implemented:** the § 3 cold-extrusion guard (`wcomp`/
+> `and2` gating `enable-safe`) — an extruder's raw `j<n>enable` reaches
+> the hardware unconditionally today, so this is a real safety gap
+> versus what's documented here.
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.
 **Component ID Format:** `[extruder]` / `[extruder<index>]`, emitted as
@@ -155,8 +164,10 @@ HOME_SEARCH_VEL = 0        # never homed — there is no endstop
 HOME_LATCH_VEL = 0
 HOME_SEQUENCE = 0
 
-# Heater half — see heater.md § 3.
-[EXT<index>]
+# Heater half — see heater.md § 3. Section name is the tool's own id
+# uppercased (heater_ini_section), e.g. [HEATER_EXTRUDER] — not the
+# [EXT<index>] shown here in an earlier draft.
+[<HEATER_SECTION>]
 PID_PONM = 1
 PID_DIR  = 0
 PID_KP   = <parameters.pid_kp>

@@ -1,3 +1,17 @@
+> **Implemented status:** `SpindleWebguiMapper` seeds `webgui_connections.hal`
+> (first generation only — hand edits are preserved on regenerate) with the
+> read-only status pins from § "webgui_connections.hal" below: commanded
+> speed, forward/reverse, at-speed (only when a feedback or at-speed pin
+> exists), and is-connected/error-count/last-error (each independently
+> optional). Pin names verified against the real runtime consumer,
+> `common/mappers/tools/SpindleDigitalMapper.py::from_dict_to_SpindleDigitalPins`
+> (`suffix = tool_id.replace("spindle_digital", "")`, `TargetRpm` capitalised
+> exactly that way). Not yet implemented: the manual override triple
+> (`absolute-master-override-enable`, `absolute-master-override`, `override`)
+> — those are `ReadWriteDynamicHalPin`s needing a `mux2` stage to arbitrate
+> between the G-code-commanded speed and an operator override, which this
+> compiler doesn't build yet.
+
 ## 1. INGESTION (Hand-Written CFG)
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.

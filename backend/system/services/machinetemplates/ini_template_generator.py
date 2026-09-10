@@ -16,17 +16,30 @@ axis letters.
 
 from __future__ import annotations
 
-from typing import List
+from typing import Any, Dict, List
 
 from domain_file_services import paths
+from mappers.machineconfig import heater_ini_section
 
 from models.machineconfig.linuxcnc_models import Axis
+
+#: Documented defaults for PID fields no schema carries yet — see
+#: `.agent/component/heater.md` § 1 (`pid_on_measurement` defaults to
+#: true) and `HeaterHalMapper`'s own `_DEFAULT_MAX_POWER` (the same
+#: 100% ceiling, so the HAL and INI sides agree even though neither
+#: reads it from a real field today).
+_DEFAULT_PID_PONM = 1
+_DEFAULT_PID_CVMAX = 100.0
 
 #: PrintNC-WEBGUI's known-good ``[DISPLAY]`` block (see
 #: ``machine_config/example/PrintNC-WEBGUI/Machine.ini``) — every
 #: value here is a sane default for a bench mill/router, not
 #: machine-specific, so it's safe to carry into every generated INI
-#: verbatim.
+#: verbatim. The commented ``#INTRO_GRAPHIC``/``#INTRO_TIME`` lines
+#: are load-bearing as comments: LinuxCNC's ini parser apparently
+#: expects to see those keywords present (even disabled) — the
+#: reference file carries them the same way, drop them and keep it
+#: working only by accident.
 _DISPLAY_DEFAULTS = """\
 [DISPLAY]
 #DISPLAY = axis
@@ -43,6 +56,8 @@ DEFAULT_LINEAR_VELOCITY = 50.00
 MIN_LINEAR_VELOCITY = 0
 MAX_LINEAR_VELOCITY = 100.00
 
+#INTRO_GRAPHIC = linuxcnc.gif
+#INTRO_TIME = 5
 PROGRAM_PREFIX = {program_prefix}
 INCREMENTS = 5mm 1mm .5mm .1mm .05mm .01mm .005mm
 
@@ -104,7 +119,40 @@ def _render_joint_section(joint) -> List[str]:
     ]
 
 
-def render_ini_template(machine_name: str, axes: List[Axis]) -> str:
+def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
+    """A `[<SECTION>]PID_*` block for one PID-controlled heater.
+
+    `HeaterHalMapper` (`services/halcompiler`) writes `setp
+    PID-<id>.KP [<SECTION>]PID_KP` etc. into `machine.hal` for every
+    PID heater — those are ini-var *references*, not values, so
+    without this section they resolve to nothing and every gain is
+    silently 0. `heater_ini_section` is the single shared naming
+    function both sides use, so the two can never name the section
+    differently. A `watermark` heater has no ini-var references at
+    all (`HeaterHalMapper._watermark_loop` uses literals throughout)
+    and gets no section here.
+    """
+    section = heater_ini_section(str(tool["id"]))
+    min_temp = tool.get("min_temp")
+    max_temp = tool.get("max_temp")
+    return [
+        f"[{section}]",
+        f"PID_PONM = {_DEFAULT_PID_PONM}",
+        "PID_DIR = 0",
+        f"PID_KP = {_fmt(tool.get('pid_kp') or 0.0)}",
+        f"PID_KI = {_fmt(tool.get('pid_ki') or 0.0)}",
+        f"PID_KD = {_fmt(tool.get('pid_kd') or 0.0)}",
+        f"PID_SPMIN = {_fmt(min_temp if min_temp is not None else 0.0)}",
+        f"PID_SPMAX = {_fmt(max_temp if max_temp is not None else 0.0)}",
+        "PID_CVMIN = 0.0",
+        f"PID_CVMAX = {_fmt(_DEFAULT_PID_CVMAX)}",
+        "",
+    ]
+
+
+def render_ini_template(
+    machine_name: str, axes: List[Axis], tools: List[Dict[str, Any]] | None = None
+) -> str:
     """Render a live, loadable ``machine.ini``.
 
     Args:
@@ -115,7 +163,15 @@ def render_ini_template(machine_name: str, axes: List[Axis]) -> str:
             ``AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()``
             — one joint per declared stepper, so a multi-motor axis
             (dual-Y gantry) renders every joint.
+        tools: The ``hardware.json`` ``tools[]`` list (raw dicts,
+            ``build_hardware_json``'s own output — the same shape
+            ``HeaterHalMapper`` consumes). Every ``extruder`` /
+            ``heated_bed`` tool with ``control: "pid"`` (the default)
+            gets a matching ``[<SECTION>]PID_*`` block; ``None`` or a
+            tool-less profile renders none, same as before this
+            parameter existed.
     """
+    tools = tools or []
     joint_count = _joint_count(axes)
     coordinates = _coordinates(axes) or "X"
 
@@ -186,6 +242,13 @@ def render_ini_template(machine_name: str, axes: List[Axis]) -> str:
         lines.extend(_render_axis_section(axis))
         for joint in axis.joints:
             lines.extend(_render_joint_section(joint))
+
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") not in ("extruder", "heated_bed"):
+            continue
+        if (tool.get("control") or "pid") != "pid":
+            continue
+        lines.extend(_render_heater_section(tool))
 
     return "\n".join(lines).rstrip("\n") + "\n"
 

@@ -25,12 +25,18 @@ def test_pid_loop_matches_the_reference_machine_shape():
     assert "net heater_bed-heater-SP <= PID-heater_bed.CV" in fragment.nets
 
 
-def test_pid_setp_block_references_the_ini_section_by_id_suffix():
+def test_pid_setp_block_references_the_ini_section_by_full_tool_id():
+    """The section name is the tool's own id, uppercased — not a
+    LinuxCNC-style `BED`/`EXT0` abbreviation. Two reasons: it reads as
+    "temperature control" generically (heater.md), and it's unique by
+    construction for multiple heaters/extruders since `tools[].id`
+    already has to be (`ini_template_generator.heater_ini_section` is
+    the one shared function both the HAL and INI sides use)."""
     fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
-    assert "setp PID-heater_bed.pOnM [BED]PID_PONM" in fragment.setp
-    assert "setp PID-heater_bed.direction [BED]PID_DIR" in fragment.setp
-    assert "setp PID-heater_bed.SPmax [BED]PID_SPMAX" in fragment.setp
-    assert "setp PID-heater_bed.CVmax [BED]PID_CVMAX" in fragment.setp
+    assert "setp PID-heater_bed.pOnM [HEATER_BED]PID_PONM" in fragment.setp
+    assert "setp PID-heater_bed.direction [HEATER_BED]PID_DIR" in fragment.setp
+    assert "setp PID-heater_bed.SPmax [HEATER_BED]PID_SPMAX" in fragment.setp
+    assert "setp PID-heater_bed.CVmax [HEATER_BED]PID_CVMAX" in fragment.setp
 
 
 def test_pid_compute_is_addf_on_servo_thread():
@@ -39,10 +45,17 @@ def test_pid_compute_is_addf_on_servo_thread():
     assert addf.thread == "servo-thread"
 
 
-def test_extruder_ini_section_derives_from_its_own_id_suffix():
+def test_a_second_extruder_gets_its_own_distinct_ini_section():
+    """No separate numbering scheme needed — the tool id is already
+    unique (`heater.md` § 2's `E_HEATER_ID_COLLISION`), so the derived
+    section is too."""
     extruder = dict(BED, id="heater_extruder", sensor="extruder")
     fragment = HeaterHalMapper.to_fragment(extruder, {"id": "extruder", "pin": "PA1"}, None)
-    assert "setp PID-heater_extruder.KP [EXTRUDER]PID_KP" in fragment.setp
+    assert "setp PID-heater_extruder.KP [HEATER_EXTRUDER]PID_KP" in fragment.setp
+
+    second = dict(BED, id="heater_extruder_test", sensor="extruder_test")
+    fragment = HeaterHalMapper.to_fragment(second, {"id": "extruder_test", "pin": "PA2"}, None)
+    assert "setp PID-heater_extruder_test.KP [HEATER_EXTRUDER_TEST]PID_KP" in fragment.setp
 
 
 def test_watermark_loop_uses_a_comp_block_not_pid():

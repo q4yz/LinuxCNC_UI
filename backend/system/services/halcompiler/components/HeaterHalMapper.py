@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mappers.machineconfig import PinStringMapper
+from mappers.machineconfig import PinStringMapper, heater_ini_section
 from models.machineconfig.hal_fragment_models import (
     SERVO_THREAD,
     Addf,
@@ -89,7 +89,7 @@ class HeaterHalMapper:
 
     @staticmethod
     def _pid_loop(fragment: HalFragment, heater_id: str, sensor_id: str | None) -> None:
-        section = HeaterHalMapper._ini_section(heater_id)
+        section = heater_ini_section(heater_id)
         pid = f"PID-{heater_id}"
 
         fragment.loadrt.append(f"loadrt PIDcontroller names={pid}")
@@ -154,19 +154,6 @@ class HeaterHalMapper:
         fragment.nets.append(f"net {heater_id}-heater-SP <= {duty}.out")
 
     # -- shared -------------------------------------------------------------- #
-
-    @staticmethod
-    def _ini_section(heater_id: str) -> str:
-        """`heater_bed` -> `BED`; `heater_extruder` -> `EXTRUDER`.
-
-        A `[SECTION]PID_*` ini-var reference, not a value — machine.ini
-        generation is a separate, not-yet-built compiler output
-        (`heater.md` § 3); this only has to name the section
-        consistently, matching the id-suffix convention every other
-        heater-facing pin already uses (§ 2's routing table).
-        """
-        suffix = heater_id.replace("heater", "", 1).strip("_")
-        return suffix.upper() or heater_id.upper()
 
     @staticmethod
     def _request(

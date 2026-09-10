@@ -14,6 +14,109 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.16 (2026-09-10) `machine.ini` INTRO_GRAPHIC/INTRO_TIME parser quirk, `webgui_connections.hal` now seeded with real spindle+heater bindings
+
+- **`[DISPLAY]` needs `#INTRO_GRAPHIC`/`#INTRO_TIME` present even
+  commented.** User-reported: LinuxCNC's ini parser apparently expects
+  these keywords to exist (disabled is fine) — dropped from
+  `_DISPLAY_DEFAULTS` (`ini_template_generator.py`) at some point,
+  restored at the exact position the real `PrintNC-WEBGUI/Machine.ini`
+  has them, right before `PROGRAM_PREFIX`.
+
+- **`webgui_connections.hal` now gets real routing on first generation.**
+  Scope: spindle + heater only, per explicit instruction. New
+  `SpindleWebguiMapper`/`HeaterWebguiMapper`
+  (`services/halcompiler/components/`) each take one `tools[]` dict and
+  emit `net` lines into the `webgui.*` namespace; a new
+  `render_webgui_connections(payload)` (`services/halcompiler/__init__.py`)
+  aggregates both over a whole `hardware.json` payload, deliberately
+  independent of `compile_machine_hal`/`validate_machine` — a spindle or
+  heater with a real pin deserves a working UI binding even if the rest
+  of the machine doesn't compile yet. `generator.py`'s existing
+  first-generation-only seed (hand edits always preserved on
+  regenerate — unchanged policy) now calls this instead of writing a
+  bare static header.
+
+- **Course-corrected mid-task (user's own call):** first pass was about
+  to mirror the *literal* reference file's signal/component names
+  (`vfdmod.spindle.at-speed`, `mux2.0.in0`, …) from
+  `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`. User
+  stopped it: use that file only to learn which `webgui.*` pins must
+  exist and the routing shape, then implement with *this* compiler's
+  own already-established signal names (`DigitalSpindleHalMapper`'s
+  `spindle-speed-cmd`/`spindle-forward`/…, `HeaterHalMapper`'s
+  `<id>-SP`/`<sensor>-PV`).
+
+- **Pin names came from the real runtime consumers, not the reference
+  file** — `common/mappers/tools/SpindleDigitalMapper.py::from_dict_to_SpindleDigitalPins`
+  (`suffix = tool_id.replace("spindle_digital", "")`, `TargetRpm`
+  capitalised exactly that way) and
+  `common/mappers/tools/HeaterMapper.py::from_dict_to_HeaterPins`
+  (`suffix = tool_id.replace("heater", "")`, fan bound by its own bare
+  id with no `-SP` suffix on the webgui side).
+
+- **Deliberately out of scope:** the spindle's manual-override triple
+  (`absolute-master-override-enable`/`absolute-master-override`/
+  `override`) and any `ReadWriteDynamicHalPin` needing a `mux2`
+  arbitration stage — this compiler doesn't build `mux2` staging yet;
+  documented as a gap in `digital_spindle.md`, not silently dropped.
+
+- **930 backend tests passing** (`common`+`machine`=452,
+  `system`=478 passed/2 skipped), mypy clean across 293 source files.
+  16 new tests: `test_spindle_webgui_mapper.py`,
+  `test_heater_webgui_mapper.py`, `test_render_webgui_connections.py`,
+  plus one `generate_machine_templates`-level end-to-end test.
+
+### 1.15 (2026-09-10) Two real `machine.ini` bugs: extruder joint numbering collided with X, heater PID sections never existed
+
+User-reported this time, not secondhand advice — both confirmed real
+and fixed:
+
+- **Extruder joint always numbered `[JOINT_0]`.** `AxisBuilder`
+  (`services/machineconfig/axis_builder.py`) is a *second*,
+  `machine.ini`-facing joint-numbering pass, separate from
+  `hardware_json_generator`'s own (which was already correct — see
+  its `test_hardware_json_v2_emits_user_example`). It numbered the
+  extruder joint off `len(self._axes["A"].joints)` — the A axis's own
+  local joint count, always starting at 0 — instead of
+  `self._next_joint()`, the shared sequential allocator every
+  Cartesian joint uses. Any machine with both an X axis and an
+  extruder got **two** `[JOINT_0]` blocks in `machine.ini`, and two
+  `remora.joint.0.*` writers in `machine.hal`. One-line fix: call the
+  shared allocator instead. `[JOINT_3]` now, correctly, on a machine
+  where X/Y/Z already claim 0/1/2.
+
+- **No `[<SECTION>]PID_*` block ever existed in `machine.ini`.**
+  `HeaterHalMapper` (`.agent/component/heater.md` § 3, landed in 1.10)
+  writes `setp PID-<id>.KP [<SECTION>]PID_KP` etc. into `machine.hal`
+  — an ini-var *reference*. `render_ini_template` never wrote the
+  matching section at all, so every PID heater's gains silently
+  resolved to nothing. `render_ini_template` now takes an optional
+  `tools` parameter (`hardware.json`'s own `tools[]`, the same shape
+  `HeaterHalMapper` already consumes) and emits one `[<SECTION>]`
+  block per `control: "pid"` heater.
+
+- **Section naming, reconsidered mid-fix (the user's own call):**
+  first pass matched `HeaterHalMapper`'s existing LinuxCNC-style
+  `BED`/`EXTRUDER` abbreviation (stripping the `heater` prefix).
+  Changed to the tool's own id uppercased verbatim —
+  `HEATER_BED`/`HEATER_EXTRUDER` — because it reads as "temperature
+  control" generically (a `heater_generic` chamber heater names the
+  same way a bed or hot end does) and is unique by construction for
+  multiple extruders, since `tools[].id` already has to be
+  (`E_HEATER_ID_COLLISION`) — no separate numbering scheme needed.
+  New shared `heater_ini_section()` (`backend/common/mappers/
+  machineconfig/`) is the *one* place both `HeaterHalMapper` and
+  `ini_template_generator` compute this, so they can never name a
+  section differently from each other again.
+
+- **913 backend tests passing** (`common`+`machine`=452, `system`=461),
+  mypy clean. New `test_axis_builder.py` locks in the joint-numbering
+  fix directly; a `generate_machine_templates`-level test proves both
+  fixes together end-to-end (one `[JOINT_3]`, not two `[JOINT_0]`s,
+  plus a real `[HEATER_EXTRUDER]` block the HAL's own reference
+  resolves against).
+
 ### 1.14 (2026-09-10) A real `machine.hal` bug (bit->float), two more Gemini claims checked and rejected, `deadband`/`pgain` ingested
 
 Second round of secondhand advice (Gemini, reviewing generated

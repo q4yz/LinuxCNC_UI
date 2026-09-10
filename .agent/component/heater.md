@@ -7,7 +7,19 @@
 > converted to a float via `conv_bit_float` + `scale` before it
 > reaches `<id>-heater-SP` — linking a bit pin straight to
 > `remora.SP.N` (a float) is a HAL load-time type error, not shown in
-> the § 3 sketch above. Not yet implemented: class A `pwmgen` staging
+> the § 3 sketch above. `ini_template_generator` now writes the
+> matching `[<SECTION>]PID_*` machine.ini block for every PID heater
+> (`generate_machine_templates` — a real bug before this: the HAL side
+> referenced an ini-var no file ever defined, so every gain silently
+> resolved to nothing). `HeaterWebguiMapper` seeds `webgui_connections.hal`
+> (first generation only — hand edits are preserved on regenerate) with the
+> operator's target-temperature write into `<id>-SP`, the sensor's `-PV`
+> reading (only when a sensor is set — no sensor means `HeaterHalMapper`
+> creates no `-PV` signal to bind), and a referenced fan's `-SP` write
+> keyed by the fan's own bare id (no suffix on the webgui side). Pin names
+> verified against the real runtime consumer,
+> `common/mappers/tools/HeaterMapper.py::from_dict_to_HeaterPins`
+> (`suffix = tool_id.replace("heater", "")`). Not yet implemented: class A `pwmgen` staging
 > (`E_PID_WITHOUT_PWM`), `E_NO_ANALOG_INPUT` on a parport-only machine,
 > and `W_NO_RUNAWAY_GUARD`. A heater pin routed to an MCU with no
 > analog handling is silently dropped by that router today rather than
@@ -117,9 +129,15 @@ never changes the HAL name the machine file is written against.
 machine.ini
 ```ini
 # One section per heater. Gains live here, not in the HAL file, so
-# they can be retuned without regenerating.
-[<HEATER_SECTION>]           # e.g. [BED], [EXT0]
-PID_PONM  = <pid_on_measurement ? 1 : 0>
+# they can be retuned without regenerating. The section name is the
+# tool's own id, uppercased (heater_ini_section — implemented, shared
+# between HeaterHalMapper and ini_template_generator so the two can
+# never name it differently) — NOT a LinuxCNC-style BED/EXT0
+# abbreviation. Reads as "temperature control" generically, and is
+# unique by construction for multiple heaters/extruders since
+# tools[].id already has to be.
+[<HEATER_SECTION>]           # e.g. [HEATER_BED], [HEATER_EXTRUDER]
+PID_PONM  = <pid_on_measurement ? 1 : 0>  # not yet a Tool field — defaults to 1
 PID_DIR   = 0                 # 0 = heating (raise output to raise PV)
 PID_KP    = <parameters.pid_kp>
 PID_KI    = <parameters.pid_ki>

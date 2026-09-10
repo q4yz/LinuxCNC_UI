@@ -294,6 +294,72 @@ def test_render_ini_template_multi_joint_axis_repeats_letter():
     assert "[JOINT_2]" in text
 
 
+def test_render_ini_template_emits_a_pid_section_per_pid_heater():
+    """Bug: `HeaterHalMapper` writes `setp PID-<id>.KP [<SECTION>]
+    PID_KP` into machine.hal — an ini-var *reference*. Without a
+    matching `[<SECTION>]` block in machine.ini every gain silently
+    resolves to nothing."""
+    from services.machinetemplates import render_ini_template
+
+    tools = [
+        {
+            "id": "heater_bed",
+            "type": "heated_bed",
+            "control": "pid",
+            "pid_kp": 20.0,
+            "pid_ki": 1.5,
+            "pid_kd": 5.0,
+            "min_temp": 0.0,
+            "max_temp": 130.0,
+        },
+        {
+            "id": "heater_extruder",
+            "type": "extruder",
+            "control": "pid",
+            "pid_kp": 22.2,
+            "pid_ki": 1.08,
+            "pid_kd": 114.0,
+            "min_temp": 0.0,
+            "max_temp": 300.0,
+        },
+    ]
+    text = render_ini_template("printer", [_axis("X", 0)], tools)
+
+    assert "[HEATER_BED]" in text
+    assert "PID_KP = 20.0" in text
+    assert "PID_KI = 1.5" in text
+    assert "PID_KD = 5.0" in text
+    assert "PID_SPMIN = 0.0" in text
+    assert "PID_SPMAX = 130.0" in text
+    assert "PID_CVMIN = 0.0" in text
+    assert "PID_CVMAX = 100.0" in text
+    assert "PID_DIR = 0" in text
+    assert "PID_PONM = 1" in text
+
+    assert "[HEATER_EXTRUDER]" in text
+    assert "PID_KP = 22.2" in text
+    assert "PID_SPMAX = 300.0" in text
+
+
+def test_render_ini_template_skips_watermark_heaters():
+    """`HeaterHalMapper._watermark_loop` uses literals throughout — no
+    ini-var references, so no section is needed (or emitted)."""
+    from services.machinetemplates import render_ini_template
+
+    tools = [{"id": "heater_bed", "type": "heated_bed", "control": "watermark"}]
+    text = render_ini_template("printer", [_axis("X", 0)], tools)
+    assert "[HEATER_BED]" not in text
+
+
+def test_render_ini_template_without_tools_is_unaffected():
+    """The `tools` parameter is additive — omitting it entirely (the
+    pre-existing call shape) must render exactly as before."""
+    from services.machinetemplates import render_ini_template
+
+    text = render_ini_template("printer", [_axis("X", 0)])
+    assert "PID_" not in text
+
+
 # ---------------------------------------------------------------------- #
 # generate_machine_templates                                              #
 # ---------------------------------------------------------------------- #
@@ -420,6 +486,57 @@ def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_r
     assert '"Joint Number": 0' in config_txt
 
 
+def test_generate_numbers_the_extruder_joint_correctly_and_writes_its_pid_section(
+    isolated_roots,
+):
+    """End-to-end regression for two real bugs found in the generated
+    `machine.ini`: the extruder joint was always numbered 0 (colliding
+    with X's own `[JOINT_0]`) instead of continuing the X/Y/Z
+    sequence, and no `[HEATER_EXTRUDER]` PID section existed at all —
+    `machine.hal`'s `setp PID-heater_extruder.KP [HEATER_EXTRUDER]
+    PID_KP` referenced a section that was never written."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    profile = (
+        "[mcu]\nconnection: remora-spi\n\n"
+        "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nrotation_distance: 40\nposition_max: 300\n\n"
+        "[stepper_y]\nstep_pin: PG0\ndir_pin: PG1\nrotation_distance: 40\nposition_max: 300\n\n"
+        "[stepper_z]\nstep_pin: PG2\ndir_pin: PG3\nrotation_distance: 40\nposition_max: 300\n\n"
+        "[extruder]\n"
+        "step_pin: PC9\ndir_pin: PC8\nrotation_distance: 33.5\n"
+        "heater_pin: PE3\nsensor_pin: PA1\ncontrol: pid\n"
+        "pid_Kp: 22.2\npid_Ki: 1.08\npid_Kd: 114\nmin_temp: 0\nmax_temp: 250\n"
+    )
+    (isolated_roots["profiles"] / "printer.cfg").write_text(profile, encoding="utf-8")
+
+    generate_machine_templates(
+        "printer.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    configs = isolated_roots["machines"] / "printer" / "configs"
+    ini = (configs / "machine.ini").read_text(encoding="utf-8")
+
+    assert "[JOINT_0]" in ini
+    assert "[JOINT_1]" in ini
+    assert "[JOINT_2]" in ini
+    assert "[JOINT_3]" in ini
+    # Exactly one of each — the old bug produced two `[JOINT_0]` blocks.
+    assert ini.count("[JOINT_0]") == 1
+    assert ini.count("[JOINT_3]") == 1
+
+    assert "[HEATER_EXTRUDER]" in ini
+    assert "PID_KP = 22.2" in ini
+    assert "PID_SPMAX = 250.0" in ini
+
+    hal = (configs / "machine.hal").read_text(encoding="utf-8")
+    assert "setp PID-heater_extruder.KP [HEATER_EXTRUDER]PID_KP" in hal
+    # The section this line references really does exist in machine.ini.
+    assert "[HEATER_EXTRUDER]" in ini
+
+
 def test_generate_gives_each_remora_board_its_own_config_txt(isolated_roots):
     """Two Remora MCUs on one machine — a second board's firmware
     payload must never overwrite the first's `config.txt`."""
@@ -507,6 +624,50 @@ def test_generate_preserves_hand_edited_webgui_connections(isolated_roots):
     # Everything else really was regenerated (sanity check the swap
     # isn't a no-op skip of the whole directory).
     assert "MACHINE = my_machine" in (configs / "machine.ini").read_text(encoding="utf-8")
+
+
+def test_generate_seeds_webgui_connections_with_real_spindle_and_heater_bindings(
+    isolated_roots,
+):
+    """First generation of a machine with a spindle + a heater gets a
+    working `webgui_connections.hal`, not just the static header — and
+    a regenerate must still preserve whatever the operator did to it
+    afterward (the existing preserve-on-regenerate test covers that
+    half; this one is about what gets seeded in the first place)."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    profile = (
+        "[mcu]\nconnection: remora-spi\n\n"
+        "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nrotation_distance: 40\nposition_max: 300\n\n"
+        "[heater_bed]\n"
+        "heater_pin: PB7\nsensor_pin: PA0\nsensor_type: Generic 3950\n"
+        "control: pid\npid_Kp: 20\npid_Ki: 1.5\npid_Kd: 5\nmin_temp: 0\nmax_temp: 130\n\n"
+        "[mcu vfd0]\nconnection: vfd_rs485\n\n"
+        "[spindle]\n"
+        "run_pin: vfd0:run-forward\nspeed_pin: vfd0:rpm-in\n"
+        "is_connected_pin: vfd0:is-connected\nmax_rpm: 24000\nmin_rpm: 5000\n"
+    )
+    (isolated_roots["profiles"] / "printer.cfg").write_text(profile, encoding="utf-8")
+
+    generate_machine_templates(
+        "printer.cfg",
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+
+    text = (isolated_roots["machines"] / "printer" / "configs" / "webgui_connections.hal").read_text(
+        encoding="utf-8"
+    )
+    assert "# Spindle: spindle_digital" in text
+    assert "net spindle-speed-cmd => webgui.TargetRpm" in text
+    assert "net spindle_digital-is-connected => webgui.is-connected" in text
+    assert "# Heater: heater_bed" in text
+    assert "net heater_bed-SP <= webgui.target-temperature_bed" in text
+    assert "net bed-PV => webgui.bed" in text
+    # The old static header text is still there too — this is a seed,
+    # not a replacement of the operator-facing framing.
+    assert "custom.hal always sources this file" in text
 
 
 def test_generate_multi_motor_axis_emits_one_joint_per_motor(isolated_roots):
