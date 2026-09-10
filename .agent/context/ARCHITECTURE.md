@@ -378,9 +378,15 @@ files into `machine_config/<name>/`:
 - `Machine.hal` — the main HAL file.
 - `custom.hal` — always `source`s `webgui_connections.hal` (hard
   rule: every generated `custom.hal` calls it).
-- `webgui_connections.hal` — the WebGUI's own HAL wiring. Its bytes
-  are read back and preserved across a regenerate rather than
-  overwritten, since a user may hand-edit it.
+- `webgui_connections.hal` — the WebGUI's own HAL wiring, seeded with
+  real spindle/heater bindings (`SpindleWebguiMapper`/
+  `HeaterWebguiMapper`). Regenerated every time like every other
+  file — hand edits do not survive a confirmed override. The only
+  protection against losing them by accident is
+  `MainMachineProtectedError`: the machine currently selected as
+  "main" (`MachineLifecycleService.default_machine()`) can't be
+  regenerated via this endpoint at all, confirm_override or not —
+  see `.agent/HANDOFF.md` § 1.18.
 - `postgui_call_list.hal` — referenced by the INI's
   `POSTGUI_HALFILE`.
 - `<name>.tbl` — the tool table.

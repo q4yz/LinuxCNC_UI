@@ -14,6 +14,93 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.18 (2026-09-10) `webgui_connections.hal` preserve-on-regenerate dropped entirely; new hard guard against overriding the "main" machine
+
+User-directed policy change, not a bug report: the selective
+"preserve `webgui_connections.hal` across a regenerate" mechanism
+(landed in 1.16, patched in 1.17) is gone. Replaced with a simpler,
+stricter model — two rules instead of one leaky one:
+
+- **A confirmed override now really means override.** Once an
+  operator accepts the "machine already exists — override?" warning
+  (`confirm_override: true`), every file under the machine folder is
+  replaced, `webgui_connections.hal` included. `generate_machine_templates`
+  no longer captures the file's bytes before `clear_directory` and
+  writes them back — it just calls `_render_webgui_connections_starter`
+  unconditionally, exactly like `machine.ini`/`machine.hal`/etc.
+  already did. (1.17's `_is_pristine_starter`/`_LEGACY_WEBGUI_CONNECTIONS_STARTER`
+  machinery is deleted along with it — moot once nothing is ever
+  preserved.)
+
+- **The currently-selected "main" machine can't be regenerated via
+  this endpoint at all**, confirmed or not — new
+  `MainMachineProtectedError` (`services/machinetemplates/generator.py`).
+  `generate_machine_templates` gained a `protected_machine: Optional[str]`
+  kwarg (the `target_folder/machine_name` of the machine that must
+  not be touched); when the request's own target matches it *and* the
+  folder already exists, it's refused before any file is touched,
+  regardless of `confirm_override`. The router
+  (`routers/machineconfig.py::generate_machine`) supplies this from
+  `MachineLifecycleService.default_machine()` — the same "which
+  machine would `linuxcnc -r <ini>` start next" concept the lifecycle
+  endpoints already use. Answers **403** (not 409 — there is no
+  `confirm_override` retry that succeeds), structured as
+  `{"kind": "main_machine_protected", "machine": ..., "message": ...}`.
+  The frontend needed no changes: `describeError`
+  (`frontend/src/core/error-format.ts`) already unwraps a
+  `detail.message` string from any non-machine_exists `ApiError`, and
+  `machineconfigFacade.generateMachine`'s catch-all already routes an
+  unrecognised failure through `reportCommandFailure` → a toast.
+
+- **Deliberately still permissive:** the guard only fires when the
+  target folder already exists. A `default_machine.json` pointing at
+  a name the operator has since deleted by hand (exactly what the
+  error message tells them to do) does not block a fresh generate
+  under that same name — matches `MachineLifecycleService.default_ini()`'s
+  own existing tolerance for a stale pointer.
+
+- **934 backend tests passing** (`common`+`machine`=452, `system`=482
+  passed/2 skipped — net +3 vs. 1.17's 931), mypy clean. Replaced
+  1.17's preserve/pristine-starter tests with
+  `test_generate_overwrites_hand_edited_webgui_connections_on_confirmed_override`,
+  and added `test_generate_refuses_to_override_the_protected_main_machine`,
+  `test_protected_machine_only_blocks_when_the_folder_actually_exists`,
+  `test_protected_machine_check_respects_target_folder`, and a
+  router-level `test_generate_main_machine_conflict_flow` asserting
+  the 403 shape end-to-end.
+
+### 1.17 (2026-09-10) `webgui_connections.hal` bindings from 1.16 never appeared for a machine generated before that landed
+
+User-reported, real bug in the previous entry's own feature, found
+minutes after landing: the `printnc` machine (generated earlier the
+same session, before spindle/heater bindings existed) kept getting a
+binding-free `webgui_connections.hal` on every regenerate, even after
+`SpindleWebguiMapper` shipped.
+
+- **Root cause:** `generate_machine_templates` treats *any*
+  pre-existing `webgui_connections.hal` as operator hand-wiring and
+  writes it back byte-for-byte, never touching it again — the
+  deliberate "regenerate must not clobber hand edits" policy. But a
+  machine generated once before 1.16 landed has the *old*, binding-free
+  header sitting on disk, and no operator ever touched it — the policy
+  was preserving a stale scaffold, not real wiring, and had no way to
+  tell the difference.
+
+- **Fix:** new `_is_pristine_starter(existing: bytes) -> bool`
+  (`generator.py`) recognizes byte-for-byte matches (CRLF-normalized)
+  against *either* the current `WEBGUI_CONNECTIONS_HEADER` or the
+  pre-1.16 text now preserved as `_LEGACY_WEBGUI_CONNECTIONS_STARTER`.
+  Only when the existing file is neither — i.e. actually diverges from
+  every known untouched scaffold — is it treated as hand-wiring and
+  preserved verbatim. Same file, same policy line, one added
+  condition.
+
+- **931 backend tests passing** (`common`+`machine`=452, `system`=479
+  passed/2 skipped), mypy clean. New
+  `test_generate_refreshes_a_pre_feature_pristine_starter_with_real_bindings`
+  reproduces the exact report: seed a config with the legacy starter
+  text, regenerate, assert real bindings now appear.
+
 ### 1.16 (2026-09-10) `machine.ini` INTRO_GRAPHIC/INTRO_TIME parser quirk, `webgui_connections.hal` now seeded with real spindle+heater bindings
 
 - **`[DISPLAY]` needs `#INTRO_GRAPHIC`/`#INTRO_TIME` present even

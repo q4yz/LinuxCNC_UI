@@ -20,11 +20,10 @@ already-existing signal, in the separate file the operator hand-edits
 create, hence the same presence checks on the raw spindle dict).
 
 **Scope for this pass:** read-only status display only (at-speed,
-commanded/actual RPM, forward/reverse, health). The manual RPM
-override (`webgui.absolute-master-override(-enable)`, `webgui.override`
-— the runtime's `SpindleDigitalPins` already has read*write* pins for
-these) needs a `mux2` stage this compiler doesn't build yet — see
-`.agent/HANDOFF.md`.
+commanded/actual RPM, forward/reverse, health) AND the percentage
+RPM override via halui. The absolute manual RPM override
+(`webgui.absolute-master-override(-enable)`) needs a `mux2` stage
+this compiler doesn't build yet — see `.agent/HANDOFF.md`.
 """
 
 from __future__ import annotations
@@ -51,8 +50,14 @@ class SpindleWebguiMapper:
     @staticmethod
     def to_lines(spindle: dict[str, Any]) -> list[str]:
         spindle_id = str(spindle["id"])
+        n = int(spindle.get("spindle_number") or 0)
         suffix = spindle_id.replace("spindle_digital", "", 1)
-        lines = [f"# Spindle: {spindle_id}"]
+
+        lines = [
+            f"# ----------------------------------------------------------",
+            f"# Spindle: {spindle_id}",
+            f"# ----------------------------------------------------------"
+        ]
 
         # Commanded speed — always exists (DigitalSpindleHalMapper
         # always emits `spindle-speed-cmd`), read-only display.
@@ -73,7 +78,19 @@ class SpindleWebguiMapper:
             signal = signal_template.format(id=spindle_id)
             lines.append(f"net {signal} => webgui.{pin}{suffix}")
 
-        lines.append("")
+        # --- Web GUI Override (Percentage) ---
+        lines.extend([
+            "",
+            f"# --- Web GUI Override ---",
+            f"# 1. Enable direct value mode",
+            f"setp halui.spindle.{n}.override.direct-value true",
+            f"# 2. Set the scale so each count equals 1% (0.01)",
+            f"setp halui.spindle.{n}.override.scale 0.01",
+            f"# 3. Connect the web signal to the counts pin",
+            f"net spindle-override-{spindle_id} webgui.override{suffix} => halui.spindle.{n}.override.counts",
+            ""
+        ])
+
         return lines
 
 

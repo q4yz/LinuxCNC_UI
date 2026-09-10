@@ -69,8 +69,10 @@ from services import (
 )
 from services.machinetemplates import (
     MachineExistsError,
+    MainMachineProtectedError,
     generate_machine_templates,
 )
+from services.MachineLifecycleService import get_machine_lifecycle_service
 from machineconfig_parser import ConfigValidationError
 
 logger = logging.getLogger("backend.machineconfig_service")
@@ -567,7 +569,10 @@ def get_machines_tree() -> DirectoryListing:
         "verbatim machine.cfg copy, the real hardware.json, and the "
         "machine.ini / machine.hal templates (config.txt is intentionally "
         "not generated). Answers 409 when the machine already exists "
-        "unless confirm_override is set."
+        "unless confirm_override is set, in which case the whole folder "
+        "is replaced. Answers 403, regardless of confirm_override, when "
+        "the target is the currently-selected main machine — that one "
+        "has to be deleted manually first."
     ),
     response_model=GenerateResponse,
 )
@@ -580,9 +585,22 @@ def generate_machine(payload: GenerateRequest) -> GenerateResponse:
             confirm_override=payload.confirm_override,
             config_service=get_config_service(),
             machine_service=get_machine_service(),
+            protected_machine=get_machine_lifecycle_service().default_machine(),
         )
     except FileNotFoundError as exc:
         raise NotFoundError(str(exc)) from exc
+    except MainMachineProtectedError as exc:
+        # Not a 409: there is no confirm_override retry that makes
+        # this succeed. The frontend should show this as a hard stop,
+        # not open the override-confirm modal.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "kind": "main_machine_protected",
+                "machine": exc.machine,
+                "message": str(exc),
+            },
+        ) from exc
     except MachineExistsError as exc:
         # Structured 409: the frontend opens the "machine already
         # exists — override?" confirm modal off ``kind`` and retries

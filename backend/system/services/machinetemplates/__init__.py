@@ -13,9 +13,11 @@ that an operator can hand-finish and deploy:
   userspace component with per-pin connection suggestions.
 * ``custom.hal``              — always loads the ``webgui`` HAL component
   and sources ``webgui_connections.hal``.
-* ``webgui_connections.hal``  — starter file for the operator's own
-  ``webgui.*`` pin wiring; only written once (never overwritten on a
-  regenerate) so hand edits survive.
+* ``webgui_connections.hal``  — seeded with real spindle/heater
+  bindings; regenerated every time like every other file, with one
+  exception — the currently-selected "main" machine can't be
+  regenerated (and so can't lose this file's wiring) at all, see
+  :class:`MainMachineProtectedError`.
 * ``tool.tbl``                — minimal empty tool table so the
   generated INI's ``[EMCIO] TOOL_TABLE`` reference resolves.
 
@@ -36,6 +38,7 @@ from .generator import (
     GENERATED_FILES,
     GenerateResult,
     MachineExistsError,
+    MainMachineProtectedError,
     generate_machine_templates,
     resolve_machine_configs_dir,
 )
@@ -52,6 +55,7 @@ __all__ = [
     "GENERATED_FILES",
     "GenerateResult",
     "MachineExistsError",
+    "MainMachineProtectedError",
     "PinCatalog",
     "PinContainerDescriptor",
     "PinDescriptor",

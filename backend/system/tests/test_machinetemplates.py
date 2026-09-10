@@ -600,11 +600,15 @@ def test_generate_writes_no_sidecars_when_the_machine_does_not_compile(isolated_
     assert not any(p.name.startswith("config_") for p in configs.iterdir())
 
 
-def test_generate_preserves_hand_edited_webgui_connections(isolated_roots):
-    """Regenerating a machine must not clobber the operator's own
-    webgui_connections.hal wiring — every other file is regenerated,
-    this one is the deliberate exception (see the generator's
-    module docstring)."""
+def test_generate_overwrites_hand_edited_webgui_connections_on_confirmed_override(
+    isolated_roots,
+):
+    """webgui_connections.hal is no longer spared on a regenerate —
+    once the operator confirms the "replace this machine" warning,
+    every file is replaced, hand-wiring included. The one thing that
+    actually blocks an accidental override is
+    ``MainMachineProtectedError`` (see the tests below), not a
+    selective per-file preserve."""
     from domain_file_services import ConfigFileService, MachineFileService
     from services.machinetemplates import generate_machine_templates
 
@@ -620,10 +624,81 @@ def test_generate_preserves_hand_edited_webgui_connections(isolated_roots):
 
     generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
 
-    assert (configs / "webgui_connections.hal").read_text(encoding="utf-8") == hand_wiring
-    # Everything else really was regenerated (sanity check the swap
-    # isn't a no-op skip of the whole directory).
+    text = (configs / "webgui_connections.hal").read_text(encoding="utf-8")
+    assert text != hand_wiring
+    assert "webgui_connections.hal - wire the" in text
+    # Everything else really was regenerated too (sanity check the
+    # swap isn't a no-op skip of the whole directory).
     assert "MACHINE = my_machine" in (configs / "machine.ini").read_text(encoding="utf-8")
+
+
+def test_generate_refuses_to_override_the_protected_main_machine(isolated_roots):
+    """The currently-selected "main" machine can't be regenerated via
+    this endpoint at all — confirm_override or not. This is the real
+    accident guard: clicking through a generic "replace?" warning
+    must never be able to touch the machine LinuxCNC would start
+    next."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import (
+        MainMachineProtectedError,
+        generate_machine_templates,
+    )
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", **kwargs)
+
+    with pytest.raises(MainMachineProtectedError):
+        generate_machine_templates(
+            "my_machine.cfg",
+            confirm_override=True,
+            protected_machine="my_machine",
+            **kwargs,
+        )
+
+    # Untouched — not even the confirm_override write happened.
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    assert (configs / "webgui_connections.hal").exists()
+
+
+def test_protected_machine_only_blocks_when_the_folder_actually_exists(isolated_roots):
+    """A stale ``default_machine.json`` pointer (the operator deleted
+    the folder by hand, exactly as the error message tells them to)
+    must not permanently lock out that name — first generation under
+    a protected name is a fresh folder, not an override."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", protected_machine="my_machine", **kwargs)
+
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    assert (configs / "machine.cfg").exists()
+
+
+def test_protected_machine_check_respects_target_folder(isolated_roots):
+    """The protected name is ``target_folder/machine_name`` — a
+    protected bare name must not accidentally block a same-named
+    machine nested under a target folder, or vice versa."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    # Protected name is "group/my_machine" — the bare-root generate
+    # below is a different target and must proceed normally.
+    generate_machine_templates(
+        "my_machine.cfg", protected_machine="group/my_machine", **kwargs
+    )
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    assert (configs / "machine.cfg").exists()
 
 
 def test_generate_seeds_webgui_connections_with_real_spindle_and_heater_bindings(
@@ -827,6 +902,35 @@ def test_generate_machine_exists_conflict_flow(machine_app, isolated_roots):
         json={**payload, "confirm_override": True},
     )
     assert override.status_code == 200
+
+
+def test_generate_main_machine_conflict_flow(machine_app, isolated_roots, monkeypatch):
+    """The router asks ``MachineLifecycleService`` which machine is
+    currently "main" and refuses to regenerate it — a 403, not the
+    409 override-confirm flow, since there is no confirm_override
+    that makes this request succeed."""
+    import routers.machineconfig as router_module
+
+    client = TestClient(machine_app)
+    payload = {"profile_path": "my_machine.cfg"}
+
+    first = client.post("/api/v1/modules/machineconfig/machines/generate", json=payload)
+    assert first.status_code == 200
+
+    monkeypatch.setattr(
+        router_module,
+        "get_machine_lifecycle_service",
+        lambda: type("_Stub", (), {"default_machine": staticmethod(lambda: "my_machine")})(),
+    )
+
+    protected = client.post(
+        "/api/v1/modules/machineconfig/machines/generate",
+        json={**payload, "confirm_override": True},
+    )
+    assert protected.status_code == 403
+    detail = protected.json()["detail"]
+    assert detail["kind"] == "main_machine_protected"
+    assert detail["machine"] == "my_machine"
 
 
 def test_generate_missing_profile_returns_404(machine_app, isolated_roots):
