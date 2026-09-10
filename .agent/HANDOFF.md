@@ -14,6 +14,104 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.19 (2026-09-10) New `[estop]` component — full stack, new doc `estop.md`
+
+Integrated end to end: ingestion, `hardware.json`, HAL compiler, and a
+new `.agent/component/estop.md`. The frontend (`EStopHeader.vue`) and
+runtime DTO (`common/dtos/EStopDto.py`, `StateService.activate_estop()`)
+already existed and needed no changes — this closed the one real gap:
+`StateService`'s own docstring says "the HAL layer is responsible for
+... generating the required rising edge (pulse)", and nothing did.
+
+- **Cardinality (exactly one, required) is enforced in
+  `hardware_json_generator.build_hardware_json`, not in
+  `MachineConfigParser`.** Deliberate: the raw section-by-section
+  parser is shared by ~60 narrowly-scoped grammar tests
+  (`test_machineconfig_parser.py`) that each construct a tiny,
+  unrelated one-section snippet; hard-requiring `[estop]` there would
+  have forced every one of them to carry an irrelevant section just
+  to keep parsing. `build_hardware_json` — "assemble the complete,
+  deployable machine" — is the same layer `MachineValidator`'s
+  `E_NO_MCU` rule already lives at for the analogous "machine has no
+  MCU at all" case, so this isn't a new pattern. New
+  `MissingEstopSectionError(ConfigValidationError)`, defined in
+  `machineconfig_parser.py` (co-located with its siblings, so it
+  still gets the router's generic `ConfigValidationError` → 4xx toast
+  handling for free) but raised from `hardware_json_generator.py`.
+  "At most one" needed no code: `[estop]` is bare-only (no
+  named-instance form), so a second one is a literal duplicate
+  section `configparser`'s own strict mode already rejects.
+
+- **Blast radius of the cardinality requirement, checked before
+  committing to where it lives:** grepped every test file that calls
+  `build_hardware_json` (4: `test_halcompiler_validator.py`,
+  `test_hardware_json_lossless.py`, `test_machineconfig_module.py`,
+  `test_machinetemplates.py` via `generate_machine_templates`) vs.
+  every file that only calls the raw parser (`test_machineconfig_parser.py`,
+  `test_axis_builder.py`, `test_heater_extractor.py` — confirmed zero
+  overlap). Fixed the small, tractable set: 9 real profiles under
+  `machine_config/profiles/*.cfg` (all now declare `[estop]` —
+  `mcu_parallelport.cfg` grounds it with real `fault_pin`/`out_pin`
+  matching the PrintNC-WEBGUI reference exactly, pin-10-in/pin-14-out;
+  the other 8 get a bare block), plus every inline `.cfg` fixture in
+  those 4 test files. `test_machineconfig_parser.py`'s ~1167 lines
+  needed zero changes.
+
+- **UI pulse chain (unconditional, `EstopHalMapper`):** `oneshot` ->
+  `halui.estop.activate`, sourced from `webgui.estop`. This is what
+  makes an empty `[estop]` block meaningful on its own — a UI-only
+  machine still gets a working E-stop button. Always the *last*
+  component fragment in `assembler.py::assemble` (after spindle/
+  heater/driver fragments) — two golden tests' exact `addf` servo-list
+  assertions needed one line added
+  (`test_hal_compiler_golden.py`/`_remora.py`) to account for it.
+
+- **Physical chain (optional, per pin) — a real conflict found and
+  fixed before it ever shipped:** grounded fault_pin/out_pin against
+  `machine_config/example/PrintNC-WEBGUI/Machine.hal`'s hand-wired
+  `estop_latch` chain (lines 41-57). First implementation wired
+  `iocontrol.0.user-enable-out`/`user-request-enable`/`emc-enable-in`
+  unconditionally — smoke-testing against a class-B (Remora) machine
+  immediately showed these are the *exact same pins*
+  `RemoraRouterMapper.base_fragment()` already nets for its own SPI
+  link-health chain (`remora.SPI-enable`/`-reset`/`-status`).
+  Double-driving them is a genuine HAL load error, not cosmetic.
+  Fixed with `EstopHalMapper._owns_iocontrol_chain()`: gates per-pin
+  (not per-machine — a mixed-MCU machine routes correctly) on whether
+  *that pin's own target MCU* is class B. The physical `PinRequest`
+  still routes either way (a Remora `fault_pin` still becomes a real
+  `config.txt` "Digital Pin" module); only the `iocontrol`/
+  `estop_latch` linkage is skipped on class B.
+
+- **Two new generic `PinRole`s** (`DIGITAL_IN`/`DIGITAL_OUT`,
+  `hal_fragment_models.py`) rather than reusing `ENDSTOP` — mechanically
+  identical on every router today, but a distinct role lets a router's
+  firmware-module naming (and a future validator rule) tell "this is a
+  home switch" from "this is some other digital input" apart.
+  `ParportRouterMapper` handles both in full (verified against the
+  real reference). `RemoraRouterMapper` handles `DIGITAL_IN` (reuses
+  the verified `"Digital Pin"`/`Mode: Input` shape, sharing one
+  `remora.input.NN` bit-space/counter with `ENDSTOP` — distinct
+  firmware `Name` only). `DIGITAL_OUT` on Remora is a deliberate,
+  documented gap: no real reference `config.txt` shows a digital
+  *output* module (every example is `Mode: Input`) — fabricating one
+  would be the same mistake as inventing an unverified `config.txt`
+  shape that's already been rejected elsewhere in this project
+  (see 1.14's rejected Gemini claims). The request still doesn't
+  crash — it's silently unrouted, same "honest gap" class as
+  `ANALOG_IN`'s missing thermistor module.
+
+- **965 backend tests passing** (`common`+`machine`=452, `system`=513),
+  mypy clean across 295 source files. New:
+  `test_estop_hal_mapper.py` (9), 9 parser tests in
+  `test_machineconfig_parser.py`, 3 `build_hardware_json` tests in
+  `test_machineconfig_module.py`, 5 validator tests in
+  `test_halcompiler_validator.py`, router tests for the two new
+  `PinRole`s in `test_parport_router_mapper.py`/
+  `test_remora_router_mapper.py` (the latter includes a test proving
+  `ENDSTOP`/`DIGITAL_IN` share one bit-space and a test proving
+  `DIGITAL_OUT` on Remora is an honest no-op, not a crash).
+
 ### 1.18 (2026-09-10) `webgui_connections.hal` preserve-on-regenerate dropped entirely; new hard guard against overriding the "main" machine
 
 User-directed policy change, not a bug report: the selective

@@ -117,6 +117,46 @@ def test_malformed_pin(machine):
     assert "E_MALFORMED_PIN" in _codes(machine)
 
 
+def test_estop_pins_are_checked_for_unknown_mcu(machine):
+    """`estop` is a top-level singleton, not a list — it needs its own
+    fold into `_parsed_pins()` to get the same generic checks every
+    other pin field gets for free."""
+    machine["estop"] = {"fault_pin": "nosuch:10"}
+    assert "E_UNKNOWN_MCU" in _codes(machine)
+
+
+def test_estop_pins_participate_in_pin_conflict_detection(machine):
+    machine["estop"] = {"out_pin": "PF13"}  # already the joint's step pin
+    assert "E_PIN_CONFLICT" in _codes(machine)
+
+
+def test_estop_malformed_pin_is_reported(machine):
+    machine["estop"] = {"fault_pin": "mcu:"}
+    assert "E_MALFORMED_PIN" in _codes(machine)
+
+
+def test_estop_absent_key_is_not_an_error():
+    """No presence/cardinality rule lives here — that's
+    `build_hardware_json`'s job (`test_machineconfig_module.py`), not
+    the compile-gate validator's. A payload with no `estop` key
+    at all (e.g. a fixture predating this feature) must still
+    validate exactly as it did before."""
+    machine = {
+        "version": "2.2",
+        "machine": "t",
+        "source": "test",
+        "kinematics": "cartesian",
+        "hal_type": "remora",
+        "mcus": [{"id": "mcu", "connection": "remora-spi"}],
+    }
+    assert validate_machine(machine) == []
+
+
+def test_estop_with_only_valid_pins_reports_nothing(machine):
+    machine["estop"] = {"fault_pin": "PG6", "out_pin": "PG7"}
+    assert _codes(machine) == set()
+
+
 def test_duplicate_pin_override_suppresses_the_conflict(machine):
     """An operator-declared exception — see `[duplicate_pin_override]`."""
     machine["joints"][0]["dir_pin"] = "PF13"  # already the step pin

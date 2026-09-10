@@ -128,6 +128,54 @@ def test_analog_in_requests_get_sequential_pv_channels():
     assert "net extruder-PV <= remora.PV.1" in fragment.nets
 
 
+def test_digital_in_request_gets_a_digital_pin_module_named_distinctly_from_endstop():
+    """Mechanically identical to ENDSTOP — same `remora.input.NN`,
+    same "Digital Pin"/Input firmware shape — but the module's `Name`
+    must not say "endstop_..." for something that isn't one (the
+    E-stop's `fault_pin`, routed with `owner="estop"`)."""
+    fragment = RemoraRouterMapper.route(
+        [_request("estop-fault", PinRole.DIGITAL_IN, "PG6", owner="estop")]
+    )
+    assert "net estop-fault remora.input.00" in fragment.nets
+    assert fragment.firmware_modules[0].module == {
+        "Name": "digital_in_estop",
+        "Thread": "Servo",
+        "Type": "Digital Pin",
+        "Comment": "estop",
+        "Pin": "PG_6",
+        "Mode": "Input",
+        "Data Bit": 0,
+    }
+
+
+def test_endstop_and_digital_in_share_one_input_bit_space():
+    """Both roles write into the same `remora.input.NN` array on the
+    real board — they must not each start their own counter at 0 and
+    collide on `Data Bit`."""
+    requests = [
+        _request("endstop_x-sw", PinRole.ENDSTOP, "PC0", owner="endstop_x"),
+        _request("estop-fault", PinRole.DIGITAL_IN, "PG6", owner="estop"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net endstop_x-sw remora.input.00" in fragment.nets
+    assert "net estop-fault remora.input.01" in fragment.nets
+    data_bits = {m.module["Data Bit"] for m in fragment.firmware_modules}
+    assert data_bits == {0, 1}
+
+
+def test_digital_out_request_is_an_honest_gap_not_a_crash():
+    """No real reference `config.txt` shows a digital *output* module
+    (every example is `Mode: Input`) — routing one through Remora
+    produces no firmware module and no net, same "honest gap" class
+    as ANALOG_IN's missing Temperature module, rather than a
+    fabricated, unverified shape."""
+    fragment = RemoraRouterMapper.route(
+        [_request("estop-out", PinRole.DIGITAL_OUT, "PG7", owner="estop")]
+    )
+    assert fragment.nets == []
+    assert fragment.firmware_modules == []
+
+
 def test_endstop_and_analog_indices_do_not_collide():
     """Real ender3-shaped machine: endstops and heaters share one MCU.
 

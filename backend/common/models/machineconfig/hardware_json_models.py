@@ -266,6 +266,27 @@ class Fan(BaseModel):
     max_power: float | None = None
 
 
+class Estop(BaseModel):
+    """The machine's single E-stop component (`.agent/component/estop.md`).
+
+    Both fields are optional — an empty ``estop`` object (``{}`` on
+    the wire, both fields dropped by ``exclude_none``) is valid and
+    is exactly what a UI-only machine emits: the operator's
+    `webgui.estop` signal always reaches `halui.estop.activate`
+    through a `oneshot` pulse regardless of hardware.
+    :func:`build_hardware_json` is what actually enforces "exactly
+    one ``[estop]``" on the source ``.cfg`` — this model stays
+    ``Optional`` on :class:`HardwareJson` so a hand-crafted or
+    pre-existing payload (this compiler's own test fixtures included)
+    that never declared one still validates.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fault_pin: str | None = None
+    out_pin: str | None = None
+
+
 class McuInfo(BaseModel):
     """A single MCU record exposed in ``hardware.json``.
 
@@ -446,6 +467,12 @@ class HardwareJson(BaseModel):
     # ``MAX_LINEAR_ACCELERATION``; previously parsed and discarded.
     max_velocity: float | None = None
     max_accel: float | None = None
+
+    # The machine's single E-stop component. ``None`` only for a
+    # payload built before this field existed (or a hand-crafted test
+    # fixture) — every payload ``build_hardware_json`` emits carries
+    # one, even if both pins are unset. See :class:`Estop`.
+    estop: "Estop | None" = None
 
     axes: list[Axis] = Field(default_factory=list)
     joints: list[Stepper] = Field(default_factory=list)
@@ -649,6 +676,7 @@ __all__ = [
     "Axis",
     "Driver",
     "Endstop",
+    "Estop",
     "Fan",
     "HardwareJson",
     "McuInfo",

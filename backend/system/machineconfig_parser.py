@@ -10,6 +10,7 @@ from typing import Any
 
 from models.machineconfig import (
     EndstopSwitch,
+    Estop,
     Extruder,
     Fan,
     Heater,
@@ -344,6 +345,36 @@ class DuplicateMcuSectionError(ConfigValidationError):
         )
 
 
+class MissingEstopSectionError(ConfigValidationError):
+    """Raised when a machine has no ``[estop]`` section.
+
+    Every machine configuration must declare exactly one — physical
+    ``fault_pin``/``out_pin`` are independently optional (an empty
+    ``[estop]`` block is valid, for a UI-only trigger), but the
+    section itself is not. Declaring it twice is already rejected for
+    free by :mod:`configparser`'s own strict duplicate-section check
+    (``[estop]`` has no named-instance form, unlike ``[heater_*]`` or
+    ``[spindle *]``), so only the "at least one" half needs a
+    dedicated error here.
+
+    Raised by :func:`services.machineconfig.hardware_json_generator.
+    build_hardware_json`, not by :class:`MachineConfigParser` itself —
+    see that module's docstring for why the enforcement boundary sits
+    at "assemble the complete, deployable machine" rather than
+    "parsed this one section", the same layer :class:`MachineValidator`
+    already uses for the machine-wide ``E_NO_MCU`` rule.
+    """
+
+    kind = "missing_estop_section"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Every machine configuration must declare exactly one "
+            "[estop] section (physical fault_pin/out_pin are optional "
+            "— an empty [estop] block is valid for a UI-only trigger)."
+        )
+
+
 class MalformedConfigError(ConfigValidationError):
     """Raised when the source text violates INI syntax itself.
 
@@ -671,6 +702,8 @@ class MachineConfigParser:
                 graph.duplicate_pin_overrides = self._parse_duplicate_pin_override(
                     section_name, section
                 )
+            elif section_schema.kind is SectionKind.ESTOP:
+                graph.estop = self._parse_estop(section_name, section)
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -1055,6 +1088,22 @@ class MachineConfigParser:
             overrides.add(f"{mcu_id or 'mcu'}:{pin_id}")
         return frozenset(overrides)
 
+    def _parse_estop(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> Estop:
+        """Build the machine's single :class:`Estop`.
+
+        Both fields are optional pins, like every other component —
+        an empty ``[estop]`` block (no keys at all) is valid and
+        produces ``Estop(fault_pin=None, out_pin=None)``.
+        """
+        return Estop(
+            fault_pin=self._optional_string(section, "fault_pin"),
+            out_pin=self._optional_string(section, "out_pin"),
+        )
+
     def _parse_mcu(
         self,
         section_name: str,
@@ -1198,6 +1247,11 @@ class MachineConfigParser:
             MachineConfigParser._validate_pin_mcu(
                 section_name, "pin", fan.pin, declared
             )
+        if graph.estop is not None:
+            for attr in ("fault_pin", "out_pin"):
+                MachineConfigParser._validate_pin_mcu(
+                    "estop", attr, getattr(graph.estop, attr, None), declared
+                )
 
     def _parse_fan(
         self,
@@ -1386,6 +1440,7 @@ __all__ = [
     "KlipperConfigParser",
     "MachineConfigParser",
     "MalformedConfigError",
+    "MissingEstopSectionError",
     "MissingRequiredKeywordError",
     "MultipleExtrudersError",
     "UndefinedKeywordError",

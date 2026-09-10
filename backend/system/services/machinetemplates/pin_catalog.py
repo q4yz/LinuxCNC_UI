@@ -86,7 +86,8 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "actual_temperature": "drive from the thermistor input (your ADC/thermistor reader's output)",
     },
     "EStopPin": {
-        "pressed": "sink into halui.estop.request (webgui raises/lowers the estop)",
+        "pressed": "sink into a oneshot pulse generator -> halui.estop.activate "
+        "(EstopHalMapper wires this automatically; see .agent/component/estop.md)",
     },
 }
 

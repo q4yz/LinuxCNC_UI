@@ -55,6 +55,7 @@ class SectionKind(str, Enum):
     TMC2209 = "tmc2209"
     FAN = "fan"
     DUPLICATE_PIN_OVERRIDE = "duplicate_pin_override"
+    ESTOP = "estop"
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +172,11 @@ TMC2209_KEYS = frozenset(
         "sense_resistor",
     }
 )
+# The E-stop component. Both fields are pins, not protocols, like
+# every other component (`.agent/component/README.md` § 1) — and both
+# are optional: an empty ``[estop]`` block is valid (UI-only trigger,
+# see `.agent/component/estop.md`), physical wiring is opt-in on top.
+ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
 # Fan sections accept a single ``pin`` plus an optional ``max_power``
 # (0.0–1.0) which the runtime uses as the ``PWM Max`` value in the
 # Remora board JSON. ``cycle_time`` / ``hardware_pwm`` / ``off_below``
@@ -206,6 +212,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.TMC2209: TMC2209_KEYS,
     SectionKind.FAN: FAN_KEYS,
     SectionKind.DUPLICATE_PIN_OVERRIDE: DUPLICATE_PIN_OVERRIDE_KEYS,
+    SectionKind.ESTOP: ESTOP_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -271,6 +278,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
             DUPLICATE_PIN_OVERRIDE_KEYS,
             "duplicate_pin_override",
         )
+
+    if section == "estop":
+        return SectionSchema(SectionKind.ESTOP, ESTOP_KEYS, "estop")
 
     stepper_match = _STEPPER_SECTION.fullmatch(section)
     if stepper_match:
@@ -355,6 +365,7 @@ __all__ = [
     "ALLOWED_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",
     "ENDSTOP_SWITCH_KEYS",
+    "ESTOP_KEYS",
     "EXTRUDER_KEYS",
     "FAN_KEYS",
     "FAN_IGNORED_KEYS",

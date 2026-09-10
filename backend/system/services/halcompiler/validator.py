@@ -111,6 +111,21 @@ class MachineValidator:
                     out.append((PinStringMapper.from_string(raw), owner, field, is_joint))
                 except ValueError as exc:
                     self._error("E_MALFORMED_PIN", str(exc), owner)
+
+        # ``estop`` is a top-level singleton object, not a list — it
+        # can't ride ``_PIN_FIELDS``' generic ``_records()`` walk, so
+        # it gets its own two-field pass folded into the same output
+        # every other check (unknown-MCU, pin-conflict) already walks.
+        estop = self._payload.get("estop")
+        if isinstance(estop, dict):
+            for field in ("fault_pin", "out_pin"):
+                raw = estop.get(field)
+                if not raw:
+                    continue
+                try:
+                    out.append((PinStringMapper.from_string(raw), "estop", field, False))
+                except ValueError as exc:
+                    self._error("E_MALFORMED_PIN", str(exc), "estop")
         return out
 
     # -- rules --------------------------------------------------------- #

@@ -60,22 +60,37 @@ class RemoraRouterMapper:
 
     @staticmethod
     def route(requests: list[PinRequest]) -> HalFragment:
-        """§ 4 — digital inputs (endstops) + analog SP/PV channels.
+        """§ 4 — digital inputs (endstops, E-stop `fault_pin`, ...) +
+        analog SP/PV channels.
 
-        Each role gets its **own** index counter. Sharing one
+        Each role *group* gets its **own** index counter. Sharing one
         `enumerate()` index across roles would leave gaps the moment a
         machine mixes endstops with heaters (ender3 does exactly
         this) — request 3 being an ``ANALOG_OUT`` must not burn
         `remora.input.03` that request 4's endstop then never gets.
+        ``ENDSTOP`` and ``DIGITAL_IN`` share one counter/bit-space on
+        purpose: both land on the same `remora.input.NN` array and the
+        same firmware "Digital Pin"/``Mode: Input`` module shape — the
+        *only* difference is the firmware module's ``Name`` (kept
+        distinct so `config.txt` never calls an E-stop input pin
+        "endstop_..."), not the routing itself.
+
+        No ``DIGITAL_OUT`` case exists here — unlike ``ANALOG_OUT``
+        (a verified "PWM" module), there is no real reference
+        `config.txt` with a digital *output* module to ground one
+        against (every real example only shows ``Mode: Input``). A
+        `DIGITAL_OUT` request routed through this MCU is an honest
+        gap, same class as `ANALOG_IN`'s missing thermistor module
+        below — see `.agent/component/estop.md`.
         """
         fragment = HalFragment()
-        endstop_index = 0
+        digital_in_index = 0
         sp_index = 0
         pv_index = 0
         for request in requests:
-            if request.role is PinRole.ENDSTOP:
-                nn = f"{endstop_index:02d}"
-                endstop_index += 1
+            if request.role in (PinRole.ENDSTOP, PinRole.DIGITAL_IN):
+                nn = f"{digital_in_index:02d}"
+                digital_in_index += 1
                 # Writer only — the component mapper already emitted the
                 # reader side (`net <signal> => joint.N....`) as a separate
                 # `net` line; HAL lets the same net name accumulate pins
@@ -88,11 +103,12 @@ class RemoraRouterMapper:
                 pullup = "^" if request.pin.pullup else ""
                 firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
                 pin = f"{invert}{pullup}{firmware_pin}"
+                name_prefix = "endstop" if request.role is PinRole.ENDSTOP else "digital_in"
                 fragment.firmware_modules.append(
                     FirmwareModuleRequest(
                         mcu_id=request.pin.mcu_id,
                         module={
-                            "Name": f"endstop_{request.owner}",
+                            "Name": f"{name_prefix}_{request.owner}",
                             "Thread": "Servo",
                             # "Digital Pin" (with the space) — the real
                             # reference config.txt's literal key; not a
@@ -101,7 +117,7 @@ class RemoraRouterMapper:
                             "Comment": request.owner,
                             "Pin": pin,
                             "Mode": "Input",
-                            "Data Bit": endstop_index - 1,
+                            "Data Bit": digital_in_index - 1,
                         },
                     )
                 )

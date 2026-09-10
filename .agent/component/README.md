@@ -24,6 +24,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `fan.md` | `[fan_*]` | Part, hot-end, controller, exhaust. |
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
+| `estop.md` | `[estop]` | Required exactly once. UI pulse chain unconditional; physical chain optional. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
@@ -180,8 +181,8 @@ hardware-agnostic signals that the router consumes:
 | `spindle-forward` / `spindle-reverse` | out of `spindle.0.*` | spindle |
 | `spindle-speed-cmd` | out of `spindle.0.speed-out` | spindle |
 | `spindle-at-speed` | into `spindle.0.at-speed` | spindle |
-| `estop-out` | out of `iocontrol.0.user-enable-out` | machine core |
-| `estop-fault` | into `estop-latch.0.fault-in` | machine core |
+| `estop-out` | out of `iocontrol.0.user-enable-out` | estop (`EstopHalMapper`, class A/C only — see `estop.md` § 3) |
+| `estop-fault` | into `estop-latch.0.fault-in` | estop (`EstopHalMapper`, class A/C only) |
 
 `webgui.*` pins are the userspace UI component's surface — the
 authoritative list is generated per machine into the `machine.hal`

@@ -1165,3 +1165,100 @@ pins: par0:
     with pytest.raises(InvalidValueError) as exc_info:
         MachineConfigParser().parse_string(config)
     assert exc_info.value.key == "pins"
+
+
+# ---------------------------------------------------------------------- #
+# [estop]                                                                 #
+# ---------------------------------------------------------------------- #
+#
+# Cardinality ("exactly one [estop] required") is NOT enforced here —
+# see `services.machineconfig.hardware_json_generator.build_hardware_json`
+# and its own tests. The raw section-by-section parser stays lenient
+# (``graph.estop`` is simply ``None`` when the section is absent) so
+# every other grammar test in this file — none of which care about
+# estop — keeps working unmodified.
+
+
+def test_estop_section_is_recognised_by_the_schema():
+    assert schema_for_section("estop").kind is SectionKind.ESTOP
+
+
+def test_empty_estop_block_is_valid():
+    """A UI-only machine: no physical pins at all."""
+    config = "[estop]\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.estop is not None
+    assert graph.estop.fault_pin is None
+    assert graph.estop.out_pin is None
+
+
+def test_estop_section_parses_both_pins():
+    config = """
+[estop]
+fault_pin: 10
+out_pin: 14
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.estop.fault_pin == "10"
+    assert graph.estop.out_pin == "14"
+
+
+def test_estop_pins_are_independently_optional():
+    config = "[estop]\nfault_pin: 10\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.estop.fault_pin == "10"
+    assert graph.estop.out_pin is None
+
+
+def test_estop_unknown_keyword_raises():
+    config = "[estop]\nbogus_pin: 10\n"
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "estop"
+    assert exc_info.value.key == "bogus_pin"
+
+
+def test_estop_absent_section_leaves_graph_estop_none():
+    """The parser itself never requires [estop] — a graph missing one
+    is a perfectly valid parse result at this layer."""
+    config = "[stepper_x]\nstep_pin: PF13\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.estop is None
+
+
+def test_estop_declared_twice_is_rejected_by_configparser_itself():
+    """[estop] has no named-instance form (unlike [heater_*]/[spindle
+    *]) — a second bare [estop] is a literal duplicate section, which
+    configparser's own strict mode already rejects for free."""
+    config = "[estop]\nfault_pin: 10\n\n[estop]\nout_pin: 14\n"
+    with pytest.raises(MalformedConfigError):
+        MachineConfigParser().parse_string(config)
+
+
+def test_estop_orphan_mcu_pin_qualifier_raises_undefined_mcu_error():
+    config = """
+[mcu]
+connection: parallelport
+
+[estop]
+fault_pin: ghost:10
+"""
+    with pytest.raises(UndefinedMcuError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "estop"
+    assert exc_info.value.key == "fault_pin"
+    assert exc_info.value.mcu_name == "ghost"
+
+
+def test_estop_known_mcu_pin_qualifier_accepted():
+    config = """
+[mcu par0]
+connection: parallelport
+
+[estop]
+fault_pin: par0:10
+out_pin: par0:14
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.estop.fault_pin == "par0:10"
+    assert graph.estop.out_pin == "par0:14"

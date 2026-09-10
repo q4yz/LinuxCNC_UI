@@ -22,6 +22,7 @@ from models.machineconfig.hal_fragment_models import HalFragment, PinRequest, co
 from models.machineconfig.pin_models import CapabilityClass
 
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
+from .components.EstopHalMapper import EstopHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
 from .components.MotionSystemHalMapper import MotionSystemHalMapper
 from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
@@ -96,6 +97,7 @@ class HalAssembler:
             + self._spindle_fragments()
             + self._heater_fragments()
             + self._driver_fragments(capability_class)
+            + [self._estop_fragment()]
         )
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
@@ -198,6 +200,16 @@ class HalAssembler:
             fan = self._fans_by_id.get(tool.get("fan"))
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
         return fragments
+
+    def _estop_fragment(self) -> HalFragment:
+        """Always present, independent of motion class — the UI pulse
+        chain needs no hardware, and the optional physical chain
+        decides its own MCU-class gating internally (see
+        ``EstopHalMapper._owns_iocontrol_chain``)."""
+        estop = self._payload.get("estop")
+        return EstopHalMapper.to_fragment(
+            estop if isinstance(estop, dict) else {}, self._mcus_by_id
+        )
 
     def _driver_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         """A `TMC2209` firmware module per joint whose driver has a UART pin.

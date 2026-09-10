@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from machineconfig_parser import split_pin
+from machineconfig_parser import MissingEstopSectionError, split_pin
 from models.machineconfig.hardware_json_models import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -159,6 +159,25 @@ def _endstop_record(endstop_section: str, pin: str) -> dict[str, Any]:
     return {
         "id": _endstop_id(endstop_section),
         "pin": pin,
+    }
+
+
+# ---------------------------------------------------------------------- #
+# Estop payload                                                           #
+# ---------------------------------------------------------------------- #
+
+
+def _estop_payload(estop) -> dict[str, Any]:
+    """Build the top-level ``estop`` object.
+
+    Both fields stay ``None`` for an empty ``[estop]`` block — a
+    valid, singleton object (not an absent key), matching the "an
+    empty [estop] block is valid" requirement (`.agent/component/
+    estop.md`).
+    """
+    return {
+        "fault_pin": estop.fault_pin,
+        "out_pin": estop.out_pin,
     }
 
 
@@ -463,7 +482,22 @@ def build_hardware_json(
     Raises :class:`pydantic.ValidationError` if any reference is
     unresolved. The exception handler in the router converts that
     into the structured 400 envelope for the toast channel.
+
+    Raises :class:`MissingEstopSectionError` when ``graph.estop`` is
+    ``None`` — this is deliberately where "every machine configuration
+    must declare exactly one [estop] section" is enforced, not in
+    :class:`MachineConfigParser` itself. Raw section-level parsing
+    (and its ~60 narrowly-scoped grammar tests) stays lenient; this
+    function is "assemble the complete, deployable machine", the same
+    layer :class:`MachineValidator`'s ``E_NO_MCU`` rule already lives
+    at for the analogous "machine has no MCU at all" case. The "at
+    most one" half needs no code at all — :mod:`configparser`'s own
+    strict duplicate-section check already rejects a second bare
+    ``[estop]``.
     """
+
+    if graph.estop is None:
+        raise MissingEstopSectionError()
 
     axes_letters = AxisBuilder(graph).build()
     # The LinuxCNC ``Axis`` list is in canonical order (X, Y, Z, ...).
@@ -813,6 +847,7 @@ def build_hardware_json(
         "hal_type": hal_type,
         "max_velocity": _fmt_float(getattr(graph.printer, "max_velocity", None)),
         "max_accel": _fmt_float(getattr(graph.printer, "max_accel", None)),
+        "estop": _estop_payload(graph.estop),
         "axes": axes_records,
         "joints": joint_records,
         "drivers": driver_records,

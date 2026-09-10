@@ -44,6 +44,17 @@ class PinRole(Enum):
     #: A measured value coming in from hardware (a thermistor reading)
     #: — `remora.PV.N` on class B.
     ANALOG_IN = "analog_in"
+    #: A generic digital output — direction, not device (same "any
+    #: I/O-capable MCU can carry one" contract as SPINDLE_OUT). Used
+    #: by the E-stop component's `out_pin` (`estop.md` § 3).
+    DIGITAL_OUT = "digital_out"
+    #: A generic digital input. Mechanically identical to ENDSTOP on
+    #: every router today (a plain level read); kept as its own role
+    #: rather than reusing ENDSTOP so a router's firmware-module
+    #: naming (and a future validator rule) can tell "this is a home
+    #: switch" from "this is some other digital input" apart. Used by
+    #: the E-stop component's `fault_pin`.
+    DIGITAL_IN = "digital_in"
 
 
 @dataclass(frozen=True, slots=True)

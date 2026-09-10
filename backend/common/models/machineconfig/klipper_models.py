@@ -247,6 +247,24 @@ class Fan:
 
 
 @dataclass(slots=True)
+class Estop:
+    """The machine's single E-stop component (`.agent/component/estop.md`).
+
+    Both fields are optional pins, like every other component — an
+    empty ``[estop]`` block is valid on its own (the UI's own
+    continuous ``webgui.estop`` signal always reaches
+    ``halui.estop.activate`` through a `oneshot` pulse, regardless of
+    hardware). ``fault_pin`` is a physical E-stop loop's fault input;
+    ``out_pin`` mirrors LinuxCNC's own enable state out to a physical
+    pin (a lamp, a relay, ...). Independently optional — declaring
+    one does not require the other.
+    """
+
+    fault_pin: str | None = None
+    out_pin: str | None = None
+
+
+@dataclass(slots=True)
 class MCU:
     """One MCU configuration (transport settings + optional identity).
 
@@ -312,6 +330,12 @@ class MachineConfigGraph:
     """
 
     printer: Printer | None = None
+    # The machine's single E-stop component. ``None`` until parsed;
+    # ``hardware_json_generator.build_hardware_json`` is where "exactly
+    # one [estop] is required" is actually enforced (not here — see
+    # that module's docstring for why the boundary sits there and not
+    # in the section-by-section parser).
+    estop: Estop | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
     heaters: dict[str, Heater] = field(default_factory=dict)
@@ -379,6 +403,7 @@ MachineConfig = MachineConfigGraph
 __all__ = [
     "ConnectionType",
     "EndstopSwitch",
+    "Estop",
     "Extruder",
     "Fan",
     "Heater",

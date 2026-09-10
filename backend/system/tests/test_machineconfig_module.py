@@ -72,6 +72,7 @@ def isolated_machine_config(monkeypatch, tmp_path):
     (profiles / "starter.cfg").write_text(
         "#Start\n[printer]\nkinematics: cartesian\nmax_velocity: 250.0\n"
         "[stepper_x]\n    step_pin: PC2\n    dir_pin: PB9\n    enable_pin: !PC3\n"
+        "[estop]\n"
     )
 
     yield {
@@ -333,6 +334,8 @@ sensor_pin: PA0
 control: watermark
 min_temp: 0
 max_temp: 130
+
+[estop]
 """
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "test")
@@ -434,6 +437,8 @@ kinematics: cartesian
 
 [stepper_x]
 step_pin: PF13
+
+[estop]
 """
     graph = MachineConfigParser().parse_string(config)
     payload = build_hardware_json(graph, "no-heaters")
@@ -441,6 +446,50 @@ step_pin: PF13
     assert payload["temperature_sensors"] == []
     assert payload["fans"] == []
     assert payload["endstops"] == []
+
+
+# ---------------------------------------------------------------------- #
+# [estop] — cardinality + wire shape (`.agent/component/estop.md`)        #
+# ---------------------------------------------------------------------- #
+
+
+def test_build_hardware_json_requires_an_estop_section():
+    """"Exactly one [estop]" is enforced here, not in the raw parser —
+    see `build_hardware_json`'s own docstring for why. A graph with no
+    `[estop]` at all (a valid parse — the parser stays lenient) must
+    not reach a deployable hardware.json."""
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser, MissingEstopSectionError
+
+    graph = MachineConfigParser().parse_string("[stepper_x]\nstep_pin: PF13\n")
+    assert graph.estop is None  # confirms the parser itself raised nothing
+
+    with pytest.raises(MissingEstopSectionError):
+        build_hardware_json(graph, "no-estop")
+
+
+def test_build_hardware_json_emits_an_empty_estop_object_for_a_ui_only_machine():
+    """An empty [estop] block is valid and required for UI-only setups
+    — the wire shape is a present, empty object, never an absent key
+    (which would be indistinguishable from "not declared at all")."""
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string("[stepper_x]\nstep_pin: PF13\n\n[estop]\n")
+    payload = build_hardware_json(graph, "ui-only")
+    assert payload["estop"] == {}
+
+
+def test_build_hardware_json_emits_the_declared_estop_pins():
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string(
+        "[mcu]\nconnection: parallelport\n\n[estop]\nfault_pin: 10\nout_pin: 14\n"
+    )
+    payload = build_hardware_json(graph, "test")
+    assert payload["estop"] == {"fault_pin": "10", "out_pin": "14"}
+
 
 # ---------------------------------------------------------------------- #
 # Structured-error response (issue #99)                                   #

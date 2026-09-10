@@ -21,9 +21,14 @@ from models.machineconfig.hal_fragment_models import (
 _PORT_INDEX = 0
 
 #: Roles routed as a parport OUTPUT pin (the component already wrote
-#: the signal; the router adds the consumer). ENDSTOP is the one INPUT
-#: role — the router adds the signal's writer instead.
-_OUTPUT_ROLES = {PinRole.STEP, PinRole.DIR, PinRole.ENABLE}
+#: the signal; the router adds the consumer). ENDSTOP/DIGITAL_IN are
+#: the INPUT roles — the router adds the signal's writer instead.
+_OUTPUT_ROLES = {PinRole.STEP, PinRole.DIR, PinRole.ENABLE, PinRole.DIGITAL_OUT}
+#: Input roles are mechanically identical on a parport (`-in`/`-in-not`,
+#: never a `setp`) — only their HAL signal *name* differs, chosen by
+#: whichever component made the request (`estop-fault` vs. an endstop's
+#: own `<axis>-sw`).
+_INPUT_ROLES = {PinRole.ENDSTOP, PinRole.DIGITAL_IN}
 
 
 class ParportRouterMapper:
@@ -72,7 +77,7 @@ class ParportRouterMapper:
                 fragment.setp.append(
                     f"setp parport.{_PORT_INDEX}.pin-{pin_id}-out-invert {invert}"
                 )
-            elif request.role is PinRole.ENDSTOP:
+            elif request.role in _INPUT_ROLES:
                 suffix = "in-not" if request.pin.invert else "in"
                 fragment.nets.append(
                     f"net {request.signal} <= parport.{_PORT_INDEX}.pin-{pin_id}-{suffix}"

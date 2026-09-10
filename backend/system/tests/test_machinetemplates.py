@@ -30,7 +30,8 @@ PROFILE_BODY = (
     "microsteps: 16\n"
     "rotation_distance: 40\n"
     "position_endstop: 0\n"
-    "position_max: 300\n"
+    "position_max: 300\n\n"
+    "[estop]\n"
 )
 
 
@@ -458,7 +459,8 @@ def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_r
         "microsteps: 16\n"
         "rotation_distance: 40\n"
         "position_endstop: 0\n"
-        "position_max: 300\n"
+        "position_max: 300\n\n"
+        "[estop]\n"
     )
     (isolated_roots["profiles"] / "compilable.cfg").write_text(profile, encoding="utf-8")
 
@@ -506,7 +508,8 @@ def test_generate_numbers_the_extruder_joint_correctly_and_writes_its_pid_sectio
         "[extruder]\n"
         "step_pin: PC9\ndir_pin: PC8\nrotation_distance: 33.5\n"
         "heater_pin: PE3\nsensor_pin: PA1\ncontrol: pid\n"
-        "pid_Kp: 22.2\npid_Ki: 1.08\npid_Kd: 114\nmin_temp: 0\nmax_temp: 250\n"
+        "pid_Kp: 22.2\npid_Ki: 1.08\npid_Kd: 114\nmin_temp: 0\nmax_temp: 250\n\n"
+        "[estop]\n"
     )
     (isolated_roots["profiles"] / "printer.cfg").write_text(profile, encoding="utf-8")
 
@@ -559,7 +562,8 @@ def test_generate_gives_each_remora_board_its_own_config_txt(isolated_roots):
         "dir_pin: mcu_b:PG1\n"
         "enable_pin: mcu_b:PF15\n"
         "rotation_distance: 40\n"
-        "position_max: 300\n"
+        "position_max: 300\n\n"
+        "[estop]\n"
     )
     (isolated_roots["profiles"] / "dual_board.cfg").write_text(profile, encoding="utf-8")
 
@@ -721,7 +725,8 @@ def test_generate_seeds_webgui_connections_with_real_spindle_and_heater_bindings
         "[mcu vfd0]\nconnection: vfd_rs485\n\n"
         "[spindle]\n"
         "run_pin: vfd0:run-forward\nspeed_pin: vfd0:rpm-in\n"
-        "is_connected_pin: vfd0:is-connected\nmax_rpm: 24000\nmin_rpm: 5000\n"
+        "is_connected_pin: vfd0:is-connected\nmax_rpm: 24000\nmin_rpm: 5000\n\n"
+        "[estop]\n"
     )
     (isolated_roots["profiles"] / "printer.cfg").write_text(profile, encoding="utf-8")
 
@@ -756,7 +761,8 @@ def test_generate_multi_motor_axis_emits_one_joint_per_motor(isolated_roots):
         "[stepper_x]\nstep_pin: PA0\ndir_pin: PA1\nposition_max: 300\n\n"
         "[stepper_y]\nstep_pin: PA2\ndir_pin: PA3\nposition_max: 400\n\n"
         "[stepper_y1]\nstep_pin: PA4\ndir_pin: PA5\nposition_max: 400\n\n"
-        "[stepper_z]\nstep_pin: PA6\ndir_pin: PA7\nposition_max: 100\n",
+        "[stepper_z]\nstep_pin: PA6\ndir_pin: PA7\nposition_max: 100\n\n"
+        "[estop]\n",
         encoding="utf-8",
     )
 

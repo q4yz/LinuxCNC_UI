@@ -77,6 +77,26 @@ def test_endstop_picks_in_or_in_not_by_invert_never_a_setp():
     assert not inverted.setp
 
 
+def test_digital_out_is_routed_like_any_other_output_role():
+    """The E-stop's `out_pin` — a plain output, no `-out-reset` (that's
+    STEP-only)."""
+    fragment = ParportRouterMapper.route([_request("estop-out", PinRole.DIGITAL_OUT, "14")])
+    assert "net estop-out => parport.0.pin-14-out" in fragment.nets
+    assert not any("pin-14-out-reset" in s for s in fragment.setp)
+    assert "setp parport.0.pin-14-out-invert 0" in fragment.setp
+
+
+def test_digital_in_picks_in_or_in_not_by_invert_never_a_setp():
+    """Mechanically identical to ENDSTOP — the E-stop's `fault_pin`
+    uses the same `-in`/`-in-not` selection."""
+    plain = ParportRouterMapper.route([_request("estop-fault", PinRole.DIGITAL_IN, "10")])
+    assert "net estop-fault <= parport.0.pin-10-in" in plain.nets
+    assert not plain.setp
+
+    inverted = ParportRouterMapper.route([_request("estop-fault", PinRole.DIGITAL_IN, "!10")])
+    assert "net estop-fault <= parport.0.pin-10-in-not" in inverted.nets
+
+
 def test_pin_ids_are_zero_padded_to_two_digits():
     fragment = ParportRouterMapper.route([_request("s-step", PinRole.STEP, "2")])
     assert "net s-step => parport.0.pin-02-out" in fragment.nets
