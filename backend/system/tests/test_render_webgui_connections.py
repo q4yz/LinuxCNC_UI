@@ -1,5 +1,5 @@
-"""render_webgui_connections — aggregates SpindleWebguiMapper/
-HeaterWebguiMapper over a hardware.json payload's `tools[]`.
+"""render_webgui_connections — aggregates EstopWebguiMapper/
+SpindleWebguiMapper/HeaterWebguiMapper over a hardware.json payload.
 
 Deliberately independent of `validate_machine`/`compile_machine_hal`
 — a spindle or heater with a real pin still deserves a working UI
@@ -33,6 +33,37 @@ def test_binds_a_spindle_and_a_heater_together():
     assert "# Heater: heater_bed" in text
     assert "net heater_bed-SP <= webgui.target-temperature_bed" in text
     assert "net bed-PV => webgui.bed" in text
+
+
+def test_estop_binding_appears_when_the_payload_declares_one():
+    """Every real hardware.json has an `estop` key (required exactly
+    once) — the binding is unconditional once it's present, regardless
+    of whether fault_pin/out_pin are set."""
+    text = render_webgui_connections({"estop": {}})
+    assert "net estop-activate webgui.estop => halui.estop.activate" in text
+
+
+def test_estop_and_spindle_and_heater_all_bind_together():
+    payload = {
+        "estop": {"fault_pin": "10"},
+        "tools": [
+            {"id": "spindle_digital", "run_pin": "vfd0:run-forward", "type": "spindle_digital"},
+            {"id": "heater_bed", "sensor": "bed", "type": "heated_bed"},
+        ],
+    }
+    text = render_webgui_connections(payload)
+    assert "# Estop" in text
+    assert "net estop-activate webgui.estop => halui.estop.activate" in text
+    assert "# Spindle: spindle_digital" in text
+    assert "# Heater: heater_bed" in text
+
+
+def test_a_non_estop_dict_value_is_ignored_not_crashed():
+    """A payload that carries some other truthy-but-wrong `estop`
+    shape (a hand-edited fixture, a future format change) must not
+    crash rendering — only a genuine dict triggers the binding."""
+    assert render_webgui_connections({"estop": None}) == ""
+    assert render_webgui_connections({"estop": "not-a-dict"}) == ""
 
 
 def test_a_non_dict_tools_entry_is_skipped_not_crashed():

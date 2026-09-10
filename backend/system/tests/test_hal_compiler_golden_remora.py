@@ -133,10 +133,11 @@ def test_addf_is_all_servo_thread_no_base_thread_at_all():
     # Order=1 tier: motion-command-handler/motion-controller (the
     # `motion` fragment, always first into `combine()`), THEN each
     # heater's PID compute (declared bed-before-extruder, same as the
-    # component-fragment concatenation order), THEN the E-stop UI
-    # pulse chain (`EstopHalMapper` is always the last component
-    # fragment — `assembler.py::assemble`) — before `remora.write`
-    # ever runs, matching the real thread-attachment block.
+    # component-fragment concatenation order) — before `remora.write`
+    # ever runs, matching the real thread-attachment block. No E-stop
+    # entry here: the UI half lives in `webgui_connections.hal` via
+    # `EstopWebguiMapper` and this fixture declares no physical
+    # `fault_pin`/`out_pin`, so `EstopHalMapper` contributes nothing.
     servo = [a.func for a in sorted(fragment.addf, key=lambda a: a.order)]
     assert servo == [
         "remora.read",
@@ -144,7 +145,6 @@ def test_addf_is_all_servo_thread_no_base_thread_at_all():
         "motion-controller",
         "PID-heater_bed.compute",
         "PID-heater_extruder.compute",
-        "estop-pulse-generator",
         "remora.update-freq",
         "remora.write",
     ]

@@ -1,7 +1,25 @@
-> **Implemented status:** `EstopHalMapper` (`backend/system/services/
-> halcompiler/components/EstopHalMapper.py`) emits the § 3 UI pulse
-> chain unconditionally on every machine — no hardware needed — plus
-> the § 3 physical chain when `fault_pin`/`out_pin` are declared.
+> **Implemented status:** Two mappers split the § 3 HAL, matching the
+> two things `[estop]` can affect:
+>
+> * `EstopWebguiMapper` (`backend/system/services/halcompiler/
+>   components/EstopWebguiMapper.py`) unconditionally seeds
+>   `webgui_connections.hal` (via `render_webgui_connections`) with a
+>   plain `webgui.estop => halui.estop.activate` passthrough net — no
+>   hardware needed, present on every machine. This is what makes an
+>   empty `[estop]` block useful on its own for a UI-only machine.
+>   `StateService.activate_estop()` (`backend/machine/services/
+>   StateService.py`) generates the rising edge itself now — assert
+>   `True`, hold ~50 ms, reset to `False` — rather than relying on a
+>   HAL-side `oneshot` to turn a held level into a pulse; that turned
+>   out not to be as simple as it sounds (a held level plus a HAL-side
+>   reset has its own edge cases a Python-owned pulse doesn't). The
+>   router endpoint (`POST /estop/activate`,
+>   `backend/machine/routers/state.py`) is `async` and `await`s it.
+> * `EstopHalMapper` (`backend/system/services/halcompiler/
+>   components/EstopHalMapper.py`) emits the § 3 physical chain into
+>   `machine.hal` when `fault_pin`/`out_pin` are declared — and
+>   nothing at all when they aren't.
+>
 > Cardinality ("exactly one `[estop]`") is enforced by
 > `services.machineconfig.hardware_json_generator.build_hardware_json`,
 > not by the raw section parser — see that function's own docstring
@@ -68,18 +86,9 @@ re-tune without regenerating HAL.
 
 machine.hal
 ```hal
-# --- UI pulse chain (unconditional — no hardware required) ---
-#
-# StateService.activate_estop() (backend/machine/services/
-# StateService.py) just asserts webgui.estop True and leaves it
-# there — a continuous level. halui.estop.activate needs a *rising
-# edge* every time the operator presses the button, not a held
-# level, so a oneshot turns the continuous UI signal into a pulse.
-loadrt oneshot names=estop-pulse-generator
-addf estop-pulse-generator servo-thread
-setp estop-pulse-generator.width 0.1
-net continuous-estop-in webgui.estop => estop-pulse-generator.in
-net pulsed-estop-out estop-pulse-generator.out => halui.estop.activate
+# Nothing at all when fault_pin and out_pin are both unset — an
+# empty [estop] block contributes zero lines here. EstopHalMapper
+# only ever emits the physical chain below, per declared pin.
 
 # --- IF parameters.fault_pin AND this pin's MCU is not class B ---
 # Physical E-stop chain — grounded in the real reference machine,
@@ -104,13 +113,15 @@ net estop-out => <out_pin>                    # <- out_pin (output)
 
 webgui_connections.hal
 ```hal
-# Nothing here. webgui.estop is machine-core wiring (every generated
-# machine needs it, regardless of what the operator hand-wires), so
-# it lives in machine.hal via EstopHalMapper — not something an
-# operator ever hand-wires per-machine the way a spindle VFD or a
-# heater's fan is. See `pin_catalog.py`'s "EStopPin" entry for the
-# read-only reference hint shown in machine.hal's own pin-reference
-# appendix when a machine doesn't compile yet.
+# UI trigger — unconditional, present the moment [estop] exists at
+# all (even empty). webgui.estop is already a clean 0 -> 1 -> 0 edge
+# by the time HAL sees it: StateService.activate_estop() generates
+# the pulse itself (assert True, hold ~50 ms, reset False) rather
+# than leaving edge generation to a HAL-side oneshot, so this is a
+# plain passthrough — no different in kind from a spindle's
+# TargetRpm binding.
+# Estop
+net estop-activate webgui.estop => halui.estop.activate
 ```
 
 ## 4. Validation rules

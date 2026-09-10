@@ -161,16 +161,23 @@ def _run_mdi_endpoint(cmd: MdiCommand) -> StatusResponse:
     operation_id="activateEstop",
     response_model=StatusResponse,
 )
-def _activate_estop_endpoint() -> StatusResponse:
-    """Drive ``halui.estop.activate`` directly.
+async def _activate_estop_endpoint() -> StatusResponse:
+    """Drive ``webgui.estop`` directly (see ``StateService.activate_estop``
+    for the pulse itself — this only has to await it).
 
     Used only by the global E-Stop header button (``EStopHeader.vue``).
     The state bar's smaller E-STOP button still goes through
     ``POST /state`` via :func:`_set_state_endpoint` so the two
     affordances keep distinct behaviour contracts.
+
+    ``activate_estop`` is ``async`` — it holds the pin ``True`` for
+    50 ms before resetting it to ``False`` itself (rather than relying
+    on HAL to turn a held level into a pulse), so this handler must
+    ``await`` it rather than fire-and-forget; a bare call would only
+    construct the coroutine without ever running its body.
     """
     try:
-        get_state_service().activate_estop()
+        await get_state_service().activate_estop()
     except HTTPException:
         # ``activate_estop`` raises 503 on HAL write failure; let it
         # propagate so the operator sees the wiring fault instead of

@@ -1,36 +1,34 @@
-"""The `[estop]` component -> :class:`HalFragment` (`.agent/component/estop.md`).
+"""The `[estop]` component's physical chain -> :class:`HalFragment`
+(`.agent/component/estop.md`).
 
-Two independent halves, matching the two things `[estop]` can carry:
+The UI half — `webgui.estop` -> `halui.estop.activate` — lives in
+`webgui_connections.hal` via `EstopWebguiMapper`, not here:
+`StateService.activate_estop()` (`backend/machine/services/
+StateService.py`) now generates its own pulse (assert, hold briefly,
+reset), so the HAL side is just a plain passthrough net, no different
+in kind from a spindle's `TargetRpm` binding — it needs no `oneshot`
+and no core `machine.hal` wiring at all.
 
-* **UI pulse chain (unconditional).** `StateService.activate_estop()`
-  just asserts the webgui `estop` pin (`webgui.estop`,
-  `common/dtos/EStopDto.py`) `True` and leaves it there — a
-  *continuous* level, not a pulse. `halui.estop.activate` needs a
-  *rising edge* every time the operator presses the button, not a
-  held level, so a `oneshot` turns the continuous UI signal into a
-  0.1 s pulse before it reaches halui. This half needs no hardware at
-  all — it is what makes an empty `[estop]` block useful on its own
-  for a UI-only machine.
+This mapper covers only what's left: the **optional, per-pin physical
+E-stop chain**. `fault_pin`/`out_pin` mirror the hand-wired chain in
+the real reference machine, `machine_config/example/PrintNC-WEBGUI/
+Machine.hal` (lines 41-57): an `estop_latch` gates LinuxCNC's own
+enable state on a physical fault input, and a physical output pin
+mirrors LinuxCNC's enable state back out (a lamp, a relay, a second
+machine's E-stop loop). Each pin is independently optional, and
+declaring neither (including a fully empty `[estop]` block) is valid
+— this mapper then contributes nothing to `machine.hal` at all.
 
-* **Physical E-stop chain (optional, per pin).** `fault_pin`/`out_pin`
-  mirror the hand-wired chain in the real reference machine,
-  `machine_config/example/PrintNC-WEBGUI/Machine.hal` (lines 41-57):
-  an `estop_latch` gates LinuxCNC's own enable state on a physical
-  fault input, and a physical output pin mirrors LinuxCNC's enable
-  state back out (a lamp, a relay, a second machine's E-stop loop).
-  Each pin is independently optional.
-
-  This half is skipped on a class-B (Remora/EtherCAT) MCU: that
-  router's own `base_fragment()` already nets `iocontrol.0.
-  user-enable-out` / `user-request-enable` / `emc-enable-in` for its
-  own SPI/EtherCAT link-health chain (`RemoraRouterMapper.
-  base_fragment`) — wiring `estop_latch` on top of the *same* pins
-  would double-drive them, a genuine HAL load error, not a cosmetic
-  one. The physical pin itself is still routed (a `PinRequest`
-  survives either way, so a Remora `fault_pin` still becomes a real
-  `config.txt` "Digital Pin" module) — only the `iocontrol`/
-  `estop_latch` linkage is skipped, and only on the MCU that pin
-  actually targets, never the whole machine.
+This chain is skipped on a class-B (Remora/EtherCAT) MCU: that
+router's own `base_fragment()` already nets `iocontrol.0.
+user-enable-out` / `user-request-enable` / `emc-enable-in` for its own
+SPI/EtherCAT link-health chain (`RemoraRouterMapper.base_fragment`) —
+wiring `estop_latch` on top of the *same* pins would double-drive
+them, a genuine HAL load error, not a cosmetic one. The physical pin
+itself is still routed (a `PinRequest` survives either way, so a
+Remora `fault_pin` still becomes a real `config.txt` "Digital Pin"
+module) — only the `iocontrol`/`estop_latch` linkage is skipped, and
+only on the MCU that pin actually targets, never the whole machine.
 """
 
 from __future__ import annotations
@@ -47,30 +45,15 @@ from models.machineconfig.hal_fragment_models import (
 )
 from models.machineconfig.pin_models import CapabilityClass
 
-#: `oneshot`'s pulse width in seconds. Long enough for halui to
-#: register the rising edge every servo cycle, short enough nothing
-#: reads it as "held" — the worked example's own 100 ms.
-_PULSE_WIDTH_SECONDS = 0.1
-
-_ONESHOT = "estop-pulse-generator"
-
 
 class EstopHalMapper:
-    """The `[estop]` component — UI pulse chain plus optional hardware."""
+    """The `[estop]` component's optional physical E-stop chain."""
 
     @staticmethod
     def to_fragment(
         estop: dict[str, Any], mcus_by_id: dict[str, dict[str, Any]]
     ) -> HalFragment:
-        fragment = HalFragment(
-            loadrt=[f"loadrt oneshot names={_ONESHOT}"],
-            addf=[Addf(_ONESHOT, SERVO_THREAD, order=1)],
-            setp=[f"setp {_ONESHOT}.width {_PULSE_WIDTH_SECONDS}"],
-            nets=[
-                f"net continuous-estop-in webgui.estop => {_ONESHOT}.in",
-                f"net pulsed-estop-out {_ONESHOT}.out => halui.estop.activate",
-            ],
-        )
+        fragment = HalFragment()
 
         fault_pin = estop.get("fault_pin")
         if fault_pin:

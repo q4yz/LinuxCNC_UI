@@ -16,6 +16,7 @@ facade does not touch the router.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import warnings
@@ -129,16 +130,27 @@ class StateService:
         """Forces an immediate emergency stop."""
         execute_sync_cmd("state", 3.0, getattr(linuxcnc, "STATE_ESTOP", 1))
 
-    def activate_estop(self) -> None:
+    async def activate_estop(self) -> None:
 
         """Critical e-stop activation — drives ``webgui.estop`` directly.
 
-        We simply assert the custom software pin to True. The HAL layer is
-        responsible for routing this to `halui.estop.activate` and generating
-        the required rising edge (pulse) to ensure halui registers the command.
+        Generates the pulse itself: assert the pin, hold it briefly,
+        then reset it so it's armed for the next press. Leaving the
+        reset to HAL (a held level turned into an edge by a
+        `oneshot`) turned out not to be as simple as it sounds, so
+        this method now owns the whole 0 -> 1 -> 0 cycle; `machine.hal`
+        wires `webgui.estop` straight into `halui.estop.activate` (a
+        plain passthrough, see `EstopWebguiMapper` /
+        `.agent/component/estop.md`) and trusts this method to have
+        already produced a clean edge.
         """
         try:
             self._Estop.pressed.set_value(True)
+
+            await asyncio.sleep(0.05)
+
+            # Reset the pin so it is armed for the next time
+            self._Estop.pressed.set_value(False)
         except Exception as e:
             raise HTTPException(
                 status_code=503,

@@ -14,6 +14,61 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.20 (2026-09-10) Estop UI wiring moved to `webgui_connections.hal`; backend now owns the pulse
+
+Direct follow-up to 1.19, prompted by two things happening together:
+the user edited `StateService.activate_estop()` themselves (uncommitted
+at the time) to generate its own pulse — assert `True`,
+`await asyncio.sleep(0.05)`, reset `False` — instead of leaving the
+whole reset to a HAL-side `oneshot`, and asked for the webgui pin to
+be wired "via webguipin mapper" (`SpindleWebguiMapper`/
+`HeaterWebguiMapper`'s pattern) instead of baked into `machine.hal`.
+
+- **`webgui.estop` is now a proper edge by the time HAL sees it**,
+  so the `oneshot`/pulse machinery in 1.19's `EstopHalMapper` was
+  pure redundancy once the backend owns the 0 -> 1 -> 0 cycle — wiring
+  it straight into `halui.estop.activate` (a plain passthrough net,
+  same shape as a spindle's `TargetRpm` binding) is enough. New
+  `EstopWebguiMapper` (`services/halcompiler/components/`, no
+  arguments — the binding never varies per machine) is now folded
+  into `render_webgui_connections()` alongside `SpindleWebguiMapper`/
+  `HeaterWebguiMapper`, so it seeds into `webgui_connections.hal` on
+  first generation like every other UI binding. `EstopHalMapper`
+  lost its entire "UI pulse chain" half — it's now purely the
+  optional physical `fault_pin`/`out_pin` chain, and contributes
+  nothing at all to `machine.hal` for an empty `[estop]` block.
+
+- **Found and fixed a real, separate bug while wiring this up**: the
+  user's edit made `activate_estop` `async def`, but
+  `POST /estop/activate` (`machine/routers/state.py`) still called it
+  as `get_state_service().activate_estop()` with no `await` — a
+  no-op (constructs the coroutine, never runs its body, `webgui.estop`
+  never gets written at all). Fixed: the endpoint handler is now
+  `async def` and awaits the call. Caught by fixing
+  `test_machine_state_facade.py`'s `TestActivateEstop` tests, which
+  called the real (non-mocked) coroutine directly and needed
+  `asyncio.run(...)` — the mocked-endpoint tests
+  (`TestActivateEstopEndpoint`) needed no changes: `unittest.mock.patch`
+  auto-detects a real `async def` target and substitutes an
+  `AsyncMock`, so `await mock(...)` already worked once the router
+  awaited it.
+
+- **Updated the now-stale docstrings this touched**: `StateService.
+  activate_estop`'s own comment used to say "the HAL layer is
+  responsible for … generating the required rising edge" — no longer
+  true, now says so. `pin_catalog.py`'s `EStopPin` connect-hint and
+  `estop.md` §§ implemented-status/3 updated to match (plain
+  passthrough net, not a `oneshot`).
+
+- **969 backend tests passing** (`common`+`machine`=452, `system`=517),
+  mypy clean across 297 source files. New `test_estop_webgui_mapper.py`;
+  `test_estop_hal_mapper.py` lost its two UI-pulse-chain tests (that
+  behavior moved out) and gained a test asserting an empty `[estop]`
+  produces a fully empty fragment; `test_render_webgui_connections.py`
+  gained estop-binding coverage; the two golden tests' `addf` exact-list
+  assertions from 1.19 were reverted (no more `estop-pulse-generator`
+  entry, since neither golden fixture declares physical estop pins).
+
 ### 1.19 (2026-09-10) New `[estop]` component — full stack, new doc `estop.md`
 
 Integrated end to end: ingestion, `hardware.json`, HAL compiler, and a

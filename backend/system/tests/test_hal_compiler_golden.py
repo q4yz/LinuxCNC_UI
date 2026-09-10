@@ -111,10 +111,6 @@ def test_addf_thread_assignment_and_order_match(fragment):
         "stepgen.capture-position",
         "motion-command-handler",
         "motion-controller",
-        # `EstopHalMapper`'s UI pulse chain — always the last component
-        # fragment (`assembler.py::assemble`), so it lands after the
-        # motion order=1 tier but still ahead of order=2's write.
-        "estop-pulse-generator",
         "stepgen.update-freq",
     ]
 

@@ -2,6 +2,7 @@
 
 from .DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .EstopHalMapper import EstopHalMapper
+from .EstopWebguiMapper import EstopWebguiMapper
 from .HeaterHalMapper import HeaterHalMapper
 from .HeaterWebguiMapper import HeaterWebguiMapper
 from .MotionSystemHalMapper import MotionSystemHalMapper
@@ -13,6 +14,7 @@ from .StepperHalMapper import StepperHalMapper
 __all__ = [
     "DigitalSpindleHalMapper",
     "EstopHalMapper",
+    "EstopWebguiMapper",
     "HeaterHalMapper",
     "HeaterWebguiMapper",
     "MotionSystemHalMapper",

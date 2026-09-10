@@ -1,12 +1,15 @@
-"""EstopHalMapper — `.agent/component/estop.md` § 3.
+"""EstopHalMapper — the optional physical chain half of
+`.agent/component/estop.md` § 3.
 
-The UI pulse chain half is grounded in the runtime's own contract:
-`StateService.activate_estop()` (`machine/services/StateService.py`)
-just asserts `webgui.estop` `True` and leaves it there — a continuous
-level — and its own docstring says the HAL layer is responsible for
-"generating the required rising edge (pulse)". The physical chain half
-is grounded in the real reference machine,
-`machine_config/example/PrintNC-WEBGUI/Machine.hal` (lines 41-57).
+The UI half — `webgui.estop` -> `halui.estop.activate` — no longer
+lives here at all; it's a plain passthrough net in
+`webgui_connections.hal` via `EstopWebguiMapper` (see
+`test_estop_webgui_mapper.py`), since `StateService.activate_estop()`
+(`machine/services/StateService.py`) now generates its own pulse
+(assert, hold briefly, reset) instead of relying on a HAL-side
+`oneshot`. This file covers only the physical chain, grounded in the
+real reference machine, `machine_config/example/PrintNC-WEBGUI/
+Machine.hal` (lines 41-57).
 """
 
 from __future__ import annotations
@@ -18,22 +21,15 @@ _PARPORT_MCU = {"mcu": {"id": "mcu", "connection": "parallelport"}}
 _REMORA_MCU = {"mcu": {"id": "mcu", "connection": "remora-spi"}}
 
 
-def test_the_ui_pulse_chain_is_always_present():
-    """No hardware at all — the empty-[estop] / UI-only case."""
+def test_no_physical_pins_means_an_entirely_empty_fragment():
+    """The empty-[estop] / UI-only case — this mapper contributes
+    nothing to `machine.hal` at all once the UI half moved out."""
     fragment = EstopHalMapper.to_fragment({}, {})
-
-    assert "loadrt oneshot names=estop-pulse-generator" in fragment.loadrt
-    assert "setp estop-pulse-generator.width 0.1" in fragment.setp
-    assert "net continuous-estop-in webgui.estop => estop-pulse-generator.in" in fragment.nets
-    assert "net pulsed-estop-out estop-pulse-generator.out => halui.estop.activate" in fragment.nets
-    assert not fragment.requests
-
-
-def test_the_oneshot_runs_in_the_servo_thread():
-    fragment = EstopHalMapper.to_fragment({}, {})
-    assert len(fragment.addf) == 1
-    assert fragment.addf[0].func == "estop-pulse-generator"
-    assert fragment.addf[0].thread == "servo-thread"
+    assert fragment.loadrt == []
+    assert fragment.addf == []
+    assert fragment.setp == []
+    assert fragment.nets == []
+    assert fragment.requests == []
 
 
 def test_no_physical_pins_means_no_requests_and_no_latch():

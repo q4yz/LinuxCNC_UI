@@ -24,9 +24,10 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -436,39 +437,39 @@ class TestDeprecatedPassthroughs:
 
 
 class TestActivateEstop:
-    """Critical e-stop activation drives ``self._Estop.pressed.set_value(True)``.
+    """Critical e-stop activation drives ``self._Estop.pressed.set_value``.
 
     Per the ``HalPin`` subclass architecture (see
     ``.agent/context/LESSONS_LEARNED.md`` § 3.5), any pin-level policy
     (edge generation, debouncing) belongs on the ``HalPin`` subclass
     wrapped by ``EStopPin`` — the service itself only calls
-    ``set_value(True)`` on the current pin and translates a raised
+    ``set_value`` on the current pin and translates a raised
     exception into ``HTTPException(503)``. These tests swap in a
     fake pin object so no real HAL is touched.
 
-    NOTE: an earlier version of this test pinned a two-write
-    (0 then 1) rising-edge dance called directly against
-    ``halui.estop.activate`` via a free-floating ``write_hal_pin``
-    helper — exactly the anti-pattern LESSONS_LEARNED § 3.5 describes
-    fixing. That dance does not exist in the current
-    ``ReadWriteDynamicHalPin``/``EStopPin`` pair, and it does not need
-    to: edge generation for ``halui.estop.activate`` is the HAL
-    wiring's job, not Python's — see the docstring on
-    :meth:`StateService.activate_estop`. The backend's only
-    responsibility is asserting ``webgui.estop`` and turning a write
-    failure into ``HTTPException(503)``, which is exactly what these
-    tests pin.
+    NOTE: an earlier version of this method left edge generation
+    entirely to a HAL-side ``oneshot`` (holding ``webgui.estop`` at
+    ``True`` forever, never resetting it from Python) on the theory
+    that "edge generation is HAL's job, not Python's". That turned
+    out not to be as simple as it sounds — ``activate_estop`` now
+    generates the pulse itself: assert ``True``, hold briefly, reset
+    to ``False``. `machine.hal` no longer needs a `oneshot` at all;
+    the webgui-side binding is a plain passthrough net (see
+    ``EstopWebguiMapper``, `.agent/component/estop.md`).
     """
 
-    def test_activate_estop_calls_set_value_true(self):
-        """The current pin's ``set_value(True)`` is the entire write path."""
+    def test_activate_estop_calls_set_value_true_then_false(self):
+        """``activate_estop`` is now the pulse's own source: it asserts
+        the pin, holds it briefly, then resets it itself — see its
+        docstring for why (a HAL-side reset turned out not to be as
+        simple as a plain ``oneshot``)."""
         svc = StateService()
         mock_pin = MagicMock()
         svc._Estop = EStopPin("estop", mock_pin)
 
-        svc.activate_estop()
+        asyncio.run(svc.activate_estop())
 
-        mock_pin.set_value.assert_called_once_with(True)
+        assert mock_pin.set_value.call_args_list == [call(True), call(False)]
 
     def test_activate_estop_raises_503_when_set_value_fails(self):
         """A failure writing the pin must surface as HTTP 503, not
@@ -480,7 +481,7 @@ class TestActivateEstop:
         svc._Estop = EStopPin("estop", mock_pin)
 
         with pytest.raises(HTTPException) as exc_info:
-            svc.activate_estop()
+            asyncio.run(svc.activate_estop())
 
         assert exc_info.value.status_code == 503
         assert "estop" in str(exc_info.value.detail).lower()
@@ -498,7 +499,7 @@ class TestActivateEstop:
             services_StateService_mod, "execute_sync_cmd"
         ) as mock_sync:
             with pytest.raises(HTTPException):
-                svc.activate_estop()
+                asyncio.run(svc.activate_estop())
             assert mock_sync.call_count == 0, (
                 "activate_estop must not call execute_sync_cmd on "
                 "HAL failure — silently falling back to the slow "
