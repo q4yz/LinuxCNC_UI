@@ -14,6 +14,167 @@ GitHub issue (see § 2); the issues are the canonical backlog now.
 
 ## 1. Recent attempted work (newest first)
 
+### 1.23 (2026-09-11) New `[fan]`/`[heater_fan]` components — real Klipper section syntax, `kind`-discriminated `fans[]`
+
+User pasted the real Klipper `[fan]`/`[heater_fan]` doc pages and asked
+for both in their "basic form": a float, G-code (`part`) or the HAL
+(`heater`) drives it, ignoring the tachometer/enable-pin/kick-start
+fields real hardware here doesn't have ("assume only two pin fans").
+`fan.md` (§§ 1-4) had *already* speced most of this shape from an
+earlier session — this landed it for real rather than designing from
+scratch, correcting the doc where the real implementation diverged
+from the old aspirational sketch.
+
+- **Real Klipper syntax, not a synthetic `kind:` field.** `[fan]`/
+  `[fan_generic ...]` and `[heater_fan <name>]` are two distinct
+  sections (new `SectionKind.HEATER_FAN`), not one section with a
+  `kind:` sub-key — matches what an operator actually pastes from
+  Klipper docs. Both land in the same `fans[]` hardware.json list,
+  discriminated by a `kind: "part" | "heater"` field the *compiler*
+  assigns, so `tools[].fan` cross-reference validation stays one
+  mechanism. `HeaterFan.heater` resolves through the same
+  `_heater_id()` every other heater cross-reference already uses
+  (`"extruder"` -> `"heater_extruder"`, Klipper's own default when
+  `heater:` is omitted).
+
+- **Two fully independent control models, per the request:**
+  `FanHalMapper` (`part`) gives every declared fan its own direct
+  `PinRequest` unconditionally — no heater reference needed any more
+  (this makes fan.md's old `W_ORPHAN_FAN` concern moot). `FanHalMapper`
+  (`heater`) wires the `wcomp`/`conv_bit_float`/`scale` chain fan.md
+  already sketched: reads the *reading* (not the setpoint, which drops
+  to 0 on an estop while the block is still hot), turns "hot" into a
+  bit, then into 0 or `fan_speed` — skipped entirely (no crash) when
+  the referenced heater has no sensor to gate on. A `heater`-kind fan
+  gets **no** `webgui_connections.hal` binding at all — new
+  `FanWebguiMapper` only ever runs for `part` fans, matching "the user
+  can not control the heater_fan" exactly.
+
+- **Real bug found and fixed while wiring `FanWebguiMapper` in:**
+  `HeaterWebguiMapper` used to also emit a referenced fan's binding —
+  moved out entirely (every fan is uniform now, heater-referenced or
+  not) — which surfaced a *second*, independent real bug: a heater's
+  auto-derived placeholder fan (sharing the heater's own `heater_pin`,
+  1.22's `duplicate_pin_overrides` fix) still got its own standalone
+  `webgui.<fan_id>` binding, but `HalAssembler` *renames* that fan's
+  signal onto the heater's own canonical one — so the binding
+  referenced a signal name `machine.hal` never actually used, silently
+  disconnected from the real output. Fixed at the render layer:
+  `render_webgui_connections` now skips a `part` fan's binding
+  whenever its pin sits in `duplicate_pin_overrides`.
+
+- **A real, still-open gap flagged rather than half-built:**
+  `shutdown_speed` is ingested all the way to `hardware.json` on both
+  kinds, but nothing switches a fan to it on an estop yet — the clean
+  mechanism (a `mux2` off a shared "machine enabled" export) needs a
+  cross-MCU-class signal this compiler doesn't have a single owner for
+  yet (`EstopHalMapper`'s own physical chain reads `iocontrol.0.
+  user-enable-out` directly, but only conditionally per pin/MCU-class
+  — see `estop.md`). Documented in `fan.md`'s own § 3, not silently
+  dropped.
+
+- **A second, larger gap found and flagged, out of this pass's
+  scope:** no machine-runtime code registers `webgui.<fan_id>` as a
+  real HAL pin for a *standalone* fan — only a heater's own nested
+  `fan` field does (`HeaterMapper.py::from_dict_to_HeaterPins`). "G-code
+  defines the speed" for a genuinely standalone `[fan]` needs a small
+  `FanPin`/`FanMapper`/`FanService` on the machine backend (mirroring
+  `TemperatureService`'s own shape) that does not exist yet — a
+  distinct, separate-sized feature (a new runtime API surface, not
+  "the config" or "the HAL"), flagged to the user directly rather than
+  built under time pressure in the same pass as the compiler-side work.
+
+- **1028 backend tests passing** (`common`+`machine`=456, `system`=572),
+  mypy clean across 306 source files. New test files:
+  `test_fan_hardware_json_generator.py`, `test_fan_hal_mapper.py`,
+  `test_fan_webgui_mapper.py`; new `[heater_fan]`/extended `[fan]`
+  coverage in `test_machineconfig_parser.py`, `test_hardware_json_model.py`
+  (the `E_UNKNOWN_HEATER` pydantic cross-ref), `test_halcompiler_validator.py`
+  (the same rule's dict-level twin), `test_render_webgui_connections.py`
+  (the shared-pin skip regression). `mcu_remora_spi.cfg` (this
+  session's own demo profile) now declares a real `[fan_generic]` +
+  `[heater_fan]` pair, so the existing profile-sweep tests
+  (`test_hardware_json_lossless.py`, `test_halcompiler_validator.py::
+  test_profiles_with_an_mcu_pass_the_gate`) exercise the whole feature
+  end to end for free.
+
+### 1.22 (2026-09-11) Remora `config.txt` generation: Reset Pin + real Temperature modules, a real duplicate-PWM firmware bug, and the mapper-pattern refactor
+
+Triggered by `machine_config/example/ender3/config.txt` — a NEW real
+reference file the user added this session (`git log`: "feat: added
+remora config out to the compiler", same day) — with the explicit ask
+"fix the remora generation" plus "switch to the mapper pattern".
+Three real gaps/bugs found and fixed, verified end-to-end against the
+user's own real `printer.cfg` (BIGTREETECH OCTOPUS, real pins).
+
+- **Mapper pattern:** `HalAssembler._render_firmware_configs` used to
+  build the `{"Board": ..., "Modules": [...]}` root dict inline. Pulled
+  into new `RemoraFirmwareConfigMapper.to_config(mcu, modules)` — the
+  assembler still decides *which* modules go to *which* MCU (its own
+  job per README § 4), the firmware target's JSON shape is now a
+  dedicated mapper's call, same pattern as every other Remora shape
+  (`RemoraStepperHalMapper`, `RemoraDriverFirmwareMapper`).
+
+- **Missing `"Reset Pin"` module (real gap, now implemented):** every
+  module in the real reference file is preceded by one; this compiler
+  never emitted anything like it. New `reset_pin` MCU field
+  (`.cfg` → `MCU.reset_pin` → `hardware.json`'s `mcus[].reset_pin`),
+  restricted to `remora-spi`/`remora-eth` (mirrors the RS-485 serial
+  trio's own restriction — a typo elsewhere, not a tuning knob).
+  `RemoraRouterMapper.base_fragment()` emits the module unconditionally
+  when declared, MCU-intrinsic like the SPI-enable chain above it —
+  always first in the file, matching the reference exactly.
+
+- **Missing `"Temperature"` module (real gap, now *partially*
+  implemented):** the previous "not yet implemented" reasoning
+  (no `beta`/`r0`/`t0` schema field) turned out to have a real answer
+  once the reference file existed to check against — its
+  `temp_extruder`/`temp_bed` modules use `beta=3950, r0=100000, t0=25`,
+  the textbook NTC 100K B3950 curve Klipper/Marlin ship as "Generic
+  3950" by default, and `temperature_sensors[].type` already carries
+  that exact string. New `PinRequest.sensor_type` field (the router
+  otherwise never sees a sensor's `type`, only the flat request list)
+  threaded through from `HeaterHalMapper`; `RemoraRouterMapper`'s new
+  `_THERMISTOR_CURVES` lookup (currently just "Generic 3950") emits the
+  module when the type is known, stays the same honest gap as before
+  for anything else — no guessed curve, ever.
+  **Also corrected a stale, actively-wrong doc claim** in
+  `mcu_spi_remora.md`: an earlier draft asserted `"Sensor": "Generic
+  3950"` (no nesting) was the "correct, real shape" and warned future
+  agents not to "fix" it to `"Sensor": "Thermistor"` + nested curve —
+  written before any real reference existed to check against. The
+  actual file uses exactly the form that earlier draft warned against.
+
+- **Real firmware bug found independently while smoke-testing against
+  `printer.cfg`, not something ender3's reference exposed:** every
+  heater with a `heater_pin` gets an auto-derived "fan" sharing that
+  exact pin (`hardware_json_generator._fan_payload` — real, documented,
+  `W_FAN_SHARES_HEATER_PIN`, "every generated machine has it," per
+  1.10-era work). `HalAssembler` never silently merges a physical-pin
+  collision without explicit `duplicate_pin_overrides` permission
+  (`test_hal_assembler_duplicate_pin_override.py`'s own deliberate
+  "trust the input" contract) — so a heater with no *real* declared
+  cooling fan got **two independent `"PWM"` modules, two different
+  `SP[i]` channels, pointing at the same physical pin**. Fixed at the
+  root: `build_hardware_json` now auto-adds that pin to
+  `duplicate_pin_overrides` itself whenever it creates the auto-fan —
+  since the compiler creates the collision, the compiler also supplies
+  the permission, exactly what an operator would otherwise have to do
+  by hand. The assembler's own "never silently merge" contract is
+  untouched; this closes the one gap in it that was compiler-caused
+  rather than operator-caused.
+
+- **994 backend tests passing** (`common`+`machine`=456, `system`=538),
+  mypy clean across 301 source files. New: `test_remora_firmware_config_mapper.py`,
+  `test_heater_fan_pin_sharing_override.py` (the duplicate-PWM
+  regression, end to end through the real parser + generator +
+  assembler), `reset_pin` tests in `test_machineconfig_parser.py`,
+  Temperature/Reset-Pin tests in `test_remora_router_mapper.py`. The
+  Remora golden test (`test_hal_compiler_golden_remora.py`) now
+  declares a real `board`/`reset_pin`/sensor `type` and asserts the
+  new modules, plus a new test cross-checking that every module `Type`
+  this compiler emits is one the real reference file actually has.
+
 ### 1.21 (2026-09-11) Real HAL load crash on a heater/extruder machine: `webgui.<sensor>` registered as HAL_OUT, fighting the MCU router's own pin
 
 User ran a real generated machine (their own `printer.cfg`, rewritten

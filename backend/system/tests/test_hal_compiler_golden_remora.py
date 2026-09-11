@@ -44,6 +44,7 @@ from services.halcompiler.assembler import HalAssembler
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE_HAL = REPO_ROOT / "machine_config" / "example" / "ender3" / "ender3.hal"
 REFERENCE_ENDSTOPS = REPO_ROOT / "machine_config" / "example" / "ender3" / "3Dprinter.hal"
+REFERENCE_CONFIG = REPO_ROOT / "machine_config" / "example" / "ender3" / "config.txt"
 
 PAYLOAD: dict[str, Any] = {
     "version": "2.2",
@@ -51,7 +52,15 @@ PAYLOAD: dict[str, Any] = {
     "source": "test",
     "kinematics": "cartesian",
     "hal_type": "remora",
-    "mcus": [{"id": "mcu", "connection": "remora-spi", "parameters": {"spi_clk_div": 64}}],
+    "mcus": [
+        {
+            "id": "mcu",
+            "connection": "remora-spi",
+            "board": "BIGTREETECH OCTOPUS",
+            "reset_pin": "PC15",
+            "parameters": {"spi_clk_div": 64},
+        }
+    ],
     "axes": [
         {"id": "x", "joint_numbers": [0], "endstop": "endstop_x"},
         {"id": "y", "joint_numbers": [1], "endstop": "endstop_y"},
@@ -67,8 +76,8 @@ PAYLOAD: dict[str, Any] = {
     "drivers": [],
     "fans": [{"id": "fan_heater_extruder", "pin": "mcu:PB1"}],
     "temperature_sensors": [
-        {"id": "bed", "pin": "mcu:PA0"},
-        {"id": "extruder", "pin": "mcu:PA1"},
+        {"id": "bed", "pin": "mcu:PA0", "type": "Generic 3950"},
+        {"id": "extruder", "pin": "mcu:PA1", "type": "Generic 3950"},
     ],
     "tools": [
         {
@@ -107,6 +116,7 @@ def fragment():
 def test_reference_files_exist():
     assert REFERENCE_HAL.exists(), f"reference machine missing: {REFERENCE_HAL}"
     assert REFERENCE_ENDSTOPS.exists(), f"reference machine missing: {REFERENCE_ENDSTOPS}"
+    assert REFERENCE_CONFIG.exists(), f"reference machine missing: {REFERENCE_CONFIG}"
 
 
 def test_fixture_validates_clean():
@@ -189,7 +199,9 @@ def test_firmware_config_carries_every_joint_and_endstop_module(fragment):
     `machine_config/example/ender3/config.txt` — root is
     `{"Board": ..., "Modules": [...]}` (no top-level frequency block),
     steppers are `"Stepgen"`, endstops are `"Digital Pin"` (the space
-    matters), heater/fan outputs get a `"PWM"` module."""
+    matters), heater/fan outputs get a `"PWM"` module, a declared
+    `reset_pin` gets a `"Reset Pin"` module, and a "Generic 3950"
+    sensor gets a `"Temperature"` module with the matching curve."""
     config_key = next(k for k in fragment.files if k.startswith("config_"))
     assert config_key == "config_mcu.txt"
 
@@ -198,6 +210,17 @@ def test_firmware_config_carries_every_joint_and_endstop_module(fragment):
     config = json.loads(fragment.files[config_key])
     assert config["Board"] == "BIGTREETECH OCTOPUS"
     assert "Thread" not in config
+
+    reset_pins = [m for m in config["Modules"] if m["Type"] == "Reset Pin"]
+    assert reset_pins == [
+        {
+            "Name": "reset_pin",
+            "Thread": "Servo",
+            "Type": "Reset Pin",
+            "Comment": "Reset pin",
+            "Pin": "PC_15",
+        }
+    ]
 
     steppers = [m for m in config["Modules"] if m["Type"] == "Stepgen"]
     assert len(steppers) == 4
@@ -213,9 +236,36 @@ def test_firmware_config_carries_every_joint_and_endstop_module(fragment):
     assert len(pwm_modules) == 3
     assert {m["SP[i]"] for m in pwm_modules} == {0, 1, 2}
 
-    # No Temperature module yet — see RemoraRouterMapper's own comment
-    # (temperature_sensors[] has no thermistor curve to put in one).
-    assert not any(m["Type"] == "Temperature" for m in config["Modules"])
+    temperature_modules = [m for m in config["Modules"] if m["Type"] == "Temperature"]
+    assert len(temperature_modules) == 2
+    assert {m["Name"] for m in temperature_modules} == {"temp_bed", "temp_extruder"}
+    for module in temperature_modules:
+        assert module["Sensor"] == "Thermistor"
+        assert module["Thermistor"]["beta"] == 3950
+        assert module["Thermistor"]["r0"] == 100000
+        assert module["Thermistor"]["t0"] == 25
+
+
+def test_firmware_config_module_types_are_all_seen_in_the_real_reference_file(fragment):
+    """Not a byte-for-byte diff (this fixture's ids/comments don't have
+    to match the hand-written file's — only the shape does, same
+    convention as the HAL comparison above), and this fixture declares
+    no `[tmc2209 ...]` drivers (covered separately by
+    `test_remora_driver_firmware_mapper.py`) so it can't cover every
+    type the reference has — but every module `Type` this compiler
+    *does* emit must be one the real, working `config.txt` actually
+    ships, never an invented one."""
+    import json
+
+    reference = json.loads(REFERENCE_CONFIG.read_text(encoding="utf-8"))
+    reference_types = {m["Type"] for m in reference["Modules"]}
+
+    config = json.loads(fragment.files["config_mcu.txt"])
+    generated_types = {m["Type"] for m in config["Modules"]}
+
+    assert generated_types <= reference_types
+    # Sanity: this fixture should still exercise most of the real shapes.
+    assert len(generated_types) >= 4
 
 
 def test_full_render_is_well_formed_hal_text():

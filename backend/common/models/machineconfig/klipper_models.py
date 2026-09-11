@@ -239,11 +239,40 @@ class Fan:
     in the Remora board JSON. The runtime clamps it to 1.0 and
     scales it to 8-bit (0–255) so a Klipper ``max_power: 0.5`` ends
     up as ``PWM Max: 128``.
+
+    ``shutdown_speed`` (0.0–1.0) is Klipper's own "duty on estop/
+    shutdown" field — ingested as data today; not yet wired into a
+    HAL safety circuit (`.agent/component/fan.md`).
     """
 
     name: str = ""
     pin: str | None = None
     max_power: float | None = None
+    shutdown_speed: float | None = None
+
+
+@dataclass(slots=True)
+class HeaterFan:
+    """A fan the HAL manages automatically off a heater's own reading —
+    never operator/G-code commandable (`.agent/component/fan.md` §
+    "kind: heater"). Klipper's real ``[heater_fan <name>]`` section;
+    distinct from a heater's own optional ``fan:`` reference (a plain
+    passthrough SP channel the operator drives).
+
+    ``heater`` is the *raw* Klipper heater section name (e.g.
+    ``"extruder"``, Klipper's own default when omitted) — resolving
+    it to this compiler's canonical tool id (``"heater_extruder"``)
+    is `hardware_json_generator`'s job, the same layer that resolves
+    every other cross-reference.
+    """
+
+    name: str = ""
+    pin: str | None = None
+    max_power: float | None = None
+    shutdown_speed: float | None = None
+    heater: str = "extruder"
+    heater_temp: float | None = None
+    fan_speed: float | None = None
 
 
 @dataclass(slots=True)
@@ -252,9 +281,10 @@ class Estop:
 
     Both fields are optional pins, like every other component — an
     empty ``[estop]`` block is valid on its own (the UI's own
-    continuous ``webgui.estop`` signal always reaches
-    ``halui.estop.activate`` through a `oneshot` pulse, regardless of
-    hardware). ``fault_pin`` is a physical E-stop loop's fault input;
+    ``webgui.estop`` signal reaches ``halui.estop.activate`` through a
+    plain passthrough net — ``StateService.activate_estop()`` now
+    generates the pulse itself, see ``EstopWebguiMapper``), regardless
+    of hardware. ``fault_pin`` is a physical E-stop loop's fault input;
     ``out_pin`` mirrors LinuxCNC's own enable state out to a physical
     pin (a lamp, a relay, ...). Independently optional — declaring
     one does not require the other.
@@ -291,6 +321,13 @@ class MCU:
       sections. ``parity`` is normalised to ``none``/``even``/
       ``odd``; all three stay ``None`` when undeclared so the
       router applies its documented defaults (9600 / 1 / none).
+    * ``reset_pin`` — the board's own reset GPIO, only valid on
+      ``remora-spi``/``remora-eth``. Real, not invented: every module
+      in the reference firmware config
+      (`machine_config/example/ender3/config.txt`) is preceded by a
+      `"Reset Pin"` module; this is a physical pin string like any
+      other (`.agent/component/README.md` § 1 grammar), formatted at
+      emission time the same way a joint's `step_pin` is.
 
     The ``hal_type`` property collapses :attr:`connection` to
     the legacy two-value discriminator the original HAL generator
@@ -304,6 +341,7 @@ class MCU:
     baud_rate: int | None = None
     node_id: int | None = None
     parity: str | None = None
+    reset_pin: str | None = None
 
     @property
     def hal_type(self) -> str:
@@ -349,6 +387,7 @@ class MachineConfigGraph:
     spindle_digitals: dict[str, SpindleDigital] = field(default_factory=dict)
     tmc2209s: dict[str, TMC2209] = field(default_factory=dict)
     fans: dict[str, Fan] = field(default_factory=dict)
+    heater_fans: dict[str, HeaterFan] = field(default_factory=dict)
     # Multiple MCUs. The key is the section's object name
     # (``"mcu"`` for the bare ``[mcu]`` form, ``"a"`` for ``[mcu a]``).
     mcus: dict[str, MCU] = field(default_factory=dict)
@@ -407,6 +446,7 @@ __all__ = [
     "Extruder",
     "Fan",
     "Heater",
+    "HeaterFan",
     "MachineConfig",
     "MachineConfigGraph",
     "MCU",

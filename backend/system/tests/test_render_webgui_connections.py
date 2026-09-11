@@ -1,5 +1,6 @@
 """render_webgui_connections — aggregates EstopWebguiMapper/
-SpindleWebguiMapper/HeaterWebguiMapper over a hardware.json payload.
+SpindleWebguiMapper/HeaterWebguiMapper/FanWebguiMapper over a
+hardware.json payload.
 
 Deliberately independent of `validate_machine`/`compile_machine_hal`
 — a spindle or heater with a real pin still deserves a working UI
@@ -64,6 +65,41 @@ def test_a_non_estop_dict_value_is_ignored_not_crashed():
     crash rendering — only a genuine dict triggers the binding."""
     assert render_webgui_connections({"estop": None}) == ""
     assert render_webgui_connections({"estop": "not-a-dict"}) == ""
+
+
+def test_a_part_fan_binds_but_a_heater_fan_does_not():
+    payload = {
+        "fans": [
+            {"id": "fan", "pin": "PA8", "kind": "part"},
+            {"id": "heater_fan_heatbreak", "pin": "PA9", "kind": "heater"},
+        ]
+    }
+    text = render_webgui_connections(payload)
+    assert "net fan-SP <= webgui.fan" in text
+    assert "heater_fan_heatbreak" not in text
+
+
+def test_kind_defaults_to_part_when_absent_from_a_fan_record():
+    text = render_webgui_connections({"fans": [{"id": "fan", "pin": "PA8"}]})
+    assert "net fan-SP <= webgui.fan" in text
+
+
+def test_a_fan_sharing_a_pin_in_duplicate_pin_overrides_gets_no_binding():
+    """Real regression guard: HalAssembler renames a shared-pin fan's
+    signal onto whatever else already claims the pin, so a standalone
+    webgui binding here would reference a signal machine.hal never
+    actually uses."""
+    payload = {
+        "fans": [{"id": "fan_extruder", "pin": "mcu:PA2", "kind": "part"}],
+        "duplicate_pin_overrides": ["mcu:PA2"],
+    }
+    assert render_webgui_connections(payload) == ""
+
+
+def test_a_non_dict_fans_entry_is_skipped_not_crashed():
+    payload = {"fans": ["not-a-dict", {"id": "fan", "pin": "PA8"}]}
+    text = render_webgui_connections(payload)
+    assert "net fan-SP <= webgui.fan" in text
 
 
 def test_a_non_dict_tools_entry_is_skipped_not_crashed():

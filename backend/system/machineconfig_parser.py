@@ -14,6 +14,7 @@ from models.machineconfig import (
     Extruder,
     Fan,
     Heater,
+    HeaterFan,
     MachineConfigGraph,
     MCU,
     Printer,
@@ -698,6 +699,9 @@ class MachineConfigParser:
                 fan = self._parse_fan(section_name, section)
                 graph.fans[fan.name] = fan
                 fan_section_order.append(section_name)
+            elif section_schema.kind is SectionKind.HEATER_FAN:
+                heater_fan = self._parse_heater_fan(section_name, section)
+                graph.heater_fans[heater_fan.name] = heater_fan
             elif section_schema.kind is SectionKind.DUPLICATE_PIN_OVERRIDE:
                 graph.duplicate_pin_overrides = self._parse_duplicate_pin_override(
                     section_name, section
@@ -1120,6 +1124,8 @@ class MachineConfigParser:
         The RS-485 serial trio (``baud_rate`` / ``node_id`` /
         ``parity``) is only accepted on a ``vfd_rs485`` (or legacy
         ``rs485``) MCU — anywhere else it's a typo, not a tuning knob.
+        ``reset_pin`` is the mirror case: only accepted on a
+        ``remora-spi``/``remora-eth`` MCU.
         """
         connection_raw = (
             self._optional_string(section, "connection") or "remora-spi"
@@ -1139,6 +1145,15 @@ class MachineConfigParser:
                         "unset — this keyword is only valid on a "
                         "'vfd_rs485' MCU section",
                     )
+        if connection_raw not in ("remora-spi", "remora-eth"):
+            if self._optional_string(section, "reset_pin") is not None:
+                raise InvalidValueError(
+                    section_name,
+                    "reset_pin",
+                    section["reset_pin"],
+                    "unset — this keyword is only valid on a "
+                    "'remora-spi'/'remora-eth' MCU section",
+                )
         return MCU(
             connection=connection_raw,
             interface=self._optional_string(section, "interface"),
@@ -1146,6 +1161,7 @@ class MachineConfigParser:
             baud_rate=self._optional_int(section_name, section, "baud_rate"),
             node_id=self._optional_int(section_name, section, "node_id"),
             parity=self._parse_parity(section_name, section),
+            reset_pin=self._optional_string(section, "reset_pin"),
         )
 
     def _parse_parity(
@@ -1247,6 +1263,10 @@ class MachineConfigParser:
             MachineConfigParser._validate_pin_mcu(
                 section_name, "pin", fan.pin, declared
             )
+        for section_name, heater_fan in graph.heater_fans.items():
+            MachineConfigParser._validate_pin_mcu(
+                section_name, "pin", heater_fan.pin, declared
+            )
         if graph.estop is not None:
             for attr in ("fault_pin", "out_pin"):
                 MachineConfigParser._validate_pin_mcu(
@@ -1266,6 +1286,49 @@ class MachineConfigParser:
         ``max_power`` is optional; the runtime scales it to 8-bit for
         the Remora ``PWM Max`` field when present.
         """
+        self._log_ignored_fan_keys(section_name, section)
+        pin = self._required_string(section_name, section, "pin")
+        max_power = self._optional_float(section_name, section, "max_power")
+        shutdown_speed = self._optional_float(section_name, section, "shutdown_speed")
+        return Fan(
+            name=derive_fan_name(section_name),
+            pin=pin,
+            max_power=max_power,
+            shutdown_speed=shutdown_speed,
+        )
+
+    def _parse_heater_fan(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> HeaterFan:
+        """Build a :class:`HeaterFan` from a ``[heater_fan <name>]`` section.
+
+        ``heater`` stays the *raw* Klipper heater section name
+        (Klipper's own default, ``"extruder"``, when omitted) —
+        resolving it to this compiler's canonical tool id is
+        `hardware_json_generator`'s job, matching every other
+        cross-reference (`.agent/component/fan.md`).
+        """
+        self._log_ignored_fan_keys(section_name, section)
+        pin = self._required_string(section_name, section, "pin")
+        return HeaterFan(
+            name=derive_fan_name(section_name),
+            pin=pin,
+            max_power=self._optional_float(section_name, section, "max_power"),
+            shutdown_speed=self._optional_float(section_name, section, "shutdown_speed"),
+            heater=self._optional_string(section, "heater") or "extruder",
+            heater_temp=self._optional_float(section_name, section, "heater_temp"),
+            fan_speed=self._optional_float(section_name, section, "fan_speed"),
+        )
+
+    @staticmethod
+    def _log_ignored_fan_keys(
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> None:
+        """Shared between ``[fan]`` and ``[heater_fan]`` — both accept
+        the same "real Klipper keyword, no Remora equivalent" set."""
         for key in FAN_IGNORED_KEYS:
             if key in section:
                 logger.info(
@@ -1273,13 +1336,6 @@ class MachineConfigParser:
                     section_name,
                     key,
                 )
-        pin = self._required_string(section_name, section, "pin")
-        max_power = self._optional_float(section_name, section, "max_power")
-        return Fan(
-            name=derive_fan_name(section_name),
-            pin=pin,
-            max_power=max_power,
-        )
 
     def _parse_tmc2209(
         self,

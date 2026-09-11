@@ -15,8 +15,12 @@ more `machine.hal` content. Pin names come straight from
   same pin a heater and its sensor entity always share (`heater.md`
   § 2 — "one thermistor, one HAL pin, addressed the same way whether
   or not a heater claims it").
-* `webgui.<fan_id>` (bare id, no suffix) — a **write**: same shape as
-  the setpoint, into `<fan_id>-SP`.
+
+A heater's referenced fan (``tools[].fan``) does NOT get its binding
+here — every ``kind: "part"`` fan (a real declared one, or a heater's
+own auto-derived placeholder) is uniform now, so `FanWebguiMapper`
+covers all of them the same way regardless of whether a heater
+happens to reference one (`.agent/component/fan.md`).
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from typing import Any
 
 
 class HeaterWebguiMapper:
-    """`net` lines binding one heater's setpoint/reading/fan onto `webgui.*`."""
+    """`net` lines binding one heater's setpoint/reading onto `webgui.*`."""
 
     @staticmethod
     def to_lines(heater: dict[str, Any]) -> list[str]:
@@ -38,10 +42,6 @@ class HeaterWebguiMapper:
         sensor_id = heater.get("sensor")
         if sensor_id:
             lines.append(f"net {sensor_id}-PV => webgui.{sensor_id}")
-
-        fan_id = heater.get("fan")
-        if fan_id:
-            lines.append(f"net {fan_id}-SP <= webgui.{fan_id}")
 
         lines.append("")
         return lines

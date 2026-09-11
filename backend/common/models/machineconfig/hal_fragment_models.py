@@ -79,12 +79,20 @@ class PinRequest:
 
     ``owner`` is the requesting entity's id, kept only for diagnostics
     (a router that can't satisfy a request names who asked).
+
+    ``sensor_type`` is optional, role-specific metadata: only
+    ``ANALOG_IN``'s Remora routing reads it today, to look up the
+    thermistor curve (`beta`/`r0`/`t0`) a `config.txt` "Temperature"
+    module needs — the router has no other way to see a sensor's
+    ``temperature_sensors[].type`` field, since it only ever receives
+    the flat request list, not the source records.
     """
 
     signal: str
     role: PinRole
     pin: ParsedPin
     owner: str
+    sensor_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,9 +23,11 @@ from models.machineconfig.pin_models import CapabilityClass
 
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
+from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
 from .components.MotionSystemHalMapper import MotionSystemHalMapper
 from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
+from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
 from .components.StepperHalMapper import StepperHalMapper
 from .mcus.ParportRouterMapper import ParportRouterMapper
@@ -54,15 +56,6 @@ _STEPPER_MAPPERS: dict[CapabilityClass, Any] = {
     CapabilityClass.POSITION: RemoraStepperHalMapper,
 }
 
-#: `config.txt`'s `"Board"` when the MCU declares none — the real
-#: reference config (`machine_config/example/ender3/config.txt`) uses
-#: this exact name, and `board` is never autofilled onto the MCU
-#: record itself (`.agent/component/mcu_spi_remora.md` § 1) — this
-#: fallback is `config.txt`-only, not something a `hardware.json`
-#: reader would ever see.
-_DEFAULT_FIRMWARE_BOARD = "BIGTREETECH OCTOPUS"
-
-
 class UnsupportedMcuError(NotImplementedError):
     """A pin needs an MCU connection type this compiler doesn't route yet."""
 
@@ -81,6 +74,9 @@ class HalAssembler:
             s["id"]: s for s in payload.get("temperature_sensors", []) if s.get("id")
         }
         self._fans_by_id = {f["id"]: f for f in payload.get("fans", []) if f.get("id")}
+        self._tools_by_id = {
+            t["id"]: t for t in payload.get("tools", []) if isinstance(t, dict) and t.get("id")
+        }
         self._drivers_by_id = {d["id"]: d for d in payload.get("drivers", []) if d.get("id")}
         # ``[duplicate_pin_override]``'s allowlist — see
         # ``_merge_override_duplicates``. The validator trusts this
@@ -96,6 +92,7 @@ class HalAssembler:
             self._component_fragments(capability_class)
             + self._spindle_fragments()
             + self._heater_fragments()
+            + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment()]
         )
@@ -201,6 +198,23 @@ class HalAssembler:
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
         return fragments
 
+    def _fan_fragments(self) -> list[HalFragment]:
+        """One fragment per fan — always its own direct pin route.
+
+        Independent of motion class, like a spindle or heater's own
+        pin. A `kind: "part"` fan a heater also references (its own
+        auto-derived placeholder, or a real one) ends up with the
+        *same* signal name here and in `HeaterHalMapper`'s own fan
+        handling — `_deduplicated_requests` collapses the two into one
+        route, no `duplicate_pin_override` needed (same signal name,
+        not two different ones sharing a pin).
+        """
+        return [
+            FanHalMapper.to_fragment(fan, self._tools_by_id, self._sensors_by_id)
+            for fan in self._payload.get("fans", [])
+            if isinstance(fan, dict)
+        ]
+
     def _estop_fragment(self) -> HalFragment:
         """Always present, independent of motion class — the UI pulse
         chain needs no hardware, and the optional physical chain
@@ -287,11 +301,9 @@ class HalAssembler:
         what the assembler exists to coordinate — no single mapper sees
         the whole board's module list.
 
-        Root shape is ``{"Board": ..., "Modules": [...]}`` — verified
-        against the real, working
-        ``machine_config/example/ender3/config.txt``, which has no
-        top-level ``"Thread"`` frequency block at all (that was this
-        function's own earlier, unverified guess).
+        The root shape itself (``{"Board": ..., "Modules": [...]}``) is
+        :class:`RemoraFirmwareConfigMapper`'s call, not this method's —
+        this only decides *which* modules belong to *which* MCU.
         """
         by_mcu: dict[str, list[dict[str, object]]] = {}
         for request in fragment.firmware_modules:
@@ -299,10 +311,7 @@ class HalAssembler:
 
         for mcu_id, modules in by_mcu.items():
             mcu = self._mcus_by_id.get(mcu_id) or {}
-            config: dict[str, Any] = {
-                "Board": mcu.get("board") or _DEFAULT_FIRMWARE_BOARD,
-                "Modules": modules,
-            }
+            config = RemoraFirmwareConfigMapper.to_config(mcu, modules)
             fragment.files[f"config_{mcu_id}.txt"] = json.dumps(config, indent=2)
 
     # -- pass 2: routing --------------------------------------------------- #

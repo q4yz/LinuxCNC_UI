@@ -228,6 +228,7 @@ class MachineValidator:
         fans = self._ids("fans")
         drivers = self._ids("drivers")
         endstops = self._ids("endstops")
+        tools = self._ids("tools")
 
         for tool in self._records("tools"):
             owner = str(tool.get("id", "?"))
@@ -240,6 +241,18 @@ class MachineValidator:
             if tool.get("fan") and str(tool["fan"]) not in fans:
                 self._error(
                     "E_UNKNOWN_FAN", f"fan {tool['fan']!r} is not declared.", owner
+                )
+
+        for fan in self._records("fans"):
+            if fan.get("kind") != "heater":
+                continue
+            owner = str(fan.get("id", "?"))
+            heater = fan.get("heater")
+            if heater and str(heater) not in tools:
+                self._error(
+                    "E_UNKNOWN_HEATER",
+                    f"heater {heater!r} is not declared in tools[].",
+                    owner,
                 )
 
         for joint in self._records("joints"):

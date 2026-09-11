@@ -1,23 +1,23 @@
 > **Implemented status:** `HeaterHalMapper` emits the § 3 PID and
-> watermark loops, the sensor `-PV` reading, and a referenced fan's
-> `-SP` as a plain passthrough (matching the reference machine exactly
-> — `ext0-cooling-SP => remora.SP.2`, no temperature gating). Routed
-> today only through `RemoraRouterMapper` (`remora.SP.N`/`remora.PV.N`
-> — class B). The watermark branch's `comp.out` (a HAL **bit**) is
-> converted to a float via `conv_bit_float` + `scale` before it
-> reaches `<id>-heater-SP` — linking a bit pin straight to
-> `remora.SP.N` (a float) is a HAL load-time type error, not shown in
-> the § 3 sketch above. `ini_template_generator` now writes the
-> matching `[<SECTION>]PID_*` machine.ini block for every PID heater
+> watermark loops and the sensor `-PV` reading. Routed today only
+> through `RemoraRouterMapper` (`remora.SP.N`/`remora.PV.N` — class B).
+> The watermark branch's `comp.out` (a HAL **bit**) is converted to a
+> float via `conv_bit_float` + `scale` before it reaches
+> `<id>-heater-SP` — linking a bit pin straight to `remora.SP.N` (a
+> float) is a HAL load-time type error, not shown in the § 3 sketch
+> above. `ini_template_generator` now writes the matching
+> `[<SECTION>]PID_*` machine.ini block for every PID heater
 > (`generate_machine_templates` — a real bug before this: the HAL side
 > referenced an ini-var no file ever defined, so every gain silently
 > resolved to nothing). `HeaterWebguiMapper` seeds `webgui_connections.hal`
-> (first generation only — hand edits are preserved on regenerate) with the
-> operator's target-temperature write into `<id>-SP`, the sensor's `-PV`
-> reading (only when a sensor is set — no sensor means `HeaterHalMapper`
-> creates no `-PV` signal to bind), and a referenced fan's `-SP` write
-> keyed by the fan's own bare id (no suffix on the webgui side). Pin names
-> verified against the real runtime consumer,
+> (regenerated every time, hand edits included — no longer preserved
+> across a regenerate) with the operator's target-temperature write
+> into `<id>-SP` and the sensor's `-PV` reading (only when a sensor is
+> set — no sensor means `HeaterHalMapper` creates no `-PV` signal to
+> bind). A referenced fan's own binding is **not** this mapper's job
+> any more — every fan (heater-referenced or standalone) gets uniform
+> treatment via `FanWebguiMapper` now, see `fan.md`. Pin names verified
+> against the real runtime consumer,
 > `common/mappers/tools/HeaterMapper.py::from_dict_to_HeaterPins`
 > (`suffix = tool_id.replace("heater", "")`). Not yet implemented: class A `pwmgen` staging
 > (`E_PID_WITHOUT_PWM`), `E_NO_ANALOG_INPUT` on a parport-only machine,
@@ -212,7 +212,9 @@ net <id>-heater-SP <= duty-<id>.out
 # The MCU router binds these (README.md § 5):
 #   <id>-heater-SP   -> heater_pin   (analog on class B, binary on class A)
 #   <sensor.id>-PV   <- the sensor's pin
-#   <fan.id>-SP      -> the referenced fan's pin
+# A referenced fan's own <fan.id>-SP export is FanHalMapper's job now
+# (fan.md), not this mapper's — including the heater's own auto-
+# derived placeholder fan.
 ```
 
 **Where the PWM lives decides what is valid.** On class B (Remora,
@@ -241,8 +243,8 @@ net <id>-SP <= webgui.target-temperature<suffix>
 # separate entity — see TemperatureService.preload_hal_pins.)
 net <sensor.id>-PV => webgui.<sensor.id>
 
-# --- IF fan != null ---
-net <fan.id>-SP <= webgui.<fan.id>
+# A referenced fan's own webgui binding lives in fan.md's own
+# section, not here — FanWebguiMapper covers every fan uniformly.
 ```
 
 ## 4. ROUTING NOTES
@@ -251,7 +253,9 @@ net <fan.id>-SP <= webgui.<fan.id>
 |---|---|---|
 | `<id>-heater-SP` | out | `heater_pin` |
 | `<sensor.id>-PV` | in (analog) | `temperature_sensors[].pin` |
-| `<fan.id>-SP` | out | the referenced `fans[].pin` |
+
+A referenced fan's own `<fan.id>-SP` (and its `webgui` binding) is
+`fan.md`'s table, not this one.
 
 **The sensor route has two halves**, because the reading has two
 consumers — the control loop and the UI — and the UI's pin is named

@@ -117,7 +117,7 @@
       "Type": "Temperature",
       "Comment": "Extruder temperature sensor",
       "PV[i]": 0,
-      "Sensor": "Generic 3950",
+      "Sensor": "Thermistor",
       "Thermistor": {
         "Pin": "PF_4",
         "beta": 3950,
@@ -139,7 +139,7 @@
       "Type": "Temperature",
       "Comment": "Heated Bed temperature sensor",
       "PV[i]": 1,
-      "Sensor": "Generic 3950",
+      "Sensor": "Thermistor",
       "Thermistor": {
         "Pin": "PF_3",
         "beta": 3950,

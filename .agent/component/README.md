@@ -21,7 +21,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `stepper.md` | `[stepper_<axis>]` | Axis / joint. Class A shown. |
 | `exturder.md` | `[extruder]` | Heater + joint. (Filename is transposed.) |
 | `heater.md` | `[heater_*]`, `[temperature_sensor]` | Bed / hot end. |
-| `fan.md` | `[fan_*]` | Part, hot-end, controller, exhaust. |
+| `fan.md` | `[fan]`/`[fan_generic *]`, `[heater_fan *]` | Part (commandable) vs. heater-gated (HAL-managed only). |
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
 | `estop.md` | `[estop]` | Required exactly once. UI pulse chain unconditional; physical chain optional. |

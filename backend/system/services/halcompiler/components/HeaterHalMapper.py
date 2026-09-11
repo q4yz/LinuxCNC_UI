@@ -67,7 +67,13 @@ class HeaterHalMapper:
         )
         if sensor is not None:
             HeaterHalMapper._request(
-                fragment, sensor, "pin", f"{sensor_id}-PV", PinRole.ANALOG_IN, sensor_id
+                fragment,
+                sensor,
+                "pin",
+                f"{sensor_id}-PV",
+                PinRole.ANALOG_IN,
+                sensor_id,
+                sensor_type=sensor.get("type"),
             )
 
         fan_ref = heater.get("fan")
@@ -163,12 +169,19 @@ class HeaterHalMapper:
         signal: str,
         role: PinRole,
         owner: str,
+        sensor_type: str | None = None,
     ) -> None:
         raw = record.get(field)
         if not raw:
             return
         fragment.requests.append(
-            PinRequest(signal=signal, role=role, pin=PinStringMapper.from_string(raw), owner=owner)
+            PinRequest(
+                signal=signal,
+                role=role,
+                pin=PinStringMapper.from_string(raw),
+                owner=owner,
+                sensor_type=sensor_type,
+            )
         )
 
 

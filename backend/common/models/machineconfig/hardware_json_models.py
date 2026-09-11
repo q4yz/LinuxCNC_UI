@@ -243,27 +243,44 @@ class TemperatureSensor(BaseModel):
 
 
 class Fan(BaseModel):
-    """A single output fan.
+    """A single output fan — either operator/G-code commandable
+    (``kind: "part"``, Klipper's ``[fan]``/``[fan_generic ...]``) or
+    HAL-managed off a heater's own reading (``kind: "heater"``,
+    Klipper's ``[heater_fan <name>]``) — never both
+    (`.agent/component/fan.md`).
 
     ``max_power`` (0.0–1.0) is the PWM duty-cycle ceiling. The
     Remora board JSON uses an 8-bit ``pwm_max`` field; the
     runtime scales ``max_power`` to 0–255 before pushing the value into the
     firmware. Persisting the float here keeps the round-trip
     deterministic (no need to re-read ``config.txt`` to recover the
-    duty-cycle cap).
+    duty-cycle cap). ``shutdown_speed`` is Klipper's own "duty on
+    estop/shutdown" field — carried as data; not yet wired into a HAL
+    safety circuit.
 
     The list is intentionally separate from ``tools`` because a
     standalone ``[fan]`` section (part cooling) does not need an
     operator-facing card in the ToolPanel — it just needs an
     addressable record so the temperature module can wire a fan
     onto a heater.
+
+    ``heater``/``heater_temp``/``fan_speed`` are ``kind: "heater"``
+    only: ``heater`` resolves into ``tools[].id`` (the heater this
+    fan follows), ``heater_temp`` is the reading (°C) that turns it
+    on, ``fan_speed`` the 0.0-1.0 speed it runs at once triggered.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
+    kind: Literal["part", "heater"] = "part"
     max_power: float | None = None
+    shutdown_speed: float | None = None
+    # ---- kind: "heater" only ---------------------------------------- #
+    heater: str | None = None
+    heater_temp: float | None = None
+    fan_speed: float | None = None
 
 
 class Estop(BaseModel):
@@ -324,6 +341,10 @@ class McuInfo(BaseModel):
     baud_rate: int | None = None
     node_id: int | None = None
     parity: Literal["none", "even", "odd"] | None = None
+    # The board's own reset GPIO — present only on remora-spi/
+    # remora-eth MCUs that declared one. Real firmware field, not
+    # invented: see `.agent/component/mcu_spi_remora.md`.
+    reset_pin: str | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -529,6 +550,7 @@ class HardwareJson(BaseModel):
             s.id: i for i, s in enumerate(self.temperature_sensors)
         }
         fans_idx = {f.id: i for i, f in enumerate(self.fans)}
+        tools_idx = {t.id: i for i, t in enumerate(self.tools)}
         endstops_idx = {e.id: i for i, e in enumerate(self.endstops)}
         joint_numbers_idx = {
             j.joint_number: j.id for j in self.joints
@@ -605,6 +627,16 @@ class HardwareJson(BaseModel):
                 errors.append(
                     f"Tool '{tool.id}' references unknown fan "
                     f"'{tool.fan}'."
+                )
+
+        # A ``kind: "heater"`` fan's ``heater`` must resolve into
+        # ``tools[]`` — the HAL chain reads that heater's own sensor,
+        # so an unresolved reference means nothing to gate on.
+        for fan in self.fans:
+            if fan.heater is not None and fan.heater not in tools_idx:
+                errors.append(
+                    f"Fan '{fan.id}' references unknown heater "
+                    f"'{fan.heater}'."
                 )
 
         if errors:

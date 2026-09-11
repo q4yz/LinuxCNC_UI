@@ -87,6 +87,7 @@ def _entities(graph) -> dict[str, list[object]]:
         "spindle_digital": list(graph.spindle_digitals.values()),
         "tmc2209": list(graph.tmc2209s.values()),
         "fan": list(graph.fans.values()),
+        "heater_fan": list(graph.heater_fans.values()),
         "mcu": list(graph.mcus.values()),
     }
 

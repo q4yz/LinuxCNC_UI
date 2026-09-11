@@ -157,6 +157,26 @@ def test_estop_with_only_valid_pins_reports_nothing(machine):
     assert _codes(machine) == set()
 
 
+def test_heater_fan_with_a_valid_heater_reference_reports_nothing(machine):
+    machine["fans"].append(
+        {"id": "heater_fan_heatbreak", "pin": "PB2", "kind": "heater", "heater": "heater_bed"}
+    )
+    assert _codes(machine) == set()
+
+
+def test_heater_fan_with_an_unknown_heater_reference_is_rejected(machine):
+    machine["fans"].append(
+        {"id": "heater_fan_heatbreak", "pin": "PB2", "kind": "heater", "heater": "ghost"}
+    )
+    assert "E_UNKNOWN_HEATER" in _codes(machine)
+
+
+def test_a_part_fan_with_no_heater_field_is_unaffected_by_the_new_rule(machine):
+    """`kind: "part"` (or absent — the default) never checks `heater`."""
+    machine["fans"].append({"id": "extra_fan", "pin": "PB2"})
+    assert _codes(machine) == set()
+
+
 def test_duplicate_pin_override_suppresses_the_conflict(machine):
     """An operator-declared exception — see `[duplicate_pin_override]`."""
     machine["joints"][0]["dir_pin"] = "PF13"  # already the step pin

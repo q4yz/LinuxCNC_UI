@@ -711,6 +711,103 @@ off_below: 0.1
     graph = MachineConfigParser().parse_string(config)
     assert graph.fans["fan"].pin == "PA8"
 
+def test_fan_shutdown_speed_is_optional_and_parses() -> None:
+    config = """
+[fan]
+pin: PA8
+shutdown_speed: 0.0
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.fans["fan"].shutdown_speed == pytest.approx(0.0)
+    assert MachineConfigParser().parse_string("[fan]\npin: PA8\n").fans["fan"].shutdown_speed is None
+
+
+def test_fan_extended_ignored_keys_logged_but_not_rejected() -> None:
+    """The real Klipper keywords this compiler assumes away on a
+    two-pin fan: no tachometer wire, no separate enable line, no
+    startup-kick stage."""
+    config = """
+[fan]
+pin: PA8
+enable_pin: PA9
+tachometer_pin: PA10
+tachometer_ppr: 2
+tachometer_poll_interval: 0.0015
+kick_start_time: 0.1
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.fans["fan"].pin == "PA8"
+
+
+# ---------------------------------------------------------------------- #
+# [heater_fan]                                                            #
+# ---------------------------------------------------------------------- #
+
+
+def test_heater_fan_schema_recognises_bare_and_named_sections() -> None:
+    for header in ("heater_fan", "heater_fan heatbreak_cooling_fan"):
+        schema = schema_for_section(header)
+        assert schema is not None, f"{header!r} returned None"
+        assert schema.kind is SectionKind.HEATER_FAN
+
+
+def test_heater_fan_section_parses_into_graph() -> None:
+    config = """
+[heater_fan heatbreak_cooling_fan]
+pin: PA9
+heater: extruder
+heater_temp: 60
+fan_speed: 0.8
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert "heater_fan_heatbreak_cooling_fan" in graph.heater_fans
+    heater_fan = graph.heater_fans["heater_fan_heatbreak_cooling_fan"]
+    assert heater_fan.pin == "PA9"
+    assert heater_fan.heater == "extruder"
+    assert heater_fan.heater_temp == pytest.approx(60.0)
+    assert heater_fan.fan_speed == pytest.approx(0.8)
+
+
+def test_heater_fan_heater_defaults_to_extruder() -> None:
+    """Klipper's own documented default when ``heater:`` is omitted."""
+    config = "[heater_fan]\npin: PA9\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.heater_fans["heater_fan"].heater == "extruder"
+
+
+def test_heater_fan_without_pin_raises_missing_required_keyword() -> None:
+    config = "[heater_fan]\nheater: extruder\n"
+    with pytest.raises(MissingRequiredKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "heater_fan"
+    assert exc_info.value.key == "pin"
+
+
+def test_heater_fan_unknown_keyword_raises() -> None:
+    config = "[heater_fan]\npin: PA9\nmystery: nope\n"
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "heater_fan"
+    assert exc_info.value.key == "mystery"
+
+
+def test_heater_fan_shares_the_fan_ignored_keys() -> None:
+    config = """
+[heater_fan]
+pin: PA9
+enable_pin: PA10
+cycle_time: 0.01
+hardware_pwm: True
+off_below: 0.1
+tachometer_pin: PA11
+tachometer_ppr: 2
+tachometer_poll_interval: 0.0015
+kick_start_time: 0.1
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.heater_fans["heater_fan"].pin == "PA9"
+
+
 def test_duplicate_fan_canonical_id_raises() -> None:
     """Identical fan section names are rejected at parse time
     before our canonical-id check ever runs — wrapped into
@@ -912,6 +1009,40 @@ baud_rate: 9600
     assert exc_info.value.section == "mcu"
     assert exc_info.value.key == "baud_rate"
     assert "vfd_rs485" in str(exc_info.value)
+
+
+def test_remora_mcu_parses_the_reset_pin() -> None:
+    config = """
+[mcu]
+connection: remora-spi
+reset_pin: PC15
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.mcus["mcu"].reset_pin == "PC15"
+
+
+def test_reset_pin_is_optional() -> None:
+    config = """
+[mcu]
+connection: remora-spi
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.mcus["mcu"].reset_pin is None
+
+
+def test_reset_pin_rejected_on_non_remora_mcu() -> None:
+    """``reset_pin`` on a parport MCU is a typo, not a tuning knob —
+    mirrors the RS-485 serial trio's own restriction."""
+    config = """
+[mcu]
+connection: parallelport
+reset_pin: PC15
+"""
+    with pytest.raises(InvalidValueError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "mcu"
+    assert exc_info.value.key == "reset_pin"
+    assert "remora" in str(exc_info.value)
 
 
 def test_shared_endstop_pin_across_axes_is_accepted() -> None:

@@ -314,14 +314,15 @@ def _temperature_sensor_payload(heater_section: str, h) -> dict[str, Any]:
 def _fan_payload(heater_section: str, h) -> dict[str, Any]:
     """Build a fan entry from a heater's heater_pin.
 
-    The fan id is conventional (``fan_<heater_id>``). Profiles with
-    a dedicated ``[fan]`` Klipper section are not yet part of the
-    Klipper → hardware.json pipeline; when they are, the canonical
-    id policy will be extended.
+    The fan id is conventional (``fan_<heater_id>``). ``kind: "part"``
+    — this placeholder is operator/G-code commandable, same as a real
+    dedicated ``[fan]`` section (`.agent/component/fan.md`), just
+    piggybacking on the heater's own output pin.
     """
     return {
         "id": _fan_id(heater_section),
         "pin": h.heater_pin,
+        "kind": "part",
     }
 
 
@@ -333,10 +334,16 @@ def _standalone_fan_payload(fan_section: str, fan) -> dict[str, Any]:
     runtime Python controllers address the fan by this id; the
     ``_fan_id`` helper (heater-derived) is reserved for fans that
     piggyback on a heater's ``heater_pin``.
+
+    ``kind: "part"`` — operator/G-code commandable
+    (`.agent/component/fan.md`'s "part" kind); `FanHalMapper` gives it
+    its own direct pin route and `webgui_connections.hal` binding
+    regardless of whether any heater also references it.
     """
     payload: dict[str, Any] = {
         "id": fan.name or fan_section,
         "pin": fan.pin,
+        "kind": "part",
     }
     if fan.max_power is not None:
         # ``max_power`` (0.0–1.0) is the PWM duty-cycle ceiling. The
@@ -345,6 +352,37 @@ def _standalone_fan_payload(fan_section: str, fan) -> dict[str, Any]:
         # Persisting it here lets the runtime reconstruct the same
         # mapping without re-reading ``config.txt``.
         payload["max_power"] = round(float(fan.max_power), 4)
+    if fan.shutdown_speed is not None:
+        payload["shutdown_speed"] = round(float(fan.shutdown_speed), 4)
+    return payload
+
+
+def _heater_fan_payload(heater_fan_section: str, heater_fan) -> dict[str, Any]:
+    """Build a fan entry from a ``[heater_fan <name>]`` Klipper section.
+
+    ``kind: "heater"`` — never operator/G-code commandable; the HAL
+    wires it straight off the referenced heater's own sensor reading
+    (`.agent/component/fan.md` § 3's "kind: heater" chain), so unlike
+    every other fan it gets no `webgui_connections.hal` binding at
+    all. ``heater`` resolves the *raw* Klipper heater section name
+    (`"extruder"`, `"heater_bed"`, ...) to this compiler's canonical
+    tool id via :func:`_heater_id` — the same resolution every other
+    heater cross-reference in this file already goes through.
+    """
+    payload: dict[str, Any] = {
+        "id": heater_fan.name or heater_fan_section,
+        "pin": heater_fan.pin,
+        "kind": "heater",
+        "heater": _heater_id(heater_fan.heater),
+    }
+    if heater_fan.heater_temp is not None:
+        payload["heater_temp"] = round(float(heater_fan.heater_temp), 4)
+    if heater_fan.fan_speed is not None:
+        payload["fan_speed"] = round(float(heater_fan.fan_speed), 4)
+    if heater_fan.max_power is not None:
+        payload["max_power"] = round(float(heater_fan.max_power), 4)
+    if heater_fan.shutdown_speed is not None:
+        payload["shutdown_speed"] = round(float(heater_fan.shutdown_speed), 4)
     return payload
 
 
@@ -715,6 +753,20 @@ def build_hardware_json(
     tool_records: list[dict[str, Any]] = []
     temperature_sensor_records: list[dict[str, Any]] = []
     fan_records: list[dict[str, Any]] = []
+    # A heater's auto-derived "fan" (below) always shares its own
+    # heater_pin — real (one physical output can't drive two logical
+    # signals), but the *compiler's* doing, not the operator's
+    # (W_FAN_SHARES_HEATER_PIN warns, never blocks). The assembler
+    # itself never silently merges a physical-pin collision without
+    # explicit permission (`HalAssembler._merge_override_duplicates` —
+    # by design, so a genuine operator typo is never silently
+    # papered over) — so since the compiler is the one creating this
+    # particular collision, the compiler is also the one that has to
+    # supply the permission, the same way an operator would by hand.
+    # Without this, the heater's own PID output and its placeholder
+    # fan route as two independent `config.txt` PWM modules pointing
+    # at one physical pin — invalid firmware, not just cosmetic.
+    auto_duplicate_pin_overrides: set[str] = set()
     for heater_section, heater in graph.heaters.items():
         tool_records.append(_tool_payload_from_heater(heater_section, heater))
         if heater.sensor_pin:
@@ -723,6 +775,9 @@ def build_hardware_json(
             )
         if heater.heater_pin:
             fan_records.append(_fan_payload(heater_section, heater))
+            mcu_id, pin_id = split_pin(heater.heater_pin)
+            if pin_id is not None:
+                auto_duplicate_pin_overrides.add(f"{mcu_id or 'mcu'}:{pin_id}")
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
     for spindle_id, spindle in graph.spindle_digitals.items():
@@ -801,6 +856,13 @@ def build_hardware_json(
     for fan_section, fan in graph.fans.items():
         fan_records.append(_standalone_fan_payload(fan_section, fan))
 
+    # ``[heater_fan <name>]`` sections land in the same ``fans[]`` list
+    # (``kind: "heater"`` is the discriminator) so `tools[].fan` /
+    # cross-reference validation stays a single mechanism — they just
+    # never get referenced by a tool the way a "part" fan is.
+    for heater_fan_section, heater_fan in graph.heater_fans.items():
+        fan_records.append(_heater_fan_payload(heater_fan_section, heater_fan))
+
     # HAL type from the MCU section if present. With multi-MCU the
     # decision collapses to "remora" if any remora transport is
     # declared, otherwise the first declared MCU's transport (which
@@ -834,6 +896,8 @@ def build_hardware_json(
             mcu_record["node_id"] = mcu.node_id
         if mcu.parity is not None:
             mcu_record["parity"] = mcu.parity
+        if mcu.reset_pin is not None:
+            mcu_record["reset_pin"] = mcu.reset_pin
         mcu_records.append(mcu_record)
 
     # Validate the structured payload against the strict model.
@@ -856,7 +920,9 @@ def build_hardware_json(
         "temperature_sensors": temperature_sensor_records,
         "fans": fan_records,
         "mcus": mcu_records,
-        "duplicate_pin_overrides": sorted(graph.duplicate_pin_overrides),
+        "duplicate_pin_overrides": sorted(
+            graph.duplicate_pin_overrides | auto_duplicate_pin_overrides
+        ),
     }
 
     model = _HardwareJsonModel.model_validate(payload)

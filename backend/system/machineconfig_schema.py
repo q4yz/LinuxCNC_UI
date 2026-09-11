@@ -54,6 +54,7 @@ class SectionKind(str, Enum):
     SPINDLE_ANALOG = "spindle_analog"
     TMC2209 = "tmc2209"
     FAN = "fan"
+    HEATER_FAN = "heater_fan"
     DUPLICATE_PIN_OVERRIDE = "duplicate_pin_override"
     ESTOP = "estop"
 
@@ -177,13 +178,46 @@ TMC2209_KEYS = frozenset(
 # are optional: an empty ``[estop]`` block is valid (UI-only trigger,
 # see `.agent/component/estop.md`), physical wiring is opt-in on top.
 ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
-# Fan sections accept a single ``pin`` plus an optional ``max_power``
-# (0.0–1.0) which the runtime uses as the ``PWM Max`` value in the
-# Remora board JSON. ``cycle_time`` / ``hardware_pwm`` / ``off_below``
-# are recognised by Klipper but ignored by the compiler (the Remora
-# firmware uses a fixed PWM cycle).
-FAN_KEYS = frozenset({"pin", "max_power", "cycle_time", "hardware_pwm", "off_below"})
-FAN_IGNORED_KEYS = frozenset({"cycle_time", "hardware_pwm", "off_below"})
+# Fan sections accept ``pin``, an optional ``max_power`` (0.0–1.0,
+# the runtime's ``PWM Max`` in the Remora board JSON), and an optional
+# ``shutdown_speed`` (duty on estop/shutdown — Klipper's own field,
+# ingested as data today; not yet wired into a HAL safety circuit,
+# see `.agent/component/fan.md`).
+#
+# Every other keyword Klipper's real `[fan]`/`[heater_fan]` docs
+# define is recognised but ignored — this compiler assumes a plain
+# two-pin fan (no tachometer wire at all, so no RPM sense) driven at
+# a fixed PWM cycle by whichever MCU router binds the pin, so none of
+# these have anywhere to go: ``cycle_time`` / ``hardware_pwm`` (fixed
+# PWM cycle), ``off_below`` (no minimum-duty modelling yet),
+# ``enable_pin`` (no separate power-enable line modelled),
+# ``tachometer_pin``/``tachometer_ppr``/``tachometer_poll_interval``
+# (no tachometer on a two-pin fan), ``kick_start_time`` (no startup-kick
+# stage).
+FAN_IGNORED_KEYS = frozenset(
+    {
+        "cycle_time",
+        "hardware_pwm",
+        "off_below",
+        "enable_pin",
+        "tachometer_pin",
+        "tachometer_ppr",
+        "tachometer_poll_interval",
+        "kick_start_time",
+    }
+)
+FAN_KEYS = frozenset({"pin", "max_power", "shutdown_speed"}) | FAN_IGNORED_KEYS
+# ``[heater_fan <name>]`` shares every ``[fan]`` keyword (Klipper's own
+# docs: "See the fan section for a description of the above
+# parameters") plus its own association fields: which heater drives
+# it, the temperature that turns it on, and the speed it runs at once
+# triggered. Unlike a plain fan, a heater_fan is never operator/G-code
+# commandable — the HAL wires it straight off the heater's own sensor
+# reading (`.agent/component/fan.md` § 3's "kind: heater" chain).
+HEATER_FAN_KEYS = (
+    frozenset({"pin", "max_power", "shutdown_speed", "heater", "heater_temp", "fan_speed"})
+    | FAN_IGNORED_KEYS
+)
 
 # MCU sections accept the transport / board / serial keywords.
 # ``connection`` is the single source of truth for how the HAL
@@ -196,8 +230,20 @@ FAN_IGNORED_KEYS = frozenset({"cycle_time", "hardware_pwm", "off_below"})
 # about protocols and device paths, not PCB names. The RS-485 trio
 # (``baud_rate`` / ``node_id`` / ``parity``) is constrained by the
 # parser to ``vfd_rs485`` (and legacy ``rs485``) sections only.
+# ``reset_pin`` is constrained to ``remora-spi``/``remora-eth`` only
+# — the real reference firmware config (`machine_config/example/
+# ender3/config.txt`) always carries a `"Reset Pin"` module; no other
+# connection type has anything that reads it.
 MCU_KEYS = frozenset(
-    {"connection", "interface", "board", "baud_rate", "node_id", "parity"}
+    {
+        "connection",
+        "interface",
+        "board",
+        "baud_rate",
+        "node_id",
+        "parity",
+        "reset_pin",
+    }
 )
 
 SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
@@ -211,6 +257,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.SPINDLE_ANALOG: SPINDLE_ANALOG_KEYS,
     SectionKind.TMC2209: TMC2209_KEYS,
     SectionKind.FAN: FAN_KEYS,
+    SectionKind.HEATER_FAN: HEATER_FAN_KEYS,
     SectionKind.DUPLICATE_PIN_OVERRIDE: DUPLICATE_PIN_OVERRIDE_KEYS,
     SectionKind.ESTOP: ESTOP_KEYS,
 }
@@ -246,6 +293,14 @@ _HEATER_GENERIC_SECTION = re.compile(
 #   [fan_generic part_cooling] -> named instance, id = "fan_generic_part_cooling"
 _FAN_SECTION = re.compile(
     r"^fan(?:_generic)?(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
+)
+# heater_fan mirrors Klipper's own syntax — always named in practice
+# ("[heater_fan heatbreak_cooling_fan]"), bare accepted too for
+# consistency with every other component here:
+#   [heater_fan]                    -> bare, id = "heater_fan"
+#   [heater_fan heatbreak_cooling]  -> named, id = "heater_fan_heatbreak_cooling"
+_HEATER_FAN_SECTION = re.compile(
+    r"^heater_fan(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
 )
 # Digital spindle sections mirror the fan naming pattern:
 #   [spindle]            -> bare (canonical id = "spindle_digital")
@@ -346,6 +401,14 @@ def schema_for_section(section: str) -> SectionSchema | None:
             SectionKind.SPINDLE_ANALOG, SPINDLE_ANALOG_KEYS, "spindle_analog"
         )
 
+    heater_fan_match = _HEATER_FAN_SECTION.fullmatch(section)
+    if heater_fan_match:
+        return SectionSchema(
+            SectionKind.HEATER_FAN,
+            HEATER_FAN_KEYS,
+            section,
+        )
+
     fan_match = _FAN_SECTION.fullmatch(section)
     if fan_match:
         # The schema object_name is the bare section header so the
@@ -369,6 +432,7 @@ __all__ = [
     "EXTRUDER_KEYS",
     "FAN_KEYS",
     "FAN_IGNORED_KEYS",
+    "HEATER_FAN_KEYS",
     "HEATER_KEYS",
     "MCU_KEYS",
     "PRINTER_IGNORED_KEYS",

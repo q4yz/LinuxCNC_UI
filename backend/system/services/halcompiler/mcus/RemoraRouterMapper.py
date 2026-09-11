@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mappers.machineconfig import RemoraFirmwarePinMapper
+from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
 from models.machineconfig.hal_fragment_models import (
     SERVO_THREAD,
     Addf,
@@ -28,13 +28,29 @@ from models.machineconfig.hal_fragment_models import (
 #: default STM32 SPI one — `mcu_spi_remora.md` § 2's `computed.component`.
 _LPC_CHIP = "lpc17xx"
 
+#: ``temperature_sensors[].type`` -> ``(beta, r0 ohms, t0 degC)``.
+#: "Generic 3950" is the standard NTC 100K B3950 curve Klipper/Marlin
+#: ship as their own default — verified against the real, working
+#: `machine_config/example/ender3/config.txt`'s `temp_extruder`/
+#: `temp_bed` modules, not derived from generic thermistor tables.
+#: Lookup is case-insensitive (`.cfg` authors capitalise inconsistently).
+#: A `type` not listed here is an honest gap: no module is emitted
+#: rather than guessing a curve that would silently misreport real
+#: temperatures.
+_THERMISTOR_CURVES: dict[str, tuple[int, int, int]] = {
+    "generic 3950": (3950, 100000, 25),
+}
+
 
 class RemoraRouterMapper:
     """Routes :class:`PinRequest` entries whose ``pin.mcu_id`` is this MCU."""
 
     @staticmethod
     def base_fragment(mcu: dict[str, Any]) -> HalFragment:
-        """§ 3 — component load, E-stop/SPI chain, thread attachment."""
+        """§ 3 — component load, E-stop/SPI chain, thread attachment,
+        plus the board's own `"Reset Pin"` firmware module when
+        `reset_pin` is declared. MCU-intrinsic, same as the SPI-enable
+        chain above it — not something any routed request triggers."""
         params = mcu.get("parameters") or {}
         chip = str(params.get("chip", "stm32")).strip().lower()
 
@@ -44,7 +60,7 @@ class RemoraRouterMapper:
             spi_clk_div = params.get("spi_clk_div", 64)
             loadrt = [f"loadrt remora-spi SPI_clk_div={spi_clk_div}"]
 
-        return HalFragment(
+        fragment = HalFragment(
             loadrt=loadrt,
             nets=[
                 "net user-enable-out <= iocontrol.0.user-enable-out => remora.SPI-enable",
@@ -57,6 +73,24 @@ class RemoraRouterMapper:
                 Addf("remora.write", SERVO_THREAD, order=2),
             ],
         )
+
+        reset_pin = mcu.get("reset_pin")
+        if reset_pin:
+            parsed = PinStringMapper.from_string(reset_pin)
+            fragment.firmware_modules.append(
+                FirmwareModuleRequest(
+                    mcu_id=str(mcu.get("id", "mcu")),
+                    module={
+                        "Name": "reset_pin",
+                        "Thread": "Servo",
+                        "Type": "Reset Pin",
+                        "Comment": "Reset pin",
+                        "Pin": RemoraFirmwarePinMapper.to_firmware_pin(parsed.pin_id),
+                    },
+                )
+            )
+
+        return fragment
 
     @staticmethod
     def route(requests: list[PinRequest]) -> HalFragment:
@@ -140,13 +174,35 @@ class RemoraRouterMapper:
                 sp_index += 1
             elif request.role is PinRole.ANALOG_IN:
                 fragment.nets.append(f"net {request.signal} <= remora.PV.{pv_index}")
-                # No "Temperature" module here — the real reference
-                # module (config.txt's temp_bed/temp_extruder entries)
-                # needs a thermistor curve (Sensor + beta/r0/t0) that
-                # temperature_sensors[] doesn't carry yet. Fabricating
-                # placeholder curve values would silently misreport
-                # real temperatures, which is worse than the honest
-                # gap — see .agent/HANDOFF.md.
+                curve = _THERMISTOR_CURVES.get(
+                    str(request.sensor_type or "").strip().lower()
+                )
+                if curve is not None:
+                    beta, r0, t0 = curve
+                    firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
+                    fragment.firmware_modules.append(
+                        FirmwareModuleRequest(
+                            mcu_id=request.pin.mcu_id,
+                            module={
+                                "Name": f"temp_{request.owner}",
+                                "Thread": "Servo",
+                                "Type": "Temperature",
+                                "Comment": request.owner,
+                                "PV[i]": pv_index,
+                                "Sensor": "Thermistor",
+                                "Thermistor": {
+                                    "Pin": firmware_pin,
+                                    "beta": beta,
+                                    "r0": r0,
+                                    "t0": t0,
+                                },
+                            },
+                        )
+                    )
+                # An unrecognised (or absent) sensor type stays an
+                # honest gap — no module, since a fabricated curve
+                # would silently misreport real temperatures. The HAL
+                # `net` line above is still emitted either way.
                 pv_index += 1
         return fragment
 

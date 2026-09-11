@@ -303,6 +303,48 @@ class TestCrossReferences:
         model = model_validate(payload)
         assert any(f.id == "fan_part_cooling" for f in model.fans)
 
+    def test_fan_kind_defaults_to_part(self) -> None:
+        payload = _minimal_payload()
+        payload["fans"].append({"id": "fan_part_cooling", "pin": "PA8"})
+        model = model_validate(payload)
+        assert model.fans[0].kind == "part"
+
+    def test_heater_fan_record_with_a_valid_heater_reference_round_trips(self) -> None:
+        payload = _minimal_payload()
+        payload["tools"].append(
+            {"id": "heater_extruder", "type": "extruder", "heater_pin": "PE3", "control": "pid"}
+        )
+        payload["fans"].append(
+            {
+                "id": "heater_fan_heatbreak",
+                "pin": "PA9",
+                "kind": "heater",
+                "heater": "heater_extruder",
+                "heater_temp": 60.0,
+                "fan_speed": 0.8,
+            }
+        )
+        model = model_validate(payload)
+        fan = next(f for f in model.fans if f.id == "heater_fan_heatbreak")
+        assert fan.kind == "heater"
+        assert fan.heater == "heater_extruder"
+        assert fan.heater_temp == 60.0
+        assert fan.fan_speed == 0.8
+
+    def test_heater_fan_reference_must_resolve(self) -> None:
+        payload = _minimal_payload()
+        payload["fans"].append(
+            {"id": "heater_fan_heatbreak", "pin": "PA9", "kind": "heater", "heater": "ghost"}
+        )
+        with pytest.raises(ValueError, match="references unknown heater"):
+            model_validate(payload)
+
+    def test_shutdown_speed_round_trips_on_a_fan_record(self) -> None:
+        payload = _minimal_payload()
+        payload["fans"].append({"id": "fan_part_cooling", "pin": "PA8", "shutdown_speed": 0.0})
+        model = model_validate(payload)
+        assert model.fans[0].shutdown_speed == 0.0
+
     def test_fan_records_must_have_unique_ids(self) -> None:
         """Two Fan records sharing an id are rejected (graph-level validator)."""
         payload = _minimal_payload()

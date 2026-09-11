@@ -7,8 +7,20 @@ from models.machineconfig.hal_fragment_models import PinRequest, PinRole
 from services.halcompiler.mcus.RemoraRouterMapper import RemoraRouterMapper
 
 
-def _request(signal: str, role: PinRole, pin_string: str, owner: str = "endstop_x") -> PinRequest:
-    return PinRequest(signal=signal, role=role, pin=PinStringMapper.from_string(pin_string), owner=owner)
+def _request(
+    signal: str,
+    role: PinRole,
+    pin_string: str,
+    owner: str = "endstop_x",
+    sensor_type: str | None = None,
+) -> PinRequest:
+    return PinRequest(
+        signal=signal,
+        role=role,
+        pin=PinStringMapper.from_string(pin_string),
+        owner=owner,
+        sensor_type=sensor_type,
+    )
 
 
 def test_base_fragment_loads_the_spi_component_with_the_configured_divider():
@@ -43,6 +55,33 @@ def test_base_fragment_addf_order_sandwiches_motion_at_order_one():
     assert by_func["remora.update-freq"] == 2
     assert by_func["remora.write"] == 2
     assert all(a.thread == "servo-thread" for a in fragment.addf)
+
+
+def test_base_fragment_with_no_reset_pin_emits_no_firmware_module():
+    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    assert fragment.firmware_modules == []
+
+
+def test_base_fragment_emits_the_reset_pin_module_when_declared():
+    """Module shape verified against the real, working
+    `machine_config/example/ender3/config.txt` — its very first
+    module, before any joint or driver."""
+    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "reset_pin": "PC15"})
+    assert len(fragment.firmware_modules) == 1
+    request = fragment.firmware_modules[0]
+    assert request.mcu_id == "mcu"
+    assert request.module == {
+        "Name": "reset_pin",
+        "Thread": "Servo",
+        "Type": "Reset Pin",
+        "Comment": "Reset pin",
+        "Pin": "PC_15",
+    }
+
+
+def test_base_fragment_reset_pin_mcu_id_falls_back_to_the_mcu_record_id():
+    fragment = RemoraRouterMapper.base_fragment({"id": "board_a", "reset_pin": "PC15"})
+    assert fragment.firmware_modules[0].mcu_id == "board_a"
 
 
 def test_endstop_requests_get_zero_padded_input_indices_in_order():
@@ -108,14 +147,63 @@ def test_analog_out_requests_get_a_pwm_firmware_module():
     }
 
 
-def test_analog_in_requests_get_no_firmware_module_yet():
-    """No Temperature module — `temperature_sensors[]` doesn't carry a
-    thermistor curve (beta/r0/t0) yet; fabricating one would silently
-    misreport real temperatures. See the router's own comment."""
+def test_analog_in_with_no_sensor_type_gets_no_firmware_module():
+    """An honest gap, not "not yet implemented" — an unrecognised (or
+    absent) `sensor_type` has no known thermistor curve, and
+    fabricating one would silently misreport real temperatures."""
     fragment = RemoraRouterMapper.route(
         [_request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed")]
     )
     assert fragment.firmware_modules == []
+
+
+def test_analog_in_with_an_unrecognised_sensor_type_gets_no_firmware_module():
+    fragment = RemoraRouterMapper.route(
+        [_request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed", sensor_type="EPCOS 100K")]
+    )
+    assert fragment.firmware_modules == []
+
+
+def test_analog_in_with_a_known_sensor_type_gets_a_temperature_module():
+    """Module shape (and the `beta`/`r0`/`t0` curve for "Generic 3950")
+    verified against the real, working `machine_config/example/
+    ender3/config.txt`'s `temp_extruder`/`temp_bed` modules."""
+    fragment = RemoraRouterMapper.route(
+        [_request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed", sensor_type="Generic 3950")]
+    )
+    assert fragment.firmware_modules[0].module == {
+        "Name": "temp_bed",
+        "Thread": "Servo",
+        "Type": "Temperature",
+        "Comment": "bed",
+        "PV[i]": 0,
+        "Sensor": "Thermistor",
+        "Thermistor": {
+            "Pin": "PA_0",
+            "beta": 3950,
+            "r0": 100000,
+            "t0": 25,
+        },
+    }
+
+
+def test_analog_in_sensor_type_lookup_is_case_insensitive():
+    fragment = RemoraRouterMapper.route(
+        [_request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed", sensor_type="GENERIC 3950")]
+    )
+    assert fragment.firmware_modules[0].module["Sensor"] == "Thermistor"
+
+
+def test_analog_in_pv_index_still_advances_with_or_without_a_curve():
+    requests = [
+        _request("bed-PV", PinRole.ANALOG_IN, "PA0", owner="bed", sensor_type="Generic 3950"),
+        _request("extruder-PV", PinRole.ANALOG_IN, "PA1", owner="extruder"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net bed-PV <= remora.PV.0" in fragment.nets
+    assert "net extruder-PV <= remora.PV.1" in fragment.nets
+    assert fragment.firmware_modules[0].module["PV[i]"] == 0
+    assert len(fragment.firmware_modules) == 1  # extruder has no known curve
 
 
 def test_analog_in_requests_get_sequential_pv_channels():

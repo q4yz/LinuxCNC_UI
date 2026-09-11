@@ -1,3 +1,25 @@
+> **Implemented status:** `RemoraFirmwareConfigMapper`
+> (`backend/system/services/halcompiler/components/
+> RemoraFirmwareConfigMapper.py`) owns the `{"Board", "Modules"}` root
+> shape — pulled out of `HalAssembler._render_firmware_configs`, which
+> used to build it inline (the assembler decides *which* modules
+> belong to *which* MCU; the firmware target's own JSON shape is a
+> mapper's job, same as every other Remora-specific shape here).
+> `RemoraRouterMapper.base_fragment()` emits the board's `"Reset Pin"`
+> module when `reset_pin` is declared, and `route()`'s `ANALOG_IN`
+> branch emits a real `"Temperature"` module (§ 4) when
+> `temperature_sensors[].type` matches a known thermistor preset
+> ("Generic 3950" — the standard NTC 100K B3950 curve, not fabricated)
+> — an unrecognised or absent type stays the same honest gap as
+> before. `hardware_json_generator.build_hardware_json` also now
+> auto-populates `duplicate_pin_overrides` for every heater's own
+> generator-created fan-shares-heater-pin case (`heater.md`'s
+> `W_FAN_SHARES_HEATER_PIN`) — without it, `HalAssembler` (which never
+> silently merges a physical-pin collision without explicit
+> permission) emitted two independent `"PWM"` config.txt modules for
+> one physical pin, a real firmware defect only surfaced by actually
+> loading a real generated machine.
+
 ## 1. INGESTION (Hand-Written CFG)
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.
@@ -13,6 +35,9 @@
                    // needs a board to compile firmware; this HAL pipeline does not.
     interface: string // (Optional) transport selector, e.g. a spidev path
     servo_period: integer // (Optional) ns per servo cycle, default 1000000
+    reset_pin: string // (Optional) the board's own reset GPIO. Real, not invented:
+                        // every module in the reference config.txt is preceded by a
+                        // "Reset Pin" module. Only valid on remora-spi/remora-eth.
 ```
 
 **No step timing here.** Remora is capability class B (`README.md` § 2):
@@ -139,11 +164,26 @@ Sweep behaviour — `pin_id` here is an MCU-native port name (`PF13`,
 > exact (`"Stepgen"`, not `"Stepper"`; `"Digital Pin"` **with the
 > space**, not `"DigitalPin"`), and every STM32 pin is spelled with an
 > underscore between the port letter and the number (`"PF_13"`, not
-> Klipper's `"PF13"` — see `RemoraFirmwarePinMapper`). `"Sensor":
-> "Generic 3950"` plus a nested `"Thermistor"` object is the correct,
-> real shape for a temperature module, not a bug — do not "fix" it to
-> a flat `"Sensor": "Thermistor"` form; that is not what this
-> firmware target expects.
+> Klipper's `"PF13"` — see `RemoraFirmwarePinMapper`). A temperature
+> module's `"Sensor"` field is the flat **string** `"Thermistor"`
+> (never the sensor's own type name, e.g. `"Generic 3950"`), with the
+> actual curve nested one level down under `"Thermistor": {"Pin",
+> "beta", "r0", "t0"}` — an earlier draft of this file claimed the
+> opposite (`"Sensor": "Generic 3950"`, no nesting) before the real
+> `config.txt` existed to check it against; that claim was wrong.
+
+### The board's own reset pin → `config.txt`, nothing in HAL
+
+MCU-intrinsic, emitted unconditionally by `RemoraRouterMapper.
+base_fragment()` whenever `reset_pin` is declared — the same way the
+SPI-enable/reset/status chain above it is, not something any routed
+request triggers. Always the *first* module in the file (matches the
+real reference exactly):
+
+```json
+{ "Name": "reset_pin", "Thread": "Servo", "Type": "Reset Pin",
+  "Comment": "Reset pin", "Pin": "<firmware pin of reset_pin>" }
+```
 
 ### Joint pins → `config.txt`, nothing in HAL
 
@@ -230,6 +270,18 @@ net <owner.id>-heater-SP => remora.SP.<N>
   "Comment": "<owner.id>", "SP[i]": <N>, "PWM Pin": "<firmware pin of pin_id>" }
 ```
 
+A heater's own auto-derived "fan" (`heater.md`'s `W_FAN_SHARES_HEATER_PIN`
+— every generated machine with a `heater_pin` has one, real but the
+compiler's own doing, not the operator's) always shares that exact
+pin. `HalAssembler` never silently merges a physical-pin collision
+without explicit permission (`[duplicate_pin_override]`) — so
+`build_hardware_json` auto-populates that permission itself for this
+one, compiler-created case, collapsing the heater's own PID output and
+its placeholder fan onto one signal, one `SP.N`, one `"PWM"` module.
+Without this a heater with no real declared cooling fan got **two**
+independent PWM modules on the same physical pin — invalid firmware,
+not a cosmetic duplicate.
+
 ### Analog input (thermistor) → `remora.PV.N`
 
 `PV` = process variable:
@@ -239,13 +291,30 @@ net <owner.id>-heater-SP => remora.SP.<N>
 net <sensor.id>-PV <= remora.PV.<N>
 ```
 
-**Not yet implemented:** the matching `config.txt` `"Temperature"`
-module (`"PV[i]"` + `"Sensor"` + a nested `"Thermistor"` curve —
-`{"Pin", "beta", "r0", "t0"}`) needs a thermistor curve
-`temperature_sensors[]` doesn't carry yet. Emitting one with a
-fabricated curve would silently misreport real temperatures, which is
-worse than the gap — the HAL `net` line above is emitted; the firmware
-module is not, until that schema field exists.
+The matching `config.txt` `"Temperature"` module is emitted when
+`temperature_sensors[].type` matches a known thermistor preset:
+
+```json
+{ "Name": "temp_<sensor.id>", "Thread": "Servo", "Type": "Temperature",
+  "Comment": "<sensor.id>", "PV[i]": <N>, "Sensor": "Thermistor",
+  "Thermistor": { "Pin": "<firmware pin of pin_id>",
+                  "beta": <curve.beta>, "r0": <curve.r0>, "t0": <curve.t0> } }
+```
+
+Curve lookup (`RemoraRouterMapper._THERMISTOR_CURVES`, case-insensitive):
+
+| `temperature_sensors[].type` | beta | r0 (Ω) | t0 (°C) |
+|---|---|---|---|
+| `"Generic 3950"` | 3950 | 100000 | 25 |
+
+Verified against the real `config.txt`'s `temp_extruder`/`temp_bed`
+modules — this is the standard NTC 100K B3950 curve Klipper/Marlin
+ship as their own default, not a fabricated number. An unrecognised
+(or absent) `type` stays an honest gap: no module, since a guessed
+curve would silently misreport real temperatures — the HAL `net` line
+above is still emitted either way. Extending the table to a new
+thermistor type is a one-line addition once its curve is verified
+against real hardware.
 
 ### Skew
 
