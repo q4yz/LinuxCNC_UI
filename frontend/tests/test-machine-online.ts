@@ -313,6 +313,22 @@ test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", (
   // teleported into.
   assert.match(dash, /id="toolpath-slot-dashboard"/, "DashboardView must expose the dashboard teleport slot");
   assert.match(jog, /id="toolpath-slot-jogging"/, "JoggingView must expose the jogging teleport slot");
+
+  // DashboardView's slot div is wrapped in a BaseCard (for the
+  // "Toolpath" title bar). BaseCard now stagger-defers its default
+  // slot by up to 15ms (see test-basecard-stagger.ts) — if this card
+  // opted into that, the slot div wouldn't exist yet at the moment
+  // App.vue's post-flush watcher tries to Teleport into it right
+  // after a route change, throwing "Failed to locate Teleport
+  // target" (this is a real regression that was caught live in the
+  // browser, not a hypothetical). This card has nothing heavy to
+  // defer anyway — the actual viewer lives elsewhere — so it must
+  // opt out.
+  assert.match(
+    dash,
+    /<BaseCard title="Toolpath" :stagger="false">[\s\S]{0,500}id="toolpath-slot-dashboard"/,
+    "the Toolpath card's BaseCard must opt out of staggering so the teleport slot div exists synchronously on mount",
+  );
 });
 
 test("the shared viewer pauses its render loop while parked off-route", () => {

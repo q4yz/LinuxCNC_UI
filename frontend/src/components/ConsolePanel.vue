@@ -6,6 +6,7 @@ import { ModulesMachineStateService } from '../../generated/api/services/Modules
 import { filterAutocompleteCommands } from '../config/gcodes'
 import { useMachineStore } from '../stores/machine'
 import { BaseButton } from '../ui/index.ts'
+import BaseCard from '../ui/BaseCard.vue'
 
 const consoleStore = useConsoleStore()
 const machineStore = useMachineStore()
@@ -247,12 +248,8 @@ const getMessageClass = (type: string) => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-full">
-
-    <!-- Header -->
-    <div class="bg-gray-700/50 px-4 py-2 border-b border-gray-600 flex justify-between items-center gap-3">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm shrink-0">Terminal / Console</h2>
-
+  <BaseCard title="Terminal / Console" class="h-full flex flex-col overflow-hidden">
+    <template #header-actions>
       <!-- Log level filter chips -->
       <div class="flex items-center gap-1 flex-wrap" data-test="console-level-chips">
         <button
@@ -272,79 +269,81 @@ const getMessageClass = (type: string) => {
       </div>
 
       <BaseButton variant="ghost" size="sm" class="shrink-0" @click="consoleStore.clearMessages()">Clear</BaseButton>
-    </div>
+    </template>
 
-    <!-- Message Area — virtualized: only the rows near the viewport
-         are ever mounted, so the DOM cost stays flat no matter how
-         long the session's console history grows. -->
-    <div ref="messageContainer" class="flex-1 p-4 overflow-y-auto font-mono text-sm">
-      <div v-if="consoleStore.filteredMessages.length === 0" class="text-gray-600 italic">
-        <span v-if="consoleStore.messages.length === 0">Console ready...</span>
-        <span v-else>No messages at the {{ filterLevel }} level.</span>
-      </div>
-      <div v-else :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }">
-        <div
-          v-for="virtualRow in rowVirtualizer.getVirtualItems()"
-          :key="virtualRow.index"
-          :ref="(el) => rowVirtualizer.measureElement(el as Element)"
-          :data-index="virtualRow.index"
-          class="flex space-x-2 pb-1"
-          :style="{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }"
-        >
-          <span class="text-gray-500 shrink-0">[{{ consoleStore.filteredMessages[virtualRow.index].timestamp }}]</span>
-          <span :class="getMessageClass(consoleStore.filteredMessages[virtualRow.index].type)" class="break-all">{{ consoleStore.filteredMessages[virtualRow.index].text }}</span>
+    <div class="flex flex-col h-full">
+      <!-- Message Area — virtualized: only the rows near the viewport
+           are ever mounted, so the DOM cost stays flat no matter how
+           long the session's console history grows. -->
+      <div ref="messageContainer" class="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-sm">
+        <div v-if="consoleStore.filteredMessages.length === 0" class="text-gray-600 italic">
+          <span v-if="consoleStore.messages.length === 0">Console ready...</span>
+          <span v-else>No messages at the {{ filterLevel }} level.</span>
         </div>
-      </div>
-    </div>
-
-    <!-- Input Area -->
-    <div class="p-3 bg-gray-900 border-t border-gray-700 mt-auto relative">
-      <!-- Autocomplete menu — absolutely positioned so it floats
-           above the input box. Anchored to the bottom of the input
-           row via the negative ``bottom`` offset. -->
-      <div
-        v-if="showSuggestions && suggestions.length > 0"
-        class="absolute left-3 right-3 bottom-full mb-1 bg-gray-800 border border-gray-600 rounded max-h-56 overflow-y-auto z-10"
-        data-test="console-suggestions"
-      >
-        <div
-          v-for="(entry, idx) in suggestions"
-          :key="entry.label"
-          @mousedown.prevent="selectSuggestion(entry)"
-          @mouseenter="suggestionIndex = idx"
-          :class="[
-            'px-3 py-1.5 cursor-pointer font-mono text-sm flex justify-between items-center',
-            suggestionIndex === idx ? 'bg-blue-600/40 text-white' : 'text-gray-200 hover:bg-gray-700'
-          ]"
-          :data-test="`console-suggestion-${entry.label}`"
-        >
-          <span class="font-semibold">{{ entry.label }}</span>
-          <span class="text-gray-400 text-xs ml-3 truncate">{{ entry.description }}</span>
+        <div v-else :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }">
+          <div
+            v-for="virtualRow in rowVirtualizer.getVirtualItems()"
+            :key="virtualRow.index"
+            :ref="(el) => rowVirtualizer.measureElement(el as Element)"
+            :data-index="virtualRow.index"
+            class="flex space-x-2 pb-1"
+            :style="{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }"
+          >
+            <span class="text-gray-500 shrink-0">[{{ consoleStore.filteredMessages[virtualRow.index].timestamp }}]</span>
+            <span :class="getMessageClass(consoleStore.filteredMessages[virtualRow.index].type)" class="break-all">{{ consoleStore.filteredMessages[virtualRow.index].text }}</span>
+          </div>
         </div>
       </div>
 
-      <div ref="inputWrapper" class="flex items-center space-x-2">
-        <span class="text-blue-500 font-bold font-mono">></span>
-        <input
-          v-model="commandInput"
-          @input="onInput"
-          @focus="onFocus"
-          @blur="onBlur"
-          @keydown="onKeyDown"
-          @keyup.enter="submitCommand"
-          @keydown.up.prevent="historyUp"
-          @keydown.down.prevent="historyDown"
-          type="text"
-          placeholder="Enter G-Code or MDI command..."
-          class="flex-1 bg-transparent text-gray-100 font-mono focus:outline-none placeholder-gray-600"
-          autocomplete="off"
-          spellcheck="false"
-          data-test="console-input"
+      <!-- Input Area -->
+      <div class="p-3 bg-gray-900 border-t border-gray-700 relative">
+        <!-- Autocomplete menu — absolutely positioned so it floats
+             above the input box. Anchored to the bottom of the input
+             row via the negative ``bottom`` offset. -->
+        <div
+          v-if="showSuggestions && suggestions.length > 0"
+          class="absolute left-3 right-3 bottom-full mb-1 bg-gray-800 border border-gray-600 rounded max-h-56 overflow-y-auto z-10"
+          data-test="console-suggestions"
         >
-        <BaseButton variant="primary" size="sm" @click="submitCommand">
-          SEND
-        </BaseButton>
+          <div
+            v-for="(entry, idx) in suggestions"
+            :key="entry.label"
+            @mousedown.prevent="selectSuggestion(entry)"
+            @mouseenter="suggestionIndex = idx"
+            :class="[
+              'px-3 py-1.5 cursor-pointer font-mono text-sm flex justify-between items-center',
+              suggestionIndex === idx ? 'bg-blue-600/40 text-white' : 'text-gray-200 hover:bg-gray-700'
+            ]"
+            :data-test="`console-suggestion-${entry.label}`"
+          >
+            <span class="font-semibold">{{ entry.label }}</span>
+            <span class="text-gray-400 text-xs ml-3 truncate">{{ entry.description }}</span>
+          </div>
+        </div>
+
+        <div ref="inputWrapper" class="flex items-center space-x-2">
+          <span class="text-blue-500 font-bold font-mono">></span>
+          <input
+            v-model="commandInput"
+            @input="onInput"
+            @focus="onFocus"
+            @blur="onBlur"
+            @keydown="onKeyDown"
+            @keyup.enter="submitCommand"
+            @keydown.up.prevent="historyUp"
+            @keydown.down.prevent="historyDown"
+            type="text"
+            placeholder="Enter G-Code or MDI command..."
+            class="flex-1 bg-transparent text-gray-100 font-mono focus:outline-none placeholder-gray-600"
+            autocomplete="off"
+            spellcheck="false"
+            data-test="console-input"
+          >
+          <BaseButton variant="primary" size="sm" @click="submitCommand">
+            SEND
+          </BaseButton>
+        </div>
       </div>
     </div>
-  </div>
+  </BaseCard>
 </template>
