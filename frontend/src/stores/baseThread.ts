@@ -57,6 +57,19 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   // variable and not in a `state: () => ({})` block, Vue won't wrap it in a proxy.
   let pollHandle: ReturnType<typeof setInterval> | null = null;
 
+  // `axes` is entirely static — every field the backend's own
+  // AxisMapper exposes (id, jointNumbers, minLimit, maxLimit) is
+  // baked into hardware.json at machine-config compile time and
+  // cached by the backend's AxisService singleton for the life of
+  // the machine session. Fetched once via the STATIC response tier
+  // and never touched again by the 1 Hz `refresh()` below, so its
+  // reference — and therefore every computed/watch downstream of it
+  // (NgcCoordinateSystemViewer's axis-limit grid rebuild chief among
+  // them) — stops changing after this one assignment instead of
+  // getting a new (but identically-valued) object every single tick.
+  let staticAxesLoaded = false;
+  let staticAxesLoadPromise: Promise<void> | null = null;
+
   // ─────────────────────────────────────────────────────────────────
   // GETTERS
   // ─────────────────────────────────────────────────────────────────
@@ -83,11 +96,13 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       // The BaseThreadService handles all data extraction and mappers now
       const snapshot = await BaseThreadService.fetchSnapshot();
 
-      // Entity Surface
+      // Entity Surface. ``axes`` is deliberately NOT reassigned here
+      // — it's wholly static data, sourced once by fetchStaticAxes()
+      // below, not by this 1 Hz poll. See the comment by
+      // `staticAxesLoaded` above.
       progress.value = snapshot.progress;
       readings.value = snapshot.readings;
       toolList.value = snapshot.toolList;
-      axes.value = snapshot.axes;
 
       timestamp.value = snapshot.timestamp;
       connectionStatus.value = "connected";
@@ -96,6 +111,29 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       console.error("[baseThread] refresh failed:", err);
       connectionStatus.value = "error";
     }
+  }
+
+  /**
+   * Fetch the STATIC response tier exactly once per session and use
+   * it as the sole, permanent source for ``axes``. Idempotent (a
+   * shared in-flight promise, same pattern as
+   * `stores/machine.ts`'s `refreshSettings()`) so re-entering while
+   * a fetch is already running never fires a second request.
+   */
+  async function fetchStaticAxes(): Promise<void> {
+    if (staticAxesLoaded) return;
+    if (staticAxesLoadPromise) return staticAxesLoadPromise;
+    staticAxesLoadPromise = (async () => {
+      try {
+        const snapshot = await BaseThreadService.fetchStatic();
+        axes.value = snapshot.axes;
+      } catch (err: unknown) {
+        console.error("[baseThread] fetchStaticAxes failed:", err);
+      } finally {
+        staticAxesLoaded = true;
+      }
+    })();
+    return staticAxesLoadPromise;
   }
 
   /**
@@ -108,6 +146,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     connectionStatus.value = "connecting";
 
     void refresh();
+    void fetchStaticAxes();
 
     pollHandle = setInterval(() => {
       void refresh();

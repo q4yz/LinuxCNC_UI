@@ -255,10 +255,18 @@ test("machine-level widgets are wrapped in MachineGate", () => {
 // DashboardView and JoggingView used to each mount their own
 // NgcCoordinateSystemViewer + MachineGate, so switching between the
 // two views tore down one WebGL context and built a new one on every
-// click. A single instance now lives in App.vue and is handed
-// between the two views via Teleport, gated by one MachineGate.
+// click. A single instance lived in App.vue, Teleported between the
+// two views' slots. The viewer was later pulled off Dashboard
+// entirely (a live WebGL canvas embedded in a scrolling page fighting
+// the page's own scroll compositing — plus OrbitControls' non-passive
+// wheel listener forcing main-thread scrolling over the canvas — was
+// a structural mismatch no amount of render-loop tuning fully fixed),
+// so it now lives only on JoggingView. Still Teleported (not mounted
+// directly) so the one WebGL context survives route changes instead
+// of being torn down and rebuilt every time the operator navigates
+// away and back.
 
-test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", () => {
+test("NgcCoordinateSystemViewer is a single instance owned by App.vue, living only on Jogging", () => {
   const app = read("App.vue");
   assert.match(
     app,
@@ -268,13 +276,18 @@ test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", (
   assert.match(app, /<Teleport\s+:to="toolpathTeleportTarget"/, "the viewer must be teleported to the active view's slot");
   assert.match(
     app,
-    /route\.name === ['"]dashboard['"][\s\S]{0,80}toolpathTeleportTarget\.value = ['"]#toolpath-slot-dashboard['"]/,
-    "dashboard route must target the dashboard slot",
+    /isToolpathViewActive = computed\(\(\) => route\.name === ['"]jogging['"]\)/,
+    "the viewer is only ever active on the jogging route now that it's off Dashboard",
   );
   assert.match(
     app,
     /route\.name === ['"]jogging['"][\s\S]{0,80}toolpathTeleportTarget\.value = ['"]#toolpath-slot-jogging['"]/,
     "jogging route must target the jogging slot",
+  );
+  assert.doesNotMatch(
+    app,
+    /toolpath-slot-dashboard/,
+    "App.vue must not still target a dashboard slot — DashboardView no longer has one",
   );
   assert.match(
     app,
@@ -302,33 +315,17 @@ test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", (
     "index.html must declare #toolpath-parking as a sibling of #app, outside the Vue-mounted tree",
   );
 
-  // Neither view should own the widget directly any more.
+  // Neither view should own the widget directly.
   const dash = read("views/DashboardView.vue");
   const jog = read("views/JoggingView.vue");
   assert.doesNotMatch(dash, /NgcCoordinateSystemViewer/, "DashboardView must not import/mount its own viewer");
+  assert.doesNotMatch(dash, /toolpath-slot-dashboard/, "DashboardView must not expose a dashboard teleport slot any more");
   assert.doesNotMatch(jog, /NgcCoordinateSystemViewer/, "JoggingView must not import/mount its own viewer");
   assert.doesNotMatch(jog, /MachineGate/, "JoggingView no longer needs its own MachineGate — the shared instance carries one");
 
-  // Each view exposes the plain slot div the shared instance is
+  // Jogging exposes the plain slot div the shared instance is
   // teleported into.
-  assert.match(dash, /id="toolpath-slot-dashboard"/, "DashboardView must expose the dashboard teleport slot");
   assert.match(jog, /id="toolpath-slot-jogging"/, "JoggingView must expose the jogging teleport slot");
-
-  // DashboardView's slot div is wrapped in a BaseCard (for the
-  // "Toolpath" title bar). BaseCard now stagger-defers its default
-  // slot by up to 15ms (see test-basecard-stagger.ts) — if this card
-  // opted into that, the slot div wouldn't exist yet at the moment
-  // App.vue's post-flush watcher tries to Teleport into it right
-  // after a route change, throwing "Failed to locate Teleport
-  // target" (this is a real regression that was caught live in the
-  // browser, not a hypothetical). This card has nothing heavy to
-  // defer anyway — the actual viewer lives elsewhere — so it must
-  // opt out.
-  assert.match(
-    dash,
-    /<BaseCard title="Toolpath"[^>]*:stagger="false"[^>]*>[\s\S]{0,500}id="toolpath-slot-dashboard"/,
-    "the Toolpath card's BaseCard must opt out of staggering so the teleport slot div exists synchronously on mount",
-  );
 });
 
 test("the shared viewer pauses its render loop while parked off-route", () => {

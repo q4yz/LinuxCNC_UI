@@ -160,6 +160,89 @@ test("progressFraction getter collapses on zero / missing totals and clamps at 1
   );
 });
 
+// ------------------------------------------------------------------ //
+// Static axes: fetched once via the STATIC response tier                //
+// ------------------------------------------------------------------ //
+//
+// `axes` is entirely static (id/jointNumbers/minLimit/maxLimit all
+// come from hardware.json at compile time, cached by the backend's
+// AxisService singleton). Reassigning it from every 1 Hz `refresh()`
+// tick — even though the values never change — handed
+// NgcCoordinateSystemViewer's `axisLimits` computed a fresh object
+// reference every second, which re-fired its non-deep `watch` and
+// rebuilt the whole Three.js grid/outline on every tick. Fetching it
+// once via `?mode=static` and never touching it again from the poll
+// fixes that at the source, with no consumer-facing change — `axes`
+// keeps the exact same name/shape from every component's point of
+// view.
+
+test("refresh() no longer assigns axes — it is not this poll's job any more", () => {
+  const text = readStore();
+  const refreshBody = text.match(/async function refresh\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.ok(refreshBody, "expected to find the refresh() function body");
+  assert.doesNotMatch(
+    refreshBody,
+    /axes\.value\s*=/,
+    "refresh() (the 1 Hz poll) must not reassign axes.value — that would reintroduce a fresh reference every tick",
+  );
+});
+
+test("fetchStaticAxes fetches the STATIC tier exactly once per session", () => {
+  const text = readStore();
+  assert.match(text, /async function fetchStaticAxes\s*\(\s*\)\s*:\s*Promise<void>\s*\{/);
+  assert.match(
+    text,
+    /BaseThreadService\.fetchStatic\s*\(/,
+    "must go through the facade's dedicated static-tier method, not fetchSnapshot()",
+  );
+  assert.match(
+    text,
+    /fetchStaticAxes[\s\S]*?axes\.value\s*=\s*snapshot\.axes/,
+    "the static fetch's result must be the one place that assigns axes.value",
+  );
+  // Idempotent: a loaded flag plus a shared in-flight promise (the
+  // same pattern stores/machine.ts uses for refreshSettings()) so
+  // concurrent/repeat callers never fire a second request.
+  assert.match(text, /if\s*\(\s*staticAxesLoaded\s*\)\s*return/);
+  assert.match(text, /if\s*\(\s*staticAxesLoadPromise\s*\)\s*return\s+staticAxesLoadPromise/);
+  assert.match(text, /staticAxesLoaded\s*=\s*true/);
+});
+
+test("armPoll fires the static axes fetch once, outside the recurring interval", () => {
+  const text = readStore();
+  const armPollBody = text.match(/function armPoll\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.ok(armPollBody, "expected to find the armPoll() function body");
+  assert.match(
+    armPollBody,
+    /void fetchStaticAxes\(\)/,
+    "armPoll must kick off the one-time static fetch alongside the initial refresh()",
+  );
+  // Must be called once at the top of armPoll, not from inside the
+  // setInterval callback (which would defeat the whole point).
+  const insideInterval = armPollBody.match(/setInterval\(\s*\(\)\s*=>\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  assert.doesNotMatch(
+    insideInterval,
+    /fetchStaticAxes/,
+    "fetchStaticAxes must not be called from inside the recurring setInterval",
+  );
+});
+
+test("BaseThreadService.fetchStatic requests the static tier via the generated client", () => {
+  const facadeText = readFileSync(
+    resolve(repoRoot, "frontend/src/facades/baseThreadFacade.ts"),
+    "utf-8",
+  );
+  assert.match(
+    facadeText,
+    /static async fetchStatic\s*\(\s*\)\s*:\s*Promise<Snapshot>\s*\{/,
+  );
+  assert.match(
+    facadeText,
+    /ApiBaseThreadService\.getBaseThreadSnapshot\(\s*["']static["']\s*\)/,
+    "fetchStatic must request mode=static from the generated client",
+  );
+});
+
 test("store calls BaseThreadService.fetchSnapshot on refresh, which wraps the generated getBaseThreadSnapshot op", () => {
   // The store goes through the domain facade
   // (``facades/baseThreadFacade.ts``), not the generated client

@@ -30,7 +30,6 @@ import ToastContainer from './components/ToastContainer.vue'
 import EStopHeader from './components/EStopHeader.vue'
 import MachineGate from './components/machine/MachineGate.vue'
 import NgcCoordinateSystemViewer from './components/NgcCoordinateSystemViewer.vue'
-import { useDashboardScrollState } from './composables/useDashboardScrollState'
 
 const baseThread = useBaseThreadStore()
 const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
@@ -39,16 +38,17 @@ const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
 // Shared 3D toolpath viewer                                            //
 // ------------------------------------------------------------------- //
 //
-// DashboardView and JoggingView both used to mount their own
-// NgcCoordinateSystemViewer, so switching between the two views
-// tore down one WebGL context/Three.js scene and built a new one
-// from scratch on every click — expensive even on a desktop, far
-// worse on a GPU-less target. A single instance lives here instead
-// and is handed between the two views via Teleport (which moves the
-// existing DOM node — including the live canvas/GL context — rather
-// than destroying and recreating it). ``isToolpathViewActive`` tells
-// the viewer to pause its render loop while parked on an unrelated
-// route instead of rendering an invisible canvas.
+// Lives only on JoggingView now — it used to also appear embedded in
+// Dashboard's scrolling column, where a live WebGL canvas fighting
+// the page's own scroll compositing (plus OrbitControls' non-passive
+// wheel listener forcing main-thread scrolling over the canvas) was
+// a structural mismatch no amount of render-loop tuning fully fixed.
+// Still Teleported rather than mounted directly in JoggingView so a
+// single WebGL context/Three.js scene survives route changes instead
+// of being torn down and rebuilt — the instance just parks (hidden,
+// RAF loop paused) when the operator is elsewhere. ``isToolpathViewActive``
+// pauses the render loop while parked instead of rendering an
+// invisible canvas.
 //
 // The target is set from a ``post``-flush watcher (not a plain
 // computed) so it only flips *after* Vue has patched <router-view>
@@ -56,21 +56,13 @@ const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
 // the now-active/reactivated view) is guaranteed to already exist
 // in the document by the time Teleport looks it up.
 const route = useRoute()
-const { isScrolling } = useDashboardScrollState()
-// Also pause the render loop while Dashboard's own scroll container
-// is moving — the viewer is a live, continuously-redrawing canvas
-// competing with the scroll for the same raster thread on a
-// GPU-less target. See useDashboardScrollState.ts.
-const isToolpathViewActive = computed(
-  () => (route.name === 'dashboard' || route.name === 'jogging') && !isScrolling.value,
-)
+const isToolpathViewActive = computed(() => route.name === 'jogging')
 const toolpathTeleportTarget = ref('#toolpath-parking')
 
 watch(
   () => route.name,
   () => {
-    if (route.name === 'dashboard') toolpathTeleportTarget.value = '#toolpath-slot-dashboard'
-    else if (route.name === 'jogging') toolpathTeleportTarget.value = '#toolpath-slot-jogging'
+    if (route.name === 'jogging') toolpathTeleportTarget.value = '#toolpath-slot-jogging'
     else toolpathTeleportTarget.value = '#toolpath-parking'
   },
   { immediate: true, flush: 'post' },
@@ -157,12 +149,11 @@ onUnmounted(() => {
 
     </div>
 
-    <!-- Shared 3D toolpath viewer — a single instance, handed to
-         whichever of Dashboard/Jogging is active via Teleport (see
-         script setup above). Parked (hidden, RAF loop paused) in
+    <!-- Shared 3D toolpath viewer — a single instance, moved into
+         JoggingView's slot via Teleport while that view is active
+         (see script setup above). Parked (hidden, RAF loop paused) in
          index.html's #toolpath-parking div — which must live outside
-         this component tree, see the comment there — when neither
-         view is on screen. -->
+         this component tree, see the comment there — everywhere else. -->
     <Teleport :to="toolpathTeleportTarget">
       <MachineGate label="Toolpath">
         <NgcCoordinateSystemViewer :active="isToolpathViewActive" />

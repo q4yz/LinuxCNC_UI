@@ -12,9 +12,28 @@ export class BaseThreadService {
       const wire = await ApiBaseThreadService.getBaseThreadSnapshot();
       return toSnapshot(wire);
     } catch (err: unknown) {
-      // Log the error but let the caller (the Pinia store) handle 
+      // Log the error but let the caller (the Pinia store) handle
       // the UI error state rather than returning a half-built object.
       console.error("[BaseThreadService] Failed to fetch snapshot", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Fetch the STATIC tier only (`?mode=static`) — machine
+   * configuration that's baked into `hardware.json` at compile time
+   * (axis travel limits, joint numbers, ...) and cached by the
+   * backend's own service singletons for the life of the machine
+   * session. Every dynamic field comes back null/omitted; reuses the
+   * same `toSnapshot` mapper since it already defaults missing
+   * fields rather than crashing on them.
+   */
+  static async fetchStatic(): Promise<Snapshot> {
+    try {
+      const wire = await ApiBaseThreadService.getBaseThreadSnapshot("static");
+      return toSnapshot(wire);
+    } catch (err: unknown) {
+      console.error("[BaseThreadService] Failed to fetch static snapshot", err);
       throw err;
     }
   }

@@ -1,17 +1,19 @@
-// Structural guard for freezing the Dashboard's two live canvases
-// (the shared 3D toolpath viewer and the temperature chart) while
-// the Dashboard's own scroll container is moving.
+// Structural guard for freezing the Dashboard's live temperature
+// chart while the Dashboard's own scroll container is moving.
 //
-// Both canvases redraw continuously (the viewer on telemetry
-// position updates, the chart on its 10 Hz tick) independently of
+// The chart redraws continuously (a 10 Hz tick) independently of
 // whatever the operator is doing. On a GPU-less target, a redraw
 // landing mid-scroll competes with the browser's own scroll-repaint
-// work on the same software rasterizer, which is the reported cause
-// of scroll performance collapsing specifically while a canvas is
-// visible. useDashboardScrollState.ts is a small singleton signal
-// DashboardView writes to (on its own ``scroll`` event) and both
-// canvas owners read from to pause their redraws during the gesture
-// (and its momentum/inertia tail).
+// work on the same software rasterizer. useDashboardScrollState.ts is
+// a small singleton signal DashboardView writes to (on its own
+// ``scroll`` event) that the chart reads from to pause its redraws
+// during the gesture (and its momentum/inertia tail).
+//
+// The shared 3D toolpath viewer used to also live on Dashboard and
+// read this same signal, but it was pulled off Dashboard entirely
+// (see test-machine-online.ts) — it now lives only on JoggingView,
+// which has no scroll container, so App.vue no longer needs this
+// composable at all.
 //
 // Run with: ``node --test frontend/tests/test-dashboard-scroll-freeze.ts``
 
@@ -60,13 +62,17 @@ test("DashboardView marks scrolling on its own scroll container", () => {
   );
 });
 
-test("App.vue pauses the shared 3D viewer while Dashboard is scrolling", () => {
+test("App.vue no longer needs the dashboard-scroll signal — the viewer isn't on Dashboard any more", () => {
   const text = read("App.vue");
-  assert.match(text, /import\s*\{\s*useDashboardScrollState\s*\}/, "must consume the shared composable");
+  assert.doesNotMatch(
+    text,
+    /useDashboardScrollState/,
+    "App.vue must not import this composable — JoggingView (the viewer's only home now) has no scroll container to freeze against",
+  );
   assert.match(
     text,
-    /isToolpathViewActive\s*=\s*computed\(\s*\(\)\s*=>\s*\(route\.name === ['"]dashboard['"] \|\| route\.name === ['"]jogging['"]\)\s*&&\s*!isScrolling\.value/,
-    "the viewer's active flag must also require that Dashboard is not currently scrolling",
+    /isToolpathViewActive = computed\(\(\) => route\.name === ['"]jogging['"]\)/,
+    "the viewer's active flag is just the route check now — no scroll-state gate needed off Dashboard",
   );
 });
 
