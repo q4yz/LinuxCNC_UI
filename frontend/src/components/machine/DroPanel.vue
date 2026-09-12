@@ -259,7 +259,7 @@ function updateWcs(event: Event) {
         class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
         @click.self="closeSetPosition"
     >
-      <div class="bg-gray-800 border border-gray-600 rounded-lg p-6 shadow-2xl w-72">
+      <div class="bg-gray-800 border border-gray-600 rounded-lg p-6 w-72">
         <h3 class="text-lg font-bold text-gray-100 mb-4">Set {{ setPositionModal.axisName }} Position</h3>
         <BaseInput
             v-model="setPositionModal.value"

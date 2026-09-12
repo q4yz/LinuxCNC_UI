@@ -76,7 +76,7 @@ function stopSpindle() {
         Analog spindle — slider controls speed
       </p>
       <div
-        class="px-3 py-1 text-xs font-bold uppercase rounded shadow-sm"
+        class="px-3 py-1 text-xs font-bold uppercase rounded"
         :class="isRunning ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-500 border border-gray-700'"
       >
         State: {{ isRunning ? 'Running' : 'Stopped' }}
@@ -134,7 +134,6 @@ input[type=range]::-webkit-slider-thumb {
   border-radius: 50%;
   background: #3b82f6; /* blue-500 */
   cursor: pointer;
-  box-shadow: 0 0 4px rgba(0,0,0,0.5);
   margin-top: -1px;
 }
 input[type=range]::-moz-range-thumb {
@@ -144,6 +143,5 @@ input[type=range]::-moz-range-thumb {
   background: #3b82f6;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 4px rgba(0,0,0,0.5);
 }
 </style>

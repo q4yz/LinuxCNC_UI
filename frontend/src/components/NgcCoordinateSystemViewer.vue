@@ -10,6 +10,7 @@ import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
 import { MacroButton, useMacroButtonConfig } from '../ui'
+import { useRenderQuality } from '../composables/useRenderQuality'
 
 
 // --- Interfaces & Types ---
@@ -133,6 +134,21 @@ let toolpathLine: THREE.LineSegments | null = null
 let wcsMarkerGroup: THREE.Group | null = null
 let animationFrameId: number = 0
 let resizeObserver: ResizeObserver | null = null
+
+// Render-on-demand: the WebGL canvas is only redrawn when something
+// actually changed (camera moved/damping settling, toolhead moved,
+// toolpath/limits rebuilt, a camera-mode tween in flight, or a
+// resize) instead of unconditionally every animation frame. This is
+// the standard Three.js "render on demand" pattern — see
+// OrbitControls' own docs — and it is the single biggest win on a
+// GPU-less target: most of the time this viewer is on screen,
+// nothing is moving, so the RAF loop below does almost no work.
+let needsRender = true
+function requestRender(): void {
+  needsRender = true
+}
+
+const { quality: renderQuality, toggleQuality: toggleRenderQuality, rendererOptions, pixelRatioFor } = useRenderQuality()
 
 const machineLimits = ref<MachineLimits | null>(null)
 const toolpathMeta = ref<ToolpathMeta>({ filename: '', moves: 0 })
@@ -295,7 +311,10 @@ onBeforeUnmount(() => {
     })
   }
 
-  if (controls) controls.dispose()
+  if (controls) {
+    controls.removeEventListener('change', requestRender)
+    controls.dispose()
+  }
 
   cameraTween = null
   window.removeEventListener('keydown', handleKeyDown)
@@ -334,14 +353,19 @@ const initThreeJS = () => {
   camera.position.set(200, 200, 200)
   camera.lookAt(0, 0, 0)
 
-  renderer = new THREE.WebGLRenderer({ antialias: true })
+  renderer = new THREE.WebGLRenderer(rendererOptions())
   renderer.setSize(width, height)
-  renderer.setPixelRatio(window.devicePixelRatio)
+  renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio))
   container.value.appendChild(renderer.domElement)
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.05
+  // Damping keeps animating the camera for a bit after the operator
+  // releases the mouse/touch; ``change`` fires on every one of those
+  // steps (and on every direct drag/zoom/pan), which is exactly the
+  // signal the render-on-demand loop needs.
+  controls.addEventListener('change', requestRender)
 
   controls.enableRotate = initialFrame.enableRotate
 
@@ -391,6 +415,7 @@ const initThreeJS = () => {
       camera.aspect = newWidth / newHeight
       camera.updateProjectionMatrix()
     }
+    requestRender()
   })
   resizeObserver.observe(container.value)
 }
@@ -399,6 +424,7 @@ const updateToolheadPosition = () => {
   if (!toolheadGroup || !store.status.position) return
   const [x, y, z] = store.status.position
   toolheadGroup.position.set(x, y, z)
+  requestRender()
 }
 
 const setupWatchers = () => {
@@ -512,6 +538,7 @@ const setCameraMode = (mode: CameraMode) => {
     fromTarget: controls.target.clone(),
     toTarget: new THREE.Vector3(0, 0, 0),
   }
+  requestRender()
 }
 
 const advanceCameraTween = () => {
@@ -626,6 +653,7 @@ const onFocusOut = (event: FocusEvent) => {
 
 const setMachineLimits = (limits: MachineLimits | null) => {
   machineLimits.value = limits
+  requestRender()
   if (!limitsGroup) return
 
   while (limitsGroup.children.length) {
@@ -750,6 +778,7 @@ const replaceToolpathMesh = (segments: ParsedSegment[], motion: number = motionL
   const material = new THREE.LineBasicMaterial({ vertexColors: true })
   toolpathLine = new THREE.LineSegments(geometry, material)
   if (scene) scene.children[0].add(toolpathLine)
+  requestRender()
 }
 
 const clearToolpathMesh = () => {
@@ -761,6 +790,7 @@ const clearToolpathMesh = () => {
   }
   if (toolpathLine.parent) toolpathLine.parent.remove(toolpathLine)
   toolpathLine = null
+  requestRender()
 }
 
 const clearToolpath = () => {
@@ -793,7 +823,7 @@ const updateWcsMarker = () => {
     }
   }
 
-  if (!props.applyWorkingOffset) return
+  if (!props.applyWorkingOffset) { requestRender(); return }
   const [ox, oy, oz] = activeWcsOffset.value
   const arms: Array<{ dx: number; dy: number; dz: number; color: number }> = [
     { dx: WCS_MARKER_ARM_LENGTH, dy: 0, dz: 0, color: 0xef4444 },
@@ -807,14 +837,33 @@ const updateWcsMarker = () => {
     const m = new THREE.LineBasicMaterial({ color: arm.color })
     wcsMarkerGroup.add(new THREE.LineSegments(g, m))
   }
+  requestRender()
 }
 
 const animate = () => {
   animationFrameId = requestAnimationFrame(animate)
-  if (cameraTween) advanceCameraTween()
+  if (cameraTween) {
+    advanceCameraTween()
+    needsRender = true
+  }
+  // ``update()`` is cheap when damping has nothing left to settle
+  // (an early-out inside Three.js) and is what fires the ``change``
+  // listener above while it does — call it unconditionally so a
+  // still-decelerating drag keeps marking frames dirty.
   if (controls) controls.update()
+  if (!needsRender) return
+  needsRender = false
   if (renderer && scene && camera) renderer.render(scene, camera)
 }
+
+// The render-quality toggle can change ``pixelRatioFor`` live —
+// unlike ``antialias`` (fixed at WebGL context creation), the pixel
+// ratio can be updated on an existing renderer.
+watch(renderQuality, () => {
+  if (!renderer) return
+  renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio))
+  requestRender()
+})
 </script>
 
 <template>
@@ -828,15 +877,32 @@ const animate = () => {
     <div ref="container" class="absolute inset-0"></div>
 
     <!-- UI Overlay for Viewer Info -->
-    <div class="absolute top-4 right-4 pointer-events-none">
-      <div class="bg-gray-900/80 backdrop-blur text-xs text-gray-300 px-3 py-1.5 rounded border border-gray-700 shadow font-mono">
+    <div class="absolute top-4 right-4 flex flex-col items-end gap-1 pointer-events-none">
+      <div class="bg-gray-900/80 backdrop-blur text-xs text-gray-300 px-3 py-1.5 rounded border border-gray-700 font-mono">
         <div class="font-semibold text-gray-100">Ngc Coordinate System Viewer</div>
 
       </div>
+      <!-- Render-quality toggle. Defaults to "High" (antialias + full
+           device pixel ratio) so nothing changes for anyone until they
+           opt out; "Low" trades that polish for a lighter WebGL render
+           on weak/GPU-less hardware. Antialiasing only applies on the
+           viewer's next mount (it's fixed at WebGL context creation);
+           the pixel-ratio half applies immediately. -->
+      <button
+        type="button"
+        tabindex="-1"
+        class="pointer-events-auto bg-gray-900/80 backdrop-blur text-[10px] uppercase tracking-wider text-gray-300 hover:text-white px-2 py-1 rounded border border-gray-700 font-mono"
+        :title="renderQuality === 'high'
+          ? 'High-quality 3D rendering. Switch to Low for weak/GPU-less hardware (takes full effect after reload).'
+          : 'Reduced-quality 3D rendering for weak/GPU-less hardware. Switch back to High for full visual quality (takes full effect after reload).'"
+        @click="toggleRenderQuality"
+      >
+        {{ renderQuality === 'high' ? '3D: High' : '3D: Low' }}
+      </button>
     </div>
 
     <!-- Camera-mode toolbar -->
-    <div class="absolute top-4 left-4 flex gap-1 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg p-1 shadow-lg pointer-events-auto">
+    <div class="absolute top-4 left-4 flex gap-1 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg p-1 pointer-events-auto">
       <button
         v-for="m in cameraModes"
         :key="m.id"
@@ -874,7 +940,7 @@ const animate = () => {
         @mouseleave="jogStop(b.axis)"
         @touchend="jogStop(b.axis)"
         @touchcancel="jogStop(b.axis)"
-        class="w-16 h-16 backdrop-blur border border-gray-700 rounded-lg shadow-lg text-2xl font-bold leading-none transition-colors touch-none select-none focus:outline-none pointer-events-auto flex items-center justify-center"
+        class="w-16 h-16 backdrop-blur border border-gray-700 rounded-lg text-2xl font-bold leading-none transition-colors touch-none select-none focus:outline-none pointer-events-auto flex items-center justify-center"
       >
         <!-- The visual glyph (▲, ▼, etc.) -->
         <span>{{ b.glyph }}</span>
@@ -886,7 +952,7 @@ const animate = () => {
     <!-- Speed-only widget -->
     <div
       v-if="isPlanarView"
-      class="absolute bottom-4 right-4 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-3 py-2 shadow-lg pointer-events-auto"
+      class="absolute bottom-4 right-4 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-3 py-2 pointer-events-auto"
     >
       <div class="flex items-center gap-3">
         <span class="text-[10px] text-gray-400 uppercase tracking-wider">
@@ -918,21 +984,21 @@ const animate = () => {
         :descriptor="buttonsBySlot['viewer.1']"
         variant="secondary"
         size="sm"
-        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700"
       />
       <MacroButton
         v-if="buttonsBySlot?.['viewer.2']"
         :descriptor="buttonsBySlot['viewer.2']"
         variant="secondary"
         size="sm"
-        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700"
       />
       <MacroButton
         v-if="buttonsBySlot?.['viewer.3']"
         :descriptor="buttonsBySlot['viewer.3']"
         variant="secondary"
         size="sm"
-        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700 shadow-lg"
+        class="px-2 py-1 text-xs backdrop-blur bg-gray-900/80 border-gray-700"
       />
     </div>
   </div>
@@ -946,7 +1012,6 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 50%;
   background: #3b82f6;
   cursor: pointer;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
   margin-top: -5px;
 }
 input[type="range"]::-webkit-slider-runnable-track {
@@ -963,7 +1028,6 @@ input[type="range"]::-moz-range-thumb {
   background: #3b82f6;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
 }
 input[type="range"]::-moz-range-track {
   width: 100%;

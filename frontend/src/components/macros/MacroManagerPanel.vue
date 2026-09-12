@@ -233,7 +233,7 @@ watch(() => store.lastError, (value) => {
       @click.self="createOpen = false"
     >
       <form
-        class="w-full max-w-md space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-5 shadow-2xl"
+        class="w-full max-w-md space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-5"
         @submit.prevent="commitCreate"
       >
         <h3 class="text-lg font-semibold text-gray-100">New macro</h3>

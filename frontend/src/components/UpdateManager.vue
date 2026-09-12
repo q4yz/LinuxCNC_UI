@@ -209,7 +209,7 @@ onMounted(() => {
         v-if="isUpdating"
         class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/90 backdrop-blur-sm"
       >
-        <div class="flex flex-col items-center p-8 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl max-w-md w-full text-center">
+        <div class="flex flex-col items-center p-8 bg-gray-800 border border-gray-700 rounded-xl max-w-md w-full text-center">
           <div class="w-16 h-16 mb-6 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
           <h2 class="text-2xl font-bold text-white mb-2 tracking-wide">UPDATING SYSTEM</h2>
           <p class="text-gray-400">Please wait while the system pulls the latest updates and reinstalls dependencies. The page will reload automatically.</p>

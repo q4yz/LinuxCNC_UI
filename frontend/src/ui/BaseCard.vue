@@ -1,6 +1,6 @@
 <template>
 
-  <div class="rounded-lg bg-gray-800 border border-gray-700 shadow-md ">
+  <div class="rounded-lg bg-gray-800 border border-gray-700">
 
 
 

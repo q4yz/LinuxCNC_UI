@@ -48,7 +48,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 <template>
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" @click.self="reject">
-    <section class="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 text-white shadow-2xl" role="dialog" aria-modal="true">
+    <section class="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 text-white" role="dialog" aria-modal="true">
       <div class="flex items-start justify-between gap-4">
         <h2 class="text-lg font-semibold text-gray-100">{{ props.title }}</h2>
         <BaseButton v-if="props.showDismissCrossButton" variant="ghost" size="sm" aria-label="Close" @click="reject">

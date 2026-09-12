@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
 import { ModulesMachineStateService } from '../../generated/api/services/ModulesMachineStateService'
 import { filterAutocompleteCommands } from '../config/gcodes'
@@ -56,13 +57,35 @@ const levelChipStyles = {
 
 const levelChipInactive = 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
 
-// Auto-scroll to bottom on new message
-watch(() => consoleStore.messages, async () => {
+// ----------------------------------------------------------------- //
+// Virtualized message list                                          //
+// ----------------------------------------------------------------- //
+//
+// A long-running session can accumulate thousands of console lines;
+// rendering every one of them as a real DOM node (as a plain
+// ``v-for`` used to) means the list keeps costing more to lay out
+// and paint the longer the session runs. ``@tanstack/vue-virtual``
+// only mounts the rows currently in (or near) the viewport, so the
+// render cost stays flat regardless of how large ``messages`` grows
+// — the console effectively gets infinite scroll for free. Row
+// height varies with wrapped text, so sizing is measured live via
+// ``measureElement`` rather than assumed fixed.
+const rowVirtualizer = useVirtualizer(computed(() => ({
+  count: consoleStore.filteredMessages.length,
+  getScrollElement: () => messageContainer.value,
+  estimateSize: () => 20,
+  overscan: 12,
+})))
+
+// Auto-scroll to bottom on new message. Watching ``.length`` (not
+// ``messages`` with ``{ deep: true }``) means this only re-runs when
+// a row is actually added/removed instead of walking every message
+// object's fields on every mutation.
+watch(() => consoleStore.filteredMessages.length, async (length) => {
+  if (length === 0) return
   await nextTick()
-  if (messageContainer.value) {
-    messageContainer.value.scrollTop = messageContainer.value.scrollHeight
-  }
-}, { deep: true })
+  rowVirtualizer.value.scrollToIndex(length - 1, { align: 'end' })
+})
 
 const submitCommand = async () => {
   const cmd = commandInput.value.trim()
@@ -224,7 +247,7 @@ const getMessageClass = (type: string) => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-full">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-full">
 
     <!-- Header -->
     <div class="bg-gray-700/50 px-4 py-2 border-b border-gray-600 flex justify-between items-center gap-3">
@@ -251,19 +274,26 @@ const getMessageClass = (type: string) => {
       <BaseButton variant="ghost" size="sm" class="shrink-0" @click="consoleStore.clearMessages()">Clear</BaseButton>
     </div>
 
-    <!-- Message Area -->
-    <div ref="messageContainer" class="flex-1 p-4 overflow-y-auto space-y-1 font-mono text-sm">
+    <!-- Message Area — virtualized: only the rows near the viewport
+         are ever mounted, so the DOM cost stays flat no matter how
+         long the session's console history grows. -->
+    <div ref="messageContainer" class="flex-1 p-4 overflow-y-auto font-mono text-sm">
       <div v-if="consoleStore.filteredMessages.length === 0" class="text-gray-600 italic">
         <span v-if="consoleStore.messages.length === 0">Console ready...</span>
         <span v-else>No messages at the {{ filterLevel }} level.</span>
       </div>
-      <div
-        v-for="msg in consoleStore.filteredMessages"
-        :key="msg.id"
-        class="flex space-x-2"
-      >
-        <span class="text-gray-500 shrink-0">[{{ msg.timestamp }}]</span>
-        <span :class="getMessageClass(msg.type)" class="break-all">{{ msg.text }}</span>
+      <div v-else :style="{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }">
+        <div
+          v-for="virtualRow in rowVirtualizer.getVirtualItems()"
+          :key="virtualRow.index"
+          :ref="(el) => rowVirtualizer.measureElement(el as Element)"
+          :data-index="virtualRow.index"
+          class="flex space-x-2 pb-1"
+          :style="{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }"
+        >
+          <span class="text-gray-500 shrink-0">[{{ consoleStore.filteredMessages[virtualRow.index].timestamp }}]</span>
+          <span :class="getMessageClass(consoleStore.filteredMessages[virtualRow.index].type)" class="break-all">{{ consoleStore.filteredMessages[virtualRow.index].text }}</span>
+        </div>
       </div>
     </div>
 
@@ -274,7 +304,7 @@ const getMessageClass = (type: string) => {
            row via the negative ``bottom`` offset. -->
       <div
         v-if="showSuggestions && suggestions.length > 0"
-        class="absolute left-3 right-3 bottom-full mb-1 bg-gray-800 border border-gray-600 rounded shadow-lg max-h-56 overflow-y-auto z-10"
+        class="absolute left-3 right-3 bottom-full mb-1 bg-gray-800 border border-gray-600 rounded max-h-56 overflow-y-auto z-10"
         data-test="console-suggestions"
       >
         <div

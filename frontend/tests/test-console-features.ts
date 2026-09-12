@@ -223,13 +223,31 @@ test("ConsolePanel renders a log-level chip row", () => {
 });
 
 
-test("ConsolePanel iterates over filteredMessages only", () => {
+test("ConsolePanel virtualizes filteredMessages only, not the raw array", () => {
   const text = readText(consolePanelPath);
-  // The renderer must use the getter, not the raw messages
-  // array, so the level filter actually hides rows.
-  assert.match(text, /v-for="msg in consoleStore\.filteredMessages"/);
-  // Ensure the raw array is no longer the iteration source.
-  assert.doesNotMatch(text, /v-for="msg in consoleStore\.messages"/);
+  // The message list is virtualized (only visible rows are ever
+  // mounted, so the DOM cost stays flat regardless of how long the
+  // session's history grows) via @tanstack/vue-virtual, sized off
+  // the getter — not the raw messages array — so the level filter
+  // still actually hides rows.
+  assert.match(text, /useVirtualizer/);
+  assert.match(text, /from ['"]@tanstack\/vue-virtual['"]/);
+  assert.match(text, /count:\s*consoleStore\.filteredMessages\.length/);
+  assert.match(text, /v-for="virtualRow in rowVirtualizer\.getVirtualItems\(\)"/);
+  assert.match(text, /consoleStore\.filteredMessages\[virtualRow\.index\]/);
+  // Ensure the raw array is not what sizes the virtualizer.
+  assert.doesNotMatch(text, /count:\s*consoleStore\.messages\.length/);
+});
+
+test("ConsolePanel auto-scrolls without a deep watch on the message array", () => {
+  const text = readText(consolePanelPath);
+  // A deep watch on ``messages`` walks every message object's
+  // fields on every mutation — expensive for an unbounded,
+  // ever-growing console log. Watching ``.length`` catches the same
+  // "a row was added" signal at a fraction of the cost.
+  assert.match(text, /watch\(\s*\(\)\s*=>\s*consoleStore\.filteredMessages\.length/);
+  assert.doesNotMatch(text, /watch\(\s*\(\)\s*=>\s*consoleStore\.messages\s*,[\s\S]*?\{\s*deep:\s*true\s*\}/);
+  assert.match(text, /rowVirtualizer\.value\.scrollToIndex\(/);
 });
 
 

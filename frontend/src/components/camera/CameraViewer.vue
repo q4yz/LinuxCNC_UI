@@ -280,7 +280,7 @@ onBeforeUnmount(async () => {
 
     <div
       v-if="activeCameraId"
-      class="pointer-events-none absolute left-4 top-4 max-w-[80%] truncate rounded border border-gray-700 bg-gray-900/80 px-3 py-1.5 font-mono text-xs text-gray-200 shadow backdrop-blur"
+      class="pointer-events-none absolute left-4 top-4 max-w-[80%] truncate rounded border border-gray-700 bg-gray-900/80 px-3 py-1.5 font-mono text-xs text-gray-200 backdrop-blur"
     >
       {{ cameraName }}
     </div>
@@ -289,7 +289,7 @@ onBeforeUnmount(async () => {
       v-if="activeCameraId"
       variant="primary"
       :disabled="devices.length < 2"
-      class="absolute bottom-4 right-4 shadow-lg"
+      class="absolute bottom-4 right-4"
       aria-label="Switch Camera"
       title="Switch Camera"
       @click="store.cycleCamera()"

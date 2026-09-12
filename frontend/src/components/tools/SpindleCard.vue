@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Added min-w-[380px] and overflow-x-auto -->
-  <div class="flex gap-6 bg-gray-900/40  rounded-lg border border-gray-700 shadow-sm w-full min-w-[250px] overflow-x-auto transition-opacity"
+  <div class="flex gap-6 bg-gray-900/40  rounded-lg border border-gray-700 w-full min-w-[250px] overflow-x-auto transition-opacity"
        :class="{ 'opacity-60': isDisabled }">
 
     <!-- LEFT COLUMN: Controls -->
@@ -367,7 +367,7 @@ onBeforeUnmount(() => {
       <span class="text-gray-400">Conn:</span>
       <div
           class="w-2.5 h-2.5 rounded-full shrink-0"
-          :class="tool.isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-red-500'"
+          :class="tool.isConnected ? 'bg-emerald-500' : 'bg-red-500'"
       ></div>
       <span :class="tool.isConnected ? 'text-emerald-400' : 'text-red-400'" class="font-bold">
           {{ tool.isConnected ? "YES" : "NO" }}
@@ -390,12 +390,12 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Gradient Bar Container -->
-      <div class="flex-1 w-8 relative rounded-full overflow-hidden border-2 border-gray-900 shadow-inner bg-gray-800">
+      <div class="flex-1 w-8 relative rounded-full overflow-hidden border-2 border-gray-900 bg-gray-800">
         <!-- Colored Background Gauge -->
         <div class="absolute inset-0" :style="gaugeGradient"></div>
         <!-- Black/Gray mask sliding down to reveal colors -->
         <div
-            class="absolute top-0 w-full bg-gray-800 transition-all duration-300 ease-out border-b border-gray-900 shadow-sm"
+            class="absolute top-0 w-full bg-gray-800 transition-all duration-300 ease-out border-b border-gray-900"
             :style="{ height: gaugeCoverHeight }"
         ></div>
       </div>
@@ -422,7 +422,6 @@ input[type="range"]:not(.slider-vertical)::-webkit-slider-thumb {
   border-radius: 50%;
   background: #3b82f6;
   cursor: pointer;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
   margin-top: -4px;
 }
 
@@ -433,6 +432,5 @@ input[type="range"]:not(.slider-vertical)::-moz-range-thumb {
   background: #3b82f6;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
 }
 </style>

@@ -54,7 +54,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden flex flex-col h-full">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-full">
     <!-- Header -->
     <div class="bg-gray-700/50 px-4 py-2 border-b border-gray-600 flex justify-between items-center">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Raw Machine State (3s Snapshot)</h2>

@@ -254,7 +254,7 @@ onMounted(() => {
 <template>
   <!-- Full-page dedicated view: fill the parent container end-to-end
        instead of being a small dashboard card. -->
-  <div class="bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden w-full h-full flex flex-col">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden w-full h-full flex flex-col">
     <!-- Header & Upload -->
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex  items-center shrink-0">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
@@ -370,7 +370,7 @@ onMounted(() => {
           data-test="file-preview-modal"
           @click.self="closePreview"
       >
-        <div class="w-full max-w-4xl rounded-lg border border-gray-600 bg-gray-800 shadow-2xl">
+        <div class="w-full max-w-4xl rounded-lg border border-gray-600 bg-gray-800">
           <header class="flex items-center justify-between gap-2 border-b border-gray-700 px-4 py-3">
             <div class="min-w-0">
               <h3 class="truncate font-mono text-sm font-semibold text-gray-100">{{ previewFile.filename }}</h3>

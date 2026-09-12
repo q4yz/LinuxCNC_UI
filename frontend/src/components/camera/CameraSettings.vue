@@ -307,7 +307,7 @@ onMounted(() => {
                   :class="[
                     'rounded px-2 py-1 text-xs font-semibold transition-colors',
                     preferenceFor(device.id).rotate === angle
-                      ? 'bg-blue-600 text-white shadow'
+                      ? 'bg-blue-600 text-white'
                       : 'bg-gray-700 text-gray-200 hover:bg-gray-600',
                   ]"
                   @click="updateRotatePreference(device.id, angle)"

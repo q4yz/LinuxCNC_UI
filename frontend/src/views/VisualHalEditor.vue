@@ -766,7 +766,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             <div
               v-for="node in canvas.nodes"
               :key="node.id"
-              class="absolute rounded-lg bg-gray-800 border border-gray-700 shadow-lg select-none"
+              class="absolute rounded-lg bg-gray-800 border border-gray-700 select-none"
               :style="nodeStyle(node)"
               :data-test-node="node.label"
             >
@@ -852,7 +852,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             enter-from-class="opacity-0 translate-y-2"
             leave-to-class="opacity-0 translate-y-2"
           >
-            <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 shadow-2xl overflow-hidden w-48" data-test="hal-block-menu">
+            <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 overflow-hidden w-48" data-test="hal-block-menu">
               <button
                 v-for="kind in BLOCK_MENU"
                 :key="kind"
@@ -867,7 +867,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
           </Transition>
 
           <button
-            class="h-14 w-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900 transition-transform"
+            class="h-14 w-14 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-gray-900 transition-transform"
             :class="{ 'rotate-45': menuOpen }"
             data-test="hal-fab"
             title="Add block"

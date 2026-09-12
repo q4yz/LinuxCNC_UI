@@ -137,7 +137,7 @@ watch(
         @click="onBackdropClick"
       >
         <section
-          class="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 text-white shadow-2xl"
+          class="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 text-white"
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-title"

@@ -31,7 +31,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
             type="button"
             class="px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider transition-colors"
             :class="tool.id === selectedToolId
-            ? 'bg-blue-600 text-white shadow'
+            ? 'bg-blue-600 text-white'
             : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
             @click="toolStore.setSelectedToolId(tool.id)"
         >
@@ -43,7 +43,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
     <div class="space-y-4">
       <div
           v-if="selectedTool"
-          class="bg-gray-800 border border-gray-700 rounded-lg p-1 shadow-sm"
+          class="bg-gray-800 border border-gray-700 rounded-lg p-1"
       >
 
 
@@ -74,7 +74,7 @@ const { toolList, selectedToolId, selectedTool } = storeToRefs(toolStore);
 
       <div
           v-else
-          class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm text-gray-400 italic shadow-sm"
+          class="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm text-gray-400 italic"
       >
         No tools configured yet.
       </div>

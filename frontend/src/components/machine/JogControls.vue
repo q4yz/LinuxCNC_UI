@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
           class="col-start-2 flex flex-col items-center justify-center text-[10px] text-gray-500 font-bold uppercase tracking-widest cursor-pointer"
           @click="focusAndActivate"
       >
-        <div class="h-4 w-4 rounded-full shadow-inner transition-colors duration-200 mb-1" :class="isActive ? 'bg-blue-500' : 'bg-gray-600'"></div>
+        <div class="h-4 w-4 rounded-full transition-colors duration-200 mb-1" :class="isActive ? 'bg-blue-500' : 'bg-gray-600'"></div>
         Numpad 5
       </div>
 

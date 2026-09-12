@@ -15,22 +15,30 @@ import BaseSelect from '../../ui/BaseSelect.vue'
 
 const store = useTemperatureStore()
 
+// Redraw cadence for the chart's "now" cursor. The underlying
+// samples only land at 1 Hz (temperatureStore's own poll), but
+// ticking currentTime faster than that lets the smoothstep
+// interpolation below animate the curve between samples instead of
+// jumping once a second. 10 Hz looks smooth to the eye while
+// costing a fraction of what a 60 Hz requestAnimationFrame loop
+// did — rebuilding the whole ECharts option is not free, and on a
+// GPU-less Pi 4 that 6x reduction is the difference between a
+// warm CPU and a pegged one.
+const CHART_TICK_MS = 100
 const currentTime = ref<number>(Date.now())
-let animFrame: number | null = null
+let tickHandle: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   store.start()
-
-  const tick = () => {
+  currentTime.value = Date.now()
+  tickHandle = setInterval(() => {
     currentTime.value = Date.now()
-    animFrame = requestAnimationFrame(tick)
-  }
-  animFrame = requestAnimationFrame(tick)
+  }, CHART_TICK_MS)
 })
 
 onBeforeUnmount(() => {
   store.stop()
-  if (animFrame !== null) cancelAnimationFrame(animFrame)
+  if (tickHandle !== null) clearInterval(tickHandle)
 })
 
 const {
@@ -92,6 +100,34 @@ function roundTo(value: number, decimals: number): number {
 }
 
 const WINDOW_SECONDS = 30
+
+// Formatter callbacks are handed to ECharts by reference and only
+// ever invoked at render time, so they are declared once here
+// instead of as inline closures inside ``chartOptions`` — at 10 Hz
+// that avoids allocating a fresh closure (and capturing
+// ``unitLabel``) on every single tick for no behavioural gain.
+function unitLabelFor(unit: TemperatureUnit): string {
+  return unit === TemperatureUnit.KELVIN ? 'K' : '°C'
+}
+
+function yAxisLabelFormatter(value: number | string): string {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return ''
+  const v = store.unit === TemperatureUnit.KELVIN ? num + 273.15 : num
+  return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
+}
+
+function tooltipValueFormatter(value: number | string): string {
+  const num = Number(value)
+  const v = store.unit === TemperatureUnit.KELVIN ? num + 273.15 : num
+  return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
+}
+
+function xAxisLabelFormatter(value: number | string): string {
+  const d = new Date(value)
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
 const chartOptions = computed(() => {
   const now = currentTime.value
@@ -183,20 +219,13 @@ const chartOptions = computed(() => {
     }
   })
 
-  const unitLabel =  store.unit === TemperatureUnit.KELVIN ? 'K' : '°C'
-  const axisFormatter = (value: number | string) => {
-    const num = Number(value)
-    if (!Number.isFinite(num)) return ''
-    const v =  store.unit ===TemperatureUnit.KELVIN ? num + 273.15 : num
-    return `${roundTo(v, 2).toFixed(2)} ${unitLabel}`
-  }
+  const unitLabel = unitLabelFor(store.unit)
 
   return {
     animation: false,
     tooltip: {
       trigger: 'axis',
-      valueFormatter: (value: number | string) =>
-          `${roundTo(store.unit === TemperatureUnit.KELVIN ? Number(value) + 273.15 : Number(value), 2).toFixed(2)} ${unitLabel}`,
+      valueFormatter: tooltipValueFormatter,
     },
     legend: {
       data: legendData,
@@ -214,16 +243,12 @@ const chartOptions = computed(() => {
       minInterval: 10000,
       axisLabel: {
         color: '#9CA3AF',
-        formatter: (value: number | string) => {
-          const d = new Date(value)
-          const pad = (n: number) => n.toString().padStart(2, '0')
-          return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-        }
+        formatter: xAxisLabelFormatter,
       },
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: '#9CA3AF', formatter: axisFormatter },
+      axisLabel: { color: '#9CA3AF', formatter: yAxisLabelFormatter },
       splitLine: { lineStyle: { color: '#374151' } },
       name: unitLabel,
       nameTextStyle: { color: '#9CA3AF' },
@@ -272,7 +297,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
       <div
           v-for="(data, name) in sensors"
           :key="name"
-          class="bg-gray-800 border border-gray-600 rounded-lg p-2 sm:p-3 flex flex-row items-center justify-between shadow-sm gap-1 "
+          class="bg-gray-800 border border-gray-600 rounded-lg p-2 sm:p-3 flex flex-row items-center justify-between gap-1 "
       >
         <!-- Left Side: Color, Name, and Actual Temp -->
         <div class="flex items-center space-x-2 sm:space-x-4 lg:space-x-6">

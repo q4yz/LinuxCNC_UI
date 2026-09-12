@@ -14,6 +14,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { ParsedSegment } from "../parsers/gcodeParser";
+import { useRenderQuality } from "../composables/useRenderQuality";
 
 const props = defineProps<{
   segments: ParsedSegment[];
@@ -33,6 +34,17 @@ let controls: OrbitControls | null = null;
 let toolpathMesh: THREE.LineSegments | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
+// Render-on-demand, same pattern (and same reasoning) as
+// ``NgcCoordinateSystemViewer.vue``: redraw only when the camera
+// moved, the mesh was rebuilt, or the container resized — not every
+// animation frame unconditionally.
+let needsRender = true;
+function requestRender(): void {
+  needsRender = true;
+}
+
+const { rendererOptions, pixelRatioFor } = useRenderQuality();
+
 function initScene(): void {
   const container = containerEl.value;
   if (!container || renderer) return;
@@ -47,14 +59,15 @@ function initScene(): void {
     5000,
   );
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer = new THREE.WebGLRenderer({ ...rendererOptions(), alpha: false });
+  renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio));
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
+  controls.addEventListener("change", requestRender);
 
   resizeObserver = new ResizeObserver(() => {
     if (!container || !renderer || !camera) return;
@@ -63,6 +76,7 @@ function initScene(): void {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
+    requestRender();
   });
   resizeObserver.observe(container);
 
@@ -72,7 +86,10 @@ function initScene(): void {
 function renderLoop(): void {
   if (!renderer || !scene || !camera || !controls) return;
   controls.update();
-  renderer.render(scene, camera);
+  if (needsRender) {
+    needsRender = false;
+    renderer.render(scene, camera);
+  }
   requestAnimationFrame(renderLoop);
 }
 
@@ -157,6 +174,7 @@ function render(): void {
     toolpathMesh = mesh;
   }
   fitTo(props.segments);
+  requestRender();
 }
 
 watch(() => props.segments, () => render());
@@ -170,6 +188,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   clearToolpath();
+  controls?.removeEventListener("change", requestRender);
   controls?.dispose();
   controls = null;
   renderer?.dispose();

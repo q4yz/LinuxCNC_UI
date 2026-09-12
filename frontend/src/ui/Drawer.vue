@@ -143,7 +143,7 @@ watch(
       <aside
         v-if="open"
         :class="[
-          'fixed top-0 bottom-0 z-50 bg-gray-800 border-gray-700 shadow-2xl',
+          'fixed top-0 bottom-0 z-50 bg-gray-800 border-gray-700',
           'flex flex-col overflow-hidden',
           panelPositionClasses,
           width,

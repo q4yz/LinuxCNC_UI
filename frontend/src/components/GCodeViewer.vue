@@ -194,7 +194,7 @@ const animate = () => {
     
     <!-- UI Overlay for Viewer Info -->
     <div class="absolute top-4 left-4 pointer-events-none">
-      <div class="bg-gray-900/80 backdrop-blur text-xs text-gray-300 px-3 py-1.5 rounded border border-gray-700 shadow font-mono">
+      <div class="bg-gray-900/80 backdrop-blur text-xs text-gray-300 px-3 py-1.5 rounded border border-gray-700 font-mono">
         WebGl Viewer
       </div>
     </div>

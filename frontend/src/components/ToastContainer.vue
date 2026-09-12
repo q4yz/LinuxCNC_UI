@@ -117,7 +117,7 @@ const _renderEpoch = ref(Date.now());
       v-for="toast in visibleToasts"
       :key="toast.id"
       :class="[
-        'bg-gray-800 text-gray-100 rounded-md border border-gray-700 shadow-xl px-3 py-2 pointer-events-auto flex items-start gap-2',
+        'bg-gray-800 text-gray-100 rounded-md border border-gray-700 px-3 py-2 pointer-events-auto flex items-start gap-2',
         styleFor(toast.type).borderClass,
       ]"
       role="status"
