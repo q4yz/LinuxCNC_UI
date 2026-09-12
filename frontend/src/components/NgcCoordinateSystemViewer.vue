@@ -11,6 +11,7 @@ import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
 import { MacroButton, useMacroButtonConfig } from '../ui'
 import { useRenderQuality } from '../composables/useRenderQuality'
+import { useViewerGridSetting } from '../composables/useViewerGridSetting'
 
 
 // --- Interfaces & Types ---
@@ -139,6 +140,7 @@ let controls: OrbitControls | null = null
 let toolheadGroup: THREE.Group | null = null
 let toolheadMesh: THREE.Mesh | null = null
 let limitsGroup: THREE.Group | null = null
+let gridMesh: THREE.LineSegments | null = null
 let toolpathLine: THREE.LineSegments | null = null
 let wcsMarkerGroup: THREE.Group | null = null
 let animationFrameId: number = 0
@@ -189,7 +191,8 @@ let lastRenderedToolheadPosition: [number, number, number] | null = null
 let lastToolheadRenderAt = 0
 let pendingToolheadRenderTimer: ReturnType<typeof setTimeout> | null = null
 
-const { quality: renderQuality, toggleQuality: toggleRenderQuality, rendererOptions, pixelRatioFor } = useRenderQuality()
+const { quality: renderQuality, rendererOptions, pixelRatioFor } = useRenderQuality()
+const { showGrid } = useViewerGridSetting()
 
 const machineLimits = ref<MachineLimits | null>(null)
 const toolpathMeta = ref<ToolpathMeta>({ filename: '', moves: 0 })
@@ -755,6 +758,7 @@ const setMachineLimits = (limits: MachineLimits | null) => {
       else child.material.dispose()
     }
   }
+  gridMesh = null
 
   if (!limits) return
 
@@ -792,7 +796,13 @@ const setMachineLimits = (limits: MachineLimits | null) => {
   const gridGeometry = new THREE.BufferGeometry().setFromPoints(gridPoints)
   const gridMaterial = new THREE.LineBasicMaterial({ color: 0x334155, depthWrite: false })
   const grid = new THREE.LineSegments(gridGeometry, gridMaterial)
+  // Optional (Settings > 3D Viewer): the outline above stays visible
+  // either way — this only hides the finer grid lines, both to give
+  // an uncluttered view on request and to shave one more thing off
+  // every frame's render on weak hardware.
+  grid.visible = showGrid.value
   limitsGroup.add(grid)
+  gridMesh = grid
 }
 
 const loadProgramToolpath = async (filename: string) => {
@@ -978,6 +988,13 @@ watch(renderQuality, () => {
   renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio))
   requestRender()
 })
+
+// The grid-visibility toggle (Settings > 3D Viewer) applies live —
+// no rebuild needed, just flip the existing mesh's visibility.
+watch(showGrid, (visible) => {
+  if (gridMesh) gridMesh.visible = visible
+  requestRender()
+})
 </script>
 
 <template>
@@ -996,23 +1013,12 @@ watch(renderQuality, () => {
         <div class="font-semibold text-gray-100">Ngc Coordinate System Viewer</div>
 
       </div>
-      <!-- Render-quality toggle. Defaults to "High" (antialias + full
-           device pixel ratio) so nothing changes for anyone until they
-           opt out; "Low" trades that polish for a lighter WebGL render
-           on weak/GPU-less hardware. Antialiasing only applies on the
-           viewer's next mount (it's fixed at WebGL context creation);
-           the pixel-ratio half applies immediately. -->
-      <button
-        type="button"
-        tabindex="-1"
-        class="pointer-events-auto bg-gray-900/80 backdrop-blur text-[10px] uppercase tracking-wider text-gray-300 hover:text-white px-2 py-1 rounded border border-gray-700 font-mono"
-        :title="renderQuality === 'high'
-          ? 'High-quality 3D rendering. Switch to Low for weak/GPU-less hardware (takes full effect after reload).'
-          : 'Reduced-quality 3D rendering for weak/GPU-less hardware. Switch back to High for full visual quality (takes full effect after reload).'"
-        @click="toggleRenderQuality"
-      >
-        {{ renderQuality === 'high' ? '3D: High' : '3D: Low' }}
-      </button>
+      <!-- Render quality + grid visibility are controlled from
+           Settings > 3D Viewer now (see ViewerSettingsPanel.vue) —
+           this toggle used to live here as an overlay button, but it
+           sat directly under EStopHeader's fixed top-right header,
+           which is always on top for a much better reason (E-Stop
+           must always be reachable) and made the button unclickable. -->
     </div>
 
     <!-- Camera-mode toolbar -->
