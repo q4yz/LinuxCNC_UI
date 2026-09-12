@@ -157,6 +157,38 @@ function requestRender(): void {
   needsRender = true
 }
 
+// Toolhead-position render throttling. The servo thread streams
+// position at up to 10 Hz, and real hardware feedback almost always
+// carries some sub-visible floating-point jitter — the backend's
+// delta diffing is correct (it only sends a field when it's
+// numerically different), but "numerically different" isn't the same
+// as "visually different", so in practice a position delta arrives on
+// close to every tick, jogging or not. Each one of those triggers a
+// full software-rasterized WebGL frame, which is expensive enough on
+// a GPU-less target that back-to-back renders compete with the
+// operator's own input handling for the same main thread — exactly
+// the moment responsiveness matters most.
+//
+// Two independent filters, both applied only to the *toolhead marker*
+// (the toolpath-rebuild and limits-rebuild paths are separate,
+// already-narrow triggers and are untouched):
+//
+//   1. A dead-zone: skip the render outright if the move is smaller
+//      than what's visually perceptible, filtering out feedback
+//      jitter for free.
+//   2. A trailing-edge throttle: cap how often a real move can force
+//      a render, so a fast jog doesn't claim every single render slot
+//      — the mesh's own transform is still updated every tick
+//      regardless (so its position is never stale), only the forced
+//      *redraw* is capped, with a trailing call scheduled so the
+//      final position in a burst still gets painted even if updates
+//      stop mid-window.
+const TOOLHEAD_EPSILON_SQ = 0.02 * 0.02 // mm, squared (compared against squared distance to skip a sqrt)
+const TOOLHEAD_RENDER_MIN_INTERVAL_MS = 150 // caps position-driven renders to ~6.7 fps
+let lastRenderedToolheadPosition: [number, number, number] | null = null
+let lastToolheadRenderAt = 0
+let pendingToolheadRenderTimer: ReturnType<typeof setTimeout> | null = null
+
 const { quality: renderQuality, toggleQuality: toggleRenderQuality, rendererOptions, pixelRatioFor } = useRenderQuality()
 
 const machineLimits = ref<MachineLimits | null>(null)
@@ -305,6 +337,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (animationFrameId) cancelAnimationFrame(animationFrameId)
+  if (pendingToolheadRenderTimer !== null) clearTimeout(pendingToolheadRenderTimer)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   if (renderer) renderer.dispose()
 
@@ -432,12 +465,61 @@ const initThreeJS = () => {
 const updateToolheadPosition = () => {
   if (!toolheadGroup || !store.status.position) return
   const [x, y, z] = store.status.position
+  // The mesh's own transform always tracks the latest position,
+  // independent of whether this tick goes on to request a redraw —
+  // whenever the canvas next actually paints (from this update, a
+  // later one, or camera interaction), it shows the current position,
+  // never a stale one.
   toolheadGroup.position.set(x, y, z)
-  requestRender()
+
+  if (lastRenderedToolheadPosition) {
+    const [lx, ly, lz] = lastRenderedToolheadPosition
+    const dx = x - lx, dy = y - ly, dz = z - lz
+    if (dx * dx + dy * dy + dz * dz < TOOLHEAD_EPSILON_SQ) {
+      // Sub-visual move (most likely feedback jitter, not real
+      // motion) — the transform is already up to date above; skip
+      // forcing a redraw for it.
+      return
+    }
+  }
+
+  const now = performance.now()
+  const elapsed = now - lastToolheadRenderAt
+  if (elapsed >= TOOLHEAD_RENDER_MIN_INTERVAL_MS) {
+    if (pendingToolheadRenderTimer !== null) {
+      clearTimeout(pendingToolheadRenderTimer)
+      pendingToolheadRenderTimer = null
+    }
+    lastToolheadRenderAt = now
+    lastRenderedToolheadPosition = [x, y, z]
+    requestRender()
+    return
+  }
+
+  // Throttled: a render already happened too recently. Schedule one
+  // trailing call at the throttle boundary so the final position in
+  // a fast burst (e.g. a held jog) still gets painted even if updates
+  // stop before the window elapses — re-reads the position at fire
+  // time since more updates likely arrived while this was pending.
+  if (pendingToolheadRenderTimer === null) {
+    pendingToolheadRenderTimer = setTimeout(() => {
+      pendingToolheadRenderTimer = null
+      const latest = store.status.position
+      if (!latest) return
+      lastToolheadRenderAt = performance.now()
+      lastRenderedToolheadPosition = [latest[0], latest[1], latest[2]]
+      requestRender()
+    }, TOOLHEAD_RENDER_MIN_INTERVAL_MS - elapsed)
+  }
 }
 
 const setupWatchers = () => {
-  watch(() => store.status.position, updateToolheadPosition, { deep: true })
+  // Not `{ deep: true }` — ServoThreadState.patch() always reassigns
+  // `position` as a whole new array on change (`[...delta.position]`),
+  // never mutates it in place, so a shallow reference-change watch
+  // already catches every real update without the cost of deep
+  // traversal (negligible for 9 numbers, but pointless all the same).
+  watch(() => store.status.position, updateToolheadPosition)
   watch(() => store.status.file, async (newFile) => {
     if (typeof newFile === 'string' && newFile.length > 0) await loadProgramToolpath(newFile)
     else clearToolpath()
