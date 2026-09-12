@@ -1,6 +1,6 @@
 <template>
 
-  <div class="rounded-lg bg-gray-800 border border-gray-700">
+  <div class="rounded-lg bg-gray-800 border border-gray-700" :style="cardStyle">
 
 
 
@@ -32,7 +32,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 const props = withDefaults(
   defineProps<{
@@ -47,13 +47,39 @@ const props = withDefaults(
     // already there, and there's no actual heavy work in the slot to
     // spread out in the first place.
     stagger?: boolean;
+    // Placeholder height (px) reserved for content-visibility's
+    // off-screen skip, below. Card heights vary wildly across
+    // consumers (a small settings row vs. the 600px toolpath viewer),
+    // and ``contain-intrinsic-size`` needs *some* estimate to reserve
+    // scroll space for a card the browser hasn't measured yet. A tall
+    // card should pass its own estimate; the default suits most of
+    // the smaller panels. ``auto`` remembers the real measured height
+    // after the card is first shown, so a mismatched guess only ever
+    // costs one layout jump the first time that card scrolls into
+    // view — not a running cost.
+    minHeight?: number;
   }>(),
   {
     title: '',
     footer: '',
     stagger: true,
+    minHeight: 220,
   },
 );
+
+// content-visibility: auto lets the browser skip layout and paint
+// entirely for a card that's scrolled out of view — on a GPU-less
+// target, scrolling past a long stack of cards (the Dashboard) means
+// less work competing for the same software rasterizer on every
+// scroll frame. It only takes effect while a card is NOT currently
+// visible: a fully on-screen card (including a modal — always
+// visible when shown) renders exactly as before, so this carries no
+// risk to anything (dropdowns, modals) that visually escapes its own
+// card's box while shown.
+const cardStyle = computed(() => ({
+  contentVisibility: 'auto' as const,
+  containIntrinsicSize: `auto ${props.minHeight}px`,
+}));
 
 // Every dashboard panel wraps itself in BaseCard, and several of
 // them (the WebGL viewer, the ECharts temperature chart, the file

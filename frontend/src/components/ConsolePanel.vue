@@ -248,7 +248,7 @@ const getMessageClass = (type: string) => {
 </script>
 
 <template>
-  <BaseCard title="Terminal / Console" class="h-full flex flex-col overflow-hidden">
+  <BaseCard title="Terminal / Console" class="h-full flex flex-col overflow-hidden" :min-height="300">
     <template #header-actions>
       <!-- Log level filter chips -->
       <div class="flex items-center gap-1 flex-wrap" data-test="console-level-chips">

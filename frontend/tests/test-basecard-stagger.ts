@@ -83,3 +83,32 @@ test("BaseCard's footer region renders for footer-actions content, not just foot
     "footer region must render when either footer text or the footer-actions slot has content",
   );
 });
+
+// ------------------------------------------------------------------ //
+// content-visibility: skip layout/paint for off-screen cards            //
+// ------------------------------------------------------------------ //
+//
+// The Dashboard stacks 7+ cards in one scrollable column; without a
+// containment boundary, scrolling past them can force the browser to
+// redo layout/paint for the whole stack on every frame — expensive
+// in software rendering (no GPU) on a Pi 4. content-visibility: auto
+// only imposes containment while a card is off-screen, so a fully
+// visible card (including a modal, always visible when shown) is
+// completely unaffected — safe to default on for every consumer.
+
+test("BaseCard applies content-visibility with a per-card size estimate", () => {
+  const text = read();
+  assert.match(text, /minHeight\?:\s*number/, "must expose a minHeight override prop");
+  assert.match(text, /minHeight:\s*220/, "must default to a reasonable estimate for typical panels");
+  assert.match(
+    text,
+    /contentVisibility:\s*'auto'/,
+    "must turn on content-visibility so off-screen cards skip layout/paint",
+  );
+  assert.match(
+    text,
+    /containIntrinsicSize:\s*`auto \$\{props\.minHeight\}px`/,
+    "must use the auto keyword so the real measured size is remembered after first render, not just the estimate forever",
+  );
+  assert.match(text, /:style="cardStyle"/, "the root element must actually apply the computed style");
+});

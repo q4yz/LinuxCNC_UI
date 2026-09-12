@@ -326,7 +326,7 @@ test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", (
   // opt out.
   assert.match(
     dash,
-    /<BaseCard title="Toolpath" :stagger="false">[\s\S]{0,500}id="toolpath-slot-dashboard"/,
+    /<BaseCard title="Toolpath"[^>]*:stagger="false"[^>]*>[\s\S]{0,500}id="toolpath-slot-dashboard"/,
     "the Toolpath card's BaseCard must opt out of staggering so the teleport slot div exists synchronously on mount",
   );
 });

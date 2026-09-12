@@ -30,6 +30,7 @@ import ToastContainer from './components/ToastContainer.vue'
 import EStopHeader from './components/EStopHeader.vue'
 import MachineGate from './components/machine/MachineGate.vue'
 import NgcCoordinateSystemViewer from './components/NgcCoordinateSystemViewer.vue'
+import { useDashboardScrollState } from './composables/useDashboardScrollState'
 
 const baseThread = useBaseThreadStore()
 const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
@@ -55,8 +56,13 @@ const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
 // the now-active/reactivated view) is guaranteed to already exist
 // in the document by the time Teleport looks it up.
 const route = useRoute()
+const { isScrolling } = useDashboardScrollState()
+// Also pause the render loop while Dashboard's own scroll container
+// is moving — the viewer is a live, continuously-redrawing canvas
+// competing with the scroll for the same raster thread on a
+// GPU-less target. See useDashboardScrollState.ts.
 const isToolpathViewActive = computed(
-  () => route.name === 'dashboard' || route.name === 'jogging',
+  () => (route.name === 'dashboard' || route.name === 'jogging') && !isScrolling.value,
 )
 const toolpathTeleportTarget = ref('#toolpath-parking')
 

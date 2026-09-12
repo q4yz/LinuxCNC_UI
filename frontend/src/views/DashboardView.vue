@@ -24,12 +24,21 @@ import McodePanel from '../components/macros/McodePanel.vue'
 import PowerOn from "../components/machine/PowerOn.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
 import BaseCard from "../ui/BaseCard.vue";
+import { useDashboardScrollState } from "../composables/useDashboardScrollState";
 
 defineOptions({ name: 'DashboardView' })
+
+// Freeze the live 3D viewer + temperature chart while this view's
+// own scroll container is moving — see useDashboardScrollState.ts.
+// A plain ``scroll`` listener never blocks the scroll itself: unlike
+// wheel/touchmove, ``scroll`` isn't cancelable, so this can't make
+// scrolling feel less responsive, only make what's drawn during it
+// cheaper.
+const { markScrolling } = useDashboardScrollState()
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto pr-2">
+  <div class="h-full overflow-y-auto pr-2" @scroll="markScrolling">
     <!-- Changed from grid to flex flex-wrap -->
     <div class="flex flex-wrap gap-6 pb-8">
 
@@ -68,7 +77,7 @@ defineOptions({ name: 'DashboardView' })
                elsewhere, so there's no heavy work here to defer, and
                deferring the div itself would mean App.vue tries to
                Teleport into a target that doesn't exist yet. -->
-          <BaseCard title="Toolpath" :stagger="false">
+          <BaseCard title="Toolpath" :stagger="false" :min-height="650">
             <!-- The actual 3D viewer is a single instance shared with
                  JoggingView, owned by App.vue, and moved here via
                  Teleport while this view is active (see App.vue) —

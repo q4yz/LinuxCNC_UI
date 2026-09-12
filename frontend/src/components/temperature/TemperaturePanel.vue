@@ -11,9 +11,11 @@ import { BaseButton } from '../../ui/index.ts'
 import BaseCard from '../../ui/BaseCard.vue'
 import BaseInput from '../../ui/BaseInput.vue'
 import BaseSelect from '../../ui/BaseSelect.vue'
+import { useDashboardScrollState } from '../../composables/useDashboardScrollState'
 
 
 const store = useTemperatureStore()
+const { isScrolling } = useDashboardScrollState()
 
 // Redraw cadence for the chart's "now" cursor. The underlying
 // samples only land at 1 Hz (temperatureStore's own poll), but
@@ -32,6 +34,12 @@ onMounted(() => {
   store.start()
   currentTime.value = Date.now()
   tickHandle = setInterval(() => {
+    // Skip the tick (and therefore the chartOptions rebuild + echarts
+    // redraw below) while the dashboard is actively scrolling — this
+    // canvas competes with the scroll for the same raster thread on
+    // a GPU-less target. The chart just catches up to the current
+    // time once the scroll settles; see useDashboardScrollState.ts.
+    if (isScrolling.value) return
     currentTime.value = Date.now()
   }, CHART_TICK_MS)
 })
@@ -263,7 +271,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 </script>
 
 <template>
-  <BaseCard title="🔥 Temperatures" >
+  <BaseCard title="🔥 Temperatures" :min-height="600">
     <!-- Global unit toggle and Cool All -->
     <div class="mb-3 flex items-center justify-between">
 
