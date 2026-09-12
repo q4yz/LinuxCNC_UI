@@ -298,6 +298,22 @@ def test_both_pid_loops_are_loaded(fragment):
     assert "loadrt PIDcontroller names=PID-heater_extruder" in fragment.loadrt
 
 
+def test_full_render_merges_both_heaters_onto_one_loadrt_line():
+    """The two raw fragment entries above are correct and expected —
+    ``HeaterHalMapper`` has no way to know about the other heater's
+    own ``loadrt``. But LinuxCNC's realtime loader can only load
+    ``PIDcontroller`` once per session: two separate ``loadrt
+    PIDcontroller`` lines in the *rendered* text fails at boot
+    ("already exists"), exactly like the real reference file's single
+    ``loadrt PIDcontroller names=PID-bed,PID-ext0`` documented above.
+    This is the render-time merge (``render_hal``'s ``_merge_loadrt``)
+    that turns the two fragment-level lines into one.
+    """
+    text = compile_machine_hal(PAYLOAD)
+    assert "loadrt PIDcontroller names=PID-heater_bed,PID-heater_extruder" in text
+    assert text.count("loadrt PIDcontroller") == 1
+
+
 def test_analog_out_allocation_matches_the_reference_declaration_order(fragment):
     """bed's heater-SP, then extruder's heater-SP, then its cooling
     fan's SP — exactly the reference file's SP.0/SP.1/SP.2 order,

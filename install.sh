@@ -216,6 +216,8 @@ server {
     root $UI_DIST_DIR;
     index index.html;
 
+    client_max_body_size 100M;
+
     # Ensure the .crt file triggers a download with the correct MIME type
     location = /cnc-root.crt {
         types { application/x-x509-ca-cert crt; }
@@ -282,6 +284,9 @@ server {
 
     root $UI_DIST_DIR;
     index index.html;
+
+    client_max_body_size 100M;
+
 
     location / {
         try_files \$uri \$uri/ /index.html;

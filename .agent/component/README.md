@@ -165,6 +165,22 @@ thread. Emit in this order:
 7. `net` router output (§4 of each MCU template) — always last, since it
    consumes signals every other component exported.
 
+A component mapper never needs to worry about *another* mapper wanting
+the same realtime component (`scale`, `conv_bit_float`, `PIDcontroller`,
+`wcomp`, `comp`, `near`, `not`, ...) — two heaters both wanting a PID
+loop, or a heater-gated fan and a watermark heater both wanting
+`conv_bit_float`, is ordinary. Emit your own `loadrt <comp>
+names=<your-name>` line per instance as usual; `render_hal` merges every
+`names=`-style `loadrt` line for the same component into one
+`loadrt <comp> names=a,b,c` at render time, since LinuxCNC's realtime
+loader can only load a given component module once per session — two
+separate `loadrt <comp>` calls fail the second one at boot ("already
+exists"), and no mapper can see what component names another mapper
+already used. This is why the real reference HAL
+(`machine_config/example/ender3/3Dprinter.hal`) loads its two heaters'
+PID controllers as one `loadrt PIDcontroller names=PID-bed,PID-ext0`,
+never two lines.
+
 ---
 
 ## 5. Conventions for signal names
