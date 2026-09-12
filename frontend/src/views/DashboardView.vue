@@ -72,18 +72,7 @@ const { markScrolling } = useDashboardScrollState()
 
 
 
-          <!-- :stagger="false" — this card's slot is just a Teleport
-               target div (see App.vue); the real 3D viewer mounts
-               elsewhere, so there's no heavy work here to defer, and
-               deferring the div itself would mean App.vue tries to
-               Teleport into a target that doesn't exist yet. -->
-          <BaseCard title="Toolpath" :stagger="false" :min-height="650">
-            <!-- The actual 3D viewer is a single instance shared with
-                 JoggingView, owned by App.vue, and moved here via
-                 Teleport while this view is active (see App.vue) —
-                 this div is just the slot it's teleported into. -->
-            <div id="toolpath-slot-dashboard" class="flex-1 relative h-[600px]"></div>
-          </BaseCard>
+
 
 
         <MachineGate label="Job status">
