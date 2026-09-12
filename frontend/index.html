@@ -8,6 +8,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Teleport target for the shared 3D toolpath viewer (see
+         App.vue) while it's parked off the dashboard/jogging routes.
+         Must live outside the Vue-mounted tree: Vue mounts an
+         app's whole subtree in one pass, so a target declared
+         inside App.vue's own template does not exist in the live
+         document yet at the moment a Teleport inside that same
+         pass tries to resolve it. -->
+    <div id="toolpath-parking" style="display: none"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

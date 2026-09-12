@@ -223,9 +223,8 @@ test("facade manual disconnect does not arm the reconnect loop", () => {
 
 test("machine-level widgets are wrapped in MachineGate", () => {
   const expectations = [
-    ["views/DashboardView.vue", ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget", "NgcCoordinateSystemViewer"]],
+    ["views/DashboardView.vue", ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget"]],
     ["views/RunningView.vue", ["AxisSpeedControl", "ToolPanel"]],
-    ["views/JoggingView.vue", ["NgcCoordinateSystemViewer"]],
     ["views/DebugView.vue", ["DebugPanel"]],
     ["views/FilesView.vue", ["ActivePrintWidget"]],
     ["views/SettingsView.vue", ["CameraSettings", "MachineSettingsPanel", "TemperatureSettingsPanel"]],
@@ -247,6 +246,111 @@ test("machine-level widgets are wrapped in MachineGate", () => {
   // explanation live there).
   const dash = read("views/DashboardView.vue");
   assert.match(dash, /<ConsolePanel\s*\/?>/, "ConsolePanel must stay ungated");
+});
+
+// ------------------------------------------------------------------ //
+// Shared 3D toolpath viewer (single instance, not one per view)          //
+// ------------------------------------------------------------------ //
+//
+// DashboardView and JoggingView used to each mount their own
+// NgcCoordinateSystemViewer + MachineGate, so switching between the
+// two views tore down one WebGL context and built a new one on every
+// click. A single instance now lives in App.vue and is handed
+// between the two views via Teleport, gated by one MachineGate.
+
+test("NgcCoordinateSystemViewer is a single shared instance owned by App.vue", () => {
+  const app = read("App.vue");
+  assert.match(
+    app,
+    /<MachineGate[^>]*>\s*<NgcCoordinateSystemViewer[^>]*:active="isToolpathViewActive"[^>]*\/>\s*<\/MachineGate>/,
+    "App.vue must own the one MachineGate + NgcCoordinateSystemViewer pair",
+  );
+  assert.match(app, /<Teleport\s+:to="toolpathTeleportTarget"/, "the viewer must be teleported to the active view's slot");
+  assert.match(
+    app,
+    /route\.name === ['"]dashboard['"][\s\S]{0,80}toolpathTeleportTarget\.value = ['"]#toolpath-slot-dashboard['"]/,
+    "dashboard route must target the dashboard slot",
+  );
+  assert.match(
+    app,
+    /route\.name === ['"]jogging['"][\s\S]{0,80}toolpathTeleportTarget\.value = ['"]#toolpath-slot-jogging['"]/,
+    "jogging route must target the jogging slot",
+  );
+  assert.match(
+    app,
+    /flush:\s*['"]post['"]/,
+    "the teleport target must switch only after <router-view> has patched, so the destination slot already exists",
+  );
+
+  // The "parked" fallback target must live in index.html, OUTSIDE
+  // the Vue-mounted tree — not in App.vue's own template. Vue mounts
+  // an app's whole subtree in one pass, so a target declared inside
+  // the same component that contains the Teleport does not exist in
+  // the live document yet when the Teleport tries to resolve it on
+  // initial mount (this is exactly the "emitsOptions of null" crash
+  // this test guards against — Vue warns "Failed to locate Teleport
+  // target" and the ensuing render throws).
+  assert.doesNotMatch(
+    app,
+    /id="toolpath-parking"/,
+    "the #toolpath-parking div must not be declared inside App.vue — Vue cannot resolve a Teleport target rendered by the same mount pass",
+  );
+  const indexHtml = readRepo("frontend/index.html");
+  assert.match(
+    indexHtml,
+    /<div id="app">[\s\S]*<div id="toolpath-parking"/,
+    "index.html must declare #toolpath-parking as a sibling of #app, outside the Vue-mounted tree",
+  );
+
+  // Neither view should own the widget directly any more.
+  const dash = read("views/DashboardView.vue");
+  const jog = read("views/JoggingView.vue");
+  assert.doesNotMatch(dash, /NgcCoordinateSystemViewer/, "DashboardView must not import/mount its own viewer");
+  assert.doesNotMatch(jog, /NgcCoordinateSystemViewer/, "JoggingView must not import/mount its own viewer");
+  assert.doesNotMatch(jog, /MachineGate/, "JoggingView no longer needs its own MachineGate — the shared instance carries one");
+
+  // Each view exposes the plain slot div the shared instance is
+  // teleported into.
+  assert.match(dash, /id="toolpath-slot-dashboard"/, "DashboardView must expose the dashboard teleport slot");
+  assert.match(jog, /id="toolpath-slot-jogging"/, "JoggingView must expose the jogging teleport slot");
+});
+
+test("the shared viewer pauses its render loop while parked off-route", () => {
+  const viewer = read("components/NgcCoordinateSystemViewer.vue");
+  assert.match(viewer, /active\?:\s*boolean/, "viewer must accept an active prop");
+  assert.match(viewer, /if \(!props\.active\)/, "the RAF loop must bail out while inactive");
+  assert.match(
+    viewer,
+    /watch\(\(\)\s*=>\s*props\.active/,
+    "an active watcher must resume the RAF loop when teleported back on screen",
+  );
+});
+
+// ------------------------------------------------------------------ //
+// keep-alive across the three heaviest views                            //
+// ------------------------------------------------------------------ //
+
+test("Dashboard/Jogging/Running stay mounted across navigation via keep-alive", () => {
+  const app = read("App.vue");
+  assert.match(
+    app,
+    /<keep-alive\s+:include="\['DashboardView',\s*'JoggingView',\s*'RunningView'\]"/,
+    "App.vue must keep-alive the three heaviest views by name",
+  );
+  assert.match(app, /<router-view v-slot="\{\s*Component\s*\}">/, "router-view must expose Component to drive keep-alive");
+
+  for (const [rel, name] of [
+    ["views/DashboardView.vue", "DashboardView"],
+    ["views/JoggingView.vue", "JoggingView"],
+    ["views/RunningView.vue", "RunningView"],
+  ]) {
+    const text = read(rel);
+    assert.match(
+      text,
+      new RegExp(`defineOptions\\(\\{\\s*name:\\s*['"]${name}['"]\\s*\\}\\)`),
+      `${rel} must declare an explicit name matching keep-alive's include list`,
+    );
+  }
 });
 
 // ------------------------------------------------------------------ //

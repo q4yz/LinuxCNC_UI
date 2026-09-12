@@ -10,7 +10,6 @@
 // ungated — it also carries system-side rows and the offline
 // explanation itself.
 
-import NgcCoordinateSystemViewer from '../components/NgcCoordinateSystemViewer.vue'
 import ConsolePanel from '../components/ConsolePanel.vue'
 import DebugPanel from '../components/DebugPanel.vue'
 import ActivePrintWidget from '../components/ActivePrintWidget.vue'
@@ -25,6 +24,8 @@ import McodePanel from '../components/macros/McodePanel.vue'
 import PowerOn from "../components/machine/PowerOn.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
 import BaseCard from "../ui/BaseCard.vue";
+
+defineOptions({ name: 'DashboardView' })
 </script>
 
 <template>
@@ -63,11 +64,11 @@ import BaseCard from "../ui/BaseCard.vue";
 
 
           <BaseCard title="Toolpath" >
-            <div class="flex-1 relative h-[600px]">
-              <MachineGate label="Toolpath">
-                <NgcCoordinateSystemViewer/>
-              </MachineGate>
-            </div>
+            <!-- The actual 3D viewer is a single instance shared with
+                 JoggingView, owned by App.vue, and moved here via
+                 Teleport while this view is active (see App.vue) —
+                 this div is just the slot it's teleported into. -->
+            <div id="toolpath-slot-dashboard" class="flex-1 relative h-[600px]"></div>
           </BaseCard>
 
 

@@ -100,8 +100,17 @@ const SCROLL_KEYS = new Set([
 const props = withDefaults(
     defineProps<{
       applyWorkingOffset?: boolean
+      // Whether this viewer is the one currently on screen. A single
+      // instance is shared (via Teleport, see App.vue) between the
+      // Dashboard and Jogging views instead of each view owning its
+      // own WebGL context — ``active`` lets the RAF render loop pause
+      // while the instance is parked off-route rather than tearing
+      // down and rebuilding the whole Three.js scene on every nav
+      // click. Defaults to ``true`` so any other/standalone usage
+      // behaves exactly as before.
+      active?: boolean
     }>(),
-    { applyWorkingOffset: true }
+    { applyWorkingOffset: true, active: true }
 )
 
 const store = useMachineStore()
@@ -276,7 +285,7 @@ let cameraTween: CameraTween | null = null
 onMounted(async () => {
   initThreeJS()
   setupWatchers()
-  animate()
+  if (props.active) animate()
 
   if (typeof store.status.file === 'string' && store.status.file.length > 0) {
     await loadProgramToolpath(store.status.file)
@@ -841,6 +850,14 @@ const updateWcsMarker = () => {
 }
 
 const animate = () => {
+  if (!props.active) {
+    // Parked off-route (see App.vue's shared-instance Teleport):
+    // stop scheduling frames entirely rather than rendering an
+    // invisible canvas. The ``active`` watcher below restarts the
+    // loop the moment this instance is teleported back on screen.
+    animationFrameId = 0
+    return
+  }
   animationFrameId = requestAnimationFrame(animate)
   if (cameraTween) {
     advanceCameraTween()
@@ -855,6 +872,21 @@ const animate = () => {
   needsRender = false
   if (renderer && scene && camera) renderer.render(scene, camera)
 }
+
+// Resume/suspend the RAF loop as this shared instance is handed
+// between routes. Reactivating forces a fresh render immediately —
+// the toolhead position, loaded program, or WCS offsets may well
+// have changed while parked (the underlying stores never stop
+// updating; only this viewer's own render loop was paused).
+watch(() => props.active, (isActive) => {
+  if (isActive) {
+    requestRender()
+    if (!animationFrameId) animate()
+  } else if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = 0
+  }
+})
 
 // The render-quality toggle can change ``pixelRatioFor`` live —
 // unlike ``antialias`` (fixed at WebGL context creation), the pixel
