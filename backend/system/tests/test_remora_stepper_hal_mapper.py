@@ -51,7 +51,12 @@ def test_joint_pins_become_one_firmware_stepgen_module():
     """Module shape verified against the real, working
     `machine_config/example/ender3/config.txt` — `"Type": "Stepgen"`
     (not "Stepper"), a `"Name"` field, and pins underscore-formatted
-    (`"PF_13"`, not Klipper's `"PF13"`)."""
+    (`"PF_13"`, not Klipper's `"PF13"`).
+
+    ``dir_pin`` is declared inverted (``!PF12``) in the fixture, but
+    the firmware module must never carry a leading ``!`` — confirmed
+    against real Remora hardware, where the config.txt parser doesn't
+    recognise it as a modifier and writing it breaks the pin."""
     fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [X_JOINT], None)
     assert len(fragment.firmware_modules) == 1
 
@@ -64,7 +69,7 @@ def test_joint_pins_become_one_firmware_stepgen_module():
         "Comment": "stepper_x step generator",
         "Joint Number": 0,
         "Step Pin": "PF_13",
-        "Direction Pin": "!PF_12",
+        "Direction Pin": "PF_12",
         "Enable Pin": "PF_14",
     }
 

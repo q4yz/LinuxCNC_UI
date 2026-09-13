@@ -94,22 +94,35 @@ def test_endstop_requests_get_zero_padded_input_indices_in_order():
     assert "net endstop_y-sw remora.input.01" in fragment.nets
 
 
-def test_endstop_firmware_module_carries_pullup_and_invert_as_pin_flags():
+def test_endstop_firmware_module_carries_pullup_as_a_pin_flag():
     """Module shape verified against the real, working
     `machine_config/example/ender3/config.txt` — `"Type": "Digital
     Pin"` (with the space, not "DigitalPin"), a `"Name"` field, and
     the pin underscore-formatted."""
-    fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^!PC0")])
+    fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^PC0")])
     module = fragment.firmware_modules[0].module
     assert module == {
         "Name": "endstop_endstop_x",
         "Thread": "Servo",
         "Type": "Digital Pin",
         "Comment": "endstop_x",
-        "Pin": "!^PC_0",
+        "Pin": "^PC_0",
         "Mode": "Input",
         "Data Bit": 0,
     }
+
+
+def test_endstop_firmware_module_never_carries_a_bang_even_when_inverted():
+    """Confirmed against real Remora hardware: a leading ``!`` on a
+    "Digital Pin"'s ``Pin`` string is not a modifier the firmware's
+    config.txt parser recognises (unlike ``^`` for pullup) — writing
+    it breaks the pin. There is no HAL-side substitute either; an
+    inverted Remora digital input is an open gap, not silently
+    reinterpreted."""
+    fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^!PC0")])
+    module = fragment.firmware_modules[0].module
+    assert module["Pin"] == "^PC_0"
+    assert "!" not in module["Pin"]
 
 
 def test_motion_roles_are_ignored():

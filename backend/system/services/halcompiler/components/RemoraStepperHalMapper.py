@@ -127,7 +127,12 @@ class RemoraStepperHalMapper:
                 continue
             pin = PinStringMapper.from_string(raw)
             firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(pin.pin_id)
-            module[key] = f"{'!' if pin.invert else ''}{firmware_pin}"
+            # No leading `!` for an inverted pin — confirmed against
+            # real Remora hardware, where the firmware's config.txt
+            # parser does not recognise it as a modifier and writing
+            # it breaks the pin (see RemoraRouterMapper's own note on
+            # the same finding for "Digital Pin" modules).
+            module[key] = firmware_pin
         fragment.firmware_modules.append(FirmwareModuleRequest(mcu_id=parsed.mcu_id, module=module))
 
 
