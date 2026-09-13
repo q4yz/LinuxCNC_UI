@@ -64,6 +64,7 @@ from routers import (
 from services.ServoThreadService import (
     get_servo_thread_service,
 )
+from services.FansService import get_fans_service
 from services.StateService import get_state_service
 from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
@@ -103,6 +104,7 @@ _MODULE_DOMAINS = [
 tool_service = get_tools_service()
 sensor_service = get_temperature_service()
 state_service = get_state_service()
+fans_service = get_fans_service()
 
 
 @asynccontextmanager
@@ -124,6 +126,7 @@ async def lifespan(app: FastAPI):
         tool_service.preload_hal_pins()
         sensor_service.preload_hal_pins()
         state_service.preload_hal_pins()
+        fans_service.preload_hal_pins()
         HalPin.initialize_component()
 
         reseed_from_hardware_json()
@@ -320,6 +323,7 @@ if __name__ == "__main__":
     tool_service.preload_hal_pins()
     sensor_service.preload_hal_pins()
     state_service.preload_hal_pins()
+    fans_service.preload_hal_pins()
     HalPin.initialize_component()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")

@@ -8,7 +8,7 @@
 [mcu <identifier>]
     connection: string // Must be "vfd_rs485" ("rs485" is the legacy alias)
     interface: string // Serial device, e.g. "/dev/ttyUSB0" or a by-id path
-    baud_rate: integer // (Optional) default 9600
+    baud_rate: integer // (Optional) default 19200 (the reference machine's value — see § 3)
     node_id: integer // (Optional) Modbus slave address, default 1
     parity: string // (Optional) "none" | "even" | "odd", default "none";
                    // single-letter N|E|O is accepted and normalised
@@ -48,7 +48,7 @@ them:
   "id": "<identifier>",
   "connection": "vfd_rs485",
   "interface": "/dev/serial/by-id/usb-VFD0-if00-port0",
-  "baud_rate": 9600,
+  "baud_rate": 19200,
   "node_id": 1,
   "parity": "none"
 }]}
@@ -63,29 +63,55 @@ machine.ini
 ```
 
 vfd.ini — a sidecar next to the INI and HAL. `vfdmod` reads it for the
-serial settings and the drive's Modbus register map. The `[common]`
-block comes straight off the ingested MCU fields (defaults 9600 / 1 /
-none when undeclared); the register numbers are **drive-specific**
-(see the vfdmod project's per-VFD examples) and stay empty until a
-`model` field selects a register map.
+serial settings, the spindle RPM range and the drive's Modbus
+register map. Real section names are `[Common]` / `[RS485]` /
+`[Control]` / `[SpindleRpmIn]` / `[SpindleRpmOut]` (a lowercase
+`[common]` — an earlier version of this doc and the router both had
+that wrong — does not match what `vfdmod` parses, and is exactly the
+"MaxSpeedRPM - parameter is wrong or missing" failure at LinuxCNC
+startup). Only five values vary per machine: the spindle's
+`MaxSpeedRPM`/`MinSpeedRPM` (off the spindle tool routed to this MCU,
+not the MCU record itself — a bare MCU has no notion of "which
+spindle rides this bus", so the assembler stitches these in before
+calling `base_fragment`) and the three serial-link settings
+(`SlaveAddress`/`SerialDevice`/`BaudRate`, off the ingested MCU
+fields, defaulting to 1 / `/dev/ttyUSB0` / 19200 when undeclared).
+Everything else — `DataBits`, `Parity`, `StopBits`, the `[Control]`
+register/values, `[SpindleRpmIn]`/`[SpindleRpmOut]` addresses, and
+every `[P00.xx]`-style user parameter — is copied verbatim from
+`machine_config/example/PrintNC-WEBGUI/vfd.ini`, a known-working
+reference machine. The register map is **drive-specific** (see the
+vfdmod project's per-VFD examples); the reference machine's map is
+the only sane default until a `model` field lands.
 ```ini
-[common]
-address  = <node_id || 1>
-port     = <interface>
-baud     = <baud_rate || 9600>
-parity   = <parity || 'none'>
-databits = 8
-stopbits = 1
+[Common]
+MaxSpeedRPM=<spindle.max_rpm || 24000>
+MinSpeedRPM=<spindle.min_rpm || 5000>
 
-[rpmIn]
-address    = <rpm_in_register>   # drive-specific, not yet ingested
-multiplier = 1
-divider    = 1
+[RS485]
+SlaveAddress=<node_id || 1>
+SerialDevice=<interface || '/dev/ttyUSB0'>
+BaudRate=<baud_rate || 19200>
+DataBits=8
+Parity=N
+StopBits=1
 
-[rpmOut]
-address    = <rpm_out_register>  # drive-specific, not yet ingested
-multiplier = 1
-divider    = 1
+[Control]
+Address=0x2000
+RunForwardValue=0x0012
+RunReverseValue=0x0022
+StopValue=0x0001
+
+[SpindleRpmIn]
+Address=0x2001
+Multiplier=1
+Divider=6
+
+[SpindleRpmOut]
+Address=0x200B
+Multiplier=6
+Divider=1
+# ...plus every [P00.xx]-style user parameter, copied verbatim.
 ```
 
 machine.hal

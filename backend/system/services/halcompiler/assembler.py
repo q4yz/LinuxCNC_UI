@@ -358,9 +358,35 @@ class HalAssembler:
                     f"no HAL router implemented yet for MCU {mcu_id!r} "
                     f"(connection={mcu.get('connection')!r})"
                 )
-            bases.append(router.base_fragment(mcu))
+            bases.append(router.base_fragment(self._enrich_mcu_for_base(mcu, mcu_requests)))
             routes.append(router.route(mcu_requests))
         return bases, routes
+
+    def _enrich_mcu_for_base(
+        self, mcu: dict[str, Any], mcu_requests: list[PinRequest]
+    ) -> dict[str, Any]:
+        """Stitch spindle RPM limits onto the MCU record for ``base_fragment``.
+
+        A bare ``hardware.json`` MCU record has no notion of "which
+        spindle rides this bus" — that lives on the tool, not the
+        MCU — so ``VfdRs485RouterMapper.base_fragment`` (the only
+        router that needs it, for ``vfd.ini``'s ``MaxSpeedRPM`` /
+        ``MinSpeedRPM``) can't read it off ``mcu`` alone. Per the "one
+        drive per MCU" rule (``mcu_vfd_rs485.md`` § 4), every request
+        routed to a given VFD MCU belongs to the same spindle, so the
+        first request's ``owner`` names it. Harmless no-op for every
+        other router: they don't look for these keys.
+        """
+        if not mcu_requests:
+            return mcu
+        spindle = self._tools_by_id.get(mcu_requests[0].owner)
+        if not spindle:
+            return mcu
+        return {
+            **mcu,
+            "_spindle_min_rpm": spindle.get("min_rpm"),
+            "_spindle_max_rpm": spindle.get("max_rpm"),
+        }
 
 
 def assemble_machine(payload: dict[str, Any]) -> HalFragment:

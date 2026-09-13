@@ -123,5 +123,13 @@ class HardwareConfigService:
             return raw_sensors
         return []
 
+    def get_fans(self) -> List[Dict[str, Any]]:
+        """Return the raw ``fans[]`` array from the payload."""
+        payload = self.load_payload()
+        raw_fans = payload.get("fans")
+        if isinstance(raw_fans, list):
+            return raw_fans
+        return []
+
 
 __all__ = ["HardwareConfigService"]

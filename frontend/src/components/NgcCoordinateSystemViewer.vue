@@ -388,11 +388,17 @@ const initThreeJS = () => {
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
-  controls.dampingFactor = 0.05
   // Damping keeps animating the camera for a bit after the operator
   // releases the mouse/touch; ``change`` fires on every one of those
   // steps (and on every direct drag/zoom/pan), which is exactly the
-  // signal the render-on-demand loop needs.
+  // signal the render-on-demand loop needs — but it also means a low
+  // damping factor forces many extra renders in the tail of every
+  // gesture just to settle an already-imperceptible glide. This
+  // viewer's canvas fills most of the screen, so on a GPU-less Pi
+  // that's real cost for no visible benefit; 0.2 stops the glide in a
+  // fraction of a second instead of 2-3s while still feeling like
+  // damping rather than an abrupt snap.
+  controls.dampingFactor = 0.2
   controls.addEventListener('change', requestRender)
 
   controls.enableRotate = initialFrame.enableRotate

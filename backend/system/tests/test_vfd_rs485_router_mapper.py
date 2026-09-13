@@ -28,31 +28,63 @@ def test_base_fragment_has_no_realtime_component():
 
 def test_ini_sidecar_reads_the_ingested_serial_fields():
     """The MCU record's ingested fields (interface / node_id /
-    baud_rate / parity) flow straight into the vfd.ini sidecar."""
+    baud_rate) flow straight into the vfd.ini sidecar's [RS485]
+    block, using vfdmod's real key names."""
     mcu = {
         "id": "vfd0",
         "connection": "vfd_rs485",
         "interface": "/dev/ttyUSB0",
         "node_id": 3,
         "baud_rate": 19200,
-        "parity": "even",
     }
     fragment = VfdRs485RouterMapper.base_fragment(mcu)
     ini = fragment.files["vfd_vfd0.ini"]
-    assert "port     = /dev/ttyUSB0" in ini
-    assert "address  = 3" in ini
-    assert "baud     = 19200" in ini
-    assert "parity   = even" in ini
+    assert "SerialDevice=/dev/ttyUSB0" in ini
+    assert "SlaveAddress=3" in ini
+    assert "BaudRate=19200" in ini
 
 
-def test_ini_sidecar_falls_back_to_documented_defaults():
+def test_ini_sidecar_reads_the_spindle_rpm_range_stitched_in_by_the_assembler():
+    """MaxSpeedRPM/MinSpeedRPM come from the spindle tool, not the
+    MCU record — the assembler stitches ``_spindle_min_rpm`` /
+    ``_spindle_max_rpm`` onto the MCU dict before calling this
+    (see ``HalAssembler._enrich_mcu_for_base``)."""
+    mcu = {"id": "vfd0", "_spindle_min_rpm": 3000, "_spindle_max_rpm": 18000}
+    fragment = VfdRs485RouterMapper.base_fragment(mcu)
+    ini = fragment.files["vfd_vfd0.ini"]
+    assert "MaxSpeedRPM=18000" in ini
+    assert "MinSpeedRPM=3000" in ini
+
+
+def test_ini_sidecar_falls_back_to_the_reference_machines_known_good_defaults():
+    """No MCU/spindle fields at all — every value falls back to
+    ``machine_config/example/PrintNC-WEBGUI/vfd.ini``'s own numbers."""
     fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
     ini = fragment.files["vfd_vfd0.ini"]
-    assert "address  = 1" in ini
-    assert "baud     = 9600" in ini
-    assert "parity   = none" in ini
-    assert "databits = 8" in ini
-    assert "stopbits = 1" in ini
+    assert "MaxSpeedRPM=24000" in ini
+    assert "MinSpeedRPM=5000" in ini
+    assert "SlaveAddress=1" in ini
+    assert "SerialDevice=/dev/ttyUSB0" in ini
+    assert "BaudRate=19200" in ini
+    assert "DataBits=8" in ini
+    assert "Parity=N" in ini
+    assert "StopBits=1" in ini
+
+
+def test_ini_sidecar_carries_the_reference_register_map_verbatim():
+    """The Modbus register map is drive-specific and not ingested
+    from the profile yet — every value here must come straight from
+    the reference machine, unedited."""
+    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    ini = fragment.files["vfd_vfd0.ini"]
+    assert "[Control]" in ini
+    assert "Address=0x2000" in ini
+    assert "RunForwardValue=0x0012" in ini
+    assert "StopValue=0x0001" in ini
+    assert "[SpindleRpmIn]" in ini
+    assert "[SpindleRpmOut]" in ini
+    assert "[P00.00]" in ini
+    assert "[P11.04]" in ini
 
 
 def test_output_pins_route_with_an_arrow_into_vfdmod():
@@ -101,10 +133,12 @@ def test_ini_sidecar_is_valid_ini_text():
     import configparser
 
     fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
-    parser = configparser.ConfigParser()
+    # ``;`` comments and duplicate-looking keys across sections
+    # (vfdmod's own style) parse fine as long as the file is
+    # well-formed INI — this is the check that would have caught the
+    # earlier ``[common]``/``[rpmIn]`` shape actually being wrong
+    # for what vfdmod expects, since it still parsed as valid INI.
+    parser = configparser.ConfigParser(strict=False, inline_comment_prefixes=(";",))
     parser.read_string(fragment.files["vfd_vfd0.ini"])
-    # Register addresses stay empty until a `model` field selects a
-    # drive-specific map (mcu_vfd_rs485.md § 3) — the section must
-    # still parse so vfdmod can report the gap itself.
-    assert parser["rpmIn"]["address"] == ""
-    assert parser["common"]["baud"] == "9600"
+    assert parser["Common"]["MaxSpeedRPM"] == "24000"
+    assert parser["RS485"]["BaudRate"] == "19200"

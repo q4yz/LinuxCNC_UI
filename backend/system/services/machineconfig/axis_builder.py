@@ -218,19 +218,39 @@ class AxisBuilder:
         self._apply_axis_envelope_from_joint(axis, joint)
 
     def _append_joint(self, axis: Axis, stepper: Stepper) -> None:
-        joint = self._make_joint(stepper, axis.letter, joint_number=self._next_joint())
+        # A second (and later) stepper on a SPLIT axis is a gantry
+        # motor sharing the first joint's rail — Klipper convention is
+        # that only the primary stepper (``stepper_y``) declares
+        # ``position_min``/``position_max``/``position_endstop``/
+        # ``homing_speed``; ``stepper_y1`` etc. only carry pin/motor
+        # fields. Without a fallback, ``_make_joint`` would silently
+        # default those to 0 for every joint after the first.
+        joint = self._make_joint(
+            stepper, axis.letter, joint_number=self._next_joint(), fallback=axis.primary_joint
+        )
         axis.joints.append(joint)
         if len(axis.joints) == 1:
             self._apply_axis_envelope_from_joint(axis, joint)
 
-    def _make_joint(self, stepper: Stepper, letter: str, joint_number: int) -> Joint:
-        homing_speed = _get_float(stepper, "homing_speed", 0.0)
-        position_endstop = float(stepper.position_endstop or 0.0)
+    def _make_joint(
+        self, stepper: Stepper, letter: str, joint_number: int, fallback: Joint | None = None
+    ) -> Joint:
+        fallback_min = fallback.min_limit if fallback else 0.0
+        fallback_max = fallback.max_limit if fallback else 0.0
+        fallback_home = fallback.home_position if fallback else 0.0
+        fallback_search_vel = fallback.home_search_vel if fallback else 0.0
+
+        homing_speed = _get_float(stepper, "homing_speed", fallback_search_vel)
+        position_endstop = (
+            float(stepper.position_endstop)
+            if stepper.position_endstop is not None
+            else fallback_home
+        )
         return Joint(
             joint_number=joint_number,
             axis_letter=letter,
-            min_limit=_get_float(stepper, "position_min", 0.0),
-            max_limit=_get_float(stepper, "position_max", 0.0),
+            min_limit=_get_float(stepper, "position_min", fallback_min),
+            max_limit=_get_float(stepper, "position_max", fallback_max),
             max_velocity=self._stepper_velocity(stepper) or self._printer_velocity(),
             max_acceleration=self._stepper_accel(stepper) or self._printer_accel(),
             stepgen_maxaccel=(self._stepper_accel(stepper) or self._printer_accel()) * 1.1,
