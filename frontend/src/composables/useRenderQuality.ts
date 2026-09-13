@@ -53,6 +53,20 @@ export function useRenderQuality() {
     /** Device pixel ratio cap for the current setting (this one CAN apply live). */
     pixelRatioFor: (devicePixelRatio: number): number =>
       quality.value === "high" ? devicePixelRatio : Math.min(devicePixelRatio, 1),
+    /**
+     * Internal render-resolution scale for the current setting, applied
+     * on top of ``pixelRatioFor`` via ``renderer.setSize(w * scale, h *
+     * scale, false)``. The ``false`` keeps the canvas's on-screen CSS
+     * box at full container size while shrinking only the WebGL drawing
+     * buffer — the browser upscales it back visually. This matters most
+     * for a viewer whose canvas fills most of the screen (unlike a
+     * small preview panel): a weak GPU's fill rate (pixels it can color
+     * per second) scales with total on-screen pixels regardless of
+     * scene complexity, so halving the buffer resolution cuts that cost
+     * ~4x for a small, mostly-unnoticeable softness. This one CAN apply
+     * live too.
+     */
+    renderScaleFor: (): number => (quality.value === "high" ? 1 : 0.5),
   };
 }
 

@@ -159,39 +159,7 @@ function requestRender(): void {
   needsRender = true
 }
 
-// Toolhead-position render throttling. The servo thread streams
-// position at up to 10 Hz, and real hardware feedback almost always
-// carries some sub-visible floating-point jitter — the backend's
-// delta diffing is correct (it only sends a field when it's
-// numerically different), but "numerically different" isn't the same
-// as "visually different", so in practice a position delta arrives on
-// close to every tick, jogging or not. Each one of those triggers a
-// full software-rasterized WebGL frame, which is expensive enough on
-// a GPU-less target that back-to-back renders compete with the
-// operator's own input handling for the same main thread — exactly
-// the moment responsiveness matters most.
-//
-// Two independent filters, both applied only to the *toolhead marker*
-// (the toolpath-rebuild and limits-rebuild paths are separate,
-// already-narrow triggers and are untouched):
-//
-//   1. A dead-zone: skip the render outright if the move is smaller
-//      than what's visually perceptible, filtering out feedback
-//      jitter for free.
-//   2. A trailing-edge throttle: cap how often a real move can force
-//      a render, so a fast jog doesn't claim every single render slot
-//      — the mesh's own transform is still updated every tick
-//      regardless (so its position is never stale), only the forced
-//      *redraw* is capped, with a trailing call scheduled so the
-//      final position in a burst still gets painted even if updates
-//      stop mid-window.
-const TOOLHEAD_EPSILON_SQ = 0.02 * 0.02 // mm, squared (compared against squared distance to skip a sqrt)
-const TOOLHEAD_RENDER_MIN_INTERVAL_MS = 150 // caps position-driven renders to ~6.7 fps
-let lastRenderedToolheadPosition: [number, number, number] | null = null
-let lastToolheadRenderAt = 0
-let pendingToolheadRenderTimer: ReturnType<typeof setTimeout> | null = null
-
-const { quality: renderQuality, rendererOptions, pixelRatioFor } = useRenderQuality()
+const { quality: renderQuality, rendererOptions, pixelRatioFor, renderScaleFor } = useRenderQuality()
 const { showGrid } = useViewerGridSetting()
 
 const machineLimits = ref<MachineLimits | null>(null)
@@ -340,7 +308,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (animationFrameId) cancelAnimationFrame(animationFrameId)
-  if (pendingToolheadRenderTimer !== null) clearTimeout(pendingToolheadRenderTimer)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   if (renderer) renderer.dispose()
 
@@ -381,6 +348,12 @@ const cleanMaterial = (material: THREE.Material) => {
 
 const initThreeJS = () => {
   if (!container.value) return
+  // DIAGNOSTIC: WebGL context creation is the single most expensive
+  // one-time operation this component does. This must log exactly
+  // ONCE for the lifetime of the shared instance (see App.vue) — if
+  // it logs again later, the viewer is being torn down and rebuilt
+  // somewhere it shouldn't be, instead of just parked/reactivated.
+  console.log('[NgcViewer] initThreeJS() — creating WebGL renderer + scene')
 
   const width = container.value.clientWidth
   const height = container.value.clientHeight
@@ -399,8 +372,18 @@ const initThreeJS = () => {
   camera.lookAt(0, 0, 0)
 
   renderer = new THREE.WebGLRenderer(rendererOptions())
-  renderer.setSize(width, height)
+  // ``false`` keeps the canvas's on-screen box at the container's full
+  // size (enforced below via inline style, since Three.js only writes
+  // that style itself when this flag is left true) while the drawing
+  // buffer beneath it shrinks by renderScaleFor() — this viewer fills
+  // most of the screen, so a weak GPU's fill-rate cost (which scales
+  // with on-screen pixel count, not scene complexity) is the thing
+  // this saves; see useRenderQuality.ts.
+  renderer.setSize(width * renderScaleFor(), height * renderScaleFor(), false)
   renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio))
+  renderer.domElement.style.width = '100%'
+  renderer.domElement.style.height = '100%'
+  renderer.domElement.style.display = 'block'
   container.value.appendChild(renderer.domElement)
 
   controls = new OrbitControls(camera, renderer.domElement)
@@ -456,7 +439,7 @@ const initThreeJS = () => {
     for (const entry of entries) {
       const newWidth = entry.contentRect.width
       const newHeight = entry.contentRect.height
-      renderer.setSize(newWidth, newHeight)
+      renderer.setSize(newWidth * renderScaleFor(), newHeight * renderScaleFor(), false)
       camera.aspect = newWidth / newHeight
       camera.updateProjectionMatrix()
     }
@@ -468,52 +451,14 @@ const initThreeJS = () => {
 const updateToolheadPosition = () => {
   if (!toolheadGroup || !store.status.position) return
   const [x, y, z] = store.status.position
-  // The mesh's own transform always tracks the latest position,
-  // independent of whether this tick goes on to request a redraw —
-  // whenever the canvas next actually paints (from this update, a
-  // later one, or camera interaction), it shows the current position,
-  // never a stale one.
   toolheadGroup.position.set(x, y, z)
-
-  if (lastRenderedToolheadPosition) {
-    const [lx, ly, lz] = lastRenderedToolheadPosition
-    const dx = x - lx, dy = y - ly, dz = z - lz
-    if (dx * dx + dy * dy + dz * dz < TOOLHEAD_EPSILON_SQ) {
-      // Sub-visual move (most likely feedback jitter, not real
-      // motion) — the transform is already up to date above; skip
-      // forcing a redraw for it.
-      return
-    }
-  }
-
-  const now = performance.now()
-  const elapsed = now - lastToolheadRenderAt
-  if (elapsed >= TOOLHEAD_RENDER_MIN_INTERVAL_MS) {
-    if (pendingToolheadRenderTimer !== null) {
-      clearTimeout(pendingToolheadRenderTimer)
-      pendingToolheadRenderTimer = null
-    }
-    lastToolheadRenderAt = now
-    lastRenderedToolheadPosition = [x, y, z]
-    requestRender()
-    return
-  }
-
-  // Throttled: a render already happened too recently. Schedule one
-  // trailing call at the throttle boundary so the final position in
-  // a fast burst (e.g. a held jog) still gets painted even if updates
-  // stop before the window elapses — re-reads the position at fire
-  // time since more updates likely arrived while this was pending.
-  if (pendingToolheadRenderTimer === null) {
-    pendingToolheadRenderTimer = setTimeout(() => {
-      pendingToolheadRenderTimer = null
-      const latest = store.status.position
-      if (!latest) return
-      lastToolheadRenderAt = performance.now()
-      lastRenderedToolheadPosition = [latest[0], latest[1], latest[2]]
-      requestRender()
-    }, TOOLHEAD_RENDER_MIN_INTERVAL_MS - elapsed)
-  }
+  // DIAGNOSTIC: no dead-zone/throttle any more — this fires on every
+  // position update the servo thread delivers (up to 10 Hz), exactly
+  // as often as requestRender() gets called for it. console.count
+  // aggregates in devtools instead of spamming one line per call —
+  // watch how fast this climbs relative to the render() log below.
+  console.count('[NgcViewer] updateToolheadPosition (position update)')
+  requestRender()
 }
 
 const setupWatchers = () => {
@@ -527,12 +472,32 @@ const setupWatchers = () => {
     if (typeof newFile === 'string' && newFile.length > 0) await loadProgramToolpath(newFile)
     else clearToolpath()
   })
-  watch(() => baseThreadProgress.value?.motionLine, () => {
+  watch(() => baseThreadProgress.value?.motionLine, (line) => {
+    // DIAGNOSTIC: source-tagged so it's obvious which watcher asked
+    // for the rebuild below, not just that one happened.
+    console.log('[NgcViewer] motionLine watch fired ->', line)
     if (lastLoadedFilename) redrawToolpath()
   })
   watch(
       () => [store.status.g5xIndex, store.status.g5xOffset?.slice(0, 3), store.status.g92Offset?.slice(0, 3)],
-      () => { if (lastLoadedFilename) redrawToolpath() },
+      (val) => {
+        // DIAGNOSTIC: this getter is only re-evaluated when
+        // g5xIndex/g5xOffset/g92Offset are reassigned (Vue's
+        // per-property dependency tracking) — normally only on an
+        // actual WCS/offset change, since the backend only includes
+        // a field in a telemetry delta when it's genuinely different.
+        // BUT the getter itself builds a brand-new array every time
+        // it runs (.slice() always copies), so if it ever DOES
+        // re-evaluate without a real value change (any code path that
+        // reassigns these fields to an unchanged value), Vue's
+        // object-identity comparison can't tell — a new array is
+        // never "equal" to the old one, so the callback fires
+        // regardless. If this logs during a plain jog (no WCS change,
+        // no program running), that mismatch is happening somewhere
+        // and this is the confirmation, not just a suspicion.
+        console.log('[NgcViewer] g5x/g92-offset watch fired ->', val)
+        if (lastLoadedFilename) redrawToolpath()
+      },
       { deep: true },
   )
   watch(() => axisLimits.value, setMachineLimits, { immediate: true })
@@ -746,6 +711,12 @@ const onFocusOut = (event: FocusEvent) => {
 // ---------------------------------------------------------------------- //
 
 const setMachineLimits = (limits: MachineLimits | null) => {
+  // DIAGNOSTIC: disposes and rebuilds the grid + outline geometry —
+  // axis limits are entirely static machine config (fetched once,
+  // see stores/baseThread.ts), so this should log exactly ONCE per
+  // session. Repeated logs here mean the static-axes fix regressed
+  // or something else is still feeding this a fresh object every tick.
+  console.log('[NgcViewer] setMachineLimits() — grid/outline rebuilt', limits)
   machineLimits.value = limits
   requestRender()
   if (!limitsGroup) return
@@ -809,6 +780,10 @@ const loadProgramToolpath = async (filename: string) => {
   if (!scene || !filename) return
   const basename = String(filename).split(/[\\/]/).pop()
   if (!basename) return
+  // DIAGNOSTIC: fires once per distinct loaded/switched program —
+  // should never repeat for the same filename without an intervening
+  // unload.
+  console.log('[NgcViewer] loadProgramToolpath()', basename)
 
   if (!parsedCache.has(basename)) {
     try {
@@ -831,11 +806,21 @@ const redrawToolpath = () => {
   if (!scene || !lastLoadedFilename) return
   const segments = parsedCache.get(lastLoadedFilename)
   if (!segments) return
+  // DIAGNOSTIC: triggered by the motionLine watch (program execution
+  // progress) or the g5x/g92-offset watch (WCS/work-offset changes).
+  // Should be rare — a real program-progress tick or an actual WCS
+  // switch, not a per-telemetry-tick event. If this fires
+  // continuously (e.g. during a plain jog with no program running
+  // and no WCS change), one of those two watches is re-triggering
+  // spuriously — see the g5x/g92 watch below, which builds a fresh
+  // array on every evaluation.
+  console.log('[NgcViewer] redrawToolpath() — full toolpath mesh rebuild triggered')
   replaceToolpathMesh(segments)
   updateWcsMarker()
 }
 
 const replaceToolpathMesh = (segments: ParsedSegment[], motion: number = motionLine.value) => {
+  console.log(`[NgcViewer] replaceToolpathMesh() — rebuilding ${segments.length} segments`)
   clearToolpathMesh()
 
   const activeIdx = activeWcsIdx.value
@@ -914,6 +899,9 @@ const clearToolpath = () => {
 const WCS_MARKER_ARM_LENGTH = 12
 
 const updateWcsMarker = () => {
+  // DIAGNOSTIC: only ever called from redrawToolpath() — see the log
+  // there for the full "why did this fire" context.
+  console.log('[NgcViewer] updateWcsMarker() — WCS origin marker rebuilt')
   if (!wcsMarkerGroup) return
   while (wcsMarkerGroup.children.length) {
     const child = wcsMarkerGroup.children.pop() as THREE.Mesh | undefined
@@ -962,7 +950,16 @@ const animate = () => {
   if (controls) controls.update()
   if (!needsRender) return
   needsRender = false
-  if (renderer && scene && camera) renderer.render(scene, camera)
+  if (renderer && scene && camera) {
+    // DIAGNOSTIC: the actual, ground-truth "the canvas redrew this
+    // frame" signal — every requestRender() call above only sets a
+    // flag; this is the one place that flag turns into real WebGL
+    // work. Logs with a timestamp so the interval between entries in
+    // the console (not just the count) shows the true redraw rate —
+    // e.g. two entries 100ms apart means it's redrawing at 10fps.
+    console.log(`[NgcViewer] renderer.render() at t=${performance.now().toFixed(1)}ms`)
+    renderer.render(scene, camera)
+  }
 }
 
 // Resume/suspend the RAF loop as this shared instance is handed
@@ -980,12 +977,14 @@ watch(() => props.active, (isActive) => {
   }
 })
 
-// The render-quality toggle can change ``pixelRatioFor`` live —
-// unlike ``antialias`` (fixed at WebGL context creation), the pixel
-// ratio can be updated on an existing renderer.
+// The render-quality toggle can change ``pixelRatioFor``/``renderScaleFor``
+// live — unlike ``antialias`` (fixed at WebGL context creation), both
+// the pixel ratio and the drawing-buffer scale can be updated on an
+// existing renderer.
 watch(renderQuality, () => {
-  if (!renderer) return
+  if (!renderer || !container.value) return
   renderer.setPixelRatio(pixelRatioFor(window.devicePixelRatio))
+  renderer.setSize(container.value.clientWidth * renderScaleFor(), container.value.clientHeight * renderScaleFor(), false)
   requestRender()
 })
 

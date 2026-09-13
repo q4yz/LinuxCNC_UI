@@ -30,13 +30,17 @@ const { showGrid, setShowGrid } = useViewerGridSetting()
         </h3>
         <p class="text-xs text-gray-400 mt-1">
           Controls the 3D toolpath viewer's WebGL renderer. High uses
-          antialiasing and your display's full pixel density — nicer
-          edges, more work per frame. Low disables antialiasing and
-          caps the pixel density at 1x, trading some visual polish for
-          a lighter render on weak/GPU-less hardware. Antialiasing
-          only takes effect after the viewer is next mounted (it's
-          fixed when the WebGL context is created); the pixel-density
-          half applies immediately.
+          antialiasing, your display's full pixel density, and full
+          drawing-buffer resolution — nicer edges, more work per frame.
+          Low disables antialiasing, caps the pixel density at 1x, and
+          renders internally at half resolution (the browser scales it
+          back up to fill the same on-screen size) — trading a little
+          visual sharpness for a render that's roughly a quarter the
+          pixel-fill cost, which matters most on a weak/GPU-less
+          display since this viewer's canvas fills most of the screen.
+          Antialiasing only takes effect after the viewer is next
+          mounted (it's fixed when the WebGL context is created); the
+          pixel-density and resolution changes both apply immediately.
         </p>
       </header>
       <div class="flex items-center gap-1 bg-gray-900 border border-gray-700 rounded-lg p-1 w-fit" role="radiogroup" aria-label="Render quality">
