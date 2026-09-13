@@ -133,11 +133,12 @@ webgui_connections.hal
 # this router exports are consumed there.
 ```
 
-> **VERIFY the pin names against your vfdmod build.** `vfdmod` is
-> third-party; the `vfdmod.control.*` / `vfdmod.spindle.*` /
-> `vfdmod.rs485.*` groupings below match the commonly-shipped build,
-> but forks differ. Confirm with `halcmd show pin vfdmod*` before
-> generating for real hardware.
+> **Verified against the PrintNC-WEBGUI reference machine's own working
+> HAL** (`machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`),
+> not a guess — `rpm-in` was wrong until that cross-check caught it.
+> `vfdmod` is still third-party, though, and a different fork may not
+> match. Confirm with `halcmd show pin vfdmod*` before generating for
+> hardware running a build other than the reference machine's.
 
 ## 4. PIN ROUTER (Class C — I/O only, one peripheral)
 
@@ -154,12 +155,19 @@ number. The router maps each to a `vfdmod` pin:
 |---|---|---|
 | `run-forward` | `vfdmod.control.run-forward` | out |
 | `run-reverse` | `vfdmod.control.run-reverse` | out |
-| `rpm-in` | `vfdmod.control.rpm-in` | out (command *to* the drive) |
+| `rpm-in` | `vfdmod.spindle.rpm-in` | out (command *to* the drive) |
 | `rpm-out` | `vfdmod.spindle.rpm-out` | in (measured speed) |
 | `at-speed` | `vfdmod.spindle.at-speed` | in |
 | `fault` | `vfdmod.rs485.last-error` | in |
 | `is-connected` | `vfdmod.rs485.is-connected` | in |
 | `error-count` | `vfdmod.rs485.error-count` | in |
+
+Verified against `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`,
+a real, working machine's own HAL — not a guess. `rpm-in` used to be
+listed under `vfdmod.control.*` (alongside `run-forward`/
+`run-reverse`); that pin doesn't exist on a real vfdmod build
+("Pin 'vfdmod.control.rpm-in' does not exist" at LinuxCNC startup).
+The RPM command pin lives under `vfdmod.spindle.*`, next to `rpm-out`.
 
 Reject an unknown `pin_id` with `E_PIN_UNAVAILABLE` rather than
 emitting a `net` against a pin `vfdmod` does not create — that fails

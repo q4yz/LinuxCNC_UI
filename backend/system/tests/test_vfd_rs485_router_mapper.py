@@ -98,6 +98,18 @@ def test_input_pins_route_with_an_arrow_out_of_vfdmod():
     assert "net spindle-forward <= vfdmod.spindle.rpm-out" in fragment.nets
 
 
+def test_rpm_in_routes_to_the_spindle_group_not_control():
+    """Real bug: this used to map to `vfdmod.control.rpm-in`, which
+    doesn't exist on a real vfdmod build ("Pin 'vfdmod.control.rpm-in'
+    does not exist" at LinuxCNC startup) — verified against
+    `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`'s
+    own working wiring, the RPM command pin lives under
+    `vfdmod.spindle.*` alongside `rpm-out`, not `vfdmod.control.*`
+    with `run-forward`/`run-reverse`."""
+    fragment = VfdRs485RouterMapper.route([_request("vfd0:rpm-in")])
+    assert "net spindle-forward => vfdmod.spindle.rpm-in" in fragment.nets
+
+
 def test_health_pins_route_through_the_same_generic_table():
     for pin_id, hal_pin in (
         ("fault", "vfdmod.rs485.last-error"),

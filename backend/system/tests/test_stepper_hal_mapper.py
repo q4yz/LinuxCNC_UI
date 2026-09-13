@@ -99,3 +99,29 @@ def test_a_dual_motor_axis_wires_the_shared_endstop_into_both_joints():
     assert "net endstop_y-sw => joint.2.home-sw-in" in fragment.nets
     # One writer only, however many joints share it.
     assert sum(1 for r in fragment.requests if r.role is PinRole.ENDSTOP) == 1
+
+
+def test_a_dual_motor_axis_gives_its_second_joint_its_own_position_signal():
+    """The real bug: both joints on a gantry axis used to get the same
+    `<axis>pos-cmd`/`<axis>pos-fb` signal names, so `joint.1.motor-pos-
+    cmd` and `joint.2.motor-pos-cmd` fought over one HAL signal — a
+    hard "signal already has a writer" load failure. The reference
+    machine's own working PrintNC-V3.hal disambiguates the second
+    joint with a `2` suffix (`y2pos-cmd`/`y2pos-fb`); a third would get
+    `3`, etc. Only the axis's first joint keeps the plain name."""
+    y_axis = {"id": "y", "joint_numbers": [1, 2], "endstop": "endstop_y"}
+    joints = [
+        {"id": "stepper_y", "joint_number": 1, "step_pin": "mcu:02", "dir_pin": "mcu:!03"},
+        {"id": "stepper_y1", "joint_number": 2, "step_pin": "mcu:04", "dir_pin": "mcu:!05"},
+    ]
+    endstop = {"id": "endstop_y", "pin": "mcu:12"}
+
+    fragment = StepperHalMapper.to_fragment(y_axis, joints, endstop)
+
+    assert "net ypos-cmd joint.1.motor-pos-cmd => stepgen.1.position-cmd" in fragment.nets
+    assert "net ypos-fb stepgen.1.position-fb => joint.1.motor-pos-fb" in fragment.nets
+    assert "net y2pos-cmd joint.2.motor-pos-cmd => stepgen.2.position-cmd" in fragment.nets
+    assert "net y2pos-fb stepgen.2.position-fb => joint.2.motor-pos-fb" in fragment.nets
+    # No line anywhere still names both joints' signal identically.
+    assert not any("net ypos-cmd joint.2" in n for n in fragment.nets)
+    assert not any("net ypos-fb " in n and "joint.2" in n for n in fragment.nets)

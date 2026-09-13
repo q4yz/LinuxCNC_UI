@@ -47,8 +47,8 @@ class StepperHalMapper:
         axis_id = str(axis["id"])
         endstop_signal = f"{endstop['id']}-sw" if endstop else None
 
-        for joint in joints:
-            StepperHalMapper._joint(fragment, axis_id, joint)
+        for index, joint in enumerate(joints, start=1):
+            StepperHalMapper._joint(fragment, axis_id, joint, index)
             if endstop_signal is not None:
                 fragment.nets.append(
                     f"net {endstop_signal} => joint.{joint['joint_number']}.home-sw-in"
@@ -67,9 +67,18 @@ class StepperHalMapper:
         return fragment
 
     @staticmethod
-    def _joint(fragment: HalFragment, axis_id: str, joint: dict[str, Any]) -> None:
+    def _joint(fragment: HalFragment, axis_id: str, joint: dict[str, Any], index: int) -> None:
         n = joint["joint_number"]
         joint_id = str(joint["id"])
+        # A dual-motor (gantry) axis has more than one joint sharing
+        # one `axis_id` — the first joint keeps the plain `<axis>pos-
+        # cmd`/`<axis>pos-fb` names, but every joint after it must get
+        # its own suffix (`y2pos-cmd`, `y3pos-cmd`, ...) or two
+        # different `joint.N.motor-pos-cmd` writers collide on one
+        # signal name, which HAL rejects outright ("signal already has
+        # a writer") — real reference machines (PrintNC-V3.hal) use
+        # exactly this `y`/`y2` split for their dual-Y gantry.
+        pos_prefix = axis_id if index == 1 else f"{axis_id}{index}"
 
         fragment.setp.extend(
             [
@@ -83,8 +92,8 @@ class StepperHalMapper:
         )
         fragment.nets.extend(
             [
-                f"net {axis_id}pos-cmd joint.{n}.motor-pos-cmd => stepgen.{n}.position-cmd",
-                f"net {axis_id}pos-fb stepgen.{n}.position-fb => joint.{n}.motor-pos-fb",
+                f"net {pos_prefix}pos-cmd joint.{n}.motor-pos-cmd => stepgen.{n}.position-cmd",
+                f"net {pos_prefix}pos-fb stepgen.{n}.position-fb => joint.{n}.motor-pos-fb",
             ]
         )
 

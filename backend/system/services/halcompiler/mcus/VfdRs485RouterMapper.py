@@ -14,13 +14,17 @@ from typing import Any
 
 from models.machineconfig.hal_fragment_models import SERVO_THREAD, Addf, HalFragment, PinRequest
 
-#: `pin_id` -> (the real `vfdmod` pin, direction). `.agent/component/
-#: mcu_vfd_rs485.md` § 4's table — third-party pin names, unverified
-#: against a specific vfdmod build (see that file's closing note).
+#: `pin_id` -> (the real `vfdmod` pin, direction). Verified against
+#: `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`, a
+#: real, working machine's own HAL wiring — not the unverified guess
+#: this table used to be (`rpm-in` was `vfdmod.control.rpm-in`, which
+#: doesn't exist on a real vfdmod build; the RPM command pin lives
+#: under `vfdmod.spindle.*` alongside `rpm-out`, not `vfdmod.control.*`
+#: with `run-forward`/`run-reverse`).
 _PIN_MAP: dict[str, tuple[str, str]] = {
     "run-forward": ("vfdmod.control.run-forward", "out"),
     "run-reverse": ("vfdmod.control.run-reverse", "out"),
-    "rpm-in": ("vfdmod.control.rpm-in", "out"),
+    "rpm-in": ("vfdmod.spindle.rpm-in", "out"),
     "rpm-out": ("vfdmod.spindle.rpm-out", "in"),
     "at-speed": ("vfdmod.spindle.at-speed", "in"),
     "fault": ("vfdmod.rs485.last-error", "in"),
