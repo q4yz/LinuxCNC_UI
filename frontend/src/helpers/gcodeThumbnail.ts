@@ -110,8 +110,35 @@ export function buildThumbnailBlock(
   return `; thumbnail begin ${width}x${height} ${b64.length}\n${chunked}\n; thumbnail end\n`;
 }
 
+// LinuxCNC's optional `%` program wrapper is only recognised when it
+// is the literal FIRST line of the file (nothing but `%` and
+// trailing whitespace) — Fusion 360's own LinuxCNC post-processor
+// writes exactly this (`writeln("%")` in both `onOpen()`/`onClose()`
+// of `linuxcnc.cps`). Pushing it to line 2 by prepending the
+// thumbnail block ahead of it is not a cosmetic issue: the
+// interpreter stops treating it as the wrapper at all, and a bare
+// `%` on any other line is not valid G-code — a real parse error on
+// the machine, not just in this app's own preview.
+const PERCENT_WRAPPER_RE = /^%[ \t]*\r?\n/;
+
 /**
- * Returns the text with a thumbnail block prepended when it doesn't
+ * Insert ``block`` into ``text``, respecting a leading `%`
+ * program-wrapper line when present (kept first; the block lands
+ * right after it) — prepended at the very start otherwise. Pure
+ * string logic, independent of {@link buildThumbnailBlock}'s DOM
+ * requirement so it's directly testable.
+ */
+export function insertThumbnailBlock(text: string, block: string): string {
+  const wrapper = text.match(PERCENT_WRAPPER_RE);
+  if (wrapper) {
+    const wrapperLine = wrapper[0];
+    return wrapperLine + block + text.slice(wrapperLine.length);
+  }
+  return block + text;
+}
+
+/**
+ * Returns the text with a thumbnail block inserted when it doesn't
  * already carry one — otherwise the text, unchanged.
  */
 export function ensureEmbeddedThumbnail(
@@ -120,5 +147,5 @@ export function ensureEmbeddedThumbnail(
 ): string {
   if (hasEmbeddedThumbnail(text)) return text;
   const block = buildThumbnailBlock(segments);
-  return block ? block + text : text;
+  return block ? insertThumbnailBlock(text, block) : text;
 }

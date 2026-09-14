@@ -929,6 +929,8 @@ class MachineConfigParser:
             kinematics="cartesian",
             max_velocity=self._optional_float(section_name, section, "max_velocity"),
             max_accel=self._optional_float(section_name, section, "max_accel"),
+            max_z_velocity=self._optional_float(section_name, section, "max_z_velocity"),
+            max_z_accel=self._optional_float(section_name, section, "max_z_accel"),
         )
 
     def _parse_stepper(

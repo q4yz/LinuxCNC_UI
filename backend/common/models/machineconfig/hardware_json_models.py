@@ -507,11 +507,19 @@ class HardwareJson(BaseModel):
     kinematics: str
     hal_type: str
 
-    # Machine-wide motion envelope from the profile's ``[printer]``
+    # Machine-wide motion envelope from the profile's ``[machine]``
     # section. Feeds ``[TRAJ] MAX_LINEAR_VELOCITY`` /
     # ``MAX_LINEAR_ACCELERATION``; previously parsed and discarded.
     max_velocity: float | None = None
     max_accel: float | None = None
+    # Z-specific envelope, separate from the above — a real CNC's Z
+    # axis (fighting gravity, usually a leadscrew) is almost always
+    # far slower than X/Y. Applied per-joint by
+    # ``AxisBuilder._printer_z_velocity``/``_printer_z_accel``; carried
+    # here too purely so the declared machine-wide value round-trips
+    # into hardware.json like every other parsed field.
+    max_z_velocity: float | None = None
+    max_z_accel: float | None = None
 
     # The machine's single E-stop component. ``None`` only for a
     # payload built before this field existed (or a hand-crafted test

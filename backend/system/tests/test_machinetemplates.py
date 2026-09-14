@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from tests._module_app_factory import build_module_app
 
 PROFILE_BODY = (
-    "[printer]\n"
+    "[machine]\n"
     "kinematics: cartesian\n"
     "max_velocity: 300\n\n"
     "[stepper_x]\n"
@@ -476,7 +476,7 @@ def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_r
     profile = (
         "[mcu]\n"
         "connection: remora-spi\n\n"
-        "[printer]\n"
+        "[machine]\n"
         "kinematics: cartesian\n"
         "max_velocity: 300\n\n"
         "[stepper_x]\n"

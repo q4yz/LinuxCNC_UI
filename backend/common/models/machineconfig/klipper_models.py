@@ -56,11 +56,21 @@ def connection_to_hal_type(connection: ConnectionType) -> str:
 
 @dataclass(slots=True)
 class Printer:
-    """Cartesian machine-wide motion settings."""
+    """Cartesian machine-wide motion settings.
+
+    ``max_z_velocity``/``max_z_accel`` are separate from
+    ``max_velocity``/``max_accel`` because a real CNC's Z axis
+    (fighting gravity, usually a leadscrew rather than a belt) almost
+    always needs a much lower speed/accel ceiling than X/Y — see
+    :meth:`AxisBuilder._printer_z_velocity` for the fallback when
+    neither this nor the Z stepper's own ``max_velocity`` is set.
+    """
 
     kinematics: Literal["cartesian"] = "cartesian"
     max_velocity: float | None = None
     max_accel: float | None = None
+    max_z_velocity: float | None = None
+    max_z_accel: float | None = None
 
 
 @dataclass(slots=True)

@@ -227,3 +227,63 @@ def test_gantry_axis_home_sequence_is_negative_on_every_joint():
     # Single-joint axes on the same machine stay positive.
     assert by_letter["X"].joints[0].home_sequence == 2
     assert by_letter["Z"].joints[0].home_sequence == 0
+
+
+_Z_VELOCITY_CONFIG = """
+[machine]
+kinematics: cartesian
+max_velocity: 250.0
+max_accel: 750.0
+max_z_velocity: 100.0
+max_z_accel: 500.0
+
+[stepper_x]
+step_pin: PF13
+dir_pin: PF12
+
+[stepper_z]
+step_pin: PG2
+dir_pin: PG3
+"""
+
+
+def test_z_axis_uses_its_own_machine_level_velocity_and_accel():
+    """Real bug: `max_z_velocity`/`max_z_accel` were already accepted
+    by the schema but silently discarded — never read into the
+    Printer model, never applied anywhere. Z fell back to X/Y's own
+    (much higher) `max_velocity`/`max_accel`, since the ONLY place Z
+    was ever special-cased (`_new_axis`'s hardcoded 5.0/200.0) was
+    immediately overwritten by `_apply_axis_envelope_from_joint`,
+    which read the JOINT's velocity — computed without any Z
+    awareness at all."""
+    graph = MachineConfigParser().parse_string(_Z_VELOCITY_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    x_joint = by_letter["X"].joints[0]
+    z_joint = by_letter["Z"].joints[0]
+
+    assert x_joint.max_velocity == 250.0
+    assert x_joint.max_acceleration == 750.0
+    assert z_joint.max_velocity == 100.0
+    assert z_joint.max_acceleration == 500.0
+    # The axis-level envelope must agree with its own joint.
+    assert by_letter["Z"].max_velocity == 100.0
+    assert by_letter["Z"].max_acceleration == 500.0
+
+
+def test_z_axis_falls_back_to_its_own_default_not_x_ys():
+    """No `[machine]` section at all (matches `_CONFIG`, the common
+    fixture in this file) — Z must fall back to the Z-specific
+    default (5.0 / 200.0), never X/Y's generic 250.0 / 750.0."""
+    graph = MachineConfigParser().parse_string(_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    x_joint = by_letter["X"].joints[0]
+    z_joint = by_letter["Z"].joints[0]
+
+    assert x_joint.max_velocity == 250.0
+    assert x_joint.max_acceleration == 750.0
+    assert z_joint.max_velocity == 5.0
+    assert z_joint.max_acceleration == 200.0

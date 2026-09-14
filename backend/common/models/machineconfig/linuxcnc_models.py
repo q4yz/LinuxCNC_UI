@@ -2,7 +2,7 @@
 
 The LinuxCNC vocabulary is deliberately richer than Klipper's:
 
-* A Klipper ``[printer]`` block maps to a single LinuxCNC ``[TRAJ]``
+* A profile's ``[machine]`` block maps to a single LinuxCNC ``[TRAJ]``
   section plus per-axis ``[AXIS_*]`` blocks.
 * A Klipper ``[stepper_x]`` block maps to a single
   :class:`Joint`. Multiple Klipper steppers on one axis (e.g.

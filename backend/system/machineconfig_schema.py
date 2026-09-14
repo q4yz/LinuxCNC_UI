@@ -332,8 +332,18 @@ def schema_for_section(section: str) -> SectionSchema | None:
             mcu_match.group("name") or "mcu",
         )
 
-    if section == "printer":
-        return SectionSchema(SectionKind.PRINTER, PRINTER_KEYS, "printer")
+    if section == "machine":
+        # `[machine]`, not `[printer]` — Klipper's own vocabulary
+        # (inherited since this compiler reuses Klipper's `.cfg`
+        # syntax) makes no sense for a CNC profile that was never a
+        # 3D printer. Only this name is accepted; `[printer]` now
+        # falls through to `UnsupportedSectionError` like any other
+        # unrecognised section. `_parse_printer`'s own
+        # `kinematics != "cartesian"` check still rejects anything
+        # but a Cartesian machine — the only kinematics this compiler
+        # (or LinuxCNC `trivkins`, which every generated INI assumes)
+        # supports.
+        return SectionSchema(SectionKind.PRINTER, PRINTER_KEYS, "machine")
 
     if section == "duplicate_pin_override":
         return SectionSchema(

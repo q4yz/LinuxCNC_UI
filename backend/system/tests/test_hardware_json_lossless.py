@@ -14,7 +14,7 @@ three had live examples:
 2. **Parsed then discarded** — ``STEPPER_KEYS`` allowed
    ``position_min`` / ``homing_speed`` but ``_parse_stepper`` never
    read them into the :class:`Stepper` dataclass.
-3. **On the entity, never emitted** — PID gains, ``[printer]`` motion
+3. **On the entity, never emitted** — PID gains, ``[machine]`` motion
    limits and every TMC driver setting reached the graph and stopped
    there.
 
@@ -145,7 +145,7 @@ def test_compiler_relevant_fields_are_emitted() -> None:
     payload = json.loads(json.dumps(build_hardware_json(graph, "test")))
 
     assert payload["version"] == "2.2"
-    # [printer] motion envelope -> [TRAJ] limits
+    # [machine] motion envelope -> [TRAJ] limits
     assert payload["max_velocity"] is not None
     assert payload["max_accel"] is not None
 

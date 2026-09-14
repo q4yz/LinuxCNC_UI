@@ -70,7 +70,7 @@ def isolated_machine_config(monkeypatch, tmp_path):
     # Seed a starter profile that contains the ``#Start`` marker so
     # the "ready" badge has something to flag.
     (profiles / "starter.cfg").write_text(
-        "#Start\n[printer]\nkinematics: cartesian\nmax_velocity: 250.0\n"
+        "#Start\n[machine]\nkinematics: cartesian\nmax_velocity: 250.0\n"
         "[stepper_x]\n    step_pin: PC2\n    dir_pin: PB9\n    enable_pin: !PC3\n"
         "[estop]\n"
     )
@@ -170,7 +170,7 @@ def test_profiles_create_folder_file_read_write_rename_delete(
     resp = client.put(
         "/api/v1/modules/machineconfig/profiles/content",
         params={"path": "subdir/new.cfg"},
-        json={"content": "#Start\n[printer]\nkinematics: cartesian\n"},
+        json={"content": "#Start\n[machine]\nkinematics: cartesian\n"},
     )
     assert resp.status_code == 200
 
@@ -432,7 +432,7 @@ def test_hardware_json_v2_empty_arrays_when_no_heaters(
     from machineconfig_parser import MachineConfigParser
 
     config = """
-[printer]
+[machine]
 kinematics: cartesian
 
 [stepper_x]
@@ -489,6 +489,25 @@ def test_build_hardware_json_emits_the_declared_estop_pins():
     )
     payload = build_hardware_json(graph, "test")
     assert payload["estop"] == {"fault_pin": "10", "out_pin": "14"}
+
+
+def test_build_hardware_json_emits_max_z_velocity_and_max_z_accel():
+    """Real bug: both fields were already accepted by the schema and
+    parsed into the Printer model, but never made it into
+    hardware.json — silently dropped between the graph and the wire
+    payload."""
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string(
+        "[machine]\nkinematics: cartesian\nmax_velocity: 250.0\nmax_accel: 750.0\n"
+        "max_z_velocity: 100.0\nmax_z_accel: 500.0\n\n[estop]\n"
+    )
+    payload = build_hardware_json(graph, "test")
+    assert payload["max_velocity"] == 250.0
+    assert payload["max_accel"] == 750.0
+    assert payload["max_z_velocity"] == 100.0
+    assert payload["max_z_accel"] == 500.0
 
 
 # ---------------------------------------------------------------------- #

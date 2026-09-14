@@ -235,10 +235,15 @@ class AxisBuilder:
             raise ValueError(f"Unknown axis mapping policy: {self.policy}")
 
     def _new_axis(self, letter: str, stepper: Stepper) -> Axis:
+        # This initial value is immediately overwritten by
+        # ``_apply_axis_envelope_from_joint`` once the first joint is
+        # built (both call sites run it right after ``_new_axis``) —
+        # kept letter-aware anyway so the two never silently disagree
+        # in some future path that skips that call.
         axis = Axis(
             letter=letter,
-            max_velocity=self._printer_velocity() if letter != "Z" else 5.0,
-            max_acceleration=self._printer_accel() if letter != "Z" else 200.0,
+            max_velocity=self._printer_z_velocity() if letter == "Z" else self._printer_velocity(),
+            max_acceleration=self._printer_z_accel() if letter == "Z" else self._printer_accel(),
             min_limit=_get_float(stepper, "position_min", 0.0),
             max_limit=_get_float(stepper, "position_max", 0.0),
         )
@@ -293,14 +298,21 @@ class AxisBuilder:
             if stepper.position_endstop is not None
             else fallback_home
         )
+        # Z gets its own printer-level fallback (`max_z_velocity`/
+        # `max_z_accel`, or the Z-specific default) — never X/Y's —
+        # when the stepper itself doesn't declare a velocity/accel.
+        default_velocity = self._printer_z_velocity() if letter == "Z" else self._printer_velocity()
+        default_accel = self._printer_z_accel() if letter == "Z" else self._printer_accel()
+        joint_velocity = self._stepper_velocity(stepper) or default_velocity
+        joint_accel = self._stepper_accel(stepper) or default_accel
         return Joint(
             joint_number=joint_number,
             axis_letter=letter,
             min_limit=min_limit,
             max_limit=max_limit,
-            max_velocity=self._stepper_velocity(stepper) or self._printer_velocity(),
-            max_acceleration=self._stepper_accel(stepper) or self._printer_accel(),
-            stepgen_maxaccel=(self._stepper_accel(stepper) or self._printer_accel()) * 1.1,
+            max_velocity=joint_velocity,
+            max_acceleration=joint_accel,
+            stepgen_maxaccel=joint_accel * 1.1,
             home_position=self._home_position_with_backoff(position_endstop, min_limit, max_limit),
             home_offset=position_endstop,
             home_search_vel=homing_speed or 10.0,
@@ -386,6 +398,22 @@ class AxisBuilder:
         if self.graph.printer and self.graph.printer.max_accel is not None:
             return float(self.graph.printer.max_accel)
         return 750.0
+
+    def _printer_z_velocity(self) -> float:
+        """``[machine] max_z_velocity``, falling back to a Z-specific
+        default — never to :meth:`_printer_velocity` (X/Y's), since a
+        real CNC's Z axis (fighting gravity, usually a leadscrew) is
+        almost always far slower than the gantry."""
+        if self.graph.printer and self.graph.printer.max_z_velocity is not None:
+            return float(self.graph.printer.max_z_velocity)
+        return 5.0
+
+    def _printer_z_accel(self) -> float:
+        """``[machine] max_z_accel``, same Z-specific-default rule as
+        :meth:`_printer_z_velocity`."""
+        if self.graph.printer and self.graph.printer.max_z_accel is not None:
+            return float(self.graph.printer.max_z_accel)
+        return 200.0
 
     def _stepper_velocity(self, stepper: Stepper) -> float:
         raw = getattr(stepper, "max_velocity", None)

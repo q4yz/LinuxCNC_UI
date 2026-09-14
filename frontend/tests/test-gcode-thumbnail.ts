@@ -22,6 +22,7 @@ import {
   chunkBase64,
   THUMBNAIL_CHUNK_WIDTH,
   hasEmbeddedThumbnail,
+  insertThumbnailBlock,
 } from "../src/helpers/gcodeThumbnail";
 import { parseGcodeToolpath } from "../src/parsers/gcodeParser";
 
@@ -69,6 +70,37 @@ test("hasEmbeddedThumbnail recognises a chunked, semicolon-prefixed block", () =
     "",
   ].join("\n");
   assert.ok(hasEmbeddedThumbnail(block));
+});
+
+test("insertThumbnailBlock keeps a leading % program wrapper first", () => {
+  // Real bug: prepending the block ahead of a leading `%` pushed it
+  // to line 2, where LinuxCNC no longer recognises it as the
+  // wrapper — a bare `%` on any other line is not valid G-code.
+  // Fusion 360's own LinuxCNC post-processor always writes this
+  // wrapper (`writeln("%")` in linuxcnc.cps's onOpen/onClose).
+  const text = "%\nG1 X10 Y5\nM30\n%\n";
+  const block = "; thumbnail begin 1x1 4\n; QQ==\n; thumbnail end\n";
+  const result = insertThumbnailBlock(text, block);
+
+  const lines = result.split("\n");
+  assert.equal(lines[0], "%", "the % wrapper must stay the literal first line");
+  assert.equal(result, "%\n" + block + "G1 X10 Y5\nM30\n%\n");
+});
+
+test("insertThumbnailBlock prepends normally when there is no % wrapper", () => {
+  const text = "G1 X10 Y5\nM30\n";
+  const block = "; thumbnail begin 1x1 4\n; QQ==\n; thumbnail end\n";
+  const result = insertThumbnailBlock(text, block);
+  assert.equal(result, block + text);
+});
+
+test("insertThumbnailBlock does not mistake a mid-file % for the wrapper", () => {
+  // Only a % on line 1 is the wrapper; one later in the file (some
+  // posts write a trailing % too) must not be treated specially.
+  const text = "G1 X10 Y5\nM30\n%\n";
+  const block = "; thumbnail begin 1x1 4\n; QQ==\n; thumbnail end\n";
+  const result = insertThumbnailBlock(text, block);
+  assert.equal(result, block + text);
 });
 
 test("a chunked thumbnail block is entirely inert to the toolpath parser", () => {

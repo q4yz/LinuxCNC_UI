@@ -23,6 +23,7 @@ from machineconfig_parser import (
     UndefinedKeywordError,
     UndefinedMcuError,
     UnknownStepperError,
+    UnsupportedSectionError,
     derive_fan_name,
     derive_heater_name,
     split_pin,
@@ -33,6 +34,56 @@ from machineconfig_schema import (
     SectionKind,
     schema_for_section,
 )
+
+def test_machine_section_is_recognised_by_the_schema():
+    assert schema_for_section("machine").kind is SectionKind.PRINTER
+
+
+def test_printer_section_name_is_no_longer_accepted():
+    """Only `[machine]` is a valid section name — `[printer]` (Klipper's
+    own vocabulary, inherited from reusing Klipper's `.cfg` syntax)
+    makes no sense for a CNC profile that was never a 3D printer."""
+    config = "[printer]\nkinematics: cartesian\n"
+    with pytest.raises(UnsupportedSectionError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert "printer" in str(exc_info.value)
+
+
+def test_machine_section_defaults_kinematics_to_cartesian():
+    config = "[machine]\nmax_velocity: 250\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.printer.kinematics == "cartesian"
+
+
+def test_machine_section_rejects_non_cartesian_kinematics():
+    """`cartesian` is the only kinematics this compiler (and the
+    `trivkins` LinuxCNC assumes in every generated INI) supports."""
+    config = "[machine]\nkinematics: corexy\n"
+    with pytest.raises(InvalidValueError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "machine"
+    assert exc_info.value.key == "kinematics"
+
+
+def test_machine_section_parses_max_z_velocity_and_max_z_accel():
+    """Real bug this closes: both keys were already accepted by the
+    schema (no UndefinedKeywordError) but silently discarded — never
+    read into the Printer model, never applied to the Z axis, which
+    always fell back to X/Y's own (much higher) velocity/accel."""
+    config = (
+        "[machine]\n"
+        "kinematics: cartesian\n"
+        "max_velocity: 250.0\n"
+        "max_accel: 750.0\n"
+        "max_z_velocity: 100.0\n"
+        "max_z_accel: 500.0\n"
+    )
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.printer.max_velocity == 250.0
+    assert graph.printer.max_accel == 750.0
+    assert graph.printer.max_z_velocity == 100.0
+    assert graph.printer.max_z_accel == 500.0
+
 
 def test_invalid_keyword_reports_section_and_key() -> None:
     """The parser demonstrates the zero-tolerance keyword contract."""
@@ -56,7 +107,7 @@ def test_builds_linked_object_graph_and_ignores_mcu() -> None:
 connection: rs485
 interface: /dev/ttyACM0
 
-[printer]
+[machine]
 kinematics: cartesian
 max_velocity: 250
 max_accel: 1200

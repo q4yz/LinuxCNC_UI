@@ -958,6 +958,8 @@ def build_hardware_json(
         "hal_type": hal_type,
         "max_velocity": _fmt_float(getattr(graph.printer, "max_velocity", None)),
         "max_accel": _fmt_float(getattr(graph.printer, "max_accel", None)),
+        "max_z_velocity": _fmt_float(getattr(graph.printer, "max_z_velocity", None)),
+        "max_z_accel": _fmt_float(getattr(graph.printer, "max_z_accel", None)),
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "axes": axes_records,
