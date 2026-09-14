@@ -43,10 +43,20 @@ def test_step_and_dir_are_exported_as_requests_with_correct_invert():
     assert by_role[PinRole.DIR].pin.invert is True
 
 
-def test_enable_is_optional_and_only_exported_when_present():
+def test_stepgen_enable_net_is_unconditional_but_the_physical_pin_is_optional():
+    """Real bug: a joint with no declared PHYSICAL enable pin used to
+    get no `joint.N.amp-enable-out => stepgen.N.enable` net AT ALL —
+    verified against a real, working PrintNC-WEBGUI machine.hal, only
+    X has a separate hardware enable pin; Y/Y1/Z don't, but all four
+    still wire the internal net. Without it, `stepgen.N.enable` is
+    never driven, the stepgen never runs, `position-fb` stays frozen
+    while `position-cmd` moves, and FERROR trips within milliseconds
+    of a jog or homing move — a position error before a single real
+    step happens."""
     without = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {})
+    assert "net stepper_x-enable joint.0.amp-enable-out => stepgen.0.enable" in without.nets
+    # No PinRequest, though — no physical pin was declared to route.
     assert not any(r.role is PinRole.ENABLE for r in without.requests)
-    assert not any("enable" in n for n in without.nets)
 
     joint = dict(X_JOINT, enable_pin="mcu:!14")
     withit = StepperHalMapper.to_fragment(X_AXIS, [joint], {})

@@ -121,11 +121,24 @@ class StepperHalMapper:
         StepperHalMapper._pin_export(fragment, joint, "step_pin", PinRole.STEP, joint_id, n)
         StepperHalMapper._pin_export(fragment, joint, "dir_pin", PinRole.DIR, joint_id, n)
 
+        # This net is what actually turns the stepgen on — without it,
+        # `stepgen.N.enable` is never driven, the stepgen never runs,
+        # and `position-fb` stays frozen at 0 while `position-cmd`
+        # moves the instant a joint is commanded (homing or a jog):
+        # within milliseconds that gap exceeds FERROR and LinuxCNC
+        # throws a position error before a single real step happens.
+        # Unconditional, unlike the PinRequest below: a joint with no
+        # separate PHYSICAL enable pin (a real, verified working
+        # PrintNC-WEBGUI machine only wires one for X; Y/Y1/Z have
+        # none) still needs LinuxCNC's own amp-enable-out driving the
+        # stepgen internally — that requirement doesn't depend on
+        # whether a hardware pin is also being routed for it.
+        fragment.nets.append(
+            f"net {joint_id}-enable joint.{n}.amp-enable-out => stepgen.{n}.enable"
+        )
+
         enable_pin = joint.get("enable_pin")
         if enable_pin:
-            fragment.nets.append(
-                f"net {joint_id}-enable joint.{n}.amp-enable-out => stepgen.{n}.enable"
-            )
             fragment.requests.append(
                 PinRequest(
                     signal=f"{joint_id}-enable",

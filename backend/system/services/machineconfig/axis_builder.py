@@ -43,15 +43,21 @@ logger = logging.getLogger("backend.services.machineconfig.axis_builder")
 FULL_STEPS_PER_REVOLUTION = 200
 
 #: ``HOME_SEQUENCE`` phase per axis letter — LinuxCNC homes phases in
-#: increasing order, joints sharing one phase move together. Z homes
-#: alone first (phase 0) so the tool clears the work before X/Y move;
-#: X and Y then home together (phase 1). Deliberately just these two
-#: phases, not one per axis — a machine that needs finer-grained
-#: homing order (or a non-Cartesian sequence) does it with a homing
-#: macro instead; the compiler only owns this one fixed, common case.
-#: An axis letter not listed here (e.g. the extruder's synthetic "A")
-#: keeps the pre-existing default of 0, unchanged.
-_HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 0, "X": 1, "Y": 1}
+#: increasing order (by absolute value), joints sharing one phase move
+#: together. Verified against a real, working PrintNC machine.ini/
+#: machine.hal pair: Z homes alone first (phase 0, clears the tool
+#: from the work), Y homes second (phase 1, both gantry joints
+#: simultaneously — see :meth:`_negate_gantry_home_sequences` for the
+#: negative sign), X homes last (phase 2, alone — the same reference
+#: machine has X and Z sharing one physical switch, and homes them in
+#: separate phases with no other special handling: no
+#: ``HOME_IS_SHARED``, just each axis fully retracting off the switch
+#: before the next phase starts). Deliberately just these three fixed
+#: phases, not one per axis — a machine that needs a different order
+#: does it with a homing macro instead; the compiler only owns this
+#: one verified, common case. An axis letter not listed here (e.g. the
+#: extruder's synthetic "A") keeps the pre-existing default of 0.
+_HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 0, "Y": 1, "X": 2}
 
 
 def _get_float(stepper: Stepper, name: str, default: float) -> float:

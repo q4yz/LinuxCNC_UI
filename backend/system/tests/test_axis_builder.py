@@ -155,18 +155,19 @@ max_temp: 250
     assert a_numbers == [3, 4]
 
 
-def test_home_sequence_is_z_alone_then_x_and_y_together():
-    """Z homes first (phase 0, alone) so the tool clears the work
-    before X/Y move; X and Y then home together (phase 1). A fixed,
-    deliberately simple policy — anything more elaborate is a homing
-    macro's job, not the compiler's."""
+def test_home_sequence_is_z_then_y_then_x():
+    """Verified against a real, working PrintNC machine.ini: Z homes
+    alone first (phase 0, clears the tool from the work), Y homes
+    second (phase 1, both gantry joints together), X homes last
+    (phase 2, alone). A fixed, deliberately simple policy — anything
+    more elaborate is a homing macro's job, not the compiler's."""
     graph = MachineConfigParser().parse_string(_CONFIG)
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
 
     by_letter = {axis.letter: axis for axis in axes}
     assert by_letter["Z"].joints[0].home_sequence == 0
-    assert by_letter["X"].joints[0].home_sequence == 1
     assert by_letter["Y"].joints[0].home_sequence == 1
+    assert by_letter["X"].joints[0].home_sequence == 2
 
 
 def test_gantry_axis_home_sequence_is_negative_on_every_joint():
@@ -185,5 +186,5 @@ def test_gantry_axis_home_sequence_is_negative_on_every_joint():
     assert y_joints[1].home_sequence == -1
 
     # Single-joint axes on the same machine stay positive.
-    assert by_letter["X"].joints[0].home_sequence == 1
+    assert by_letter["X"].joints[0].home_sequence == 2
     assert by_letter["Z"].joints[0].home_sequence == 0
