@@ -52,12 +52,19 @@ FULL_STEPS_PER_REVOLUTION = 200
 #: machine has X and Z sharing one physical switch, and homes them in
 #: separate phases with no other special handling: no
 #: ``HOME_IS_SHARED``, just each axis fully retracting off the switch
-#: before the next phase starts). Deliberately just these three fixed
+#: before the next phase starts — see
+#: :meth:`_home_position_with_backoff`). Deliberately just these three fixed
 #: phases, not one per axis — a machine that needs a different order
 #: does it with a homing macro instead; the compiler only owns this
 #: one verified, common case. An axis letter not listed here (e.g. the
 #: extruder's synthetic "A") keeps the pre-existing default of 0.
 _HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 0, "Y": 1, "X": 2}
+
+#: How far ``HOME`` (the final resting position after homing) pulls
+#: back off ``HOME_OFFSET`` (the switch's own coordinate) — see
+#: :meth:`AxisBuilder._home_position_with_backoff`. 5mm matches the
+#: real, working PrintNC machine.ini this was verified against.
+_HOME_BACKOFF_MM = 5.0
 
 
 def _get_float(stepper: Stepper, name: str, default: float) -> float:
@@ -270,9 +277,16 @@ class AxisBuilder:
     ) -> Joint:
         fallback_min = fallback.min_limit if fallback else 0.0
         fallback_max = fallback.max_limit if fallback else 0.0
-        fallback_home = fallback.home_position if fallback else 0.0
+        # NOTE: falls back to the primary joint's HOME_OFFSET (the raw
+        # switch coordinate), not its HOME (which already has the
+        # backoff below applied) — otherwise a secondary joint that
+        # inherits this would have the backoff compounded a second
+        # time on top of an already-backed-off value.
+        fallback_home = fallback.home_offset if fallback else 0.0
         fallback_search_vel = fallback.home_search_vel if fallback else 0.0
 
+        min_limit = _get_float(stepper, "position_min", fallback_min)
+        max_limit = _get_float(stepper, "position_max", fallback_max)
         homing_speed = _get_float(stepper, "homing_speed", fallback_search_vel)
         position_endstop = (
             float(stepper.position_endstop)
@@ -282,12 +296,12 @@ class AxisBuilder:
         return Joint(
             joint_number=joint_number,
             axis_letter=letter,
-            min_limit=_get_float(stepper, "position_min", fallback_min),
-            max_limit=_get_float(stepper, "position_max", fallback_max),
+            min_limit=min_limit,
+            max_limit=max_limit,
             max_velocity=self._stepper_velocity(stepper) or self._printer_velocity(),
             max_acceleration=self._stepper_accel(stepper) or self._printer_accel(),
             stepgen_maxaccel=(self._stepper_accel(stepper) or self._printer_accel()) * 1.1,
-            home_position=position_endstop,
+            home_position=self._home_position_with_backoff(position_endstop, min_limit, max_limit),
             home_offset=position_endstop,
             home_search_vel=homing_speed or 10.0,
             home_latch_vel=homing_speed or 10.0,
@@ -299,6 +313,37 @@ class AxisBuilder:
             dir_pin=stepper.dir_pin,
             enable_pin=stepper.enable_pin,
         )
+
+    @staticmethod
+    def _home_position_with_backoff(
+        position_endstop: float, min_limit: float, max_limit: float
+    ) -> float:
+        """``HOME`` (final resting position) pulls back off ``HOME_OFFSET``
+        (the switch's own coordinate) by :data:`_HOME_BACKOFF_MM`.
+
+        Verified against a real, working PrintNC machine.ini (Z:
+        ``HOME_OFFSET = 135`` / ``HOME = 130``, a 5mm gap). Without
+        it, a joint parks exactly ON its switch — harmless alone, but
+        a real crash when two axes SHARE one physical switch and home
+        in different sequence phases (this machine's X/Z on pin 13):
+        the first axis stays resting on the shared switch, so when
+        the second axis starts homing it sees a switch already
+        active, drives away expecting it to release, and never stops
+        because the first axis is still physically pressing it.
+
+        Direction follows which end of travel the switch sits at — a
+        joint homing at ``max_limit`` backs off toward smaller values,
+        one homing at ``min_limit`` backs off toward larger ones. A
+        joint with no real travel range at all (``min_limit ==
+        max_limit`` — the synthesised extruder joint, which has
+        neither a switch nor a meaningful `HOME`) is left alone.
+        """
+        if max_limit <= min_limit:
+            return position_endstop
+        midpoint = (min_limit + max_limit) / 2
+        if position_endstop >= midpoint:
+            return position_endstop - _HOME_BACKOFF_MM
+        return position_endstop + _HOME_BACKOFF_MM
 
     def _apply_axis_envelope_from_joint(self, axis: Axis, joint: Joint) -> None:
         axis.max_velocity = joint.max_velocity

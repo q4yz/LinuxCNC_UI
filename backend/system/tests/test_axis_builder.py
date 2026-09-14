@@ -114,8 +114,11 @@ def test_gantry_second_joint_inherits_travel_limits_from_the_primary_stepper():
 
     assert primary.min_limit == -2.0
     assert primary.max_limit == 497.7
-    assert primary.home_position == 497.7
+    # HOME_OFFSET is the raw switch coordinate; HOME backs 5mm off it
+    # (_home_position_with_backoff) — see test_axis_builder.py's own
+    # backoff-specific tests below for why.
     assert primary.home_offset == 497.7
+    assert primary.home_position == 492.7
     assert primary.home_search_vel == 10.0
     assert primary.home_latch_vel == 10.0
 
@@ -153,6 +156,42 @@ max_temp: 250
     by_letter = {axis.letter: axis for axis in axes}
     a_numbers = [j.joint_number for j in by_letter["A"].joints]
     assert a_numbers == [3, 4]
+
+
+def test_home_backs_off_from_home_offset_toward_the_center_of_travel():
+    """Real bug: HOME and HOME_OFFSET used to be identical, so a joint
+    parked exactly ON its switch after homing. Harmless alone, but a
+    real crash when two axes SHARE one physical switch and home in
+    different sequence phases: the first axis stays resting on the
+    switch, so the second axis sees it already active, drives away
+    expecting it to release, and never stops because the first axis
+    is still pressing it. Verified against a real, working PrintNC
+    machine.ini: Z's `HOME_OFFSET = 135` / `HOME = 130`, a 5mm gap.
+
+    `_CONFIG`'s steppers declare no `position_endstop` (defaults to
+    0.0) and `position_max: 300.0` with no `position_min` (defaults
+    to 0.0) — so the switch sits at the MIN end of travel here, and
+    the backoff must add, not subtract."""
+    graph = MachineConfigParser().parse_string(_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    x_joint = by_letter["X"].joints[0]
+    assert x_joint.home_offset == 0.0
+    assert x_joint.home_position == 5.0
+
+
+def test_home_backoff_is_skipped_for_a_joint_with_no_real_travel_range():
+    """The synthesised extruder joint has no switch and no meaningful
+    HOME at all (min_limit == max_limit == 0.0, both defaulted) — it
+    must not get a fabricated -5/+5 offset."""
+    graph = MachineConfigParser().parse_string(_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    a_joint = by_letter["A"].joints[0]
+    assert a_joint.min_limit == a_joint.max_limit == 0.0
+    assert a_joint.home_position == a_joint.home_offset == 0.0
 
 
 def test_home_sequence_is_z_then_y_then_x():
