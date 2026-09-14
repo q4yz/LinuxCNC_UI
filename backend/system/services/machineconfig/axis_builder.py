@@ -42,6 +42,17 @@ logger = logging.getLogger("backend.services.machineconfig.axis_builder")
 #     SCALE = (microsteps * full_steps_per_rotation) / rotation_distance
 FULL_STEPS_PER_REVOLUTION = 200
 
+#: ``HOME_SEQUENCE`` phase per axis letter — LinuxCNC homes phases in
+#: increasing order, joints sharing one phase move together. Z homes
+#: alone first (phase 0) so the tool clears the work before X/Y move;
+#: X and Y then home together (phase 1). Deliberately just these two
+#: phases, not one per axis — a machine that needs finer-grained
+#: homing order (or a non-Cartesian sequence) does it with a homing
+#: macro instead; the compiler only owns this one fixed, common case.
+#: An axis letter not listed here (e.g. the extruder's synthetic "A")
+#: keeps the pre-existing default of 0, unchanged.
+_HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 0, "X": 1, "Y": 1}
+
 
 def _get_float(stepper: Stepper, name: str, default: float) -> float:
     """Read an optional float field off a :class:`Stepper`.
@@ -176,7 +187,23 @@ class AxisBuilder:
         for letter, axis in self._axes.items():
             if letter not in AXIS_ORDER and axis not in ordered:
                 ordered.append(axis)
+
+        self._negate_gantry_home_sequences(ordered)
         return ordered
+
+    @staticmethod
+    def _negate_gantry_home_sequences(axes: list[Axis]) -> None:
+        """A multi-joint (gantry) axis's ``HOME_SEQUENCE`` must be
+        negative on every one of its joints — the sign, not the
+        number, is what tells LinuxCNC's homing state machine "these
+        joints home together and latch independently to square the
+        gantry" rather than just "these happen to share a phase".
+        A single-joint axis is never touched (stays positive/0)."""
+        for axis in axes:
+            if len(axis.joints) <= 1:
+                continue
+            for joint in axis.joints:
+                joint.home_sequence = -abs(joint.home_sequence)
 
     # ----- Internals ------------------------------------------------ #
 
@@ -258,7 +285,7 @@ class AxisBuilder:
             home_offset=position_endstop,
             home_search_vel=homing_speed or 10.0,
             home_latch_vel=homing_speed or 10.0,
-            home_sequence=0,
+            home_sequence=_HOME_SEQUENCE_BY_AXIS.get(letter, 0),
             scale=stepgen_scale(stepper),
             ferror=2.0 if letter != "Y" else 9.0,
             min_ferror=1.0 if letter != "Y" else 5.0,

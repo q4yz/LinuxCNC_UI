@@ -5,17 +5,30 @@ Class A only (software `stepgen`) for this pass — see
 different per-joint body (position-command, or a hard reject); that
 mapper lands when Phase 2/3 needs it, not here.
 
-Operates per **axis**, not per joint, because the home-switch wiring
-is axis-scoped: `stepper.md` documents `net <axis>-home-sw => joint.N
-.home-sw-in` once per (axis, joint) pair, and two axes can share one
-physical endstop (PrintNC-WEBGUI's X and Z both home off "home-xz").
+Home-switch wiring is resolved per **joint**, not once per axis: a
+dual-motor (gantry) axis's second stepper can declare its own,
+distinct switch (`hardware_json_generator.py`'s per-joint `endstop`
+field) — sharing one switch across every joint on the axis would
+leave that second switch permanently unwired, which is exactly what
+used to happen (a real HAL bug: LinuxCNC homes a gantry expecting
+independent switches per joint so it can square the gantry; blinding
+one motor to the other's switch causes an immediate position error
+during the latch phase). A joint with no switch of its own falls back
+to its axis's `endstop` — the common case (a single-joint axis, or a
+gantry whose second motor genuinely shares one physical switch)
+behaves exactly as before.
+
+Two axes can also share one physical endstop (PrintNC-WEBGUI's X and
+Z both home off "home-xz") — `stepper.md` documents `net
+<axis>-home-sw => joint.N.home-sw-in` once per (axis, joint) pair.
 The signal name is derived from the **endstop's own id**
-(`<endstop_id>-sw`), not the axis id — two axes referencing the same
-endstop id then naturally produce the same signal name, so they
-collapse onto one writer with two readers instead of two writers
-fighting over one physical pin. The assembler is what actually
-de-duplicates the resulting :class:`PinRequest` (same signal requested
-twice, once per axis) down to a single route.
+(`<endstop_id>-sw`), not the axis id — two axes (or two joints)
+referencing the same endstop id then naturally produce the same
+signal name, so they collapse onto one writer with two-or-more
+readers instead of two writers fighting over one physical pin. The
+assembler is what actually de-duplicates the resulting
+:class:`PinRequest` (same signal requested twice) down to a single
+route.
 """
 
 from __future__ import annotations
@@ -41,20 +54,28 @@ class StepperHalMapper:
     def to_fragment(
         axis: dict[str, Any],
         joints: list[dict[str, Any]],
-        endstop: dict[str, Any] | None,
+        endstops_by_id: dict[str, dict[str, Any]],
     ) -> HalFragment:
         fragment = HalFragment()
         axis_id = str(axis["id"])
-        endstop_signal = f"{endstop['id']}-sw" if endstop else None
+        axis_endstop_id = axis.get("endstop")
+        requested_endstop_ids: set[str] = set()
 
         for index, joint in enumerate(joints, start=1):
             StepperHalMapper._joint(fragment, axis_id, joint, index)
-            if endstop_signal is not None:
-                fragment.nets.append(
-                    f"net {endstop_signal} => joint.{joint['joint_number']}.home-sw-in"
-                )
-
-        if endstop is not None:
+            # This joint's own switch first; a joint with none of its
+            # own (the common case) shares the axis's.
+            endstop_id = joint.get("endstop") or axis_endstop_id
+            endstop = endstops_by_id.get(endstop_id) if endstop_id else None
+            if endstop is None:
+                continue
+            endstop_signal = f"{endstop['id']}-sw"
+            fragment.nets.append(
+                f"net {endstop_signal} => joint.{joint['joint_number']}.home-sw-in"
+            )
+            if endstop["id"] in requested_endstop_ids:
+                continue
+            requested_endstop_ids.add(endstop["id"])
             fragment.requests.append(
                 PinRequest(
                     signal=endstop_signal,

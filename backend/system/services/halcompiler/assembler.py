@@ -162,8 +162,13 @@ class HalAssembler:
             ]
             if not joints:
                 continue
-            endstop = self._endstops_by_id.get(axis.get("endstop"))
-            fragments.append(mapper.to_fragment(axis, joints, endstop))
+            # The full endstops-by-id map, not one axis-level lookup —
+            # a dual-motor (gantry) axis's joints can each reference a
+            # DIFFERENT switch (see hardware_json_generator.py's
+            # per-joint ``endstop`` field); the mapper resolves each
+            # joint's own reference itself instead of the whole axis
+            # sharing one.
+            fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
         return fragments
 
     def _spindle_fragments(self) -> list[HalFragment]:

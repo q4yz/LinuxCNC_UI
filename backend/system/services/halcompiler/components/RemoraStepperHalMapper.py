@@ -23,9 +23,13 @@ is unconditional — every joint in the reference config
 (`machine_config/example/ender3/ender3.hal`) wires it, because the
 board always owns an enable line for the module it just loaded.
 
-Endstop wiring mirrors :class:`StepperHalMapper`'s axis-scoped,
-endstop-id-named signal (so two axes sharing one switch collapse onto
-one writer) but additionally targets `neg-lim-sw-in` — confirmed
+Endstop wiring is resolved per **joint**, not once per axis — same
+reasoning as :class:`StepperHalMapper` (a gantry axis's second motor
+can declare its own, distinct switch; a joint with none of its own
+falls back to its axis's, so a single-joint axis or a genuinely
+shared-switch gantry behaves exactly as before). The signal is
+endstop-id-named (so two axes/joints sharing one switch collapse onto
+one writer) and additionally targets `neg-lim-sw-in` — confirmed
 against `3Dprinter.hal`'s `net X-stop remora.input.00 => joint.0.home
 -sw-in joint.0.neg-lim-sw-in`, genuinely different wiring from the
 parport reference machine, which wires `home-sw-in` alone.
@@ -51,20 +55,26 @@ class RemoraStepperHalMapper:
     def to_fragment(
         axis: dict[str, Any],
         joints: list[dict[str, Any]],
-        endstop: dict[str, Any] | None,
+        endstops_by_id: dict[str, dict[str, Any]],
     ) -> HalFragment:
         fragment = HalFragment()
-        endstop_signal = f"{endstop['id']}-sw" if endstop else None
+        axis_endstop_id = axis.get("endstop")
+        requested_endstop_ids: set[str] = set()
 
         for joint in joints:
             RemoraStepperHalMapper._joint(fragment, joint)
-            if endstop_signal is not None:
-                n = joint["joint_number"]
-                fragment.nets.append(
-                    f"net {endstop_signal} => joint.{n}.home-sw-in joint.{n}.neg-lim-sw-in"
-                )
-
-        if endstop is not None:
+            endstop_id = joint.get("endstop") or axis_endstop_id
+            endstop = endstops_by_id.get(endstop_id) if endstop_id else None
+            if endstop is None:
+                continue
+            n = joint["joint_number"]
+            endstop_signal = f"{endstop['id']}-sw"
+            fragment.nets.append(
+                f"net {endstop_signal} => joint.{n}.home-sw-in joint.{n}.neg-lim-sw-in"
+            )
+            if endstop["id"] in requested_endstop_ids:
+                continue
+            requested_endstop_ids.add(endstop["id"])
             fragment.requests.append(
                 PinRequest(
                     signal=endstop_signal,

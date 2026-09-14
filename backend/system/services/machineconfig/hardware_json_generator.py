@@ -28,8 +28,15 @@ becomes ``id: "stepper_x"``; ``[heater_bed]`` becomes
 ``[endstop_switch X_MIN]`` (or an inline ``endstop_pin:`` on
 ``[stepper_x]``) becomes a single ``Endstop`` record with id
 ``"endstop_x_min"`` carrying only ``{id, pin}``. Each axis hosts
-the switch via a single ``endstop: "endstop_x_min"`` reference; one
-switch may be referenced by multiple axes.
+the switch via a single ``endstop: "endstop_x_min"`` reference (the
+primary/first joint's switch, kept for backward compatibility); one
+switch may be referenced by multiple axes. Each **joint** also
+carries its own ``endstop`` reference — usually the same id as its
+axis, but a dual-motor (gantry) axis whose second stepper declares
+its own distinct ``endstop_pin`` gets its own id here, so the HAL
+compiler can wire each gantry joint to its own physical switch
+instead of collapsing them onto the axis's single switch (which
+would leave a real second switch permanently unwired).
 
 The ``tools`` list is the operator-facing view: every ``[extruder]``,
 ``[heater_bed]``, ``[heater_generic]``, ``[spindle]``, and
@@ -626,6 +633,19 @@ def build_hardware_json(
     #    sharing axis references that one id — mirroring how the HAL
     #    compiler routes a shared switch (one writer, many readers)
     #    and keeping the validator's E_PIN_CONFLICT gate honest.
+    # ``joint_endstop_id_by_key`` mirrors ``axis_state[*]["endstop_id"]``
+    # but keyed by the stepper's OWN dict key ("y", "y1", ...), not the
+    # axis letter — a dual-motor axis has more than one stepper, and
+    # ``axis_state`` only has room for one id per axis letter (the
+    # primary/first joint's, kept for backward compatibility). Without
+    # this, a second stepper's own ``endstop_pin`` (e.g. ``stepper_y1``
+    # declaring its own switch for gantry squaring) would still get an
+    # ``Endstop`` record here, but nothing would ever reference it —
+    # ``letter.lower() in axis_state`` is False for a key like ``"y1"``
+    # (that's never a canonical axis letter), so the assignment below
+    # used to be silently skipped and the real second switch never
+    # reached any joint.
+    joint_endstop_id_by_key: dict[str, str] = {}
     inline_endstop_names: set[str] = set()
     inline_endstop_ids_by_pin: dict[tuple[str | None, str], str] = {}
     for letter, stepper in graph.steppers.items():
@@ -635,6 +655,7 @@ def build_hardware_json(
         if raw_pin is not None:
             shared_id = inline_endstop_ids_by_pin.get((mcu_prefix, raw_pin))
             if shared_id is not None:
+                joint_endstop_id_by_key[letter] = shared_id
                 if letter.lower() in axis_state:
                     axis_state[letter.lower()]["endstop_id"] = shared_id
                 continue
@@ -649,6 +670,7 @@ def build_hardware_json(
             inline_endstop_ids_by_pin[(mcu_prefix, raw_pin)] = _endstop_id(
                 endstop_section
             )
+        joint_endstop_id_by_key[letter] = _endstop_id(endstop_section)
         if letter.lower() in axis_state:
             axis_state[letter.lower()]["endstop_id"] = _endstop_id(
                 endstop_section
@@ -662,13 +684,20 @@ def build_hardware_json(
     #    override the inferred ``<AXIS>_MIN`` name with an
     #    explicit one). Inline switches with the same name are
     #    skipped above. The owning axis is derived from
-    #    ``EndstopSwitch.stepper.axis``.
+    #    ``EndstopSwitch.stepper.axis``; the owning *joint* (for
+    #    ``joint_endstop_id_by_key``) needs the stepper's own dict key,
+    #    which the graph only exposes by identity, not by name — same
+    #    "more than one stepper per axis letter" gap as path 1 above.
+    stepper_key_by_identity = {id(s): key for key, s in graph.steppers.items()}
     for endstop_name, endstop in graph.endstop_switches.items():
         if not endstop.stepper:
             continue
         axis_letter = endstop.stepper.axis.lower()
         if endstop.pin is not None:
             endstop_records.append(_endstop_record(endstop_name, endstop.pin))
+        stepper_key = stepper_key_by_identity.get(id(endstop.stepper))
+        if stepper_key is not None:
+            joint_endstop_id_by_key[stepper_key] = _endstop_id(endstop_name)
         if axis_letter in axis_state:
             axis_state[axis_letter]["endstop_id"] = _endstop_id(endstop_name)
             # ``[endstop_switch] position`` wins when explicitly set;
@@ -682,6 +711,14 @@ def build_hardware_json(
                 axis_state[axis_letter]["position_endstop"] = (
                     endstop.stepper.position_endstop
                 )
+
+    # Stamp each joint record with its OWN endstop reference — see
+    # ``joint_endstop_id_by_key`` above. A joint whose stepper declared
+    # no endstop of its own (the common case: only the axis's primary
+    # stepper carries a switch) simply gets ``None``, same as before
+    # this field existed.
+    for record, (letter, _stepper) in zip(joint_records, graph.steppers.items()):
+        record["endstop"] = joint_endstop_id_by_key.get(letter)
 
     # Stamp ``joint_number`` on every joint record in canonical
     # order: all X joints first, then Y, then Z, then A (extruders),

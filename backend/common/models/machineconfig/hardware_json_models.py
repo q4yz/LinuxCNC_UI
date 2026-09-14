@@ -163,6 +163,15 @@ class Stepper(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     joint_number: int = Field(ge=0)
     driver: str | None = None
+    # This joint's own home switch, when its stepper declared one
+    # (directly, or via a separate ``[endstop_switch]`` section
+    # referencing it) — usually the same id as its axis's ``endstop``,
+    # but a dual-motor (gantry) axis whose second stepper carries a
+    # distinct switch needs its own id here so each joint wires to its
+    # own physical switch instead of sharing the axis's single one.
+    # ``None`` for a joint whose stepper declared no switch of its own
+    # (the common case).
+    endstop: str | None = None
     step_pin: str | None = None
     dir_pin: str | None = None
     enable_pin: str | None = None
@@ -589,6 +598,16 @@ class HardwareJson(BaseModel):
                 errors.append(
                     f"Joint '{joint.id}' references unknown driver "
                     f"'{joint.driver}'."
+                )
+
+        # Every joint.endstop must resolve into endstops[], same rule
+        # as axis.endstop above — a joint's own switch reference (the
+        # gantry-squaring case) is just as real a cross-reference.
+        for joint in self.joints:
+            if joint.endstop is not None and joint.endstop not in endstops_idx:
+                errors.append(
+                    f"Joint '{joint.id}' references unknown endstop "
+                    f"'{joint.endstop}'."
                 )
 
         # ``joint_number`` must be unique across the ``joints`` list —

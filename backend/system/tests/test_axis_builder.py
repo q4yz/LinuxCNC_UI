@@ -153,3 +153,37 @@ max_temp: 250
     by_letter = {axis.letter: axis for axis in axes}
     a_numbers = [j.joint_number for j in by_letter["A"].joints]
     assert a_numbers == [3, 4]
+
+
+def test_home_sequence_is_z_alone_then_x_and_y_together():
+    """Z homes first (phase 0, alone) so the tool clears the work
+    before X/Y move; X and Y then home together (phase 1). A fixed,
+    deliberately simple policy — anything more elaborate is a homing
+    macro's job, not the compiler's."""
+    graph = MachineConfigParser().parse_string(_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    assert by_letter["Z"].joints[0].home_sequence == 0
+    assert by_letter["X"].joints[0].home_sequence == 1
+    assert by_letter["Y"].joints[0].home_sequence == 1
+
+
+def test_gantry_axis_home_sequence_is_negative_on_every_joint():
+    """A dual-motor (gantry) axis must get a NEGATIVE HOME_SEQUENCE on
+    every one of its joints — the sign is what tells LinuxCNC's homing
+    state machine these joints home together and latch independently
+    to square the gantry, not just that they share a phase. A
+    single-joint axis (X, Z here) is never negated."""
+    graph = MachineConfigParser().parse_string(_GANTRY_CONFIG)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    y_joints = by_letter["Y"].joints
+    assert len(y_joints) == 2
+    assert y_joints[0].home_sequence == -1
+    assert y_joints[1].home_sequence == -1
+
+    # Single-joint axes on the same machine stay positive.
+    assert by_letter["X"].joints[0].home_sequence == 1
+    assert by_letter["Z"].joints[0].home_sequence == 0
