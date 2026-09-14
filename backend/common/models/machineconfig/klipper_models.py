@@ -295,6 +295,21 @@ class Estop:
 
 
 @dataclass(slots=True)
+class Probe:
+    """The machine's single touch-probe component (`.agent/component/probe.md`).
+
+    One field: the digital input the probe switch is wired to
+    (``motion.probe-input`` on the HAL side — no ``loadrt``, it's a
+    core LinuxCNC motion pin). Unlike :class:`Estop`, genuinely
+    optional at the whole-section level — a machine with no touch
+    probe simply never declares ``[probe]`` at all, and that is not
+    an error (no UI-driven fallback needs it the way E-stop does).
+    """
+
+    pin: str | None = None
+
+
+@dataclass(slots=True)
 class MCU:
     """One MCU configuration (transport settings + optional identity).
 
@@ -374,6 +389,10 @@ class MachineConfigGraph:
     # that module's docstring for why the boundary sits there and not
     # in the section-by-section parser).
     estop: Estop | None = None
+    # The machine's single touch-probe component. ``None`` both before
+    # parsing AND for a machine that legitimately has no probe at all
+    # — unlike ``estop``, absence is never enforced as an error.
+    probe: Probe | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
     heaters: dict[str, Heater] = field(default_factory=dict)
@@ -451,6 +470,7 @@ __all__ = [
     "MachineConfigGraph",
     "MCU",
     "Printer",
+    "Probe",
     "SpindleAnalog",
     "SpindleDigital",
     "Stepper",

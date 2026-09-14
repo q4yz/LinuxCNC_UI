@@ -1393,3 +1393,70 @@ out_pin: par0:14
     graph = MachineConfigParser().parse_string(config)
     assert graph.estop.fault_pin == "par0:10"
     assert graph.estop.out_pin == "par0:14"
+
+
+def test_probe_section_is_recognised_by_the_schema():
+    assert schema_for_section("probe").kind is SectionKind.PROBE
+
+
+def test_empty_probe_block_is_valid():
+    config = "[probe]\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.probe is not None
+    assert graph.probe.pin is None
+
+
+def test_probe_section_parses_its_pin():
+    config = "[probe]\npin: !15\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.probe.pin == "!15"
+
+
+def test_probe_unknown_keyword_raises():
+    config = "[probe]\nbogus_pin: 15\n"
+    with pytest.raises(UndefinedKeywordError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "probe"
+    assert exc_info.value.key == "bogus_pin"
+
+
+def test_probe_absent_section_leaves_graph_probe_none():
+    """Unlike [estop], a machine with no touch probe simply never
+    declares [probe] at all — that must never be enforced as an
+    error anywhere in the pipeline."""
+    config = "[stepper_x]\nstep_pin: PF13\n"
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.probe is None
+
+
+def test_probe_declared_twice_is_rejected_by_configparser_itself():
+    config = "[probe]\npin: par0:15\n\n[probe]\npin: par0:16\n"
+    with pytest.raises(MalformedConfigError):
+        MachineConfigParser().parse_string(config)
+
+
+def test_probe_orphan_mcu_pin_qualifier_raises_undefined_mcu_error():
+    config = """
+[mcu]
+connection: parallelport
+
+[probe]
+pin: ghost:15
+"""
+    with pytest.raises(UndefinedMcuError) as exc_info:
+        MachineConfigParser().parse_string(config)
+    assert exc_info.value.section == "probe"
+    assert exc_info.value.key == "pin"
+    assert exc_info.value.mcu_name == "ghost"
+
+
+def test_probe_known_mcu_pin_qualifier_accepted():
+    config = """
+[mcu par0]
+connection: parallelport
+
+[probe]
+pin: !par0:15
+"""
+    graph = MachineConfigParser().parse_string(config)
+    assert graph.probe.pin == "!par0:15"

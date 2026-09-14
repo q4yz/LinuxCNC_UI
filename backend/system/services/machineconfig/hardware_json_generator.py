@@ -188,6 +188,16 @@ def _estop_payload(estop) -> dict[str, Any]:
     }
 
 
+def _probe_payload(probe) -> dict[str, Any] | None:
+    """Build the top-level ``probe`` object, or ``None`` when the
+    machine declared no ``[probe]`` section at all — unlike
+    :func:`_estop_payload`, absence is the normal case here, not
+    something ``build_hardware_json`` enforces against."""
+    if probe is None:
+        return None
+    return {"pin": probe.pin}
+
+
 # ---------------------------------------------------------------------- #
 # Tool payload                                                            #
 # ---------------------------------------------------------------------- #
@@ -949,6 +959,7 @@ def build_hardware_json(
         "max_velocity": _fmt_float(getattr(graph.printer, "max_velocity", None)),
         "max_accel": _fmt_float(getattr(graph.printer, "max_accel", None)),
         "estop": _estop_payload(graph.estop),
+        "probe": _probe_payload(graph.probe),
         "axes": axes_records,
         "joints": joint_records,
         "drivers": driver_records,

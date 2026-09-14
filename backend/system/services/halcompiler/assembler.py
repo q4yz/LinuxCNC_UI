@@ -26,6 +26,7 @@ from .components.EstopHalMapper import EstopHalMapper
 from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
 from .components.MotionSystemHalMapper import MotionSystemHalMapper
+from .components.ProbeHalMapper import ProbeHalMapper
 from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
@@ -94,7 +95,7 @@ class HalAssembler:
             + self._heater_fragments()
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
-            + [self._estop_fragment()]
+            + [self._estop_fragment(), self._probe_fragment()]
         )
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
@@ -229,6 +230,13 @@ class HalAssembler:
         return EstopHalMapper.to_fragment(
             estop if isinstance(estop, dict) else {}, self._mcus_by_id
         )
+
+    def _probe_fragment(self) -> HalFragment:
+        """A no-op empty fragment when the machine declared no
+        ``[probe]`` at all — unlike estop, that's the normal case, not
+        something to fall back to a default object for."""
+        probe = self._payload.get("probe")
+        return ProbeHalMapper.to_fragment(probe if isinstance(probe, dict) else None)
 
     def _driver_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         """A `TMC2209` firmware module per joint whose driver has a UART pin.

@@ -25,6 +25,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
 | `estop.md` | `[estop]` | Required exactly once. UI pulse chain unconditional; physical chain optional. |
+| `probe.md` | `[probe]` | Genuinely optional — absent entirely on a machine with no touch probe. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
@@ -199,6 +200,7 @@ hardware-agnostic signals that the router consumes:
 | `spindle-at-speed` | into `spindle.0.at-speed` | spindle |
 | `estop-out` | out of `iocontrol.0.user-enable-out` | estop (`EstopHalMapper`, class A/C only — see `estop.md` § 3) |
 | `estop-fault` | into `estop-latch.0.fault-in` | estop (`EstopHalMapper`, class A/C only) |
+| `probe-in` | into `motion.probe-input` | probe (`ProbeHalMapper`, every class — see `probe.md` § 3) |
 
 `webgui.*` pins are the userspace UI component's surface — the
 authoritative list is generated per machine into the `machine.hal`

@@ -18,8 +18,13 @@ that an operator can hand-finish and deploy:
   exception — the currently-selected "main" machine can't be
   regenerated (and so can't lose this file's wiring) at all, see
   :class:`MainMachineProtectedError`.
-* ``tool.tbl``                — minimal empty tool table so the
-  generated INI's ``[EMCIO] TOOL_TABLE`` reference resolves.
+* ``tool.tbl``                — tools 1-99 pre-registered with zeroed
+  Z/D offsets, so the generated INI's ``[EMCIO] TOOL_TABLE`` reference
+  resolves AND any ``T<n> M6`` a program names is a known tool number —
+  a dynamic hardware tool-length-setter workflow measures and applies
+  the real offset live during the M6 macro (``G10 L1``) rather than
+  expecting anyone to hand-type lengths here (see
+  :data:`.generator.TOOL_TABLE_TEMPLATE`).
 
 The Remora ``config.txt`` flash payload and the pluggable-compiler
 framework that used to live alongside this package have been

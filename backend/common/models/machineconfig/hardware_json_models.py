@@ -313,6 +313,21 @@ class Estop(BaseModel):
     out_pin: str | None = None
 
 
+class Probe(BaseModel):
+    """The machine's single touch-probe component (`.agent/component/probe.md`).
+
+    One field, ``pin`` — the digital input the probe switch is wired
+    to (``motion.probe-input`` on the HAL side). Unlike :class:`Estop`,
+    genuinely optional at the whole-object level: ``HardwareJson.probe``
+    is ``None`` for a machine with no touch probe, and that is not an
+    error — there's no UI-driven fallback the way E-stop has.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pin: str | None = None
+
+
 class McuInfo(BaseModel):
     """A single MCU record exposed in ``hardware.json``.
 
@@ -503,6 +518,12 @@ class HardwareJson(BaseModel):
     # fixture) — every payload ``build_hardware_json`` emits carries
     # one, even if both pins are unset. See :class:`Estop`.
     estop: "Estop | None" = None
+
+    # The machine's single touch-probe component. ``None`` for a
+    # machine with no touch probe at all — unlike ``estop``, this is
+    # the normal case, not something ``build_hardware_json`` enforces
+    # against. See :class:`Probe`.
+    probe: "Probe | None" = None
 
     axes: list[Axis] = Field(default_factory=list)
     joints: list[Stepper] = Field(default_factory=list)
@@ -731,6 +752,7 @@ __all__ = [
     "Fan",
     "HardwareJson",
     "McuInfo",
+    "Probe",
     "Stepper",
     "TemperatureSensor",
     "Tool",

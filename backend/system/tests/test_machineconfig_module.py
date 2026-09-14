@@ -492,6 +492,47 @@ def test_build_hardware_json_emits_the_declared_estop_pins():
 
 
 # ---------------------------------------------------------------------- #
+# [probe] — genuinely optional, unlike [estop] (`.agent/component/probe.md`) #
+# ---------------------------------------------------------------------- #
+
+
+def test_build_hardware_json_omits_probe_entirely_when_not_declared():
+    """Unlike [estop], a machine with no [probe] must not get a
+    fabricated empty object — the key is absent altogether."""
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string(
+        "[stepper_x]\nstep_pin: PF13\n\n[estop]\n"
+    )
+    assert graph.probe is None  # confirms the parser raised nothing
+    payload = build_hardware_json(graph, "no-probe")
+    assert "probe" not in payload
+
+
+def test_build_hardware_json_emits_an_empty_probe_object_when_the_section_is_present_but_bare():
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string(
+        "[stepper_x]\nstep_pin: PF13\n\n[estop]\n\n[probe]\n"
+    )
+    payload = build_hardware_json(graph, "bare-probe")
+    assert payload["probe"] == {}
+
+
+def test_build_hardware_json_emits_the_declared_probe_pin():
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    from machineconfig_parser import MachineConfigParser
+
+    graph = MachineConfigParser().parse_string(
+        "[mcu]\nconnection: parallelport\n\n[estop]\n\n[probe]\npin: !15\n"
+    )
+    payload = build_hardware_json(graph, "test")
+    assert payload["probe"] == {"pin": "!15"}
+
+
+# ---------------------------------------------------------------------- #
 # Structured-error response (issue #99)                                   #
 # ---------------------------------------------------------------------- #
 

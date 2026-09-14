@@ -280,6 +280,27 @@ def test_render_ini_template_is_live_and_loadable():
         assert not line.startswith("# ["), f"section line is commented out: {line!r}"
 
 
+def test_tool_table_template_pre_registers_every_tool_1_to_99():
+    """LinuxCNC's `io` process hard-errors ("Requested tool not
+    found") on a `T<n> M6` naming a tool absent from tool.tbl — but a
+    hardware tool-length-setter workflow measures the real Z offset
+    live during the M6 macro (a `G10 L1` overwriting this row in
+    memory), so there's nothing meaningful to hand-type here. Every
+    tool number 1-99 must resolve regardless of which physical tools
+    are actually loaded; format verified against the real, working
+    reference machine's own table
+    (`machine_config/example/PrintNC-WEBGUI/tool.tbl`:
+    `T<n> P<n> Z<val> D<val> ;<comment>`)."""
+    from services.machinetemplates.generator import TOOL_TABLE_TEMPLATE
+
+    lines = [
+        line for line in TOOL_TABLE_TEMPLATE.splitlines() if line and not line.startswith(";")
+    ]
+    assert len(lines) == 99
+    for n, line in enumerate(lines, start=1):
+        assert line.startswith(f"T{n} P{n} Z0.0 D0.0"), line
+
+
 def test_render_ini_template_multi_joint_axis_repeats_letter():
     """A dual-motor axis (e.g. a gantry Y) emits one [JOINT_N] per
     motor and repeats its letter in the trivkins coordinates string."""
@@ -412,8 +433,14 @@ def test_generate_writes_full_template_set(isolated_roots):
 
     # webgui_connections.hal ships as a starter file.
     assert (configs / "webgui_connections.hal").exists()
-    assert (configs / "tool.tbl").exists()
     assert (configs / "postgui_call_list.hal").exists()
+
+    # tool.tbl pre-registers every tool number a program could name,
+    # zeroed for a dynamic hardware tool-length-setter workflow.
+    tool_tbl = (configs / "tool.tbl").read_text(encoding="utf-8")
+    assert "T1 P1 Z0.0 D0.0" in tool_tbl
+    assert "T99 P99 Z0.0 D0.0" in tool_tbl
+    assert "T100" not in tool_tbl
 
 
 def test_generate_falls_back_to_the_catalog_when_the_machine_does_not_compile(isolated_roots):

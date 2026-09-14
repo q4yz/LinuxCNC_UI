@@ -80,6 +80,7 @@ def _entities(graph) -> dict[str, list[object]]:
     return {
         "printer": [graph.printer] if graph.printer else [],
         "estop": [graph.estop] if graph.estop else [],
+        "probe": [graph.probe] if graph.probe else [],
         "stepper": list(graph.steppers.values()),
         "endstop_switch": list(graph.endstop_switches.values()),
         "heater": list(graph.heaters.values()),

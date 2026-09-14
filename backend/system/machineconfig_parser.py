@@ -18,6 +18,7 @@ from models.machineconfig import (
     MachineConfigGraph,
     MCU,
     Printer,
+    Probe,
     SpindleAnalog,
     SpindleDigital,
     Stepper,
@@ -708,6 +709,8 @@ class MachineConfigParser:
                 )
             elif section_schema.kind is SectionKind.ESTOP:
                 graph.estop = self._parse_estop(section_name, section)
+            elif section_schema.kind is SectionKind.PROBE:
+                graph.probe = self._parse_probe(section_name, section)
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -1108,6 +1111,21 @@ class MachineConfigParser:
             out_pin=self._optional_string(section, "out_pin"),
         )
 
+    def _parse_probe(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> Probe:
+        """Build the machine's single :class:`Probe`.
+
+        One optional pin — an empty ``[probe]`` block (no keys at
+        all) is valid and produces ``Probe(pin=None)``, same leniency
+        as every other component.
+        """
+        return Probe(
+            pin=self._optional_string(section, "pin"),
+        )
+
     def _parse_mcu(
         self,
         section_name: str,
@@ -1272,6 +1290,10 @@ class MachineConfigParser:
                 MachineConfigParser._validate_pin_mcu(
                     "estop", attr, getattr(graph.estop, attr, None), declared
                 )
+        if graph.probe is not None:
+            MachineConfigParser._validate_pin_mcu(
+                "probe", "pin", graph.probe.pin, declared
+            )
 
     def _parse_fan(
         self,

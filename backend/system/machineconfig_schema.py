@@ -57,6 +57,7 @@ class SectionKind(str, Enum):
     HEATER_FAN = "heater_fan"
     DUPLICATE_PIN_OVERRIDE = "duplicate_pin_override"
     ESTOP = "estop"
+    PROBE = "probe"
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +179,12 @@ TMC2209_KEYS = frozenset(
 # are optional: an empty ``[estop]`` block is valid (UI-only trigger,
 # see `.agent/component/estop.md`), physical wiring is opt-in on top.
 ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
+# The probe component — a single digital input, ``motion.probe-input``
+# (`.agent/component/probe.md`). Genuinely optional, unlike ``[estop]``:
+# a machine with no touch probe simply never declares this section at
+# all (no "empty block is still valid" requirement — there's nothing
+# UI-driven to fall back to).
+PROBE_KEYS = frozenset({"pin"})
 # Fan sections accept ``pin``, an optional ``max_power`` (0.0–1.0,
 # the runtime's ``PWM Max`` in the Remora board JSON), and an optional
 # ``shutdown_speed`` (duty on estop/shutdown — Klipper's own field,
@@ -260,6 +267,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.HEATER_FAN: HEATER_FAN_KEYS,
     SectionKind.DUPLICATE_PIN_OVERRIDE: DUPLICATE_PIN_OVERRIDE_KEYS,
     SectionKind.ESTOP: ESTOP_KEYS,
+    SectionKind.PROBE: PROBE_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -336,6 +344,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "estop":
         return SectionSchema(SectionKind.ESTOP, ESTOP_KEYS, "estop")
+
+    if section == "probe":
+        return SectionSchema(SectionKind.PROBE, PROBE_KEYS, "probe")
 
     stepper_match = _STEPPER_SECTION.fullmatch(section)
     if stepper_match:
@@ -437,6 +448,7 @@ __all__ = [
     "MCU_KEYS",
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
+    "PROBE_KEYS",
     "SECTION_SCHEMAS",
     "SPINDLE_ANALOG_KEYS",
     "SPINDLE_KEYS",

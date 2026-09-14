@@ -11,10 +11,33 @@
 // The block is written INTO the file, so the thumbnail renders
 // everywhere — this app's file list, OctoPrint, any slicer-aware
 // tool. Files that already carry a thumbnail are never modified.
+//
+// Every payload line is chunked to `THUMBNAIL_CHUNK_WIDTH` characters
+// and `;`-prefixed, matching PrusaSlicer's own convention — NOT one
+// giant unbroken line. LinuxCNC's interpreter reads the whole file it
+// runs (unlike this app's own upload-time preview, which never
+// touches the saved file at all); a single line carrying several KB
+// of base64 is exactly the kind of block a real G-code interpreter's
+// line-length limit chokes on. Chunking costs nothing here — each
+// chunk line still parses as a single semicolon-comment, identical in
+// effect to one giant line, just safe for every consumer.
 
 import type { ParsedSegment } from "../parsers/gcodeParser";
 
 const DATA_URL_PREFIX = "data:image/png;base64,";
+
+// RFC 2045's own MIME base64 line width — a conventional, widely
+// recognised chunk size (PrusaSlicer uses the same ballpark).
+export const THUMBNAIL_CHUNK_WIDTH = 76;
+
+/** Split a base64 string into `;`-prefixed lines of at most `width` chars. */
+export function chunkBase64(b64: string, width: number): string {
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += width) {
+    lines.push(`; ${b64.slice(i, i + width)}`);
+  }
+  return lines.join("\n");
+}
 
 /** True when the text already carries a `; thumbnail begin` block. */
 export function hasEmbeddedThumbnail(text: string): boolean {
@@ -83,7 +106,8 @@ export function buildThumbnailBlock(
   ctx.stroke();
 
   const b64 = canvas.toDataURL("image/png").slice(DATA_URL_PREFIX.length);
-  return `; thumbnail begin ${width}x${height} ${b64.length}\n${b64}\n; thumbnail end\n`;
+  const chunked = chunkBase64(b64, THUMBNAIL_CHUNK_WIDTH);
+  return `; thumbnail begin ${width}x${height} ${b64.length}\n${chunked}\n; thumbnail end\n`;
 }
 
 /**

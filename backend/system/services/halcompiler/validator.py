@@ -126,6 +126,17 @@ class MachineValidator:
                     out.append((PinStringMapper.from_string(raw), "estop", field, False))
                 except ValueError as exc:
                     self._error("E_MALFORMED_PIN", str(exc), "estop")
+
+        # ``probe`` is the same shape of singleton object as ``estop``,
+        # just one field — folded in for the same reason.
+        probe = self._payload.get("probe")
+        if isinstance(probe, dict):
+            raw = probe.get("pin")
+            if raw:
+                try:
+                    out.append((PinStringMapper.from_string(raw), "probe", "pin", False))
+                except ValueError as exc:
+                    self._error("E_MALFORMED_PIN", str(exc), "probe")
         return out
 
     # -- rules --------------------------------------------------------- #
