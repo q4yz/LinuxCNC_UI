@@ -66,23 +66,60 @@ class _SpindleContext:
             )
 
     def build_speed_command(self) -> None:
-        """Generates speed scaling logic and routes the speed command pin."""
+        """Generates speed scaling logic and routes the winning speed to the drive.
+
+        Every digital spindle gets a `mux2` selector between LinuxCNC's
+        own G-code-commanded speed and the WebGUI's absolute manual
+        override (`absolute_master_override`/`_enable` —
+        `SpindleDigitalService._forward`'s "master override" path) —
+        never a direct `spindle.N.speed-out => <drive>` connection.
+        A HAL pin can only ever belong to one signal: if the drive's
+        speed-command pin were hardwired straight onto the G-code
+        signal here, `webgui_connections.hal`'s override wiring would
+        have to fight it for the same physical pin — a "pin already
+        linked" load failure, not a soft conflict. `SpindleWebguiMapper`
+        only ever ADDS the `webgui.*` pins onto the `mux2.in1`/`mux2.sel`
+        signals this method declares; the selection logic itself lives
+        here, once, centralized — see `.agent/component/digital_spindle.md`.
+        """
         rpm_scale = self.spindle.get("rpm_scale")
         scaled = rpm_scale is not None and rpm_scale != 1.0
 
         if not scaled:
             self.fragment.nets.append(f"net spindle-speed-cmd spindle.{self.n}.speed-out")
-            self.request("speed_pin", "spindle-speed-cmd", PinRole.SPINDLE_OUT)
-            return
+            gcode_signal = "spindle-speed-cmd"
+        else:
+            self.fragment.nets.append(f"net spindle-speed-cmd spindle.{self.n}.speed-out => scale-{self.spindle_id}-cmd.in")
+            self.fragment.loadrt.append(f"loadrt scale names=scale-{self.spindle_id}-cmd")
+            self.fragment.addf.append(Addf(f"scale-{self.spindle_id}-cmd", SERVO_THREAD, order=2))
+            self.fragment.setp.append(f"setp scale-{self.spindle_id}-cmd.gain {rpm_scale}")
 
-        self.fragment.nets.append(f"net spindle-speed-cmd spindle.{self.n}.speed-out => scale-{self.spindle_id}-cmd.in")
-        self.fragment.loadrt.append(f"loadrt scale names=scale-{self.spindle_id}-cmd")
-        self.fragment.addf.append(Addf(f"scale-{self.spindle_id}-cmd", SERVO_THREAD, order=2))
-        self.fragment.setp.append(f"setp scale-{self.spindle_id}-cmd.gain {rpm_scale}")
+            gcode_signal = f"{self.spindle_id}-speed-out"
+            self.fragment.nets.append(f"net {gcode_signal} scale-{self.spindle_id}-cmd.out")
 
-        cmd_signal = f"{self.spindle_id}-speed-out"
-        self.fragment.nets.append(f"net {cmd_signal} scale-{self.spindle_id}-cmd.out")
-        self.request("speed_pin", cmd_signal, PinRole.SPINDLE_OUT)
+        # mux2: in0 = G-code-commanded speed (already reflects the
+        # operator's *relative* spindle-speed override too — that one
+        # is native LinuxCNC behaviour via halui.spindle.N.override.*,
+        # wired by SpindleWebguiMapper, no mux2 needed for it). in1 /
+        # sel are declared here as bare signals with no writer yet —
+        # SpindleWebguiMapper adds the actual webgui.absolute-master-
+        # override(-enable) pins onto them from webgui_connections.hal,
+        # same "component declares the signal, webgui mapper adds the
+        # UI pin later" pattern every other status/control signal in
+        # this file already uses.
+        mux_name = f"mux2-{self.spindle_id}"
+        self.fragment.loadrt.append(f"loadrt mux2 names={mux_name}")
+        self.fragment.addf.append(Addf(mux_name, SERVO_THREAD, order=2))
+        self.fragment.nets.append(f"net {gcode_signal} => {mux_name}.in0")
+
+        web_override_signal = f"{self.spindle_id}-web-target-rpm"
+        web_enable_signal = f"{self.spindle_id}-use-web-rpm"
+        self.fragment.nets.append(f"net {web_override_signal} => {mux_name}.in1")
+        self.fragment.nets.append(f"net {web_enable_signal} => {mux_name}.sel")
+
+        target_signal = f"{self.spindle_id}-target-rpm"
+        self.fragment.nets.append(f"net {target_signal} {mux_name}.out")
+        self.request("speed_pin", target_signal, PinRole.SPINDLE_OUT)
 
     def build_run_reverse(self) -> None:
         self.fragment.nets.append(f"net spindle-forward spindle.{self.n}.forward")
@@ -122,8 +159,14 @@ class _SpindleContext:
                 f"setp {near}.scale {_NEAR_SCALE}",
                 f"setp {near}.difference {min_rpm * _NEAR_DIFFERENCE_FRACTION}",
             ])
+            # Compares against the *winning* commanded speed
+            # (mux2's output — see build_speed_command), not the raw
+            # G-code signal: while the WebGUI's absolute override is
+            # active, the drive is being commanded to that RPM, not
+            # the G-code's, and at-speed must track what's actually
+            # being asked of it.
             self.fragment.nets.extend([
-                f"net spindle-speed-cmd => {near}.in1",
+                f"net {self.spindle_id}-target-rpm => {near}.in1",
                 f"net spindle-speed-fb => {near}.in2",
                 f"net spindle-at-speed {near}.out => spindle.{self.n}.at-speed",
             ])

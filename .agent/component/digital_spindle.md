@@ -6,11 +6,18 @@
 > optional). Pin names verified against the real runtime consumer,
 > `common/mappers/tools/SpindleDigitalMapper.py::from_dict_to_SpindleDigitalPins`
 > (`suffix = tool_id.replace("spindle_digital", "")`, `TargetRpm` capitalised
-> exactly that way). Not yet implemented: the manual override triple
-> (`absolute-master-override-enable`, `absolute-master-override`, `override`)
-> — those are `ReadWriteDynamicHalPin`s needing a `mux2` stage to arbitrate
-> between the G-code-commanded speed and an operator override, which this
-> compiler doesn't build yet.
+> exactly that way). Also implemented: the manual override triple.
+> `override` (the *relative* percentage override) is native LinuxCNC
+> behaviour — it already scales `spindle.N.speed-out` before this component
+> ever sees it, wired via `halui.spindle.N.override.*` in
+> `webgui_connections.hal`. The *absolute* override
+> (`absolute-master-override-enable`, `absolute-master-override` —
+> `ReadWriteDynamicHalPin`s that bypass the G-code speed entirely) is
+> arbitrated by a `mux2-<id>` stage `DigitalSpindleHalMapper` always builds
+> in `machine.hal`, centralized so only one component ever drives the
+> drive's speed-command pin; `SpindleWebguiMapper` only ADDS the two
+> `webgui.*` pins onto the `mux2.in1`/`mux2.sel` signals already declared
+> there — see § 3 below.
 
 ## 1. INGESTION (Hand-Written CFG)
 
@@ -142,7 +149,25 @@ addf scale-<id>-cmd servo-thread
 setp scale-<id>-cmd.gain <parameters.rpm_scale>
 
 net spindle-speed-cmd spindle.<spindle_number>.speed-out => scale-<id>-cmd.in
-net <id>-speed-out    scale-<id>-cmd.out          # -> speed_pin
+net <id>-speed-out    scale-<id>-cmd.out          # -> mux2-<id>.in0
+
+# Absolute-override arbitration: mux2 picks between the G-code-commanded
+# speed (in0, already reflects the *relative* override too — that's
+# native LinuxCNC behaviour via halui.spindle.N.override.*, no mux2
+# needed for it) and the WebGUI's absolute manual target (in1), gated by
+# a WebGUI enable toggle (sel). Built for every digital spindle, scaled
+# or not — a HAL pin can only belong to one signal, so the drive's speed
+# pin is always driven from mux2's output, never straight off
+# spindle-speed-cmd, or webgui_connections.hal's override wiring would
+# fight this net for the same physical pin ("pin already linked").
+# in1/sel are declared here as bare reader signals with no writer yet;
+# SpindleWebguiMapper adds the actual webgui.absolute-master-override(-enable)
+# pins onto them from webgui_connections.hal.
+loadrt mux2 names=mux2-<id>
+addf mux2-<id> servo-thread
+net <id>-web-target-rpm => mux2-<id>.in1        # <- webgui.absolute-master-override
+net <id>-use-web-rpm    => mux2-<id>.sel        # <- webgui.absolute-master-override-enable
+net <id>-target-rpm mux2-<id>.out               # -> speed_pin
 
 # Run / direction.
 net spindle-forward spindle.<spindle_number>.forward   # -> run_pin
@@ -164,8 +189,11 @@ loadrt near names=near-<id>-at-speed
 addf near-<id>-at-speed servo-thread
 setp near-<id>-at-speed.scale 1.02
 setp near-<id>-at-speed.difference <min_rpm * 0.05>
-net spindle-speed-cmd => near-<id>-at-speed.in1
-net spindle-speed-fb  => near-<id>-at-speed.in2
+# Compares against mux2's output (the winning commanded speed), not the
+# raw G-code signal: while the absolute override is active, the drive
+# is being commanded to that RPM, not the G-code's.
+net <id>-target-rpm  => near-<id>-at-speed.in1
+net spindle-speed-fb => near-<id>-at-speed.in2
 net spindle-at-speed  near-<id>-at-speed.out => spindle.<spindle_number>.at-speed
 
 # --- ELSE (no feedback at all) ------------------------------------
@@ -187,7 +215,10 @@ webgui_connections.hal
 ```hal
 # UI Bindings for <id> — transport-independent. The exact pin list for
 # this machine is in the generated catalog at the top of machine.hal.
-net spindle-speed-cmd => webgui.TargetRpm
+# TargetRpm reads mux2's winning speed (machine.hal), not the raw
+# G-code signal, so the display tracks what the drive is actually
+# being asked for even while the absolute override is active.
+net <id>-target-rpm => webgui.TargetRpm
 net spindle-forward   => webgui.spindle-forward
 net spindle-reverse   => webgui.spindle-reverse
 
@@ -197,10 +228,16 @@ net spindle-at-speed => webgui.spindle-at-speed
 # --- ELSE: echo the command so the UI shows something coherent ---
 net spindle-speed-cmd => webgui.rpm-out
 
-# Operator override.
+# Operator override (relative %, native LinuxCNC behaviour — no mux2).
 setp halui.spindle.0.override.direct-value true
 setp halui.spindle.0.override.scale 0.01
 net spindle-override webgui.override => halui.spindle.0.override.counts
+
+# Operator override (absolute — bypasses G-code speed via mux2-<id>,
+# declared in machine.hal). This is the only place these two pins are
+# ever wired as writers.
+net <id>-web-target-rpm webgui.absolute-master-override      => mux2-<id>.in1
+net <id>-use-web-rpm    webgui.absolute-master-override-enable => mux2-<id>.sel
 
 # Drive health — each signal above only exists when the operator
 # declared the matching pin, so each line here is independently
@@ -232,12 +269,14 @@ The exports this component leaves for the MCU router:
 |---|---|---|
 | `spindle-forward` | out | `run_pin` |
 | `spindle-reverse` | out | `reverse_pin` (if present) |
-| `<id>-speed-out` | out | `speed_pin` |
+| `<id>-target-rpm` | out | mux2-<id>'s output — routed to `speed_pin` (not the raw G-code signal) |
 | `<id>-speed-fb-raw` | in | `speed_fb_pin` (if present) |
 | `spindle-at-speed` | in | `at_speed_pin` (if present) |
 | `<id>-fault` | in | `fault_pin` (if present) |
 | `<id>-is-connected` | in | `is_connected_pin` (if present) |
 | `<id>-error-count` | in | `error_count_pin` (if present) |
+| `<id>-web-target-rpm` | in (webgui writes) | `webgui.absolute-master-override` -> mux2-<id>.in1 |
+| `<id>-use-web-rpm` | in (webgui writes) | `webgui.absolute-master-override-enable` -> mux2-<id>.sel |
 
 Validation:
 

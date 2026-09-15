@@ -30,7 +30,7 @@ def test_binds_a_spindle_and_a_heater_together():
     }
     text = render_webgui_connections(payload)
     assert "# Spindle: spindle_digital" in text
-    assert "net spindle-speed-cmd => webgui.TargetRpm" in text
+    assert "net spindle_digital-target-rpm => webgui.TargetRpm" in text
     assert "# Heater: heater_bed" in text
     assert "net heater_bed-SP <= webgui.target-temperature_bed" in text
     assert "net bed-PV => webgui.bed" in text

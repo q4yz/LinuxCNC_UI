@@ -66,8 +66,8 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "spindle_at_speed": "drive from vfdmod.spindle-at-speed",
         "spindle_forward": "drive from the forward run latch (halui.spindle.0.on / vfdmod)",
         "spindle_reverse": "drive from the reverse run latch (halui.spindle.0.on / vfdmod)",
-        "absolute_master_override_enable": "sink into halui.spindle.override.enable",
-        "absolute_master_override": "scale, then sink into halui.spindle.override.value",
+        "absolute_master_override_enable": "sink into mux2-<id>.sel (selects the override over the G-code speed)",
+        "absolute_master_override": "sink into mux2-<id>.in1 (bypasses the G-code speed entirely when selected)",
         "override": "scale (x100), then sink into halui.spindle.override.scale",
     },
     "SpindleAnalogPins": {

@@ -13,17 +13,21 @@ bare `webgui.spindle-at-speed` colliding with the first. Get a name
 wrong here and the net binds to a pin nothing reads.
 
 Every signal name on the machine.hal side (`spindle-at-speed`,
-`spindle-speed-cmd`, ...) is exactly what `DigitalSpindleHalMapper`
+`spindle-speed-cmd`, `<id>-target-rpm`, `<id>-web-target-rpm`,
+`<id>-use-web-rpm`, ...) is exactly what `DigitalSpindleHalMapper`
 already emits — this only adds one more reader/writer onto an
 already-existing signal, in the separate file the operator hand-edits
 (so it must never assume a signal exists that mapper didn't actually
 create, hence the same presence checks on the raw spindle dict).
 
-**Scope for this pass:** read-only status display only (at-speed,
-commanded/actual RPM, forward/reverse, health) AND the percentage
-RPM override via halui. The absolute manual RPM override
-(`webgui.absolute-master-override(-enable)`) needs a `mux2` stage
-this compiler doesn't build yet — see `.agent/HANDOFF.md`.
+**Scope for this pass:** read-only status display (at-speed,
+commanded/actual RPM, forward/reverse, health), the percentage RPM
+override via halui, AND the absolute manual RPM override
+(`webgui.absolute-master-override(-enable)`). The latter only ever
+ADDS the two `webgui.*` pins onto the `mux2.in1`/`mux2.sel` signals
+`DigitalSpindleHalMapper.build_speed_command` already declared — the
+`mux2` selector itself lives in `machine.hal`, centralized, not here;
+see `.agent/component/digital_spindle.md`.
 """
 
 from __future__ import annotations
@@ -59,9 +63,12 @@ class SpindleWebguiMapper:
             f"# ----------------------------------------------------------"
         ]
 
-        # Commanded speed — always exists (DigitalSpindleHalMapper
-        # always emits `spindle-speed-cmd`), read-only display.
-        lines.append(f"net spindle-speed-cmd => webgui.TargetRpm{suffix}")
+        # Commanded speed — the WINNING speed (mux2's output, always
+        # emitted by DigitalSpindleHalMapper), not the raw G-code
+        # signal: while the absolute override is active this is what
+        # the drive is actually being asked for, and the display
+        # should track that, not a value the drive is ignoring.
+        lines.append(f"net {spindle_id}-target-rpm => webgui.TargetRpm{suffix}")
 
         if spindle.get("speed_fb_pin"):
             lines.append(f"net spindle-speed-fb => webgui.rpm-out{suffix}")
@@ -79,15 +86,33 @@ class SpindleWebguiMapper:
             lines.append(f"net {signal} => webgui.{pin}{suffix}")
 
         # --- Web GUI Override (Percentage) ---
+        # Native LinuxCNC behaviour: `halui.spindle.N.override.*`
+        # scales the G-code-commanded speed itself, so this already
+        # reaches the drive through `spindle.N.speed-out` with no
+        # mux2 involved — that selector only arbitrates the *absolute*
+        # override below, which bypasses the G-code speed entirely.
         lines.extend([
             "",
-            f"# --- Web GUI Override ---",
+            f"# --- Web GUI Override (Percentage) ---",
             f"# 1. Enable direct value mode",
             f"setp halui.spindle.{n}.override.direct-value true",
             f"# 2. Set the scale so each count equals 1% (0.01)",
             f"setp halui.spindle.{n}.override.scale 0.01",
             f"# 3. Connect the web signal to the counts pin",
             f"net spindle-override-{spindle_id} webgui.override{suffix} => halui.spindle.{n}.override.counts",
+            ""
+        ])
+
+        # --- Web GUI Override (Absolute) ---
+        # `<id>-web-target-rpm`/`<id>-use-web-rpm` are declared as
+        # bare signals in machine.hal (mux2.in1/mux2.sel are already
+        # readers) — these two lines are the only place their actual
+        # writer pins get added, same "component declares, webgui
+        # mapper connects the UI" split as every other signal here.
+        lines.extend([
+            f"# --- Web GUI Override (Absolute) ---",
+            f"net {spindle_id}-web-target-rpm webgui.absolute-master-override{suffix} => mux2-{spindle_id}.in1",
+            f"net {spindle_id}-use-web-rpm webgui.absolute-master-override-enable{suffix} => mux2-{spindle_id}.sel",
             ""
         ])
 

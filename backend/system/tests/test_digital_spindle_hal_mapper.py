@@ -39,7 +39,7 @@ def test_unscaled_speed_command_binds_directly_no_scale_block():
     assert not any("scale-spindle_digital-cmd" in line for line in fragment.loadrt)
 
     request = next(r for r in fragment.requests if r.role is PinRole.SPINDLE_OUT and r.pin.pin_id == "rpm-in")
-    assert request.signal == "spindle-speed-cmd"
+    assert request.signal == "spindle_digital-target-rpm"
 
 
 def test_scaled_speed_command_gets_its_own_scale_block_and_signal():
@@ -52,7 +52,23 @@ def test_scaled_speed_command_gets_its_own_scale_block_and_signal():
     assert "net spindle_digital-speed-out scale-spindle_digital-cmd.out" in fragment.nets
 
     request = next(r for r in fragment.requests if r.pin.pin_id == "rpm-in")
-    assert request.signal == "spindle_digital-speed-out"
+    assert request.signal == "spindle_digital-target-rpm"
+
+
+def test_speed_command_always_gets_a_mux2_selector_between_gcode_and_web_override():
+    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    assert "loadrt mux2 names=mux2-spindle_digital" in fragment.loadrt
+    assert any(a.func == "mux2-spindle_digital" for a in fragment.addf)
+    assert "net spindle-speed-cmd => mux2-spindle_digital.in0" in fragment.nets
+    assert "net spindle_digital-web-target-rpm => mux2-spindle_digital.in1" in fragment.nets
+    assert "net spindle_digital-use-web-rpm => mux2-spindle_digital.sel" in fragment.nets
+    assert "net spindle_digital-target-rpm mux2-spindle_digital.out" in fragment.nets
+
+
+def test_scaled_speed_command_feeds_the_scaled_signal_into_mux2_in0():
+    spindle = dict(FULL_SPINDLE, rpm_scale=2.5)
+    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    assert "net spindle_digital-speed-out => mux2-spindle_digital.in0" in fragment.nets
 
 
 def test_run_pin_always_requested_reverse_pin_only_when_declared():
@@ -82,7 +98,7 @@ def test_speed_fb_only_derives_at_speed_with_a_near_component():
     assert "loadrt near names=near-spindle_digital-at-speed" in fragment.loadrt
     assert "setp near-spindle_digital-at-speed.scale 1.02" in fragment.setp
     assert "setp near-spindle_digital-at-speed.difference 250.0" in fragment.setp
-    assert "net spindle-speed-cmd => near-spindle_digital-at-speed.in1" in fragment.nets
+    assert "net spindle_digital-target-rpm => near-spindle_digital-at-speed.in1" in fragment.nets
     assert "net spindle-speed-fb => near-spindle_digital-at-speed.in2" in fragment.nets
     assert "net spindle-at-speed near-spindle_digital-at-speed.out => spindle.0.at-speed" in fragment.nets
 
@@ -117,6 +133,13 @@ def test_spindle_number_selects_the_linuxcnc_spindle_index():
     fragment = DigitalSpindleHalMapper.to_fragment(spindle)
     assert "net spindle-forward spindle.1.forward" in fragment.nets
     assert "net spindle-speed-cmd spindle.1.speed-out" in fragment.nets
+
+
+def test_mux2_instance_is_named_per_spindle_to_avoid_multi_spindle_collisions():
+    spindle = dict(FULL_SPINDLE, id="spindle_digital_test", spindle_number=1)
+    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    assert "loadrt mux2 names=mux2-spindle_digital_test" in fragment.loadrt
+    assert "net spindle_digital_test-target-rpm mux2-spindle_digital_test.out" in fragment.nets
 
 
 def test_missing_spindle_number_defaults_to_zero():

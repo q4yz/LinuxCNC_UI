@@ -25,7 +25,21 @@ FULL_SPINDLE = {
 
 def test_commanded_speed_is_always_bound():
     lines = SpindleWebguiMapper.to_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
-    assert "net spindle-speed-cmd => webgui.TargetRpm" in lines
+    assert "net spindle_digital-target-rpm => webgui.TargetRpm" in lines
+
+
+def test_absolute_override_pins_are_always_wired_onto_the_mux2_signals():
+    lines = SpindleWebguiMapper.to_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
+    assert "net spindle_digital-web-target-rpm webgui.absolute-master-override => mux2-spindle_digital.in1" in lines
+    assert "net spindle_digital-use-web-rpm webgui.absolute-master-override-enable => mux2-spindle_digital.sel" in lines
+
+
+def test_absolute_override_pins_get_a_suffixed_pin_for_a_second_spindle():
+    lines = SpindleWebguiMapper.to_lines(
+        {"id": "spindle_digital_test", "run_pin": "vfd0:run-forward"}
+    )
+    assert "net spindle_digital_test-web-target-rpm webgui.absolute-master-override_test => mux2-spindle_digital_test.in1" in lines
+    assert "net spindle_digital_test-use-web-rpm webgui.absolute-master-override-enable_test => mux2-spindle_digital_test.sel" in lines
 
 
 def test_full_spindle_binds_every_readout():
@@ -42,7 +56,7 @@ def test_full_spindle_binds_every_readout():
 
 def test_second_spindle_gets_a_suffixed_pin_never_colliding_with_the_first():
     lines = SpindleWebguiMapper.to_lines(dict(FULL_SPINDLE, id="spindle_digital_test"))
-    assert "net spindle-speed-cmd => webgui.TargetRpm_test" in lines
+    assert "net spindle_digital_test-target-rpm => webgui.TargetRpm_test" in lines
     assert "net spindle-at-speed => webgui.spindle-at-speed_test" in lines
     assert "net spindle_digital_test-is-connected => webgui.is-connected_test" in lines
     # No bare (unsuffixed) pin name leaked through.

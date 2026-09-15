@@ -767,7 +767,7 @@ def test_generate_seeds_webgui_connections_with_real_spindle_and_heater_bindings
         encoding="utf-8"
     )
     assert "# Spindle: spindle_digital" in text
-    assert "net spindle-speed-cmd => webgui.TargetRpm" in text
+    assert "net spindle_digital-target-rpm => webgui.TargetRpm" in text
     assert "net spindle_digital-is-connected => webgui.is-connected" in text
     assert "# Heater: heater_bed" in text
     assert "net heater_bed-SP <= webgui.target-temperature_bed" in text
