@@ -20,7 +20,7 @@ import time
 from typing import Optional
 
 
-from hardware.Connection import execute_sync_cmd, linuxcnc, get_stat_channel
+from hardware.Connection import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel
 from pydantic import BaseModel, Field
 
 from dtos.tools.SpindleDigitalDto import (
@@ -148,48 +148,34 @@ class ProgramService:
         execute_sync_cmd("abort")
 
     def pause_program(self) -> None:
+        # 1. Trigger the pause
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_PAUSE", 1))
-        self._stop_spindles_on_pause()
 
-    def _stop_spindles_on_pause(self) -> None:
-        """Kill every configured digital spindle the instant a running
-        program pauses.
+        # 2. Wait for motion to stop
+        stat = get_stat_channel()
+        if stat:
+            stat.poll()
+            while stat.motion_type != 0:
+                time.sleep(0.1)
+                stat.poll()
 
-        LinuxCNC itself never does this on its own — ``AUTO_PAUSE``
-        only halts motion; the spindle keeps turning, which is the
-        right default for plenty of jobs (spindle-synchronized motion,
-        a quick look mid-cut) but leaves a live tool spinning in the
-        air unattended, which this operator wants closed instead.
-        Reuses the exact same M5-via-MDI path every other spindle
-        stop in this app already goes through
-        (``SpindleDigitalService.set_spindle``) rather than poking HAL
-        pins directly. Best-effort: motion has already stopped by the
-        time this runs, so a failure here must never fail the pause
-        itself — only logged.
-        """
-        spindle_ids = [
-            pins.id
-            for pins in get_tools_service().get_halpins()
-            if isinstance(pins, SpindleDigitalPins)
-        ]
-        if not spindle_ids:
-            return
-
-        spindle_service = get_spindle_digital_service()
-        for tool_id in spindle_ids:
+        # 3. Safe Retract
+        cmd = get_cmd_channel()
+        if cmd:
             try:
-                spindle_service.set_spindle(
-                    SpindleDigitalSettingsDTO(
-                        id=tool_id,
-                        speed=0,
-                        master_override=0,
-                        state=DirectionStateType.STOP,
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 - pause must not fail on this
-                logger.error("Failed to stop spindle %r on pause: %s", tool_id, exc)
+                cmd.jog(getattr(linuxcnc, "JOG_INCREMENT", 3), True, 2, 600.0, 15.0)
+                time.sleep(1.5)
+            except Exception as exc:
+                logger.error("Failed to jog Z-axis on pause: %s", exc)
+
+        # 4. Delegate spindle shutdown to the Spindle service
+        get_spindle_digital_service().stop_all_for_pause()
 
     def resume_program(self) -> None:
+        # 1. Delegate spindle spin-up to the Spindle service
+        get_spindle_digital_service().resume_all_from_pause()
+
+        # 2. Resume motion (LinuxCNC handles the Z plunge automatically)
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 
     def progress_program(self, stat=None) -> ProgramProgressResponse:
