@@ -151,31 +151,59 @@ class ProgramService:
         # 1. Trigger the pause
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_PAUSE", 1))
 
-        # 2. Wait for motion to stop
         stat = get_stat_channel()
         if stat:
             stat.poll()
-            while stat.motion_type != 0:
+
+            # 2. WAIT FOR INTERPRETER: The motors stop before the interpreter
+            # transitions to INTERP_PAUSED (3). We must wait for both.
+            INTERP_PAUSED = getattr(linuxcnc, "INTERP_PAUSED", 3)
+            while stat.motion_type != 0 or stat.interp_state != INTERP_PAUSED:
                 time.sleep(0.1)
                 stat.poll()
 
-        # 3. Safe Retract
+            # 3. MODE SWITCH: We must enter MANUAL mode to legally jog the Z-axis.
+            MODE_MANUAL = getattr(linuxcnc, "MODE_MANUAL", 1)
+            execute_sync_cmd("mode", 0, MODE_MANUAL)
+
+            while stat.task_mode != MODE_MANUAL:
+                time.sleep(0.1)
+                stat.poll()
+
+        # 4. Safe Retract (Now fully legal)
         cmd = get_cmd_channel()
         if cmd:
             try:
+                # JOG_INCREMENT (3), teleop (True), axis (2 for Z), speed, distance
                 cmd.jog(getattr(linuxcnc, "JOG_INCREMENT", 3), True, 2, 600.0, 15.0)
                 time.sleep(1.5)
             except Exception as exc:
                 logger.error("Failed to jog Z-axis on pause: %s", exc)
 
-        # 4. Delegate spindle shutdown to the Spindle service
+        # 5. Delegate spindle shutdown to the Spindle service
+        # (The spindle state is still preserved in the stat channel, so the
+        # SpindleDigitalService's internal snapshot will capture it perfectly).
         get_spindle_digital_service().stop_all_for_pause()
 
     def resume_program(self) -> None:
         # 1. Delegate spindle spin-up to the Spindle service
+        # (It is perfectly legal to command the spindle while in MANUAL mode)
         get_spindle_digital_service().resume_all_from_pause()
 
-        # 2. Resume motion (LinuxCNC handles the Z plunge automatically)
+        stat = get_stat_channel()
+        if stat:
+            stat.poll()
+
+            # 2. MODE SWITCH: We must return to AUTO mode before we can resume.
+            MODE_AUTO = getattr(linuxcnc, "MODE_AUTO", 2)
+            if stat.task_mode != MODE_AUTO:
+                execute_sync_cmd("mode", 0, MODE_AUTO)
+
+                while stat.task_mode != MODE_AUTO:
+                    time.sleep(0.1)
+                    stat.poll()
+
+        # 3. Resume motion (LinuxCNC handles the Z plunge automatically)
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 
     def progress_program(self, stat=None) -> ProgramProgressResponse:
