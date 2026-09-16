@@ -263,7 +263,44 @@ async function resumePrint() {
 
   consoleStore.debug("[ActivePrintWidget] Requesting resume...");
   const result = await progressFacade.resumeProgram();
-  if (result.failed) reportCommandFailure("resume program", result);
+  if (result.failed) {
+    reportCommandFailure("resume program", result);
+  } else {
+    // resumeProgram() always reverses Pause & Inspect on the backend
+    // (a safe no-op if it was never engaged) — mirror that here so a
+    // stale "Inspecting" badge never survives a resume.
+    isInspecting.value = false;
+  }
+}
+
+// --- Pause & Inspect -------------------------------------------------
+//
+// Only ever valid on top of an already-paused program — LinuxCNC's
+// eoffset lift only applies cleanly while paused (see
+// `.agent/component/pause_inspect.md`). The backend has no status
+// feed for "is inspect currently engaged" (just write-only HAL
+// pins), so `isInspecting` is purely local UI state: set on a
+// successful `pauseInspect` call, cleared on resume or on leaving
+// Paused by any other path (stop/estop/etc).
+const isInspecting = ref<boolean>(false);
+
+watch(isPaused, (paused) => {
+  if (!paused) isInspecting.value = false;
+});
+
+async function pauseInspectAction() {
+  if (systemState.value !== SystemState.PAUSED) {
+    consoleStore.error("[ActivePrintWidget] Ignored pause & inspect request: Machine is not paused.");
+    return;
+  }
+
+  consoleStore.debug("[ActivePrintWidget] Requesting pause & inspect...");
+  const result = await progressFacade.pauseInspect();
+  if (result.failed) {
+    reportCommandFailure("pause & inspect", result);
+  } else {
+    isInspecting.value = true;
+  }
 }
 
 async function stopPrint() {
@@ -424,6 +461,30 @@ async function stopPrint() {
         >
           Stop / Cancel
         </BaseButton>
+      </div>
+
+      <!-- Pause & Inspect — only offered once a Pause is already
+           active (see pauseInspectAction's guard); Resume above
+           reverses it regardless of whether it was engaged. -->
+      <div v-if="isPaused" class="flex items-center gap-2" data-testid="pause-inspect-row">
+        <BaseButton
+            v-if="!isInspecting"
+            class="flex-1"
+            variant="secondary"
+            title="Lift the tool clear of the work and inhibit the spindle"
+            data-testid="pause-inspect-button"
+            @click="pauseInspectAction"
+        >
+          Inspect
+        </BaseButton>
+        <div
+            v-else
+            class="flex-1 rounded border border-yellow-700 bg-yellow-900/30 px-2 py-1.5 text-center text-xs text-yellow-300"
+            role="status"
+            data-testid="pause-inspect-active"
+        >
+          Inspecting — tool lifted, spindle inhibited
+        </div>
       </div>
 
       <span v-if="!isRunning && !isPaused" class="text-xs text-gray-500 italic">

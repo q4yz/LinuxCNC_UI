@@ -15,22 +15,18 @@ program-lifecycle surface; the base-thread snapshot router
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
 
-
+from dtos.PauseInspect import PauseInspectPin
+from dtos.pins.HalPin import HalDataType
+from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from hardware.Connection import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel
 from pydantic import BaseModel, Field
 
-from dtos.tools.SpindleDigitalDto import (
-    DirectionStateType,
-    SpindleDigitalPins,
-    SpindleDigitalSettingsDTO,
-)
 from services.line_count_cache import lookup as lookup_line_count
-from services.SpindleDigitalService import get_spindle_digital_service
-from services.ToolsService import get_tools_service
 
 logger = logging.getLogger("backend.services.ProgramService")
 
@@ -105,6 +101,33 @@ class ProgramService:
 
     LOAD_TIMEOUT_S = 5.0
 
+    def __init__(self) -> None:
+        self._PauseInspect: Optional[PauseInspectPin] = None
+
+    def preload_hal_pins(self) -> None:
+        self._PauseInspect = PauseInspectPin(
+            "pause_inspect",
+            # A bare on/off toggle — the actual lift distance is
+            # configured once via `axis.z.eoffset-scale` in
+            # `webgui_connections.hal` (1 count = `eoffset-scale` mm),
+            # not sent from Python, so this pin only ever carries 0/1.
+            ReadWriteDynamicHalPin(
+                "inspect-z-lift", HalDataType.BIT,
+                "Pause & Inspect: engages the Z-axis eoffset lift",
+            ),
+            ReadWriteDynamicHalPin(
+                "inspect-spindle-inhibit", HalDataType.BIT,
+                "Pause & Inspect: inhibits the spindle while active",
+            ),
+        )
+
+    def _pause_inspect_pins(self) -> PauseInspectPin:
+        """Lazily initializes the pin container (mirrors StateService.get_halpins)."""
+        if self._PauseInspect is None:
+            logger.warning("Pause & Inspect pins used before preload! Forcing late initialization.")
+            self.preload_hal_pins()
+        return self._PauseInspect
+
     def _is_program_loaded(self) -> bool:
         """Helper to safely check if the interpreter has a file loaded."""
         stat = get_stat_channel()
@@ -148,62 +171,41 @@ class ProgramService:
         execute_sync_cmd("abort")
 
     def pause_program(self) -> None:
-        # 1. Trigger the pause
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_PAUSE", 1))
 
-        stat = get_stat_channel()
-        if stat:
-            stat.poll()
+    def pause_inspect(self) -> None:
+        """Lift the tool clear of the work and inhibit the spindle.
 
-            # 2. WAIT FOR INTERPRETER: The motors stop before the interpreter
-            # transitions to INTERP_PAUSED (3). We must wait for both.
-            INTERP_PAUSED = getattr(linuxcnc, "INTERP_PAUSED", 3)
-            while stat.motion_type != 0 or stat.interp_state != INTERP_PAUSED:
-                time.sleep(0.1)
-                stat.poll()
+        Separate from :meth:`pause_program` — a plain Pause only halts
+        motion (LinuxCNC's own ``AUTO_PAUSE``), the operator opts into
+        this on top of that when they actually want to look at the
+        cut. Drives ``webgui.inspect-z-lift``/``webgui.inspect-
+        spindle-inhibit`` straight into ``axis.z.eoffset-counts`` /
+        ``motion.spindle-inhibit`` (see ``PauseInspectWebguiMapper``) —
+        the trajectory planner stays in sync with the interpreter the
+        whole time, unlike an M5-via-MDI spindle stop.
+        """
+        pins = self._pause_inspect_pins()
+        pins.inspect_z_lift.set_value(True)
+        pins.inspect_spindle_inhibit.set_value(True)
 
-            # 3. MODE SWITCH: We must enter MANUAL mode to legally jog the Z-axis.
-            MODE_MANUAL = getattr(linuxcnc, "MODE_MANUAL", 1)
-            execute_sync_cmd("mode", 0, MODE_MANUAL)
+    async def resume_program(self) -> None:
+        """Reverse :meth:`pause_inspect`, then resume the program.
 
-            while stat.task_mode != MODE_MANUAL:
-                time.sleep(0.1)
-                stat.poll()
+        Spindle inhibit is released first and given 2.5s to spin back
+        up to speed before the Z lift is cleared, so the tool never
+        re-enters the cut before the spindle is back at speed; the Z
+        lift then gets 0.5s to retract before ``AUTO_RESUME`` restarts
+        motion. A no-op (aside from ``AUTO_RESUME`` itself) if
+        :meth:`pause_inspect` was never engaged, since both pins are
+        already False.
+        """
+        pins = self._pause_inspect_pins()
+        pins.inspect_spindle_inhibit.set_value(False)
+        await asyncio.sleep(2.5)
+        pins.inspect_z_lift.set_value(False)
+        await asyncio.sleep(0.5)
 
-        # 4. Safe Retract (Now fully legal)
-        cmd = get_cmd_channel()
-        if cmd:
-            try:
-                # JOG_INCREMENT (3), teleop (True), axis (2 for Z), speed, distance
-                cmd.jog(getattr(linuxcnc, "JOG_INCREMENT", 3), True, 2, 600.0, 15.0)
-                time.sleep(1.5)
-            except Exception as exc:
-                logger.error("Failed to jog Z-axis on pause: %s", exc)
-
-        # 5. Delegate spindle shutdown to the Spindle service
-        # (The spindle state is still preserved in the stat channel, so the
-        # SpindleDigitalService's internal snapshot will capture it perfectly).
-        get_spindle_digital_service().stop_all_for_pause()
-
-    def resume_program(self) -> None:
-        # 1. Delegate spindle spin-up to the Spindle service
-        # (It is perfectly legal to command the spindle while in MANUAL mode)
-        get_spindle_digital_service().resume_all_from_pause()
-
-        stat = get_stat_channel()
-        if stat:
-            stat.poll()
-
-            # 2. MODE SWITCH: We must return to AUTO mode before we can resume.
-            MODE_AUTO = getattr(linuxcnc, "MODE_AUTO", 2)
-            if stat.task_mode != MODE_AUTO:
-                execute_sync_cmd("mode", 0, MODE_AUTO)
-
-                while stat.task_mode != MODE_AUTO:
-                    time.sleep(0.1)
-                    stat.poll()
-
-        # 3. Resume motion (LinuxCNC handles the Z plunge automatically)
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 
     def progress_program(self, stat=None) -> ProgramProgressResponse:

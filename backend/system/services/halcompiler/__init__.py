@@ -21,6 +21,7 @@ from .assembler import HalAssembler, UnsupportedMcuError, assemble_machine
 from .components.EstopWebguiMapper import EstopWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
+from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
 from .renderer import render_hal
 from .validator import MachineValidator, validate_machine
@@ -40,16 +41,16 @@ def compile_machine_hal(payload: dict[str, object]) -> str:
 
 
 def render_webgui_connections(payload: dict[str, object]) -> str:
-    """Estop/spindle/heater/fan UI bindings — `net` lines for a fresh
-    ``webgui_connections.hal``, not ``machine.hal``.
+    """Estop/Pause-&-Inspect/spindle/heater/fan UI bindings — `net`
+    lines for a fresh ``webgui_connections.hal``, not ``machine.hal``.
 
     Used only to *seed* a machine's ``webgui_connections.hal`` the
     first time it's generated — ``generate_machine_templates``
     preserves hand edits on every regenerate after that, so this
     never overwrites an operator's own wiring (see
     ``SpindleWebguiMapper``/``HeaterWebguiMapper``/``EstopWebguiMapper``/
-    ``FanWebguiMapper`` for why the pin names have to match the
-    runtime's own convention exactly).
+    ``PauseInspectWebguiMapper``/``FanWebguiMapper`` for why the pin
+    names have to match the runtime's own convention exactly).
 
     Deliberately independent of :func:`compile_machine_hal` /
     :func:`validate_machine` — a spindle or heater with a real pin
@@ -85,6 +86,12 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
     lines: list[str] = []
     if isinstance(payload.get("estop"), dict):
         lines.extend(EstopWebguiMapper.to_lines())
+        # Pause & Inspect is machine-level (every machine has a Z axis
+        # — `[machine]` compilation only accepts `kinematics:
+        # cartesian`), not tied to any tool entry, so it rides the same
+        # "is this a real machine payload" gate as Estop rather than a
+        # `tools[]`/`fans[]` presence check.
+        lines.extend(PauseInspectWebguiMapper.to_lines())
     for tool in payload.get("tools", []) or []:
         if not isinstance(tool, dict):
             continue

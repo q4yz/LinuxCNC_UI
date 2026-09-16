@@ -140,12 +140,36 @@ def pause_program():
 
 
 @router.post(
+    "/pause_inspect",
+    response_model=StatusResponse,
+    operation_id="pauseInspect",
+)
+def pause_inspect():
+    """Lift the tool clear of the work and inhibit the spindle.
+
+    A separate, explicit action on top of a plain ``/pause`` — see
+    ``ProgramService.pause_inspect``.
+    """
+    get_program_lifecycle_service().pause_inspect()
+    return StatusResponse(status="success")
+
+
+@router.post(
     "/resume",
     response_model=StatusResponse,
     operation_id="resumeProgram",
 )
-def resume_program():
-    get_program_lifecycle_service().resume_program()
+async def resume_program():
+    """Reverses ``pause_inspect`` (if engaged) before resuming motion.
+
+    ``ProgramService.resume_program`` is ``async`` — it awaits real
+    delays between clearing the spindle inhibit and the Z lift (see
+    its docstring) — so this handler must be ``async`` and ``await``
+    it too, exactly like ``/estop/activate`` in ``routers/state.py``:
+    a bare unawaited call would only construct the coroutine without
+    ever running its body.
+    """
+    await get_program_lifecycle_service().resume_program()
     return StatusResponse(status="success")
 
 @router.post(
@@ -170,6 +194,7 @@ __all__ = [
     "stop_program",
     "unload_program",
     "pause_program",
+    "pause_inspect",
     "resume_program",
     "trigger_parser",
     "load_program",

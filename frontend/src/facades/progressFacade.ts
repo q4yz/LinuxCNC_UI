@@ -90,6 +90,18 @@ export class ProgressFacade {
     );
   }
 
+  /**
+   * Lift the tool clear of the work and inhibit the spindle. A
+   * separate, explicit action layered on top of an already-paused
+   * program — only valid while paused (`resumeProgram` reverses it).
+   */
+  public async pauseInspect(): Promise<CommandResult> {
+    return this._commandResultFrom(
+      ModulesProgramService.pauseInspect(),
+      "pause_inspect",
+    );
+  }
+
   public async stopProgram(): Promise<CommandResult> {
     return this._commandResultFrom(
       ModulesProgramService.stopProgram(),

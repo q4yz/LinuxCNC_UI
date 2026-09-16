@@ -55,11 +55,11 @@ fi
 # merge-openapi.mjs), so both need to be briefly reachable here.
 echo -e "\n---> Temporarily starting both backends to generate API schemas..."
 cd "$PROJECT_DIR/backend/machine"
-sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/uvicorn" main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend-machine.log" 2>&1 &
+sudo -u "$REAL_USER" bash -c "'$PROJECT_DIR/backend/venv/bin/uvicorn' main:app --host 127.0.0.1 --port 8000 > '$PROJECT_DIR/backend-machine.log' 2>&1" &
 MACHINE_BACKEND_PID=$!
 
 cd "$PROJECT_DIR/backend/system"
-sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/uvicorn" main:app --host 127.0.0.1 --port 8001 > "$PROJECT_DIR/backend-system.log" 2>&1 &
+sudo -u "$REAL_USER" bash -c "'$PROJECT_DIR/backend/venv/bin/uvicorn' main:app --host 127.0.0.1 --port 8001 > '$PROJECT_DIR/backend-system.log' 2>&1" &
 SYSTEM_BACKEND_PID=$!
 
 echo "Waiting for both backends to expose their OpenAPI schemas..."
@@ -352,7 +352,10 @@ rm -f "/etc/sudoers.d/linuxcnc-nginx-reload"
 
 cat << EOF > "$SUDOERS_FILE"
 $REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
-$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-system
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart linuxcnc-ui-system*
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl stop linuxcnc-ui-system*
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl start linuxcnc-ui-system*
+$REAL_USER ALL=(ALL) NOPASSWD: /bin/systemctl daemon-reload
 EOF
 
 # Sudoers files must have strict permissions or the system will ignore them

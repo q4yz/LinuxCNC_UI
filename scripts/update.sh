@@ -49,6 +49,10 @@ echo "Stopping the system service to prevent port collisions during schema gener
 # so there is no linuxcnc-ui-machine unit to stop here.
 sudo /bin/systemctl stop linuxcnc-ui-system
 
+echo "Cleaning up orphaned backend processes..."
+pkill -f "uvicorn" || true
+pkill -f "python.*backend" || true
+
 echo "Triggering UI rebuild and service restarts..."
 # Call the rebuild script (which handles the frontend build, API generation, restarts, and nginx reload)
 bash "$PROJECT_DIR/rebuild_ui.sh"

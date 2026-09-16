@@ -401,6 +401,17 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         return result;
     }
 
+    async function pauseInspect(): Promise<CommandResult> {
+        const consoleStore = useConsoleStore();
+        const result = await progressFacade.pauseInspect();
+        if (result.failed) {
+            reportCommandFailure("pause & inspect", result);
+        } else {
+            consoleStore.info("Pause & Inspect: tool lifted, spindle inhibited");
+        }
+        return result;
+    }
+
     async function abortProgram(): Promise<CommandResult> {
         const consoleStore = useConsoleStore();
         const result = await progressFacade.stopProgram();
@@ -465,6 +476,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         runProgram,
         pauseProgram,
         resumeProgram,
+        pauseInspect,
         abortProgram,
         unloadProgram,
         updateAxisSettings,

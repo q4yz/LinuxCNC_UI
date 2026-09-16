@@ -90,6 +90,12 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "(StateService.activate_estop() generates the pulse itself; "
         "EstopWebguiMapper wires this automatically, see .agent/component/estop.md)",
     },
+    "PauseInspectPin": {
+        "inspect_z_lift": "sink into axis.z.eoffset-counts (0/1; the actual lift "
+        "distance is axis.z.eoffset-scale, see PauseInspectWebguiMapper)",
+        "inspect_spindle_inhibit": "sink into motion.spindle-inhibit "
+        "(PauseInspectWebguiMapper wires this automatically)",
+    },
 }
 
 #: Fallback suggestion when a field has no table entry.
@@ -320,6 +326,7 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
 
     from domain_file_services.paths import default_machine_hardware_json
     from dtos.EStopDto import EStopPin
+    from dtos.PauseInspect import PauseInspectPin
     from dtos.pins.HalPin import HalDataType
     from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
     from factories.tools.ToolHalPinFactory import ToolHalPinFactory
@@ -380,7 +387,14 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
         if sensor_pin_map is not None:
             sensors.append(sensor_pin_map)
 
-    state = [EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT, ""))]
+    state = [
+        EStopPin("estop", ReadWriteDynamicHalPin("estop", HalDataType.BIT, "")),
+        PauseInspectPin(
+            "pause_inspect",
+            ReadWriteDynamicHalPin("inspect-z-lift", HalDataType.BIT, ""),
+            ReadWriteDynamicHalPin("inspect-spindle-inhibit", HalDataType.BIT, ""),
+        ),
+    ]
     return tools, sensors, state
 
 

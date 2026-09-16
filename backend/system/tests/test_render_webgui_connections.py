@@ -44,6 +44,16 @@ def test_estop_binding_appears_when_the_payload_declares_one():
     assert "net estop-activate webgui.estop => halui.estop.activate" in text
 
 
+def test_pause_inspect_binding_rides_the_same_gate_as_estop():
+    """Machine-level, not tied to any tool entry — same "is this a
+    real machine payload" gate as Estop (see `render_webgui_connections`
+    docstring), so it appears exactly when `estop` does."""
+    text = render_webgui_connections({"estop": {}})
+    assert "net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => motion.spindle-inhibit" in text
+    assert "net inspect-z-lift webgui.inspect-z-lift => axis.z.eoffset-counts" in text
+    assert render_webgui_connections({}) == ""
+
+
 def test_estop_and_spindle_and_heater_all_bind_together():
     payload = {
         "estop": {"fault_pin": "10"},
@@ -55,6 +65,7 @@ def test_estop_and_spindle_and_heater_all_bind_together():
     text = render_webgui_connections(payload)
     assert "# Estop" in text
     assert "net estop-activate webgui.estop => halui.estop.activate" in text
+    assert "# Pause & Inspect" in text
     assert "# Spindle: spindle_digital" in text
     assert "# Heater: heater_bed" in text
 
