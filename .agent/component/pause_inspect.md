@@ -62,15 +62,31 @@ None. `render_webgui_connections` reads no dedicated key for this
 component — it fires whenever `payload.get("estop")` is a dict, same
 gate as `EstopWebguiMapper`.
 
-## 3. COMPILATION (HAL)
+## 3. COMPILATION (INI & HAL)
 
-No `machine.ini` section, no `machine.hal` contribution.
+machine.ini — `[AXIS_Z]` gets one extra key beyond the usual
+`MAX_VELOCITY`/`MAX_ACCELERATION`/limits every axis has
+(`ini_template_generator.py`'s `_render_axis_section`, gated on
+`axis.letter == "Z"`):
+```ini
+[AXIS_Z]
+MAX_VELOCITY = <...>
+MAX_ACCELERATION = <...>
+MIN_LIMIT = <...>
+MAX_LIMIT = <...>
+OFFSET_AV_RATIO = 0.2
+```
+Without it the eoffset wiring below is inert, not broken — LinuxCNC's
+own default is 0, meaning zero velocity/accel budget is reserved for
+external-offset motion, so `eoffset-counts` can be set to anything and
+the axis simply never moves. No error, no warning, just a Z lift that
+silently does nothing — manually verified against a real machine, and
+`0.2` (20% of Z's own envelope reserved for the lift) is the verified
+value that actually moves it.
 
-`PauseInspectWebguiMapper.to_lines()` takes the `estop` dict (the same
-one `render_webgui_connections` already gates its own call on) because
-the eoffset-clear safety net has real HAL load-time hazards, none
-catchable by a plain Python string-content test — see the mapper's
-own module docstring for the full reasoning:
+`PauseInspectWebguiMapper.to_lines()` takes no arguments — see the
+mapper's own module docstring for the full reasoning behind each
+fix:
 
 * **Spindle inhibit is per-spindle, not global.** There is no
   `motion.spindle-inhibit` pin — a real `halcmd show` confirms it is
@@ -80,24 +96,26 @@ own module docstring for the full reasoning:
   visibility into which spindle(s) a machine declares, so it targets
   `spindle.0.inhibit` — correct for the single-spindle case, an
   honest gap on a genuine multi-spindle machine.
-* **A pin can only belong to one signal.** `[estop].out_pin`
-  (`EstopHalMapper`, machine.hal) already links `iocontrol.0.
-  user-enable-out` to the `estop-out` signal when declared. Also
-  netting that same physical pin onto a second signal here is a HAL
-  "pin already linked" load failure — the exact class of bug the
-  mux2 spindle-override fix (`DigitalSpindleHalMapper`) routed around
-  earlier. So: read the *existing* `estop-out` signal (a second
-  reader, always legal) when `out_pin` is declared; link
-  `iocontrol.0.user-enable-out` directly — nothing else claims it in
-  that case — only when it is not.
 * **`axis.z.eoffset-counts` is `s32`, `webgui.inspect-z-lift` is
   `bit`.** Linking them directly is a HAL load-time type mismatch —
   the same class of error `HeaterHalMapper`'s watermark branch already
   routes around (`comp.out` `bit` -> a `float` duty-cycle channel,
   `.agent/component/heater.md` § 3) via `conv_bit_float`. This uses
   the sibling `conv_bit_s32` the same way.
+* **`axis.z.eoffset-clear`'s source had the wrong polarity.** An
+  earlier version wired it from `estop-out`/`iocontrol.0.
+  user-enable-out` (`EstopHalMapper`) — that pin is TRUE while the
+  machine is powered on and healthy, FALSE on E-stop, the *opposite*
+  of what "clear the lift on E-stop" needs. Wired that way,
+  `eoffset-clear` was asserted continuously during normal operation,
+  crushing the lift back to 0 every servo cycle before it could ever
+  take effect — a real bug, manually verified on a real machine, not
+  a hypothetical. `halui.estop.is-activated` (a standard `halui` pin,
+  always present) is TRUE only while E-stop actually is active — the
+  correct polarity, and unlike `estop-out` it needs no branching on
+  whether `[estop].out_pin` is declared.
 
-webgui_connections.hal — `[estop].out_pin` **not** declared:
+webgui_connections.hal:
 ```hal
 # Pause & Inspect (external offsets & spindle inhibit)
 net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.0.inhibit
@@ -107,31 +125,22 @@ net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.0.inhibit
 # conv_bit_s32 stage below), so this scale IS the lift distance. Tune
 # by hand-editing this line — NOT preserved across a regenerate (every
 # file `generate_machine_templates` writes is rewritten from scratch),
-# so re-apply after every regenerate.
+# so re-apply after every regenerate. Needs [AXIS_Z] OFFSET_AV_RATIO
+# > 0 (machine.ini) to actually move the axis at all.
 setp axis.z.eoffset-enable 1
 setp axis.z.eoffset-scale 1.0
 
-# Safety: clear the offset the instant the machine loses enable (an
-# E-stop, or anything else that drops iocontrol.0.user-enable-out).
-# No [estop].out_pin declared, so nothing else claims this pin — safe
-# to link it directly.
-net inspect-eoffset-clear <= iocontrol.0.user-enable-out
-net inspect-eoffset-clear => axis.z.eoffset-clear
+# Safety: clear the offset while E-stop is actually active.
+# halui.estop.is-activated (TRUE only during E-stop) — NOT
+# iocontrol.0.user-enable-out / estop-out (TRUE while healthy, the
+# opposite polarity — see module docstring for the bug this replaced).
+net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear
 
 # webgui.inspect-z-lift (bit) -> axis.z.eoffset-counts (s32).
 loadrt conv_bit_s32 names=inspect-z-lift-conv
 addf inspect-z-lift-conv servo-thread
 net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in
 net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts
-```
-
-webgui_connections.hal — `[estop].out_pin` **declared** (only the
-eoffset-clear source differs):
-```hal
-# estop-out already exists (EstopHalMapper, machine.hal) and already
-# claims iocontrol.0.user-enable-out as its writer — read the
-# existing signal, never re-link the same physical pin.
-net estop-out => axis.z.eoffset-clear
 ```
 
 ## 4. Runtime sequencing
@@ -157,12 +166,11 @@ full 3 s and dispatches `AUTO_RESUME`, same as a plain resume would.
 ## 5. Signal names
 
 `inspect-spindle-inhibit`, `inspect-z-lift-bit`, `inspect-z-lift-s32`,
-and (only when `[estop].out_pin` is absent) `inspect-eoffset-clear`
-are new — reserved here for any future component that needs to touch
-`axis.z.eoffset-*` or `spindle.N.inhibit`, so a second feature never
-double-drives the same eoffset stage a machine only has one of.
-`estop-out` is not new (`.agent/component/README.md` § 5, `estop.md`)
-— this component only ever adds a second reader onto it, never a
-writer. `spindle.N.inhibit` is not new either — every other
-`DigitalSpindleHalMapper` net already targets `spindle.{n}.*`; this is
-just the first thing outside that mapper to touch it.
+and `estop-is-active` are new — reserved here for any future
+component that needs to touch `axis.z.eoffset-*`, `spindle.N.inhibit`,
+or `halui.estop.is-activated`, so a second feature never double-drives
+the same eoffset stage a machine only has one of. `spindle.N.inhibit`
+is not new — every other `DigitalSpindleHalMapper` net already targets
+`spindle.{n}.*`; this is just the first thing outside that mapper to
+touch it. `estop-out` (`.agent/component/README.md` § 5, `estop.md`)
+is no longer touched by this component at all (see § 3's polarity fix).

@@ -200,11 +200,14 @@ class ProgramService:
         :meth:`pause_inspect` was never engaged, since both pins are
         already False.
         """
+
         pins = self._pause_inspect_pins()
-        pins.inspect_spindle_inhibit.set_value(False)
-        await asyncio.sleep(2.5)
-        pins.inspect_z_lift.set_value(False)
-        await asyncio.sleep(0.5)
+
+        if pins.inspect_spindle_inhibit.get_value() or pins.inspect_z_lift.get_value():
+            pins.inspect_spindle_inhibit.set_value(False)
+            await asyncio.sleep(2.5)
+            pins.inspect_z_lift.set_value(False)
+            await asyncio.sleep(0.5)
 
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 

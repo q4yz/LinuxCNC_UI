@@ -13,10 +13,15 @@ regenerate, like every other file `generate_machine_templates` writes
 (see its own module docstring) — a fix here reaches every existing
 machine the next time it's (re)generated.
 
-Three HAL load-time hazards this mapper has to route around, each only
-observable once the generated files are actually loaded on a real
-LinuxCNC session (never at Python string-generation time, which is why
-the unit tests alone did not catch any of them):
+`[AXIS_Z] OFFSET_AV_RATIO` (`ini_template_generator.py`'s
+`_OFFSET_AV_RATIO`) has to be set too, or this wiring is inert — a
+correctly-netted `eoffset-counts` still never actually moves the axis
+without a nonzero velocity/accel budget reserved for external-offset
+motion.
+
+Two HAL hazards this mapper routes around, both only observable on a
+real LinuxCNC session (never at Python string-generation time or in a
+unit test asserting on string content alone):
 
 * **Spindle inhibit is per-spindle, not global.** There is no
   `motion.spindle-inhibit` pin — a real `halcmd show` confirms it is
@@ -35,28 +40,23 @@ the unit tests alone did not catch any of them):
   `"comp.out is a HAL BIT ... Linking a bit pin to a float pin is a
   HAL load-time type error"`), via the exact same `conv_bit_*` idiom
   used here (`conv_bit_s32` instead of `conv_bit_float`).
-* **`axis.z.eoffset-clear`'s safety source can double-claim a pin.**
-  `[estop]`'s optional `out_pin` (`EstopHalMapper`) already links
-  `iocontrol.0.user-enable-out` to the `estop-out` signal when declared
-  — a HAL pin can only ever belong to one signal, so this mapper must
-  NOT also net `iocontrol.0.user-enable-out` onto a second signal of
-  its own on a machine that declared one (a genuine "pin already
-  linked" load failure, not a soft conflict — see `DigitalSpindleHalMapper.
-  build_speed_command`'s docstring for the same class of bug in the
-  spindle mux2 fix). `to_lines()` therefore takes the `estop` dict and
-  reads the already-existing `estop-out` *signal* (a second reader,
-  always legal) when `out_pin` is declared, falling back to linking
-  `iocontrol.0.user-enable-out` directly — perfectly legal since
-  nothing else claims that physical pin — only when it is not. A
-  machine with neither still loads fine either way; `estop-out`
-  existing with no reader, or a net with no writer, both just idle at
-  their default value rather than failing to load — only a genuine
-  double link on the same physical pin does that.
+
+`axis.z.eoffset-clear` is wired from `halui.estop.is-activated`, a
+standard HALUI status pin, always present — NOT from `estop-out`
+(`iocontrol.0.user-enable-out`, `EstopHalMapper`) as an earlier version
+of this mapper had it. That was a real, manually-verified polarity
+bug: `iocontrol.0.user-enable-out` is TRUE while the machine is
+powered on and healthy, and FALSE on E-stop — the *opposite* of what
+"clear on E-stop" needs. Wired that way, `eoffset-clear` was asserted
+continuously during normal operation, crushing the Z lift back to 0
+every servo cycle — the feature never actually lifted anything.
+`halui.estop.is-activated` is TRUE only while E-stop actually is
+active, the correct polarity, and (being a `halui` pin, not tied to
+`[estop]`'s optional `out_pin`) needs no `estop`-dict branching the
+way the old `estop-out` source did.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 
 class PauseInspectWebguiMapper:
@@ -76,49 +76,28 @@ class PauseInspectWebguiMapper:
     _SPINDLE_INDEX = 0
 
     @staticmethod
-    def to_lines(estop: dict[str, Any] | None = None) -> list[str]:
-        estop = estop or {}
-
-        lines = [
+    def to_lines() -> list[str]:
+        return [
             "# Pause & Inspect (external offsets & spindle inhibit)",
             f"net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.{PauseInspectWebguiMapper._SPINDLE_INDEX}.inhibit",
             "",
             "setp axis.z.eoffset-enable 1",
             f"setp axis.z.eoffset-scale {PauseInspectWebguiMapper._EOFFSET_SCALE}",
+            # TRUE only while E-stop actually is active — see module
+            # docstring for why iocontrol.0.user-enable-out (estop-out)
+            # is the wrong polarity for this.
+            "net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear",
+            "",
+            # axis.z.eoffset-counts is s32; webgui.inspect-z-lift is
+            # bit — conv_bit_s32 is the same type-converter idiom
+            # HeaterHalMapper already uses for its own bit -> float
+            # watermark branch (see module docstring).
+            "loadrt conv_bit_s32 names=inspect-z-lift-conv",
+            "addf inspect-z-lift-conv servo-thread",
+            "net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in",
+            "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts",
+            "",
         ]
-
-        if estop.get("out_pin"):
-            # estop-out already exists (EstopHalMapper, machine.hal)
-            # and already claims iocontrol.0.user-enable-out as its
-            # writer — read the existing signal, never re-link the
-            # same physical pin onto a second signal of our own.
-            lines.append("net estop-out => axis.z.eoffset-clear")
-        else:
-            # No [estop].out_pin declared, so nothing else claims this
-            # pin — safe to link it directly.
-            lines.extend(
-                [
-                    "net inspect-eoffset-clear <= iocontrol.0.user-enable-out",
-                    "net inspect-eoffset-clear => axis.z.eoffset-clear",
-                ]
-            )
-
-        lines.extend(
-            [
-                "",
-                # axis.z.eoffset-counts is s32; webgui.inspect-z-lift is
-                # bit — conv_bit_s32 is the same type-converter idiom
-                # HeaterHalMapper already uses for its own bit -> float
-                # watermark branch (see module docstring).
-                "loadrt conv_bit_s32 names=inspect-z-lift-conv",
-                "addf inspect-z-lift-conv servo-thread",
-                "net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in",
-                "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts",
-                "",
-            ]
-        )
-
-        return lines
 
 
 __all__ = ["PauseInspectWebguiMapper"]

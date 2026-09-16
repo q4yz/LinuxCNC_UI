@@ -1,18 +1,22 @@
 """PauseInspectWebguiMapper — `webgui_connections.hal` binding for the
 Z-axis lift + spindle inhibit safety feature.
 
-Machine-level like `EstopWebguiMapper`, but unlike it, `to_lines()`
-takes the `estop` dict: the eoffset-clear safety net must not
-double-link `iocontrol.0.user-enable-out` onto a second signal when
-`[estop].out_pin` already claims it via `EstopHalMapper`'s `estop-out`
-(a genuine HAL "pin already linked" load failure, not a soft
-conflict — the same class of bug the mux2 spindle fix routed around).
-Also covers the `webgui.inspect-z-lift` (bit) -> `axis.z.eoffset-counts`
-(s32) type mismatch, the same `conv_bit_*` idiom `HeaterHalMapper`
-already uses for its own bit -> float watermark branch, and the
-spindle-inhibit target being `spindle.0.inhibit` (per-spindle, per a
-real `halcmd show`) rather than a global `motion.spindle-inhibit`
-pin, which does not exist.
+Machine-level and unconditional, same shape as `EstopWebguiMapper`: no
+arguments, output never varies per machine. Covers three fixes to a
+previous version, each only observable on a real LinuxCNC session,
+never from string-content assertions alone:
+
+* the spindle-inhibit target being `spindle.0.inhibit` (per-spindle,
+  per a real `halcmd show`) rather than a global `motion.spindle-inhibit`
+  pin, which does not exist;
+* the `webgui.inspect-z-lift` (bit) -> `axis.z.eoffset-counts` (s32)
+  type mismatch, the same `conv_bit_*` idiom `HeaterHalMapper` already
+  uses for its own bit -> float watermark branch;
+* `axis.z.eoffset-clear`'s source being `halui.estop.is-activated`
+  (TRUE only while E-stop actually is active) rather than `estop-out`
+  / `iocontrol.0.user-enable-out` (TRUE while the machine is healthy —
+  the *opposite* polarity, which continuously crushed the Z lift back
+  to 0 every servo cycle; a real bug, manually verified and fixed).
 """
 
 from __future__ import annotations
@@ -37,25 +41,16 @@ def test_enables_the_z_eoffset_stage_with_a_configurable_scale():
     assert "setp axis.z.eoffset-scale 1.0" in lines
 
 
-def test_eoffset_clears_from_the_native_iocontrol_pin_when_no_estop_out_pin():
-    """No `[estop].out_pin` declared -> nothing else claims
-    `iocontrol.0.user-enable-out`, so linking it directly is safe."""
-    lines = PauseInspectWebguiMapper.to_lines({})
-    assert "net inspect-eoffset-clear <= iocontrol.0.user-enable-out" in lines
-    assert "net inspect-eoffset-clear => axis.z.eoffset-clear" in lines
-    assert not any("estop-out" in line for line in lines)
-
-
-def test_eoffset_clears_from_the_existing_estop_out_signal_when_declared():
-    """`[estop].out_pin` declared -> `EstopHalMapper` already links
-    `iocontrol.0.user-enable-out` to the `estop-out` signal in
-    `machine.hal`; re-linking that same physical pin to a second
-    signal here would be a HAL load-time "pin already linked" error.
-    Reading the existing `estop-out` signal (a second reader) is the
-    only safe option."""
-    lines = PauseInspectWebguiMapper.to_lines({"out_pin": "par0:14"})
-    assert "net estop-out => axis.z.eoffset-clear" in lines
+def test_eoffset_clears_only_while_estop_is_actually_active():
+    """`halui.estop.is-activated` is TRUE only while E-stop is
+    engaged — the correct polarity for "clear the lift on E-stop".
+    `estop-out`/`iocontrol.0.user-enable-out` (TRUE while healthy, the
+    opposite) must never appear here again — that was the real,
+    manually-verified bug this replaced."""
+    lines = PauseInspectWebguiMapper.to_lines()
+    assert "net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear" in lines
     assert not any("iocontrol.0.user-enable-out" in line for line in lines)
+    assert not any("estop-out" in line for line in lines)
 
 
 def test_z_lift_is_converted_from_bit_to_s32_before_eoffset_counts():
@@ -74,6 +69,5 @@ def test_z_lift_is_converted_from_bit_to_s32_before_eoffset_counts():
 
 
 def test_output_is_stable_regardless_of_call_site():
-    """Same `estop` input -> identical output every time."""
-    assert PauseInspectWebguiMapper.to_lines({}) == PauseInspectWebguiMapper.to_lines({})
-    assert PauseInspectWebguiMapper.to_lines(None) == PauseInspectWebguiMapper.to_lines({})
+    """No parameters — the binding never varies per machine."""
+    assert PauseInspectWebguiMapper.to_lines() == PauseInspectWebguiMapper.to_lines()

@@ -31,6 +31,20 @@ from models.machineconfig.linuxcnc_models import Axis
 _DEFAULT_PID_PONM = 1
 _DEFAULT_PID_CVMAX = 100.0
 
+#: `[AXIS_Z] OFFSET_AV_RATIO` — the fraction of the axis's own
+#: velocity/acceleration budget LinuxCNC's trajectory planner reserves
+#: for *external offset* motion (`axis.z.eoffset-*`,
+#: `PauseInspectWebguiMapper`). Undeclared (LinuxCNC's own default is
+#: 0), the eoffset stage has zero motion budget and never actually
+#: moves the axis no matter what `eoffset-counts` is set to — a
+#: silent no-op, not an error, so nothing else catches it. Every
+#: machine gets `PauseInspectWebguiMapper`'s Z eoffset wiring
+#: unconditionally, so every machine's `[AXIS_Z]` needs this too, or
+#: the feature is wired but inert. 0.2 is a conservative default
+#: (verified against a real machine) — 20% of Z's own velocity/accel
+#: ceiling reserved for the lift, leaving 80% for normal G-code motion.
+_OFFSET_AV_RATIO = 0.2
+
 #: PrintNC-WEBGUI's known-good ``[DISPLAY]`` block (see
 #: ``machine_config/example/PrintNC-WEBGUI/Machine.ini``) — every
 #: value here is a sane default for a bench mill/router, not
@@ -87,14 +101,20 @@ def _joint_count(axes: List[Axis]) -> int:
 
 
 def _render_axis_section(axis: Axis) -> List[str]:
-    return [
+    lines = [
         f"[AXIS_{axis.letter}]",
         f"MAX_VELOCITY = {_fmt(axis.max_velocity)}",
         f"MAX_ACCELERATION = {_fmt(axis.max_acceleration)}",
         f"MIN_LIMIT = {_fmt(axis.min_limit)}",
         f"MAX_LIMIT = {_fmt(axis.max_limit)}",
-        "",
     ]
+    if axis.letter == "Z":
+        # See _OFFSET_AV_RATIO docstring — required for
+        # PauseInspectWebguiMapper's Z eoffset wiring to actually move
+        # the axis, not just this axis's own envelope.
+        lines.append(f"OFFSET_AV_RATIO = {_fmt(_OFFSET_AV_RATIO)}")
+    lines.append("")
+    return lines
 
 
 def _render_joint_section(joint) -> List[str]:
@@ -227,9 +247,6 @@ def render_ini_template(
         "ANGULAR_UNITS = degree",
         f"DEFAULT_LINEAR_VELOCITY = {_fmt(traj_default_velocity)}",
         f"MAX_LINEAR_VELOCITY = {_fmt(traj_max_velocity)}",
-        "",
-        "[APPLICATIONS]",
-        f"APP = {_posix(paths.PROJECT_ROOT / 'start_network.sh')}",
         "",
         "[EMCIO]",
         "EMCIO = io",

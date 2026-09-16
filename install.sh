@@ -364,6 +364,29 @@ chmod 0440 "$SUDOERS_FILE"
 # Grab just the first IP address for a clean display output
 DISPLAY_IP=$(echo $ALL_IPS | awk '{print $1}')
 
+
+echo -e "\n---> Configuring boot-time certificate renewal (linuxcnc-ui-cert)..."
+CERT_SERVICE="/etc/systemd/system/linuxcnc-ui-cert.service"
+cat << EOF > "$CERT_SERVICE"
+[Unit]
+Description=LinuxCNC UI - re-mint TLS certificate for current IPs (start_network.sh)
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=oneshot
+User=$REAL_USER
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$PROJECT_DIR/start_network.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chmod +x "$PROJECT_DIR/start_network.sh"
+systemctl daemon-reload
+systemctl enable linuxcnc-ui-cert
+
 echo "=========================================="
 echo " Installation Complete!"
 echo " "

@@ -280,6 +280,28 @@ def test_render_ini_template_is_live_and_loadable():
         assert not line.startswith("# ["), f"section line is commented out: {line!r}"
 
 
+def test_axis_z_gets_offset_av_ratio_for_pause_and_inspect_but_x_and_y_do_not():
+    """`PauseInspectWebguiMapper` always wires `axis.z.eoffset-*` (see
+    `.agent/component/pause_inspect.md` § 3) — without a nonzero
+    `[AXIS_Z] OFFSET_AV_RATIO`, LinuxCNC reserves zero velocity/accel
+    budget for that motion and the Z lift silently never moves the
+    axis, no error. Manually verified against a real machine. X/Y have
+    no eoffset wiring, so they must not get the key at all."""
+    from services.machinetemplates import render_ini_template
+
+    axes = [_axis("X", 0), _axis("Y", 1), _axis("Z", 2)]
+    text = render_ini_template("my_machine", axes)
+
+    sections = text.split("[AXIS_")
+    x_section = next(s for s in sections if s.startswith("X]"))
+    y_section = next(s for s in sections if s.startswith("Y]"))
+    z_section = next(s for s in sections if s.startswith("Z]"))
+
+    assert "OFFSET_AV_RATIO = 0.2" in z_section
+    assert "OFFSET_AV_RATIO" not in x_section
+    assert "OFFSET_AV_RATIO" not in y_section
+
+
 def test_tool_table_template_pre_registers_every_tool_1_to_99():
     """LinuxCNC's `io` process hard-errors ("Requested tool not
     found") on a `T<n> M6` naming a tool absent from tool.tbl — but a
