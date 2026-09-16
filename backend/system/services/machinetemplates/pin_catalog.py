@@ -91,10 +91,10 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "EstopWebguiMapper wires this automatically, see .agent/component/estop.md)",
     },
     "PauseInspectPin": {
-        "inspect_z_lift": "sink into axis.z.eoffset-counts (0/1; the actual lift "
-        "distance is axis.z.eoffset-scale, see PauseInspectWebguiMapper)",
-        "inspect_spindle_inhibit": "sink into motion.spindle-inhibit "
-        "(PauseInspectWebguiMapper wires this automatically)",
+        "inspect_z_lift": "sink into axis.z.eoffset-counts via conv_bit_s32 (0/1; "
+        "the actual lift distance is axis.z.eoffset-scale, see PauseInspectWebguiMapper)",
+        "inspect_spindle_inhibit": "sink into spindle.0.inhibit (per-spindle, not "
+        "motion.spindle-inhibit — PauseInspectWebguiMapper wires this automatically)",
     },
 }
 

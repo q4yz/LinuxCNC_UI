@@ -49,9 +49,22 @@ def test_pause_inspect_binding_rides_the_same_gate_as_estop():
     real machine payload" gate as Estop (see `render_webgui_connections`
     docstring), so it appears exactly when `estop` does."""
     text = render_webgui_connections({"estop": {}})
-    assert "net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => motion.spindle-inhibit" in text
-    assert "net inspect-z-lift webgui.inspect-z-lift => axis.z.eoffset-counts" in text
+    assert "net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.0.inhibit" in text
+    assert "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts" in text
     assert render_webgui_connections({}) == ""
+
+
+def test_pause_inspect_reads_the_estop_dict_it_was_gated_on():
+    """The same `estop` dict that gates Pause & Inspect's presence is
+    also passed through to it, so it can avoid double-linking
+    `iocontrol.0.user-enable-out` when `[estop].out_pin` already
+    claims it (see `PauseInspectWebguiMapper`)."""
+    without_out_pin = render_webgui_connections({"estop": {}})
+    assert "net inspect-eoffset-clear <= iocontrol.0.user-enable-out" in without_out_pin
+
+    with_out_pin = render_webgui_connections({"estop": {"out_pin": "par0:14"}})
+    assert "net estop-out => axis.z.eoffset-clear" in with_out_pin
+    assert "iocontrol.0.user-enable-out" not in with_out_pin
 
 
 def test_estop_and_spindle_and_heater_all_bind_together():

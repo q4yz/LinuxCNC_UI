@@ -84,14 +84,18 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             return False
 
     lines: list[str] = []
-    if isinstance(payload.get("estop"), dict):
+    estop = payload.get("estop")
+    if isinstance(estop, dict):
         lines.extend(EstopWebguiMapper.to_lines())
         # Pause & Inspect is machine-level (every machine has a Z axis
         # — `[machine]` compilation only accepts `kinematics:
         # cartesian`), not tied to any tool entry, so it rides the same
         # "is this a real machine payload" gate as Estop rather than a
-        # `tools[]`/`fans[]` presence check.
-        lines.extend(PauseInspectWebguiMapper.to_lines())
+        # `tools[]`/`fans[]` presence check. `estop` itself is passed
+        # through so the mapper can avoid double-linking
+        # iocontrol.0.user-enable-out when [estop].out_pin already
+        # claims it (see PauseInspectWebguiMapper's docstring).
+        lines.extend(PauseInspectWebguiMapper.to_lines(estop))
     for tool in payload.get("tools", []) or []:
         if not isinstance(tool, dict):
             continue
