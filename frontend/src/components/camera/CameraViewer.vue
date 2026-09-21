@@ -81,6 +81,8 @@ const MAX_RETRY_DELAY_MS = 15_000;
 const STREAM_RETRY_BASE_MS = 2_000;
 const STREAM_CONNECT_DELAY_MS = 1_200;
 
+const streamImg = ref<HTMLImageElement | null>(null);
+
 const streamUrl: Ref<string> = ref("");
 let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
@@ -91,6 +93,11 @@ function releaseStream(): void {
     clearTimeout(streamTimer);
     streamTimer = null;
   }
+
+  if (streamImg.value) {
+    streamImg.value.removeAttribute("src");
+  }
+
   streamUrl.value = "";
 }
 
@@ -124,6 +131,9 @@ function scheduleStreamOpen(delayMs: number = STREAM_CONNECT_DELAY_MS): void {
  * hint from /status.
  */
 function handleStreamError(): void {
+
+  if (!streamUrl.value) return;
+
   retryCount += 1;
   const delay = Math.min(
     STREAM_RETRY_BASE_MS * Math.pow(2, retryCount - 1),
@@ -193,6 +203,7 @@ onBeforeUnmount(async () => {
   >
     <!-- 1. The active stream -->
     <img
+      ref="streamImg"
       v-if="streamUrl"
       :key="streamUrl"
       :src="streamUrl"
