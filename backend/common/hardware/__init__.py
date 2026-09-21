@@ -2,13 +2,11 @@ from .Connection import (
     HAS_HAL,
     USE_MOCK,
     DeviceConfigMapper,
-    HalSubscriptionManager,
     execute_gcode,
     execute_sync_cmd,
     get_stat_channel,
     get_cmd_channel,
     get_error_channel,
-    hal_manager,
     is_linuxcnc_connected,
     linuxcnc,
     hal
@@ -26,8 +24,6 @@ __all__ = [
     "execute_gcode",
 
     "DeviceConfigMapper",
-    "HalSubscriptionManager",
-    "hal_manager",
     "hal",
     "linuxcnc"
     # Note: ``MachineService`` / ``machine_service`` / ``default_mapper``

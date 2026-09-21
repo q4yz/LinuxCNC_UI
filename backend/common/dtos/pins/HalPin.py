@@ -99,6 +99,44 @@ class HalPin(ABC, Generic[T]):
         return self._component_name
 
 
+class HalComponentConnection:
+    """Single choke point for writing a pin on the shared HAL
+    component instance (``HalPin._comp_instance``) — mirrors
+    ``_LazyChannel``'s role for NML channels
+    (``hardware.Connection``): every ``HalPin`` subclass that writes
+    routes through here instead of indexing ``_comp_instance``
+    directly.
+
+    No lock today — different features write different pins from
+    different call sites (estop's pulse, Pause & Inspect, spindle
+    override, heater setpoints), so a same-pin concurrent write is a
+    narrow UI-debounce concern, not a HAL-API thread-safety one (see
+    the connection-reliability audit that also produced the
+    ``command`` channel's lock and ``stat``/``error_channel``'s
+    per-thread instances in ``hardware.Connection``). Funneling every
+    write through this one object means a lock can be added here
+    later, if real evidence of contention ever shows up, without
+    touching every ``HalPin`` subclass again.
+    """
+
+    @staticmethod
+    def write(pin: str, value: Any) -> None:
+        """Write ``value`` to ``pin`` on the shared component instance.
+
+        Raises ``RuntimeError`` if the component hasn't been
+        initialized yet (``HalPin.initialize_component()`` never
+        called) — callers translate that into their own
+        logged-and-swallowed contract.
+        """
+        comp = HalPin._comp_instance
+        if comp is None:
+            raise RuntimeError(
+                f"HAL component '{HalPin._component_name}' not initialized. "
+                "Did you call HalPin.initialize_component()?"
+            )
+        comp[pin] = value
+
+
 
 
 

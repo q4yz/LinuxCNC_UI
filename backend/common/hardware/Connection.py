@@ -14,6 +14,33 @@ This file only owns:
 The module is strictly mock-agnostic. It communicates with the driver
 exclusively through the standard `linuxcnc` and `hal` Python APIs,
 treating real hardware and the local simulator identically.
+
+``stat``/``error_channel`` are read-only NML status buffers — real
+LinuxCNC explicitly supports any number of independent simultaneous
+readers (AXIS, halui, ``halcmd`` and a custom script routinely poll
+``stat()`` concurrently against the same machine with zero
+coordination needed). :func:`get_stat_channel`/:func:`get_error_channel`
+therefore hand out one independent ``_LazyChannel`` **per calling
+thread** rather than one shared global — the freeze this fixed was
+never NML-level contention, it was this module's own single cached
+``stat`` object having ``.poll()`` called on it concurrently from
+multiple OS threads at once (the asyncio event-loop thread via
+``ServoThreadService.telemetry_loop`` at 10 Hz, and every Starlette
+threadpool worker thread dispatching a sync HTTP handler that reads
+status — base-thread snapshot, program progress, macro execution).
+LinuxCNC's Python NML bindings are not documented as thread-safe for
+concurrent calls on one object; giving each thread its own handle
+removes that hazard with no lock and no added latency, since
+independent readers never wait on each other.
+
+``command`` (write/dispatch + ``wait_complete``) stays a single
+shared channel, deliberately not part of this fix — dispatching is
+operator-paced, not a hot polling path, and ``wait_complete()``'s
+"did *my* command finish" tracking assumes one in-flight command per
+object; giving every caller an independent ``command`` channel would
+need its own synchronization story (a lock around dispatch +
+``wait_complete`` as one atomic unit) that read-only ``stat``/
+``error_channel`` simply doesn't need.
 """
 from __future__ import annotations
 
@@ -143,9 +170,48 @@ class _LazyChannel:
 INITIAL_BACKOFF_S = _LazyChannel.INITIAL_BACKOFF_S
 MAX_BACKOFF_S = _LazyChannel.MAX_BACKOFF_S
 
-_stat_ch = _LazyChannel("stat")
+# `command` is the one channel that stays a single shared instance —
+# see module docstring for why write/dispatch is a different problem
+# than read-only stat/error polling.
 _cmd_ch = _LazyChannel("command")
-_error_ch = _LazyChannel("error_channel")
+
+# Serializes every dispatch+wait_complete round-trip through the
+# shared `command` channel — real LinuxCNC task processes one command
+# at a time anyway, and `wait_complete()`'s "did *my* command finish"
+# tracking assumes one in-flight command per channel object. Without
+# this, two threads dispatching concurrently on the same `command`
+# object can each observe the *other's* completion. Held for the
+# whole round-trip (including `execute_gcode`'s MDI mode-switch
+# preamble, not just the final `wait_complete`) so a mode switch from
+# one call can never interleave with another call's dispatch. NOT
+# reentrant — `_switch_to_mdi_mode`/`_wait_for_completion` never
+# acquire it themselves, only the top-level `execute_gcode`/
+# `execute_sync_cmd` callers do, exactly once each.
+_cmd_lock = threading.Lock()
+
+# `stat`/`error_channel` are one independent `_LazyChannel` per
+# calling thread (see module docstring) rather than a shared global —
+# `threading.local()` gives each thread its own slot for free, with
+# no lock and no cross-thread coordination needed.
+_thread_local = threading.local()
+
+
+def _thread_stat_channel() -> _LazyChannel:
+    """This calling thread's own `stat` channel wrapper (lazy)."""
+    channel = getattr(_thread_local, "stat_ch", None)
+    if channel is None:
+        channel = _LazyChannel("stat")
+        _thread_local.stat_ch = channel
+    return channel
+
+
+def _thread_error_channel() -> _LazyChannel:
+    """This calling thread's own `error_channel` wrapper (lazy)."""
+    channel = getattr(_thread_local, "error_ch", None)
+    if channel is None:
+        channel = _LazyChannel("error_channel")
+        _thread_local.error_ch = channel
+    return channel
 
 
 # ---------------------------------------------------------------------------
@@ -194,26 +260,39 @@ def _switch_to_mdi_mode(stat_channel: Any, cmd_channel: Any) -> None:
 # Public Accessors
 # ---------------------------------------------------------------------------
 def get_stat_channel() -> Optional[Any]:
-    """Retrieve the underlying LinuxCNC status channel."""
-    return _stat_ch.get()
+    """Retrieve the calling thread's own LinuxCNC status channel.
+
+    One independent NML connection per thread — see module docstring
+    for why this is no longer a single shared global.
+    """
+    return _thread_stat_channel().get()
 
 
 def get_cmd_channel() -> Optional[Any]:
-    """Retrieve the underlying LinuxCNC command channel."""
+    """Retrieve the underlying LinuxCNC command channel (shared)."""
     return _cmd_ch.get()
 
 
 def get_error_channel() -> Optional[Any]:
-    """Retrieve the underlying LinuxCNC error channel."""
-    return _error_ch.get()
+    """Retrieve the calling thread's own LinuxCNC error channel.
+
+    One independent NML connection per thread — see module docstring
+    for why this is no longer a single shared global.
+    """
+    return _thread_error_channel().get()
 
 
 def is_linuxcnc_connected() -> bool:
-    """Check if all LinuxCNC NML channels have successfully connected."""
+    """Check if this thread's NML channels have successfully connected.
+
+    ``stat``/``error_channel`` are per-thread (see module docstring)
+    — this reports the calling thread's own connection state for
+    those two, plus the shared ``command`` channel's.
+    """
     return (
-        _stat_ch.is_connected()
+        _thread_stat_channel().is_connected()
         and _cmd_ch.is_connected()
-        and _error_ch.is_connected()
+        and _thread_error_channel().is_connected()
     )
 
 
@@ -250,17 +329,18 @@ def execute_gcode(gcode: str, timeout: float = 10.0) -> Dict[str, Any]:
         )
 
     try:
-        _switch_to_mdi_mode(stat, cmd)
-        cmd.mdi(gcode)
+        with _cmd_lock:
+            _switch_to_mdi_mode(stat, cmd)
+            cmd.mdi(gcode)
 
-        # We catch the inner exception from _wait_for_completion
-        # and re-raise it with G-Code specific context if needed.
-        try:
-            _wait_for_completion(cmd, timeout)
-        except HTTPException as he:
-            if he.status_code == 400:
-                raise HTTPException(status_code=400, detail=f"G-code execution error: {gcode}")
-            raise
+            # We catch the inner exception from _wait_for_completion
+            # and re-raise it with G-Code specific context if needed.
+            try:
+                _wait_for_completion(cmd, timeout)
+            except HTTPException as he:
+                if he.status_code == 400:
+                    raise HTTPException(status_code=400, detail=f"G-code execution error: {gcode}")
+                raise
 
         return {"status": "success", "gcode": gcode}
 
@@ -302,8 +382,9 @@ def execute_sync_cmd(cmd_name: str, timeout: float = 0, *args) -> Dict[str, str]
 
     # 2. Execute and wait
     try:
-        func(*args)
-        _wait_for_completion(cmd, timeout)
+        with _cmd_lock:
+            func(*args)
+            _wait_for_completion(cmd, timeout)
         return {"status": "success"}
     except HTTPException:
         raise
@@ -335,6 +416,36 @@ def read_error_history() -> List[str]:
     return list(getattr(stat, "errors", []) or [])
 
 
+class _HalReadConnection:
+    """Single choke point for reading a named HAL pin via
+    ``hal.get_value`` — mirrors ``_LazyChannel``'s role for NML
+    channels.
+
+    No lock today: ``hal.get_value()`` is a stateless named-pin
+    lookup, not a connection with in-flight state the way NML's
+    ``command`` channel is, and it's never called from the async
+    event loop — only from threadpool-dispatched sync handlers (the
+    1Hz base-thread snapshot's tools/sensors overlay). Worst case on
+    a genuine concurrent read is one stale/bad sample that
+    self-corrects on the next poll, not a freeze. Wrapping it in one
+    object now means a lock can be added here later, if real evidence
+    of contention ever shows up, without touching every ``HalPin``
+    subclass that reads a pin.
+    """
+
+    def read(self, pin_name: str) -> Optional[Any]:
+        if hal is None:
+            return None
+        try:
+            return hal.get_value(pin_name)
+        except Exception as e:
+            logger.debug("Failed to read HAL pin '%s': %s", pin_name, e)
+            return None
+
+
+_hal_read_ch = _HalReadConnection()
+
+
 def read_hal_pin(pin_name: str) -> Optional[Any]:
     """
     Read the current value of a specific HAL pin.
@@ -345,13 +456,7 @@ def read_hal_pin(pin_name: str) -> Optional[Any]:
     Returns:
         The value of the pin (float, int, bool) or None if unreadable.
     """
-    if hal is None:
-        return None
-    try:
-        return hal.get_value(pin_name)
-    except Exception as e:
-        logger.debug("Failed to read HAL pin '%s': %s", pin_name, e)
-        return None
+    return _hal_read_ch.read(pin_name)
 
 
 
@@ -359,10 +464,6 @@ def read_hal_pin(pin_name: str) -> Optional[Any]:
 # Re-exports for backward compatibility
 # ---------------------------------------------------------------------------
 from .DeviceConfigMapper import DeviceConfigMapper  # noqa: E402,F401
-from .HalSubscriptionManager import (  # noqa: E402,F401
-    HalSubscriptionManager,
-    hal_manager,
-)
 
 # NOTICE: 'linuxcnc' has been removed from this list!
 __all__ = [
@@ -374,9 +475,8 @@ __all__ = [
     "execute_sync_cmd",
     "execute_gcode",
     "read_error_history",
+    "read_hal_pin",
     "DeviceConfigMapper",
-    "HalSubscriptionManager",
-    "hal_manager",
     "MachineState",
     "MachineMode",
     "RcsStatus",

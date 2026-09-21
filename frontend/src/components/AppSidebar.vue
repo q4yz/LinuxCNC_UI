@@ -27,6 +27,7 @@ const builtinItems = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', order: 1, activeMachineOnly: true },
   { id: 'jogging', label: 'Jogging', icon: 'jogging', order: 1, activeMachineOnly: true  },
   { id: 'running', label: 'Running', icon: 'running', order: 1, activeMachineOnly: true  },
+  { id: 'probing', label: 'Probing', icon: 'probing', order: 1, activeMachineOnly: true  },
   { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2, activeMachineOnly: false },
   { id: 'camera', label: 'Camera', icon: 'camera', order: 3 , activeMachineOnly: true },
   { id: 'settings', label: 'Settings', icon: 'settings', order: 7, activeMachineOnly: false },

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import TypeVar, Optional
 
-from dtos.pins.HalPin import HalDataType, HalPin, logger, HalDirection
+from dtos.pins.HalPin import HalComponentConnection, HalDataType, HalPin, logger, HalDirection
 
 from hardware.Connection import read_hal_pin, hal
 
@@ -24,14 +24,12 @@ class ReadWriteDynamicHalPin(HalPin[T]):
     def set_value(self, value: T) -> None:
         full_pin_name = f"{HalPin._component_name}.{self.pin}"
 
-        if HalPin._comp_instance is None:
+        try:
+            HalComponentConnection.write(self.pin, value)
+            logger.info("HAL write native -> %s = %s", full_pin_name, value)
+        except RuntimeError:
             logger.error("Cannot set %s: HAL component not initialized. Did you call HalPin.initialize_component()?",
                          full_pin_name)
-            return
-
-        try:
-            HalPin._comp_instance[self.pin] = value
-            logger.info("HAL write native -> %s = %s", full_pin_name, value)
         except Exception as e:
             logger.error("Failed to write native HAL pin '%s': %s", full_pin_name, e)
 

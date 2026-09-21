@@ -15,13 +15,16 @@ This suite covers:
 
   * :class:`DeviceConfigMapper` — .cfg parsing, endstop-pin extraction,
     fallback pins.
-  * :class:`HalSubscriptionManager` — subscribe / poll / callback
-    fan-out, start / stop idempotency.
   * :class:`MachineService` (hardware-layer) — ``get_endstop`` and
     ``get_endstop_state_subscription`` — including the M114 fallback
     when LinuxCNC is offline.
   * :func:`execute_gcode` — happy path + 503 when channels are
     offline.
+
+``HalSubscriptionManager`` (interval-poll HAL pin subscriptions) was
+removed — this app only ever reads HAL pins on request (REST-style,
+see the 1Hz base-thread snapshot), it never needed a standing poll
+loop, and the class had zero production callers.
 """
 
 from __future__ import annotations
@@ -40,8 +43,6 @@ import pytest
 conn_mod = importlib.import_module("hardware.Connection")
 from hardware.Connection import (
     DeviceConfigMapper,
-    HalSubscriptionManager,
-
     execute_gcode,
 )
 from services.MachineService import MachineService
@@ -149,123 +150,6 @@ class TestDeviceConfigMapper:
 
 
 # ────────────────────────────────────────────────────────────────────── #
-# HalSubscriptionManager                                                  #
-# ────────────────────────────────────────────────────────────────────── #
-
-
-class TestHalSubscriptionManager:
-    """Poll / subscribe / fire-on-change semantics.
-
-    Tests do not start the background thread — they exercise
-    ``subscribe`` + ``read_pin`` + ``_poll_loop`` directly so the
-    suite stays hermetic and fast.
-    """
-
-    def test_subscribe_records_callback_under_pin(self):
-        """First subscribe on a pin captures the current value
-        (the mock returns ``False``) as the baseline so the first
-        poll doesn't fire a spurious change event.
-        """
-        mgr = HalSubscriptionManager(poll_interval=0.01)
-        cb = lambda val: None
-        mgr.subscribe("joint.0.home-sw-in", cb)
-        assert "joint.0.home-sw-in" in mgr._subscriptions
-        assert cb in mgr._subscriptions["joint.0.home-sw-in"]
-        # First subscribe seeds the baseline with the current
-        # (mock) value so a subsequent change is detected.
-        assert mgr._last_known_states["joint.0.home-sw-in"] is False
-
-    def test_subscribe_appends_multiple_callbacks(self):
-        """Multiple subscribers on one pin fan out independently —
-        ``subscribe`` does not replace, it appends.
-        """
-        mgr = HalSubscriptionManager()
-        cb_a = lambda val: None
-        cb_b = lambda val: None
-        mgr.subscribe("joint.0.home-sw-in", cb_a)
-        mgr.subscribe("joint.0.home-sw-in", cb_b)
-        assert [cb_a, cb_b] == mgr._subscriptions["joint.0.home-sw-in"]
-
-    def test_read_pin_returns_false_when_hal_unavailable(self):
-        """``hal is None`` or ``USE_MOCK=True`` short-circuits to
-        ``False`` so the dashboard renders the "offline" branch
-        instead of crashing.
-        """
-        mgr = HalSubscriptionManager()
-        with patch.object(conn_mod, "HAS_HAL", False):
-            assert mgr.read_pin("anything") is False
-        with patch.object(conn_mod, "HAS_HAL", True):
-            with patch.object(conn_mod, "USE_MOCK", True):
-                assert mgr.read_pin("anything") is False
-
-    def test_read_pin_calls_hal_get_value_when_available(self):
-        """Real HAL path goes through ``hal.get_value``. Mock the HAL
-        helper to confirm the dispatch path.
-        """
-        fake_hal = type("HAL", (), {"get_value": staticmethod(lambda p: True)})
-        mgr = HalSubscriptionManager()
-        with patch.object(conn_mod, "hal", fake_hal):
-            with patch.object(conn_mod, "HAS_HAL", True):
-                with patch.object(conn_mod, "USE_MOCK", False):
-                    assert mgr.read_pin("joint.0.home-sw-in") is True
-
-    def test_poll_loop_fires_callback_on_state_change(self):
-        """The poll loop reads each subscribed pin and fires callbacks
-        only when the value changes from the last-known state.
-
-        Tests drive ``_poll_loop`` directly. The loop runs ``while
-        self._running:`` — the test stops the loop after one tick
-        by patching ``time.sleep`` to flip ``_running`` to ``False``,
-        so the while-exit fires before the second ``time.sleep``
-        would block the suite.
-        """
-        mgr = HalSubscriptionManager(poll_interval=0.001)
-        fired: list = []
-        mgr.subscribe("joint.0.home-sw-in", lambda v: fired.append(v))
-
-        # First tick: value matches the seeded baseline → no fire.
-        # Patch ``time.sleep`` so the very first sleep flips
-        # ``_running`` off and the loop exits after one iteration.
-        with patch.object(mgr, "read_pin", return_value=False):
-            with patch.object(conn_mod.time, "sleep") as sleep_spy:
-                def stop_after_first_sleep(_):
-                    mgr._running = False
-                sleep_spy.side_effect = stop_after_first_sleep
-                mgr._running = True
-                mgr._poll_loop()
-        assert fired == []
-
-        # Second tick: pin flips True → callback fires once. The
-        # same sleep-flip pattern keeps the loop bounded.
-        with patch.object(mgr, "read_pin", return_value=True):
-            with patch.object(conn_mod.time, "sleep") as sleep_spy:
-                sleep_spy.side_effect = lambda _: setattr(mgr, "_running", False)
-                mgr._running = True
-                mgr._poll_loop()
-        assert fired == [True]
-
-    def test_start_is_idempotent(self):
-        """Multiple ``start()`` calls don't stack poll threads — the
-        ``_running`` guard short-circuits the second invocation.
-        """
-        mgr = HalSubscriptionManager()
-        # Patch ``threading.Thread`` so the test doesn't actually spawn.
-        with patch.object(conn_mod.threading, "Thread") as mock_thread:
-            mgr.start()
-            mgr.start()  # second call must no-op
-            assert mock_thread.call_count == 1
-
-    def test_stop_is_idempotent(self):
-        """``stop()`` when the thread was never started must not
-        raise — ``_thread`` is ``None`` and the ``is not None``
-        guard short-circuits the ``join()``.
-        """
-        mgr = HalSubscriptionManager()
-        mgr.stop()  # must not raise
-        mgr.stop()
-
-
-# ────────────────────────────────────────────────────────────────────── #
 # MachineService (hardware-layer)                                       #
 # ────────────────────────────────────────────────────────────────────── #
 
@@ -319,10 +203,9 @@ class TestExecuteGcode:
                 "wait_complete": lambda self, t: getattr(conn_mod.linuxcnc, "RCS_DONE", 1),
             },
         )()
-        with patch.object(conn_mod, "_stat_ch", conn_mod._LazyChannel("stat")):
-            with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
-                with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
-                    result = execute_gcode("G28")
+        with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
+                result = execute_gcode("G28")
 
         assert result == {"status": "success", "gcode": "G28"}
 

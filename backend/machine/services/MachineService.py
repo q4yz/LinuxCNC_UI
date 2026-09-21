@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 
 from hardware.Connection import (
     DeviceConfigMapper,
-    HalSubscriptionManager,
     execute_gcode,
     execute_sync_cmd,
     is_linuxcnc_connected, ensure_mdi_mode,
@@ -34,9 +33,8 @@ class MachineService:
     LinuxCNC command channel.
     """
 
-    def __init__(self, mapper: DeviceConfigMapper, hal_sub_mgr: HalSubscriptionManager) -> None:
+    def __init__(self, mapper: DeviceConfigMapper) -> None:
         self.mapper = mapper
-        self.hal_mgr = hal_sub_mgr
 
     def safe_execute_gcode(self, command: str, timeout: float = 2.0) -> Dict[str, Any]:
         """Executes a G-code command only if the machine is online."""
@@ -67,14 +65,11 @@ def get_machine_service() -> MachineService:
     Mirrors the :class:`backend.hardware.connection._LazyChannel`
     pattern: the instance survives across requests and resets on
     ``uvicorn --reload``. The first call composes a default
-    :class:`DeviceConfigMapper` and :class:`HalSubscriptionManager`.
+    :class:`DeviceConfigMapper`.
     """
     global _machine_service
     if _machine_service is None:
-        _machine_service = MachineService(
-            mapper=DeviceConfigMapper(),
-            hal_sub_mgr=HalSubscriptionManager(),
-        )
+        _machine_service = MachineService(mapper=DeviceConfigMapper())
     return _machine_service
 
 
