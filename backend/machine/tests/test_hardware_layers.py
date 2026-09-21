@@ -41,6 +41,14 @@ import pytest
 # instance. ``importlib.import_module`` bypasses the package
 # __init__ re-export and gives us the submodule.
 conn_mod = importlib.import_module("hardware.Connection")
+# ``hardware.Connection`` is itself a package now (core/channel_stat/
+# channel_error/channel_cmd) — ``execute_gcode`` is *defined* in
+# ``channel_cmd``, so its internal ``get_stat_channel()``/
+# ``get_cmd_channel()`` calls resolve names bound in *that* module's
+# own namespace, not whatever ``patch.object(conn_mod, ...)`` touches
+# on the package facade. Patch where it's used: ``cmd_mod``, not
+# ``conn_mod``.
+cmd_mod = importlib.import_module("hardware.Connection.channel_cmd")
 from hardware.Connection import (
     DeviceConfigMapper,
     execute_gcode,
@@ -203,8 +211,8 @@ class TestExecuteGcode:
                 "wait_complete": lambda self, t: getattr(conn_mod.linuxcnc, "RCS_DONE", 1),
             },
         )()
-        with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
-            with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
+        with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
                 result = execute_gcode("G28")
 
         assert result == {"status": "success", "gcode": "G28"}
@@ -216,8 +224,8 @@ class TestExecuteGcode:
         """
         from fastapi import HTTPException
 
-        with patch.object(conn_mod, "get_stat_channel", return_value=None):
-            with patch.object(conn_mod, "get_cmd_channel", return_value=None):
+        with patch.object(cmd_mod, "get_stat_channel", return_value=None):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=None):
                 with pytest.raises(HTTPException) as excinfo:
                     execute_gcode("G28")
         assert excinfo.value.status_code == 503
@@ -241,8 +249,8 @@ class TestExecuteGcode:
                 "wait_complete": lambda self, t: getattr(conn_mod.linuxcnc, "RCS_DONE", 1),
             },
         )()
-        with patch.object(conn_mod, "get_stat_channel", return_value=fake_stat):
-            with patch.object(conn_mod, "get_cmd_channel", return_value=fake_cmd):
+        with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
                 execute_gcode("G28")
 
         assert mode_called == []
