@@ -9,23 +9,42 @@
 //
 // Deliberately dependency-free: no Pinia stores, no key listeners,
 // no network. Props in, pixels out.
+//
+// The Float32Array build + bounding-box pass runs in `toolpathWorker.ts`,
+// not here. A large real-world G-code file can be tens of thousands
+// of segments — building `positions`/`colors` and walking every
+// point for the bounding box synchronously on `watch(segments)` would
+// freeze the tab for the whole preview-open, the same main-thread
+// stall class the live NGC viewer already had to be fixed for
+// (fill-rate / main-thread saturation). The worker hands the
+// finished buffers back as transferable objects
+// (`postMessage(..., [positions.buffer, colors.buffer])`), a
+// zero-copy handoff rather than a structured-clone of the whole
+// array. `currentJobId` guards against a stale response landing after
+// the operator has already clicked a different file to preview.
+//
+// `props.segments` is a Vue reactive Proxy (it flows down from a
+// `ref<ParsedSegment[]>` in `FileManager.vue`) — `postMessage`'s own
+// structured-clone step cannot clone a Proxy (`DataCloneError:
+// [object Object] could not be cloned`, confirmed live). `toRaw()`
+// strips that wrapper before the array ever reaches `postMessage`;
+// nested segment objects were never independently proxied (Vue wraps
+// nested access lazily through the outer proxy, it doesn't mutate the
+// stored data), so this one unwrap is enough.
 
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, toRaw, watch } from "vue";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { ParsedSegment } from "../parsers/gcodeParser";
 import { useRenderQuality } from "../composables/useRenderQuality";
+import type { ToolpathWorkerBounds, ToolpathWorkerResponse } from "./toolpathWorker";
 
 const props = defineProps<{
   segments: ParsedSegment[];
 }>();
 
-// Same palette the coordinate viewer uses (pending = blue).
-const COLOR_PENDING_R = 0x60 / 255;
-const COLOR_PENDING_G = 0xa5 / 255;
-const COLOR_PENDING_B = 0xfa / 255;
-
 const containerEl = ref<HTMLDivElement | null>(null);
+const isProcessing = ref(false);
 
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
@@ -33,6 +52,9 @@ let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
 let toolpathMesh: THREE.LineSegments | null = null;
 let resizeObserver: ResizeObserver | null = null;
+
+let worker: Worker | null = null;
+let currentJobId = 0;
 
 // Render-on-demand, same pattern (and same reasoning) as
 // ``NgcCoordinateSystemViewer.vue``: redraw only when the camera
@@ -103,85 +125,96 @@ function clearToolpath(): void {
   toolpathMesh = null;
 }
 
-function buildMesh(segments: ParsedSegment[]): THREE.LineSegments | null {
-  if (segments.length === 0) return null;
-  // Same flat-array build the coordinate viewer uses (raw program
-  // coordinates — a preview applies no runtime WCS/G92 offsets).
-  const flat = new Float32Array(segments.length * 6);
-  const colors = new Float32Array(segments.length * 6);
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    const o = i * 6;
-    flat[o] = seg.from[0];
-    flat[o + 1] = seg.from[1];
-    flat[o + 2] = seg.from[2];
-    flat[o + 3] = seg.to[0];
-    flat[o + 4] = seg.to[1];
-    flat[o + 5] = seg.to[2];
-    colors[o] = COLOR_PENDING_R;
-    colors[o + 1] = COLOR_PENDING_G;
-    colors[o + 2] = COLOR_PENDING_B;
-    colors[o + 3] = COLOR_PENDING_R;
-    colors[o + 4] = COLOR_PENDING_G;
-    colors[o + 5] = COLOR_PENDING_B;
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(flat, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  const material = new THREE.LineBasicMaterial({ vertexColors: true });
-  return new THREE.LineSegments(geometry, material);
-}
-
 // Frame the toolpath's bounding box: camera looks from Z+ down to
 // Z− (top-down, so X reads right and Y reads up like the slicer
 // preview) with a slight tilt for depth perception. No base grid —
 // the toolpath speaks for itself.
-function fitTo(segments: ParsedSegment[]): void {
+function fitToBounds(bounds: ToolpathWorkerBounds): void {
   if (!scene || !camera || !controls) return;
 
-  const box = new THREE.Box3();
-  for (const seg of segments) {
-    box.expandByPoint(new THREE.Vector3(...seg.from));
-    box.expandByPoint(new THREE.Vector3(...seg.to));
-  }
-  if (box.isEmpty()) {
-    box.expandByPoint(new THREE.Vector3(0, 0, 0));
-  }
-  const size = new THREE.Vector3();
-  box.getSize(size);
-  const center = new THREE.Vector3();
-  box.getCenter(center);
+  const sizeX = bounds.maxX - bounds.minX;
+  const sizeY = bounds.maxY - bounds.minY;
+  const sizeZ = bounds.maxZ - bounds.minZ;
 
-  const span = Math.max(size.x, size.y, size.z, 10);
+  const centerX = bounds.minX + sizeX / 2;
+  const centerY = bounds.minY + sizeY / 2;
+  const centerZ = bounds.minZ + sizeZ / 2;
+
+  const span = Math.max(sizeX, sizeY, sizeZ, 10);
   const distance = span * 1.6;
   // Mostly along +Z (looking down at the XY plane) with a slight
   // tilt (~19°) so depth still reads.
   camera.position.set(
-    center.x + distance * 0.18,
-    center.y + distance * 0.28,
-    center.z + distance,
+    centerX + distance * 0.18,
+    centerY + distance * 0.28,
+    centerZ + distance,
   );
-  controls.target.copy(center);
+  controls.target.set(centerX, centerY, centerZ);
   controls.update();
 }
 
-function render(): void {
-  if (!scene) return;
-  clearToolpath();
-  const mesh = buildMesh(props.segments);
-  if (mesh) {
-    scene.add(mesh);
-    toolpathMesh = mesh;
-  }
-  fitTo(props.segments);
-  requestRender();
+// Empty-segments framing: same "collapse to origin" fallback the
+// synchronous version used, skipped entirely by the worker path
+// below (no job is posted for an empty array) so it has to be
+// handled here instead.
+function frameOrigin(): void {
+  if (!scene || !camera || !controls) return;
+  const span = 10;
+  const distance = span * 1.6;
+  camera.position.set(distance * 0.18, distance * 0.28, distance);
+  controls.target.set(0, 0, 0);
+  controls.update();
 }
 
-watch(() => props.segments, () => render());
+function requestWorkerRender(): void {
+  if (!worker || props.segments.length === 0) {
+    clearToolpath();
+    frameOrigin();
+    requestRender();
+    return;
+  }
+
+  currentJobId++;
+  isProcessing.value = true;
+
+  worker.postMessage({
+    jobId: currentJobId,
+    segments: toRaw(props.segments),
+  });
+}
+
+function handleWorkerMessage(e: MessageEvent<ToolpathWorkerResponse>): void {
+  const { jobId, positions, colors, bounds } = e.data;
+
+  // Ignore stale responses if the operator changed the selected file
+  // rapidly — only the most recently requested job may still land.
+  if (jobId !== currentJobId) return;
+  isProcessing.value = false;
+
+  clearToolpath();
+
+  if (positions && colors && bounds && scene) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.LineBasicMaterial({ vertexColors: true });
+    toolpathMesh = new THREE.LineSegments(geometry, material);
+    scene.add(toolpathMesh);
+
+    fitToBounds(bounds);
+    requestRender();
+  }
+}
+
+watch(() => props.segments, () => requestWorkerRender());
 
 onMounted(() => {
+  worker = new Worker(new URL("./toolpathWorker.ts", import.meta.url), { type: "module" });
+  worker.onmessage = handleWorkerMessage;
+
   initScene();
-  render();
+  requestWorkerRender();
 });
 
 onBeforeUnmount(() => {
@@ -195,13 +228,28 @@ onBeforeUnmount(() => {
   renderer = null;
   scene = null;
   camera = null;
+  worker?.terminate();
+  worker = null;
 });
 </script>
 
 <template>
-  <div
-    ref="containerEl"
-    class="h-full w-full rounded-md border border-gray-700 bg-gray-950"
-    data-test="toolpath-viewer"
-  ></div>
+  <div class="relative h-full w-full">
+    <div
+      ref="containerEl"
+      class="h-full w-full rounded-md border border-gray-700 bg-gray-950"
+      data-test="toolpath-viewer"
+    ></div>
+
+    <div
+        v-if="isProcessing"
+        class="absolute inset-0 flex items-center justify-center bg-gray-950/60 backdrop-blur-[2px] transition-opacity"
+        data-test="toolpath-viewer-processing"
+    >
+      <div class="flex flex-col items-center">
+        <div class="mb-4 h-10 w-10 animate-spin rounded-full border-4 border-gray-600 border-t-blue-500"></div>
+        <span class="text-sm font-medium text-gray-300">Processing toolpath…</span>
+      </div>
+    </div>
+  </div>
 </template>
