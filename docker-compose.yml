@@ -1,0 +1,33 @@
+# Convenience wrapper around the Dockerfile — `docker compose up -d`
+# builds and runs the demo, with the operator-generated content
+# (uploaded G-code, generated machine profiles, module settings)
+# persisted in named volumes so a `docker compose restart` doesn't
+# wipe the demo back to its seed state. Not required — `docker build`
+# + `docker run` work exactly the same without this file.
+#
+# The host port MUST be 8080 (or 80/443/5173/4173) — nothing else.
+# frontend/src/services/apiClient.ts only treats that exact allowlist
+# of ports as "same-origin, nginx will proxy /api for me"; any other
+# host port makes the frontend fall back to calling
+# `<hostname>:8000` directly, which is unreachable from outside this
+# container (confirmed live: mapping to 18080 during verification
+# broke every API call with exactly this fallback). If you need a
+# different external port, put a reverse proxy in front of this
+# container rather than changing the mapping below.
+services:
+  linuxcnc-ui:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - backend-data:/app/backend/data
+      - machine-config-machines:/app/machine_config/machines
+      - machine-config-active:/app/machine_config/active
+      - nc-files:/app/nc_files
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  machine-config-machines:
+  machine-config-active:
+  nc-files:

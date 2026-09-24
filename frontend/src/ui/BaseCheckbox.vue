@@ -1,62 +1,88 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, useAttrs } from 'vue'
+import { useConsoleStore } from '../stores/console'
+
+const consoleStore = useConsoleStore()
 
 defineOptions({
   inheritAttrs: false
 })
 
-// The true state coming from the backend
 const props = defineProps<{
   modelValue: boolean
   disabled?: boolean
 }>()
 
-// Emits the change request and any timeout errors
-const emit = defineEmits(['update:modelValue', 'error'])
+const emit = defineEmits<{
+  (e: 'update:modelValue', newValue: boolean): void
+}>()
+
+const attrs = useAttrs()
+// Detect if the parent actually provided a v-model or @update:modelValue listener
+const hasListener = computed(() => !!attrs['onUpdate:modelValue'])
 
 const isPending = ref(false)
 const optimisticValue = ref(false)
+const localValue = ref(props.modelValue) // State for unmanaged/transition mode
 let timeoutId: number | null = null
 
-// The checkbox displays our optimistic guess if pending, otherwise the true backend state
+// Keep the local fallback synced just in case the parent updates the prop
+// statically but doesn't listen for changes.
+watch(() => props.modelValue, (newVal) => {
+  localValue.value = newVal
+})
+
 const currentDisplayValue = computed(() => {
+  if (!hasListener.value) return localValue.value
   return isPending.value ? optimisticValue.value : props.modelValue
 })
 
-// Watch the true backend state for confirmation
 watch(() => props.modelValue, (newBackendState) => {
-  if (isPending.value && newBackendState === optimisticValue.value) {
-    // The backend confirmed our change! Clear the pending state and timer.
+  if (hasListener.value && isPending.value && newBackendState === optimisticValue.value) {
+    consoleStore.success(`new value is set: ${optimisticValue.value}`)
     isPending.value = false
     if (timeoutId) clearTimeout(timeoutId)
   }
 })
 
+function warningAndToggleValue() {
+  localValue.value = !localValue.value
+  consoleStore.warning('Checkbox action not implemented. Toggling locally.')
+}
+
+function dispatchOptimisticUpdate() {
+  optimisticValue.value = !props.modelValue
+  isPending.value = true
+
+  consoleStore.debug(`optimisticValue set to ${optimisticValue.value}`)
+  emit('update:modelValue', optimisticValue.value)
+}
+
+function handleSyncTimeout() {
+  if (isPending.value) {
+    isPending.value = false
+    consoleStore.error('State synchronization timed out. Machine did not respond.')
+  }
+}
+
 const toggle = (event: Event) => {
-  // Prevent spam-clicking while waiting for the backend
-  if (props.disabled || isPending.value) {
+  if (props.disabled || (isPending.value && hasListener.value)) {
     event.preventDefault()
     return
   }
 
-  // Set the optimistic state and mark as pending
-  optimisticValue.value = !props.modelValue
-  isPending.value = true
+  if (!hasListener.value) {
+    warningAndToggleValue();
+    return
+  }
 
-  // Tell the parent component to send the API request
-  emit('update:modelValue', optimisticValue.value)
+  dispatchOptimisticUpdate();
 
-  // Start the 3-second rollback timer
   timeoutId = window.setTimeout(() => {
-    if (isPending.value) {
-      // The backend never confirmed. Roll back the visual state.
-      isPending.value = false
-      emit('error', 'State synchronization timed out. Machine did not respond.')
-    }
+    handleSyncTimeout();
   }, 3000)
 }
 
-// Clean up the timer if the component is destroyed before the 3 seconds are up
 onBeforeUnmount(() => {
   if (timeoutId) clearTimeout(timeoutId)
 })
@@ -67,21 +93,20 @@ onBeforeUnmount(() => {
     <input
       type="checkbox"
       :checked="currentDisplayValue"
-      :disabled="disabled || isPending"
+      :disabled="disabled || (isPending && hasListener)"
       @click.prevent="toggle"
       v-bind="$attrs"
       class="w-6 h-6 text-blue-500 bg-gray-900 border-gray-700 rounded cursor-pointer appearance-none checked:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 transition-all duration-200 flex items-center justify-center"
       :class="{
-        'opacity-50 animate-pulse cursor-wait': isPending,
-        'cursor-not-allowed opacity-50': disabled && !isPending
+        'opacity-50 animate-pulse cursor-wait': isPending && hasListener,
+        'cursor-not-allowed opacity-50': disabled && (!isPending || !hasListener)
       }"
     />
 
-    <!-- Custom SVG Checkmark to overlay on the appearance-none input -->
     <svg
       v-if="currentDisplayValue"
       class="absolute w-4 h-4 text-white pointer-events-none left-1"
-      :class="{ 'opacity-50': isPending }"
+      :class="{ 'opacity-50': isPending && hasListener }"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

@@ -1,0 +1,36 @@
+# Keep the Docker build context small and avoid baking in local-only
+# state (venvs, editor config, previous build output).
+
+.git
+.idea
+.claude
+.vscode
+
+# Python
+**/__pycache__
+**/*.pyc
+backend/venv
+backend/.venv
+.venv
+venv
+
+# Node / frontend build output — the frontend is built INSIDE the
+# image (docker/generate-frontend.sh); local node_modules/dist/
+# generated/ would only shadow that with a stale host-machine build.
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/generated
+frontend/.cert
+
+# Local/dev-only data and logs.
+*.db
+*.log
+log/
+backend/data
+backend/backend-machine.log
+backend/backend-system.log
+
+# Docs and scratch — irrelevant to the image itself.
+.agent
+*.md
