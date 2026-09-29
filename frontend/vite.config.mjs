@@ -16,8 +16,12 @@ const SYSTEM_TARGET = 'http://localhost:8001';
 // (Vite convention), everything else is a literal prefix match — so
 // the macro-start regex exception and the system-owned prefixes must
 // stay above the generic "/api" fallback.
+//
+// Unlike an nginx `location`, Vite tests the RegExp against the URL
+// *including* its query string — `start?kind=ngc` must still match,
+// or the request falls through to the system service and 404s.
 const DEV_PROXY = {
-  '^/api/v1/modules/macros/[^/]+/start$': { target: MACHINE_TARGET, changeOrigin: true },
+  '^/api/v1/modules/macros/[^/]+/start(\\?.*)?$': { target: MACHINE_TARGET, changeOrigin: true },
 
   // Remove the trailing slashes here:
   '/api/v1/system': { target: SYSTEM_TARGET, changeOrigin: true },

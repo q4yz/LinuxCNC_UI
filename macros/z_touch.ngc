@@ -65,5 +65,4 @@ o<z_touch> sub
 
 
     ; Force the Axis GUI to reload the G-code and update the visual offset
-    M100
 o<z_touch> endsub

@@ -69,14 +69,17 @@ async function remove(
  * Dispatch the macro via the unified ``startMacro`` endpoint
  * (``POST /api/v1/modules/macros/{name}/start?kind=macro|ngc``).
  * ``.mcode`` is rejected by the endpoint with 400 — the store
- * surfaces that via ``reportCommandFailure``.
+ * surfaces that via ``reportCommandFailure``. ``args`` become the
+ * positional parameters (``#1``, ``#2``, ...) of an ``.ngc``
+ * subroutine call; the backend rejects them for any other kind.
  */
 async function start(
   name: string,
   kind: MacroKind,
+  args?: number[],
 ): Promise<CommandResult> {
   return _commandResultFrom(
-    ModulesMacrosService.startMacro(name, kind),
+    ModulesMacrosService.startMacro(name, kind, args && args.length ? args : undefined),
     `start:${kind}:${name}`,
   );
 }

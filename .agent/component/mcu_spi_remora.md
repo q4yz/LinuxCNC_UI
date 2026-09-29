@@ -240,8 +240,12 @@ class):
 
 ```hal
 # Auto-Routed: <axes.id> home switch <- <mcu_id> pin <pin_id> (input <NN>)
-net <axes.id>-home-sw remora.input.<NN> => joint.<n>.home-sw-in joint.<n>.neg-lim-sw-in
+net <axes.id>-home-sw remora.input.<NN>[.not] => joint.<n>.home-sw-in
 ```
+
+Home switch only — never also `neg-lim-sw-in` (which `3Dprinter.hal`
+does): a switch already pressed at start-up then reads as a tripped
+limit and the machine faults before it can home.
 
 ```json
 { "Name": "endstop_<axes.id>", "Thread": "Servo", "Type": "Digital Pin",
@@ -253,12 +257,12 @@ net <axes.id>-home-sw remora.input.<NN> => joint.<n>.home-sw-in joint.<n>.neg-li
 `^` (pullup) is a real modifier this firmware's config.txt parser
 accepts. A leading `!` for inversion is **not** — confirmed against
 real Remora hardware, where writing it breaks the pin (the parser
-doesn't recognise it as a modifier the way it does `^`). There is no
-HAL-side `-not` twin substituted in its place either (unlike
-`ParportRouterMapper`/`VfdRs485RouterMapper`): an inverted digital
-input or stepper direction/enable pin on this MCU is an open gap, not
-silently reinterpreted, until this firmware's real invert mechanism
-(if any) is confirmed.
+doesn't recognise it as a modifier the way it does `^`). Inversion of a
+digital **input** is done HAL-side instead: the Remora driver exports
+an inverted twin `remora.input.<NN>.not` next to every
+`remora.input.<NN>`, so an `!`-prefixed input pin (`endstop_pin:
+!PG6`) nets the `.not` pin — the same idea as parport's `-in-not`.
+The firmware `Pin` string never carries the `!`.
 
 ### Analog / PWM output (heater, fan, laser) → `remora.SP.N`
 

@@ -11,6 +11,7 @@ business logic does not need to follow that split.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any, Literal
 
@@ -139,7 +140,9 @@ class AxisService:
                 except (TypeError, ValueError):
                     logger.warning("jog_axis: dropping bad axis/velocity pair %r=%r", axis, velocity)
 
-            jog_axis(coerced, distance)
+            # Worker thread: jog_axis takes the shared command lock and
+            # sleeps; doing that on the event loop froze telemetry.
+            await asyncio.to_thread(jog_axis, coerced, distance)
             return True
 
         if mtype == "jog_stop":
@@ -148,7 +151,7 @@ class AxisService:
                 logger.warning("jog_stop: 'axes' must be a list, got %r", type(axes))
                 return True
 
-            jog_stop([int(a) for a in axes])
+            await asyncio.to_thread(jog_stop, [int(a) for a in axes])
             return True
 
         # Not an axis command

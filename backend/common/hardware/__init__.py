@@ -3,6 +3,7 @@ from .Connection import (
     USE_MOCK,
     DeviceConfigMapper,
     execute_gcode,
+    dispatch_mdi,
     execute_sync_cmd,
     get_stat_channel,
     get_cmd_channel,
@@ -22,6 +23,7 @@ __all__ = [
     "is_linuxcnc_connected",
     "execute_sync_cmd",
     "execute_gcode",
+    "dispatch_mdi",
 
     "DeviceConfigMapper",
     "hal",

@@ -29,10 +29,11 @@ can declare its own, distinct switch; a joint with none of its own
 falls back to its axis's, so a single-joint axis or a genuinely
 shared-switch gantry behaves exactly as before). The signal is
 endstop-id-named (so two axes/joints sharing one switch collapse onto
-one writer) and additionally targets `neg-lim-sw-in` — confirmed
-against `3Dprinter.hal`'s `net X-stop remora.input.00 => joint.0.home
--sw-in joint.0.neg-lim-sw-in`, genuinely different wiring from the
-parport reference machine, which wires `home-sw-in` alone.
+one writer) and targets `home-sw-in` **only**, same as the parport
+reference machine. `3Dprinter.hal` additionally wires `neg-lim-sw-in`,
+but on a real machine that is wrong: a home switch that is already
+pressed at start-up (axis parked on it) reads as a tripped limit, and
+LinuxCNC refuses to move off it — the machine faults before homing.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ class RemoraStepperHalMapper:
             n = joint["joint_number"]
             endstop_signal = f"{endstop['id']}-sw"
             fragment.nets.append(
-                f"net {endstop_signal} => joint.{n}.home-sw-in joint.{n}.neg-lim-sw-in"
+                f"net {endstop_signal} => joint.{n}.home-sw-in"
             )
             if endstop["id"] in requested_endstop_ids:
                 continue

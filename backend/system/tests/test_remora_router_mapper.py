@@ -116,13 +116,30 @@ def test_endstop_firmware_module_never_carries_a_bang_even_when_inverted():
     """Confirmed against real Remora hardware: a leading ``!`` on a
     "Digital Pin"'s ``Pin`` string is not a modifier the firmware's
     config.txt parser recognises (unlike ``^`` for pullup) — writing
-    it breaks the pin. There is no HAL-side substitute either; an
-    inverted Remora digital input is an open gap, not silently
-    reinterpreted."""
+    it breaks the pin. Inversion is done HAL-side instead (see the
+    `.not` tests below)."""
     fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^!PC0")])
     module = fragment.firmware_modules[0].module
     assert module["Pin"] == "^PC_0"
     assert "!" not in module["Pin"]
+
+
+def test_inverted_endstop_nets_the_remora_not_twin():
+    """`endstop_pin: !PG6` — the driver's own inverted
+    `remora.input.NN.not` pin carries the inversion."""
+    fragment = RemoraRouterMapper.route([_request("endstop_x_min-sw", PinRole.ENDSTOP, "!PG6")])
+    assert fragment.nets == ["net endstop_x_min-sw remora.input.00.not"]
+
+
+def test_inverted_digital_in_nets_the_remora_not_twin_and_keeps_its_index():
+    requests = [
+        _request("endstop_x-sw", PinRole.ENDSTOP, "PC0"),
+        _request("estop-fault", PinRole.DIGITAL_IN, "^!PC1", owner="estop"),
+    ]
+    fragment = RemoraRouterMapper.route(requests)
+    assert "net endstop_x-sw remora.input.00" in fragment.nets
+    assert "net estop-fault remora.input.01.not" in fragment.nets
+    assert fragment.firmware_modules[1].module["Data Bit"] == 1
 
 
 def test_motion_roles_are_ignored():

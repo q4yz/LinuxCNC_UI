@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import List
+
 from fastapi import APIRouter, Path, Query, Response
 
 from services.MacroExecutionService import (
@@ -27,18 +29,24 @@ router = APIRouter(
 
 @router.post(
     "/{name}/start",
-    status_code=204,
+    status_code=202,
     summary="Start/Execute a macro",
     description=(
-        "Executes the requested macro on the CNC machine via the MDI channel. "
+        "Starts the requested macro on the CNC machine via the MDI channel "
+        "and returns immediately; the lines run in the background and "
+        "progress is reported through the console log. "
         "Switches the machine to MDI mode automatically. "
-        "Returns ``400`` if the machine is powered off or in E-STOP."
+        "For ``.ngc`` subroutines, each ``args`` value is passed as a "
+        "positional parameter (``o<name> call [#1] [#2] ...``). "
+        "Returns ``400`` if the machine is powered off or in E-STOP, "
+        "``409`` if another macro is still running."
     ),
     operation_id="startMacro",
     responses={
-        204: {"description": "Macro execution successfully started."},
+        202: {"description": "Macro execution successfully started."},
         404: {"description": "No macro with that name exists on disk."},
         400: {"description": "Invalid name/kind, or machine is not ready (E-STOP/Power Off)."},
+        409: {"description": "Another macro is still running."},
     },
 )
 def start_macro(
@@ -47,7 +55,11 @@ def start_macro(
         MacroKind.MACRO,
         description="One of ``macro`` / ``ngc`` / ``mcode``."
     ),
+    args: List[float] = Query(
+        [],
+        description="Positional subroutine parameters (``#1``, ``#2``, ...), ``.ngc`` only.",
+    ),
 ) -> Response:
-    """Executes the macro via the CNC machine's MDI channel."""
-    get_macro_execution_service().start_macro(name, kind)
-    return Response(status_code=204)
+    """Starts the macro via the CNC machine's MDI channel."""
+    get_macro_execution_service().start_macro(name, kind, args)
+    return Response(status_code=202)

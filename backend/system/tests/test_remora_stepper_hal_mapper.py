@@ -91,21 +91,21 @@ def test_a_joint_with_no_step_pin_gets_no_firmware_module():
 
 def test_endstop_signal_is_named_from_the_endstop_not_the_axis():
     fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {"endstop_x": X_ENDSTOP})
-    assert "net endstop_x-sw => joint.0.home-sw-in joint.0.neg-lim-sw-in" in fragment.nets
+    assert "net endstop_x-sw => joint.0.home-sw-in" in fragment.nets
 
     request = next(r for r in fragment.requests if r.role is PinRole.ENDSTOP)
     assert request.signal == "endstop_x-sw"
     assert request.pin.pin_id == "PC0"
 
 
-def test_endstop_wiring_targets_both_home_and_neg_lim_unlike_class_a():
-    """`3Dprinter.hal`: `net X-stop remora.input.00 => joint.0.home-sw-in
-    joint.0.neg-lim-sw-in` — genuinely different from the parport
-    reference machine, which wires `home-sw-in` alone."""
+def test_endstop_wiring_targets_home_switch_only_never_a_limit():
+    """A home switch that is already pressed at start-up must not also
+    read as a tripped `neg-lim-sw-in` — LinuxCNC would fault before it
+    can home. `3Dprinter.hal` wires both; this compiler deliberately
+    does not, matching the parport reference machine."""
     fragment = RemoraStepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {"endstop_x": X_ENDSTOP})
-    line = next(n for n in fragment.nets if "endstop_x-sw" in n)
-    assert "joint.0.home-sw-in" in line
-    assert "joint.0.neg-lim-sw-in" in line
+    assert "net endstop_x-sw => joint.0.home-sw-in" in fragment.nets
+    assert not any("lim-sw-in" in n for n in fragment.nets)
 
 
 def test_axis_with_no_endstop_emits_no_home_wiring():
@@ -127,8 +127,8 @@ def test_a_dual_motor_axis_wires_the_shared_endstop_into_both_joints():
 
     fragment = RemoraStepperHalMapper.to_fragment(y_axis, joints, endstops_by_id)
 
-    assert "net endstop_y-sw => joint.1.home-sw-in joint.1.neg-lim-sw-in" in fragment.nets
-    assert "net endstop_y-sw => joint.2.home-sw-in joint.2.neg-lim-sw-in" in fragment.nets
+    assert "net endstop_y-sw => joint.1.home-sw-in" in fragment.nets
+    assert "net endstop_y-sw => joint.2.home-sw-in" in fragment.nets
     assert sum(1 for r in fragment.requests if r.role is PinRole.ENDSTOP) == 1
 
 
@@ -148,8 +148,8 @@ def test_a_dual_motor_axis_wires_each_joint_to_its_own_distinct_endstop():
 
     fragment = RemoraStepperHalMapper.to_fragment(y_axis, joints, endstops_by_id)
 
-    assert "net endstop_y_min-sw => joint.1.home-sw-in joint.1.neg-lim-sw-in" in fragment.nets
-    assert "net endstop_y1_min-sw => joint.2.home-sw-in joint.2.neg-lim-sw-in" in fragment.nets
+    assert "net endstop_y_min-sw => joint.1.home-sw-in" in fragment.nets
+    assert "net endstop_y1_min-sw => joint.2.home-sw-in" in fragment.nets
     endstop_requests = {r.owner: r for r in fragment.requests if r.role is PinRole.ENDSTOP}
     assert set(endstop_requests) == {"endstop_y_min", "endstop_y1_min"}
 

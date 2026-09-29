@@ -1,25 +1,39 @@
 <script setup lang="ts">
-// Probing panel — visual layout only, no backend wiring yet.
+// Probing panel.
 //
 // Split-pane architecture per the design spec:
 //   1. Configuration header — probe calibration + offsets (would be
 //      "permanent" hardware config, saved to the backend once wired).
 //   2. Cycle selector — a 3x3 grid of corner/edge probing cycles plus
-//      a bore/boss (Inside/Outside) center-finder, with WCS target
-//      selection and job-scoped readouts (would be "volatile" job
-//      state, local-only, per the design spec).
+//      circle / rectangle (Inside/Outside) center-finders, with WCS
+//      target selection and live position readouts.
 //
-// Every click handler here is intentionally a no-op — this component
-// renders the interaction surface only. Wiring a handler to
-// `POST /api/v1/probing/execute` (or whatever the real endpoint ends
-// up being) is future work; nothing here should be read as having
-// been verified against real probing macros.
+// Clicking a cycle opens ``ProbeParamsDialog`` for the values that
+// cycle needs (``config/probing.ts``), then switches to the target
+// WCS if it isn't active yet and starts the matching ``.ngc`` macro
+// in ``macros/`` with positional arguments. The macros zero the
+// *active* WCS (``G10 L20 P0``), which is why the target WCS is
+// activated first.
 
-import {computed, reactive, ref} from "vue";
+import {computed, ref} from "vue";
+import {storeToRefs} from "pinia";
 import {BaseButton, Icon} from "../../ui";
 import BaseInput from "../../ui/BaseInput.vue";
+import ProbeParamsDialog from "./ProbeParamsDialog.vue";
+import {useMachineStore} from "../../stores/machine";
+import {useMacrosStore} from "../../stores/macrosStore";
+import {WORK_COORDINATE_SYSTEMS} from "../../config/gcodes";
+import {
+  buildProbeCall,
+  probeCycleFields,
+  probeCycleTitle,
+  type ProbeCycle,
+  type ProbeMode,
+} from "../../config/probing";
 
-type ProbeMode = "inside" | "outside";
+const machineStore = useMachineStore();
+const macrosStore = useMacrosStore();
+const {droX, droY, droZ, status} = storeToRefs(machineStore);
 
 // --- Configuration header state (would be the "permanent" /
 // hardware-config half in the design doc — local-only for now). ---
@@ -42,41 +56,83 @@ function toggleProbeMode() {
 }
 
 const WCS_OPTIONS = ["G54", "G55", "G56", "G57", "G58", "G59"] as const;
-const targetWcs = ref<(typeof WCS_OPTIONS)[number]>("G54");
+type WcsCode = (typeof WCS_OPTIONS)[number];
 
-// Read-only job position readouts — static placeholders until the
-// live DRO feed is wired in.
-const xPosition = ref(0);
-const yPosition = ref(0);
-const zPosition = ref(0);
-
-// Outside-mode clearance fields — the 8 fields bordering the grid,
-// only shown once probeMode flips to "outside". Named by their
-// position around the grid (see template grid-placement classes).
-const clearances = reactive({
-  topLeft: 1.0,
-  topRight: 1.0,
-  bottomLeft: 1.0,
-  bottomRight: 1.0,
-  leftTop: 1.0,
-  leftBottom: 1.0,
-  rightTop: 1.0,
-  rightBottom: 1.0,
-});
-
-// The 8 corner/edge probing cycles. `id` is a placeholder macro name
-// (`O<probe_corner> call`-shaped) for whenever this is wired up.
-type CycleId =
-    | "corner-tl" | "edge-top" | "corner-tr"
-    | "edge-left" /* center intentionally has no cycle */ | "edge-right"
-    | "corner-bl" | "edge-bottom" | "corner-br";
-
-function triggerCycle(_id: CycleId) {
-  // no-op: dispatch not wired yet — see module docstring.
+function activeWcsName(): string {
+  return WORK_COORDINATE_SYSTEMS.find((s) => s.index === status.value.g5xIndex)?.name ?? "G54";
 }
 
-function triggerBoreBoss() {
-  // no-op: dispatch not wired yet — see module docstring.
+// Starts on whatever WCS is active, so probing without touching the
+// selector never switches coordinate systems behind the operator.
+const initialWcs = activeWcsName();
+const targetWcs = ref<WcsCode>(
+    (WCS_OPTIONS as readonly string[]).includes(initialWcs) ? (initialWcs as WcsCode) : "G54",
+);
+
+// Live position readouts (active WCS), straight from the DRO feed.
+const xPosition = computed(() => Number(droX.value) || 0);
+const yPosition = computed(() => Number(droY.value) || 0);
+const zPosition = computed(() => Number(droZ.value) || 0);
+
+// --- Cycle dialog + dispatch -------------------------------------------
+
+// Last-used dialog values, keyed by field key (``searchDist`` is shared
+// by edges and corners, etc.). Remembered in this browser only — a
+// per-operator convenience, so storage failures are simply ignored.
+const LAST_VALUES_KEY = "probing.lastValues";
+
+function loadLastValues(): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(LAST_VALUES_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const lastValues = ref<Record<string, number>>(loadLastValues());
+
+function rememberValues(values: Record<string, number>) {
+  lastValues.value = {...lastValues.value, ...values};
+  try {
+    window.localStorage.setItem(LAST_VALUES_KEY, JSON.stringify(lastValues.value));
+  } catch {
+    // Private window / blocked storage — the values just aren't remembered.
+  }
+}
+
+const dialogOpen = ref(false);
+const pendingCycle = ref<ProbeCycle | null>(null);
+const dialogFields = computed(() =>
+    pendingCycle.value ? probeCycleFields(pendingCycle.value, probeMode.value) : [],
+);
+const dialogTitle = computed(() =>
+    pendingCycle.value ? probeCycleTitle(pendingCycle.value, probeMode.value) : "",
+);
+
+function triggerCycle(cycle: ProbeCycle) {
+  pendingCycle.value = cycle;
+  dialogOpen.value = true;
+}
+
+async function runProbe(values: Record<string, number>) {
+  const cycle = pendingCycle.value;
+  if (!cycle) return;
+  rememberValues(values);
+
+  const call = buildProbeCall(
+      cycle,
+      probeMode.value,
+      {probeDiameter: Number(probeDiameter.value), feedrate: Number(probingFeedrate.value)},
+      values,
+  );
+
+  if (activeWcsName() !== targetWcs.value) {
+    const switched = await machineStore.setCoordinateSystem(targetWcs.value);
+    if (switched.failed) return;
+  }
+  await macrosStore.runMacroOfKind("ngc", call.macro, call.args);
 }
 
 // --- Grid diagram geometry --------------------------------------------
@@ -187,7 +243,7 @@ const cornerDots = computed(() =>
 
 // The always-clickable 3x3 tile layer — fixed position, independent
 // of the mode-dependent overlay above.
-const TILES: { id: string; cycle: CycleId | null; title: string; testId: string }[] = [
+const TILES: { id: string; cycle: ProbeCycle | null; title: string; testId: string }[] = [
   {id: "tl", cycle: "corner-tl", title: "Probe top-left corner", testId: "probe-corner-tl"},
   {id: "tm", cycle: "edge-top", title: "Probe top edge", testId: "probe-edge-top"},
   {id: "tr", cycle: "corner-tr", title: "Probe top-right corner", testId: "probe-corner-tr"},
@@ -198,14 +254,6 @@ const TILES: { id: string; cycle: CycleId | null; title: string; testId: string 
   {id: "bm", cycle: "edge-bottom", title: "Probe bottom edge", testId: "probe-edge-bottom"},
   {id: "br", cycle: "corner-br", title: "Probe bottom-right corner", testId: "probe-corner-br"},
 ];
-
-// Percentage offsets for the outside-mode clearance fields, keyed to
-// the fixed tile grid (cell centers at 35/105/175 of a 210 box) —
-// independent of the ring geometry above, so these never move.
-const COL_LEFT_PCT = (35 / GRID_SIZE) * 100;
-const COL_RIGHT_PCT = (175 / GRID_SIZE) * 100;
-const ROW_TOP_PCT = (35 / GRID_SIZE) * 100;
-const ROW_BOTTOM_PCT = (175 / GRID_SIZE) * 100;
 </script>
 
 <template>
@@ -298,16 +346,27 @@ const ROW_BOTTOM_PCT = (175 / GRID_SIZE) * 100;
 
       <!-- Grid + bore/boss selector -->
       <div class="flex flex-wrap items-center gap-8 pt-2">
-        <!-- Bore / Boss (Inside/Outside center-finder) -->
-        <button
-            type="button"
-            class="shrink-0 h-20 w-20 rounded-full border-2 border-yellow-400 bg-gray-900 flex items-center justify-center hover:bg-gray-800/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-            title="Find bore / boss center"
-            data-testid="probe-bore-boss"
-            @click="triggerBoreBoss"
-        >
-          <span class="h-2.5 w-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
-        </button>
+        <!-- Center finders (Inside = bore / pocket, Outside = boss / block) -->
+        <div class="flex shrink-0 flex-col items-center gap-4">
+          <button
+              type="button"
+              class="h-20 w-20 rounded-full border-2 border-yellow-400 bg-gray-900 flex items-center justify-center hover:bg-gray-800/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+              :title="isOutside ? 'Find boss center (outside circle)' : 'Find bore center (inside circle)'"
+              data-testid="probe-bore-boss"
+              @click="triggerCycle('circle')"
+          >
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
+          </button>
+          <button
+              type="button"
+              class="h-20 w-20 rounded border-2 border-yellow-400 bg-gray-900 flex items-center justify-center hover:bg-gray-800/60 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+              :title="isOutside ? 'Find block center (outside rectangle)' : 'Find pocket center (inside rectangle)'"
+              data-testid="probe-rect"
+              @click="triggerCycle('rect')"
+          >
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
+          </button>
+        </div>
 
         <!-- 3x3 cycle grid — two layers: always-clickable tile buttons
              underneath, and a decorative (pointer-events-none) overlay
@@ -316,7 +375,6 @@ const ROW_BOTTOM_PCT = (175 / GRID_SIZE) * 100;
         <div
             class="relative shrink-0"
             :style="{ width: `${GRID_SIZE}px`, height: `${GRID_SIZE}px` }"
-            :class="isOutside ? 'mx-16 my-9' : ''"
         >
           <!-- Tile layer: the actual pressable surface, one button per
                cell, fixed regardless of mode. -->
@@ -405,47 +463,19 @@ const ROW_BOTTOM_PCT = (175 / GRID_SIZE) * 100;
             </g>
           </svg>
 
-          <!-- Outside-mode clearance fields, positioned around the
-               diagram and only rendered when Outside is active. -->
-          <template v-if="isOutside">
-            <div class="absolute -top-9 -translate-x-1/2" :style="{ left: `${COL_LEFT_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.topLeft" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-top-left"/>
-            </div>
-            <div class="absolute -top-9 -translate-x-1/2" :style="{ left: `${COL_RIGHT_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.topRight" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-top-right"/>
-            </div>
-            <div class="absolute -bottom-9 -translate-x-1/2" :style="{ left: `${COL_LEFT_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.bottomLeft" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-bottom-left"/>
-            </div>
-            <div class="absolute -bottom-9 -translate-x-1/2" :style="{ left: `${COL_RIGHT_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.bottomRight" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-bottom-right"/>
-            </div>
-            <div class="absolute -left-16 -translate-y-1/2" :style="{ top: `${ROW_TOP_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.leftTop" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-left-top"/>
-            </div>
-            <div class="absolute -left-16 -translate-y-1/2" :style="{ top: `${ROW_BOTTOM_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.leftBottom" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-left-bottom"/>
-            </div>
-            <div class="absolute -right-16 -translate-y-1/2" :style="{ top: `${ROW_TOP_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.rightTop" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-right-top"/>
-            </div>
-            <div class="absolute -right-16 -translate-y-1/2" :style="{ top: `${ROW_BOTTOM_PCT}%` }">
-              <BaseInput type="number" step="0.01" v-model="clearances.rightBottom" class="w-14 text-xs px-1 py-1"
-                         data-testid="clearance-right-bottom"/>
-            </div>
-          </template>
         </div>
       </div>
 
       <p class="text-xs text-blue-300/80 italic">All values in millimeters</p>
     </div>
+
+    <ProbeParamsDialog
+        v-model:open="dialogOpen"
+        :title="dialogTitle"
+        :fields="dialogFields"
+        :values="lastValues"
+        @run="runProbe"
+    />
   </div>
 </template>
 

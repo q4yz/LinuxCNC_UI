@@ -148,6 +148,60 @@ def execute_gcode(gcode: str, timeout: float = 10.0) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def dispatch_mdi(gcode: str, ack_timeout: float = 1.0) -> Optional[int]:
+    """
+    Hand one MDI line to LinuxCNC without waiting for its motion to finish.
+
+    Unlike :func:`execute_gcode`, ``_cmd_lock`` is only held for the
+    mode switch, the dispatch and a short acknowledgement wait — never
+    for the move itself. A long MDI move (a macro's ``G1``, a probe)
+    would otherwise hold the lock for its whole duration and stall
+    every other command, including a jog stop. Callers that need
+    sequential execution wait for the interpreter to go idle
+    themselves, outside the lock (see ``MacroExecutionService``).
+
+    Args:
+        gcode (str): The G-code line to dispatch.
+        ack_timeout (float): How long to wait for LinuxCNC to accept
+            the command. A timeout here is not an error — the line is
+            still queued, just not finished.
+
+    Returns:
+        The command's serial number (compare against
+        ``stat.echo_serial_number``), or ``None`` if the channel does
+        not expose one.
+
+    Raises:
+        HTTPException (503): If the LinuxCNC channels are unavailable.
+        HTTPException (400): If LinuxCNC rejects the command.
+        HTTPException (500): On unexpected internal errors.
+    """
+    cmd = get_cmd_channel()
+    stat = get_stat_channel()
+
+    if cmd is None or stat is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
+        )
+
+    try:
+        with _cmd_lock:
+            _switch_to_mdi_mode(stat, cmd)
+            cmd.mdi(gcode)
+            result = cmd.wait_complete(ack_timeout)
+            serial = getattr(cmd, "serial", None)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error("MDI dispatch failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if result == RcsStatus.ERROR:
+        raise HTTPException(status_code=400, detail=f"G-code execution error: {gcode}")
+    return serial
+
+
 def execute_sync_cmd(cmd_name: str, timeout: float = 0, *args) -> Dict[str, str]:
     """
     Dispatch a named command directly to the LinuxCNC command channel.
@@ -198,6 +252,7 @@ __all__ = [
     "get_cmd_channel",
     "is_cmd_connected",
     "execute_gcode",
+    "dispatch_mdi",
     "execute_sync_cmd",
     "ensure_mdi_mode",
 ]

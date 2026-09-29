@@ -7,7 +7,7 @@ from the former monolithic macros module to the new service API:
 
 * macros are seeded into an isolated ``MacroFileService`` root
   (no HTTP CRUD surface exists on this side);
-* ``execute_gcode`` / ``get_stat_channel`` are patched on the
+* ``dispatch_mdi`` / ``get_stat_channel`` are patched on the
   ``MacroExecutionService`` module so no real NML channel is needed.
 """
 from __future__ import annotations
@@ -47,11 +47,12 @@ class _Setup:
         )
 
         self.calls: list[str] = []
-        monkeypatch.setattr(exec_module, "execute_gcode", self._fake_execute)
+        monkeypatch.setattr(exec_module, "dispatch_mdi", self._fake_execute)
+        monkeypatch.setattr(exec_module, "_IDLE_POLL_S", 0)
 
-    def _fake_execute(self, line, timeout=10.0):
+    def _fake_execute(self, line, ack_timeout=1.0):
         self.calls.append(line)
-        return {"status": "success", "gcode": line}
+        return None
 
     def set_stat(self, monkeypatch, task_state, estop=False):
         """Patch ``get_stat_channel`` with a minimal fake stat object."""
@@ -70,6 +71,10 @@ class _Setup:
         )()
         monkeypatch.setattr(self.exec_module, "get_stat_channel", lambda: fake_stat)
         return fake_stat
+
+    def join(self):
+        """Wait for the background macro worker to finish."""
+        self.exec_module.get_macro_execution_service().join(timeout=5)
 
     def client(self, tmp_data_root):
         return TestClient(_macros_exec_app(tmp_data_root))
@@ -96,7 +101,8 @@ class TestStartMacroEndpoint:
         )
 
         resp = client.post("/api/v1/modules/macros/spindle_warmup/start?kind=macro")
-        assert resp.status_code == 204
+        assert resp.status_code == 202
+        setup.join()
         assert setup.calls == ["G91", "G1 X10 F1000", "G90"]
 
     def test_macro_kind_skips_python_blocks(
@@ -111,7 +117,8 @@ class TestStartMacroEndpoint:
         )
 
         resp = client.post("/api/v1/modules/macros/skippy/start?kind=macro")
-        assert resp.status_code == 204
+        assert resp.status_code == 202
+        setup.join()
         assert setup.calls == []
 
     def test_macro_kind_aborts_on_mid_run_estop(
@@ -136,17 +143,114 @@ class TestStartMacroEndpoint:
 
         real_execute = setup._fake_execute
 
-        def execute_then_flip(line, timeout=10.0):
-            result = real_execute(line, timeout)
+        def execute_then_flip(line, ack_timeout=1.0):
+            result = real_execute(line, ack_timeout)
             if len(setup.calls) == 2:
                 estop_flag["value"] = True
             return result
 
-        monkeypatch.setattr(setup.exec_module, "execute_gcode", execute_then_flip)
+        monkeypatch.setattr(setup.exec_module, "dispatch_mdi", execute_then_flip)
 
         resp = client.post("/api/v1/modules/macros/aborty/start?kind=macro")
-        assert resp.status_code == 204
+        assert resp.status_code == 202
+        setup.join()
         assert setup.calls == ["G0 X1", "G0 X2"]
+
+    def test_macro_waits_for_interpreter_idle_before_next_line(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """A line is only followed by the next once ``interp_state`` is
+        idle again — the wait happens by polling ``stat``, not inside
+        the command lock."""
+        setup = _Setup(tmp_data_root, monkeypatch)
+        fake_stat = setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "slow.macro").write_text(
+            "G1 X10\nG1 X20\n", encoding="utf-8"
+        )
+
+        busy_polls = {"left": 0}
+        seen_while_busy: list[list[str]] = []
+
+        def dispatch(line, ack_timeout=1.0):
+            setup.calls.append(line)
+            busy_polls["left"] = 3
+            return None
+
+        def poll(_self):
+            if busy_polls["left"] > 0:
+                busy_polls["left"] -= 1
+                _self.interp_state = 2  # INTERP_READING
+                seen_while_busy.append(list(setup.calls))
+            else:
+                _self.interp_state = 1  # INTERP_IDLE
+
+        fake_stat.poll = poll.__get__(fake_stat)
+        monkeypatch.setattr(setup.exec_module, "dispatch_mdi", dispatch)
+
+        resp = client.post("/api/v1/modules/macros/slow/start?kind=macro")
+        assert resp.status_code == 202
+        setup.join()
+        assert setup.calls == ["G1 X10", "G1 X20"]
+        # While the first move was still running, the second line
+        # had not been dispatched yet.
+        assert ["G1 X10"] in seen_while_busy
+
+    def test_macro_aborts_when_mode_leaves_mdi(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        from hardware.Connection import MachineMode
+
+        setup = _Setup(tmp_data_root, monkeypatch)
+        fake_stat = setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "moded.macro").write_text(
+            "G0 X1\nG0 X2\n", encoding="utf-8"
+        )
+        fake_stat.task_mode = MachineMode.MANUAL
+
+        resp = client.post("/api/v1/modules/macros/moded/start?kind=macro")
+        assert resp.status_code == 202
+        setup.join()
+        assert setup.calls == ["G0 X1"]
+
+    def test_start_returns_before_the_macro_finishes(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """The request answers 202 while the worker is still dispatching,
+        and a second start meanwhile is refused with 409."""
+        import threading
+
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "long.macro").write_text(
+            "G1 X10\nG1 X20\n", encoding="utf-8"
+        )
+
+        release = threading.Event()
+
+        def blocking_dispatch(line, ack_timeout=1.0):
+            setup.calls.append(line)
+            release.wait(timeout=5)
+            return None
+
+        monkeypatch.setattr(setup.exec_module, "dispatch_mdi", blocking_dispatch)
+
+        try:
+            resp = client.post("/api/v1/modules/macros/long/start?kind=macro")
+            assert resp.status_code == 202
+
+            again = client.post("/api/v1/modules/macros/long/start?kind=macro")
+            assert again.status_code == 409
+        finally:
+            release.set()
+            setup.join()
+
+        assert setup.calls == ["G1 X10", "G1 X20"]
 
     def test_ngc_kind_dispatches_subroutine_call(
         self, tmp_data_root, clean_env, monkeypatch
@@ -160,8 +264,100 @@ class TestStartMacroEndpoint:
         )
 
         resp = client.post("/api/v1/modules/macros/coolant/start?kind=ngc")
-        assert resp.status_code == 204
+        assert resp.status_code == 202
+        setup.join()
         assert setup.calls == ["o<coolant> call"]
+
+    def test_ngc_args_become_positional_call_parameters(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "probe_circle_inside.ngc").write_text(
+            "O<probe_circle_inside> sub\nO<probe_circle_inside> endsub\n", encoding="utf-8"
+        )
+
+        resp = client.post(
+            "/api/v1/modules/macros/probe_circle_inside/start",
+            params=[("kind", "ngc"), ("args", "4"), ("args", "12.5"), ("args", "-0.0000001"), ("args", "100")],
+        )
+        assert resp.status_code == 202
+        setup.join()
+        # Fixed-point only (no exponent G-code can't parse), trailing
+        # zeros dropped, a value that rounds to zero written as 0.
+        assert setup.calls == ["o<probe_circle_inside> call [4] [12.5] [0] [100]"]
+
+    def test_non_numeric_arg_is_rejected_with_422(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "evil.ngc").write_text("O<evil> sub\nO<evil> endsub\n", encoding="utf-8")
+
+        resp = client.post(
+            "/api/v1/modules/macros/evil/start",
+            params=[("kind", "ngc"), ("args", "1] M2 [")],
+        )
+        assert resp.status_code == 422
+        assert setup.calls == []
+
+    def test_non_finite_arg_is_rejected_with_400(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "inf.ngc").write_text("O<inf> sub\nO<inf> endsub\n", encoding="utf-8")
+
+        resp = client.post("/api/v1/modules/macros/inf/start", params=[("kind", "ngc"), ("args", "inf")])
+        assert resp.status_code in (400, 422)
+        assert setup.calls == []
+
+    def test_args_on_a_macro_kind_are_rejected_with_400(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "plain.macro").write_text("G0 X1\n", encoding="utf-8")
+
+        resp = client.post("/api/v1/modules/macros/plain/start", params=[("kind", "macro"), ("args", "1")])
+        assert resp.status_code == 400
+        assert setup.calls == []
+
+    def test_ngc_call_blocks_a_second_start_until_it_finishes(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        """A double-clicked probe cycle must not queue a second probe."""
+        import threading
+
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "probe.ngc").write_text("O<probe> sub\nO<probe> endsub\n", encoding="utf-8")
+
+        release = threading.Event()
+
+        def blocking_dispatch(line, ack_timeout=1.0):
+            setup.calls.append(line)
+            release.wait(timeout=5)
+            return None
+
+        monkeypatch.setattr(setup.exec_module, "dispatch_mdi", blocking_dispatch)
+        try:
+            assert client.post("/api/v1/modules/macros/probe/start?kind=ngc").status_code == 202
+            assert client.post("/api/v1/modules/macros/probe/start?kind=ngc").status_code == 409
+        finally:
+            release.set()
+            setup.join()
+        assert setup.calls == ["o<probe> call"]
 
     def test_mcode_kind_is_rejected_with_400(
         self, tmp_data_root, clean_env, monkeypatch

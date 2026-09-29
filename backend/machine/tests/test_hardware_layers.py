@@ -254,3 +254,61 @@ class TestExecuteGcode:
                 execute_gcode("G28")
 
         assert mode_called == []
+
+
+# ────────────────────────────────────────────────────────────────────── #
+# dispatch_mdi                                                             #
+# ────────────────────────────────────────────────────────────────────── #
+
+
+class TestDispatchMdi:
+    """``dispatch_mdi`` hands a line to LinuxCNC and returns without
+    waiting for its motion — the command lock is released right after
+    the acknowledgement, so a long macro move can't stall a jog stop.
+    """
+
+    @staticmethod
+    def _channels(wait_result, serial=7):
+        fake_stat = type(
+            "Stat",
+            (),
+            {"poll": lambda self: None, "task_mode": conn_mod.linuxcnc.MODE_MDI},
+        )()
+        fake_cmd = type(
+            "Cmd",
+            (),
+            {
+                "serial": serial,
+                "mode": lambda self, m: None,
+                "mdi": lambda self, g: None,
+                "wait_complete": lambda self, t: wait_result,
+            },
+        )()
+        return fake_stat, fake_cmd
+
+    def test_returns_serial_and_releases_lock(self):
+        fake_stat, fake_cmd = self._channels(getattr(conn_mod.linuxcnc, "RCS_DONE", 1))
+        with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
+                assert cmd_mod.dispatch_mdi("G1 X10") == 7
+
+        assert not cmd_mod._cmd_lock.locked()
+
+    def test_ack_timeout_is_not_an_error(self):
+        """``wait_complete`` returning -1 (still running) means the
+        move is queued, not failed."""
+        fake_stat, fake_cmd = self._channels(-1)
+        with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
+                assert cmd_mod.dispatch_mdi("G1 X10") == 7
+
+    def test_rcs_error_raises_400(self):
+        from fastapi import HTTPException
+
+        fake_stat, fake_cmd = self._channels(getattr(conn_mod.linuxcnc, "RCS_ERROR", 3))
+        with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
+            with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
+                with pytest.raises(HTTPException) as excinfo:
+                    cmd_mod.dispatch_mdi("G1 X10")
+        assert excinfo.value.status_code == 400
+        assert not cmd_mod._cmd_lock.locked()

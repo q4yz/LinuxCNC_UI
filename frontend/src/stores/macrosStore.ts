@@ -367,7 +367,11 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * that read ``lastResult.value.staticDispatched`` keep their
    * input. New code should branch on ``result.failed``.
    */
-  async function runMacroOfKind(kind: MacroKind, name: string): Promise<CommandResult> {
+  async function runMacroOfKind(
+    kind: MacroKind,
+    name: string,
+    args?: number[],
+  ): Promise<CommandResult> {
     validateMacroKindName(kind, name);
     const consoleStore = useConsoleStore();
 
@@ -394,7 +398,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     consoleStore.info(
       `Dispatching ${kind} macro '${name}' via the backend start endpoint.`,
     );
-    const result = await macrosFacade.start(name, kind);
+    const result = await macrosFacade.start(name, kind, args);
     if (result.failed) {
       lastError.value = describeError(result.failureReason);
       reportCommandFailure(`run macro ${kind}:${name}`, result);

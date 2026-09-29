@@ -209,7 +209,7 @@ class ProgramService:
             pins.inspect_z_lift.set_value(False)
             await asyncio.sleep(0.5)
 
-        execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
+        await asyncio.to_thread(execute_sync_cmd, "auto", 0, getattr(linuxcnc, "AUTO_RESUME", 2))
 
     def progress_program(self, stat=None) -> ProgramProgressResponse:
         stat = get_stat_channel()

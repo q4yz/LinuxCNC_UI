@@ -129,19 +129,18 @@ class RemoraRouterMapper:
                 # reader side (`net <signal> => joint.N....`) as a separate
                 # `net` line; HAL lets the same net name accumulate pins
                 # across statements, matching the reference file's split.
-                fragment.nets.append(f"net {request.signal} remora.input.{nn}")
                 # `^` (pullup) is a real modifier the firmware's
                 # config.txt parser accepts on a "Digital Pin"'s
                 # ``Pin`` string. A leading ``!`` for inversion is
                 # not — confirmed against real Remora hardware, where
                 # writing it breaks the pin (the parser doesn't
                 # recognise it as a modifier the way it does `^`).
-                # There is no HAL-side `not` twin substituted in its
-                # place (unlike ``ParportRouterMapper``/
-                # ``VfdRs485RouterMapper``) — inversion for a Remora
-                # digital input is an open gap, not silently
-                # reinterpreted, until this firmware's real invert
-                # mechanism (if any) is confirmed.
+                # Inversion happens HAL-side instead: the Remora driver
+                # exports an inverted twin `remora.input.NN.not` next
+                # to every `remora.input.NN` (same idea as parport's
+                # `-in-not`), so `!PG6` reads the `.not` pin.
+                suffix = ".not" if request.pin.invert else ""
+                fragment.nets.append(f"net {request.signal} remora.input.{nn}{suffix}")
                 pullup = "^" if request.pin.pullup else ""
                 firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
                 pin = f"{pullup}{firmware_pin}"

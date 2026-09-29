@@ -113,7 +113,7 @@ async def _loop() -> None:
                 axis,
             )
             try:
-                stop_axis(axis)
+                await asyncio.to_thread(stop_axis, axis)
             except Exception:
                 # Hardware layer is in a bad state — log and keep
                 # going. The next tick will try again.

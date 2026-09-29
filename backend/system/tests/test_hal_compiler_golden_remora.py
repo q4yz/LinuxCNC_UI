@@ -8,9 +8,12 @@ it, and checks the output is *structurally* equivalent — same
 components loaded, same `addf` order, same net-graph shape — not a
 byte-for-byte diff.
 
-The one deliberate structural difference from the reference text: the
-real file writes one combined `net X-stop remora.input.00 =>
-joint.0.home-sw-in joint.0.neg-lim-sw-in` line. This compiler instead
+Two deliberate differences from the reference text. First, the real
+file also wires every endstop into `joint.N.neg-lim-sw-in`; this
+compiler wires `home-sw-in` only — a switch already pressed at
+start-up would otherwise read as a tripped limit and fault the machine
+before homing. Second, the real file writes one combined `net X-stop
+remora.input.00 => ...` line. This compiler instead
 splits writer and reader across two `net <signal> ...` statements —
 the same split Phase 1 already uses for parport endstops (the
 component mapper emits the reader, the router emits the writer). HAL
@@ -28,7 +31,7 @@ Facts asserted here are quoted from those files, not invented:
     all servo-thread, no base-thread functions at all
   * `3Dprinter.hal`: only X/Y/Z (joints 0-2) have an endstop; the
     extruder (joint 3) has none
-  * each wired endstop targets both `home-sw-in` and `neg-lim-sw-in`
+  * each wired endstop targets `home-sw-in` only (see above)
 """
 
 from __future__ import annotations
@@ -184,7 +187,7 @@ def test_joint_pins_never_become_hal_nets(fragment):
 def test_only_xyz_have_endstops_the_extruder_does_not(fragment):
     """`3Dprinter.hal` wires X/Y/Z only — joint 3 (extruder) has none."""
     for n, endstop_id in ((0, "endstop_x"), (1, "endstop_y"), (2, "endstop_z")):
-        assert f"net {endstop_id}-sw => joint.{n}.home-sw-in joint.{n}.neg-lim-sw-in" in fragment.nets
+        assert f"net {endstop_id}-sw => joint.{n}.home-sw-in" in fragment.nets
     assert not any("joint.3.home-sw-in" in n for n in fragment.nets)
 
 

@@ -1,6 +1,3 @@
 o<tool_change> sub
-
-    
     M6 T1
-    
 o<tool_change> endsub

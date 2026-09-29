@@ -50,6 +50,7 @@ from .channel_cmd import (
     get_cmd_channel,
     is_cmd_connected,
     execute_gcode,
+    dispatch_mdi,
     execute_sync_cmd,
     ensure_mdi_mode,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "is_linuxcnc_connected",
     "execute_sync_cmd",
     "execute_gcode",
+    "dispatch_mdi",
     "ensure_mdi_mode",
     "read_error_history",
     "read_hal_pin",
