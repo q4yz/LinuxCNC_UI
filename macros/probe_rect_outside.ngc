@@ -1,0 +1,69 @@
+O<probe_rect_outside> sub
+(Call: O<probe_rect_outside> call [Est X Width] [Est Y Length] [Z Drop Dist] [Clearance] [Fast Feed])
+#<est_x_width> = #1
+#<est_y_length> = #2
+#<z_drop> = #3
+#<clearance> = #4
+#<fast_feed> = #5
+#<slow_feed> = [#<fast_feed> / 10.0]
+
+#<x_move> = [[#<est_x_width> / 2.0] + #<clearance>]
+#<y_move> = [[#<est_y_length> / 2.0] + #<clearance>]
+
+(Save starting position)
+#<start_x> = #5420
+#<start_y> = #5421
+#<safe_z> = #5422
+
+G40 G49
+G90 (Must use absolute machine coordinates for safe hops)
+
+(--- PROBE X+ SIDE ---)
+G53 G0 X[#<start_x> + #<x_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 X-[#<clearance> * 1.5] F#<fast_feed>
+G91 G0 X1.0
+G91 G38.2 X-2.0 F#<slow_feed>
+#<x_plus_edge> = #5061
+G90 G53 G0 Z#<safe_z> (Hop up)
+
+(--- PROBE X- SIDE ---)
+G53 G0 X[#<start_x> - #<x_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 X[#<clearance> * 1.5] F#<fast_feed>
+G91 G0 X-1.0
+G91 G38.2 X2.0 F#<slow_feed>
+#<x_minus_edge> = #5061
+G90 G53 G0 Z#<safe_z>
+
+(Center X and Move)
+#<center_x> = [[#<x_plus_edge> + #<x_minus_edge>] / 2.0]
+G53 G0 X#<center_x>
+G10 L20 P0 X0
+
+(--- PROBE Y+ SIDE ---)
+G53 G0 Y[#<start_y> + #<y_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 Y-[#<clearance> * 1.5] F#<fast_feed>
+G91 G0 Y1.0
+G91 G38.2 Y-2.0 F#<slow_feed>
+#<y_plus_edge> = #5062
+G90 G53 G0 Z#<safe_z>
+
+(--- PROBE Y- SIDE ---)
+G53 G0 Y[#<start_y> - #<y_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 Y[#<clearance> * 1.5] F#<fast_feed>
+G91 G0 Y-1.0
+G91 G38.2 Y2.0 F#<slow_feed>
+#<y_minus_edge> = #5062
+G90 G53 G0 Z#<safe_z>
+
+(Center Y and Move)
+#<center_y> = [[#<y_plus_edge> + #<y_minus_edge>] / 2.0]
+G53 G0 Y#<center_y>
+G10 L20 P0 Y0
+
+G90 (Ensure absolute mode on exit)
+O<probe_rect_outside> endsub
+M2

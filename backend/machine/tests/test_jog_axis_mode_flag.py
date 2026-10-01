@@ -262,6 +262,31 @@ def test_jog_axis_does_not_force_teleop_on_homed_machine(
 
 
 # ────────────────────────────────────────────────────────────────────── #
+# Mode switch only when needed                                             #
+# ────────────────────────────────────────────────────────────────────── #
+
+
+def test_second_axis_jog_does_not_resend_manual_mode(recording_client, teleop_stat):
+    """Pressing Y while X is already jogging (machine already MANUAL)
+    must not re-send ``mode(MANUAL)`` — LinuxCNC re-applies the
+    trajectory mode mid-motion and reports an error for it."""
+    teleop_stat.task_mode = jog_service.linuxcnc.MODE_MANUAL
+    jog_service.jog_axis({1: 1000.0}, distance=0.0)
+
+    assert [c for c in recording_client.calls if c[0] == "mode"] == []
+    assert [c[0] for c in recording_client.calls] == ["jog"]
+
+
+def test_jog_from_another_mode_still_switches_to_manual(recording_client, teleop_stat):
+    teleop_stat.task_mode = jog_service.linuxcnc.MODE_MDI
+    jog_service.jog_axis({0: 1000.0}, distance=0.0)
+
+    names = [c[0] for c in recording_client.calls]
+    assert names == ["mode", "jog"]
+    assert recording_client.calls[0][2] == jog_service.linuxcnc.MODE_MANUAL
+
+
+# ────────────────────────────────────────────────────────────────────── #
 # Wiring — make sure the service module is what the WS dispatcher uses  #
 # ────────────────────────────────────────────────────────────────────── #
 

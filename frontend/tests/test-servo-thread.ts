@@ -123,8 +123,15 @@ test("servo-thread facade routes LinuxCNC WS errors through the console store wi
   );
   assert.match(
     text,
-    /function\s+emitLinuxCNCError[\s\S]*?consoleStore\.error\([\s\S]*?popup:\s*true/,
-    "emitLinuxCNCError must call consoleStore.error() with popup:true",
+    /function\s+emitLinuxCNCError[\s\S]*?surfaceLinuxCNCEntry\(consoleStore/,
+    "emitLinuxCNCError must route through surfaceLinuxCNCEntry",
+  );
+  // Faults pop up as errors, ``(MSG, ...)`` operator messages as info
+  // — both with popup:true so the toast layer fires.
+  assert.match(
+    text,
+    /function\s+surfaceLinuxCNCEntry[\s\S]*?consoleStore\.info\([^)]*popup:\s*true[\s\S]*?consoleStore\.error\([^)]*popup:\s*true/,
+    "surfaceLinuxCNCEntry must call consoleStore.info()/error() with popup:true",
   );
 });
 
@@ -140,8 +147,8 @@ test("servo-thread facade replays full_state/delta error history through the con
   assert.match(text, /case\s*['"]delta['"][\s\S]*?this\.replayErrorHistory\(/);
   assert.match(
     text,
-    /replayErrorHistory[\s\S]*?consoleStore\.error\([\s\S]*?popup:\s*true/,
-    "replayErrorHistory must call consoleStore.error() with popup:true",
+    /private\s+replayErrorHistory[\s\S]*?surfaceLinuxCNCEntry\(consoleStore/,
+    "replayErrorHistory must route through surfaceLinuxCNCEntry (popup:true)",
   );
 });
 

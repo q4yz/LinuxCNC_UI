@@ -12,6 +12,7 @@ from dtos.ServoThreadState import ServoThreadStateDTO
 from services.AxisService import get_axis_service
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.StateService import get_state_service
+from hardware.Connection import message_severity
 
 logger = logging.getLogger("backend.services.servo_thread")
 
@@ -106,11 +107,22 @@ class ServoThreadService:
                     for kind, text in new_errors:
                         self.state_service.record_error_to_mock(kind, text)
 
-                        console_logger.log_response(f"Machine error ({kind}): {text}", level=LogLevel.ERROR)
+                        # ``(MSG, ...)`` is an operator message, not a
+                        # fault — only real errors are logged/shown as such.
+                        severity = message_severity(int(kind))
+                        if severity == "info":
+                            console_logger.log_response(f"Machine message ({kind}): {text}", level=LogLevel.INFO)
+                        else:
+                            console_logger.log_response(f"Machine error ({kind}): {text}", level=LogLevel.ERROR)
 
+                        # The envelope type stays ``error`` (it is the
+                        # error *channel*); ``data.severity`` carries
+                        # the actual classification.
                         payload = json.dumps({
                             "type": "error",
-                            "data": LinuxCNCError(kind=int(kind), text=str(text), time=now_iso()).model_dump(),
+                            "data": LinuxCNCError(
+                                kind=int(kind), text=str(text), time=now_iso(), severity=severity,
+                            ).model_dump(),
                         })
                         await self.broadcast(payload)
                         console_logger.log_telemetry(payload)

@@ -245,7 +245,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
                 ? defaultJogVelocity.value
                 : DEFAULT_JOG_VELOCITY;
 
-            consoleStore.info(`Jogging ${axisName} axis ${distance}mm`);
+            consoleStore.debug(`Jogging ${axisName} axis ${distance}mm`);
 
             // Dispatch discrete jog through the service
             servoThreadService.send({

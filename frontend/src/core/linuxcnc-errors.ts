@@ -31,6 +31,17 @@ export interface LinuxCNCErrorPayload {
     kind?: LinuxCNCErrorKind | null;
     text?: string | null;
     time?: string | null;
+    /**
+     * Backend classification of ``kind``: ``info`` for an operator
+     * message (G-code ``(MSG, ...)``), ``error`` for a fault
+     * (``(ABORT, ...)``). Missing on older backends — treat as error.
+     */
+    severity?: "error" | "info" | null;
+}
+
+/** True for an operator message (``(MSG, ...)``) rather than a fault. */
+export function isLinuxCNCMessage(payload: LinuxCNCErrorPayload | null | undefined): boolean {
+    return payload?.severity === "info";
 }
 
 /** Entry in the human-readable translation table. */
@@ -56,78 +67,33 @@ export interface LinuxCNCErrorEntry {
  */
 export const LINUXCNC_ERROR_KINDS: Readonly<Record<number, LinuxCNCErrorEntry>> =
     Object.freeze({
-        // ─── NML channel classes (python-linuxcnc surface) ─────────────
-        0: {
-            name: "Unspecified error",
-            description:
-                "LinuxCNC reported an error without a known class. The raw text follows.",
-        },
+        // ─── python-linuxcnc error-channel kinds ──────────────────────
+        // The values ``linuxcnc.NML_ERROR`` ... ``OPERATOR_DISPLAY``
+        // carry (the NML message type ids). ``(MSG, ...)`` in G-code
+        // arrives as 13, ``(ABORT, ...)`` as 11.
         1: {
             name: "NML error",
             description: "Internal NML channel error reported by the task controller.",
         },
         2: {
-            name: "Operator error",
-            description: "Operator-facing error surfaced from a HAL component or the task.",
+            name: "NML text",
+            description: "Informational message from the task controller.",
         },
         3: {
-            name: "Operator text",
-            description: "Informational operator message (not necessarily an error).",
-        },
-        4: {
-            name: "Operator display",
-            description: "Display-only message — usually safe to ignore.",
-        },
-
-        // ─── EMC subsystem error classes ──────────────────────────────
-        5: {
-            name: "System error",
-            description: "Generic LinuxCNC system / EMC subsystem fault.",
-        },
-        6: {
-            name: "Trajectory planner error",
-            description:
-                "Trajectory planner rejected a move — check feed / accel limits and joint constraints.",
-        },
-        7: {
-            name: "Task error",
-            description:
-                "Task controller reported a fault (MDI / interpreter coordination, mode switches).",
-        },
-        8: {
-            name: "Motion controller error",
-            description:
-                "Motion controller reported a fault — check joint enable, follower error and amp faults.",
-        },
-        9: {
-            name: "Interpreter error",
-            description:
-                "RS274NGC interpreter reported a G-code problem (bad syntax, illegal modal combination).",
-        },
-        10: {
-            name: "I/O controller error",
-            description:
-                "I/O controller flagged an error — check HAL signal wiring and digital inputs.",
+            name: "NML display",
+            description: "Display-only message from the task controller.",
         },
         11: {
-            name: "Tool changer error",
-            description:
-                "Tool changer failed — verify tool-prep / tool-change sequence and HAL signals.",
+            name: "Operator error",
+            description: "Error raised for the operator — e.g. G-code (ABORT, ...) or a HAL component fault.",
         },
         12: {
-            name: "Spindle error",
-            description:
-                "Spindle controller reported a fault — check VFD / spindle drive state and HAL pins.",
+            name: "Operator text",
+            description: "Informational operator message (not an error).",
         },
         13: {
-            name: "Coolant error",
-            description:
-                "Coolant controller flagged an error — verify flood / mist HAL signals.",
-        },
-        14: {
-            name: "Lubrication error",
-            description:
-                "Lube subsystem reported a fault — check lube pump / oil-level sensor.",
+            name: "Operator message",
+            description: "Operator message — e.g. G-code (MSG, ...). Not an error.",
         },
 
         // ─── Legacy / custom codes used by this UI's mock + history ────
@@ -193,6 +159,9 @@ export function lookupLinuxCNCError(kind: LinuxCNCErrorKind): LinuxCNCErrorEntry
  */
 export function formatLinuxCNCError(error: LinuxCNCErrorPayload | null | undefined): string {
     const text = (error?.text ?? "").toString().trim() || "(no message)";
+    // An operator message reads as itself — no "[Operator message #13]"
+    // prefix around "Bore Diameter is: 20.01".
+    if (isLinuxCNCMessage(error)) return text;
     if (error?.kind === undefined || error.kind === null) {
         return text;
     }
@@ -226,5 +195,10 @@ export function isLinuxCNCError(value: unknown): value is LinuxCNCErrorPayload {
         candidate.time === undefined ||
         candidate.time === null ||
         typeof candidate.time === "string";
-    return kindOk && textOk && timeOk;
+    const severityOk =
+        candidate.severity === undefined ||
+        candidate.severity === null ||
+        candidate.severity === "error" ||
+        candidate.severity === "info";
+    return kindOk && textOk && timeOk && severityOk;
 }

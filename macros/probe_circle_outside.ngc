@@ -1,0 +1,99 @@
+O<probe_circle_outside> sub
+(Call: O<probe_circle_outside> call [Est Boss Dia] [Z Drop Dist] [Clearance from Edge] [Fast Feed])
+#<boss_dia> = #1
+#<z_drop> = #2
+#<clearance> = #3
+#<fast_feed> = #4
+#<slow_feed> = [#<fast_feed> / 10.0]
+
+#<rad_move> = [[#<boss_dia> / 2.0] + #<clearance>]
+
+(Save starting WORK coordinates using correct LinuxCNC named parameters)
+#<start_x> = #<_x>
+#<start_y> = #<_y>
+#<safe_z> = #<_z>
+
+G40 G49
+
+(--- PROBE X+ SIDE ---)
+(Move to right side, drop Z, probe inward)
+G90 G0 X[#<start_x> + #<rad_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 X-[#<clearance> * 1.5] F#<fast_feed>
+O101 if [#5070 EQ 0]
+    (MSG, X+ Side Probe failed to hit wall!)
+    G90
+    M2
+O101 endif
+G91 G0 X1.0
+G91 G38.2 X-2.0 F#<slow_feed>
+#<x_plus_edge> = #5061
+(Retract Z to safe height in WORK coords)
+G90 G0 Z#<safe_z>
+
+(--- PROBE X- SIDE ---)
+(Move to left side, drop Z, probe inward)
+G90 G0 X[#<start_x> - #<rad_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 X[#<clearance> * 1.5] F#<fast_feed>
+O102 if [#5070 EQ 0]
+    (MSG, X- Side Probe failed to hit wall!)
+    G90
+    M2
+O102 endif
+G91 G0 X-1.0
+G91 G38.2 X2.0 F#<slow_feed>
+#<x_minus_edge> = #5061
+(Retract Z to safe height)
+G90 G0 Z#<safe_z>
+
+(Calculate X Center in WORK coords)
+#<center_x> = [[#<x_plus_edge> + #<x_minus_edge>] / 2.0]
+
+(Move X to Center using WORK coords)
+G90 G0 X#<center_x>
+
+(--- PROBE Y+ SIDE ---)
+(Move to back side, drop Z, probe inward. Note: X stays at true center)
+G90 G0 Y[#<start_y> + #<rad_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 Y-[#<clearance> * 1.5] F#<fast_feed>
+O103 if [#5070 EQ 0]
+    (MSG, Y+ Side Probe failed to hit wall!)
+    G90
+    M2
+O103 endif
+G91 G0 Y1.0
+G91 G38.2 Y-2.0 F#<slow_feed>
+#<y_plus_edge> = #5062
+(Retract Z to safe height)
+G90 G0 Z#<safe_z>
+
+(--- PROBE Y- SIDE ---)
+(Move to front side, drop Z, probe inward)
+G90 G0 Y[#<start_y> - #<rad_move>]
+G91 G0 Z-[#<z_drop>]
+G91 G38.2 Y[#<clearance> * 1.5] F#<fast_feed>
+O104 if [#5070 EQ 0]
+    (MSG, Y- Side Probe failed to hit wall!)
+    G90
+    M2
+O104 endif
+G91 G0 Y-1.0
+G91 G38.2 Y2.0 F#<slow_feed>
+#<y_minus_edge> = #5062
+(Retract Z to safe height)
+G90 G0 Z#<safe_z>
+
+(Calculate Y Center in WORK coords)
+#<center_y> = [[#<y_plus_edge> + #<y_minus_edge>] / 2.0]
+
+(Move Y to Center using WORK coords)
+G90 G0 Y#<center_y>
+
+(Now that probe is sitting at true physical center, set WCS!)
+G10 L20 P0 X0 Y0
+
+G90 (Return to absolute mode safely)
+O<probe_circle_outside> endsub
+M2

@@ -1,0 +1,40 @@
+O<probe_corner> sub
+(Call: O<probe_corner> call [X Dir 1/-1] [Y Dir 1/-1] [Probe Dia] [Search Dist] [Fast Feed] [Edge Overlap])
+
+#<x_dir> = #1
+#<y_dir> = #2
+#<probe_dia> = #3
+#<search_dist> = #4
+#<fast_feed> = #5
+#<overlap> = #6
+
+(1. X PROBE)
+O<probe_edge> call [1] [#<x_dir>] [#<probe_dia>] [#<search_dist>] [#<fast_feed>]
+
+(Probe edge finishes in G90 mode. X WCS is now 0. Probe is resting exactly 2mm away)
+
+(2. Switch to Incremental mode for corner navigation)
+G91
+
+(3. Y CORNER DISTANCE - Move Y backward to clear the corner)
+#<y_move> = [#<overlap> * -#<y_dir>]
+G0 Y#<y_move>
+
+(4. X CORNER DISTANCE - Move X over the part to prepare for Y probe)
+(Since we are 2mm away from the edge, we add 2.0 to the overlap to get fully across)
+#<x_move> = [[#<overlap> * #<x_dir>] + [2.0 * #<x_dir>]]
+G0 X#<x_move>
+
+(5. Switch back to Absolute mode before calling the next probe)
+G90
+
+(6. Y PROBE)
+O<probe_edge> call [2] [#<y_dir>] [#<probe_dia>] [#<search_dist>] [#<fast_feed>]
+
+(7. OPTIONAL BACKOFF - Return Y to the corner start position)
+G91
+G0 Y[#<overlap> * -#<y_dir>]
+G90
+
+O<probe_corner> endsub
+M2

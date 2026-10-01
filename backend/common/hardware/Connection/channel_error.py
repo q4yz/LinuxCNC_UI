@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Any, List, Optional
 
-from .core import _LazyChannel
+from .core import _LazyChannel, linuxcnc
 from .channel_stat import get_stat_channel
 
 _thread_local = threading.local()
@@ -57,4 +57,25 @@ def read_error_history() -> List[str]:
     return list(getattr(stat, "errors", []) or [])
 
 
-__all__ = ["get_error_channel", "is_error_connected", "read_error_history"]
+#: Error-channel kinds that carry an operator *message*, not a fault:
+#: ``(MSG, ...)`` / ``(DEBUG, ...)`` in G-code arrive as
+#: ``OPERATOR_DISPLAY``/``OPERATOR_TEXT``, their NML twins likewise.
+#: ``(ABORT, ...)`` and real faults arrive as ``OPERATOR_ERROR`` /
+#: ``NML_ERROR`` — same split AXIS makes. Resolved by name so the real
+#: module and the mock agree without hard-coding the integers.
+_MESSAGE_KIND_NAMES = ("NML_TEXT", "NML_DISPLAY", "OPERATOR_TEXT", "OPERATOR_DISPLAY")
+_MESSAGE_KINDS = frozenset(
+    getattr(linuxcnc, name) for name in _MESSAGE_KIND_NAMES if hasattr(linuxcnc, name)
+)
+
+
+def message_severity(kind: int) -> str:
+    """``"info"`` for an operator message, ``"error"`` for everything else.
+
+    Unknown kinds count as errors — misreporting a real fault as info
+    is the worse mistake of the two.
+    """
+    return "info" if kind in _MESSAGE_KINDS else "error"
+
+
+__all__ = ["get_error_channel", "is_error_connected", "read_error_history", "message_severity"]

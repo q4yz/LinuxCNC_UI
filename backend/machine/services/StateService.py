@@ -32,7 +32,7 @@ from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 from dtos.state.MachineStateDto import MachineState
 from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
     get_error_channel
-from hardware.Connection import read_error_history
+from hardware.Connection import message_severity, read_error_history
 from models.state.state_models import StateSnapshotResponse
 
 logger = logging.getLogger("backend.services.StateService")
@@ -311,9 +311,19 @@ class StateService:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("push_error mirror failed: %s", exc)
 
-    def get_error_history(self) -> List[str]:
-        """Fetch the full error history buffer."""
-        return read_error_history()
+    def get_error_history(self) -> List[Any]:
+        """Fetch the full error history buffer.
+
+        Entries that carry a ``kind`` (the mock's ``{kind, text, time}``
+        dicts) get their ``severity`` stamped here, so a replayed
+        ``(MSG, ...)`` shows as info after a reconnect too. Bare strings
+        (real ``stat.errors``) have no kind and stay errors.
+        """
+        return [
+            {**entry, "severity": message_severity(int(entry.get("kind") or 0))}
+            if isinstance(entry, dict) else entry
+            for entry in read_error_history()
+        ]
 
 
 

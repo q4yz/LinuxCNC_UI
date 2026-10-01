@@ -40,6 +40,12 @@ class LinuxcncModuleFacade:
             "AUTO_PAUSE",
             "AUTO_RESUME",
             "AUTO_STEP",
+            "NML_ERROR",
+            "NML_TEXT",
+            "NML_DISPLAY",
+            "OPERATOR_ERROR",
+            "OPERATOR_TEXT",
+            "OPERATOR_DISPLAY",
         ):
             setattr(self, _name, getattr(constants_mock, _name))
 

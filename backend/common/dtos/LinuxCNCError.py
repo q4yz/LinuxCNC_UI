@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,13 @@ class LinuxCNCError(BaseModel):
     kind: int = Field(default=0, description="LinuxCNC NML error class (kind)")
     text: str = Field(default="", description="Human-readable error text from the daemon")
     time: Optional[str] = Field(default=None, description="ISO-8601 timestamp; empty when unknown")
+    severity: Literal["error", "info"] = Field(
+        default="error",
+        description=(
+            "``info`` for an operator message (G-code ``(MSG, ...)``/``(DEBUG, ...)``), "
+            "``error`` for a fault (``(ABORT, ...)``, NML/operator errors, unknown kinds)."
+        ),
+    )
 
 
 def now_iso() -> str:

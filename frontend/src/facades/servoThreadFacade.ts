@@ -6,6 +6,7 @@ import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; 
 import {
     formatLinuxCNCError,
     isLinuxCNCError,
+    isLinuxCNCMessage,
     type LinuxCNCErrorPayload,
 } from '../core/linuxcnc-errors';
 
@@ -27,6 +28,26 @@ function errorKey(error: LinuxCNCErrorPayload): string {
     return `${error.kind ?? '?'}|${error.text ?? ''}|${error.time ?? ''}`;
 }
 
+/**
+ * Surface one error-channel entry. ``(MSG, ...)`` operator messages
+ * (``severity: "info"``) become an info toast; everything else —
+ * ``(ABORT, ...)``, NML faults, unknown kinds — stays an error.
+ */
+function surfaceLinuxCNCEntry(
+    consoleStore: ReturnType<typeof useConsoleStore>,
+    payload: LinuxCNCErrorPayload,
+): void {
+    const message = formatLinuxCNCError(payload);
+    // ``popup: true`` so the toast layer fires — the operator
+    // does not have to be looking at the console pane when an
+    // ESTOP / soft-limit fires, or a probe cycle reports a result.
+    if (isLinuxCNCMessage(payload)) {
+        consoleStore.info(message, { popup: true });
+    } else {
+        consoleStore.error(message, { popup: true });
+    }
+}
+
 function emitLinuxCNCError(
     consoleStore: ReturnType<typeof useConsoleStore>,
     payload: unknown,
@@ -36,11 +57,7 @@ function emitLinuxCNCError(
         consoleStore.error(fallback);
         return;
     }
-    const message = formatLinuxCNCError(payload);
-    // ``popup: true`` so the toast layer fires — the operator
-    // does not have to be looking at the console pane when an
-    // ESTOP / soft-limit fires.
-    consoleStore.error(message, { popup: true });
+    surfaceLinuxCNCEntry(consoleStore, payload);
 }
 
 export class ServoThreadService {
@@ -179,7 +196,7 @@ export class ServoThreadService {
         const axisName = AXIS_NAMES[axis] || `Axis ${axis}`;
 
         try {
-            consoleStore.info(`Jogging ${axisName} axis continuously...`);
+            consoleStore.debug(`Jogging ${axisName} axis continuously...`);
 
             // Start the jog over WS so the backend's watchdog registers it
             this.send({
@@ -218,7 +235,7 @@ export class ServoThreadService {
 
             // Prefer the WebSocket — the stop takes effect on the next tick
             this.send({ type: "jog_stop", axes: [axis] });
-            consoleStore.info(`${axisName} Jog stopped`);
+            consoleStore.debug(`${axisName} Jog stopped`);
 
         } catch (err: unknown) {
             consoleStore.error(`Failed to stop jog: ${describeError(err)}`);
@@ -262,11 +279,9 @@ export class ServoThreadService {
             const key = errorKey(raw);
             if (replayedErrorKeys.has(key)) continue;
             replayedErrorKeys.add(key);
-            const message = formatLinuxCNCError(raw);
-            // Replay uses ``popup: true`` so the operator sees
-            // the backlog on reload without having to expand
-            // the console panel manually.
-            consoleStore.error(message, { popup: true });
+            // Replay pops up too, so the operator sees the backlog
+            // on reload without having to expand the console panel.
+            surfaceLinuxCNCEntry(consoleStore, raw);
         }
     }
 

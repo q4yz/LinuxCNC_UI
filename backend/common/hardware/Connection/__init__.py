@@ -44,7 +44,7 @@ from .core import (
     read_hal_pin,
 )
 from .channel_stat import get_stat_channel, is_stat_connected
-from .channel_error import get_error_channel, is_error_connected, read_error_history
+from .channel_error import get_error_channel, is_error_connected, read_error_history, message_severity
 from .channel_cmd import (
     _cmd_ch,
     get_cmd_channel,
@@ -78,6 +78,7 @@ __all__ = [
     "dispatch_mdi",
     "ensure_mdi_mode",
     "read_error_history",
+    "message_severity",
     "read_hal_pin",
     "DeviceConfigMapper",
     "MachineState",

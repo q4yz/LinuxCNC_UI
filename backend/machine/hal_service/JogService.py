@@ -124,14 +124,23 @@ def stop_axis(axis: int) -> None:
 
 def jog_axis(velocities: Dict[int, float], distance: float) -> None:
     """Issue a jog command. Continuous-vs-step is decided by ``distance``."""
-    execute_sync_cmd("mode", 0.1, getattr(linuxcnc, "MODE_MANUAL", 1))
-
+    manual = getattr(linuxcnc, "MODE_MANUAL", 1)
     s = linuxcnc.stat()
-    # NML Shared Memory Flush: triple-poll forces Python to pull the
-    # freshest status data from LinuxCNC after the mode switch.
-    for _ in range(3):
-        s.poll()
-        time.sleep(0.01)
+    s.poll()
+
+    # Only switch when not already MANUAL. Jogging a second axis while
+    # the first is still moving used to re-send ``mode(MANUAL)``;
+    # LinuxCNC processes it anyway and re-applies the trajectory mode
+    # mid-motion, which motion reports as an error (the jog itself
+    # still works). Same "skip if already there" rule as
+    # ``_switch_to_mdi_mode``.
+    if getattr(s, "task_mode", None) != manual:
+        execute_sync_cmd("mode", 0.1, manual)
+        # NML Shared Memory Flush: triple-poll forces Python to pull the
+        # freshest status data from LinuxCNC after the mode switch.
+        for _ in range(3):
+            s.poll()
+            time.sleep(0.01)
 
     is_teleop = (
         s.motion_mode == getattr(linuxcnc, "TRAJ_MODE_TELEOP", 3)

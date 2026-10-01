@@ -1,0 +1,56 @@
+O<probe_rect_inside> sub
+(Call: O<probe_rect_inside> call [Max X Search] [Max Y Search] [Fast Feed])
+#<max_x> = #1
+#<max_y> = #2
+#<fast_feed> = #3
+#<slow_feed> = [#<fast_feed> / 10.0]
+
+(Save starting position)
+#<start_x> = #5420
+#<start_y> = #5421
+
+G40 G49
+G91 (Incremental mode)
+
+(--- PROBE X+ ---)
+G38.2 X#<max_x> F#<fast_feed>
+G0 X-1.0
+G38.2 X2.0 F#<slow_feed>
+#<x_plus> = #5061
+G90 G53 G0 X#<start_x> (Return to start X)
+G91
+
+(--- PROBE X- ---)
+G38.2 X-[#<max_x>] F#<fast_feed>
+G0 X1.0
+G38.2 X-2.0 F#<slow_feed>
+#<x_minus> = #5061
+
+(Center X and Move)
+#<center_x> = [[#<x_plus> + #<x_minus>] / 2.0]
+G90 G53 G0 X#<center_x>
+G10 L20 P0 X0
+G91
+
+(--- PROBE Y+ ---)
+G38.2 Y#<max_y> F#<fast_feed>
+G0 Y-1.0
+G38.2 Y2.0 F#<slow_feed>
+#<y_plus> = #5062
+G90 G53 G0 Y#<start_y> (Return to start Y)
+G91
+
+(--- PROBE Y- ---)
+G38.2 Y-[#<max_y>] F#<fast_feed>
+G0 Y1.0
+G38.2 Y-2.0 F#<slow_feed>
+#<y_minus> = #5062
+
+(Center Y and Move)
+#<center_y> = [[#<y_plus> + #<y_minus>] / 2.0]
+G90 G53 G0 Y#<center_y>
+G10 L20 P0 Y0
+
+G90 (Return to absolute mode)
+O<probe_rect_inside> endsub
+M2
