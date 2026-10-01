@@ -185,6 +185,20 @@ real reference exactly):
   "Comment": "Reset pin", "Pin": "<firmware pin of reset_pin>" }
 ```
 
+**Runtime / UI side (implemented).** A Remora MCU with `reset_pin`
+is *resettable*: the machine backend (`McuService`, via
+`McuMapper`) registers a `webgui.<mcu_id>-reset` BIT pin (HAL_OUT)
+for it, the base-thread snapshot's static tier lists it under `mcus`
+with `resettable: true`, and the dashboard shows a **RESET MCU**
+button (`PowerOn.vue`) whenever any MCU is resettable.
+`POST /api/v1/modules/mcu/reset` pulses every resettable MCU's pin
+True → False (50 ms, same as the E-stop pulse).
+
+**Open gap:** nothing nets `webgui.<mcu_id>-reset` yet — the HAL
+compiler doesn't emit a reset chain, so today the pulse lands on an
+unconnected pin. Deliberately out of scope until the board-side
+target of the pulse is confirmed against real hardware.
+
 ### Joint pins → `config.txt`, nothing in HAL
 
 ```json

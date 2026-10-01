@@ -17,6 +17,7 @@ from typing import Dict, Optional, Union
 
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
 from models.axis_model import AxisStateResponse
+from models.mcu_model import McuStateResponse
 from services.ProgramService import ProgramProgressResponse
 from models.temperature_response import TemperatureStateResponse
 from factories.tools.ToolResponseFactory import ToolStateResponseModel
@@ -42,6 +43,7 @@ class BaseThreadSnapshotMapper:
         sensors: Optional[Dict[str, Union[HeaterStateResponse, TemperatureStateResponse]]] = None,
         tools: Optional[Dict[str, ToolStateResponseModel]] = None,
         axis: Optional[Dict[str, AxisStateResponse]] = None,
+        mcus: Optional[Dict[str, McuStateResponse]] = None,
     ) -> BaseThreadSnapshotResponse:
         """Return a snapshot whose ``None`` sub-snapshots will be
         stripped by the route's ``response_model_exclude_none=True``.
@@ -51,5 +53,6 @@ class BaseThreadSnapshotMapper:
             sensors=sensors,
             tools=tools,
             axis=axis,
+            mcus=mcus,
             timestamp=_utc_timestamp(),
         )

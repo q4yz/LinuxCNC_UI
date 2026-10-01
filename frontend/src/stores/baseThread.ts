@@ -24,6 +24,7 @@ import { ReadingSet } from "../entities/temperature/ReadingSet";
 import { ToolList } from "../entities/tools/ToolList";
 import { ProgramProgress } from "../entities/progress/ProgramProgress";
 import { AxisState } from "../entities/axis/AxisState";
+import { McuState } from "../entities/mcu/McuState";
 import { HeaterReading } from "../entities/temperature/HeaterReading";
 import { SensorReading } from "../entities/temperature/SensorReading";
 import { SpindleDigital as SpindleState } from "../entities/tools/SpindleDigital";
@@ -43,6 +44,8 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   const readings = shallowRef<ReadingSet>(new ReadingSet());
   const toolList = shallowRef<ToolList>(new ToolList([]));
   const axes = shallowRef<Record<string, AxisState>>({});
+  // Static like ``axes`` — loaded once by fetchStaticAxes() below.
+  const mcus = shallowRef<Record<string, McuState>>({});
 
   // Legacy wire shape (kept for migration window)
   const sensors = ref<Record<string, any>>({});
@@ -75,6 +78,9 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   // ─────────────────────────────────────────────────────────────────
 
   /** Convenience getter for components that only need the bar fraction. */
+  /** True when at least one MCU can be reset from the UI (Remora + ``reset_pin``). */
+  const hasResettableMcu = computed(() => Object.values(mcus.value).some((m) => m.resettable));
+
   const progressFraction = computed(() => {
     const fraction = progress.value.fraction;
     if (!Number.isFinite(fraction)) return 0;
@@ -127,6 +133,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       try {
         const snapshot = await BaseThreadService.fetchStatic();
         axes.value = snapshot.axes;
+        mcus.value = snapshot.mcus;
       } catch (err: unknown) {
         console.error("[baseThread] fetchStaticAxes failed:", err);
       } finally {
@@ -185,12 +192,14 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     readings,
     toolList,
     axes,
+    mcus,
     sensors,
     tools,
     timestamp,
     connectionStatus,
     // Getters
     progressFraction,
+    hasResettableMcu,
     // Actions
     refresh,
     start,
@@ -202,6 +211,7 @@ export default useBaseThreadStore;
 
 export {
   AxisState,
+  McuState,
   HeaterReading,
   SensorReading,
   ReadingSet,

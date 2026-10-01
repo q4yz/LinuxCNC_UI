@@ -191,6 +191,7 @@ def test_snapshot_default_mode_returns_all_fields(
         "tools",
         "timestamp",
         "axis",
+        "mcus",
     }
 
 
@@ -215,6 +216,7 @@ def test_snapshot_mode_all_equivalent_to_default(
         "tools",
         "timestamp",
         "axis",
+        "mcus",
     }
 
 

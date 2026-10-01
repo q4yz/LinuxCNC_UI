@@ -131,5 +131,13 @@ class HardwareConfigService:
             return raw_fans
         return []
 
+    def get_mcus(self) -> List[Dict[str, Any]]:
+        """Return the raw ``mcus[]`` array from the payload."""
+        payload = self.load_payload()
+        raw_mcus = payload.get("mcus")
+        if isinstance(raw_mcus, list):
+            return raw_mcus
+        return []
+
 
 __all__ = ["HardwareConfigService"]

@@ -90,6 +90,11 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "(StateService.activate_estop() generates the pulse itself; "
         "EstopWebguiMapper wires this automatically, see .agent/component/estop.md)",
     },
+    "McuPins": {
+        "reset": "sink into the board's reset input (the MCU's `reset_pin`) — "
+        "McuService pulses it from the UI's RESET MCU button; not wired by "
+        "the HAL compiler yet",
+    },
     "PauseInspectPin": {
         "inspect_z_lift": "sink into axis.z.eoffset-counts via conv_bit_s32 (0/1; "
         "the actual lift distance is axis.z.eoffset-scale, see PauseInspectWebguiMapper)",
@@ -333,6 +338,7 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
     from mappers.temperature.TemperatureSensorMapper import (
         TemperatureSensorMapper,
     )
+    from mappers.mcu.McuMapper import McuMapper
     from mappers.tools.HeaterMapper import HeaterMapper
     from tools_constants import ToolType
 
@@ -395,6 +401,11 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
             ReadWriteDynamicHalPin("inspect-spindle-inhibit", HalDataType.BIT, ""),
         ),
     ]
+    # Only resettable MCUs (Remora + `reset_pin`) own a webgui pin.
+    for mcu in _valid_dicts("mcus"):
+        mcu_pins = McuMapper.from_dict_to_McuPins(mcu)
+        if mcu_pins.resettable:
+            state.append(mcu_pins)
     return tools, sensors, state
 
 

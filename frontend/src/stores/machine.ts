@@ -9,6 +9,7 @@ import {createModuleSettings} from "../core/settings/createModuleSettings";
 import {servoThreadService} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
+import {mcuFacade} from "../facades/mcuFacade";
 import {progressFacade} from "../facades/progressFacade";
 import {CommandResult} from "../entities/common/CommandResult";
 import {reportCommandFailure, describeError} from "../core/error-format";
@@ -197,6 +198,23 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             reportCommandFailure("activate ESTOP", result);
         } else {
             consoleStore.warning("E-STOP Engaged");
+        }
+        return result;
+    }
+
+    /**
+     * Reset every resettable MCU (Remora boards that declared a
+     * ``reset_pin``). The backend pulses each board's
+     * ``webgui.<id>-reset`` HAL pin; the button is only shown when
+     * ``baseThread.hasResettableMcu`` is true.
+     */
+    async function resetMcus(): Promise<CommandResult> {
+        const consoleStore = useConsoleStore();
+        const result = await mcuFacade.resetMcus();
+        if (result.failed) {
+            reportCommandFailure("reset MCU", result);
+        } else {
+            consoleStore.success(`MCU reset sent: ${result.message || "all"}`, {popup: true});
         }
         return result;
     }
@@ -463,6 +481,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         refreshSettings,
         toggleEstop,
         activateEstop,
+        resetMcus,
         togglePower,
         jog,
         jogContinuous,

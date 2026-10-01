@@ -4,6 +4,7 @@ import { toReadingSet } from "./temperatureMapper";
 import { toToolList, type AnyToolWire } from "./toolsMapper";
 import { AxisState } from "../entities/axis/AxisState";
 import type { AxisStateResponse } from "../../generated/api/models/AxisStateResponse";
+import { McuState } from "../entities/mcu/McuState";
 
 
 export function toAxisState(wire: unknown): AxisState {
@@ -30,6 +31,28 @@ export function toAxesMap(wire: unknown): Record<string, AxisState> {
 }
 
 
+export function toMcuState(wire: unknown): McuState {
+  if (!wire || typeof wire !== "object") return new McuState()
+  const w = wire as Record<string, unknown>
+  return new McuState({
+    id: typeof w.id === "string" ? w.id : "",
+    connection: typeof w.connection === "string" ? w.connection : "",
+    resettable: w.resettable === true,
+  })
+}
+
+export function toMcuMap(wire: unknown): Record<string, McuState> {
+  if (!wire || typeof wire !== "object") return {}
+  const out: Record<string, McuState> = {}
+  for (const raw of Object.values(wire as Record<string, unknown>)) {
+    const mcu = toMcuState(raw)
+    if (!mcu.id) continue
+    out[mcu.id] = mcu
+  }
+  return out
+}
+
+
 export function toSnapshot(wire: unknown): Snapshot {
   if (!wire || typeof wire !== "object") {
     return new Snapshot();
@@ -41,6 +64,7 @@ export function toSnapshot(wire: unknown): Snapshot {
     readings: toReadingSet(w.sensors),
     toolList: toToolList(w.tools as Record<string, AnyToolWire> | AnyToolWire[] | null | undefined),
     axes: toAxesMap(w.axis),
+    mcus: toMcuMap(w.mcus),
     timestamp: typeof w.timestamp === "string" ? w.timestamp : null,
   });
 }

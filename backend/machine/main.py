@@ -56,6 +56,7 @@ from routers import (
     camera as camera_router,
     hal as hal_router,
     macro_start as macro_start_router,
+    mcu as mcu_router,
     program as program_router,
     state as state_router,
     temperature as temperature_router,
@@ -65,6 +66,7 @@ from services.ServoThreadService import (
     get_servo_thread_service,
 )
 from services.FansService import get_fans_service
+from services.McuService import get_mcu_service
 from services.ProgramService import get_program_lifecycle_service
 from services.StateService import get_state_service
 from services.TemperatureService import get_temperature_service
@@ -106,6 +108,7 @@ tool_service = get_tools_service()
 sensor_service = get_temperature_service()
 state_service = get_state_service()
 fans_service = get_fans_service()
+mcu_service = get_mcu_service()
 program_service = get_program_lifecycle_service()
 
 
@@ -129,6 +132,7 @@ async def lifespan(app: FastAPI):
         sensor_service.preload_hal_pins()
         state_service.preload_hal_pins()
         fans_service.preload_hal_pins()
+        mcu_service.preload_hal_pins()
         program_service.preload_hal_pins()
         HalPin.initialize_component()
 
@@ -297,6 +301,9 @@ for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
 # Macros execution (the CRUD half lives in the system service).
 app.include_router(macro_start_router.router)
 
+# MCU actions (reset). The MCU list rides on the base-thread snapshot.
+app.include_router(mcu_router.router)
+
 
 @app.get("/")
 def read_root():
@@ -327,6 +334,7 @@ if __name__ == "__main__":
     sensor_service.preload_hal_pins()
     state_service.preload_hal_pins()
     fans_service.preload_hal_pins()
+    mcu_service.preload_hal_pins()
     program_service.preload_hal_pins()
     HalPin.initialize_component()
 

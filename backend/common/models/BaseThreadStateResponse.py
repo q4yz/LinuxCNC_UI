@@ -3,6 +3,7 @@ from typing import Union, Dict, Optional
 from pydantic import BaseModel, Field
 
 from models.axis_model import AxisStateResponse
+from models.mcu_model import McuStateResponse
 from services.ProgramService import ProgramProgressResponse
 from models.temperature_response import TemperatureStateResponse
 from factories.tools.ToolResponseFactory import ToolStateResponseModel
@@ -42,4 +43,11 @@ class BaseThreadSnapshotResponse(BaseModel):
             "id ('x', 'y', 'z', 'a', ...). Each entry lists the "
             "joint_numbers of every motor driving that axis."
         )
+    )
+    mcus: Optional[Dict[str, 'McuStateResponse']] = Field(
+        default=None,
+        description=(
+            "Static MCU list from hardware.json's mcus[], keyed by MCU id. "
+            "Only in the static/all tiers."
+        ),
     )

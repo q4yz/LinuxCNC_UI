@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
 import useMachineStore from "../../stores/machine";
+import { useBaseThreadStore } from "../../stores/baseThread";
 import BaseCard from "../../ui/BaseCard.vue";
 import { BaseButton } from "../../ui";
 
 const store = useMachineStore()
 const { isEstop, isMachineOn, machineStateText } = storeToRefs(store)
+// Static (hardware.json mcus[]): only Remora boards with a declared
+// ``reset_pin`` can be reset, so the button only exists on those machines.
+const { hasResettableMcu } = storeToRefs(useBaseThreadStore())
 
 </script>
 
@@ -22,6 +26,17 @@ const { isEstop, isMachineOn, machineStateText } = storeToRefs(store)
         </div>
       </div>
       <div class="flex space-x-3">
+        <BaseButton
+            v-if="hasResettableMcu"
+            @click="store.resetMcus()"
+            variant="secondary"
+            size="lg"
+            title="Pulse the reset pin of every Remora board that declares a reset_pin"
+            data-testid="mcu-reset"
+        >
+          RESET MCU
+        </BaseButton>
+
         <BaseButton
             @click="store.toggleEstop()"
             :variant="isEstop ? 'danger' : 'secondary'"

@@ -6,6 +6,9 @@ from mappers.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
 from mappers.axis.axis_mapper import AxisMapper
 from models.axis_model import AxisStateResponse
+from mappers.mcu.McuMapper import McuMapper
+from models.mcu_model import McuStateResponse
+from services.McuService import get_mcu_service
 from services.AxisService import get_axis_service
 from services.ProgramService import ProgramProgressResponse, get_program_lifecycle_service
 from factories.temperature.TemperatureResponseFactory import TemperatureResponseFactory
@@ -27,6 +30,7 @@ class BaseThreadSnapshotService:
         self.axes_service = get_axis_service()
         self.temperature_service = get_temperature_service()
         self.program_service = get_program_lifecycle_service()#
+        self.mcu_service = get_mcu_service()
 
         # --- MAIN ENGINE ---
 
@@ -46,6 +50,8 @@ class BaseThreadSnapshotService:
         sensors = self._sensors_snapshot(mode)
         tools = self._tools_snapshot(mode)
         axis = self._axis_state(mode)
+        # MCUs are purely static config — nothing to send on the 1 Hz tier.
+        mcus = self._mcu_state(mode) if mode != ResponseTier.BASE else None
 
         elapsed_ms = (time.monotonic() - started) * 1000.0
         logger.info(
@@ -60,6 +66,7 @@ class BaseThreadSnapshotService:
             sensors=sensors,
             tools=tools,
             axis=axis,
+            mcus=mcus,
         )
 
         # --- WRAPPERS ---
@@ -133,6 +140,14 @@ class BaseThreadSnapshotService:
             out[response.id] = response
         return out
 
+
+
+    def _mcu_state(self, mode: ResponseTier) -> Dict[str, McuStateResponse]:
+        out = {}
+        for mcu in self.mcu_service.get_halpins():
+            response = McuMapper.to_response(mcu, mode)
+            out[response.id] = response
+        return out
 
 
 _SERVICE_INSTANCE = None
