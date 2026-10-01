@@ -1,56 +1,129 @@
-O<probe_rect_inside> sub
-(Call: O<probe_rect_inside> call [Max X Search] [Max Y Search] [Fast Feed])
-#<max_x> = #1
-#<max_y> = #2
-#<fast_feed> = #3
-#<slow_feed> = [#<fast_feed> / 10.0]
+O<probe_edge> sub
 
-(Save starting position)
-#<start_x> = #5420
-#<start_y> = #5421
+(Call: O<probe_edge> call [Axis: 1=X, 2=Y] [Dir: 1=+, -1=-] [Probe Dia] [Search Dist] [Fast Feed])
+
+
+
+#<axis> = #1
+
+#<dir> = #2
+
+#<probe_dia> = #3
+
+#<search_dist> = #4
+
+#<fast_feed> = #5
+
+#<slow_feed> = [#<fast_feed> / 10.0] (Slow touch is 10% of fast speed)
+
+
+
+#<probe_radius> = [#<probe_dia> / 2.0]
+
+#<backoff> = 2.0
+
+
+
+(Assign target moves)
+
+#<x_move> = 0
+
+#<y_move> = 0
+
+O110 if [#<axis> EQ 1]
+
+#<x_move> = [#<search_dist> * #<dir>]
+
+O110 else
+
+#<y_move> = [#<search_dist> * #<dir>]
+
+O110 endif
+
+
 
 G40 G49
-G91 (Incremental mode)
 
-(--- PROBE X+ ---)
-G38.2 X#<max_x> F#<fast_feed>
-G0 X-1.0
-G38.2 X2.0 F#<slow_feed>
-#<x_plus> = #5061
-G90 G53 G0 X#<start_x> (Return to start X)
 G91
 
-(--- PROBE X- ---)
-G38.2 X-[#<max_x>] F#<fast_feed>
-G0 X1.0
-G38.2 X-2.0 F#<slow_feed>
-#<x_minus> = #5061
 
-(Center X and Move)
-#<center_x> = [[#<x_plus> + #<x_minus>] / 2.0]
-G90 G53 G0 X#<center_x>
-G10 L20 P0 X0
-G91
 
-(--- PROBE Y+ ---)
-G38.2 Y#<max_y> F#<fast_feed>
-G0 Y-1.0
-G38.2 Y2.0 F#<slow_feed>
-#<y_plus> = #5062
-G90 G53 G0 Y#<start_y> (Return to start Y)
-G91
+(FIRST TOUCH - Fast approach)
 
-(--- PROBE Y- ---)
-G38.2 Y-[#<max_y>] F#<fast_feed>
-G0 Y1.0
-G38.2 Y-2.0 F#<slow_feed>
-#<y_minus> = #5062
+G38.2 X#<x_move> Y#<y_move> F#<fast_feed>
 
-(Center Y and Move)
-#<center_y> = [[#<y_plus> + #<y_minus>] / 2.0]
-G90 G53 G0 Y#<center_y>
-G10 L20 P0 Y0
+O120 if [#5070 EQ 0]
+
+(MSG, Probe failed to contact workpiece!)
+
+G90
+
+M2 (Abort entirely)
+
+O120 endif
+
+
+
+(Back off 1mm for the slow touch)
+
+O125 if [#<axis> EQ 1]
+
+G0 X[1.0 * -#<dir>]
+
+O125 else
+
+G0 Y[1.0 * -#<dir>]
+
+O125 endif
+
+
+
+(SECOND TOUCH - Slow precision approach)
+
+O126 if [#<axis> EQ 1]
+
+G38.2 X[2.0 * #<dir>] F#<slow_feed>
+
+O126 else
+
+G38.2 Y[2.0 * #<dir>] F#<slow_feed>
+
+O126 endif
+
+
+
+O127 if [#5070 EQ 0]
+
+(MSG, Probe failed on slow approach!)
+
+G90
+
+M2
+
+O127 endif
+
+
+
+(Calculate edge and set WCS)
+
+#<offset_val> = [#<probe_radius> * -#<dir>]
+
+O130 if [#<axis> EQ 1]
+
+G10 L20 P0 X#<offset_val>
+
+G0 X[#<backoff> * -#<dir>]
+
+O130 else
+
+G10 L20 P0 Y#<offset_val>
+
+G0 Y[#<backoff> * -#<dir>]
+
+O130 endif
+
+
 
 G90 (Return to absolute mode)
-O<probe_rect_inside> endsub
-M2
+
+O<probe_edge> endsub
