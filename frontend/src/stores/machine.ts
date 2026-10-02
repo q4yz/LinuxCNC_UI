@@ -76,6 +76,10 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // ──────────────────────────────────────────────────────────────── //
 
     const defaultJogVelocity = ref(DEFAULT_JOG_VELOCITY);
+    // ``true`` only once ``defaultJogVelocity`` came from the backend.
+    // UI that must not show an assumed value (the jog slider) gates on it;
+    // the jog commands themselves keep the documented fallback.
+    const jogVelocitySynced = ref(false);
     const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
     const isUpdating = ref(false);
 
@@ -128,6 +132,11 @@ export const useMachineStore = defineStore(STORE_ID, () => {
                     const velocity = Number(settings.default_jog_velocity);
                     if (Number.isFinite(velocity) && velocity >= 1) {
                         defaultJogVelocity.value = velocity;
+                        jogVelocitySynced.value = true;
+                    } else {
+                        useConsoleStore().warning(
+                            `Machine settings: default_jog_velocity missing or invalid (${String(settings.default_jog_velocity)}); jog speed stays unsynced`,
+                        );
                     }
 
                     const interval = Number(settings.keepalive_interval_ms);
@@ -137,6 +146,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
                 }
             } catch (err) {
                 console.warn("Machine settings unavailable; using defaults", err);
+                useConsoleStore().error(
+                    `Machine settings unavailable (${describeError(err)}); jog speed stays unsynced`,
+                );
             } finally {
                 settingsLoaded = true;
             }
@@ -465,6 +477,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         connectionStatus,
         status,
         defaultJogVelocity,
+        jogVelocitySynced,
         keepaliveIntervalMs,
         isUpdating,
         droX,

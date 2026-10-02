@@ -53,6 +53,7 @@ const {
   history,
   sensors,
   unit,
+  unitSetting,
   visibleSensors,
 } = storeToRefs(store)
 
@@ -278,7 +279,8 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
       <div class="flex items-center space-x-2">
         <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Unit</span>
         <BaseSelect
-            :model-value="unit"
+            :model-value="unitSetting"
+            label="Temperature Unit"
             @update:model-value="(v) => { if (isTemperatureUnit(v)) store.setUnit(v) }"
         >
           <option :value="TemperatureUnit.CELSIUS">°C</option>

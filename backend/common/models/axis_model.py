@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,13 +20,23 @@ class AxisStateResponse(BaseModel):
             "Identifies the logical axis that owns one or more joints."
         ),
     )
-    joint_numbers: List[int] = Field(
-        ...,
+    joint_numbers: Optional[List[int]] = Field(
+        None,
         description=(
             "All joint_numbers driving this axis. For a single-motor "
             "axis the list has one element. Multi-motor axes (e.g. "
             "dual-motor Y) list every joint."
         ),
     )
-    min_limit: float = Field(..., description="Minimum soft limit for the axis")
-    max_limit: float = Field(..., description="Maximum soft limit for the axis")
+    # Static-tier fields: ``None`` on the base tier (the mapper masks
+    # them), which used to fail validation and 500 ``?mode=base``.
+    min_limit: Optional[float] = Field(None, description="Minimum soft limit for the axis")
+    max_limit: Optional[float] = Field(None, description="Maximum soft limit for the axis")
+    max_velocity: Optional[float] = Field(
+        None,
+        description="Axis velocity limit in mm/s ([AXIS_*] MAX_VELOCITY); null when the machine config has none.",
+    )
+    max_acceleration: Optional[float] = Field(
+        None,
+        description="Axis acceleration limit in mm/s² ([AXIS_*] MAX_ACCELERATION); null when the machine config has none.",
+    )

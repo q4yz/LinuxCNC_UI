@@ -18,6 +18,7 @@ import { defineStore } from "pinia";
 import { ref, shallowRef, computed } from "vue";
 
 import { BaseThreadService } from "../facades/baseThreadFacade";
+import { useConsoleStore } from "./console";
 
 // Entity imports for state typing and re-exporting
 import { ReadingSet } from "../entities/temperature/ReadingSet";
@@ -78,6 +79,19 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   // ─────────────────────────────────────────────────────────────────
 
   /** Convenience getter for components that only need the bar fraction. */
+  /**
+   * Fastest axis velocity limit in mm/s — the max(all axis vel) every
+   * speed slider is sized from. ``null`` until the static axes have
+   * arrived, or when no axis carries a limit (machine config predates
+   * them): never a guessed default.
+   */
+  const maxAxisVelocity = computed<number | null>(() => {
+    const limits = Object.values(axes.value)
+      .map((axis) => axis.maxVelocity)
+      .filter((v): v is number => v !== null);
+    return limits.length ? Math.max(...limits) : null;
+  });
+
   /** True when at least one MCU can be reset from the UI (Remora + ``reset_pin``). */
   const hasResettableMcu = computed(() => Object.values(mcus.value).some((m) => m.resettable));
 
@@ -134,6 +148,14 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
         const snapshot = await BaseThreadService.fetchStatic();
         axes.value = snapshot.axes;
         mcus.value = snapshot.mcus;
+        if (maxAxisVelocity.value === null) {
+          useConsoleStore().warning(
+            "Axis limits: no axis reports max_velocity — speed sliders stay unsynced " +
+              "(regenerate the machine config to add axis limits to hardware.json)",
+          );
+        } else {
+          useConsoleStore().debug(`Axis limits: max axis velocity ${maxAxisVelocity.value} mm/s`);
+        }
       } catch (err: unknown) {
         console.error("[baseThread] fetchStaticAxes failed:", err);
       } finally {
@@ -200,6 +222,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     // Getters
     progressFraction,
     hasResettableMcu,
+    maxAxisVelocity,
     // Actions
     refresh,
     start,

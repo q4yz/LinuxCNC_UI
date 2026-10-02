@@ -90,9 +90,11 @@ async function applySetPosition() {
   closeSetPosition()
 }
 
-function updateWcs(event: Event) {
-  const newIndex = parseInt((event.target as HTMLSelectElement).value)
-  const system = WORK_COORDINATE_SYSTEMS.find(s => s.index === newIndex)
+// The select shows the backend's ``g5x_index`` (telemetry) and only
+// *requests* a change; BaseSelect keeps the requested WCS on screen
+// until telemetry echoes it back, or reverts after its sync timeout.
+function selectWcs(index: string | number) {
+  const system = WORK_COORDINATE_SYSTEMS.find(s => s.index === Number(index))
   if (system) {
     store.setCoordinateSystem(system.name)
   }
@@ -106,8 +108,9 @@ function updateWcs(event: Event) {
       <div class="flex items-center space-x-2">
         <!-- WCS Dropdown -->
         <BaseSelect
-            v-model="status.g5xIndex"
-            @change="updateWcs"
+            :model-value="status.g5xIndex"
+            label="Work Coordinate System"
+            @update:model-value="selectWcs"
             class="text-xs"
             title="Work Coordinate System"
             :disabled="!isMachineOn"

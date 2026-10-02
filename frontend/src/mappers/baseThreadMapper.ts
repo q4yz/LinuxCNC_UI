@@ -15,6 +15,10 @@ export function toAxisState(wire: unknown): AxisState {
     jointNumbers: Array.isArray(w.joint_numbers) ? (w.joint_numbers as number[]) : [],
     minLimit: Number(w.min_limit) || 0,
     maxLimit: Number(w.max_limit) || 0,
+    // Left as-is (null/undefined/number) — AxisState keeps only a
+    // positive number and treats everything else as unknown.
+    maxVelocity: typeof w.max_velocity === "number" ? w.max_velocity : null,
+    maxAcceleration: typeof w.max_acceleration === "number" ? w.max_acceleration : null,
   })
 }
 

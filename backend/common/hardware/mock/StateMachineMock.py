@@ -118,6 +118,7 @@ class StateMachineMock:
             "task_state": 4,  # linuxcnc.STATE_ON
             "estop": 0,  # Not in E-Stop
             "interp_state": 1,  # linuxcnc.INTERP_IDLE
+            "g5x_index": 1,  # G54 — what real LinuxCNC reports after boot
             "g5x_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "g92_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "tool_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),

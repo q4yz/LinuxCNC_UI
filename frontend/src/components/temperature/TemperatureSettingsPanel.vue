@@ -12,7 +12,7 @@ import {TemperatureUnit} from "../../entities/index.ts";
 import BaseSelect from '../../ui/BaseSelect.vue'
 
 const store = useTemperatureStore()
-const { sensors, unit, sensorColors } = storeToRefs(store)
+const { sensors, unitSetting, sensorColors } = storeToRefs(store)
 
 const SENSOR_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,40}$/
 function isSensorName(name: unknown): name is string {
@@ -51,7 +51,8 @@ function onColorChange(name: string, event: Event) {
       </header>
       <div class="flex items-center space-x-2">
         <BaseSelect
-          :model-value="unit"
+          :model-value="unitSetting"
+          label="Temperature Unit"
           @update:model-value="(v) => store.setUnit(v as TemperatureUnit)"
         >
           <option :value="TemperatureUnit.CELSIUS">°C</option>

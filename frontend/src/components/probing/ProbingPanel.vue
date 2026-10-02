@@ -15,13 +15,14 @@
 // *active* WCS (``G10 L20 P0``), which is why the target WCS is
 // activated first.
 
-import {computed, ref} from "vue";
+import {computed, ref, watch} from "vue";
 import {storeToRefs} from "pinia";
 import {BaseButton, Icon} from "../../ui";
 import BaseInput from "../../ui/BaseInput.vue";
 import ProbeParamsDialog from "./ProbeParamsDialog.vue";
 import {useMachineStore} from "../../stores/machine";
 import {useMacrosStore} from "../../stores/macrosStore";
+import {useConsoleStore} from "../../stores/console";
 import {WORK_COORDINATE_SYSTEMS} from "../../config/gcodes";
 import {
   buildProbeCall,
@@ -33,6 +34,7 @@ import {
 
 const machineStore = useMachineStore();
 const macrosStore = useMacrosStore();
+const consoleStore = useConsoleStore();
 const {droX, droY, droZ, status} = storeToRefs(machineStore);
 
 // --- Configuration header state (would be the "permanent" /
@@ -58,16 +60,31 @@ function toggleProbeMode() {
 const WCS_OPTIONS = ["G54", "G55", "G56", "G57", "G58", "G59"] as const;
 type WcsCode = (typeof WCS_OPTIONS)[number];
 
-function activeWcsName(): string {
-  return WORK_COORDINATE_SYSTEMS.find((s) => s.index === status.value.g5xIndex)?.name ?? "G54";
+/** Active WCS name, or ``null`` until telemetry has reported it. */
+function activeWcsName(): string | null {
+  return WORK_COORDINATE_SYSTEMS.find((s) => s.index === status.value.g5xIndex)?.name ?? null;
 }
 
-// Starts on whatever WCS is active, so probing without touching the
-// selector never switches coordinate systems behind the operator.
-const initialWcs = activeWcsName();
-const targetWcs = ref<WcsCode>(
-    (WCS_OPTIONS as readonly string[]).includes(initialWcs) ? (initialWcs as WcsCode) : "G54",
+// Follows the active WCS until the operator picks one, so probing
+// without touching the selector never switches coordinate systems
+// behind the operator. Until telemetry reports the active WCS nothing
+// is pre-selected (no assumed G54).
+const targetWcs = ref<WcsCode | null>(null);
+const targetWcsTouched = ref(false);
+watch(
+    () => status.value.g5xIndex,
+    () => {
+      if (targetWcsTouched.value) return;
+      const active = activeWcsName();
+      targetWcs.value = (WCS_OPTIONS as readonly string[]).includes(active ?? "") ? (active as WcsCode) : null;
+    },
+    {immediate: true},
 );
+
+function selectTargetWcs(code: WcsCode) {
+  targetWcsTouched.value = true;
+  targetWcs.value = code;
+}
 
 // Live position readouts (active WCS), straight from the DRO feed.
 const xPosition = computed(() => Number(droX.value) || 0);
@@ -128,8 +145,14 @@ async function runProbe(values: Record<string, number>) {
       values,
   );
 
-  if (activeWcsName() !== targetWcs.value) {
-    const switched = await machineStore.setCoordinateSystem(targetWcs.value);
+  const target = targetWcs.value;
+  if (target === null) {
+    consoleStore.warning("Probe refused: pick a target WCS (active WCS not reported by the backend yet)");
+    return;
+  }
+  // Unknown active WCS counts as "different" — switching is explicit and safe.
+  if (activeWcsName() !== target) {
+    const switched = await machineStore.setCoordinateSystem(target);
     if (switched.failed) return;
   }
   await macrosStore.runMacroOfKind("ngc", call.macro, call.args);
@@ -315,7 +338,7 @@ const TILES: { id: string; cycle: ProbeCycle | null; title: string; testId: stri
             :key="code"
             :variant="targetWcs === code ? 'primary' : 'secondary'"
             size="sm"
-            @click="targetWcs = code"
+            @click="selectTargetWcs(code)"
             :data-testid="`wcs-${code}`"
         >
           {{ code }}

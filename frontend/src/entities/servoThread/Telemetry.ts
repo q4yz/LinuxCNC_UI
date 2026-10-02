@@ -1,6 +1,14 @@
 import {ServoThreadStateResponse} from "../../../generated/api";
 import type {LinuxCNCErrorPayload} from "../../core/linuxcnc-errors";
 
+/**
+ * LinuxCNC's ``g5x_index`` is 1 (G54) … 9 (G59.3). Anything else — missing,
+ * 0 from a stub, garbage — is "not known yet" (``null``), never a guessed G54.
+ */
+function toWcsIndex(raw: unknown): number | null {
+    return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 9 ? raw : null;
+}
+
 
 
 export type WSEnvelopeType = 'full_state' | 'delta' | 'error' | string;
@@ -57,7 +65,8 @@ export class ServoThreadState {
     file: string;
     homed: number[];
     interpState: number;
-    g5xIndex: number;
+    /** Active WCS (1 = G54 … 9 = G59.3); ``null`` until the backend reports it. */
+    g5xIndex: number | null;
     g5xOffset: number[];
     g92Offset: number[];
     currentLine: number;
@@ -85,7 +94,7 @@ export class ServoThreadState {
         this.file = data.file ?? '';
         this.homed = data.homed ? [...data.homed] : [0, 0, 0];
         this.interpState = data.interp_state ?? 1;
-        this.g5xIndex = data.g5x_index ?? 1;
+        this.g5xIndex = toWcsIndex(data.g5x_index);
         this.g5xOffset = data.g5x_offset ? [...data.g5x_offset] : [0, 0, 0, 0, 0, 0, 0, 0, 0];
         this.g92Offset = data.g92_offset ? [...data.g92_offset] : [0, 0, 0, 0, 0, 0, 0, 0, 0];
         this.currentLine = data.current_line ?? 0;
@@ -116,7 +125,7 @@ export class ServoThreadState {
         if (delta.file !== undefined && delta.file !== null) this.file = delta.file;
         if (delta.homed !== undefined && delta.homed !== null) this.homed = [...delta.homed];
         if (delta.interp_state !== undefined && delta.interp_state !== null) this.interpState = delta.interp_state;
-        if (delta.g5x_index !== undefined && delta.g5x_index !== null) this.g5xIndex = delta.g5x_index;
+        if (delta.g5x_index !== undefined && delta.g5x_index !== null) this.g5xIndex = toWcsIndex(delta.g5x_index);
         if (delta.g5x_offset !== undefined && delta.g5x_offset !== null) this.g5xOffset = [...delta.g5x_offset];
         if (delta.g92_offset !== undefined && delta.g92_offset !== null) this.g92Offset = [...delta.g92_offset];
         if (delta.current_line !== undefined && delta.current_line !== null) this.currentLine = delta.current_line;

@@ -1,112 +1,70 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, useAttrs } from 'vue'
-import { useConsoleStore } from '../stores/console'
-
-const consoleStore = useConsoleStore()
+import { computed } from 'vue'
+import { useBackendSync, DEFAULT_SYNC_TIMEOUT_MS } from './useBackendSync'
 
 defineOptions({
   inheritAttrs: false
 })
 
-const props = defineProps<{
-  modelValue: boolean
+const props = withDefaults(defineProps<{
+  // Backend value. ``null`` = not received yet; never defaulted.
+  modelValue: boolean | null
+  // Operator-facing name, used in every sync log line.
+  label: string
   disabled?: boolean
-}>()
+  syncTimeout?: number
+  // Declared as a prop (not only an emit) so we can detect whether the
+  // parent is listening — declared emit listeners never reach ``$attrs``.
+  'onUpdate:modelValue'?: (newValue: boolean) => void
+}>(), {
+  disabled: false,
+  syncTimeout: DEFAULT_SYNC_TIMEOUT_MS,
+})
 
 const emit = defineEmits<{
   (e: 'update:modelValue', newValue: boolean): void
 }>()
 
-const attrs = useAttrs()
-// Detect if the parent actually provided a v-model or @update:modelValue listener
-const hasListener = computed(() => !!attrs['onUpdate:modelValue'])
-
-const isPending = ref(false)
-const optimisticValue = ref(false)
-const localValue = ref(props.modelValue) // State for unmanaged/transition mode
-let timeoutId: number | null = null
-
-// Keep the local fallback synced just in case the parent updates the prop
-// statically but doesn't listen for changes.
-watch(() => props.modelValue, (newVal) => {
-  localValue.value = newVal
+const { displayValue, isPending, isSynced, commit } = useBackendSync<boolean>({
+  label: () => props.label,
+  source: () => props.modelValue,
+  hasListener: () => !!props['onUpdate:modelValue'],
+  emit: (value) => emit('update:modelValue', value),
+  timeoutMs: () => props.syncTimeout,
 })
 
-const currentDisplayValue = computed(() => {
-  if (!hasListener.value) return localValue.value
-  return isPending.value ? optimisticValue.value : props.modelValue
-})
-
-watch(() => props.modelValue, (newBackendState) => {
-  if (hasListener.value && isPending.value && newBackendState === optimisticValue.value) {
-    consoleStore.success(`new value is set: ${optimisticValue.value}`)
-    isPending.value = false
-    if (timeoutId) clearTimeout(timeoutId)
-  }
-})
-
-function warningAndToggleValue() {
-  localValue.value = !localValue.value
-  consoleStore.warning('Checkbox action not implemented. Toggling locally.')
-}
-
-function dispatchOptimisticUpdate() {
-  optimisticValue.value = !props.modelValue
-  isPending.value = true
-
-  consoleStore.debug(`optimisticValue set to ${optimisticValue.value}`)
-  emit('update:modelValue', optimisticValue.value)
-}
-
-function handleSyncTimeout() {
-  if (isPending.value) {
-    isPending.value = false
-    consoleStore.error('State synchronization timed out. Machine did not respond.')
-  }
-}
+const isChecked = computed(() => displayValue.value === true)
 
 const toggle = (event: Event) => {
-  if (props.disabled || (isPending.value && hasListener.value)) {
-    event.preventDefault()
-    return
-  }
-
-  if (!hasListener.value) {
-    warningAndToggleValue();
-    return
-  }
-
-  dispatchOptimisticUpdate();
-
-  timeoutId = window.setTimeout(() => {
-    handleSyncTimeout();
-  }, 3000)
+  event.preventDefault()
+  if (props.disabled || isPending.value) return
+  commit(!isChecked.value)
 }
-
-onBeforeUnmount(() => {
-  if (timeoutId) clearTimeout(timeoutId)
-})
 </script>
 
 <template>
   <div class="relative flex items-center m-2">
     <input
       type="checkbox"
-      :checked="currentDisplayValue"
-      :disabled="disabled || (isPending && hasListener)"
-      @click.prevent="toggle"
+      :checked="isChecked"
+      :indeterminate="displayValue === null"
+      :title="isSynced ? undefined : `${label}: waiting for backend value`"
       v-bind="$attrs"
+      :disabled="disabled || isPending"
+      :aria-busy="isPending"
+      @click="toggle"
       class="w-6 h-6 text-blue-500 bg-gray-900 border-gray-700 rounded cursor-pointer appearance-none checked:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 transition-all duration-200 flex items-center justify-center"
       :class="{
-        'opacity-50 animate-pulse cursor-wait': isPending && hasListener,
-        'cursor-not-allowed opacity-50': disabled && (!isPending || !hasListener)
+        'opacity-50 animate-pulse cursor-wait': isPending,
+        'cursor-not-allowed opacity-50': disabled && !isPending,
+        'border-dashed border-2 border-gray-500': displayValue === null
       }"
     />
 
     <svg
-      v-if="currentDisplayValue"
+      v-if="isChecked"
       class="absolute w-4 h-4 text-white pointer-events-none left-1"
-      :class="{ 'opacity-50': isPending && hasListener }"
+      :class="{ 'opacity-50': isPending }"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

@@ -3,15 +3,26 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../../stores/machine'
+import { useConsoleStore } from '../../stores/console'
+import { useBaseThreadStore } from '../../stores/baseThread'
 import BaseRange from "../../ui/BaseRange.vue";
 import {BaseButton} from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
 
 
-const MAX_JOG_SPEED = 3.402
 
 const machineStore = useMachineStore()
-const { defaultJogVelocity } = storeToRefs(machineStore)
+const consoleStore = useConsoleStore()
+const { defaultJogVelocity, jogVelocitySynced } = storeToRefs(machineStore)
+const { maxAxisVelocity } = storeToRefs(useBaseThreadStore())
+
+// Slider top = log10(max of all axis velocity limits, mm/s) — the
+// machine's own [AXIS_*] MAX_VELOCITY, not a hard-coded speed. ``null``
+// until the static axes arrive (and stays null for a machine config
+// without axis limits).
+const maxSliderPos = computed<number | null>(() =>
+    maxAxisVelocity.value === null ? null : Math.log10(maxAxisVelocity.value))
+const clampSlider = (pos: number, max: number) => Math.min(max, Math.max(-1, pos))
 
 // Locally tracked axes that currently have an active continuous jog.
 const activeJogAxes = ref(new Set<number>())
@@ -19,13 +30,40 @@ const activeJogAxes = ref(new Set<number>())
 // Key ledger to ensure a window blur doesn't orphan a keyup event.
 const keysHeldForJog = ref(new Set<string>())
 
-const sliderPos = ref(2)
+// Slider position (log10 of mm/s). ``null`` until the backend's
+// ``default_jog_velocity`` arrives — no assumed starting speed.
+const sliderPos = ref<number | null>(null)
 const sliderTouched = ref(false)
-watch(defaultJogVelocity, (velocity) => {
-  if (sliderTouched.value || !Number.isFinite(velocity) || velocity <= 0) return
-  sliderPos.value = Math.min(MAX_JOG_SPEED, Math.max(-1, Math.log10(velocity)))
+// Needs both backend values: the default speed to start at and the axis
+// limit to clamp it to (a default above the fastest axis is capped).
+watch([defaultJogVelocity, jogVelocitySynced, maxSliderPos], ([velocity, synced, max]) => {
+  if (max === null) {
+    sliderPos.value = null
+    return
+  }
+  if (sliderPos.value !== null && sliderPos.value > max) sliderPos.value = max
+  if (!synced || sliderTouched.value || !Number.isFinite(velocity) || velocity <= 0) return
+  sliderPos.value = clampSlider(Math.log10(velocity), max)
 }, { immediate: true })
-const jogSpeed = computed(() => Math.pow(10, sliderPos.value))
+const jogSpeed = computed<number | null>(() => (sliderPos.value === null ? null : Math.pow(10, sliderPos.value)))
+
+// The jog speed is local UI state — nothing reads it back from the
+// backend — so a slider change is confirmed by assigning it here
+// (the "wire the optimistic value in" half of BaseRange's contract).
+const setSliderPos = (value: number) => {
+  if (maxSliderPos.value === null) return
+  sliderTouched.value = true
+  sliderPos.value = clampSlider(value, maxSliderPos.value)
+}
+
+// +/- keys: scale from the current speed; nothing to scale while unsynced.
+const nudgeSlider = (delta: number) => {
+  if (sliderPos.value === null) {
+    consoleStore.warning('Jog speed: not synced from the backend yet — +/- ignored')
+    return
+  }
+  setSliderPos(sliderPos.value + delta)
+}
 
 const containerRef = ref<ComponentPublicInstance | null>(null)
 const isActive = ref(false)
@@ -100,6 +138,10 @@ const handleFocusOut = (event: FocusEvent) => {
 }
 
 const startJog = async (axis: number, direction: number) => {
+  if (jogSpeed.value === null) {
+    consoleStore.warning('Jog refused: jog speed not synced from the backend yet')
+    return
+  }
   const velocity = direction * jogSpeed.value
   activeJogAxes.value.add(axis)
   await machineStore.jogContinuous(axis, velocity)
@@ -136,14 +178,12 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // 2. Adjust Speed via +/- (Numpad or standard keys)
   if (event.code === 'NumpadAdd' || event.key === '+') {
     event.preventDefault()
-    sliderTouched.value = true
-    sliderPos.value = Math.min(MAX_JOG_SPEED, sliderPos.value + 0.1)
+    nudgeSlider(0.1)
     return
   }
   if (event.code === 'NumpadSubtract' || event.key === '-') {
     event.preventDefault()
-    sliderTouched.value = true
-    sliderPos.value = Math.max(-1, sliderPos.value - 0.1)
+    nudgeSlider(-0.1)
     return
   }
 
@@ -216,15 +256,17 @@ onBeforeUnmount(() => {
     <div class="px-4 pt-4">
       <div class="flex justify-between items-end mb-2">
         <label class="block text-sm font-medium text-gray-300">
-          Jog Speed: <span class="font-mono text-blue-300">{{ jogSpeed < 10 ? jogSpeed.toFixed(2) : jogSpeed.toFixed(1) }} mm/s</span>
+          Jog Speed: <span class="font-mono text-blue-300">{{ jogSpeed === null ? '—' : jogSpeed < 10 ? jogSpeed.toFixed(2) : jogSpeed.toFixed(1) }} mm/s</span>
         </label>
         <span class="text-[10px] text-gray-500">Use +/- to scale</span>
       </div>
       <BaseRange
-          v-model="sliderPos"
-          @touched="sliderTouched = true"
+          :model-value="sliderPos"
+          label="Jog Speed"
+          @update:model-value="setSliderPos"
           min="0.5"
-          :max="MAX_JOG_SPEED"
+          :max="maxSliderPos ?? undefined"
+          :disabled="maxSliderPos === null"
           step="0.01"
           tabindex="-1"
       />

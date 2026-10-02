@@ -488,6 +488,8 @@ def _axis_payload(
     position_max: float | None,
     position_endstop: float | None,
     position_min: float | None = None,
+    max_velocity: float | None = None,
+    max_acceleration: float | None = None,
 ) -> dict[str, Any]:
     """Build an axis entry.
 
@@ -505,8 +507,11 @@ def _axis_payload(
     validate the homing sequence without re-reading the source
     profile. ``position_min`` / ``position_max`` carry the axis
     travel limits (from the primary stepper's fields of the same
-    name). Fields with ``None`` values are dropped during
-    serialisation.
+    name). ``max_velocity`` (mm/s) / ``max_acceleration`` (mm/s²) are
+    the axis limits ``AxisBuilder`` derives — the exact values written
+    to ``machine.ini``'s ``[AXIS_*] MAX_VELOCITY``/``MAX_ACCELERATION``,
+    so the UI and LinuxCNC never disagree. Fields with ``None`` values
+    are dropped during serialisation.
     """
     return {
         "id": letter.lower(),
@@ -515,6 +520,8 @@ def _axis_payload(
         "position_min": position_min,
         "position_max": position_max,
         "position_endstop": position_endstop,
+        "max_velocity": max_velocity,
+        "max_acceleration": max_acceleration,
     }
 
 
@@ -559,6 +566,16 @@ def build_hardware_json(
     # We re-derive the letter from the Axis object so the iteration
     # below matches the consumer's expectations.
     letters_in_order = [axis.letter.lower() for axis in axes_letters]
+    # Same limits machine.ini gets — see ``_axis_payload``.
+    # A non-positive limit means "not set" (e.g. the synthesised
+    # extruder axis), so it is dropped rather than shipped as 0.
+    limits_by_letter = {
+        axis.letter.lower(): (
+            axis.max_velocity if axis.max_velocity > 0 else None,
+            axis.max_acceleration if axis.max_acceleration > 0 else None,
+        )
+        for axis in axes_letters
+    }
 
     # Joint records — one per Klipper stepper section. Emitted under
     # the ``joints`` top-level key on the wire (the legacy name was
@@ -789,6 +806,7 @@ def build_hardware_json(
                 state["position_max"],
                 state["position_endstop"],
                 state["position_min"],
+                *limits_by_letter.get(letter, (None, None)),
             )
         )
 
@@ -893,6 +911,8 @@ def build_hardware_json(
                 None,
                 None,
                 None,
+                None,
+                *limits_by_letter.get("a", (None, None)),
             )
         )
 

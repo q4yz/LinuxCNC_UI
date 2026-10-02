@@ -1,29 +1,49 @@
 <script setup lang="ts">
-
-
 import {storeToRefs} from "pinia";
-import useBaseThreadStore from "../../stores/baseThread";
 import useMachineStore from "../../stores/machine";
-import {ref} from "vue";
+import {useBaseThreadStore} from "../../stores/baseThread";
+import {useConsoleStore} from "../../stores/console";
+import {computed, ref} from "vue";
 import BaseRange from "../../ui/BaseRange.vue";
 import BaseCard from "../../ui/BaseCard.vue";
 
 const store = useMachineStore()
-const baseThreadStore = useBaseThreadStore()
+const consoleStore = useConsoleStore()
 const {  isMachineOn } = storeToRefs(store)
+const { maxAxisVelocity } = storeToRefs(useBaseThreadStore())
 
+// Slider top = max of all axis velocity limits (mm/s → mm/min), the
+// machine's own [AXIS_*] MAX_VELOCITY. ``null`` until known — the
+// slider is disabled rather than sized from a guessed 5000 mm/min.
+const maxSpeedLimit = computed<number | null>(() =>
+    maxAxisVelocity.value === null ? null : Math.round(maxAxisVelocity.value * 60))
 
-// Speed controls state (initialized to default values)
-const speedMultiplier = ref(100) // 100%
-const maxSpeed = ref(1000) // mm/min or unit/min
+// The backend does not report feed override / max velocity back, so both
+// start unknown (no assumed defaults). A successful command is the only
+// confirmation we get: on ``ok`` we wire the requested value in, which is
+// what ``BaseRange`` waits for. A failure leaves the ref untouched and
+// ``BaseRange`` reverts after its sync timeout.
+const speedMultiplier = ref<number | null>(null) // %
+const maxSpeed = ref<number | null>(null) // mm/min
 
-
-async function handleSpeedMultiplierChange() {
-  await store.updateAxisSettings(speedMultiplier.value / 100, maxSpeed.value)
+// ``/axis/settings`` takes both values in one call. Until the operator has
+// set both, a change is staged locally and nothing is sent.
+async function applyAxisSettings(multiplierPct: number | null, limit: number | null) {
+  if (multiplierPct === null || limit === null) {
+    const missing = multiplierPct === null ? 'Speed Multiplier' : 'Max Speed'
+    consoleStore.warning(`Axis speed staged, not sent: set ${missing} too — the backend only accepts both together`)
+    return true
+  }
+  const result = await store.updateAxisSettings(multiplierPct / 100, limit)
+  return result.ok
 }
 
-async function handleMaxSpeedChange() {
-  await store.updateAxisSettings(speedMultiplier.value / 100, maxSpeed.value)
+async function handleSpeedMultiplierChange(value: number) {
+  if (await applyAxisSettings(value, maxSpeed.value)) speedMultiplier.value = value
+}
+
+async function handleMaxSpeedChange(value: number) {
+  if (await applyAxisSettings(speedMultiplier.value, value)) maxSpeed.value = value
 }
 </script>
 
@@ -33,34 +53,42 @@ async function handleMaxSpeedChange() {
   <BaseCard class="p-4">
     <!-- Speed Multiplier (Feed Override) -->
     <div>
-      <div class="flex justify-between items-end mb-2">
-        <label class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Speed Multiplier</label>
-        <span class="font-mono text-lg text-blue-400 font-bold">{{ speedMultiplier }}%</span>
-      </div>
       <BaseRange
-          v-model="speedMultiplier"
-          @change="handleSpeedMultiplierChange"
+          :model-value="speedMultiplier"
+          label="Speed Multiplier"
+          @update:model-value="handleSpeedMultiplierChange"
           min="0"
           max="400"
           step="1"
           :disabled="!isMachineOn"
-      />
+      >
+        <template #header="{ value }">
+          <div class="flex justify-between items-end mb-2">
+            <label class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Speed Multiplier</label>
+            <span class="font-mono text-lg text-blue-400 font-bold">{{ value ?? '—' }}%</span>
+          </div>
+        </template>
+      </BaseRange>
     </div>
 
     <!-- Max Speed (Absolute) -->
     <div>
-      <div class="flex justify-between items-end mb-2">
-        <label class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Max Speed</label>
-        <span class="font-mono text-lg text-blue-400 font-bold">{{ maxSpeed }} mm/min</span>
-      </div>
       <BaseRange
-          v-model="maxSpeed"
-          @change="handleMaxSpeedChange"
+          :model-value="maxSpeed"
+          label="Max Speed"
+          @update:model-value="handleMaxSpeedChange"
           min="0"
-          max="5000"
+          :max="maxSpeedLimit ?? undefined"
           step="10"
-          :disabled="!isMachineOn"
-      />
+          :disabled="!isMachineOn || maxSpeedLimit === null"
+      >
+        <template #header="{ value }">
+          <div class="flex justify-between items-end mb-2">
+            <label class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Max Speed</label>
+            <span class="font-mono text-lg text-blue-400 font-bold">{{ value ?? '—' }} mm/min</span>
+          </div>
+        </template>
+      </BaseRange>
     </div>
 
   </BaseCard>

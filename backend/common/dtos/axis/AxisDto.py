@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass(slots=True)
@@ -16,3 +16,7 @@ class AxisStateDTO:
     joint_numbers: List[int]
     min_limit: float
     max_limit: float
+    # Axis limits from hardware.json (mm/s, mm/s²) — ``None`` when the
+    # machine config predates them; never defaulted.
+    max_velocity: Optional[float] = None
+    max_acceleration: Optional[float] = None

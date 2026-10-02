@@ -3,9 +3,11 @@
 // visibility / colour maps.
 
 import { defineStore, storeToRefs } from "pinia";
-import { onScopeDispose, ref, watch, type Ref } from "vue";
+import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 
 import { createModuleSettings } from "../core/settings/createModuleSettings";
+import { useConsoleStore } from "./console";
+import { describeError } from "../core/error-format";
 import { useBaseThreadStore } from "./baseThread";
 import { TemperatureUnit } from "../entities";
 import { HeaterReading, type ReadingSet } from "../entities/temperature";
@@ -82,7 +84,12 @@ export const useTemperatureStore = defineStore(
         const history: Ref<HistoryPoint[]> = ref([]);
         const windowMs = ref(WINDOW_SECONDS * 1000);
         const pollMs = ref(DEFAULT_POLL_MS);
-        const unit = ref<TemperatureUnit>(TemperatureUnit.CELSIUS);
+        // The backend's ``unit`` setting — ``null`` until the settings
+        // load, never assumed. The unit selects bind to this.
+        const unitSetting = ref<TemperatureUnit | null>(null);
+        // Display unit for converting readings. Readings arrive in °C, so
+        // an unknown setting shows them raw (Celsius) rather than guessing.
+        const unit = computed<TemperatureUnit>(() => unitSetting.value ?? TemperatureUnit.CELSIUS);
         const visibleSensors: Ref<Record<string, boolean>> = ref({});
         const sensorColors: Ref<Record<string, string>> = ref({ ...DEFAULT_SENSOR_COLORS });
 
@@ -108,7 +115,11 @@ export const useTemperatureStore = defineStore(
             if (!settings || typeof settings !== "object") return;
             const s = settings as Record<string, unknown>;
             if (s.unit === TemperatureUnit.CELSIUS || s.unit === TemperatureUnit.KELVIN) {
-                unit.value = s.unit;
+                unitSetting.value = s.unit;
+            } else {
+                useConsoleStore().warning(
+                    `Temperature unit: backend setting missing or invalid (${String(s.unit)}); unit stays unsynced`,
+                );
             }
             if (s.sensor_colors && typeof s.sensor_colors === "object") {
                 const next = { ...sensorColors.value };
@@ -128,15 +139,23 @@ export const useTemperatureStore = defineStore(
             return roundTo(value, 2);
         }
 
-        async function setUnit(nextUnit: TemperatureUnit) {
-            if (nextUnit !== TemperatureUnit.CELSIUS && nextUnit !== TemperatureUnit.KELVIN) return;
-            if (unit.value === nextUnit) return;
-            unit.value = nextUnit;
+        /**
+         * Persist the unit, then adopt it. The settings write has no
+         * read-back, so a successful write *is* the confirmation the unit
+         * select (BaseSelect) waits for; a failed one leaves the setting
+         * untouched and the select reverts after its sync timeout.
+         */
+        async function setUnit(nextUnit: TemperatureUnit): Promise<boolean> {
+            if (nextUnit !== TemperatureUnit.CELSIUS && nextUnit !== TemperatureUnit.KELVIN) return false;
+            if (unitSetting.value === nextUnit) return true;
             try {
                 await settingsClient().writeKey("unit", nextUnit);
-            } catch (_) {
-                // Best-effort
+            } catch (err: unknown) {
+                useConsoleStore().error(`Temperature unit: saving ${nextUnit} failed — ${describeError(err)}`);
+                return false;
             }
+            unitSetting.value = nextUnit;
+            return true;
         }
 
         function toggleSensorVisibility(name: string) {
@@ -213,8 +232,10 @@ export const useTemperatureStore = defineStore(
             try {
                 const settings = await settingsClient().readAll();
                 if (settings) applySettings(settings);
-            } catch (_) {
-                // Best-effort
+            } catch (err: unknown) {
+                useConsoleStore().warning(
+                    `Temperature settings could not be loaded (${describeError(err)}); unit stays unsynced`,
+                );
             }
         }
 
@@ -251,6 +272,7 @@ export const useTemperatureStore = defineStore(
             windowMs,
             pollMs,
             unit,
+            unitSetting,
             visibleSensors,
             sensorColors,
             ingest,

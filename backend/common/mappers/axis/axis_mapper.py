@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from core.field_masking import ResponseTier, include_static
 from dtos.axis.AxisDto import AxisStateDTO
@@ -16,6 +16,16 @@ class AxisMapper:
     Pydantic response.
     """
 
+    @staticmethod
+    def _positive(raw: Any) -> Optional[float]:
+        """A limit is only real when it is a positive number; anything
+        else (missing, 0, garbage) is unknown — never a guessed value."""
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
     @classmethod
     def from_dict_to_dto(cls, data: Dict[str, Any]) -> AxisStateDTO:
         return AxisStateDTO(
@@ -23,6 +33,8 @@ class AxisMapper:
             joint_numbers=list(data.get("joint_numbers", [])),
             min_limit=float(data.get("position_min", 0.0)),
             max_limit=float(data.get("position_max", 0.0)),
+            max_velocity=cls._positive(data.get("max_velocity")),
+            max_acceleration=cls._positive(data.get("max_acceleration")),
         )
 
     @classmethod
@@ -32,4 +44,6 @@ class AxisMapper:
             joint_numbers=include_static(dto.joint_numbers, r),
             min_limit=include_static(dto.min_limit, r),
             max_limit=include_static(dto.max_limit, r),
+            max_velocity=include_static(dto.max_velocity, r),
+            max_acceleration=include_static(dto.max_acceleration, r),
         )

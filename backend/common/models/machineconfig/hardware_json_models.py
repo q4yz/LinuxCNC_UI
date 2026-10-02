@@ -118,6 +118,10 @@ class Axis(BaseModel):
     position_min: float | None = None
     position_max: float | None = None
     position_endstop: float | None = None
+    # Axis limits (mm/s, mm/s²) — the same values machine.ini's
+    # ``[AXIS_*] MAX_VELOCITY``/``MAX_ACCELERATION`` get.
+    max_velocity: float | None = None
+    max_acceleration: float | None = None
 
     @model_validator(mode="after")
     def _validate_endstop_exclusive(self) -> "Axis":
