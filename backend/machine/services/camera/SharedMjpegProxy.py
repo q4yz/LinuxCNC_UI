@@ -1,6 +1,6 @@
 """Shared MJPEG proxy — one upstream connection, many downstream subscribers.
 
-The single-client :class:`services.camera_mjpeg_proxy.MjpegProxy` opens one
+The single-client :class:`services.MjpegProxy.MjpegProxy` opens one
 upstream httpx connection per ``/stream`` request. With N browser tabs
 viewing the same camera we get N redundant upstream connections. For
 IP cameras that hard-cap concurrent MJPEG clients (most do, at 1–3)
@@ -39,7 +39,7 @@ from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
-from services.camera.camera_mjpeg_proxy import (
+from services.camera.MjpegProxy import (
     MjpegProxyError,
     credentials_for,
     ensure_streamable_content_type,
@@ -49,7 +49,7 @@ from services.camera.camera_mjpeg_proxy import (
     split_url,
 )
 
-logger = logging.getLogger("backend.services.shared_mjpeg_proxy")
+logger = logging.getLogger("backend.services.SharedMjpegProxy")
 
 
 # Per-subscriber queue depth. With ``_CHUNK_BYTES = 16 KiB`` upstream
@@ -375,7 +375,7 @@ class SharedMjpegProxy:
     def _evict_from_registry(self) -> None:
         """Drop this proxy's registry slot (best-effort, idempotent)."""
         try:
-            from services.camera.shared_mjpeg_proxy import MjpegFanout  # local import
+            from services.camera.SharedMjpegProxy import MjpegFanout  # local import
             MjpegFanout._evict(self.url)
         except Exception:  # noqa: BLE001 - best-effort eviction
             logger.debug(
@@ -427,7 +427,7 @@ class SharedMjpegProxy:
         # Evict from the registry so the next ``get_or_create`` opens
         # a fresh upstream connection.
         try:
-            from services.camera.shared_mjpeg_proxy import MjpegFanout  # local import
+            from services.camera.SharedMjpegProxy import MjpegFanout  # local import
             MjpegFanout._evict(self.url)
         except Exception:  # noqa: BLE001 - best-effort eviction
             logger.debug(

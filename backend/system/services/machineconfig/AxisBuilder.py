@@ -1,9 +1,9 @@
 """Build LinuxCNC :class:`Axis` / :class:`Joint` objects from a parsed Klipper graph.
 
 The builder is the bridge between the input-side
-:class:`~..models.klipper_models.MachineConfigGraph` and the
-output-side :class:`~..models.linuxcnc_models.Axis` /
-:class:`~..models.linuxcnc_models.Joint` model. It enforces no
+:class:`~..models.KlipperModels.MachineConfigGraph` and the
+output-side :class:`~..models.LinuxCNCModels.Axis` /
+:class:`~..models.LinuxCNCModels.Joint` model. It enforces no
 strict 1:1 axis-to-joint mapping; a single Klipper axis letter may
 end up with multiple joints (dual-motor Y) or vice versa if a
 future Klipper profile ever needs that.

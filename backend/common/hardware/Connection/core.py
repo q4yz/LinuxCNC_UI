@@ -15,7 +15,7 @@ import time
 from enum import IntEnum
 from typing import Any, Callable, Optional
 
-from core.non_repeating_logger import NonRepeatingLogger
+from core.NonRepeatingLogger import NonRepeatingLogger
 
 logger = NonRepeatingLogger("backend.hardware.connection.core")
 

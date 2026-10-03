@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from machineconfig_parser import parse_config
+from MachineConfigParser import parse_config
 from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
@@ -69,7 +69,7 @@ from services.machineconfig.hardware_json_generator import build_hardware_json
 
 from .hal_template_generator import render_hal_template
 from .ini_template_generator import render_ini_template
-from .pin_catalog import PinCatalog, build_pin_catalog
+from .PinCatalog import PinCatalog, build_pin_catalog
 
 logger = logging.getLogger("backend.services.machinetemplates")
 
@@ -183,7 +183,7 @@ def _compile_machine(
 
     Returns ``(machine_hal_text, sidecar_files)`` — ``sidecar_files``
     maps a bare filename (``config_<mcu_id>.txt``, ``vfd_<mcu_id>.ini``
-    — see :class:`.hal_fragment_models.HalFragment.files`) to its
+    — see :class:`.HalFragmentModels.HalFragment.files`) to its
     content, one entry per MCU that needed one. Keyed by MCU id, not a
     fixed name, precisely so a machine with two Remora boards gets
     ``config_mcu_a.txt`` *and* ``config_mcu_b.txt`` instead of the

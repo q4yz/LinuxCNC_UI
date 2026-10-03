@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.StepperHalMapper import StepperHalMapper
 
 X_JOINT = {"id": "stepper_x", "joint_number": 0, "step_pin": "mcu:08", "dir_pin": "mcu:!09"}

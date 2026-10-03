@@ -8,7 +8,7 @@ from tests._module_app_factory import build_module_app
 
 import pytest
 
-from models.machineconfig.hardware_json_models import (
+from models.machineconfig.HardwareJsonModels import (
     Axis,
     Driver,
     Endstop,

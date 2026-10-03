@@ -46,7 +46,7 @@ from urllib.parse import parse_qsl, parse_qs, unquote, urlparse
 
 import httpx
 
-logger = logging.getLogger("backend.services.camera_mjpeg_proxy")
+logger = logging.getLogger("backend.services.MjpegProxy")
 
 
 # Cap on the upstream request so a hung IP camera cannot tie up a

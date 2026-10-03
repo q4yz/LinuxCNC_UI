@@ -10,7 +10,7 @@
 - File: `backend/data/settings.json` — flat `{ "<key>": <json value> }`
   (`UI_SETTINGS_FILE` in `common/domain_file_services/paths.py`).
   Per-installation runtime data, git-ignored.
-- Store: `common/core/ui_settings_store.py` (`UiSettingsStore`) — the
+- Store: `common/core/UiSettingsStore.py` (`UiSettingsStore`) — the
   only writer. Atomic write (`common/core/atomic_json.py`: temp file +
   `os.replace`), in-memory cache for the system process.
 - Keys are namespaced identifiers, never paths:

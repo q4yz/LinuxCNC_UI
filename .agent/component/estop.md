@@ -140,7 +140,7 @@ net estop-activate webgui.estop => halui.estop.activate
 
 ## 5. Signal names
 
-Two new generic `PinRole`s (`models/machineconfig/hal_fragment_models.py`)
+Two new generic `PinRole`s (`models/machineconfig/HalFragmentModels.py`)
 back this component, reusable by any future component needing a plain
 digital input/output that isn't an endstop:
 

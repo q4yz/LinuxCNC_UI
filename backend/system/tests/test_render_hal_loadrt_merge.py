@@ -19,7 +19,7 @@ confirms the correct shape: two heaters' PID controllers load as one
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import HalFragment
+from models.machineconfig.HalFragmentModels import HalFragment
 from services.halcompiler import render_hal
 
 

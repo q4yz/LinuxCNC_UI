@@ -21,8 +21,6 @@ function handleEdit(...args: unknown[]) {
 <template>
   <div class="h-full w-full flex flex-col">
     <FileManager @edit="handleEdit" class="mb-4" />
-    <MachineGate label="Job status">
-      <ActivePrintWidget />
-    </MachineGate>
+
   </div>
 </template>

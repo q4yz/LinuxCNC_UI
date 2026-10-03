@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.machineconfig.hal_fragment_models import (
+from models.machineconfig.HalFragmentModels import (
     BASE_THREAD,
     Addf,
     HalFragment,

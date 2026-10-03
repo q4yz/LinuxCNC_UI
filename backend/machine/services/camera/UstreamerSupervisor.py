@@ -11,8 +11,8 @@ owns subprocess lifecycle and diagnostics; ``routers/camera.py`` owns
 HTTP endpoints and stream proxying — so each file has one job and
 neither reads like two modules stapled together.
 
-Router precedent: ``services/camera/camera_mjpeg_proxy.py`` and
-``services/camera/shared_mjpeg_proxy.py`` already live under this
+Router precedent: ``services/camera/MjpegProxy.py`` and
+``services/camera/SharedMjpegProxy.py`` already live under this
 same ``services/camera/`` package; this file completes that layout.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 
 from core.ui_settings_reader import read_ui_setting
 from services.camera.camera_detection import detect_usb_cameras
-from models.camera_settings import CameraSettings
+from models.CameraSettings import CameraSettings
 
 logger = logging.getLogger("backend.camera_service")
 

@@ -23,7 +23,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 from services import StateService as state_service_module
 from services import ConsoleLogger as console_logger_module
 from services.ConsoleLogger import (

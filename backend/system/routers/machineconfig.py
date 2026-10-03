@@ -73,7 +73,7 @@ from services.machinetemplates import (
     generate_machine_templates,
 )
 from services.MachineLifecycleService import get_machine_lifecycle_service
-from machineconfig_parser import ConfigValidationError
+from MachineConfigParser import ConfigValidationError
 
 logger = logging.getLogger("backend.machineconfig_service")
 

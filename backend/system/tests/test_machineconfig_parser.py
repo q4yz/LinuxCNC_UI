@@ -8,7 +8,7 @@ import configparser
 import pytest
 
 from models.machineconfig import EndstopSwitch, Extruder, Heater, Stepper
-from machineconfig_parser import (
+from MachineConfigParser import (
     ConfigValidationError,
     DuplicateFanError,
     DuplicateHeaterError,

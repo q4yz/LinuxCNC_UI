@@ -1,7 +1,7 @@
 """Tests for the shared MJPEG fan-out proxy.
 
 These tests pin the multi-client behaviour that
-:class:`services.shared_mjpeg_proxy.SharedMjpegProxy` introduces:
+:class:`services.SharedMjpegProxy.SharedMjpegProxy` introduces:
 
 * N concurrent subscribers hit the same upstream URL → **exactly one**
   httpx connection is opened. This is the whole point of the
@@ -30,9 +30,9 @@ from typing import Any, List, Optional
 
 import pytest
 
-from services.camera import shared_mjpeg_proxy as smp
-from services.camera.shared_mjpeg_proxy import MjpegFanout
-from services.camera.camera_mjpeg_proxy import MjpegProxyError
+from services.camera import SharedMjpegProxy as smp
+from services.camera.SharedMjpegProxy import MjpegFanout
+from services.camera.MjpegProxy import MjpegProxyError
 
 
 # ---------------------------------------------------------------------- #

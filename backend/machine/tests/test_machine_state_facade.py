@@ -375,7 +375,7 @@ class TestGetStateEndpoint:
         ``STATE_*`` / ``INTERP_*`` integer field to the public
         Pydantic schema — those belong on ``raw_*`` fields only.
         """
-        from models.state.state_models import StateSnapshotResponse
+        from models.state.StateModels import StateSnapshotResponse
 
         fields = StateSnapshotResponse.model_fields.keys()
         leaked = [

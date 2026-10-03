@@ -18,8 +18,8 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.diagnostic_models import Diagnostic, Severity
-from models.machineconfig.pin_models import CapabilityClass, ParsedPin
+from models.machineconfig.DiagnosticModels import Diagnostic, Severity
+from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
 #: ``(list name, field)`` pairs that hold a pin string, and whether the
 #: pin drives a joint (which is what the capability rules care about).

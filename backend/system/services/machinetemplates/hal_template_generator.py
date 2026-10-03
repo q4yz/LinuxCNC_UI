@@ -1,7 +1,7 @@
 """``machine.hal`` template renderer.
 
 Renders the complete HAL pin catalog of the ``webgui`` userspace
-component (see :mod:`.pin_catalog`) as a commented wiring guide:
+component (see :mod:`.PinCatalog`) as a commented wiring guide:
 
 * every pin with its HAL type and direction,
 * a copy-paste-ready ``net`` suggestion line per pin (naming generic
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .pin_catalog import (
+from .PinCatalog import (
     COMPONENT_NAME,
     PinCatalog,
     PinContainerDescriptor,
@@ -106,7 +106,7 @@ def render_hal_template(
 
     Args:
         machine_name: Machine name for the header comment.
-        catalog: The pin catalog (see :mod:`.pin_catalog`).
+        catalog: The pin catalog (see :mod:`.PinCatalog`).
         standalone: ``True`` (default) renders this as the whole file
             — a `machine.hal` with no compiled wiring, the historical
             behaviour. ``False`` renders it as an appendix meant to

@@ -4,7 +4,7 @@ from core.field_masking import ResponseTier, include_base
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadOnlyDynamicHalPin import ReadOnlyDynamicHalPin
 from dtos.sensors.TemperatureDto import TemperaturePin, TemperatureStateDto
-from models.temperature_response import TemperatureStateResponse
+from models.TemperatureStateResponse import TemperatureStateResponse
 from mappers.tools.OptionalMappers import OptionalMappers
 
 

@@ -8,7 +8,7 @@ pulses.
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.RemoraStepperHalMapper import RemoraStepperHalMapper
 
 X_JOINT = {

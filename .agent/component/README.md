@@ -204,5 +204,5 @@ hardware-agnostic signals that the router consumes:
 
 `webgui.*` pins are the userspace UI component's surface — the
 authoritative list is generated per machine into the `machine.hal`
-template by `backend/system/services/machinetemplates/pin_catalog.py`.
+template by `backend/system/services/machinetemplates/PinCatalog.py`.
 Wire them in `webgui_connections.hal` only, never in `machine.hal`.

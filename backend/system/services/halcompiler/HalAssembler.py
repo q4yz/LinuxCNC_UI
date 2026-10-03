@@ -18,8 +18,8 @@ import json
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.hal_fragment_models import HalFragment, PinRequest, combine
-from models.machineconfig.pin_models import CapabilityClass
+from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, combine
+from models.machineconfig.PinModels import CapabilityClass
 
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper

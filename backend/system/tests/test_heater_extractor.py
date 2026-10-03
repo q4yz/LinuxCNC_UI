@@ -5,7 +5,7 @@ from tests._module_app_factory import build_module_app
 
 import pytest
 
-from services.machineconfig.heater_extractor import (
+from services.machineconfig.HeaterExtractor import (
     HardwareHeater,
     HeaterExtractor,
     derive_heater_name,
@@ -15,7 +15,7 @@ from models.machineconfig import (
     Heater,
     MachineConfigGraph,
 )
-from machineconfig_parser import MachineConfigParser
+from MachineConfigParser import MachineConfigParser
 
 
 # ---------------------------------------------------------------------- #

@@ -22,7 +22,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 
 
 def _axis_app(tmp_data_root, clean_env=None):

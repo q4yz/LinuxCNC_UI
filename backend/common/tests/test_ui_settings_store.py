@@ -6,7 +6,7 @@ import json
 import pytest
 
 from core.ui_settings_reader import read_ui_setting
-from core.ui_settings_store import (
+from core.UiSettingsStore import (
     MAX_VALUE_BYTES,
     InvalidSettingKeyError,
     SettingValueTooLargeError,

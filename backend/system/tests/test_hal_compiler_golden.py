@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from services.halcompiler import compile_machine_hal, validate_machine
-from services.halcompiler.assembler import HalAssembler
+from services.halcompiler.HalAssembler import HalAssembler
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE_HAL = REPO_ROOT / "machine_config" / "example" / "PrintNC-WEBGUI" / "Machine.hal"

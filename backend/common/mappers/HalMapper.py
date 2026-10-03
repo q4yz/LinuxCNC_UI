@@ -3,7 +3,7 @@
 Stays deliberately dumb: no I/O, no caching — just field-for-field
 translation from :class:`dtos.pins.MachineHalPin` /
 :class:`dtos.pins.MachineHalSignal` into the Pydantic resources in
-:mod:`models.hal`. The service layer owns when (and how often) the
+:mod:`models.HalModels`. The service layer owns when (and how often) the
 DTOs are read; this mapper only shapes them.
 """
 
@@ -14,7 +14,7 @@ from typing import Any, Iterable, List, Sequence
 from dtos.pins.HalPin import HalDirection
 from dtos.pins.MachineHalPin import MachineHalPin
 from dtos.pins.MachineSignal import MachineHalSignal
-from models.hal import HalLayoutResponse, HalPinResource, HalSignalResource
+from models.HalModels import HalLayoutResponse, HalPinResource, HalSignalResource
 
 # Python type of the DTO ``value`` field -> HAL data-type token.
 # ``bool`` must be checked before ``int`` — bool is a subclass of

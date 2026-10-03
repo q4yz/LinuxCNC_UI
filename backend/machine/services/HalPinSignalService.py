@@ -27,8 +27,8 @@ from dtos.pins.HalPin import HalDirection
 from dtos.pins.MachineHalPin import MachineHalPin
 from dtos.pins.MachineSignal import MachineHalSignal
 from hardware import hal
-from mappers.hal_mapper import HalMapper
-from models.hal import HalLayoutResponse, HalPinResource
+from mappers.HalMapper import HalMapper
+from models.HalModels import HalLayoutResponse, HalPinResource
 
 logger = logging.getLogger("backend.services.hal_pin_signal")
 

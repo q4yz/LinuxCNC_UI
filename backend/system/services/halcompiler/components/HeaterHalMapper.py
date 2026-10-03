@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper, heater_ini_section
-from models.machineconfig.hal_fragment_models import (
+from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
     HalFragment,

@@ -10,7 +10,7 @@ without parsing the raw config again.
 Shape
 -----
 The payload is the ``hardware.json`` v2 model — see
-:mod:`backend.models.machineconfig.hardware_json_models`.
+:mod:`backend.models.machineconfig.HardwareJsonModels`.
 The model is flat with explicit ``id`` fields and string
 references; the cross-reference validator walks the graph in one
 pass to enforce every reference resolves into the right list.
@@ -57,12 +57,12 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from machineconfig_parser import MissingEstopSectionError, split_pin
-from models.machineconfig.hardware_json_models import (
+from MachineConfigParser import MissingEstopSectionError, split_pin
+from models.machineconfig.HardwareJsonModels import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
 )
-from .axis_builder import AxisBuilder, stepgen_scale
+from .AxisBuilder import AxisBuilder, stepgen_scale
 
 logger = logging.getLogger("backend.services.machineconfig.hardware_json_generator")
 

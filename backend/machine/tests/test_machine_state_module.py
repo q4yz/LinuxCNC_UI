@@ -24,7 +24,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 
 def _state_app(tmp_data_root, clean_env=None):
     """Build a FastAPI app with the machine_state module wired up."""

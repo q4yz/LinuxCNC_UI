@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from core.field_masking import ResponseTier
 from dtos.axis.SpeedOverrideDto import SpeedOverrideDTO
-from mappers.axis.speed_override_mapper import SpeedOverrideMapper
+from mappers.axis.SpeedOverrideMapper import SpeedOverrideMapper
 
 
 def test_stat_values_map_through():

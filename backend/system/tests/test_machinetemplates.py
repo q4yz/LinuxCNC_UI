@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+import importlib
+
 from pathlib import Path
 
 import pytest
@@ -171,7 +173,7 @@ def test_pin_catalog_default_uses_active_hardware_json(monkeypatch, isolated_roo
     catalog instead rebuilds containers from the config mappers, so
     patching the default builder drives the default path.
     """
-    import services.machinetemplates.pin_catalog as pin_catalog_mod
+    pin_catalog_mod = importlib.import_module("services.machinetemplates.PinCatalog")  # the module, not the same-named class
     from services.machinetemplates import build_pin_catalog
 
     spindle, estop = _spindle_container()
@@ -234,7 +236,7 @@ def test_render_hal_template_appendix_mode_drops_the_standalone_framing():
 
 
 def _axis(letter, *joint_numbers, max_velocity=50.0, max_limit=300.0):
-    from models.machineconfig.linuxcnc_models import Axis, Joint
+    from models.machineconfig.LinuxCNCModels import Axis, Joint
 
     joints = [
         Joint(joint_number=n, axis_letter=letter, max_velocity=max_velocity, max_limit=max_limit)

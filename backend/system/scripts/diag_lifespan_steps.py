@@ -89,7 +89,7 @@ def _probe_pydantic_core() -> None:
 
 
 def _probe_model_rebuild() -> None:
-    from models.machineconfig.hardware_json_models import (
+    from models.machineconfig.HardwareJsonModels import (
         HardwareJson,
     )
 

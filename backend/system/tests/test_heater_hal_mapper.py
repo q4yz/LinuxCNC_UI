@@ -8,7 +8,7 @@ invented.
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.HeaterHalMapper import HeaterHalMapper
 
 BED = {"id": "heater_bed", "type": "heated_bed", "sensor": "bed", "heater_pin": "PB7", "control": "pid"}

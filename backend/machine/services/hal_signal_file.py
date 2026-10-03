@@ -1,6 +1,6 @@
 """Parse and render the Visual HAL editor's signal block inside a ``.hal`` file.
 
-Stays deliberately dumb (mirrors ``hal_mapper.py``'s style): pure text
+Stays deliberately dumb (mirrors ``HalMapper.py``'s style): pure text
 processing, no filesystem I/O of its own — callers read/write the file
 via the existing :class:`domain_file_services.MachineFileService`.
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
-from models.hal import HalFileSignalWrite
+from models.HalModels import HalFileSignalWrite
 
 MARKER_BEGIN = "# BEGIN VISUAL HAL EDITOR SIGNALS"
 MARKER_END = "# END VISUAL HAL EDITOR SIGNALS"

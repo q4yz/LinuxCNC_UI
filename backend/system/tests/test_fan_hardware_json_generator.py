@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from machineconfig_parser import MachineConfigParser
+from MachineConfigParser import MachineConfigParser
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 _BASE_HEATER = """

@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from core.field_masking import ResponseTier, include_base
 from dtos.axis.SpeedOverrideDto import SpeedOverrideDTO
-from models.axis_model import SpeedOverrideResponse
+from models.AxisModels import SpeedOverrideResponse
 
 
 def _finite(raw: Any, *, positive: bool) -> Optional[float]:

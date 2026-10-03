@@ -1,7 +1,7 @@
 """``/api/v1/settings`` — the central UI settings store.
 
 Served by the system service so settings stay available while the
-machine backend is offline. See ``core/ui_settings_store.py``.
+machine backend is offline. See ``core/UiSettingsStore.py``.
 """
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Path, Response
 
-from core.ui_settings_store import (
+from core.UiSettingsStore import (
     InvalidSettingKeyError,
     SettingValueTooLargeError,
     UiSettingsStore,
 )
 from domain_file_services.paths import UI_SETTINGS_FILE
-from models.ui_settings_model import (
+from models.UiSettingsModels import (
     UiSettingResponse,
     UiSettingsListResponse,
     UiSettingValue,

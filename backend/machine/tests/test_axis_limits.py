@@ -6,7 +6,7 @@ must stay ``None`` — never a guessed default.
 from __future__ import annotations
 
 from core.field_masking import ResponseTier
-from mappers.axis.axis_mapper import AxisMapper
+from mappers.axis.AxisMapper import AxisMapper
 
 
 def _axis(**extra):

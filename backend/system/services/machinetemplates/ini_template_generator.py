@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 from domain_file_services import paths
 from mappers.machineconfig import heater_ini_section
 
-from models.machineconfig.linuxcnc_models import Axis
+from models.machineconfig.LinuxCNCModels import Axis
 
 #: Documented defaults for PID fields no schema carries yet — see
 #: `.agent/component/heater.md` § 1 (`pid_on_measurement` defaults to

@@ -49,7 +49,7 @@ from .generator import (
 )
 from .hal_template_generator import render_hal_template
 from .ini_template_generator import render_ini_template
-from .pin_catalog import (
+from .PinCatalog import (
     PinCatalog,
     PinContainerDescriptor,
     PinDescriptor,

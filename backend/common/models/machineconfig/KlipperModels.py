@@ -1,18 +1,18 @@
 """Klipper-side data model.
 
-Dataclasses produced by :mod:`backend.machineconfig_parser`
+Dataclasses produced by :mod:`backend.MachineConfigParser`
 from a Klipper ``.cfg`` source. Every type here describes a piece of the
 *input* configuration; the LinuxCNC-side mirror lives in
-:mod:`.linuxcnc_models`.
+:mod:`.LinuxCNCModels`.
 
 Keeping the two sides in separate files makes the one-to-many
-relationship between an :class:`~.linuxcnc_models.Axis` and its
-list of :class:`~.linuxcnc_models.Joint` objects explicit — a
+relationship between an :class:`~.LinuxCNCModels.Axis` and its
+list of :class:`~.LinuxCNCModels.Joint` objects explicit — a
 single Klipper stepper (or several) flows through one joint; the
 axis is the LinuxCNC-level grouping that owns the list.
 
 Heater extraction onto ``hardware.json`` is its own concern; see
-:mod:`backend.services.machineconfig.heater_extractor`.
+:mod:`backend.services.machineconfig.HeaterExtractor`.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class Stepper:
     axis (e.g. ``[stepper_y]`` and ``[stepper_y1]``); each lives as
     its own :class:`Stepper` keyed by section name on the parent
     :class:`MachineConfigGraph`. The downstream
-    :class:`~.linuxcnc_models.AxisBuilder` decides whether multiple
+    :class:`~.LinuxCNCModels.AxisBuilder` decides whether multiple
     steppers on one axis become multiple joints (dual-motor Y) or
     merge into a single joint.
     """
@@ -133,7 +133,7 @@ class Heater:
 
     Common base for extruders and beds. The ``name`` field is the
     canonical hardware.json heater name produced by
-    :func:`backend.services.machineconfig.heater_extractor.derive_heater_name`
+    :func:`backend.services.machineconfig.HeaterExtractor.derive_heater_name`
     and is set by the parser, not by the section author.
 
     Required fields (``heater_pin``, ``sensor_pin``, ``control``)
@@ -381,11 +381,11 @@ class MachineConfigGraph:
     This is the *input* side of the compiler pipeline. It is keyed by
     section name so multi-motor axes (e.g. ``stepper_y`` and
     ``stepper_y1``) coexist without collision; the axis/joint mapping
-    happens downstream in :class:`~.linuxcnc_models.AxisBuilder`.
+    happens downstream in :class:`~.LinuxCNCModels.AxisBuilder`.
 
     Heaters live in a single dict keyed by the canonical hardware.json
     heater name (see
-    :func:`backend.services.machineconfig.heater_extractor.derive_heater_name`).
+    :func:`backend.services.machineconfig.HeaterExtractor.derive_heater_name`).
     Extruders are stored as :class:`Extruder` instances in the same
     dict and can be retrieved by name; the ``heater`` of an extruder
     is the same object so the standard :class:`Heater` accessors work

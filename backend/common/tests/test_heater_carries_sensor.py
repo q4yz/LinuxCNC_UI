@@ -15,7 +15,7 @@ third spelling again (``actual-temperature-<id>``) that matched
 neither, leaving mock sensor reads dead.
 
 The service-layer dedup that makes the pairing safe lives in
-``TemperatureService.preload_hal_pins`` and ``pin_catalog``: a sensor a
+``TemperatureService.preload_hal_pins`` and ``PinCatalog``: a sensor a
 heater claims is never built as a separate entity, so the shared name
 can never double-register.
 """

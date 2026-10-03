@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.hal_fragment_models import HalFragment, PinRequest, PinRole
+from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
 
 #: LinuxCNC `stepgen` defaults PrintNC-WEBGUI's Machine.hal uses for
 #: every joint — see stepper.md § 3. Not user-configurable yet; every

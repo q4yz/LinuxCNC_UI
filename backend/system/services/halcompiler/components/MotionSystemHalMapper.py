@@ -12,13 +12,13 @@ assembler logic.
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import (
+from models.machineconfig.HalFragmentModels import (
     BASE_THREAD,
     SERVO_THREAD,
     Addf,
     HalFragment,
 )
-from models.machineconfig.pin_models import CapabilityClass
+from models.machineconfig.PinModels import CapabilityClass
 
 #: `stepgen` step_type 0 = step/dir (the only type this compiler emits).
 _STEP_DIR_TYPE = "0"

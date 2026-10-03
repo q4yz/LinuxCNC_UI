@@ -13,7 +13,7 @@ router already claims for its own link-health chain.
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.ProbeHalMapper import ProbeHalMapper
 
 

@@ -4,25 +4,25 @@ Split into three files so the input graph, the LinuxCNC output
 model, and the canonical ``hardware.json`` v2 shape are each
 isolated:
 
-* :mod:`.klipper_models` — the input-side graph produced by the
+* :mod:`.KlipperModels` — the input-side graph produced by the
   strict parser from a Klipper ``.cfg``.
-* :mod:`.linuxcnc_models` — the output-side model with
-  :class:`~.linuxcnc_models.Axis` owning a
-  :class:`list` of :class:`~.linuxcnc_models.Joint` objects.
-* :mod:`.hardware_json_models` — the canonical ``hardware.json``
+* :mod:`.LinuxCNCModels` — the output-side model with
+  :class:`~.LinuxCNCModels.Axis` owning a
+  :class:`list` of :class:`~.LinuxCNCModels.Joint` objects.
+* :mod:`.HardwareJsonModels` — the canonical ``hardware.json``
   v2 shape with flat ids and cross-reference validation.
 
 The INI renderer (:mod:`backend.services.machineconfig.ini_generator`)
-consumes :class:`~.linuxcnc_models.Axis` and
-:class:`~.linuxcnc_models.Joint`; the parser produces
-:class:`~.klipper_models.MachineConfigGraph`. The bridge between the
-two is :class:`~.linuxcnc_models.AxisBuilder`. The
+consumes :class:`~.LinuxCNCModels.Axis` and
+:class:`~.LinuxCNCModels.Joint`; the parser produces
+:class:`~.KlipperModels.MachineConfigGraph`. The bridge between the
+two is :class:`~.LinuxCNCModels.AxisBuilder`. The
 hardware.json payload is produced by
 :mod:`backend.services.machineconfig.hardware_json_generator`
 from the same parser output.
 """
 
-from .hardware_json_models import (
+from .HardwareJsonModels import (
     Axis as HardwareAxis,
     Driver as HardwareDriver,
     Endstop as HardwareEndstop,
@@ -36,7 +36,7 @@ from .hardware_json_models import (
     model_validate as validate_hardware_json,
     to_dict as hardware_json_to_dict,
 )
-from .klipper_models import (
+from .KlipperModels import (
     ConnectionType,
     EndstopSwitch,
     Estop,
@@ -55,7 +55,7 @@ from .klipper_models import (
     TMC2209,
     connection_to_hal_type,
 )
-from .linuxcnc_models import (
+from .LinuxCNCModels import (
     AXIS_ORDER,
     Axis,
     IniConfig,

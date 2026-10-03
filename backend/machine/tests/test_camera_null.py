@@ -20,5 +20,5 @@ import logging
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 

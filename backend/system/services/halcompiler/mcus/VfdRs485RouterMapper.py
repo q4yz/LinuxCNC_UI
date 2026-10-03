@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.machineconfig.hal_fragment_models import SERVO_THREAD, Addf, HalFragment, PinRequest
+from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest
 
 #: `pin_id` -> (the real `vfdmod` pin, direction). Verified against
 #: `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`, a

@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional
 
 from core.field_masking import ResponseTier, include_static
 from dtos.axis.AxisDto import AxisStateDTO
-from models.axis_model import AxisStateResponse
+from models.AxisModels import AxisStateResponse
 
 
 class AxisMapper:

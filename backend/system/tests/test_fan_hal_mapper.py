@@ -12,7 +12,7 @@ Two `kind`s, two entirely different control models:
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.FanHalMapper import FanHalMapper
 
 _HEATER = {"id": "heater_extruder", "sensor": "extruder"}

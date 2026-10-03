@@ -12,7 +12,7 @@ import pytest
 
 from typing import Any
 
-from services.halcompiler.assembler import HalAssembler, UnsupportedMcuError
+from services.halcompiler.HalAssembler import HalAssembler, UnsupportedMcuError
 
 
 def _machine(**overrides: Any) -> dict[str, Any]:

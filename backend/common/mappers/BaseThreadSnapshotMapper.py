@@ -16,10 +16,10 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Union
 
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
-from models.axis_model import AxisStateResponse, SpeedOverrideResponse
-from models.mcu_model import McuStateResponse
+from models.AxisModels import AxisStateResponse, SpeedOverrideResponse
+from models.McuModels import McuStateResponse
 from services.ProgramService import ProgramProgressResponse
-from models.temperature_response import TemperatureStateResponse
+from models.TemperatureStateResponse import TemperatureStateResponse
 from factories.tools.ToolResponseFactory import ToolStateResponseModel
 from models.tools.HeaterModels import HeaterStateResponse
 

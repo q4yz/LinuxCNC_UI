@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 
 
 class _Sample(BaseModel):

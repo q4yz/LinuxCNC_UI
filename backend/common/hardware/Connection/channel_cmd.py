@@ -29,7 +29,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from core.non_repeating_logger import NonRepeatingLogger
+from core.NonRepeatingLogger import NonRepeatingLogger
 
 from .core import MachineMode, RcsStatus, _LazyChannel
 from .channel_stat import get_stat_channel

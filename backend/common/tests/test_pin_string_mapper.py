@@ -8,7 +8,7 @@ an inversion, so the parse is pinned here rather than trusted.
 import pytest
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.pin_models import DEFAULT_MCU_ID, CapabilityClass
+from models.machineconfig.PinModels import DEFAULT_MCU_ID, CapabilityClass
 
 parse = PinStringMapper.from_string
 

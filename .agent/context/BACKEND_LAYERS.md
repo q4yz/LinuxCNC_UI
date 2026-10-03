@@ -678,7 +678,7 @@ instead, now fixed:
 
 * `UstreamerSupervisor` (subprocess lifecycle) lived in the same file
   as the HTTP endpoints, doubling the file's job. Extracted to
-  [`backend/machine/services/camera/ustreamer_supervisor.py`](../../backend/machine/services/camera/ustreamer_supervisor.py)
+  [`backend/machine/services/camera/UstreamerSupervisor.py`](../../backend/machine/services/camera/UstreamerSupervisor.py)
   — the router file dropped from ~960 to ~380 lines and now reads as
   one thing (endpoints + stream proxying), not two stapled together.
 * Five placeholder classes (`USBDevicePayload`, `USBDevicesResponse`,
@@ -697,11 +697,11 @@ for a process supervisor, not a remaining gap.
 used to define their Pydantic models inline at the top of the file
 (`_StateCommand`, `_StateSnapshot`, `ParseResponse`,
 `LoadProgramRequest`). Moved to
-[`backend/common/models/state/state_models.py`](../../backend/common/models/state/state_models.py)
+[`backend/common/models/state/StateModels.py`](../../backend/common/models/state/StateModels.py)
 (`StateCommand`, `ModeCommand`, `MdiCommand`, `StateSnapshotResponse`,
 `StatusResponse` — this file already existed, prepared but unused
 until now) and
-[`backend/common/models/program/program_models.py`](../../backend/common/models/program/program_models.py)
+[`backend/common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py)
 (`StatusResponse`, `ParseResponse`, `LoadProgramRequest`) respectively.
 
 `state`'s operator-facing `MachineState` enum had the same problem —
@@ -725,12 +725,12 @@ being rejected by FastAPI's validation layer as a `422` first.
 
 | Module id | App | Router | Service(s) | DTO | Mapper | Pydantic response | Storage | Classical? |
 |-----------|-----|--------|-----------|-----|--------|-------------------|---------|------------|
-| `axis` | machine | [`routers/axis.py`](../../backend/machine/routers/axis.py) | [`AxisService`](../../backend/machine/services/AxisService.py) | [`common/dtos/axis/AxisDto.py`](../../backend/common/dtos/axis/AxisDto.py) | [`common/mappers/axis/axis_mapper.py`](../../backend/common/mappers/axis/axis_mapper.py) | [`common/models/axis_model.py`](../../backend/common/models/axis_model.py) | n/a (HAL-driven) | Yes |
-| `machine_state` | machine | [`routers/state.py`](../../backend/machine/routers/state.py) | [`StateService`](../../backend/machine/services/StateService.py) | [`common/dtos/state/MachineStateDto.py`](../../backend/common/dtos/state/MachineStateDto.py) (enum only) | n/a — service builds the response directly | [`common/models/state/state_models.py`](../../backend/common/models/state/state_models.py) | n/a | Yes — no mapper needed, see § 7.5 |
-| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/program_models.py`](../../backend/common/models/program/program_models.py) for the router's own endpoints; `ProgramProgressResponse` is still inline in `ProgramService.py` (untouched — not named in § 7.5, tracked separately) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
+| `axis` | machine | [`routers/axis.py`](../../backend/machine/routers/axis.py) | [`AxisService`](../../backend/machine/services/AxisService.py) | [`common/dtos/axis/AxisDto.py`](../../backend/common/dtos/axis/AxisDto.py) | [`common/mappers/axis/AxisMapper.py`](../../backend/common/mappers/axis/AxisMapper.py) | [`common/models/AxisModels.py`](../../backend/common/models/AxisModels.py) | n/a (HAL-driven) | Yes |
+| `machine_state` | machine | [`routers/state.py`](../../backend/machine/routers/state.py) | [`StateService`](../../backend/machine/services/StateService.py) | [`common/dtos/state/MachineStateDto.py`](../../backend/common/dtos/state/MachineStateDto.py) (enum only) | n/a — service builds the response directly | [`common/models/state/StateModels.py`](../../backend/common/models/state/StateModels.py) | n/a | Yes — no mapper needed, see § 7.5 |
+| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py) for the router's own endpoints; `ProgramProgressResponse` is still inline in `ProgramService.py` (untouched — not named in § 7.5, tracked separately) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
 | `temperature` | machine | [`routers/temperature.py`](../../backend/machine/routers/temperature.py) | (deprecated) | (deprecated) | (deprecated) | (deprecated) | n/a | **Deprecated** — 410 redirect to `tools` |
 | `tools` | machine | [`routers/tools.py`](../../backend/machine/routers/tools.py) | [`ToolsService`](../../backend/machine/services/ToolsService.py), [`SpindleDigitalService`](../../backend/machine/services/SpindleDigitalService.py), [`ExtruderService`](../../backend/machine/services/ExtruderService.py), [`HeaterService`](../../backend/machine/services/HeaterService.py) | [`common/dtos/tools/`](../../backend/common/dtos/tools/) | [`common/mappers/tools/`](../../backend/common/mappers/tools/) | [`common/models/tools/`](../../backend/common/models/tools/), [`common/models/tools_settings.py`](../../backend/common/models/tools_settings.py) | `SettingsStore` (settings) | **Yes — canonical** |
-| `camera` | machine | [`routers/camera.py`](../../backend/machine/routers/camera.py) | [`UstreamerSupervisor`](../../backend/machine/services/camera/ustreamer_supervisor.py) | n/a | n/a | inline | `SettingsStore` | **Exception** — process-boundary split, not classical (§ 7.4) |
+| `camera` | machine | [`routers/camera.py`](../../backend/machine/routers/camera.py) | [`UstreamerSupervisor`](../../backend/machine/services/camera/UstreamerSupervisor.py) | n/a | n/a | inline | `SettingsStore` | **Exception** — process-boundary split, not classical (§ 7.4) |
 | (telemetry) | machine | [`routers/BaseThreadRouter.py`](../../backend/machine/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/machine/services/BaseThreadService.py) | n/a | [`common/mappers/BaseThreadSnapshotMapper.py`](../../backend/common/mappers/BaseThreadSnapshotMapper.py) | [`common/models/BaseThreadStateResponse.py`](../../backend/common/models/BaseThreadStateResponse.py) | n/a | **Exception** — cross-domain aggregator (§ 7.1) |
 | (telemetry) | machine | [`routers/ServoThreadRouter.py`](../../backend/machine/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/machine/services/ServoThreadService.py) | [`common/dtos/ServoThreadState.py`](../../backend/common/dtos/ServoThreadState.py) | [`common/mappers/ServoThreadStateMapper.py`](../../backend/common/mappers/ServoThreadStateMapper.py) | [`common/models/ServoThreadStateResponse.py`](../../backend/common/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle (§ 7.2) |
 | `macros` (CRUD) | system | [`routers/macros.py`](../../backend/system/routers/macros.py) | [`MacroService`](../../backend/system/services/MacroService.py) | n/a | n/a | inline in `MacroService` | [`common/storage/MacroStorage.py`](../../backend/common/storage/MacroStorage.py), `MCodeFileService` | Yes — no DTO layer (text-in / text-out) |

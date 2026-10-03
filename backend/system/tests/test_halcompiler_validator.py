@@ -392,7 +392,7 @@ def test_the_shipped_example_machine_is_compilable():
 
 
 def _generated(profile: Path) -> dict[str, object]:
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
     from services.machineconfig.hardware_json_generator import build_hardware_json
 
     graph = MachineConfigParser().parse(profile)

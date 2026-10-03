@@ -20,6 +20,8 @@ installed, every test monkeypatches either
 ``_spawn_locked`` helper to install a stub ``Popen``.
 """
 from __future__ import annotations
+
+import importlib
 from tests._module_app_factory import build_module_app
 
 from typing import List, Optional
@@ -114,7 +116,7 @@ def fake_ustreamer(monkeypatch):
     test starts clean.
     """
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     _FakeProc.reset()
 
@@ -138,7 +140,7 @@ def fake_ustreamer(monkeypatch):
 def fake_no_ustreamer(monkeypatch):
     """Pretend ``ustreamer`` is not on PATH; ``spawn`` raises immediately."""
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch.setattr(supervisor_module.shutil, "which", lambda _name: None)
     router_module._supervisor._cooldown_until.clear()
@@ -209,7 +211,7 @@ def test_double_spawn_shares_child(fake_ustreamer, fake_linux_with_devices):
 
 def test_spawn_arms_cooldown_on_popen_failure(monkeypatch, fake_linux_with_devices):
     """If ``Popen`` raises, the cooldown blocks the next request."""
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
     from routers.camera import _supervisor
 
     def _explode(*_args, **_kwargs):
@@ -824,7 +826,7 @@ def test_status_message_reports_no_devices(monkeypatch, fake_no_ustreamer):
     """Linux host with no ``/dev/video*`` and no IP camera → NO_DEVICES."""
     import services.camera.camera_detection as detection
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch.setattr(detection.sys, "platform", "linux")
     monkeypatch.setattr(detection, "_list_video_device_paths", lambda: [])
@@ -843,7 +845,7 @@ def test_status_message_reports_device_not_found(
 ):
     """Configured ``default_device_id`` missing → DEVICE_NOT_FOUND."""
     from routers.camera import _supervisor
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch.setattr(supervisor_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: "/dev/video99")
@@ -860,7 +862,7 @@ def test_status_returns_running_url_when_child_alive(
 ):
     """A live child → ``running=True`` with the redirect URL."""
     from routers.camera import _supervisor
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch.setattr(supervisor_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(_supervisor, "read_default_device_id", lambda: "/dev/video0")
@@ -881,7 +883,7 @@ def test_status_reports_crashed_child_exit_code(
 ):
     """A child that exits non-zero → message contains the exit code."""
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch.setattr(supervisor_module.shutil, "which", lambda _name: "/usr/bin/ustreamer")
     monkeypatch.setattr(
@@ -920,7 +922,7 @@ def _camera_app(tmp_data_root, clean_env) -> FastAPI:
 
 def _set_camera_setting(tmp_data_root, key: str, value) -> None:
     """Store a camera setting the way the system service does."""
-    from core.ui_settings_store import UiSettingsStore
+    from core.UiSettingsStore import UiSettingsStore
 
     UiSettingsStore(tmp_data_root / "settings.json").write_key(key, value)
 
@@ -960,7 +962,7 @@ def test_stream_endpoint_proxies_usb_camera_via_default_device(
     the persisted default).
     """
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch_which = __import__("pytest").MonkeyPatch()
     monkeypatch_which.setattr(
@@ -1036,7 +1038,7 @@ def test_status_endpoint_omits_message_when_healthy(
     fake_ustreamer, fake_linux_with_devices, tmp_data_root, clean_env,
 ):
     import routers.camera as router_module
-    import services.camera.ustreamer_supervisor as supervisor_module
+    supervisor_module = importlib.import_module("services.camera.UstreamerSupervisor")  # the module, not the same-named class
 
     monkeypatch_which = __import__("pytest").MonkeyPatch()
     monkeypatch_which.setattr(

@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.StateService import get_state_service
 from services.ConsoleLogger import LogLevel, get_console_logger
-from models.state.state_models import (
+from models.state.StateModels import (
     MdiCommand,
     ModeCommand,
     StateCommand,

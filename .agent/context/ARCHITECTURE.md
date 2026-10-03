@@ -42,7 +42,7 @@ contracts from outside the repo. See `§ 8`.
 ```
 backend/
 ├── common/                     # Shared library — imported by both apps, never run directly
-│   ├── core/                   # ui_settings_store.py, ui_settings_reader.py, atomic_json.py, event_bus.py, field_masking.py, models.py
+│   ├── core/                   # UiSettingsStore.py, ui_settings_reader.py, atomic_json.py, EventBus.py, field_masking.py, models.py
 │   ├── dtos/                   # Frozen dataclass domain DTOs + HalPin handles
 │   ├── mappers/, factories/    # DTO ↔ Pydantic Response translation
 │   ├── models/                 # Pydantic request/response + per-module settings + machineconfig schemas
@@ -279,7 +279,7 @@ at the top level of `<script setup>`
 
 | Source | Consumers |
 |--------|-----------|
-| `machine_config/<name>/hardware.json` + generated `machine.ini` (see § 7) | Frontend reads the generated INI/hardware.json to display axis counts, limits, capabilities. Backend `backend/common/HardwareConfigService.py` (via `backend/common/models/machineconfig/{hardware_json_models.py,linuxcnc_models.py}`) parses the same files. |
+| `machine_config/<name>/hardware.json` + generated `machine.ini` (see § 7) | Frontend reads the generated INI/hardware.json to display axis counts, limits, capabilities. Backend `backend/common/HardwareConfigService.py` (via `backend/common/models/machineconfig/{HardwareJsonModels.py,LinuxCNCModels.py}`) parses the same files. |
 | `frontend/src/config/gcodes.ts` | Every `.vue` component / Pinia action that emits G-code. Helpers like `generateSetOffset(axis, value)` keep MDI strings out of components. |
 | `backend/system/routers/ui_settings.py` | Central UI settings API (`/api/v1/settings`); see `.agent/contracts/settings-module.md`. |
 
@@ -333,7 +333,7 @@ for the canonical per-domain router contract.
 
 ## 5. Event bus
 
-`backend/common/core/event_bus.py` and `frontend/src/core/event-bus.ts`
+`backend/common/core/EventBus.py` and `frontend/src/core/event-bus.ts`
 share the same contract:
 
 - **Frozen payload.** Every `publish` re-instantiates a deep-cloned,
@@ -352,7 +352,7 @@ share the same contract:
 | Generated OpenAPI client | `frontend/generated/api/` (gitignored; regenerated from both apps' merged spec by `frontend/scripts/generate-api.mjs` + `merge-openapi.mjs`, see `§ 1.4`) |
 | Backend module contract | `.agent/contracts/backend-router.md` (per-domain routers, one table per app) |
 | Settings contract | `.agent/contracts/settings-module.md` |
-| Settings persistence | `backend/common/core/ui_settings_store.py` (single `backend/data/settings.json`, atomic write, system service only) + `ui_settings_reader.py` (uncached reads from other processes) |
+| Settings persistence | `backend/common/core/UiSettingsStore.py` (single `backend/data/settings.json`, atomic write, system service only) + `ui_settings_reader.py` (uncached reads from other processes) |
 | Backend layered pattern | `.agent/context/BACKEND_LAYERS.md` |
 | Typing discipline (no bare `dict` / `any`) | `.agent/AGENT.md` |
 | Test scripts | `frontend/tests/*.mjs`, `backend/{common,machine,system}/tests/test_*.py` (run each app's suite separately — see `§ 1`) |
@@ -406,7 +406,7 @@ modeled.
 
 Versioned at the root (`"version": "2.1"`); the model rejects any
 other shape. Defined by a single Pydantic model,
-[`backend/common/models/machineconfig/hardware_json_models.py`](backend/common/models/machineconfig/hardware_json_models.py),
+[`backend/common/models/machineconfig/HardwareJsonModels.py`](backend/common/models/machineconfig/HardwareJsonModels.py),
 that validates every cross-reference in one pass and fails fast with
 the full error list when any link is unresolved.
 

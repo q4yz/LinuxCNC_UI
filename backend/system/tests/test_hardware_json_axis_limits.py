@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from machineconfig_parser import MachineConfigParser
-from models.machineconfig.hardware_json_models import HardwareJson
-from services.machineconfig.axis_builder import AxisBuilder
+from MachineConfigParser import MachineConfigParser
+from models.machineconfig.HardwareJsonModels import HardwareJson
+from services.machineconfig.AxisBuilder import AxisBuilder
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 PROFILE_DIR = Path(__file__).resolve().parents[3] / "machine_config" / "profiles"

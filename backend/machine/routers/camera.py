@@ -15,7 +15,7 @@ panel on the planet (OctoPrint, Mainsail, Fluidd). Each detected
 ``http://127.0.0.1:{8080+index}/?action=stream``; the backend
 ``/stream`` endpoint proxies those bytes same-origin. The subprocess
 supervisor (``UstreamerSupervisor``) lives in
-``services/camera/ustreamer_supervisor.py`` — this file owns HTTP
+``services/camera/UstreamerSupervisor.py`` — this file owns HTTP
 endpoints and the MJPEG proxy orchestration, that one owns process
 lifecycle. Camera doesn't fit the Router → Service → DTO → Mapper →
 Storage split used elsewhere (no domain data to map, just a process
@@ -68,9 +68,9 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from services.camera.camera_detection import USBDeviceInfo, detect_usb_cameras
-from services.camera.camera_mjpeg_proxy import MjpegProxyError, redact_url
-from services.camera.shared_mjpeg_proxy import MjpegFanout
-from services.camera.ustreamer_supervisor import UstreamerSupervisor
+from services.camera.MjpegProxy import MjpegProxyError, redact_url
+from services.camera.SharedMjpegProxy import MjpegFanout
+from services.camera.UstreamerSupervisor import UstreamerSupervisor
 
 logger = logging.getLogger("backend.camera_service")
 
@@ -83,7 +83,7 @@ logger = logging.getLogger("backend.camera_service")
 # supervisor is module-level so all endpoints share the same
 # process table. It reads ``camera.*`` from the central UI settings
 # file itself. The class lives in
-# ``services/camera/ustreamer_supervisor.py``.
+# ``services/camera/UstreamerSupervisor.py``.
 router = APIRouter(
     prefix="/api/v1/modules/camera",
     tags=["modules:camera"],

@@ -12,8 +12,8 @@ an extruder.
 
 from __future__ import annotations
 
-from machineconfig_parser import MachineConfigParser
-from services.machineconfig.axis_builder import AxisBuilder, AxisMappingPolicy
+from MachineConfigParser import MachineConfigParser
+from services.machineconfig.AxisBuilder import AxisBuilder, AxisMappingPolicy
 
 _CONFIG = """
 [stepper_x]

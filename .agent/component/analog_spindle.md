@@ -121,7 +121,7 @@ webgui_connections.hal
 # UI Bindings for <id>
 # Pin names below are the webgui component's real surface — see the
 # generated pin catalog at the top of machine.hal for the exact list
-# on this machine (backend/system/services/machinetemplates/pin_catalog.py).
+# on this machine (backend/system/services/machinetemplates/PinCatalog.py).
 
 # Commanded speed readout.
 net spindle-speed-cmd => webgui.TargetRpm

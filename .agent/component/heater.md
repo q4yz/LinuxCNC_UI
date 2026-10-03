@@ -104,7 +104,7 @@ heater carries its sensor, so `actual_temperature` resolves to
 `webgui.<sensor_id>` — one pin per thermistor, addressed the same way
 whether or not a heater claims it. The app enforces the pairing by
 never building a separate sensor entity for a claimed sensor
-(`TemperatureService.preload_hal_pins`, `pin_catalog`).
+(`TemperatureService.preload_hal_pins`, `PinCatalog`).
 
 Emit `E_HEATER_ID_PREFIX` if the id does not start with `heater`, and
 `E_HEATER_ID_COLLISION` if two heaters reduce to the same suffix.

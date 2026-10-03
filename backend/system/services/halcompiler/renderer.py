@@ -4,7 +4,7 @@ Pure formatting, nothing decided here. Section order is fixed
 (loadrt, loadusr, addf, setp, net) per
 `.agent/component/README.md` § 4; `addf` is further sorted by
 `(thread, order)` since thread scheduling is a cross-component
-invariant, not a per-fragment one — see `hal_fragment_models.Addf`.
+invariant, not a per-fragment one — see `HalFragmentModels.Addf`.
 
 `loadrt` lines that use `names=` are similarly merged per component,
 one line per component rather than one per mapper. LinuxCNC's
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 
-from models.machineconfig.hal_fragment_models import BASE_THREAD, HalFragment, SERVO_THREAD
+from models.machineconfig.HalFragmentModels import BASE_THREAD, HalFragment, SERVO_THREAD
 
 _THREAD_ORDER = {BASE_THREAD: 0, SERVO_THREAD: 1}
 

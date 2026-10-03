@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.hal_fragment_models import PinRequest, PinRole
+from models.machineconfig.HalFragmentModels import PinRequest, PinRole
 from services.halcompiler.mcus.ParportRouterMapper import ParportRouterMapper
 
 

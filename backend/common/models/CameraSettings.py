@@ -3,7 +3,7 @@ reads it.
 
 Both values are central UI settings owned by the system service
 (``camera.default_device_id`` / ``camera.ip_camera_url``, see
-``core/ui_settings_store.py``). The supervisor reads them by key on
+``core/UiSettingsStore.py``). The supervisor reads them by key on
 every request (``core/ui_settings_reader.py``) and builds this model,
 whose defaults apply when a key was never set. Per-camera display
 preferences are UI-only and never reach the backend.

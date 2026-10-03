@@ -17,7 +17,7 @@ live in ``.agent/component/``.
 
 from mappers.machineconfig import PinStringMapper
 
-from .assembler import HalAssembler, UnsupportedMcuError, assemble_machine
+from .HalAssembler import HalAssembler, UnsupportedMcuError, assemble_machine
 from .components.EstopWebguiMapper import EstopWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
@@ -25,7 +25,7 @@ from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
 from .renderer import render_hal
-from .validator import MachineValidator, validate_machine
+from .MachineValidator import MachineValidator, validate_machine
 
 
 def compile_machine_hal(payload: dict[str, object]) -> str:

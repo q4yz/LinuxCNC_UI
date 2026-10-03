@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.ui_settings_store import UiSettingsStore
+from core.UiSettingsStore import UiSettingsStore
 
 
 @pytest.fixture()

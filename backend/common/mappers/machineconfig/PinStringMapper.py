@@ -6,7 +6,7 @@ Pure translation, no I/O — the mapper layer's contract
 
 from __future__ import annotations
 
-from models.machineconfig.pin_models import DEFAULT_MCU_ID, ParsedPin
+from models.machineconfig.PinModels import DEFAULT_MCU_ID, ParsedPin
 
 #: Modifier characters and the ``ParsedPin`` flag each one sets.
 _MODIFIERS = {"!": "invert", "^": "pullup", "~": "pulldown"}

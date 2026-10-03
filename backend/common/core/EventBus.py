@@ -189,7 +189,7 @@ class EventBus:
 
 
 # Singleton instance for the core system.
-# Modules should ``from core.event_bus import bus`` and call
+# Modules should ``from core.EventBus import bus`` and call
 # ``bus.subscribe(...)`` / ``await bus.publish(...)``.
 bus = EventBus()
 

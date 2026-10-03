@@ -2,6 +2,7 @@
 import ToolPanel from "../components/tools/ToolPanel.vue";
 import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
+import ActivePrintWidget from "../components/ActivePrintWidget.vue";
 
 defineOptions({ name: 'RunningView' })
 </script>
@@ -13,6 +14,10 @@ defineOptions({ name: 'RunningView' })
       <!-- Left Column: Job Status & Machine State -->
       <div class="lg:col-span-6 xl:col-span-6 flex flex-col space-y-6">
 
+
+        <MachineGate label="Job status">
+          <ActivePrintWidget />
+        </MachineGate>
         <MachineGate label="Axis speed">
           <AxisSpeedControl />
         </MachineGate>

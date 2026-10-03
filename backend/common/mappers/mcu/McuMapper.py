@@ -4,7 +4,7 @@ from core.field_masking import ResponseTier, include_static
 from dtos.mcu.McuDto import McuPins
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-from models.mcu_model import McuStateResponse
+from models.McuModels import McuStateResponse
 
 #: Connections whose boards can carry a `reset_pin` — the same set the
 #: `.cfg` parser accepts `reset_pin` on (`machineconfig_schema.py`).

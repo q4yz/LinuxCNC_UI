@@ -18,8 +18,8 @@ from typing import Optional, List, Dict, Any, Literal
 from dtos.axis.AxisDto import AxisStateDTO
 from dtos.axis.SpeedOverrideDto import SpeedOverrideDTO
 from hardware.Connection import execute_sync_cmd, get_stat_channel, linuxcnc
-from mappers.axis.axis_mapper import AxisMapper
-from mappers.axis.speed_override_mapper import SpeedOverrideMapper
+from mappers.axis.AxisMapper import AxisMapper
+from mappers.axis.SpeedOverrideMapper import SpeedOverrideMapper
 from services.HardwareConfigService import HardwareConfigService
 from hal_service.JogService import jog_keepalive, jog_axis, jog_stop
 

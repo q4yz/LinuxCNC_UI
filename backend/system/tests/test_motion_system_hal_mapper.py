@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import BASE_THREAD, SERVO_THREAD
-from models.machineconfig.pin_models import CapabilityClass
+from models.machineconfig.HalFragmentModels import BASE_THREAD, SERVO_THREAD
+from models.machineconfig.PinModels import CapabilityClass
 from services.halcompiler.components.MotionSystemHalMapper import MotionSystemHalMapper
 
 

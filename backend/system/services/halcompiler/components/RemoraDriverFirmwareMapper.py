@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
-from models.machineconfig.hal_fragment_models import FirmwareModuleRequest, HalFragment
+from models.machineconfig.HalFragmentModels import FirmwareModuleRequest, HalFragment
 
 #: `driver.sense_resistor`'s documented fallback — the value every
 #: module in the reference config uses (a common TMC2209 breakout's

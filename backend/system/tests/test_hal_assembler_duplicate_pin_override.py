@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.halcompiler.assembler import HalAssembler
+from services.halcompiler.HalAssembler import HalAssembler
 
 
 def _machine(**overrides: Any) -> dict[str, Any]:

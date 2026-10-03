@@ -18,8 +18,8 @@ from __future__ import annotations
 from dtos.pins.HalPin import HalDirection
 from dtos.pins.MachineHalPin import MachineHalPin
 from dtos.pins.MachineSignal import MachineHalSignal
-from mappers.hal_mapper import HalMapper
-from models.hal import HalLayoutResponse
+from mappers.HalMapper import HalMapper
+from models.HalModels import HalLayoutResponse
 
 
 def _pin(value, direction=HalDirection.IN, pin="probe", comp="mockcomp", doc="test pin"):

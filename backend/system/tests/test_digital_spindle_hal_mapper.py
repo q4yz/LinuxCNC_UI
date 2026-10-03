@@ -8,7 +8,7 @@ whole point of the component/router boundary.
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 
 FULL_SPINDLE = {

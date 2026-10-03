@@ -32,7 +32,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.event_bus import EventBus
+from core.EventBus import EventBus
 
 # ---------------------------------------------------------------------- #
 # Fixtures                                                                #
@@ -268,7 +268,7 @@ def test_hardware_json_v2_emits_user_example(
     from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     config = """
 [stepper_x]
@@ -428,7 +428,7 @@ def test_hardware_json_v2_empty_arrays_when_no_heaters(
     from services.machineconfig.hardware_json_generator import (
         build_hardware_json,
     )
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     config = """
 [machine]
@@ -458,7 +458,7 @@ def test_build_hardware_json_requires_an_estop_section():
     `[estop]` at all (a valid parse — the parser stays lenient) must
     not reach a deployable hardware.json."""
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser, MissingEstopSectionError
+    from MachineConfigParser import MachineConfigParser, MissingEstopSectionError
 
     graph = MachineConfigParser().parse_string("[stepper_x]\nstep_pin: PF13\n")
     assert graph.estop is None  # confirms the parser itself raised nothing
@@ -472,7 +472,7 @@ def test_build_hardware_json_emits_an_empty_estop_object_for_a_ui_only_machine()
     — the wire shape is a present, empty object, never an absent key
     (which would be indistinguishable from "not declared at all")."""
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string("[stepper_x]\nstep_pin: PF13\n\n[estop]\n")
     payload = build_hardware_json(graph, "ui-only")
@@ -481,7 +481,7 @@ def test_build_hardware_json_emits_an_empty_estop_object_for_a_ui_only_machine()
 
 def test_build_hardware_json_emits_the_declared_estop_pins():
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string(
         "[mcu]\nconnection: parallelport\n\n[estop]\nfault_pin: 10\nout_pin: 14\n"
@@ -496,7 +496,7 @@ def test_build_hardware_json_emits_max_z_velocity_and_max_z_accel():
     hardware.json — silently dropped between the graph and the wire
     payload."""
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string(
         "[machine]\nkinematics: cartesian\nmax_velocity: 250.0\nmax_accel: 750.0\n"
@@ -518,7 +518,7 @@ def test_build_hardware_json_omits_probe_entirely_when_not_declared():
     """Unlike [estop], a machine with no [probe] must not get a
     fabricated empty object — the key is absent altogether."""
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string(
         "[stepper_x]\nstep_pin: PF13\n\n[estop]\n"
@@ -530,7 +530,7 @@ def test_build_hardware_json_omits_probe_entirely_when_not_declared():
 
 def test_build_hardware_json_emits_an_empty_probe_object_when_the_section_is_present_but_bare():
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string(
         "[stepper_x]\nstep_pin: PF13\n\n[estop]\n\n[probe]\n"
@@ -541,7 +541,7 @@ def test_build_hardware_json_emits_an_empty_probe_object_when_the_section_is_pre
 
 def test_build_hardware_json_emits_the_declared_probe_pin():
     from services.machineconfig.hardware_json_generator import build_hardware_json
-    from machineconfig_parser import MachineConfigParser
+    from MachineConfigParser import MachineConfigParser
 
     graph = MachineConfigParser().parse_string(
         "[mcu]\nconnection: parallelport\n\n[estop]\n\n[probe]\npin: !15\n"

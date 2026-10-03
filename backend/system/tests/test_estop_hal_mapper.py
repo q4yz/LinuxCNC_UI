@@ -14,7 +14,7 @@ Machine.hal` (lines 41-57).
 
 from __future__ import annotations
 
-from models.machineconfig.hal_fragment_models import PinRole
+from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.EstopHalMapper import EstopHalMapper
 
 _PARPORT_MCU = {"mcu": {"id": "mcu", "connection": "parallelport"}}

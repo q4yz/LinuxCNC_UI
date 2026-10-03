@@ -15,7 +15,7 @@ generation logic that the template system depends on:
 * :mod:`.axis_builder` — builds LinuxCNC ``Axis`` / ``Joint``
   objects from a parsed profile graph (handles multi-joint axes,
   e.g. a dual-motor gantry).
-* :mod:`.heater_extractor` — extracts the heater/temperature-sensor
+* :mod:`.HeaterExtractor` — extracts the heater/temperature-sensor
   list from a parsed graph.
 * :mod:`.hardware_json_generator` — builds the canonical
   ``hardware.json`` payload from a parsed graph.
@@ -23,10 +23,10 @@ generation logic that the template system depends on:
 
 from __future__ import annotations
 
-from machineconfig_parser import derive_fan_name
-from .axis_builder import AxisBuilder, AxisMappingPolicy, stepgen_scale
+from MachineConfigParser import derive_fan_name
+from .AxisBuilder import AxisBuilder, AxisMappingPolicy, stepgen_scale
 from .hardware_json_generator import build_hardware_json, write_hardware_json
-from .heater_extractor import (
+from .HeaterExtractor import (
     HardwareHeater,
     HeaterExtractor,
     derive_heater_name,

@@ -289,7 +289,7 @@ be wired "via webguipin mapper" (`SpindleWebguiMapper`/
 - **Updated the now-stale docstrings this touched**: `StateService.
   activate_estop`'s own comment used to say "the HAL layer is
   responsible for … generating the required rising edge" — no longer
-  true, now says so. `pin_catalog.py`'s `EStopPin` connect-hint and
+  true, now says so. `PinCatalog.py`'s `EStopPin` connect-hint and
   `estop.md` §§ implemented-status/3 updated to match (plain
   passthrough net, not a `oneshot`).
 
@@ -323,7 +323,7 @@ already existed and needed no changes — this closed the one real gap:
   `E_NO_MCU` rule already lives at for the analogous "machine has no
   MCU at all" case, so this isn't a new pattern. New
   `MissingEstopSectionError(ConfigValidationError)`, defined in
-  `machineconfig_parser.py` (co-located with its siblings, so it
+  `MachineConfigParser.py` (co-located with its siblings, so it
   still gets the router's generic `ConfigValidationError` → 4xx toast
   handling for free) but raised from `hardware_json_generator.py`.
   "At most one" needed no code: `[estop]` is bare-only (no
@@ -349,7 +349,7 @@ already existed and needed no changes — this closed the one real gap:
   `halui.estop.activate`, sourced from `webgui.estop`. This is what
   makes an empty `[estop]` block meaningful on its own — a UI-only
   machine still gets a working E-stop button. Always the *last*
-  component fragment in `assembler.py::assemble` (after spindle/
+  component fragment in `HalAssembler.py::assemble` (after spindle/
   heater/driver fragments) — two golden tests' exact `addf` servo-list
   assertions needed one line added
   (`test_hal_compiler_golden.py`/`_remora.py`) to account for it.
@@ -372,7 +372,7 @@ already existed and needed no changes — this closed the one real gap:
   `estop_latch` linkage is skipped on class B.
 
 - **Two new generic `PinRole`s** (`DIGITAL_IN`/`DIGITAL_OUT`,
-  `hal_fragment_models.py`) rather than reusing `ENDSTOP` — mechanically
+  `HalFragmentModels.py`) rather than reusing `ENDSTOP` — mechanically
   identical on every router today, but a distinct role lets a router's
   firmware-module naming (and a future validator rule) tell "this is a
   home switch" from "this is some other digital input" apart.
@@ -793,7 +793,7 @@ so the existing stepper mappers already handle it; this only adds the
 missing thermal piece `exturder.md` calls "identical to heater.md".
 
 - **New:** `components/HeaterHalMapper.py`. New `PinRole.ANALOG_OUT`/
-  `ANALOG_IN` (`hal_fragment_models.py`) — direction-based like
+  `ANALOG_IN` (`HalFragmentModels.py`) — direction-based like
   `SPINDLE_OUT`/`SPINDLE_IN`, covering `remora.SP.N`/`remora.PV.N`.
   Wired into the assembler as `_heater_fragments()`, independent of
   motion class (same reasoning as spindles).
@@ -865,7 +865,7 @@ parport, not yet done for Remora).
 
 Compressed 2026-09-09 (superseded by 1.3's fuller Remora work) — full
 detail in git history around this window. Summary: first real HAL
-emitter, class A (parport) only — `assembler.py`'s two-pass
+emitter, class A (parport) only — `HalAssembler.py`'s two-pass
 component/router join, `StepperHalMapper`, `MotionSystemHalMapper`,
 `ParportRouterMapper`, the `HalFragment`/`PinRequest`/`Addf` DTOs. Real
 catch: an endstop's HAL signal must be named after the **endstop's own
@@ -884,7 +884,7 @@ grammar, MCU capability classes A/B/C, validation rules, emission
 order), agreed the entity + small-per-component-mapper architecture
 (user-directed, mirrors the runtime's `dict → Pins → StateDTO →
 Response` layering), and landed Phase 0 (`services/halcompiler/
-validator.py`, ~16 rules, no HAL emission yet) plus the
+MachineValidator.py`, ~16 rules, no HAL emission yet) plus the
 `hardware.json` v2.2 losslessness bump (`test_hardware_json_lossless.py`).
 718 backend tests passing at the time.
 
@@ -917,7 +917,7 @@ map. **Do not close an issue from here without reading it there.**
 | #117 | ~56 pre-existing frontend test failures (identical on clean checkout) |
 | #118 | machine tests: packaging broke collection (conftest fix unverified) + ~33 failures |
 | #119 | Clear the mypy `disable_error_code` backlog (~90 design-level errors) |
-| #120 | PascalCase sweep for core infra (`backend/common/core/settings_store.py`, `event_bus.py`) |
+| #120 | PascalCase sweep for core infra (`backend/common/core/settings_store.py`, `EventBus.py`) |
 | #121 | System service must spawn/stop the machine backend (:8000) — nothing starts it on a fresh install |
 | #112 | Machine.hal wiring generation (needs hardware.json pin-out schema) |
 | #113 | Fragile `Stepper.section_name` computed property |

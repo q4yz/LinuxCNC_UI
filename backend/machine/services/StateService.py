@@ -33,7 +33,7 @@ from dtos.state.MachineStateDto import MachineState
 from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel, is_linuxcnc_connected, \
     get_error_channel
 from hardware.Connection import message_severity, read_error_history
-from models.state.state_models import StateSnapshotResponse
+from models.state.StateModels import StateSnapshotResponse
 
 logger = logging.getLogger("backend.services.StateService")
 

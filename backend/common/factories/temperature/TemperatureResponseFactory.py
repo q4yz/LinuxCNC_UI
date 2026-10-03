@@ -2,7 +2,7 @@ from typing import Union, Optional
 
 from core.field_masking import ResponseTier
 from dtos.sensors.TemperatureDto import TemperatureStateDto
-from models.temperature_response import TemperatureStateResponse
+from models.TemperatureStateResponse import TemperatureStateResponse
 # Adjust these imports to match your project's exact structure
 from dtos.tools import HeaterStateDTO
 

@@ -30,8 +30,8 @@ from typing import Any, List, Optional
 import httpx
 import pytest
 
-from services.camera import camera_mjpeg_proxy
-from services.camera.camera_mjpeg_proxy import (
+from services.camera import MjpegProxy as camera_mjpeg_proxy
+from services.camera.MjpegProxy import (
     MjpegProxy,
     MjpegProxyError,
     credentials_for,

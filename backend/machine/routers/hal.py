@@ -25,7 +25,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 
 from domain_file_services import get_machine_service
-from models.hal import (
+from models.HalModels import (
     HalFileSaveRequest,
     HalLayoutResponse,
     HalPinResource,

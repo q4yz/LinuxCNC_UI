@@ -34,7 +34,7 @@ from machineconfig_schema import (
     schema_for_section,
 )
 
-logger = logging.getLogger("backend.machineconfig_parser")
+logger = logging.getLogger("backend.MachineConfigParser")
 
 
 class ConfigValidationError(ValueError):

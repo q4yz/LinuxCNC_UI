@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .pin_models import ParsedPin
+from .PinModels import ParsedPin
 
 #: The two realtime threads a `.hal` file schedules functions into.
 BASE_THREAD = "base-thread"

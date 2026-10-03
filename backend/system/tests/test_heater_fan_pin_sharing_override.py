@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import json
 
-from machineconfig_parser import MachineConfigParser
-from services.halcompiler.assembler import HalAssembler
+from MachineConfigParser import MachineConfigParser
+from services.halcompiler.HalAssembler import HalAssembler
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 _CONFIG = """

@@ -10,8 +10,8 @@
 """
 from __future__ import annotations
 
-from machineconfig_parser import MachineConfigParser
-from services.machineconfig.axis_builder import AxisBuilder, AxisMappingPolicy, stepgen_scale
+from MachineConfigParser import MachineConfigParser
+from services.machineconfig.AxisBuilder import AxisBuilder, AxisMappingPolicy, stepgen_scale
 
 # The policy machine.ini generation uses (``machinetemplates.generator``).
 _POLICY = AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS

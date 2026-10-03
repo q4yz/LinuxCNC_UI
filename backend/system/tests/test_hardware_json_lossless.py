@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from machineconfig_parser import MachineConfigParser
+from MachineConfigParser import MachineConfigParser
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
