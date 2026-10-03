@@ -15,6 +15,14 @@ const configuredBase = (() => {
   }
   const { protocol, hostname, port } = window.location;
 
+  // The Vite dev server always proxies — on whatever port it ended up
+  // on (5174, 5175, … when 5173 is taken). A direct :8000 base there
+  // would send *system* routes (``/api/v1/settings``, macros CRUD,
+  // machineconfig) to the machine backend and 404 them.
+  if (import.meta.env.DEV) {
+    return '';
+  }
+
   // Vite dev (5173), vite preview (4173), standard HTTP/HTTPS (empty string, 80, 443),
   // and the Nginx HTTPS appliance port (8080) all proxy `/api` to the backend.
   // Leaving BASE empty keeps requests on the same origin, avoiding CORS and

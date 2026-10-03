@@ -14,15 +14,13 @@
 //   * The icon-rendering branch falls through to a literal
 //     ``<span>`` so emoji / unicode glyphs render without a new
 //     icon set entry.
-//   * ``useMacroButtonConfig`` reads / writes against
-//     ``createModuleSettings(moduleId)`` and normalises missing
-//     data to ``[]``.
+//   * The button list persists as the ``machine.macro_buttons`` UI
+//     setting (``MacroButtonsSetting``), normalising bad data to ``[]``.
 //   * ``MacroButtonEditor`` drives row count from its ``slots``
 //     prop and emits ``update:modelValue`` on commit (not per
 //     keystroke).
-//   * ``ui/index.ts`` re-exports ``MacroButton``,
-//     ``MacroButtonEditor``, ``useMacroButtonConfig`` so callers
-//     import from the shared barrel.
+//   * ``ui/index.ts`` re-exports ``MacroButton`` and
+//     ``MacroButtonEditor`` so callers import from the shared barrel.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -35,10 +33,10 @@ const repoRoot = resolve(here, "../..");
 
 const buttonPath = resolve(repoRoot, "frontend/src/ui/MacroButton.vue");
 const editorPath = resolve(repoRoot, "frontend/src/ui/MacroButtonEditor.vue");
-const composablePath = resolve(
-  repoRoot,
-  "frontend/src/ui/useMacroButtonConfig.ts",
-);
+const typesPath = resolve(repoRoot, "frontend/src/ui/macroButtonTypes.ts");
+const settingTypePath = resolve(repoRoot, "frontend/src/settings/types/MacroButtonsSetting.ts");
+const settingEditorPath = resolve(repoRoot, "frontend/src/settings/components/SettingMacroButtons.vue");
+const definitionsPath = resolve(repoRoot, "frontend/src/settings/definitions/machine.ts");
 const indexPath = resolve(repoRoot, "frontend/src/ui/index.ts");
 
 function read(path) {
@@ -47,7 +45,10 @@ function read(path) {
 
 const buttonText = read(buttonPath);
 const editorText = read(editorPath);
-const composableText = read(composablePath);
+const typesText = read(typesPath);
+const settingTypeText = read(settingTypePath);
+const settingEditorText = read(settingEditorPath);
+const definitionsText = read(definitionsPath);
 const indexText = read(indexPath);
 
 // ---------------------------------------------------------------- //
@@ -168,67 +169,34 @@ test("MacroButton honours the E-Stop and busy guards", () => {
 });
 
 // ---------------------------------------------------------------- //
-// useMacroButtonConfig.ts                                            //
+// machine.macro_buttons setting                                      //
 // ---------------------------------------------------------------- //
 
-test("useMacroButtonConfig wraps the per-module settings client", () => {
-  // The composable must persist through the canonical
-  // ``createModuleSettings(moduleId)`` client so a future
-  // endpoint migration touches one file. It must default a
-  // missing / corrupt payload to ``[]`` so a host can render
-  // without first awaiting the read.
-  assert.match(
-    composableText,
-    /createModuleSettings\(\s*moduleId\s*\)/,
-    "useMacroButtonConfig must build the settings client from moduleId",
-  );
-  assert.match(
-    composableText,
-    /SETTINGS_KEY\s*=\s*['"]macroButtons['"]/,
-    "useMacroButtonConfig must use the macroButtons settings key",
-  );
-  assert.match(
-    composableText,
-    /function\s+normalise\b/,
-    "useMacroButtonConfig must export a normalise helper",
-  );
-  assert.match(
-    composableText,
-    /Array\.isArray\(\s*raw\s*\)/,
-    "normalise must check Array.isArray",
-  );
-  assert.match(
-    composableText,
-    /function\s+normalise\([\s\S]*?return\s+\[\]/,
-    "normalise must return [] for non-arrays",
-  );
-  assert.match(
-    composableText,
-    /buttonsBySlot/,
-    "useMacroButtonConfig must expose buttonsBySlot",
-  );
+test("macro buttons persist as the machine.macro_buttons UI setting", () => {
+  // One list for every slot (DRO rows + viewer slots): two lists
+  // sharing one store would overwrite each other's rows on save.
+  assert.match(definitionsText, /new MacroButtonsSetting\(/);
+  assert.match(definitionsText, /"machine\.macro_buttons"/);
+  for (const slot of ["dro.x", "dro.y", "dro.z", "viewer.1", "viewer.2", "viewer.3"]) {
+    assert.ok(definitionsText.includes(`"${slot}"`), `slot ${slot} must be declared`);
+  }
+  // Hosts look buttons up by slot.
+  assert.match(settingTypeText, /get bySlot\(\)/);
 });
 
-test("useMacroButtonConfig.persist does not mutate buttons.value", () => {
-  // Regression guard for the request-spam loop. The earlier
-  // implementation wrote back into ``buttons.value`` inside
-  // ``persist``, which re-fired every ``watch(() =>
-  // buttons.value, ...)`` deep-watcher in the host (e.g.
-  // ``MachineSettingsPanel.vue``). Each fire called ``persist``
-  // again, producing ~100 PUTs per click. The fix is for
-  // ``persist`` to leave ``buttons.value`` alone — the editor's
-  // ``emit("update:modelValue")`` is the only path that should
-  // change the cache.
-  const persistMatch = composableText.match(
-    /async\s+function\s+persist\s*\([\s\S]*?\n\s*\}/,
-  );
-  assert.ok(persistMatch, "useMacroButtonConfig must define persist");
-  const persistBody = persistMatch[0];
-  assert.doesNotMatch(
-    persistBody,
-    /buttons\.value\s*=\s*safe/,
-    "persist must NOT mutate buttons.value (avoids the deep-watcher loop)",
-  );
+test("stored macro buttons are normalised, bad data becomes []", () => {
+  assert.match(typesText, /export function normaliseMacroButtons\(/);
+  assert.match(typesText, /if \(!Array\.isArray\(raw\)\) return \[\];/);
+  assert.match(settingTypeText, /normaliseMacroButtons\(raw\)/);
+});
+
+test("the setting editor saves only on the editor's commit, never from a watcher", () => {
+  // Regression guard for the old request-spam loop: a deep watcher on
+  // the button list that persisted on every change fired ~100 PUTs per
+  // click. The only save path is the editor's update:modelValue.
+  assert.match(settingEditorText, /@update:model-value="onUpdate"/);
+  assert.match(settingEditorText, /setting\.save\(next\)/);
+  assert.doesNotMatch(settingEditorText, /\bwatch\(/);
 });
 
 // ---------------------------------------------------------------- //
@@ -359,7 +327,7 @@ test("MacroButtonEditor scopes dropdown options to the row's macroKind", () => {
 // ui/index.ts barrel                                                 //
 // ---------------------------------------------------------------- //
 
-test("ui/index.ts re-exports MacroButton, MacroButtonEditor, useMacroButtonConfig", () => {
+test("ui/index.ts re-exports MacroButton and MacroButtonEditor", () => {
   for (const name of ["MacroButton", "MacroButtonEditor"]) {
     assert.match(
       indexText,
@@ -367,9 +335,6 @@ test("ui/index.ts re-exports MacroButton, MacroButtonEditor, useMacroButtonConfi
       `ui barrel must re-export ${name}`,
     );
   }
-  assert.match(
-    indexText,
-    /export\s*\{\s*useMacroButtonConfig\s*\}/,
-    "ui barrel must re-export the useMacroButtonConfig composable",
-  );
+  // The old per-module composable is gone (replaced by the setting).
+  assert.doesNotMatch(indexText, /useMacroButtonConfig/);
 });

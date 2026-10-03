@@ -77,6 +77,7 @@ img/
 /machine_config/ready_for_deploy/linuxcnc.ini
 /machine_config/ready_for_deploy/machine.cfg
 /machine_config/ready_for_deploy/machine.hal
-/backend/data/modules/temperature/settings.json
+# Central UI settings — per-installation runtime data.
+/backend/data/settings.json
 /machine_config/example/goal/machine.cfg
 /machine_config/example/goal/machine.hal

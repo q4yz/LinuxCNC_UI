@@ -227,7 +227,9 @@ test("machine-level widgets are wrapped in MachineGate", () => {
     ["views/RunningView.vue", ["AxisSpeedControl", "ToolPanel"]],
     ["views/DebugView.vue", ["DebugPanel"]],
     ["views/FilesView.vue", ["ActivePrintWidget"]],
-    ["views/SettingsView.vue", ["CameraSettings", "MachineSettingsPanel", "TemperatureSettingsPanel"]],
+    // The Settings page itself is ungated (settings live in the system
+    // service); only the camera device list needs the machine backend.
+    ["settings/components/SettingCameraPreferences.vue", ["CameraSettings"]],
   ];
 
   for (const [rel, widgets] of expectations) {

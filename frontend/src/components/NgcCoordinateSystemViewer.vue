@@ -9,7 +9,8 @@ import { ProgramFilesService } from '../../generated/api/services/ProgramFilesSe
 import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
-import { MacroButton, useMacroButtonConfig } from '../ui'
+import { MacroButton } from '../ui'
+import { macroButtons } from '../settings/definitions/machine'
 import { useRenderQuality } from '../composables/useRenderQuality'
 import { useViewerGridSetting } from '../composables/useViewerGridSetting'
 
@@ -200,14 +201,11 @@ const liveG92 = computed<[number, number, number]>(() => {
 
 // --- Custom macro buttons (viewer.1 / viewer.2 / viewer.3) ---
 //
-// Same ``'axis'`` module id as ``DroPanel.vue`` so the operator
-// configures every dashboard macro button from the same settings
-// file; the slot id disambiguates between the DRO's per-axis rows
-// and the viewer's three slots. ``MacroButton`` itself enforces
-// the visibility contract (missing / disabled / empty rows render
-// nothing) so we just hand the descriptor down.
-const buttonConfig = useMacroButtonConfig('axis')
-const { buttonsBySlot } = buttonConfig
+// Same ``machine.macro_buttons`` UI setting as ``DroPanel.vue``; the
+// slot id disambiguates the DRO rows from the viewer's three slots.
+// ``MacroButton`` enforces the visibility contract (missing / disabled
+// / empty rows render nothing) so we just hand the descriptor down.
+const buttonsBySlot = computed(() => macroButtons.bySlot)
 
 // --- Camera-mode & jog state ---
 const { defaultJogVelocity } = storeToRefs(store)
@@ -298,12 +296,6 @@ onMounted(async () => {
   window.addEventListener('keyup', handleKeyUp)
   window.addEventListener('blur', handleWindowBlur)
 
-  // Hydrate the macro-button config so the three viewer slots
-  // resolve their descriptors (or render nothing if the operator
-  // hasn't configured them yet). The composable coerces a missing
-  // / corrupt payload to ``[]`` so a transient settings failure
-  // never breaks the viewer.
-  void buttonConfig.refresh()
 })
 
 onBeforeUnmount(() => {

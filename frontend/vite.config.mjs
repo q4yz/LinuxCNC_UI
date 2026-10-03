@@ -25,6 +25,8 @@ const DEV_PROXY = {
 
   // Remove the trailing slashes here:
   '/api/v1/system': { target: SYSTEM_TARGET, changeOrigin: true },
+  // Central UI settings — system service, so they work with the machine offline.
+  '/api/v1/settings': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/programs': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/machineconfig': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/macros': { target: SYSTEM_TARGET, changeOrigin: true },

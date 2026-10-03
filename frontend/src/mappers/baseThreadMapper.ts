@@ -5,6 +5,7 @@ import { toToolList, type AnyToolWire } from "./toolsMapper";
 import { AxisState } from "../entities/axis/AxisState";
 import type { AxisStateResponse } from "../../generated/api/models/AxisStateResponse";
 import { McuState } from "../entities/mcu/McuState";
+import { SpeedOverride } from "../entities/axis/SpeedOverride";
 
 
 export function toAxisState(wire: unknown): AxisState {
@@ -57,6 +58,16 @@ export function toMcuMap(wire: unknown): Record<string, McuState> {
 }
 
 
+export function toSpeedOverride(wire: unknown): SpeedOverride {
+  if (!wire || typeof wire !== "object") return new SpeedOverride()
+  const w = wire as Record<string, unknown>
+  return new SpeedOverride({
+    feedOverride: typeof w.feed_override === "number" ? w.feed_override : null,
+    maxVelocity: typeof w.max_velocity === "number" ? w.max_velocity : null,
+  })
+}
+
+
 export function toSnapshot(wire: unknown): Snapshot {
   if (!wire || typeof wire !== "object") {
     return new Snapshot();
@@ -69,6 +80,7 @@ export function toSnapshot(wire: unknown): Snapshot {
     toolList: toToolList(w.tools as Record<string, AnyToolWire> | AnyToolWire[] | null | undefined),
     axes: toAxesMap(w.axis),
     mcus: toMcuMap(w.mcus),
+    speedOverride: toSpeedOverride(w.speed_override),
     timestamp: typeof w.timestamp === "string" ? w.timestamp : null,
   });
 }

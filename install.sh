@@ -242,6 +242,11 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
+    location /api/v1/settings {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
     location /api/v1/programs {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
@@ -300,6 +305,11 @@ server {
 
     # trailing slashes removed from the location paths below
     location /api/v1/system {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    location /api/v1/settings {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;

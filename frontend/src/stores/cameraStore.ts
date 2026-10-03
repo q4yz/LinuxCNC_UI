@@ -1,37 +1,31 @@
 // Camera module Pinia store. Owns the device list, the per-camera
-// preferences map, the active-camera pointer, and the diagnostic
-// stream message. Settings persistence flows through the shared
-// ``createModuleSettings`` helper so the Settings panel and the
-// store never disagree on what is on disk.
+// preferences working copy, the active-camera pointer, and the
+// diagnostic stream message.
 //
-// Persistence contract:
-//   * On boot the store reads ``GET /api/v1/modules/camera/settings``
-//     and copies ``preferences`` into the reactive ref. Until that
-//     read resolves ``preferencesHydrated === false`` so the Settings
-//     panel can render a placeholder instead of flashing the
-//     hardware-reported names.
-//   * Per-camera edits flow through ``updatePreference`` with an
-//     optimistic in-memory update and an immediate PUT. Writes are
-//     **serialised through the ``writePreferences`` chain** — every
-//     rapid keystroke queues on the previous write's promise tail
-//     so the server receives them in order and never overlaps on the
-//     wire. A previous debounce was removed because a single
-//     operator typing into a single form never produced bursts of
-//     writes worth coalescing.
-//   * ``deleteIpCamera`` clears the configured ``ip_camera_url`` AND
-//     drops the camera's preference row in a single ``writeAll`` so
-//     the device list, the persisted settings, and the in-memory
-//     cache stay in lock-step. Without this the custom-name row for
-//     the removed URL would orphan in the preferences map forever.
+// Persistence goes through the central UI settings
+// (``settings/definitions/camera``):
+//   * ``camera.preferences`` — the per-device map. The store keeps a
+//     camelCase working copy (``cameraPreferences``) so typing a custom
+//     name never fights a save echo; writes are **serialised** through
+//     one promise chain so rapid keystrokes reach the server in order.
+//   * ``camera.ip_camera_url`` — critical (the machine backend reads it),
+//     so ``deleteIpCamera`` reads it fresh before deciding to clear it.
 //   * On unmount the in-flight write is awaited via
-//     ``awaitInFlightPreferenceWrite`` so the most recent keystroke
-//     survives page navigation.
+//     ``awaitInFlightPreferenceWrite`` so the last keystroke survives
+//     page navigation.
 
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { Ref } from "vue";
 
-import { createModuleSettings } from "../core/settings/createModuleSettings";
+import { settingsRegistry } from "../settings/core/settingsRegistry";
+import { cameraPreferences as cameraPreferencesSetting, ipCameraUrl } from "../settings/definitions/camera";
+import {
+  ROTATE_VALUES,
+  defaultPreference,
+  deserializePreferences,
+  serializePreferences,
+} from "./cameraPreferenceCodec";
 import { ModulesCameraService } from "../../generated/api/services/ModulesCameraService";
 import { useConsoleStore } from "./console";
 import type {
@@ -39,11 +33,9 @@ import type {
   CameraPreference,
   CameraPreferenceMap,
   EditablePreferenceKey,
-  WirePreferenceMap,
 } from "./cameraTypes";
 
 const STORE_ID = "camera";
-const CAMERA_ID = STORE_ID;
 
 // Field set the frontend lets operators touch. ``custom_name`` matches
 // the backend snake_case schema; the local ref keeps it as
@@ -56,22 +48,6 @@ const EDITABLE_KEYS = new Set<EditablePreferenceKey>([
   "hidden",
 ]);
 
-// Whitelist of legal ``rotate`` values. Must agree with the backend
-// Pydantic validator's ``ALLOWED_ROTATIONS`` set in
-// ``backend/models/camera_settings.py`` so the chip-row buttons,
-// the store's input validation, and the on-disk schema all use the
-// same canonical angles. ``0`` is the identity (no rotation).
-const ROTATE_VALUES: ReadonlySet<number> = new Set([0, 90, 180, 270]);
-
-function defaultPreference(): CameraPreference {
-  return {
-    customName: "",
-    rotate: 0,
-    mirror: false,
-    hidden: false,
-  };
-}
-
 /**
  * Re-exported factory for ``CameraViewer``'s fallback preference
  * row — the viewer needs the same default literal the store uses
@@ -82,75 +58,7 @@ export function defaultPreferenceForActive(): CameraPreference {
   return defaultPreference();
 }
 
-/**
- * Coerce a single wire-format ``rotate`` value (read from
- * ``settings.json``) to the canonical int. Anything outside the
- * whitelist — missing, malformed, or a leftover boolean — falls
- * back to ``0`` so a hostile or stale disk payload cannot leave
- * the camera image at an unsupported angle.
- */
-function coerceRotate(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return ROTATE_VALUES.has(value) ? value : 0;
-}
-
-/**
- * Coerce a single wire-format preference row to the local
- * ``CameraPreference`` shape. Tolerant of malformed inputs (null,
- * primitives, arrays) so a hostile or stale ``settings.json``
- * never crashes the camera panel.
- *
- * The backend Pydantic model serialises the operator-facing
- * custom-name field as ``custom_name`` (snake_case). The legacy
- * version of this helper read ``value.customName`` and silently
- * dropped the value to ``""`` on every reload, which made the
- * operator think their custom name was never persisted even
- * though it was sitting on disk in snake_case form.
- */
-function coercePreference(value: unknown): CameraPreference {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return defaultPreference();
-  }
-  const row = value as Partial<Record<keyof CameraPreference | "custom_name", unknown>>;
-  return {
-    customName: typeof row.custom_name === "string" ? row.custom_name : "",
-    rotate: coerceRotate(row.rotate),
-    mirror: row.mirror === true,
-    hidden: row.hidden === true,
-  };
-}
-
-function serializePreferences(prefs: CameraPreferenceMap | null | undefined): WirePreferenceMap {
-  const out: WirePreferenceMap = {};
-  if (!prefs || typeof prefs !== "object") return out;
-  for (const [id, pref] of Object.entries(prefs)) {
-    if (!id || !pref || typeof pref !== "object") continue;
-    const row = pref as Partial<CameraPreference>;
-    out[id] = {
-      custom_name: typeof row.customName === "string" ? row.customName : "",
-      rotate: coerceRotate(row.rotate),
-      mirror: row.mirror === true,
-      hidden: row.hidden === true,
-    };
-  }
-  return out;
-}
-
-function deserializePreferences(value: unknown): CameraPreferenceMap {
-  const out: CameraPreferenceMap = {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
-  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (!id || typeof id !== "string") continue;
-    out[id] = coercePreference(raw);
-  }
-  return out;
-}
-
 export const useCameraStore = defineStore(STORE_ID, () => {
-  // Lazy settings client. Same singleton pattern as temperature/store.js:
-  // a unit test that mounts Pinia without the registry never trips.
-  const settings = createModuleSettings(CAMERA_ID);
-
   const devices: Ref<CameraDevice[]> = ref([]);
   const activeCameraId: Ref<string> = ref("");
   const cameraPreferences: Ref<CameraPreferenceMap> = ref({});
@@ -185,15 +93,18 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   let currentWrite: Promise<unknown> = Promise.resolve();
 
   /**
-   * Persist a snapshot of the preferences map. Returns the in-flight
-   * promise so callers can ``await`` if they need a barrier.
+   * Persist a snapshot of the preferences map (``camera.preferences``),
+   * queued on the serialised write chain. Rejects when the save fails
+   * (the setting has already reported it).
    */
   function writePreferences(snapshot: CameraPreferenceMap): Promise<unknown> {
+    const wire = serializePreferences(snapshot);
     const next = currentWrite
       .catch(() => undefined)
-      .then(() =>
-        settings.writeAll({ preferences: serializePreferences(snapshot) }),
-      );
+      .then(async () => {
+        const result = await cameraPreferencesSetting.save(wire);
+        if (result.failed) throw new Error(result.failureReason || "Saving camera preferences failed");
+      });
     currentWrite = next.catch(() => undefined);
     return next;
   }
@@ -266,16 +177,14 @@ export const useCameraStore = defineStore(STORE_ID, () => {
   }
 
   /**
-   * Populate ``cameraPreferences`` from the backend ``settings.json``
-   * payload. Called from ``fetchDevices``; idempotent.
+   * Populate the ``cameraPreferences`` working copy from the
+   * ``camera.preferences`` setting. Called from ``fetchDevices``;
+   * idempotent. Waits for the one global settings fetch (memoized).
    */
   async function hydratePreferences(): Promise<void> {
     try {
-      const payload = (await settings.readAll()) as
-        | { preferences?: unknown }
-        | null
-        | undefined;
-      cameraPreferences.value = deserializePreferences(payload?.preferences);
+      await settingsRegistry.fetchAll();
+      cameraPreferences.value = deserializePreferences(cameraPreferencesSetting.value);
       preferencesHydrated.value = true;
       // Fold orphaned preference keys back into the device list as
       // ``historical`` rows so the operator can keep editing their
@@ -478,14 +387,8 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    * Empty / falsy ids are skipped so clearing the URL field does
    * not seed an empty key.
    *
-   * Persistence goes through ``writeKey("preferences", ...)`` —
-   * NOT through the ``writePreferences`` chain — because
-   * ``writeAll`` is a top-level replace that would wipe the
-   * ``ip_camera_url`` the caller just persisted. The backend's
-   * ``write_key`` does read+merge internally so sibling keys
-   * survive. The write is queued on the shared serialised chain
-   * so it never overlaps with an in-flight ``updatePreference``
-   * keystroke.
+   * The write is queued on the shared serialised chain so it never
+   * overlaps with an in-flight ``updatePreference`` keystroke.
    *
    * Returns ``true`` when a row was seeded, ``false`` when the call
    * was a no-op (row already present or ``id`` was empty).
@@ -499,17 +402,8 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       [id]: defaultPreference(),
     };
 
-    const next = currentWrite
-      .catch(() => undefined)
-      .then(() =>
-        settings.writeKey(
-          "preferences",
-          serializePreferences(cameraPreferences.value),
-        ),
-      );
-    currentWrite = next.catch(() => undefined);
     try {
-      await next;
+      await writePreferences(cameraPreferences.value);
     } catch (writeError: unknown) {
       // eslint-disable-next-line no-console
       console.error("[camera] failed to persist seeded preference:", writeError);
@@ -587,24 +481,15 @@ export const useCameraStore = defineStore(STORE_ID, () => {
       const next = { ...cameraPreferences.value };
       delete next[device.id];
       cameraPreferences.value = next;
-      // Read the current settings once so we can decide whether the
-      // device being deleted is the currently-configured IP camera
-      // URL. If it is, clear the URL; otherwise preserve it so the
-      // live stream keeps working through the cleanup round-trip.
-      const current = (await settings.readAll()) as
-        | { ip_camera_url?: unknown }
-        | null
-        | undefined;
-      const isCurrentIpCam = current?.ip_camera_url === device.id;
-      const updatePayload = {
-        preferences: serializePreferences(next),
-        ip_camera_url: isCurrentIpCam
-          ? ""
-          : typeof current?.ip_camera_url === "string"
-            ? current.ip_camera_url
-            : "",
-      };
-      await settings.writeAll(updatePayload);
+      await writePreferences(next);
+      // The URL is critical (the machine backend reads it): read it
+      // fresh, and clear it only when it is the camera being removed —
+      // removing an old, inactive row must not drop the live stream.
+      if (!(await ipCameraUrl.load())) throw new Error("Could not read the IP camera URL");
+      if (ipCameraUrl.value === device.id) {
+        const cleared = await ipCameraUrl.save("");
+        if (cleared.failed) throw new Error(cleared.failureReason || "Clearing the IP camera URL failed");
+      }
       // Re-fetch so /devices drops the IP row. ``fetchDevices`` also
       // steps the active camera off the removed device id and
       // re-runs ``mergeStoredCamerasIntoDevices`` (via

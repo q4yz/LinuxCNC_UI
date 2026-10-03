@@ -5,10 +5,9 @@ import { useServoThreadStore } from '../stores/servoThread'
 // The raw telemetry payload lives in ``useServoThreadStore`` after
 // the servo/base-thread split — ``stores/machine.ts`` no longer
 // owns ``status`` as state, it composes it via a ``computed`` so
-// ``store.$state`` only contains the module-private settings
-// (``defaultJogVelocity`` / ``keepaliveIntervalMs``). Reading the
-// wrong store here was the reason the panel showed only those two
-// fields and nothing from the live telemetry.
+// ``store.$state`` holds almost nothing of its own. Reading the wrong
+// store here was the reason the panel showed nothing from the live
+// telemetry.
 const servo = useServoThreadStore()
 const throttledState = ref({})
 let intervalId: ReturnType<typeof setInterval> | null = null

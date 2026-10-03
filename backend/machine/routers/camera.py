@@ -81,9 +81,9 @@ logger = logging.getLogger("backend.camera_service")
 
 # The router is module-level so the registry can mount it; the
 # supervisor is module-level so all endpoints share the same
-# process table. ``CameraModule.on_load`` wires the settings store
-# onto the supervisor via :func:`bind_settings_store`. The class
-# itself lives in ``services/camera/ustreamer_supervisor.py``.
+# process table. It reads ``camera.*`` from the central UI settings
+# file itself. The class lives in
+# ``services/camera/ustreamer_supervisor.py``.
 router = APIRouter(
     prefix="/api/v1/modules/camera",
     tags=["modules:camera"],
@@ -133,7 +133,7 @@ def detect_usb() -> Dict[str, object]:
     summary="List all selectable cameras",
     description=(
         "Combination of the attached USB cameras and any IP-camera "
-        "URL configured in the module settings. The ``source`` field "
+        "URL configured in the UI settings (camera.ip_camera_url). The ``source`` field "
         "distinguishes ``usb`` rows from ``ip`` rows."
     ),
     operation_id="listCameraDevices",
@@ -415,16 +415,6 @@ def camera_status() -> Dict[str, object]:
 # ---------------------------------------------------------------------- #
 
 
-def bind_settings_store(settings_store) -> None:
-    """Attach a SettingsStore to the module-level supervisor.
-
-    Called from :meth:`CameraModule.on_load` once the registry has
-    built the per-module :class:`SettingsStore`. Idempotent: calling
-    twice with the same store is a no-op.
-    """
-    _supervisor.bind_settings(settings_store)
-
-
 def stop_manager() -> None:
     """Tear the supervisor down for ``on_unload``.
 
@@ -450,7 +440,6 @@ def stop_manager() -> None:
 __all__ = [
     "UstreamerSupervisor",
     "USBDeviceInfo",
-    "bind_settings_store",
     "router",
     "stop_manager",
 ]

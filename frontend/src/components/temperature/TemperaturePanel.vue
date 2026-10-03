@@ -6,11 +6,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {HeaterControlRequest} from "../../entities/tools/Heater";
-import {TemperatureUnit, isTemperatureUnit} from "../../entities";
+import {TemperatureUnit} from "../../entities";
 import { BaseButton } from '../../ui/index.ts'
 import BaseCard from '../../ui/BaseCard.vue'
 import BaseInput from '../../ui/BaseInput.vue'
-import BaseSelect from '../../ui/BaseSelect.vue'
+import SettingSelect from '../../settings/components/SettingSelect.vue'
+import { temperatureUnit } from '../../settings/definitions/temperature'
 import { useDashboardScrollState } from '../../composables/useDashboardScrollState'
 
 
@@ -53,7 +54,6 @@ const {
   history,
   sensors,
   unit,
-  unitSetting,
   visibleSensors,
 } = storeToRefs(store)
 
@@ -278,14 +278,8 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 
       <div class="flex items-center space-x-2">
         <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Unit</span>
-        <BaseSelect
-            :model-value="unitSetting"
-            label="Temperature Unit"
-            @update:model-value="(v) => { if (isTemperatureUnit(v)) store.setUnit(v) }"
-        >
-          <option :value="TemperatureUnit.CELSIUS">°C</option>
-          <option :value="TemperatureUnit.KELVIN">K</option>
-        </BaseSelect>
+        <!-- Same editor as the Settings view: the central ``temperature.unit`` setting. -->
+        <SettingSelect :setting="temperatureUnit" />
       </div>
 
       <div class="flex items-center space-x-2">

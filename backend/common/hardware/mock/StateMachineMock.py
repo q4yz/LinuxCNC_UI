@@ -119,6 +119,8 @@ class StateMachineMock:
             "estop": 0,  # Not in E-Stop
             "interp_state": 1,  # linuxcnc.INTERP_IDLE
             "g5x_index": 1,  # G54 — what real LinuxCNC reports after boot
+            "feedrate": 1.0,  # feed override fraction (1.0 = 100 %)
+            "max_velocity": 100.0,  # mock-only trajectory max velocity, mm/s
             "g5x_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "g92_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
             "tool_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),

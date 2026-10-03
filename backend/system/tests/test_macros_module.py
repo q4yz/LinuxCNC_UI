@@ -24,7 +24,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.event_bus import EventBus
-from core.settings_store import SettingsStore
 
 # ---------------------------------------------------------------------- #
 # Fixtures                                                                #
@@ -318,7 +317,7 @@ class TestMacroStorage:
             storage.write("hello", b"bytes-not-str")
 
 # ---------------------------------------------------------------------- #
-# Atomic-write interrupt test (mirrors test_settings_store.py)            #
+# Atomic-write interrupt test                                             #
 # ---------------------------------------------------------------------- #
 
 def test_atomic_write_leaves_no_partial_file_on_interrupt(

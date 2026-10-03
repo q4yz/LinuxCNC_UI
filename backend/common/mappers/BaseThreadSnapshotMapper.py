@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Union
 
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
-from models.axis_model import AxisStateResponse
+from models.axis_model import AxisStateResponse, SpeedOverrideResponse
 from models.mcu_model import McuStateResponse
 from services.ProgramService import ProgramProgressResponse
 from models.temperature_response import TemperatureStateResponse
@@ -44,6 +44,7 @@ class BaseThreadSnapshotMapper:
         tools: Optional[Dict[str, ToolStateResponseModel]] = None,
         axis: Optional[Dict[str, AxisStateResponse]] = None,
         mcus: Optional[Dict[str, McuStateResponse]] = None,
+        speed_override: Optional[SpeedOverrideResponse] = None,
     ) -> BaseThreadSnapshotResponse:
         """Return a snapshot whose ``None`` sub-snapshots will be
         stripped by the route's ``response_model_exclude_none=True``.
@@ -54,5 +55,6 @@ class BaseThreadSnapshotMapper:
             tools=tools,
             axis=axis,
             mcus=mcus,
+            speed_override=speed_override,
             timestamp=_utc_timestamp(),
         )

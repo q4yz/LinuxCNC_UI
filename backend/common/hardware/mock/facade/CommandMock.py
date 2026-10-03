@@ -187,11 +187,21 @@ class CommandMock:
         return 1
 
     def feedrate(self, *args):
+        """Mimics ``command.feedrate(scale)`` — the stat reports it back as
+        ``feedrate`` (1.0 = 100 %), like real LinuxCNC."""
         logger.info("Mock feedrate called with args: %s", args)
+        if args:
+            with self._state_mock.lock:
+                self._state_mock.feedrate = float(args[0])
         return 1
 
     def maxvel(self, *args):
+        """Mimics ``command.maxvel(units_per_s)`` — reported back as
+        ``stat.max_velocity``."""
         logger.info("Mock maxvel called with args: %s", args)
+        if args:
+            with self._state_mock.lock:
+                self._state_mock.max_velocity = float(args[0])
         return 1
 
     # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!

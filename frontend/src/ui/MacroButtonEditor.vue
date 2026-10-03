@@ -21,7 +21,7 @@
 //
 // The editor uses ``v-model`` against a ``MacroButtonDescriptor[]``.
 // Persistence is the host's job (the host's ``@update:model-value``
-// handler calls ``useMacroButtonConfig.persist``). The editor
+// handler saves the ``machine.macro_buttons`` setting). The editor
 // keeps a local draft and emits on input ``change`` events (not
 // per keystroke) so a settings tab with five slots does not fire
 // five writes per field edit.
@@ -36,7 +36,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import type { PropType } from "vue";
 
 import { ModulesMacrosService } from "../../generated/api";
-import { useMacroButtonConfig } from "./useMacroButtonConfig";
+import type { MacroButtonDescriptor, MacroButtonSlotDef } from "./macroButtonTypes";
 
 // One editable row. Mirrors ``emptyDescriptor`` below; ``macroKind``
 // is a closed union so the kind picker cannot produce junk state.
@@ -49,18 +49,12 @@ interface MacroButtonRow {
   macroName: string;
 }
 
-// One host-declared button position (``id`` unique per host).
-interface MacroButtonSlotDef {
-  id: string;
-  label?: string;
-}
-
 const props = defineProps({
-  // Two-way bound list of descriptors. The host reads/writes this
-  // through ``useMacroButtonConfig.persist``; the editor mutates a
+  // Two-way bound list of descriptors. The host persists it (the
+  // ``machine.macro_buttons`` UI setting); the editor mutates a
   // working copy and emits on commit.
   modelValue: {
-    type: Array as PropType<import("./useMacroButtonConfig").MacroButtonDescriptor[]>,
+    type: Array as PropType<MacroButtonDescriptor[]>,
     required: true,
     default: () => [],
   },
@@ -79,11 +73,6 @@ const props = defineProps({
           typeof (s as MacroButtonSlotDef).id === "string",
       ),
   },
-  // Owning module id — forwarded to ``useMacroButtonConfig`` for
-  // the settings read/write path. The editor no longer depends on
-  // the macros module being mounted (the dropdown is fetched via
-  // the generated client), so the prop is informational here.
-  moduleId: { type: String, required: true },
   // Helper-text shown above the table. Default keeps the
   // feature discoverable without forcing the host to write
   // marketing copy.
@@ -215,10 +204,10 @@ function emptyDescriptor(slot: string): MacroButtonRow {
  * not yet configured.
  */
 function normaliseDraft(
-  payload: import("./useMacroButtonConfig").MacroButtonDescriptor[],
+  payload: MacroButtonDescriptor[],
   slots: MacroButtonSlotDef[],
 ): MacroButtonRow[] {
-  const rows: import("./useMacroButtonConfig").MacroButtonDescriptor[] =
+  const rows: MacroButtonDescriptor[] =
     Array.isArray(payload) ? [...payload] : [];
   for (const slot of slots) {
     if (!rows.find((r) => r.slot === slot.id)) {

@@ -113,15 +113,14 @@ def _generate(client: TestClient, profile_path: str = "starter.cfg", **kwargs):
 def test_machineconfig_endpoints_are_mounted(
     tmp_data_root, clean_env, isolated_machine_config
 ):
-    """The router mounts under ``/api/v1/modules/machineconfig`` and the
-    canonical settings endpoint is reachable (no operator-tunable
-    knobs today — see ``MachineConfigSettings``)."""
+    """The router mounts under ``/api/v1/modules/machineconfig``. The
+    old per-module settings endpoint is gone — UI settings live in the
+    central ``/api/v1/settings`` store."""
     app, _ = _machineconfig_app(tmp_data_root, isolated_machine_config)
     client = TestClient(app)
 
-    resp = client.get("/api/v1/modules/machineconfig/settings")
-    assert resp.status_code == 200
-    assert resp.json() == {}
+    assert client.get("/api/v1/modules/machineconfig/profiles/tree").status_code == 200
+    assert client.get("/api/v1/modules/machineconfig/settings").status_code == 404
 
 # ---------------------------------------------------------------------- #
 # Profiles CRUD                                                           #

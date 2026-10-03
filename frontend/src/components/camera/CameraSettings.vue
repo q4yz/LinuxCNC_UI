@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import type { Ref } from "vue";
+// Camera display preferences (per detected device): custom name,
+// rotation, mirror, hide-from-cycle, remove IP camera. Rendered as the
+// editor of the ``camera.preferences`` UI setting; the IP camera URL
+// has its own setting editor (``SettingIpCameraUrl``).
+import { onMounted } from "vue";
 import { storeToRefs } from "pinia";
 
-import { createModuleSettings } from "../../core/settings/createModuleSettings";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraStore";
 import type { CameraDevice, EditablePreferenceKey } from "../../stores/cameraTypes";
@@ -19,14 +21,6 @@ const {
   preferencesHydrated,
   streamMessage,
 } = storeToRefs(store);
-const CAMERA_ID = "camera";
-const settings = createModuleSettings(CAMERA_ID);
-
-const ipCameraUrl: Ref<string> = ref("");
-const settingsLoading: Ref<boolean> = ref(false);
-const settingsSaving: Ref<boolean> = ref(false);
-const settingsError: Ref<string> = ref("");
-const saveMessage: Ref<string> = ref("");
 
 function preferenceFor(id: string) {
   return cameraPreferences.value[id] ?? defaultPreferenceForActive();
@@ -53,82 +47,6 @@ function updateRotatePreference(id: string, value: number): void {
   store.updatePreference(id, "rotate", value);
 }
 
-async function loadBackendSettings(): Promise<void> {
-  settingsLoading.value = true;
-  settingsError.value = "";
-
-  try {
-    const payload = (await settings.readAll()) as
-      | { ip_camera_url?: unknown }
-      | null
-      | undefined;
-    ipCameraUrl.value =
-      typeof payload?.ip_camera_url === "string" ? payload.ip_camera_url : "";
-  } catch (requestError: unknown) {
-    settingsError.value =
-      requestError instanceof Error
-        ? requestError.message
-        : "Unable to load camera settings";
-  } finally {
-    settingsLoading.value = false;
-  }
-}
-
-async function saveIpCameraUrl(): Promise<void> {
-  settingsSaving.value = true;
-  settingsError.value = "";
-  saveMessage.value = "";
-
-  try {
-    const normalizedUrl = ipCameraUrl.value.trim();
-
-    // Client-side guard against the ``user:pass@host`` antipattern.
-    // Chrome 86+ strips userinfo from cross-origin redirect Location
-    // headers as a credential-leak hardening; the operator-facing
-    // hint at save time is friendlier than the 503 the backend would
-    // surface on the next /stream request.
-    try {
-      const parsed = new URL(normalizedUrl);
-      if (parsed.username || parsed.password) {
-        throw new Error(
-          "URL contains embedded credentials (user:pass@host). " +
-          "Move them into query parameters (?user=...&pwd=...).",
-        );
-      }
-    } catch (parseError: unknown) {
-      settingsError.value =
-        parseError instanceof Error
-          ? parseError.message
-          : "Invalid IP camera URL";
-      settingsSaving.value = false;
-      return;
-    }
-
-    const payload = (await settings.writeKey(
-      "ip_camera_url",
-      normalizedUrl,
-    )) as { ip_camera_url?: unknown };
-    ipCameraUrl.value =
-      typeof payload?.ip_camera_url === "string"
-        ? payload.ip_camera_url
-        : normalizedUrl;
-    // Seed a default preferences row for the new URL so the operator
-    // can immediately rename / orient / hide / remove the camera
-    // without first toggling a checkbox. ``ensurePreference`` is a
-    // no-op when a row already exists or when the URL was cleared.
-    await store.ensurePreference(normalizedUrl);
-    saveMessage.value = "IP camera URL saved.";
-    await store.fetchDevices();
-  } catch (requestError: unknown) {
-    settingsError.value =
-      requestError instanceof Error
-        ? requestError.message
-        : "Unable to save the IP camera URL";
-  } finally {
-    settingsSaving.value = false;
-  }
-}
-
 /**
  * Confirm-and-delete an IP camera row. The store action clears the
  * ``ip_camera_url`` and drops the matching preference row in one
@@ -151,69 +69,16 @@ async function confirmRemove(device: CameraDevice | null | undefined): Promise<v
 onMounted(() => {
   store.fetchDevices();
   store.refreshStreamMessage();
-  loadBackendSettings();
 });
 </script>
 
 <template>
   <div class="space-y-8">
     <section class="space-y-3">
-      <header>
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-          IP camera
-        </h3>
-        <p class="mt-1 text-xs text-gray-400">
-          Add an HTTP or RTSP camera URL to the devices returned by the camera module.
-        </p>
-      </header>
-
-      <form class="flex flex-col gap-3 sm:flex-row sm:items-end" @submit.prevent="saveIpCameraUrl">        <label class="min-w-0 flex-1 text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">IP camera URL</span>
-          <BaseInput
-            v-model="ipCameraUrl"
-            type="text"
-            inputmode="url"
-            autocomplete="url"
-            placeholder="http://10.0.0.58/videostream.cgi?rate=0&user=Nacht&pwd=kamara"
-            :disabled="settingsLoading || settingsSaving"
-            class="w-full"
-          />
-        </label>
-        <BaseButton
-          type="submit"
-          variant="primary"
-          :loading="settingsSaving"
-          :disabled="settingsLoading"
-        >
-          {{ settingsSaving ? "Saving..." : "Save URL" }}
-        </BaseButton>
-      </form>
-
-      <p class="text-xs text-gray-500">
-        Put credentials in query parameters
-        (<code class="rounded bg-gray-800 px-1">&amp;user=...&amp;pwd=...</code>).
-        The browser forwards them across the cross-origin redirect.
-        Embedded
-        <code class="rounded bg-gray-800 px-1">user:pass@host</code>
-        credentials are stripped by Chrome and won't reach the camera.
-      </p>
-
-      <p v-if="settingsError" class="text-xs text-red-300" role="alert">
-        {{ settingsError }}
-      </p>
-      <p v-else-if="saveMessage" class="text-xs text-green-300" role="status">
-        {{ saveMessage }}
-      </p>
-    </section>
-
-    <section class="space-y-3">
       <header class="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-300">
-            Camera display preferences
-          </h3>
-          <p class="mt-1 text-xs text-gray-400">
-            Names, image orientation, and the hide flag persist with the machine (not just this browser).
+          <p class="text-xs text-gray-400">
+            Detected cameras plus every IP camera you configured before.
           </p>
         </div>
         <BaseButton
@@ -241,7 +106,7 @@ onMounted(() => {
           {{ streamMessage }}
         </p>
         <p v-else>
-          No cameras were detected. Connect a USB camera or save an IP camera URL.
+          No cameras were detected. Connect a USB camera or save an IP camera URL above.
         </p>
       </div>
 

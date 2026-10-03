@@ -23,6 +23,9 @@ const props = defineProps<{
   matchSuffix: string | null;
   selectedIds: Set<string>;
   depth: number;
+  /** Optional pin id → current value. When given (the debug pin-state
+   *  view), each pin shows its state; the editor doesn't pass it. */
+  values?: Record<string, boolean | number | null>;
 }>();
 
 const emit = defineEmits<{ pick: [pin: HalPin]; toggle: [path: string] }>();
@@ -57,6 +60,22 @@ const isSelected = computed(
 
 const indent = computed(() => `${props.depth * 14 + 6}px`);
 
+// State badge — only rendered when ``values`` is passed.
+const stateBadge = computed(() => {
+  if (!props.values || props.node.kind !== "pin") return null;
+  const value = props.values[props.node.pin.id];
+  if (value === undefined || value === null) {
+    return { text: "—", cls: "bg-gray-800 text-gray-500 border border-gray-700", title: "No value read" };
+  }
+  if (typeof value === "boolean") {
+    return value
+      ? { text: "TRUE", cls: "bg-green-600 text-white border border-green-400", title: "TRUE" }
+      : { text: "FALSE", cls: "bg-gray-800 text-gray-400 border border-gray-600", title: "FALSE" };
+  }
+  const text = Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/\.?0+$/, "");
+  return { text, cls: "bg-gray-950 text-gray-100 border border-gray-600", title: String(value) };
+});
+
 function onFolderClick() {
   if (props.node.kind === "folder") emit("toggle", props.node.path);
 }
@@ -90,6 +109,7 @@ function onFolderClick() {
         :match-suffix="matchSuffix"
         :selected-ids="selectedIds"
         :depth="depth + 1"
+        :values="values"
         @pick="emit('pick', $event)"
         @toggle="emit('toggle', $event)"
       />
@@ -123,6 +143,13 @@ function onFolderClick() {
         title="Same name pattern as the connected side"
       />
       <span class="rounded px-1.5 py-0.5 text-xs font-mono" :class="TYPE_BADGE[node.pin.type]">{{ node.pin.type }}</span>
+      <span
+        v-if="stateBadge"
+        class="min-w-[3.5rem] rounded px-1.5 py-0.5 text-center text-xs font-mono font-semibold"
+        :class="stateBadge.cls"
+        :title="stateBadge.title"
+        :data-test="`hal-pin-state-${node.pin.id}`"
+      >{{ stateBadge.text }}</span>
     </span>
   </button>
 </template>

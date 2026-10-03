@@ -28,7 +28,7 @@ from dtos.pins.MachineHalPin import MachineHalPin
 from dtos.pins.MachineSignal import MachineHalSignal
 from hardware import hal
 from mappers.hal_mapper import HalMapper
-from models.hal import HalLayoutResponse
+from models.hal import HalLayoutResponse, HalPinResource
 
 logger = logging.getLogger("backend.services.hal_pin_signal")
 
@@ -116,6 +116,12 @@ class HalPinSignalService:
                 len(self._layout_cache.signals),
             )
         return self._layout_cache
+
+    def read_pin_states(self) -> List[HalPinResource]:
+        """Every pin with its *current* value — a fresh ``halcmd show pin``
+        on each call, never the cached editor layout (whose values are
+        frozen at its first build)."""
+        return [HalMapper.to_pin_resource(pin) for pin in self._read_pins_from_linuxcnc()]
 
     def reset_cache(self) -> None:
         """Drop the cached layout (used by tests and future reload flows)."""

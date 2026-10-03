@@ -26,6 +26,7 @@ import { ToolList } from "../entities/tools/ToolList";
 import { ProgramProgress } from "../entities/progress/ProgramProgress";
 import { AxisState } from "../entities/axis/AxisState";
 import { McuState } from "../entities/mcu/McuState";
+import { SpeedOverride } from "../entities/axis/SpeedOverride";
 import { HeaterReading } from "../entities/temperature/HeaterReading";
 import { SensorReading } from "../entities/temperature/SensorReading";
 import { SpindleDigital as SpindleState } from "../entities/tools/SpindleDigital";
@@ -47,6 +48,9 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   const axes = shallowRef<Record<string, AxisState>>({});
   // Static like ``axes`` — loaded once by fetchStaticAxes() below.
   const mcus = shallowRef<Record<string, McuState>>({});
+  // Live feed override (100 %) + absolute speed cap, as LinuxCNC applies
+  // them — refreshed by the 1 Hz poll. All-null until the first snapshot.
+  const speedOverride = shallowRef<SpeedOverride>(new SpeedOverride());
 
   // Legacy wire shape (kept for migration window)
   const sensors = ref<Record<string, any>>({});
@@ -123,6 +127,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       progress.value = snapshot.progress;
       readings.value = snapshot.readings;
       toolList.value = snapshot.toolList;
+      speedOverride.value = snapshot.speedOverride;
 
       timestamp.value = snapshot.timestamp;
       connectionStatus.value = "connected";
@@ -215,6 +220,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     toolList,
     axes,
     mcus,
+    speedOverride,
     sensors,
     tools,
     timestamp,
@@ -234,6 +240,7 @@ export default useBaseThreadStore;
 
 export {
   AxisState,
+  SpeedOverride,
   McuState,
   HeaterReading,
   SensorReading,

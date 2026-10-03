@@ -203,31 +203,3 @@ def test_clear_active_jogs_drops_every_entry():
     assert jog._active_jogs == {}
 
 
-def test_read_timeout_ms_clamps_out_of_range_values():
-    """``_read_timeout_ms`` accepts only values in the configured
-    bounds (``ge=100``, ``le=5000`` per ``MachineSettings``).
-    """
-    from services import jog_watchdog
-
-    class Good:
-        def read_key(self, k):
-            return 750
-
-    class Bad:
-        def read_key(self, k):
-            return 99
-
-    class WayOff:
-        def read_key(self, k):
-            return 99_999
-
-    class TypeError:
-        def read_key(self, k):
-            return "abc"
-
-    assert jog_watchdog._read_timeout_ms(Good()) == 750
-    assert jog_watchdog._read_timeout_ms(Bad()) == jog_watchdog.DEFAULT_WATCHDOG_TIMEOUT_MS
-    assert jog_watchdog._read_timeout_ms(WayOff()) == jog_watchdog.DEFAULT_WATCHDOG_TIMEOUT_MS
-    assert jog_watchdog._read_timeout_ms(TypeError()) == jog_watchdog.DEFAULT_WATCHDOG_TIMEOUT_MS
-    # ``None`` settings → default.
-    assert jog_watchdog._read_timeout_ms(None) == jog_watchdog.DEFAULT_WATCHDOG_TIMEOUT_MS

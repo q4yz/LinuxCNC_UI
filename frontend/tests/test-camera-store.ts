@@ -25,6 +25,8 @@ const cameraDir = resolve(repoRoot, "frontend/src/components/camera");
 const storePath = resolve(repoRoot, "frontend/src/stores/cameraStore.ts");
 const viewerPath = resolve(cameraDir, "CameraViewer.vue");
 const settingsPath = resolve(cameraDir, "CameraSettings.vue");
+const codecPath = resolve(repoRoot, "frontend/src/stores/cameraPreferenceCodec.ts");
+const urlEditorPath = resolve(repoRoot, "frontend/src/settings/components/SettingIpCameraUrl.vue");
 
 function read(p) {
   return readFileSync(p, "utf-8");
@@ -36,18 +38,18 @@ test("camera module files exist", () => {
   assert.ok(existsSync(settingsPath), "CameraSettings.vue missing");
 });
 
-test("cameraStore wires the per-module settings client", () => {
+test("cameraStore persists through the central camera settings", () => {
   const text = read(storePath);
   assert.match(
     text,
-    /import\s*\{\s*createModuleSettings\s*\}\s*from\s*["']\.\.\/core\/settings\/createModuleSettings(?:\.js)?["']/,
-    "cameraStore must import createModuleSettings from the canonical settings factory",
+    /from\s*["']\.\.\/settings\/definitions\/camera["']/,
+    "cameraStore must use the camera setting instances",
   );
-  assert.match(
-    text,
-    /createModuleSettings\(\s*(?:['"]camera['"]|CAMERA_ID)\s*\)/,
-    "cameraStore must build the client with the literal 'camera' id",
-  );
+  assert.doesNotMatch(text, /createModuleSettings/, "the per-module settings client is gone");
+  // Preferences are hydrated from the one global settings fetch and
+  // written through the setting (whose echo confirms the save).
+  assert.match(text, /settingsRegistry\.fetchAll\(\)/);
+  assert.match(text, /cameraPreferencesSetting\.save\(/);
 });
 
 test("cameraStore no longer touches localStorage", () => {
@@ -183,44 +185,16 @@ test("cameraStore exposes an awaitInFlightPreferenceWrite for unmount safety", (
 
 test("cameraStore exposes deleteIpCamera that clears the URL and the preference row", () => {
   const text = read(storePath);
-  // The action must exist and be exposed on the store surface.
-  assert.match(
-    text,
-    /function\s+deleteIpCamera\s*\(/,
-    "deleteIpCamera must be defined on the store",
-  );
-  assert.match(
-    text,
-    /deleteIpCamera[\s\S]*\}\s*;/m,
-    "deleteIpCamera must be returned from the setup function",
-  );
-  // Non-IP callers must be refused (USB cameras must not be removable
-  // from this surface).
-  assert.match(
-    text,
-    /device\.source\s*!==\s*["']ip["']/,
-    "deleteIpCamera must refuse non-IP callers",
-  );
-  // The preference row for the removed camera must be dropped in the
-  // same writeAll that clears the URL so the persisted preferences
-  // never orphan the removed camera's custom name.
-  assert.match(
-    text,
-    /delete\s+next\[device\.id\]/,
-    "deleteIpCamera must drop the per-device preference row",
-  );
-  assert.match(
-    text,
-    /deleteIpCamera[\s\S]*?writeAll\s*\(/,
-    "deleteIpCamera must persist via settings.writeAll in the same round-trip",
-  );
-  // The URL-clearing branch is now keyed on ``device.historical``;
-  // the dedicated historical-safety test pins that contract.
-  assert.match(
-    text,
-    /ip_camera_url\s*:\s*["']["']/,
-    "deleteIpCamera must include an empty-string URL branch for the currently-active row",
-  );
+  assert.match(text, /function\s+deleteIpCamera\s*\(/, "deleteIpCamera must be defined on the store");
+  assert.match(text, /deleteIpCamera[\s\S]*\}\s*;/m, "deleteIpCamera must be returned from the setup function");
+  // USB cameras must not be removable from this surface.
+  assert.match(text, /device\.source\s*!==\s*["']ip["']/, "deleteIpCamera must refuse non-IP callers");
+  // The removed camera's preference row is dropped and persisted, so
+  // its custom name never orphans in the stored map.
+  assert.match(text, /delete\s+next\[device\.id\]/, "deleteIpCamera must drop the per-device preference row");
+  assert.match(text, /deleteIpCamera[\s\S]*?await writePreferences\(next\)/, "the trimmed map must be persisted");
+  // The URL is cleared through the critical URL setting.
+  assert.match(text, /ipCameraUrl\.save\(\s*["']["']\s*\)/, "the active URL is cleared to empty");
 });
 
 test("CameraSettings.vue renders the hide-from-cycle checkbox", () => {
@@ -292,43 +266,24 @@ test("CameraSettings.vue shows a loading placeholder while preferences hydrate",
   );
 });
 
-test("coercePreference reads the backend's snake_case custom_name (regression for issue #<this one>)", () => {
-  // The backend Pydantic model serialises ``custom_name`` as
-  // snake_case. An earlier version of this helper read
-  // ``value.customName`` (camelCase) and dropped the value to ``""``
-  // on every reload, which made the custom name appear to be lost
-  // between page navigations even though it was persisted under
-  // snake_case on disk. Pin the snake_case read so the typo cannot
-  // return. The migrated code uses a local ``row`` alias; the regex
-  // accepts either name (``value.custom_name`` or
-  // ``row.custom_name``).
-  const text = read(storePath);
+test("coercePreference reads the persisted snake_case custom_name (regression)", () => {
+  // The stored map uses snake_case ``custom_name``. An earlier helper
+  // read ``customName`` and dropped every custom name to "" on reload.
+  const text = read(codecPath);
   assert.match(
     text,
     /(?:value|row)\.custom_name\s*===\s*["']string["']/,
-    "coercePreference must read the backend's snake_case custom_name field",
+    "coercePreference must read the snake_case custom_name field",
   );
-  // The negative match is scoped to ``coercePreference``'s body so
-  // ``serializePreferences``'s legitimate ``row.customName`` read
-  // (camelCase in-memory → snake_case on the wire) doesn't trip it.
-  const coerceBody = text.match(
-    /function\s+coercePreference[\s\S]*?\n\s{0,3}\}/,
-  );
+  const coerceBody = text.match(/function\s+coercePreference[\s\S]*?\n\}/);
   assert.ok(coerceBody, "coercePreference body must be findable");
   assert.doesNotMatch(
     coerceBody[0],
     /(?:value|row)\.customName\s*===\s*["']string["']/,
-    "coercePreference must not read the camelCase customName — that drops the backend's snake_case value to ''",
+    "coercePreference must not read the camelCase customName",
   );
-  // The wire format produced by serializePreferences is unchanged
-  // (camelCase in-memory → snake_case on the wire). The migrated
-  // helper iterates ``prefs`` typed entries; ``pref`` is the same
-  // shape as before.
-  assert.match(
-    text,
-    /typeof\s+(?:pref|row)\.customName\s*===\s*["']string["']/,
-    "serializePreferences must keep writing the camelCase customName to snake_case custom_name",
-  );
+  // serializePreferences still writes camelCase in-memory -> snake_case.
+  assert.match(text, /typeof\s+(?:pref|row)\.customName\s*===\s*["']string["']/);
 });
 
 test("CameraViewer.vue auto-cycles when the active camera is hidden", () => {
@@ -418,105 +373,45 @@ test("CameraSettings.vue does not render an offline badge", () => {
 });
 
 test("cameraStore exposes ensurePreference that seeds a default row for a new camera id", () => {
-  // Saving an IP camera URL through the Settings panel only writes
-  // ``ip_camera_url`` — without a matching preferences row the
-  // operator cannot rename / orient / hide the camera until they
-  // first toggle a checkbox. ``ensurePreference`` closes that gap
-  // so the URL is immediately editable from the settings panel.
+  // A freshly saved IP camera URL gets a preferences row right away so
+  // it can be renamed / oriented / hidden without toggling a checkbox.
   const text = read(storePath);
-  assert.match(
-    text,
-    /function\s+ensurePreference\s*\(/,
-    "cameraStore must define an ensurePreference helper that seeds a default row",
-  );
-  assert.match(
-    text,
-    /ensurePreference[\s\S]*\}\s*;/m,
-    "ensurePreference must be returned from the setup function so the UI can call it",
-  );
-  // The helper must short-circuit on falsy ids so clearing the URL
-  // field does not seed an empty-key row.
-  assert.match(
-    text,
-    /!id\s*\|\|\s*typeof\s+id\s*!==\s*["']string["']/,
-    "ensurePreference must skip empty / non-string ids",
-  );
-  // The helper must skip ids that already have a preference row so
-  // re-saving the same URL preserves the operator's custom name and
-  // orientation settings from prior sessions.
-  assert.match(
-    text,
-    /cameraPreferences\.value\[id\]\s*\)\s*return\s+false/,
-    "ensurePreference must short-circuit when a row already exists for the id",
-  );
-  // The seed must persist via ``settings.writeKey("preferences", ...)``
-  // — NOT via a bare settings.writeAll or the writePreferences chain —
-  // because writeAll is a top-level replace that would wipe the
-  // ``ip_camera_url`` the caller just persisted. The backend's
-  // ``write_key`` does read+merge internally so sibling keys survive.
-  assert.match(
-    text,
-    /ensurePreference[\s\S]*?settings\.writeKey\s*\(\s*["']preferences["']/,
-    "ensurePreference must persist via settings.writeKey('preferences', ...) to preserve ip_camera_url",
-  );
-  // Scope the negative match to ``ensurePreference``'s body so the
-  // JSDoc that references the ``writePreferences`` chain by name
-  // does not trip the assertion. The actual dangerous pattern is a
-  // bare ``settings.writeAll`` call inside the helper — that wipes
-  // sibling keys (notably ``ip_camera_url``).
-  const bodyMatch = text.match(
-    /async\s+function\s+ensurePreference[\s\S]*?\n\s{0,3}\}/,
-  );
+  assert.match(text, /function\s+ensurePreference\s*\(/);
+  assert.match(text, /ensurePreference[\s\S]*\}\s*;/m, "ensurePreference must be returned from the setup function");
+  // Empty / non-string ids (a cleared URL) never seed a row.
+  assert.match(text, /!id\s*\|\|\s*typeof\s+id\s*!==\s*["']string["']/);
+  // An existing row (custom name from an earlier session) is kept.
+  assert.match(text, /cameraPreferences\.value\[id\]\s*\)\s*return\s+false/);
+  // The seed goes through the serialised write chain, so it never
+  // overlaps an in-flight keystroke save.
+  const bodyMatch = text.match(/async\s+function\s+ensurePreference[\s\S]*?\n\s{0,3}\}/);
   assert.ok(bodyMatch, "ensurePreference body must be findable");
-  assert.doesNotMatch(
-    bodyMatch[0],
-    /settings\.writeAll\s*\(/,
-    "ensurePreference must not call settings.writeAll (would wipe ip_camera_url)",
-  );
+  assert.match(bodyMatch[0], /await writePreferences\(/);
 });
 
-test("CameraSettings.vue calls ensurePreference from saveIpCameraUrl", () => {
-  // The UI action that saves an IP camera URL must also seed a
-  // default preference row so the new camera is immediately
-  // editable / removable from the settings panel.
-  const text = read(settingsPath);
-  // Pin that the helper is invoked inside the saveIpCameraUrl flow
-  // — a regression that drops the call would re-introduce the bug
-  // where the URL is saved but the preferences map has no row.
+test("the IP camera URL editor seeds a preference row after saving", () => {
+  // Saving the URL must also seed a preferences row for the new camera
+  // (otherwise the URL is saved but cannot be renamed/removed yet).
+  const text = read(urlEditorPath);
   assert.match(
     text,
-    /saveIpCameraUrl[\s\S]*?store\.ensurePreference\s*\(\s*normalizedUrl\s*\)/,
-    "saveIpCameraUrl must call store.ensurePreference(normalizedUrl) after writing the URL",
+    /setting\.save\(url\)[\s\S]*?cameraStore\.ensurePreference\(\s*url\s*\)/,
+    "the URL editor must call cameraStore.ensurePreference(url) after a successful save",
   );
 });
 
 test("deleteIpCamera preserves the active ip_camera_url when removing a non-active row", () => {
-  // Removing a stored-but-not-current IP-cam row must NOT wipe the
-  // currently-configured URL. Hard-coding ``ip_camera_url: ""``
-  // would silently break the live stream every time the operator
-  // cleans up an old URL.
-  //
-  // After the offline-removal, ``deleteIpCamera`` no longer keys
-  // on ``device.historical``. It reads the active URL from
-  // settings and compares against the device id directly.
+  // Removing an old, non-active IP row must NOT clear the configured
+  // URL — that would silently kill the live stream.
   const text = read(storePath);
-  assert.doesNotMatch(
-    text,
-    /device\.historical/,
-    "deleteIpCamera must no longer consult the removed historical flag",
-  );
-  // And it must still read the active URL before deciding whether
-  // to clear it.
+  assert.doesNotMatch(text, /device\.historical/);
+  // The URL is critical: read fresh before deciding.
+  assert.match(text, /ipCameraUrl\.load\(\)/, "deleteIpCamera must read the active URL fresh");
+  // Cleared only when it is the removed camera.
   assert.match(
     text,
-    /settings\.readAll\s*\(\s*\)/,
-    "deleteIpCamera must read the active URL before deciding whether to clear it",
-  );
-  // The active URL is preserved as-is when removing a different row.
-  assert.match(
-    text,
-    /ip_camera_url:\s*isCurrentIpCam/,
-    "deleteIpCamera must key the URL-rewrite decision on isCurrentIpCam",
+    /if\s*\(\s*ipCameraUrl\.value\s*===\s*device\.id\s*\)\s*\{[\s\S]*?ipCameraUrl\.save\(\s*["']["']\s*\)/,
+    "the URL is cleared only when it equals the removed device id",
   );
 });
 

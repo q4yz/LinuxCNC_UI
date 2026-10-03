@@ -52,12 +52,3 @@ def test_legacy_temperature_endpoint_is_gone(tmp_data_root, clean_env):
 # integration tests in test_temperature_settings.py.
 # ---------------------------------------------------------------------------
 
-def test_temperature_settings_defaults_round_trip():
-    from models.temperature_settings import TemperatureSettings
-
-    model = TemperatureSettings()
-    assert model.sample_period_ms == 500
-    assert model.ambient_celsius == 25.0
-    assert model.unit == "celsius"
-    assert model.sensor_colors == {}
-

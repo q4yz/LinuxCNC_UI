@@ -74,44 +74,6 @@ def test_camera_usb_endpoint_is_mounted(tmp_data_root, clean_env):
     assert isinstance(body["platform"], str)
     assert body["platform"]
 
-def test_camera_settings_endpoints_are_mounted(tmp_data_root, clean_env):
-    """The registry mounts the four canonical settings endpoints."""
-    app, _ = _camera_app(tmp_data_root, clean_env)
-    client = TestClient(app)
-
-    # GET returns defaults merged in. The slim (post-OpenCV) settings
-    # schema carries only ``{default_device_id, ip_camera_url,
-    # preferences, macro_buttons}`` — the four MJPEG knobs were
-    # removed when the module moved to ``ustreamer``.
-    resp = client.get("/api/v1/modules/camera/settings")
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload == {
-        "default_device_id": "",
-        "ip_camera_url": "",
-        "preferences": {},
-        "macro_buttons": [],
-    }
-
-    # PUT bulk returns the merged payload.
-    resp = client.put(
-        "/api/v1/modules/camera/settings",
-        json={"ip_camera_url": "rtsp://camera.local/stream"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["ip_camera_url"] == "rtsp://camera.local/stream"
-
-    # GET round-trips.
-    resp = client.get("/api/v1/modules/camera/settings")
-    assert resp.json()["ip_camera_url"] == "rtsp://camera.local/stream"
-
-    # Per-key PUT.
-    resp = client.put(
-        "/api/v1/modules/camera/settings/default_device_id",
-        json="/dev/video0",
-    )
-    assert resp.json()["default_device_id"] == "/dev/video0"
-
 def test_camera_devices_endpoint_is_mounted(tmp_data_root, clean_env):
     """``GET /devices`` combines USB detection with the IP-camera URL.
 

@@ -69,9 +69,6 @@ def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
     the test fixture rather than from the dev environment.
     """
     from fastapi import FastAPI
-    import module_settings_router as msr
-    from core.settings_store import SettingsStore
-    from models.tools_settings import ToolsSettings
 
     if monkeypatch is not None and tmp_path is not None:
         active_dir = tmp_path / "machine_config" / "active"
@@ -141,21 +138,7 @@ def _build_app(tmp_data_root, monkeypatch=None, tmp_path=None):
 
         monkeypatch.setattr(HardwareConfigService, "__init__", _init)
 
-    # Build the router manually because we need extra control over
-    # the SettingsStore defaults (the canonical helper instantiates
-    # a fresh store; tests that share state need the store reset
-    # between calls).
     app = FastAPI()
-    settings = SettingsStore(
-        module_id="tools",
-        data_root=tmp_data_root,
-        defaults=ToolsSettings(),
-    )
-    app.include_router(
-        msr.build_module_settings_router(settings),
-        prefix="/api/v1/modules/tools/settings",
-        tags=["modules:tools:settings"],
-    )
     from routers import tools as tools_router
     app.include_router(tools_router.router)
     return app

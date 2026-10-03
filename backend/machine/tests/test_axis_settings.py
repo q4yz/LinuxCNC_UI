@@ -38,9 +38,25 @@ def test_axis_settings_endpoint_validates_bounds(tmp_data_root, clean_env):
 
     resp = client.post(
         "/api/v1/modules/axis/settings",
-        json={"multiplier": 1.0, "absolute_speed_limit": 9000},
+        json={"multiplier": 1.0, "absolute_speed_limit": -1},
     )
     assert resp.status_code == 422
+
+
+def test_axis_settings_has_no_hard_coded_speed_ceiling(tmp_data_root, clean_env):
+    """The ceiling is the machine's own axis velocity (UI slider top) and
+    LinuxCNC's [TRAJ] clamp — a fixed 5000 mm/min used to 422 any machine
+    faster than ~83 mm/s, even when only the multiplier changed."""
+    app, _ = _axis_app(tmp_data_root, clean_env)
+    client = TestClient(app)
+
+    with patch("services.AxisService.AxisService.update_settings") as mock_update:
+        resp = client.post(
+            "/api/v1/modules/axis/settings",
+            json={"multiplier": 1.0, "absolute_speed_limit": 9000},
+        )
+    assert resp.status_code == 200
+    mock_update.assert_called_once_with(1.0, 9000)
 
 
 def test_axis_settings_endpoint_requires_fields(tmp_data_root, clean_env):

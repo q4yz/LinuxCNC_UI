@@ -40,3 +40,19 @@ class AxisStateResponse(BaseModel):
         None,
         description="Axis acceleration limit in mm/s² ([AXIS_*] MAX_ACCELERATION); null when the machine config has none.",
     )
+
+
+class SpeedOverrideResponse(BaseModel):
+    """Live speed override state (base-thread snapshot, 1 Hz).
+
+    Read back from LinuxCNC so the UI's override sliders show what the
+    controller actually applies, not what the UI last asked for.
+    """
+    feed_override: Optional[float] = Field(
+        None,
+        description="Feed override as a fraction (1.0 = 100 %) — LinuxCNC's stat.feedrate. Null when unknown.",
+    )
+    max_velocity: Optional[float] = Field(
+        None,
+        description="Absolute trajectory speed cap in mm/s — LinuxCNC's stat.max_velocity. Null when unknown.",
+    )

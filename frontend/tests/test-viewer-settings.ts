@@ -91,13 +91,12 @@ test("ViewerSettingsPanel exposes both controls and persists via the shared comp
 
 test("SettingsView wires in a 3D Viewer tab, ungated by MachineGate", () => {
   const text = read(settingsViewPath);
-  assert.match(text, /import ViewerSettingsPanel from '\.\.\/components\/viewer\/ViewerSettingsPanel\.vue'/);
-  assert.match(text, /\{ id: 'viewer', label: '3D Viewer' \}/);
-  assert.match(text, /v-else-if="activeTab === 'viewer'"/);
-  // Both settings are client-side preferences with no backend module
-  // to wait on — must not be wrapped in MachineGate like the other
-  // three tabs are.
-  const viewerTabBlock = text.match(/v-else-if="activeTab === 'viewer'"[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? "";
+  assert.match(text, /import ViewerSettingsPanel from "\.\.\/components\/viewer\/ViewerSettingsPanel\.vue"/);
+  assert.match(text, /const VIEWER_TAB = "3D Viewer";/);
+  assert.match(text, /v-if="activeTab === VIEWER_TAB"/);
+  // Both settings are per-browser preferences (localStorage, not the
+  // central store) with no backend to wait on — never MachineGate'd.
+  const viewerTabBlock = text.match(/v-if="activeTab === VIEWER_TAB"[\s\S]*?<\/div>/)?.[0] ?? "";
   assert.ok(viewerTabBlock, "expected to find the viewer tab's template block");
   assert.doesNotMatch(viewerTabBlock, /MachineGate/, "the 3D Viewer tab must not be gated behind machine-online status");
 });

@@ -1,110 +1,97 @@
 <script setup lang="ts">
-// Settings shell. Each panel that contributes a Settings tab is
-// imported statically and rendered as a hard dependency. The
-// registry-driven ``settingsPanels()`` walker is gone — every
-// panel below must compile to ship.
+// Settings view — generated from the central settings registry.
 //
-// The tab bar used to be purely decorative: all three panels
-// (Camera/Machine Config/Temperature) rendered simultaneously,
-// stacked one under another, regardless of which tab looked
-// "active". Each one fetches its own settings on mount
-// (CameraSettings, MachineSettingsPanel both do; see their own
-// onMounted), so opening this page fired three independent
-// settings round-trips and mounted three independent component
-// trees at once — the same "everything mounts together" pattern
-// the dashboard had, just here every time, not just once per
-// session. ``activeTab`` + ``v-if`` (not ``v-show``) means only the
-// selected panel's component is ever mounted; the other two don't
-// exist in the DOM and never fetch anything until the operator
-// actually switches to them.
+// Every setting defined in ``settings/definitions/*`` appears here under
+// its category, rendered with its own editor (``setting.component``) —
+// no hand-written panel per module. Settings are stored by the system
+// service (``/api/v1/settings``), so this page works while the machine
+// backend is offline; only editors that need machine data (the camera
+// device list) gate themselves.
+//
+// The "3D Viewer" tab is the exception: those are per-browser display
+// preferences (localStorage), deliberately not shared between clients.
+//
+// Only the active tab is mounted (``v-if``), so critical settings are
+// read fresh only when their tab is opened.
 
-import { ref } from 'vue'
-import CameraSettings from '../components/camera/CameraSettings.vue'
-import MachineSettingsPanel from '../components/machine/MachineSettingsPanel.vue'
-import TemperatureSettingsPanel from '../components/temperature/TemperatureSettingsPanel.vue'
-import ViewerSettingsPanel from '../components/viewer/ViewerSettingsPanel.vue'
-import MachineGate from '../components/machine/MachineGate.vue'
+import { computed, ref, watch } from "vue";
+import { settingsRegistry } from "../settings";
+import SettingRow from "../settings/components/SettingRow.vue";
+import ViewerSettingsPanel from "../components/viewer/ViewerSettingsPanel.vue";
 
-function apiBaseUrl(moduleId: string) {
-  return `/api/v1/modules/${moduleId}/settings`
-}
+const VIEWER_TAB = "3D Viewer";
+// Preferred tab order; categories not listed follow alphabetically.
+const CATEGORY_ORDER = ["Machine", "Macro Buttons", "Temperature", "Camera"];
 
-type SettingsTab = 'camera' | 'machineconfig' | 'temperature' | 'viewer'
+const { categories, fetched } = settingsRegistry;
 
-const TABS: Array<{ id: SettingsTab; label: string }> = [
-  { id: 'camera', label: 'Camera' },
-  { id: 'machineconfig', label: 'Machine Config' },
-  { id: 'temperature', label: 'Temperature' },
-  { id: 'viewer', label: '3D Viewer' },
-]
+const tabs = computed(() => {
+  const names = Object.keys(categories.value).sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a);
+    const ib = CATEGORY_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+  return [...names, VIEWER_TAB];
+});
 
-const activeTab = ref<SettingsTab>('camera')
+const activeTab = ref<string>("");
+watch(
+    tabs,
+    (list) => {
+      if (!list.includes(activeTab.value)) activeTab.value = list[0] ?? VIEWER_TAB;
+    },
+    { immediate: true },
+);
 
-const activeClasses = 'bg-blue-600 text-white border-b-2 border-blue-400'
-const inactiveClasses = 'text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-b-2 border-transparent'
+const activeSettings = computed(() => categories.value[activeTab.value] ?? []);
+
+const activeClasses = "bg-blue-600 text-white border-b-2 border-blue-400";
+const inactiveClasses = "text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-b-2 border-transparent";
 </script>
 
 <template>
   <div class="space-y-6">
     <header class="flex items-baseline justify-between">
       <h1 class="text-2xl font-bold">Settings</h1>
+      <button
+          v-if="!fetched"
+          type="button"
+          class="text-xs text-amber-300 underline"
+          title="Stored values could not be loaded — the settings below show their defaults"
+          data-testid="settings-retry"
+          @click="settingsRegistry.fetchAll()"
+      >
+        Showing defaults — retry loading
+      </button>
     </header>
 
     <div class="bg-gray-800 rounded-lg overflow-hidden">
-      <nav class="flex border-b border-gray-700" role="tablist">
+      <nav class="flex flex-wrap border-b border-gray-700" role="tablist">
         <button
-          v-for="tab in TABS"
-          :key="tab.id"
-          type="button"
-          role="tab"
-          class="px-4 py-3 text-sm font-medium transition-colors"
-          :class="activeTab === tab.id ? activeClasses : inactiveClasses"
-          :aria-selected="activeTab === tab.id"
-          :data-testid="`settings-tab-${tab.id}`"
-          @click="activeTab = tab.id"
+            v-for="tab in tabs"
+            :key="tab"
+            type="button"
+            role="tab"
+            class="px-4 py-3 text-sm font-medium transition-colors"
+            :class="activeTab === tab ? activeClasses : inactiveClasses"
+            :aria-selected="activeTab === tab"
+            :data-testid="`settings-tab-${tab}`"
+            @click="activeTab = tab"
         >
-          {{ tab.label }}
+          {{ tab }}
         </button>
       </nav>
 
-      <div v-if="activeTab === 'camera'" class="p-6" role="tabpanel">
-        <h2 class="text-lg font-semibold text-gray-200">Camera settings</h2>
-        <MachineGate label="Camera settings">
-          <CameraSettings class="mt-4" />
-        </MachineGate>
-        <p class="mt-4 text-xs text-gray-500">
-          Persisted at: <code>{{ apiBaseUrl('camera') }}</code>
-        </p>
+      <div v-if="activeTab === VIEWER_TAB" class="p-6" role="tabpanel">
+        <ViewerSettingsPanel />
+        <p class="mt-4 text-xs text-gray-500">Stored in this browser only (not shared with other clients).</p>
       </div>
 
-      <div v-else-if="activeTab === 'machineconfig'" class="p-6" role="tabpanel">
-        <h2 class="text-lg font-semibold text-gray-200">Machine Config settings</h2>
-        <MachineGate label="Machine settings">
-          <MachineSettingsPanel class="mt-4" />
-        </MachineGate>
-        <p class="mt-4 text-xs text-gray-500">
-          Persisted at: <code>{{ apiBaseUrl('machineconfig') }}</code>
-        </p>
-      </div>
-
-      <div v-else-if="activeTab === 'temperature'" class="p-6" role="tabpanel">
-        <h2 class="text-lg font-semibold text-gray-200">Temperature settings</h2>
-        <MachineGate label="Temperature settings">
-          <TemperatureSettingsPanel class="mt-4" />
-        </MachineGate>
-        <p class="mt-4 text-xs text-gray-500">
-          Persisted at: <code>{{ apiBaseUrl('temperature') }}</code>
-        </p>
-      </div>
-
-      <!-- Not machine-gated: both controls here are client-side
-           localStorage preferences, not backend-persisted settings —
-           there's nothing to wait on the machine backend for. -->
-      <div v-else-if="activeTab === 'viewer'" class="p-6" role="tabpanel">
-        <h2 class="text-lg font-semibold text-gray-200">3D Viewer settings</h2>
-        <ViewerSettingsPanel class="mt-4" />
-        <p class="mt-4 text-xs text-gray-500">
-          Stored in this browser only (not synced to the machine).
+      <div v-else class="p-6 space-y-3" role="tabpanel">
+        <SettingRow v-for="setting in activeSettings" :key="setting.key" :setting="setting" />
+        <p class="pt-2 text-xs text-gray-500">
+          Stored on the machine (<code>/api/v1/settings</code>) and shared by every browser.
         </p>
       </div>
     </div>

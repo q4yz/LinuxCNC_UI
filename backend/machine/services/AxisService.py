@@ -16,8 +16,10 @@ import logging
 from typing import Optional, List, Dict, Any, Literal
 
 from dtos.axis.AxisDto import AxisStateDTO
-from hardware.Connection import execute_sync_cmd, linuxcnc
+from dtos.axis.SpeedOverrideDto import SpeedOverrideDTO
+from hardware.Connection import execute_sync_cmd, get_stat_channel, linuxcnc
 from mappers.axis.axis_mapper import AxisMapper
+from mappers.axis.speed_override_mapper import SpeedOverrideMapper
 from services.HardwareConfigService import HardwareConfigService
 from hal_service.JogService import jog_keepalive, jog_axis, jog_stop
 
@@ -100,6 +102,19 @@ class AxisService:
         execute_sync_cmd("teleop_enable", 1.0, 0)
         # Coupled axes synchronize automatically via HOME_SEQUENCE
         execute_sync_cmd("home", 3.0, target_axis.joint_numbers[0])
+
+    def get_speed_override(self) -> SpeedOverrideDTO:
+        """Live feed override + absolute speed cap, as LinuxCNC applies them
+        — the read-back for :meth:`update_settings`."""
+        stat = get_stat_channel()
+        if stat is None:
+            return SpeedOverrideDTO()
+        try:
+            stat.poll()
+        except (OSError, RuntimeError) as exc:
+            logger.debug("stat.poll() failed (%s); speed override unknown", exc)
+            return SpeedOverrideDTO()
+        return SpeedOverrideMapper.from_stat(stat)
 
     def update_settings(self, multiplier: float, absolute_speed_limit: int) -> None:
         execute_sync_cmd("feedrate", 0, float(multiplier))

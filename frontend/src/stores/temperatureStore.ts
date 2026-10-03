@@ -5,9 +5,7 @@
 import { defineStore, storeToRefs } from "pinia";
 import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 
-import { createModuleSettings } from "../core/settings/createModuleSettings";
-import { useConsoleStore } from "./console";
-import { describeError } from "../core/error-format";
+import { temperatureUnit, sensorColors as sensorColorsSetting } from "../settings/definitions/temperature";
 import { useBaseThreadStore } from "./baseThread";
 import { TemperatureUnit } from "../entities";
 import { HeaterReading, type ReadingSet } from "../entities/temperature";
@@ -29,13 +27,6 @@ const DEFAULT_SENSOR_COLORS: Record<string, string> = {};
 const STORE_ID = TEMPERATURE_ID;
 
 // Singleton settings client
-let settingsClientSingleton: ReturnType<typeof createModuleSettings> | null = null;
-function settingsClient() {
-    if (!settingsClientSingleton) {
-        settingsClientSingleton = createModuleSettings(TEMPERATURE_ID);
-    }
-    return settingsClientSingleton;
-}
 
 function clone<T>(value: T): T {
     if (typeof structuredClone === "function") {
@@ -84,14 +75,15 @@ export const useTemperatureStore = defineStore(
         const history: Ref<HistoryPoint[]> = ref([]);
         const windowMs = ref(WINDOW_SECONDS * 1000);
         const pollMs = ref(DEFAULT_POLL_MS);
-        // The backend's ``unit`` setting — ``null`` until the settings
-        // load, never assumed. The unit selects bind to this.
-        const unitSetting = ref<TemperatureUnit | null>(null);
-        // Display unit for converting readings. Readings arrive in °C, so
-        // an unknown setting shows them raw (Celsius) rather than guessing.
-        const unit = computed<TemperatureUnit>(() => unitSetting.value ?? TemperatureUnit.CELSIUS);
+        // Display unit + colours are central UI settings
+        // (``settings/definitions/temperature``); their defaults apply
+        // until the stored values arrive.
+        const unit = computed<TemperatureUnit>(() => temperatureUnit.value ?? TemperatureUnit.CELSIUS);
         const visibleSensors: Ref<Record<string, boolean>> = ref({});
-        const sensorColors: Ref<Record<string, string>> = ref({ ...DEFAULT_SENSOR_COLORS });
+        const sensorColors = computed<Record<string, string>>(() => ({
+            ...DEFAULT_SENSOR_COLORS,
+            ...(sensorColorsSetting.value ?? {}),
+        }));
 
         // --- non-reactive handles ------------------------------------- //
         let pollHandle: ReturnType<typeof setInterval> | null = null;
@@ -111,27 +103,6 @@ export const useTemperatureStore = defineStore(
             visibleSensors.value = next;
         }
 
-        function applySettings(settings: unknown) {
-            if (!settings || typeof settings !== "object") return;
-            const s = settings as Record<string, unknown>;
-            if (s.unit === TemperatureUnit.CELSIUS || s.unit === TemperatureUnit.KELVIN) {
-                unitSetting.value = s.unit;
-            } else {
-                useConsoleStore().warning(
-                    `Temperature unit: backend setting missing or invalid (${String(s.unit)}); unit stays unsynced`,
-                );
-            }
-            if (s.sensor_colors && typeof s.sensor_colors === "object") {
-                const next = { ...sensorColors.value };
-                for (const [name, hex] of Object.entries(s.sensor_colors)) {
-                    if (typeof hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
-                        next[name] = hex;
-                    }
-                }
-                sensorColors.value = next;
-            }
-        }
-
         function displayTemp(celsius: number | null | undefined): number {
             if (!Number.isFinite(celsius)) return 0;
             const val = celsius as number;
@@ -139,23 +110,9 @@ export const useTemperatureStore = defineStore(
             return roundTo(value, 2);
         }
 
-        /**
-         * Persist the unit, then adopt it. The settings write has no
-         * read-back, so a successful write *is* the confirmation the unit
-         * select (BaseSelect) waits for; a failed one leaves the setting
-         * untouched and the select reverts after its sync timeout.
-         */
+        /** Persist the display unit (the setting reports failures itself). */
         async function setUnit(nextUnit: TemperatureUnit): Promise<boolean> {
-            if (nextUnit !== TemperatureUnit.CELSIUS && nextUnit !== TemperatureUnit.KELVIN) return false;
-            if (unitSetting.value === nextUnit) return true;
-            try {
-                await settingsClient().writeKey("unit", nextUnit);
-            } catch (err: unknown) {
-                useConsoleStore().error(`Temperature unit: saving ${nextUnit} failed — ${describeError(err)}`);
-                return false;
-            }
-            unitSetting.value = nextUnit;
-            return true;
+            return (await temperatureUnit.save(nextUnit)).ok;
         }
 
         function toggleSensorVisibility(name: string) {
@@ -167,15 +124,7 @@ export const useTemperatureStore = defineStore(
         }
 
         async function setSensorColor(name: string, hex: string) {
-            if (!name || typeof name !== "string") return;
-            if (typeof hex !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return;
-            const next = { ...sensorColors.value, [name]: hex };
-            sensorColors.value = next;
-            try {
-                await settingsClient().writeKey("sensor_colors", { ...next });
-            } catch (_) {
-                // Best-effort
-            }
+            await sensorColorsSetting.setColor(name, hex);
         }
 
         function colorFor(name: string): string {
@@ -228,17 +177,6 @@ export const useTemperatureStore = defineStore(
             return await TemperatureService.setTarget(request);
         }
 
-        async function refreshSettings() {
-            try {
-                const settings = await settingsClient().readAll();
-                if (settings) applySettings(settings);
-            } catch (err: unknown) {
-                useConsoleStore().warning(
-                    `Temperature settings could not be loaded (${describeError(err)}); unit stays unsynced`,
-                );
-            }
-        }
-
         async function refreshSensors() {
             await useBaseThreadStore().refresh();
         }
@@ -257,7 +195,6 @@ export const useTemperatureStore = defineStore(
             { immediate: true, deep: true },
         );
 
-        refreshSettings();
 
         onScopeDispose(() => {
             stop();
@@ -272,14 +209,12 @@ export const useTemperatureStore = defineStore(
             windowMs,
             pollMs,
             unit,
-            unitSetting,
             visibleSensors,
             sensorColors,
             ingest,
             snapshot,
             start,
             stop,
-            refreshSettings,
             refreshSensors,
             displayTemp,
             setUnit,

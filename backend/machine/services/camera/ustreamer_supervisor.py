@@ -23,8 +23,10 @@ import subprocess
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
+from core.ui_settings_reader import read_ui_setting
 from services.camera.camera_detection import detect_usb_cameras
 from models.camera_settings import CameraSettings
 
@@ -92,15 +94,17 @@ class UstreamerSupervisor:
         # crashed device.
         self._cooldown_until: Dict[str, datetime] = {}
         self._cooldown_seconds = 5.0
-        self._settings_store = None  # late-bound by bind_settings
+        # ``None`` = the system service's UI settings file. Tests point
+        # this at a temp file via ``use_settings_file``.
+        self._settings_path: Optional[Path] = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
 
-    def bind_settings(self, settings_store) -> None:
-        """Attach the module's SettingsStore. Idempotent."""
-        self._settings_store = settings_store
+    def use_settings_file(self, path: Optional[Path]) -> None:
+        """Read camera settings from ``path`` instead of the default file."""
+        self._settings_path = path
 
     def shutdown(self) -> None:
         """Terminate every spawned child. Idempotent."""
@@ -113,16 +117,19 @@ class UstreamerSupervisor:
     # ------------------------------------------------------------------ #
 
     def _load_settings(self) -> CameraSettings:
-        """Read the merged settings; fall back to defaults on error.
+        """Read the camera keys from the central UI settings, uncached.
 
-        Mirrors the legacy ``StreamManager.reload_config`` shape so a
-        malformed PUT never crashes the streaming path.
+        The system service owns ``camera.ip_camera_url`` /
+        ``camera.default_device_id`` (critical settings); reading them
+        on every call means a URL saved in the UI applies to the very
+        next ``/devices`` or ``/stream`` request, no restart. A bad
+        value falls back to defaults so streaming never crashes.
         """
         try:
-            if self._settings_store is None:
-                return CameraSettings()
-            payload = self._settings_store.read_all()
-            return CameraSettings(**payload)
+            return CameraSettings(
+                default_device_id=read_ui_setting("camera.default_device_id", "", path=self._settings_path),
+                ip_camera_url=read_ui_setting("camera.ip_camera_url", "", path=self._settings_path),
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "UstreamerSupervisor: invalid settings payload (%s); "

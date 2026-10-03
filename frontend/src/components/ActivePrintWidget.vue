@@ -191,7 +191,7 @@ const printableFiles = computed<ProgramFile[]>(() => {
         const bTime = Date.parse(b.modified || "") || 0;
         return bTime - aTime;
       })
-      .slice(0, 5);
+      .slice(0, 3);
 });
 
 async function loadFile(filename: string) {
@@ -337,7 +337,7 @@ async function stopPrint() {
 
 
     <!-- File list (Hidden while active) -->
-    <div v-if="!isActive" class="p-4 border-b border-gray-700">
+    <div v-if="!isActive" class=" border-b border-gray-700">
 
 
 
@@ -381,14 +381,7 @@ async function stopPrint() {
     </div>
 
     <!-- Standby hint -->
-    <div
-        v-if="!isActive && !isLoaded"
-        class="p-4 flex flex-col space-y-2"
-    >
-      <p class="text-xs text-gray-500 text-center">
-        Load a program to start a job.
-      </p>
-    </div>
+
 
     <!-- Loaded hint -->
     <div

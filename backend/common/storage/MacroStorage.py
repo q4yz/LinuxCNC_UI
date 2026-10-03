@@ -29,7 +29,7 @@ Key properties:
   first and then atomically renames it with :func:`os.replace`. A
   crash mid-write either leaves the previous macro intact or the
   new one in place — never a half-written file. The pattern mirrors
-  :meth:`core.settings_store.SettingsStore._atomic_write`.
+  :func:`core.atomic_json.atomic_write_json`.
 
 * **Defensive name validation.** Names must match
   ``^[A-Za-z0-9._-]{1,64}$``; ``..`` is rejected outright. The

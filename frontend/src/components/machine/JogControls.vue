@@ -13,7 +13,7 @@ import BaseCard from "../../ui/BaseCard.vue";
 
 const machineStore = useMachineStore()
 const consoleStore = useConsoleStore()
-const { defaultJogVelocity, jogVelocitySynced } = storeToRefs(machineStore)
+const { defaultJogVelocity } = storeToRefs(machineStore)
 const { maxAxisVelocity } = storeToRefs(useBaseThreadStore())
 
 // Slider top = log10(max of all axis velocity limits, mm/s) — the
@@ -31,18 +31,19 @@ const activeJogAxes = ref(new Set<number>())
 const keysHeldForJog = ref(new Set<string>())
 
 // Slider position (log10 of mm/s). ``null`` until the backend's
-// ``default_jog_velocity`` arrives — no assumed starting speed.
+// fastest axis limit is known. Starts at the ``machine.default_jog_velocity``
+// UI setting (its default until the stored value arrives).
 const sliderPos = ref<number | null>(null)
 const sliderTouched = ref(false)
-// Needs both backend values: the default speed to start at and the axis
-// limit to clamp it to (a default above the fastest axis is capped).
-watch([defaultJogVelocity, jogVelocitySynced, maxSliderPos], ([velocity, synced, max]) => {
+// Needs the axis limit to clamp to (a default above the fastest axis is
+// capped); re-seeds when the stored default arrives, unless touched.
+watch([defaultJogVelocity, maxSliderPos], ([velocity, max]) => {
   if (max === null) {
     sliderPos.value = null
     return
   }
   if (sliderPos.value !== null && sliderPos.value > max) sliderPos.value = max
-  if (!synced || sliderTouched.value || !Number.isFinite(velocity) || velocity <= 0) return
+  if (sliderTouched.value || !Number.isFinite(velocity) || velocity <= 0) return
   sliderPos.value = clampSlider(Math.log10(velocity), max)
 }, { immediate: true })
 const jogSpeed = computed<number | null>(() => (sliderPos.value === null ? null : Math.pow(10, sliderPos.value)))

@@ -5,6 +5,7 @@ from core.field_masking import ResponseTier
 from mappers.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
 from mappers.axis.axis_mapper import AxisMapper
+from mappers.axis.speed_override_mapper import SpeedOverrideMapper
 from models.axis_model import AxisStateResponse
 from mappers.mcu.McuMapper import McuMapper
 from models.mcu_model import McuStateResponse
@@ -52,6 +53,12 @@ class BaseThreadSnapshotService:
         axis = self._axis_state(mode)
         # MCUs are purely static config — nothing to send on the 1 Hz tier.
         mcus = self._mcu_state(mode) if mode != ResponseTier.BASE else None
+        # Live override values — nothing to send on the static tier.
+        speed_override = (
+            SpeedOverrideMapper.to_response(self.axes_service.get_speed_override(), mode)
+            if mode != ResponseTier.STATIC
+            else None
+        )
 
         elapsed_ms = (time.monotonic() - started) * 1000.0
         logger.info(
@@ -67,6 +74,7 @@ class BaseThreadSnapshotService:
             tools=tools,
             axis=axis,
             mcus=mcus,
+            speed_override=speed_override,
         )
 
         # --- WRAPPERS ---

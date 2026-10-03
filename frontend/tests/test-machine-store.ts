@@ -155,25 +155,17 @@ test("machine store does not await refreshSettings inside jogContinuous (regress
   );
 });
 
-test("machine store eagerly loads settings on instantiation (regression)", () => {
-  // Fix A — companion to the await-removal test above. The
-  // settings must be loaded eagerly (fire-and-forget) so the
-  // first jog click lands AFTER the values have populated. The
-  // promise is also cached so concurrent callers do not fire
-  // duplicate HTTP round-trips.
+test("machine store reads the jog velocity from the central setting, never awaiting a fetch (regression)", () => {
+  // Companion to the await-removal test above: a jog must never wait
+  // on a settings round-trip (a quick click-and-release would let the
+  // stop overtake the jog). The central setting serves its default
+  // until the one global fetch at app start has filled it.
   const text = readStore();
-  assert.match(
-    text,
-    /void\s+refreshSettings\s*\(\s*\)/,
-    "store factory must eagerly call refreshSettings() at least once",
-  );
-  // Idempotency: the second caller should reuse the cached
-  // promise rather than re-issue the HTTP GET.
-  assert.match(
-    text,
-    /settingsLoadPromise/,
-    "refreshSettings must cache its in-flight promise to dedupe concurrent callers",
-  );
+  assert.match(text, /from "\.\.\/settings\/definitions\/machine"/);
+  assert.match(text, /defaultJogVelocitySetting\.value/);
+  assert.doesNotMatch(text, /refreshSettings|createModuleSettings|settingsLoadPromise/);
+  // Keep-alive is a fixed constant, not a user setting.
+  assert.match(text, /const KEEPALIVE_INTERVAL_MS = 250;/);
 });
 
 test("JogControls handleKeyUp stops the jog even when isActive is false (regression)", () => {

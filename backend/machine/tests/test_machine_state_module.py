@@ -95,20 +95,3 @@ def test_state_invalid_mode_returns_400(tmp_data_root, clean_env):
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Invalid mode"
 
-def test_state_module_settings_router_returns_typed_payload(
-    tmp_data_root, clean_env
-):
-    """The contract requires every module to return a non-null
-    Pydantic settings model. The state module ships
-    :class:`StateSettings` (introduced in the contract rewrite —
-    see ``.agent/contracts/backend-module.md`` § 1) so the
-    canonical settings endpoints expose a typed payload from first
-    boot.
-    """
-    app, _ = _state_app(tmp_data_root, clean_env)
-    client = TestClient(app)
-
-    resp = client.get("/api/v1/modules/machine_state/settings")
-    assert resp.status_code == 200
-    assert resp.json() == {"confirm_mode_change": False}
-

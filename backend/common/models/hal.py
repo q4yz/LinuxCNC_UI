@@ -110,3 +110,11 @@ class HalFileSaveRequest(BaseModel):
     """Body of ``PUT /api/v1/hal/layout`` — the editor's current signal set."""
 
     signals: List[HalFileSignalWrite] = Field(default_factory=list)
+
+
+class HalPinStatesResponse(BaseModel):
+    """Body of ``GET /api/v1/hal/pins`` — every pin with its value, read
+    fresh from HAL at ``read_at`` (no cache, unlike the editor layout)."""
+
+    pins: List[HalPinResource] = Field(default_factory=list, description="Every HAL pin with its current value.")
+    read_at: str = Field(..., description="ISO-8601 UTC time the values were read.")

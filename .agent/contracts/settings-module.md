@@ -1,138 +1,91 @@
-# Settings Module Contract
+# Contract: central UI settings
 
-Authoritative contract for the per-module persistent settings layer.
-The matching implementation lives in
-[`backend/common/core/settings_store.py`](../../backend/common/core/settings_store.py)
-(shared by both backend apps) and is mounted by each app's own
-`_MODULE_DOMAINS` table — `backend/machine/main.py` (port 8000) and
-`backend/system/main.py` (port 8001). See
-[`.agent/contracts/backend-router.md`](backend-router.md) for which
-module id belongs to which app.
+> All UI settings live in **one** key/value document served by the
+> **system service** (always running, also while the machine backend
+> is offline). There are no per-module settings endpoints, Pydantic
+> settings models or per-module `settings.json` files any more.
 
-> **Modules are mandatory.** Every backend module exposes the four
-> canonical settings endpoints through this contract. A module
-> without a Pydantic defaults model does not exist — every module
-> returns a non-null `BaseModel` from `get_settings_model()`.
+## 1. Storage (system service)
 
-## 1. Storage Layout
+- File: `backend/data/settings.json` — flat `{ "<key>": <json value> }`
+  (`UI_SETTINGS_FILE` in `common/domain_file_services/paths.py`).
+  Per-installation runtime data, git-ignored.
+- Store: `common/core/ui_settings_store.py` (`UiSettingsStore`) — the
+  only writer. Atomic write (`common/core/atomic_json.py`: temp file +
+  `os.replace`), in-memory cache for the system process.
+- Keys are namespaced identifiers, never paths:
+  `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$` (e.g. `camera.ip_camera_url`).
+  Values: any JSON, ≤ 64 KB serialized.
+- **No backend defaults.** A key that was never written is *unset*; the
+  frontend definition owns the default.
 
-Settings are persisted per module at:
+## 2. HTTP API — `backend/system/routers/ui_settings.py`
 
-```
-<data_root>/modules/<module_id>/settings.json
-```
+| Method + path | operationId | Result |
+|---|---|---|
+| `GET /api/v1/settings` | `listSettings` | `{values: {key: value}}` — every stored key |
+| `GET /api/v1/settings/{key}` | `readSetting` | `{key, value}`; **404** when unset |
+| `PUT /api/v1/settings/{key}` body `{value}` | `writeSetting` | `{key, value}` — the echo *is* the save confirmation |
+| `DELETE /api/v1/settings/{key}` | `resetSetting` | 204 — back to the frontend default (idempotent) |
 
-`data_root` is **per app**, not shared: each app's `main.py` resolves
-it as `Path(__file__).resolve().parents[1] / "data"`, which lands at
-`backend/machine/data/` for modules owned by the machine backend and
-`backend/system/data/` for modules owned by the system service. Each
-module owns exactly one file — no shared schemas, no migrations.
-Modules that want richer layouts (multiple files, schemas,
-validation) wrap this store rather than replace it.
+Bad key / oversized value → 400. Routed to the system service by
+`frontend/vite.config.mjs`, `docker/nginx.conf` and `install.sh`.
 
-## 2. The Four Canonical Endpoints
+## 3. Reading a setting from Python (other processes)
 
-The registry mounts the following routes for every module:
+`common/core/ui_settings_reader.py`:
+`read_ui_setting(key, default)` — parses the file **on every call**
+(no cache), so a value saved in the UI applies to the next request
+without a restart. Only for settings marked **critical** in the
+frontend (today: `camera.ip_camera_url`, `camera.default_device_id`,
+read by the machine backend's camera supervisor).
 
-| Method | Path                                | Description                                |
-|--------|-------------------------------------|--------------------------------------------|
-| `GET`  | `/api/v1/modules/{id}/settings`     | Read full payload (defaults merged in).    |
-| `GET`  | `/api/v1/modules/{id}/settings/{k}` | Read single key (404 if missing).          |
-| `PUT`  | `/api/v1/modules/{id}/settings`     | Replace full payload, returns merged.      |
-| `PUT`  | `/api/v1/modules/{id}/settings/{k}` | Upsert single key, returns merged.         |
+## 4. Frontend — `frontend/src/settings/`
 
-Modules **must not** add their own settings endpoints. The four
-above are sufficient for any JSON-serialisable settings object. If
-a module needs custom validation, it should expose its own API at a
-non-`/settings` path under the module prefix.
+```ts
+// settings/definitions/machine.ts
+export const defaultJogVelocity = new NumberSetting(
+  "Machine", "Default jog velocity", "machine.default_jog_velocity", 500, { min: 1, unit: "mm/s" });
 
-## 3. Atomic Write Contract
-
-Every `PUT` writes through the following sequence:
-
-```python
-fd, tmp = tempfile.mkstemp(dir=path.parent)
-write_payload(fd)
-fsync(fd)
-os.replace(tmp, settings.json)
+// anywhere
+import { defaultJogVelocity } from "../settings/definitions/machine";
+if (defaultJogVelocity.value > 100) { ... }   // reactive
 ```
 
-`os.replace` is atomic on POSIX filesystems. A process crash mid-write
-leaves the previous `settings.json` intact. The temp file is
-cleaned up on failure (`os.unlink(tmp)`).
+- **Define** every setting in `settings/definitions/*.ts`; they are
+  imported eagerly by `main.ts`, so every setting exists (and is in
+  the Settings view) from app start.
+- **`BaseSetting`** (`core/BaseSetting.ts`): `(category, label, key,
+  default, options)`; `value`, `isLoaded`, `isStored`, `load()`,
+  `save(v)` → `CommandResult` (adopts the echo; failure keeps the old
+  value and is reported), `reset()`. Subclasses implement `type`,
+  `validate(raw)` and `component` (their editor). Subclasses declare
+  **no class fields** — type config goes through `options.config` so it
+  is part of the definition signature at registration time.
+- **Registry** (`core/settingsRegistry.ts`): one `fetchAll()` per
+  session (called by `main.ts`), cached; late registrations hydrate
+  from the cache; the same key defined twice with a *different*
+  definition throws, an identical one (HMR) is tolerated; `categories`
+  feeds the generated Settings view (`views/SettingsView.vue`).
+- **Defaults are fine**: settings only affect the UI; a value is its
+  default until the stored one arrives. Another client's change shows
+  up after a page reload (desync is acceptable).
+- **`critical: true`**: something outside this browser depends on it.
+  Never served from the cache; `value` is `null` until a fresh
+  `load()` (the Settings row does that on mount).
+- Types: `CheckboxSetting`, `NumberSetting`, `RangeSetting`,
+  `SelectSetting`, `TextSetting`, plus custom `MacroButtonsSetting`,
+  `SensorColorsSetting`, `CameraPreferencesSetting`,
+  `IpCameraUrlSetting`. Editors (`settings/components/`) use the
+  `useBackendSync` contract (requested value shown until the echo
+  confirms it, revert + log on failure).
+- Writes go through `facades/settingsFacade.ts` (generated client).
 
-The contract is exercised by the test
-`backend/common/tests/test_settings_store.py::test_atomic_write_leaves_no_partial_file_on_interrupt`
-which monkey-patches `os.replace` to raise and asserts the original
-file is unchanged.
+## 5. Not settings
 
-## 4. Defaults Merge — Pydantic Model Required
-
-Every module declares its defaults as a Pydantic model instance.
-`SettingsStore` accepts the model at construction:
-
-```python
-class CameraSettings(BaseModel):
-    resolution: tuple[int, int] = (640, 480)
-    fps: int = 10
-
-store = SettingsStore("camera", data_root, defaults=CameraSettings())
-```
-
-On every read, defaults are merged underneath the persisted payload:
-
-```python
-defaults = {"resolution": (640, 480), "fps": 10}
-persisted = {"fps": 30}
-merged = {**defaults, **persisted}  # {"resolution": (640, 480), "fps": 30}
-```
-
-User-set values always win. New defaults added in a later release
-appear automatically for existing deployments without forcing a
-migration.
-
-## 5. In-Memory Cache
-
-The store caches the merged payload after every successful read or
-write. The next `read_all` returns the cached value without hitting
-the filesystem. Writes invalidate and re-populate the cache under a
-module-local lock, so concurrent PUTs on the same module cannot race.
-
-Tests verify this in
-`test_settings_store.py::test_invalidate_forces_re_read`.
-
-## 6. Validation Rules
-
-The store is intentionally untyped at the storage layer — it stores
-any JSON-serialisable value. The Pydantic defaults model is the
-single source of truth for the schema; modules validate on the
-endpoint boundary (using the Pydantic model) and reject bad input
-before it reaches the store.
-
-The frontend has no dedicated settings client abstraction — components
-call the generated OpenAPI client directly against the four endpoints
-above and treat the payload as opaque JSON; they do no validation of
-their own.
-
-## 7. Failure Modes
-
-| Failure | Behaviour |
-|---------|-----------|
-| File missing | Falls back to defaults; `read_all` returns the merged defaults. |
-| File corrupt (JSON parse error) | Logged at ERROR; falls back to an empty dict, then merged with defaults. |
-| `PUT` parent dir missing | `mkdir(parents=True, exist_ok=True)` creates the directory on first write. |
-| `os.replace` fails | Exception propagates; temp file is cleaned up; original file untouched. |
-| Concurrent PUTs | Serialised by a module-local `threading.Lock`. |
-
-## 8. Acceptance Checklist
-
-A settings surface is "ready" when:
-
-- [ ] `get_settings_model()` returns a non-null Pydantic `BaseModel`
-      instance.
-- [ ] The module id appears in the owning app's `main.py:_MODULE_DOMAINS`
-      — and only that app's (see `.agent/contracts/backend-router.md`).
-- [ ] All persisted values flow through `read_all` / `write_all` /
-      `write_key`.
-- [ ] Defaults are Pydantic models so new keys can be added later.
-- [ ] The atomic-write property is verified by the included test.
+- Safety/timing constants are **code**, not settings: the jog watchdog
+  timeout (500 ms, `machine/services/jog_watchdog.py`) and the jog
+  keep-alive interval (250 ms, `stores/machine.ts`).
+- Per-browser display preferences (3D viewer grid / render quality)
+  stay in `localStorage` on purpose — a weak tablet and a desktop may
+  want different values.

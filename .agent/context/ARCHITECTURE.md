@@ -42,7 +42,7 @@ contracts from outside the repo. See `§ 8`.
 ```
 backend/
 ├── common/                     # Shared library — imported by both apps, never run directly
-│   ├── core/                   # settings_store.py, event_bus.py, field_masking.py, models.py
+│   ├── core/                   # ui_settings_store.py, ui_settings_reader.py, atomic_json.py, event_bus.py, field_masking.py, models.py
 │   ├── dtos/                   # Frozen dataclass domain DTOs + HalPin handles
 │   ├── mappers/, factories/    # DTO ↔ Pydantic Response translation
 │   ├── models/                 # Pydantic request/response + per-module settings + machineconfig schemas
@@ -50,7 +50,7 @@ backend/
 │   │                           # (single source of truth for machine_config/, nc_files/, macros/)
 │   ├── hardware/                # Hardware abstraction layer (see § 1.1)
 │   ├── storage/                # Filesystem-backed persistence (MacroStorage, …)
-│   ├── exceptions/, module_settings_router.py
+│   ├── exceptions/
 │   └── tests/                  # Tests for the shared library itself
 ├── machine/                    # Machine backend — port 8000 (see Overview)
 │   ├── main.py                 # FastAPI app + lifespan (telemetry loop, mock seed, watchdog)
@@ -81,8 +81,10 @@ shared module and an app-local module never need different import
 syntax. A module id owned by one process is *never* imported by the
 other (the routing table in `§ 1.4` doubles as the ownership map,
 since each path prefix belongs to the app that owns the module
-behind it) — that's what makes the split safe: no in-memory
-`SettingsStore` cache can ever go stale across processes.
+behind it) — that's what makes the split safe. UI settings are owned
+by the system service alone (one `settings.json`); the machine backend
+only *reads* the few it needs by key, uncached
+(`core/ui_settings_reader.py`).
 
 **Running tests.** Each app's suite must be run as a **separate**
 pytest invocation — `pytest backend/common/tests`,
@@ -279,7 +281,7 @@ at the top level of `<script setup>`
 |--------|-----------|
 | `machine_config/<name>/hardware.json` + generated `machine.ini` (see § 7) | Frontend reads the generated INI/hardware.json to display axis counts, limits, capabilities. Backend `backend/common/HardwareConfigService.py` (via `backend/common/models/machineconfig/{hardware_json_models.py,linuxcnc_models.py}`) parses the same files. |
 | `frontend/src/config/gcodes.ts` | Every `.vue` component / Pinia action that emits G-code. Helpers like `generateSetOffset(axis, value)` keep MDI strings out of components. |
-| `backend/{machine,system}/models/<id>_settings.py` | Pydantic defaults for module settings. Each app's own `main.py:_MODULE_DOMAINS` builds a `SettingsStore` from each defaults instance and falls back to it on read — a module id is owned by exactly one app (§ 4), never both. |
+| `backend/system/routers/ui_settings.py` | Central UI settings API (`/api/v1/settings`); see `.agent/contracts/settings-module.md`. |
 
 ## 4. Backend module mount table
 
@@ -350,7 +352,7 @@ share the same contract:
 | Generated OpenAPI client | `frontend/generated/api/` (gitignored; regenerated from both apps' merged spec by `frontend/scripts/generate-api.mjs` + `merge-openapi.mjs`, see `§ 1.4`) |
 | Backend module contract | `.agent/contracts/backend-router.md` (per-domain routers, one table per app) |
 | Settings contract | `.agent/contracts/settings-module.md` |
-| Settings persistence | `backend/common/core/settings_store.py` (atomic write per module; one `SettingsStore` instance per module id, owned by exactly one app) |
+| Settings persistence | `backend/common/core/ui_settings_store.py` (single `backend/data/settings.json`, atomic write, system service only) + `ui_settings_reader.py` (uncached reads from other processes) |
 | Backend layered pattern | `.agent/context/BACKEND_LAYERS.md` |
 | Typing discipline (no bare `dict` / `any`) | `.agent/AGENT.md` |
 | Test scripts | `frontend/tests/*.mjs`, `backend/{common,machine,system}/tests/test_*.py` (run each app's suite separately — see `§ 1`) |

@@ -192,6 +192,7 @@ def test_snapshot_default_mode_returns_all_fields(
         "timestamp",
         "axis",
         "mcus",
+        "speed_override",
     }
 
 
@@ -217,6 +218,7 @@ def test_snapshot_mode_all_equivalent_to_default(
         "timestamp",
         "axis",
         "mcus",
+        "speed_override",
     }
 
 

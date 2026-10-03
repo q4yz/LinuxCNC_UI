@@ -908,28 +908,29 @@ def test_status_reports_crashed_child_exit_code(
 def _camera_app(tmp_data_root, clean_env) -> FastAPI:
     """Build a FastAPI app with the camera module wired up.
 
-    Wires the camera supervisor's settings store explicitly because
-    the registry no longer calls ``CameraModule.on_load`` (the
-    supervisor needs the per-module SettingsStore to read
-    ``default_device_id``).
+    Points the camera supervisor at a per-test UI settings file — the
+    same file the system service writes and the supervisor reads by
+    key (``camera.default_device_id`` / ``camera.ip_camera_url``).
     """
     from routers import camera as camera_router
-    from core.settings_store import SettingsStore
 
-    app = build_module_app("camera", tmp_data_root)
-    settings = SettingsStore(
-        module_id="camera",
-        data_root=tmp_data_root,
-        defaults=camera_router.__dict__.get("__defaults__", None)
-        if False
-        else None,
-    )
-    # Fall back to the canonical defaults class if None was passed.
-    if settings._defaults is None:
-        from models.camera_settings import CameraSettings
-        settings._defaults = CameraSettings()
-    camera_router.bind_settings_store(settings)
-    return app
+    camera_router._supervisor.use_settings_file(tmp_data_root / "settings.json")
+    return build_module_app("camera", tmp_data_root)
+
+
+def _set_camera_setting(tmp_data_root, key: str, value) -> None:
+    """Store a camera setting the way the system service does."""
+    from core.ui_settings_store import UiSettingsStore
+
+    UiSettingsStore(tmp_data_root / "settings.json").write_key(key, value)
+
+
+@pytest.fixture(autouse=True)
+def _reset_supervisor_settings_file():
+    yield
+    from routers import camera as camera_router
+
+    camera_router._supervisor.use_settings_file(None)
 
 
 def test_stream_endpoint_returns_503_with_message_when_ustreamer_missing(
@@ -940,11 +941,7 @@ def test_stream_endpoint_returns_503_with_message_when_ustreamer_missing(
 
     # Save a default device id so the endpoint does not 503 with
     # "no camera selected" — we want the dependency-missing message.
-    resp = client.put(
-        "/api/v1/modules/camera/settings",
-        json={"default_device_id": "/dev/video0"},
-    )
-    assert resp.status_code == 200
+    _set_camera_setting(tmp_data_root, "camera.default_device_id", "/dev/video0")
 
     resp = client.get("/api/v1/modules/camera/stream", follow_redirects=False)
     assert resp.status_code == 503
@@ -1008,11 +1005,7 @@ def test_stream_endpoint_proxies_usb_camera_via_default_device(
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    resp = client.put(
-        "/api/v1/modules/camera/settings",
-        json={"default_device_id": "/dev/video0"},
-    )
-    assert resp.status_code == 200
+    _set_camera_setting(tmp_data_root, "camera.default_device_id", "/dev/video0")
 
     resp = client.get("/api/v1/modules/camera/stream")
     assert resp.status_code == 200
@@ -1030,10 +1023,7 @@ def test_status_endpoint_returns_message_when_dependency_missing(
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    client.put(
-        "/api/v1/modules/camera/settings",
-        json={"default_device_id": "/dev/video0"},
-    )
+    _set_camera_setting(tmp_data_root, "camera.default_device_id", "/dev/video0")
 
     resp = client.get("/api/v1/modules/camera/status")
     assert resp.status_code == 200
@@ -1056,10 +1046,7 @@ def test_status_endpoint_omits_message_when_healthy(
     app = _camera_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    client.put(
-        "/api/v1/modules/camera/settings",
-        json={"default_device_id": "/dev/video0"},
-    )
+    _set_camera_setting(tmp_data_root, "camera.default_device_id", "/dev/video0")
 
     # Force the first spawn so the supervisor has a live child.
     router_module._supervisor.spawn_or_reuse("/dev/video0")

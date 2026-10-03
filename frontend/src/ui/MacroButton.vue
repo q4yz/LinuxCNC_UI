@@ -3,8 +3,8 @@
 //
 // Renders an operator-configurable button anywhere a UI surface wants
 // to expose a one-click macro dispatch. The host component looks up
-// the resolved config for its ``slot`` id (via the
-// ``useMacroButtonConfig`` composable) and passes it down; the
+// the resolved config for its ``slot`` id (``macroButtons.bySlot`` from
+// the ``machine.macro_buttons`` setting) and passes it down; the
 // component itself is fully presentational and knows nothing about
 // how the config was persisted.
 //
@@ -60,10 +60,10 @@ import BaseButton from "./BaseButton.vue";
 import Icon from "./Icon.vue";
 import { useMacrosStore, MACRO_KIND } from "../stores/macrosStore";
 import { useMachineStore } from "../stores/machine";
-import type { MacroButtonDescriptor } from "./useMacroButtonConfig";
+import type { MacroButtonDescriptor } from "./macroButtonTypes";
 
 const props = defineProps({
-  // Resolved config row from ``useMacroButtonConfig``. ``null``
+  // Resolved config row (``macroButtons.bySlot[slot]``). ``null``
   // renders nothing — the host decides which slot id feeds in.
   descriptor: {
     type: Object as PropType<MacroButtonDescriptor | null | undefined>,

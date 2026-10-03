@@ -3,6 +3,7 @@ import { ReadingSet } from "../temperature/ReadingSet";
 import { ToolList } from "../tools/ToolList";
 import { AxisState } from "../axis/AxisState";
 import { McuState } from "../mcu/McuState";
+import { SpeedOverride } from "../axis/SpeedOverride";
 
 export interface SnapshotParams {
   progress?: ProgramProgress;
@@ -10,6 +11,7 @@ export interface SnapshotParams {
   toolList?: ToolList;
   axes?: Record<string, AxisState>;
   mcus?: Record<string, McuState>;
+  speedOverride?: SpeedOverride;
   timestamp?: string | null;
 }
 
@@ -19,6 +21,7 @@ export class Snapshot {
   readonly toolList: ToolList;
   readonly axes: Record<string, AxisState>;
   readonly mcus: Record<string, McuState>;
+  readonly speedOverride: SpeedOverride;
   readonly timestamp: string | null;
 
   constructor(params: SnapshotParams = {}) {
@@ -27,6 +30,7 @@ export class Snapshot {
     this.toolList = params.toolList ?? new ToolList([]);
     this.axes = params.axes ?? {};
     this.mcus = params.mcus ?? {};
+    this.speedOverride = params.speedOverride ?? new SpeedOverride();
     this.timestamp = params.timestamp ?? null;
   }
 }

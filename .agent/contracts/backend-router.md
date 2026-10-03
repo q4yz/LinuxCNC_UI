@@ -17,10 +17,9 @@ the process-level picture.
 
 > **Modules are mandatory.** Every module that ships in
 > `/api/v1/modules/<id>/` is a hard dependency: its router is
-> `include_router`'d at boot, its `*Settings` Pydantic defaults
-> model is wired into a `SettingsStore`, and the four canonical
-> settings endpoints are mounted under
-> `/api/v1/modules/<id>/settings`. No module is "nullable" — there
+> `include_router`'d at boot. (UI settings are not per module: they
+> live in the system service's central store, see
+> [`settings-module.md`](settings-module.md).) No module is "nullable" — there
 > is no concept of a module that may be absent at runtime. A module
 > that is not ready to satisfy the full contract does not ship.
 
@@ -87,63 +86,21 @@ there.
 
 ## 3. Mount order in each app's `main.py`
 
-In **both** apps, the settings router is mounted **before** the
-module router so a module that exposes a bare `/{name}` path cannot
-shadow `/api/v1/modules/<id>/settings` — Starlette matches in
-registration order:
+Each app mounts its own domain routers from a plain `_MODULE_ROUTERS`
+list:
 
 ```python
-# backend/machine/main.py (sketch — backend/system/main.py mirrors
-# this with its own _MODULE_DOMAINS)
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    app.include_router(
-        module_settings_router.build_module_settings_router(
-            _settings_stores[_module_id],
-        ),
-        prefix=f"/api/v1/modules/{_module_id}/settings",
-        tags=[f"modules:{_module_id}:settings"],
-    )
+# backend/machine/main.py (backend/system/main.py mirrors it)
+for _router in _MODULE_ROUTERS:
     app.include_router(_router)
 ```
 
-The `SettingsStore` is built once at import time per module, from a
-`data_root` that is **per app** —
-`Path(__file__).resolve().parents[1] / "data"` resolves to
-`backend/machine/data/` inside `backend/machine/main.py` and
-`backend/system/data/` inside `backend/system/main.py`:
+## 4. Settings
 
-```python
-_settings_stores: dict[str, SettingsStore] = {}
-_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    _settings_stores[_module_id] = SettingsStore(
-        module_id=_module_id,
-        data_root=_DATA_ROOT,
-        defaults=_settings_cls(),
-    )
-```
-
-## 4. The settings contract
-
-File: [`backend/common/models/<id>_settings.py`](../../backend/common/models/)
-(shared location — both apps import their own modules' settings
-classes from here)
-
-A Pydantic `BaseModel` subclass that documents the canonical shape
-the [`SettingsStore`](../../backend/common/core/settings_store.py)
-will serve on `GET /api/v1/modules/<id>/settings`. New keys can be
-added in later releases without breaking existing deployments — the
-store merges the defaults underneath the persisted payload so a
-missing key is filled in from this schema's defaults on every read.
-
-```python
-# backend/common/models/tools_settings.py (sketch)
-class ToolsSettings(BaseModel):
-    confirm_spindle_start: bool = Field(default=False, description=...)
-    max_spindle_rpm: int = Field(default=12000, ge=0, le=200_000, description=...)
-```
-
-The full contract for the four canonical settings endpoints lives in
+Modules have no settings endpoints of their own. Every UI setting is a
+key in the central store owned by the system service
+(`/api/v1/settings`); a backend module that must react to one reads it
+by key with `core.ui_settings_reader.read_ui_setting`. Full contract:
 [`.agent/contracts/settings-module.md`](settings-module.md).
 
 ## 5. Lifespan hooks
@@ -221,4 +178,4 @@ A backend module is "ready" when:
 **See also:** [`.agent/context/BACKEND_LAYERS.md`](../context/BACKEND_LAYERS.md)
 for the canonical Router → Service → DTO → Mapper → Storage pattern;
 [`.agent/contracts/settings-module.md`](settings-module.md) for the
-four canonical settings endpoints and atomic-write contract.
+central UI settings store.

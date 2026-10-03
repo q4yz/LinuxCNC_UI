@@ -1,6 +1,7 @@
 <script setup lang="ts">
 
 import DebugPanel from "../components/DebugPanel.vue";
+import HalPinStatePanel from "../components/debug/HalPinStatePanel.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
 
 </script>
@@ -15,6 +16,10 @@ import MachineGate from "../components/machine/MachineGate.vue";
     <section class="space-y-6">
       <MachineGate label="Telemetry debug">
         <DebugPanel />
+      </MachineGate>
+      <!-- Pin list + values come from the machine backend (HAL). -->
+      <MachineGate label="HAL pins">
+        <HalPinStatePanel />
       </MachineGate>
     </section>
   </div>

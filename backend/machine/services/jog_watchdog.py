@@ -15,10 +15,8 @@ under ``uvicorn --reload``, :func:`start_watchdog` and
 Configuration
 -------------
 
-``WATCHDOG_TIMEOUT_MS`` is read from the persisted module
-settings once at start time. Operators wanting to tune the
-timeout must restart the backend — this is the documented v1
-behaviour.
+``WATCHDOG_TIMEOUT_MS`` is a fixed safety constant — not an operator
+setting. The frontend's jog keep-alive (250 ms) must stay well below it.
 """
 from __future__ import annotations
 
@@ -30,47 +28,14 @@ from typing import Optional
 logger = logging.getLogger("backend.axis_service")
 
 
-# Keep the historical constant available for callers and tests
-# while allowing the module settings store to override it at task
-# startup.
+# Fixed safety timeout: a continuous jog whose keep-alive stops for this
+# long is force-stopped.
 WATCHDOG_TIMEOUT_MS = 500
 WATCHDOG_TIMEOUT_S = WATCHDOG_TIMEOUT_MS / 1000.0
 DEFAULT_WATCHDOG_TIMEOUT_MS = WATCHDOG_TIMEOUT_MS
 
 
 _task: "Optional[asyncio.Task[None]]" = None
-# Cached timeout. ``_task`` is reset by ``start_watchdog`` so the
-# loop re-reads its settings on every restart, which is exactly
-# the v1 contract.
-_timeout_ms_cache: int = DEFAULT_WATCHDOG_TIMEOUT_MS
-
-
-def _read_timeout_ms(settings_store) -> int:
-    """Return the timeout configured in ``settings_store``.
-
-    Tolerates missing keys, raised exceptions, and an unset store
-    by falling back to :data:`DEFAULT_WATCHDOG_TIMEOUT_MS`.
-    Operators who store a value outside the documented bounds
-    (``ge=100``, ``le=5000`` per :class:`backend.models.axis_settings.MachineSettings`)
-    are clamped here.
-    """
-    fallback = DEFAULT_WATCHDOG_TIMEOUT_MS
-    if settings_store is None:
-        return fallback
-    try:
-        raw = settings_store.read_key("jog_watchdog_timeout_ms")
-    except Exception as exc:  # noqa: BLE001 - defensive: settings may be missing
-        logger.debug("watchdog: settings read failed (%s); using default", exc)
-        return fallback
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return fallback
-    if value < 100 or value > 5000:
-        return fallback
-    return value
-
-
 async def _loop() -> None:
     """Body of the watchdog task.
 
@@ -122,22 +87,16 @@ async def _loop() -> None:
                 )
 
 
-def start_watchdog(settings_store=None) -> None:
+def start_watchdog() -> None:
     """Spawn the watchdog asyncio task.
 
     Idempotent: a second call while the previous task is still
-    running is a no-op. The ``settings_store`` argument is
-    optional; when omitted the watchdog uses
-    :data:`DEFAULT_WATCHDOG_TIMEOUT_MS`.
+    running is a no-op.
     """
-    global _task, _timeout_ms_cache, WATCHDOG_TIMEOUT_MS, WATCHDOG_TIMEOUT_S
+    global _task
 
     if _task is not None and not _task.done():
         return
-
-    _timeout_ms_cache = _read_timeout_ms(settings_store)
-    WATCHDOG_TIMEOUT_MS = _timeout_ms_cache
-    WATCHDOG_TIMEOUT_S = WATCHDOG_TIMEOUT_MS / 1000.0
 
     try:
         loop = asyncio.get_running_loop()
@@ -153,7 +112,7 @@ def start_watchdog(settings_store=None) -> None:
 
     _task = loop.create_task(_loop())
     logger.info(
-        "Jog safety watchdog started (timeout=%dms).", _timeout_ms_cache
+        "Jog safety watchdog started (timeout=%dms).", WATCHDOG_TIMEOUT_MS
     )
 
 

@@ -62,10 +62,13 @@ class _AxisSettingsCommand(BaseModel):
         le=5.0,
         description="Feed-rate override multiplier (1.0 = 100%, range 0.0-5.0)."
     )
+    # No hard-coded upper bound: the real ceiling is the machine's own
+    # (max axis velocity — the UI's slider top), and LinuxCNC clamps
+    # ``maxvel`` to [TRAJ] MAX_LINEAR_VELOCITY itself. A fixed 5000 used
+    # to 422 any machine faster than ~83 mm/s.
     absolute_speed_limit: int = Field(
         ...,
         ge=0,
-        le=5000,
         description="Absolute speed limit in mm/min (converted to machine units/second by the service)."
     )
 

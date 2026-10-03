@@ -2,7 +2,7 @@ from typing import Union, Dict, Optional
 
 from pydantic import BaseModel, Field
 
-from models.axis_model import AxisStateResponse
+from models.axis_model import AxisStateResponse, SpeedOverrideResponse
 from models.mcu_model import McuStateResponse
 from services.ProgramService import ProgramProgressResponse
 from models.temperature_response import TemperatureStateResponse
@@ -43,6 +43,13 @@ class BaseThreadSnapshotResponse(BaseModel):
             "id ('x', 'y', 'z', 'a', ...). Each entry lists the "
             "joint_numbers of every motor driving that axis."
         )
+    )
+    speed_override: Optional['SpeedOverrideResponse'] = Field(
+        default=None,
+        description=(
+            "Live feed override (fraction, 1.0 = 100 %) and absolute speed cap "
+            "(mm/s) as LinuxCNC applies them. Only in the base/all tiers."
+        ),
     )
     mcus: Optional[Dict[str, 'McuStateResponse']] = Field(
         default=None,

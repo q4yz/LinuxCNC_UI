@@ -13,7 +13,7 @@ Boot order
 ----------
 
 1. ``backend/common`` is pushed onto ``sys.path`` so the shared
-   library (settings store, domain file services, exceptions, …)
+   library (domain file services, exceptions, …)
    resolves no matter which working directory uvicorn was started
    from.
 2. ``FastAPI(...)`` is constructed.
@@ -21,8 +21,8 @@ Boot order
 4. The legacy flat routers (``BaseThreadRouter`` /
    ``ServoThreadRouter``) and the HAL layout router are mounted.
 5. The machine-owned per-domain routers are mounted under
-   ``/api/v1/modules/<id>`` with their canonical settings router,
-   plus the macros ``/start`` execution router.
+   ``/api/v1/modules/<id>``, plus the macros ``/start`` execution
+   router. (UI settings live in the system service.)
 6. The lifespan handler boots hardware preloads, starts the
    telemetry loop, and (when the ``jog_watchdog`` package was
    preserved) starts the watchdog.
@@ -43,8 +43,6 @@ if str(_COMMON_DIR) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.settings_store import SettingsStore
-import module_settings_router
 from dtos.pins.HalPin import HalPin
 from hardware import HAS_HAL
 from hardware.mock.LinuxCNCMock import mock_system
@@ -73,13 +71,6 @@ from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
 from services.ConsoleLogger import get_console_logger
 
-# Machine-owned settings models (one file per domain).
-from models.axis_settings import MachineSettings as AxisSettings
-from models.camera_settings import CameraSettings
-from models.program_settings import ProgramSettings
-from models.state_settings import StateSettings
-from models.temperature_settings import TemperatureSettings
-from models.tools_settings import ToolsSettings
 
 
 # Configure global logging
@@ -87,18 +78,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.machine.main")
 
 
-# Per-domain settings models — machine-owned module ids only. The
-# ``machineconfig`` and ``macros`` settings stores live in the system
-# service; each store is owned by exactly one process so the
-# in-memory ``SettingsStore`` cache can never serve stale data across
-# services. Each tuple is ``(module_id, settings_class, router)``.
-_MODULE_DOMAINS = [
-    ("axis", AxisSettings, axis_router.router),
-    ("machine_state", StateSettings, state_router.router),
-    ("program", ProgramSettings, program_router.router),
-    ("temperature", TemperatureSettings, temperature_router.router),
-    ("tools", ToolsSettings, tools_router.router),
-    ("camera", CameraSettings, camera_router.router),
+# Machine-owned per-domain routers (``/api/v1/modules/<id>``).
+_MODULE_ROUTERS = [
+    axis_router.router,
+    state_router.router,
+    program_router.router,
+    temperature_router.router,
+    tools_router.router,
+    camera_router.router,
 ]
 
 
@@ -145,9 +132,7 @@ async def lifespan(app: FastAPI):
     )
 
     # Per-domain lifecycle hooks.
-    reseed_temperature_defaults()
-    start_watchdog_if_configured()
-    bind_camera_settings_store()
+    start_watchdog_if_available()
 
     # Probe OpenAPI schema generation now that every router is
     # mounted. A regression that triggers a silent partial
@@ -178,36 +163,13 @@ async def lifespan(app: FastAPI):
     camera_router.stop_manager()
 
 
-def start_watchdog_if_configured() -> None:
-    """Start the jog safety watchdog if ``axis_settings`` has a store."""
+def start_watchdog_if_available() -> None:
+    """Start the jog safety watchdog (fixed timeout, not a setting)."""
     try:
         from services.jog_watchdog import start_watchdog
     except ImportError:  # pragma: no cover - watchdog is optional
         return
-
-    store = _settings_stores.get("axis")
-    if store is not None:
-        start_watchdog(store)
-
-
-def reseed_temperature_defaults() -> None:
-    """Re-seed the temperature settings defaults with sensor colours."""
-    from models.temperature_settings import seed_colors
-    from services.temperature_config_mapper import get_temperature_sensors
-
-    sensor_ids = [
-        str(sensor["id"])
-        for sensor in get_temperature_sensors()
-        if sensor.get("id")
-    ]
-    store = _settings_stores.get("temperature")
-    if store is None:
-        return
-    # Replace the seeded defaults with a freshly-built instance so
-    # the next read returns the active sensor palette.
-    store._defaults = TemperatureSettings(
-        sensor_colors=seed_colors(sensor_ids),
-    )
+    start_watchdog()
 
 
 def stop_watchdog_if_running() -> None:
@@ -220,17 +182,6 @@ def stop_watchdog_if_running() -> None:
         stop_watchdog()
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("jog_watchdog.stop_watchdog raised %s", exc)
-
-
-def bind_camera_settings_store() -> None:
-    """Wire the camera supervisor's SettingsStore."""
-    store = _settings_stores.get("camera")
-    if store is None:
-        return
-    try:
-        camera_router.bind_settings_store(store)
-    except Exception as exc:  # noqa: BLE001 - defensive
-        logger.warning("camera.bind_settings_store raised %s", exc)
 
 
 # Initialise FastAPI app
@@ -256,25 +207,6 @@ app.add_middleware(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Per-domain settings stores (one per id)                                     #
-# --------------------------------------------------------------------------- #
-#
-# Built once at module import time so the lifespan manager can hand the
-# same instance to the watchdog / camera supervisor. The same dict is
-# re-used in the router-include loop below.
-
-_settings_stores: dict[str, SettingsStore] = {}
-_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
-
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    _settings_stores[_module_id] = SettingsStore(
-        module_id=_module_id,
-        data_root=_DATA_ROOT,
-        defaults=_settings_cls(),
-    )
-
-
 # Mount the two legacy flat routers.
 app.include_router(BaseThreadRouter.router)
 app.include_router(ServoThreadRouter.router)
@@ -283,19 +215,10 @@ app.include_router(ServoThreadRouter.router)
 app.include_router(hal_router.router)
 
 
-# Mount the machine-owned per-domain routers and their canonical
-# settings surfaces. The settings router is mounted FIRST so a module
-# that exposes a bare ``/{name}`` path cannot shadow
-# ``/api/v1/modules/<id>/settings`` — Starlette matches routes in
-# registration order.
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    app.include_router(
-        module_settings_router.build_module_settings_router(
-            _settings_stores[_module_id],
-        ),
-        prefix=f"/api/v1/modules/{_module_id}/settings",
-        tags=[f"modules:{_module_id}:settings"],
-    )
+# Mount the machine-owned per-domain routers. UI settings are not
+# served here: they live in the system service (``/api/v1/settings``)
+# so they stay available while this backend is offline.
+for _router in _MODULE_ROUTERS:
     app.include_router(_router)
 
 # Macros execution (the CRUD half lives in the system service).

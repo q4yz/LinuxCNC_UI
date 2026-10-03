@@ -31,17 +31,14 @@ if str(_COMMON_DIR) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.settings_store import SettingsStore
-import module_settings_router
 from routers import (
     FilesRouter,
     SystemRouter,
     machine_lifecycle as machine_lifecycle_router,
     machineconfig as machineconfig_router,
     macros as macros_router,
+    ui_settings as ui_settings_router,
 )
-from models.machineconfig_settings import MachineConfigSettings
-from models.macros_settings import MacrosSettings
 
 
 # Configure global logging
@@ -49,14 +46,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.system.main")
 
 
-# System-owned settings domains — each settings store is owned by
-# exactly one process (the machine-owned stores live in the machine
-# backend) so the in-memory ``SettingsStore`` cache can never serve
-# stale data across services. Each tuple is
-# ``(module_id, settings_class, router)``.
-_MODULE_DOMAINS = [
-    ("machineconfig", MachineConfigSettings, machineconfig_router.router),
-    ("macros", MacrosSettings, macros_router.router),
+# System-owned per-domain routers (``/api/v1/modules/<id>``).
+_MODULE_ROUTERS = [
+    machineconfig_router.router,
+    macros_router.router,
 ]
 
 
@@ -128,41 +121,19 @@ app.add_middleware(
 register_machineconfig_exception_handlers(app)
 
 
-# --------------------------------------------------------------------------- #
-# Per-domain settings stores (one per id)                                     #
-# --------------------------------------------------------------------------- #
-
-_settings_stores: dict[str, SettingsStore] = {}
-_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
-
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    _settings_stores[_module_id] = SettingsStore(
-        module_id=_module_id,
-        data_root=_DATA_ROOT,
-        defaults=_settings_cls(),
-    )
-
-
 # System surface: version / update / machine lifecycle.
 app.include_router(SystemRouter.router)
+
+# Central UI settings (single settings.json) — lives here so it stays
+# available while the machine backend is offline.
+app.include_router(ui_settings_router.router)
 app.include_router(machine_lifecycle_router.router)
 
 # Program file uploads (nc_files/).
 app.include_router(FilesRouter.router)
 
-# Per-domain routers with their canonical settings surfaces. The
-# settings router is mounted FIRST so a module that exposes a bare
-# ``/{name}`` path (the macros module) cannot shadow
-# ``/api/v1/modules/<id>/settings`` — Starlette matches routes in
-# registration order.
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    app.include_router(
-        module_settings_router.build_module_settings_router(
-            _settings_stores[_module_id],
-        ),
-        prefix=f"/api/v1/modules/{_module_id}/settings",
-        tags=[f"modules:{_module_id}:settings"],
-    )
+# Per-domain routers.
+for _router in _MODULE_ROUTERS:
     app.include_router(_router)
 
 

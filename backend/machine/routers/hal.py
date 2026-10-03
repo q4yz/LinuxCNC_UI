@@ -19,6 +19,7 @@ anything from this module.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -28,6 +29,7 @@ from models.hal import (
     HalFileSaveRequest,
     HalLayoutResponse,
     HalPinResource,
+    HalPinStatesResponse,
     HalSignalResource,
 )
 from services import hal_signal_file
@@ -115,6 +117,21 @@ def _build_file_layout(file: Optional[str]) -> HalLayoutResponse:
 )
 def get_layout(file: Optional[str] = None) -> HalLayoutResponse:
     return _build_file_layout(file)
+
+
+@router.get(
+    "/pins",
+    response_model=HalPinStatesResponse,
+    summary="Read every HAL pin with its current value",
+    description=(
+        "A fresh read of all pins and their values (one `halcmd show pin`), "
+        "for the debug view. Not cached and not live — call again to refresh."
+    ),
+    operation_id="getHalPinStates",
+)
+def get_pin_states() -> HalPinStatesResponse:
+    read_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return HalPinStatesResponse(pins=get_hal_pin_signal_service().read_pin_states(), read_at=read_at)
 
 
 @router.put(

@@ -19,6 +19,11 @@ NC_FILES_DIR = _PROJECT_ROOT / "nc_files"
 M_CODES_DIR = MACHINE_CONFIG_DIR / "m_codes"
 MACROS_DIR = _PROJECT_ROOT / "macros"
 
+#: The single UI settings document (flat ``{key: value}``). Written only
+#: by the system service (``core.ui_settings_store``); other processes
+#: read it by key via ``core.ui_settings_reader``.
+UI_SETTINGS_FILE = _BACKEND_ROOT / "data" / "settings.json"
+
 #: Name of the persisted default-machine pointer file, sibling of
 #: ``machines/`` (see ``system.services.MachineLifecycleService``,
 #: which is the only writer — this module only ever reads it).

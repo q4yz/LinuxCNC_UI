@@ -8,6 +8,7 @@
 import { HalService } from "../../generated/api/services/HalService";
 import type { HalFileSaveRequest } from "../../generated/api/models/HalFileSaveRequest";
 import type { HalLayoutResponse } from "../../generated/api/models/HalLayoutResponse";
+import type { HalPinStatesResponse } from "../../generated/api/models/HalPinStatesResponse";
 
 export class HalVisualService {
     /**
@@ -42,6 +43,20 @@ export class HalVisualService {
             return await HalService.saveLayoutApiV1HalLayoutPut(file, { signals });
         } catch (err: unknown) {
             console.error("[HalVisualService] Failed to save HAL layout", err);
+            return null;
+        }
+    }
+
+    /**
+     * Every HAL pin with its current value, read fresh by the backend
+     * (`GET /api/v1/hal/pins`, uncached — unlike `fetchLayout`). Used by
+     * the debug view; call again to refresh. `null` on failure.
+     */
+    static async fetchPinStates(): Promise<HalPinStatesResponse | null> {
+        try {
+            return await HalService.getHalPinStates();
+        } catch (err: unknown) {
+            console.error("[HalVisualService] Failed to read HAL pin states", err);
             return null;
         }
     }

@@ -5,7 +5,7 @@ import {computed, ref} from "vue";
 import {generateSetOffset} from "../config/gcodes";
 import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
-import {createModuleSettings} from "../core/settings/createModuleSettings";
+import {defaultJogVelocity as defaultJogVelocitySetting} from "../settings/definitions/machine";
 import {servoThreadService} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
@@ -19,21 +19,12 @@ const AXIS_NAMES = ["X", "Y", "Z", "A", "B", "C", "U", "V", "W"];
 
 // Sentinel accepted by the backend ``/home`` endpoint to home all axes.
 const HOME_ALL: "all" = "all";
-const DEFAULT_JOG_VELOCITY = 500;
-const DEFAULT_KEEPALIVE_INTERVAL_MS = 250;
+// Jog keep-alive cadence. Not a user setting: it must stay well below
+// the backend's jog watchdog timeout (``jog_watchdog.WATCHDOG_TIMEOUT_S``,
+// 500 ms) or a held jog key stops the axis.
+const KEEPALIVE_INTERVAL_MS = 250;
 
-// The backend has no ``machine`` module — the per-axis machine
-// settings (``default_jog_velocity``, ``keepalive_interval_ms``,
-// ``jog_watchdog_timeout_ms``, ``estop_disables_power``) actually
-// live under the ``axis`` module. This mirrors the mount in
-// ``backend/main.py`` (``_MODULE_DOMAINS``) and the historical
-// note in ``MachineSettingsPanel.vue:18-26``: every other frontend
-// surface that touches these settings already passes ``"axis"``.
-// Earlier this constant was ``"machine"`` which produced a boot-time
-// 404 at ``/api/v1/modules/machine/settings`` and silently fell back
-// to the hard-coded defaults above.
-const MACHINE_ID = "axis";
-const STORE_ID = MACHINE_ID;
+const STORE_ID = "axis";
 
 /**
  * Canonical LinuxCNC axis letter identifiers. Used by the homing
@@ -52,8 +43,6 @@ export const Axis = {
   Z: "z",
 } as const;
 export type Axis = (typeof Axis)[keyof typeof Axis];
-
-const machineSettings = createModuleSettings(MACHINE_ID);
 
 export const useMachineStore = defineStore(STORE_ID, () => {
     // ──────────────────────────────────────────────────────────────── //
@@ -75,12 +64,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Module-private state                                               //
     // ──────────────────────────────────────────────────────────────── //
 
-    const defaultJogVelocity = ref(DEFAULT_JOG_VELOCITY);
-    // ``true`` only once ``defaultJogVelocity`` came from the backend.
-    // UI that must not show an assumed value (the jog slider) gates on it;
-    // the jog commands themselves keep the documented fallback.
-    const jogVelocitySynced = ref(false);
-    const keepaliveIntervalMs = ref(DEFAULT_KEEPALIVE_INTERVAL_MS);
+    // Central UI setting (``machine.default_jog_velocity``): its default
+    // until the stored value arrives — a UI preference, so that's fine.
+    const defaultJogVelocity = computed(() => defaultJogVelocitySetting.value ?? defaultJogVelocitySetting.defaultValue);
     const isUpdating = ref(false);
 
     // ──────────────────────────────────────────────────────────────── //
@@ -116,57 +102,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Lifecycle                                                          //
     // ──────────────────────────────────────────────────────────────── //
 
-    let settingsLoaded = false;
-    let settingsLoadPromise: Promise<void> | null = null;
-
-    async function refreshSettings(): Promise<void> {
-        // Idempotent: a second caller while the first load is in
-        // flight awaits the same promise so we never fire two
-        // HTTP round-trips for the same store instance.
-        if (settingsLoaded) return;
-        if (settingsLoadPromise) return settingsLoadPromise;
-        settingsLoadPromise = (async () => {
-            try {
-                const settings = await machineSettings.readAll();
-                if (settings && typeof settings === "object") {
-                    const velocity = Number(settings.default_jog_velocity);
-                    if (Number.isFinite(velocity) && velocity >= 1) {
-                        defaultJogVelocity.value = velocity;
-                        jogVelocitySynced.value = true;
-                    } else {
-                        useConsoleStore().warning(
-                            `Machine settings: default_jog_velocity missing or invalid (${String(settings.default_jog_velocity)}); jog speed stays unsynced`,
-                        );
-                    }
-
-                    const interval = Number(settings.keepalive_interval_ms);
-                    if (Number.isFinite(interval) && interval >= 50 && interval <= 2000) {
-                        keepaliveIntervalMs.value = interval;
-                    }
-                }
-            } catch (err) {
-                console.warn("Machine settings unavailable; using defaults", err);
-                useConsoleStore().error(
-                    `Machine settings unavailable (${describeError(err)}); jog speed stays unsynced`,
-                );
-            } finally {
-                settingsLoaded = true;
-            }
-        })();
-        return settingsLoadPromise;
-    }
-
-    // Eagerly kick off the settings load when the store is first
-    // instantiated so the first jog click does not have to await a
-    // round-trip before sending ``jog_axis``. Previously the await
-    // lived inside ``jogContinuous``, which created a race: a quick
-    // click-and-release let ``stopJog`` finish before
-    // ``jogContinuous`` ever reached the WebSocket, leaving a
-    // keep-alive interval running for a jog the operator already
-    // cancelled. Loading eagerly (fire-and-forget) closes that
-    // window — the values land before any operator input on every
-    // realistic boot.
-    void refreshSettings();
 
     // ──────────────────────────────────────────────────────────────── //
     // Hardware actions                                                   //
@@ -265,15 +200,9 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         const consoleStore = useConsoleStore();
         const axisName = AXIS_NAMES[axis];
         try {
-            // Settings are loaded eagerly on store creation; do not
-            // await here — the discrete jog would race against a
-            // subsequent ``stopJog`` if it ever had to wait on the
-            // HTTP round-trip. Fall back to the documented defaults
-            // (``DEFAULT_JOG_VELOCITY``) if the load is still in
-            // flight on the very first click.
-            const velocity = Number.isFinite(defaultJogVelocity.value)
-                ? defaultJogVelocity.value
-                : DEFAULT_JOG_VELOCITY;
+            // Never awaits a settings fetch — the setting serves its
+            // default until the stored value has arrived.
+            const velocity = defaultJogVelocity.value;
 
             consoleStore.debug(`Jogging ${axisName} axis ${distance}mm`);
 
@@ -290,24 +219,17 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     }
 
     async function jogContinuous(axis: number, velocity: number) {
-        // No await on ``refreshSettings`` here — see ``jog`` above.
-        // The keep-alive interval is set up synchronously inside
-        // ``servoThreadService.jogContinuous`` so a click-and-release
-        // that lands before the settings round-trip resolves still
-        // produces a paired ``jog_axis`` + ``jog_stop`` over the
-        // socket; awaiting would let the operator's ``stopJog``
-        // overtake the jog and leave the axis running on a zombie
-        // keep-alive timer.
+        // Nothing is awaited here: the keep-alive interval is set up
+        // synchronously inside ``servoThreadService.jogContinuous`` so a
+        // quick click-and-release still produces a paired ``jog_axis`` +
+        // ``jog_stop`` — awaiting would let ``stopJog`` overtake the jog
+        // and leave the axis running on a zombie keep-alive timer.
         const requestedVelocity = Number(velocity);
         const jogVelocity = Number.isFinite(requestedVelocity)
             ? requestedVelocity
             : defaultJogVelocity.value;
-        const intervalMs = Number.isFinite(keepaliveIntervalMs.value)
-            ? keepaliveIntervalMs.value
-            : DEFAULT_KEEPALIVE_INTERVAL_MS;
-
         // The service handles all the `setInterval` and logging logic!
-        servoThreadService.jogContinuous(axis, jogVelocity, intervalMs);
+        servoThreadService.jogContinuous(axis, jogVelocity, KEEPALIVE_INTERVAL_MS);
     }
 
     async function jogStop(axis: number) {
@@ -477,8 +399,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         connectionStatus,
         status,
         defaultJogVelocity,
-        jogVelocitySynced,
-        keepaliveIntervalMs,
         isUpdating,
         droX,
         droY,
@@ -491,7 +411,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         isPaused,
         isLoaded,
         printProgress,
-        refreshSettings,
         toggleEstop,
         activateEstop,
         resetMcus,

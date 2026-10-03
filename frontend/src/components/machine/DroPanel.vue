@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from 'vue'
+import {computed, ref} from 'vue'
 import {storeToRefs} from 'pinia'
 import {Axis, useMachineStore} from '../../stores/machine'
 import {useBaseThreadStore} from '../../stores/baseThread'
 import {WORK_COORDINATE_SYSTEMS} from '../../config/gcodes'
-import {useMacroButtonConfig, MacroButton} from '../../ui'
+import {MacroButton} from '../../ui'
+import {macroButtons} from '../../settings/definitions/machine'
 import BaseCard from "../../ui/BaseCard.vue";
 import {BaseButton} from "../../ui";
 import BaseInput from "../../ui/BaseInput.vue";
@@ -46,25 +47,11 @@ const allAxesHomed = computed(
         && homedAxisLetters.value.has(Axis.Z),
 )
 
-// Custom macro buttons (one slot per axis row). The shared
-// ``useMacroButtonConfig`` composable reads from the per-module
-// ``SettingsStore``; ``buttonsBySlot`` is a slot id → descriptor
-// lookup. ``MacroButton`` renders nothing when the matching row
-// is missing, disabled, or empty.
-//
-// The settings moduleId is ``"axis"`` (not ``manifest.id`` of
-// ``"machine"``) to match the backend's ``_MODULE_DOMAINS[0]``
-// mount under that id; the write surface
-// (``MachineSettingsPanel.vue``) uses the same id so both ends
-// of the read/write pair share ``<data_root>/modules/axis/settings.json``.
-const buttonConfig = useMacroButtonConfig('axis')
-const {buttonsBySlot} = buttonConfig
-
-onMounted(() => {
-  // Fire-and-forget; the composable handles missing keys by
-  // defaulting to ``[]``.
-  buttonConfig.refresh()
-})
+// Custom macro buttons (one slot per axis row) from the central
+// ``machine.macro_buttons`` UI setting — already loaded at app start.
+// ``MacroButton`` renders nothing when the matching row is missing,
+// disabled, or empty.
+const buttonsBySlot = computed(() => macroButtons.bySlot)
 
 // Set Position modal state
 const setPositionModal = ref<{visible: boolean; axis: number | null; axisName: string; value: string}>({visible: false, axis: null, axisName: '', value: ''})

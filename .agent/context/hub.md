@@ -33,7 +33,7 @@ LinuxCNC_UI/
 │   ├── HANDOFF.md             # Agent-maintained log + current technical-debt list (optional — see § 2.2)
 │   ├── contracts/              # Backend router + settings module contracts
 │   │   ├── backend-router.md  # Per-domain router contract, one per app
-│   │   └── settings-module.md # Per-module settings endpoints contract
+│   │   └── settings-module.md # Central UI settings contract
 │   └── doc/                   # Offline LinuxCNC reference docs
 │       └── linuxcnc_docs.htlm # Rendered reference (note the unusual .htlm extension — not a typo to "fix" blindly, check what generated it first)
 │
@@ -99,7 +99,7 @@ needs before editing any code.
 | [.agent/HANDOFF.md](.agent/HANDOFF.md) | When you want to know what previous agents have already tried, completed, or abandoned — **and** for the current technical-debt list (§ 2). Optional — if the file is missing, this entry silently skips. |
 | [.agent/STATE.md](.agent/STATE.md) | Operational details for specific domains (base-thread/servo-thread split, event bus contract, camera/macros gotchas) that are easy to re-break. |
 | [.agent/contracts/backend-router.md](.agent/contracts/backend-router.md) | When you are creating or modifying a backend per-domain router in either app. |
-| [.agent/contracts/settings-module.md](.agent/contracts/settings-module.md) | When you are touching the four canonical settings endpoints. |
+| [.agent/contracts/settings-module.md](.agent/contracts/settings-module.md) | When you add or read a UI setting (central store, `frontend/src/settings`). |
 | [.agent/TEST.md](.agent/TEST.md) | When you need to know what the orchestrator will run to verify your edits. Do **not** run it yourself. |
 | [.agent/HANDOFF_TEMPLATE.md](.agent/HANDOFF_TEMPLATE.md) | When the orchestrator asks for a PR description. |
 | [README.md](README.md) | When the task is about the run/build/contribute experience for humans. |
