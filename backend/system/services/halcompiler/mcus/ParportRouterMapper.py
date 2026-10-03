@@ -64,7 +64,10 @@ class ParportRouterMapper:
         fragment = HalFragment()
         for request in requests:
             pin_id = ParportRouterMapper._normalize_pin_id(request.pin.pin_id)
-            invert = "1" if request.pin.invert else "0"
+            # A DIR pin's ``!`` is not inverted here: it is expressed as a
+            # negative ``[JOINT_N]SCALE`` in machine.ini (``AxisBuilder.
+            # _direction_sign``) — one mechanism for every board.
+            invert = "1" if request.pin.invert and request.role is not PinRole.DIR else "0"
 
             if request.role in _OUTPUT_ROLES:
                 fragment.nets.append(

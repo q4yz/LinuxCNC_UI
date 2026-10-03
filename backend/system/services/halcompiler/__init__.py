@@ -21,6 +21,7 @@ from .assembler import HalAssembler, UnsupportedMcuError, assemble_machine
 from .components.EstopWebguiMapper import EstopWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
+from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
 from .renderer import render_hal
@@ -41,7 +42,7 @@ def compile_machine_hal(payload: dict[str, object]) -> str:
 
 
 def render_webgui_connections(payload: dict[str, object]) -> str:
-    """Estop/Pause-&-Inspect/spindle/heater/fan UI bindings — `net`
+    """Estop/Pause-&-Inspect/spindle/heater/fan/MCU-reset UI bindings — `net`
     lines for a fresh ``webgui_connections.hal``, not ``machine.hal``.
 
     Used only to *seed* a machine's ``webgui_connections.hal`` the
@@ -105,6 +106,9 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             continue
         if fan.get("kind", "part") == "part" and not _fan_pin_is_shared(fan):
             lines.extend(FanWebguiMapper.to_lines(fan))
+    for mcu in payload.get("mcus", []) or []:
+        if isinstance(mcu, dict):
+            lines.extend(McuResetWebguiMapper.to_lines(mcu))
     if not lines:
         return ""
     return "\n".join(lines).rstrip("\n") + "\n"

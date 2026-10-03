@@ -137,3 +137,23 @@ def test_a_non_dict_tools_entry_is_skipped_not_crashed():
     }
     text = render_webgui_connections(payload)
     assert "# Spindle: spindle_digital" in text
+
+
+def test_resettable_remora_mcu_binds_webgui_reset_to_pru_reset():
+    """The UI's RESET MCU pulse (``webgui.<id>-reset``) drives the Remora
+    driver's ``PRU-reset`` input."""
+    payload = {"mcus": [{"id": "mcu", "connection": "remora-spi", "reset_pin": "PC15"}]}
+    text = render_webgui_connections(payload)
+    assert "net mcu-reset webgui.mcu-reset => remora.PRU-reset" in text
+
+
+def test_mcu_without_reset_pin_or_not_remora_gets_no_reset_binding():
+    """Only MCUs the runtime registers a reset pin for — netting a
+    ``webgui.*`` pin that doesn't exist is a HAL load error."""
+    payload = {
+        "mcus": [
+            {"id": "mcu", "connection": "remora-spi"},
+            {"id": "par0", "connection": "parallelport", "reset_pin": "x"},
+        ]
+    }
+    assert "PRU-reset" not in render_webgui_connections(payload)

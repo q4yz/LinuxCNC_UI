@@ -20,21 +20,30 @@ class McuMapper:
         """``webgui.<id>-reset`` (without the ``webgui.`` component prefix)."""
         return f"{mcu_id}-reset"
 
+    @staticmethod
+    def is_resettable(data: Dict[str, Any]) -> bool:
+        """A Remora MCU that declared a ``reset_pin`` — the one rule both
+        the runtime (this mapper) and the HAL compiler's
+        ``webgui_connections.hal`` binding use."""
+        return (
+            bool(data.get("id"))
+            and str(data.get("connection", "")) in REMORA_CONNECTIONS
+            and bool(data.get("reset_pin"))
+        )
+
     @classmethod
     def from_dict_to_McuPins(cls, data: Dict[str, Any]) -> McuPins:
         """Build one MCU's runtime surface.
 
         Only a Remora MCU that declared a ``reset_pin`` gets a real
         ``webgui.<id>-reset`` pin — ``ReadWriteDynamicHalPin`` (HAL_OUT),
-        driven by webgui and pulsed by ``McuService.reset_mcus``. Wiring
-        that pin to the board in ``machine.hal`` is the HAL compiler's
-        job (not done yet), so for now it is a registered but
-        unconnected HAL pin.
+        driven by webgui and pulsed by ``McuService.reset_mcus``. It is
+        wired to the board in ``webgui_connections.hal``
+        (``McuResetWebguiMapper``: ``=> remora.PRU-reset``).
         """
         mcu_id = str(data.get("id", ""))
         connection = str(data.get("connection", ""))
-        resettable = bool(mcu_id) and connection in REMORA_CONNECTIONS and bool(data.get("reset_pin"))
-        if not resettable:
+        if not cls.is_resettable(data):
             return McuPins(id=mcu_id, connection=connection)
         return McuPins(
             id=mcu_id,

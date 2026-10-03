@@ -228,6 +228,8 @@ def render_ini_template(
         "[RS274NGC]",
         "PARAMETER_FILE = linuxcnc.var",
         f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
+        # ``o<name> call`` (macros / probing cycles) looks subroutines up here.
+        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}",
         "",
         "[EMCMOT]",
         "EMCMOT = motmod",

@@ -110,8 +110,12 @@ setp parport.<mcu_index>.pin-<pin_id>-out-invert <invert ? 1 : 0>
 ```hal
 # Auto-Routed: <joints.id> dir -> <mcu_id> pin <pin_id>
 net <joints.id>-dir => parport.<mcu_index>.pin-<pin_id>-out
-setp parport.<mcu_index>.pin-<pin_id>-out-invert <invert ? 1 : 0>
+setp parport.<mcu_index>.pin-<pin_id>-out-invert 0
 ```
+
+Always `0`: an inverted `dir_pin` (`!par0:09`) is expressed as a negative
+`[JOINT_N]SCALE` in `machine.ini` instead (`AxisBuilder._direction_sign`)
+— the same mechanism on every board.
 
 ### `enable_pin` → output
 

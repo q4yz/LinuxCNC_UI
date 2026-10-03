@@ -115,9 +115,13 @@ def test_addf_thread_assignment_and_order_match(fragment):
     ]
 
 
+# The reference machine's dir pins 09/03/05 are inverted (`!par0:09`).
+# That inversion now lives in a negative ``[JOINT_N]SCALE`` in
+# machine.ini (``AxisBuilder._direction_sign``), not in parport's
+# ``-out-invert`` — so every step/dir pin here is ``invert 0``.
 @pytest.mark.parametrize(
     "pin,expected_invert",
-    [("08", "0"), ("09", "1"), ("02", "0"), ("03", "1"), ("04", "0"), ("05", "1"), ("06", "0"), ("07", "0")],
+    [("08", "0"), ("09", "0"), ("02", "0"), ("03", "0"), ("04", "0"), ("05", "0"), ("06", "0"), ("07", "0")],
 )
 def test_invert_flags_match_the_reference_machine(fragment, pin, expected_invert):
     line = f"setp parport.0.pin-{pin}-out-invert {expected_invert}"

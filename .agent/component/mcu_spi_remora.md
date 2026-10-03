@@ -194,10 +194,11 @@ button (`PowerOn.vue`) whenever any MCU is resettable.
 `POST /api/v1/modules/mcu/reset` pulses every resettable MCU's pin
 True → False (50 ms, same as the E-stop pulse).
 
-**Open gap:** nothing nets `webgui.<mcu_id>-reset` yet — the HAL
-compiler doesn't emit a reset chain, so today the pulse lands on an
-unconnected pin. Deliberately out of scope until the board-side
-target of the pulse is confirmed against real hardware.
+**Wiring:** `webgui_connections.hal` gets
+`net <mcu_id>-reset webgui.<mcu_id>-reset => remora.PRU-reset` for every
+resettable MCU (`McuResetWebguiMapper`, using the runtime's own
+`McuMapper.is_resettable` so the compiler never nets a pin the runtime
+doesn't register).
 
 ### Joint pins → `config.txt`, nothing in HAL
 

@@ -53,13 +53,19 @@ def test_step_gets_reset_flag_dir_and_enable_do_not():
 
 
 def test_invert_flag_is_carried_through_to_out_invert():
-    requests = [_request("s-dir", PinRole.DIR, "!03")]
-    fragment = ParportRouterMapper.route(requests)
-    assert "setp parport.0.pin-03-out-invert 1" in fragment.setp
+    # Non-DIR outputs keep using parport's own inversion.
+    fragment = ParportRouterMapper.route([_request("s-en", PinRole.ENABLE, "!17")])
+    assert "setp parport.0.pin-17-out-invert 1" in fragment.setp
 
-    requests = [_request("s-dir", PinRole.DIR, "07")]
-    fragment = ParportRouterMapper.route(requests)
-    assert "setp parport.0.pin-07-out-invert 0" in fragment.setp
+    fragment = ParportRouterMapper.route([_request("s-en", PinRole.ENABLE, "16")])
+    assert "setp parport.0.pin-16-out-invert 0" in fragment.setp
+
+
+def test_inverted_dir_pin_is_not_inverted_in_hal():
+    """A DIR pin's ``!`` becomes a negative ``[JOINT_N]SCALE`` in
+    machine.ini instead — one mechanism for every board."""
+    fragment = ParportRouterMapper.route([_request("s-dir", PinRole.DIR, "!03")])
+    assert "setp parport.0.pin-03-out-invert 0" in fragment.setp
 
 
 def test_output_roles_get_a_consumer_net():

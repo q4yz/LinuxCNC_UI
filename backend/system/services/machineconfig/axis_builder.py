@@ -23,6 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable
 
+from mappers.machineconfig import PinStringMapper
 from models.machineconfig import (
     AXIS_ORDER,
     Axis,
@@ -292,7 +293,9 @@ class AxisBuilder:
 
         min_limit = _get_float(stepper, "position_min", fallback_min)
         max_limit = _get_float(stepper, "position_max", fallback_max)
-        homing_speed = _get_float(stepper, "homing_speed", fallback_search_vel)
+        # Magnitude only — the direction is decided below from which end
+        # of travel the switch sits at (a fallback value may already be signed).
+        homing_speed = abs(_get_float(stepper, "homing_speed", fallback_search_vel))
         position_endstop = (
             float(stepper.position_endstop)
             if stepper.position_endstop is not None
@@ -315,16 +318,48 @@ class AxisBuilder:
             stepgen_maxaccel=joint_accel * 1.1,
             home_position=self._home_position_with_backoff(position_endstop, min_limit, max_limit),
             home_offset=position_endstop,
-            home_search_vel=homing_speed or 10.0,
-            home_latch_vel=homing_speed or 10.0,
+            home_search_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
+            home_latch_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
             home_sequence=_HOME_SEQUENCE_BY_AXIS.get(letter, 0),
-            scale=stepgen_scale(stepper),
+            scale=stepgen_scale(stepper) * self._direction_sign(stepper),
             ferror=2.0 if letter != "Y" else 9.0,
             min_ferror=1.0 if letter != "Y" else 5.0,
             step_pin=stepper.step_pin,
             dir_pin=stepper.dir_pin,
             enable_pin=stepper.enable_pin,
         )
+
+    @staticmethod
+    def _toward_switch(speed: float, position_endstop: float, min_limit: float, max_limit: float) -> float:
+        """Signed ``HOME_SEARCH_VEL``/``HOME_LATCH_VEL``: LinuxCNC homes in
+        the direction of the velocity's sign, so a switch at the *min* end
+        of travel needs a negative velocity, one at the max end a positive
+        one. Same min/max split as :meth:`_home_position_with_backoff`. A
+        joint without a real travel range (extruder) keeps it positive.
+        Latch uses the same sign as search: back off, then re-approach the
+        switch slowly.
+        """
+        if max_limit <= min_limit:
+            return speed
+        midpoint = (min_limit + max_limit) / 2
+        return speed if position_endstop >= midpoint else -speed
+
+    @staticmethod
+    def _direction_sign(stepper: Stepper) -> float:
+        """``-1`` when ``dir_pin`` is inverted (``!PF12`` / ``!par0:09``).
+
+        The inversion is expressed as a negative ``SCALE`` in
+        ``machine.ini`` instead of hardware-specific pin inversion — it
+        works identically on every board (Remora's firmware cannot invert
+        a pin at all, parport's ``-out-invert`` is no longer used for DIR).
+        """
+        raw = getattr(stepper, "dir_pin", None)
+        if not raw:
+            return 1.0
+        try:
+            return -1.0 if PinStringMapper.from_string(str(raw)).invert else 1.0
+        except ValueError:
+            return 1.0
 
     @staticmethod
     def _home_position_with_backoff(

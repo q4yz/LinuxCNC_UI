@@ -7,7 +7,7 @@
 ```cfg
 [stepper_<axis_id>]
 step_pin: string // The hardware pin (may include ! for invert)
-dir_pin: string // The hardware pin (may include ! for invert)
+dir_pin: string // The hardware pin (may include ! for invert — becomes a negative SCALE in machine.ini, on every board)
 enable_pin: string // The hardware pin (may include ! for invert)
 microsteps: integer // Microstepping multiplier (e.g., 16)
 rotation_distance: float // Millimeters traveled per full motor revolution
