@@ -398,11 +398,15 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
 
     # 3. Listing reflects the new macro.
     resp = client.get("/api/v1/modules/macros/")
-    assert resp.json() == {
-        "macros": [
-            {"name": "spindle_warmup", "kind": "macro", "size_bytes": 18}
-        ]
-    }
+    rows = resp.json()["macros"]
+    assert len(rows) == 1
+    assert rows[0]["macro_name"] == "spindle_warmup"
+    assert rows[0]["macro_kind"] == "macro"
+    # The shared file record: on-disk name, size and change date.
+    assert rows[0]["name"] == "spindle_warmup.macro"
+    assert rows[0]["kind"] == "file"
+    assert rows[0]["size_bytes"] == 18
+    assert rows[0]["modified"]
 
     # 4. Read it back — body matches what we wrote.
     resp = client.get("/api/v1/modules/macros/spindle_warmup")
@@ -428,7 +432,7 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
     # 7. Add a second macro — listing is sorted.
     client.put("/api/v1/modules/macros/alpha", content="alpha payload")
     resp = client.get("/api/v1/modules/macros/")
-    names = [entry["name"] for entry in resp.json()["macros"]]
+    names = [entry["macro_name"] for entry in resp.json()["macros"]]
     assert names == ["alpha", "spindle_warmup"]
 
     # 8. Delete the second macro — listing shrinks, response is 204.
@@ -437,7 +441,7 @@ def test_full_crud_lifecycle(tmp_data_root, clean_env, isolated_storage):
 
     # 9. Listing reflects the deletion.
     resp = client.get("/api/v1/modules/macros/")
-    names = [entry["name"] for entry in resp.json()["macros"]]
+    names = [entry["macro_name"] for entry in resp.json()["macros"]]
     assert names == ["alpha"]  # only the second macro remains
 
     # 10. Subsequent reads / deletes of the removed macro are 404.
@@ -501,8 +505,9 @@ class TestMacrosNGCKind:
         assert resp.status_code == 200
         rows = resp.json()["macros"]
         assert len(rows) == 1
-        assert rows[0]["name"] == "coolant"
-        assert rows[0]["kind"] == "ngc"
+        assert rows[0]["macro_name"] == "coolant"
+        assert rows[0]["macro_kind"] == "ngc"
+        assert rows[0]["name"] == "coolant.ngc"
 
         # Listing under ``kind=macro`` returns nothing — the file
         # is .ngc, not .macro, so the two extensions are isolated.
@@ -524,11 +529,11 @@ class TestMacrosNGCKind:
         )
 
         resp = client.get("/api/v1/modules/macros/?kind=ngc")
-        ngc_names = [row["name"] for row in resp.json()["macros"]]
+        ngc_names = [row["macro_name"] for row in resp.json()["macros"]]
         assert ngc_names == ["coolant"]
 
         resp = client.get("/api/v1/modules/macros/?kind=macro")
-        macro_names = [row["name"] for row in resp.json()["macros"]]
+        macro_names = [row["macro_name"] for row in resp.json()["macros"]]
         assert macro_names == ["home_all"]
 
         # On disk: ``<root>/coolant.ngc`` and
@@ -577,8 +582,9 @@ class TestMacrosMCodeKind:
         resp = client.get("/api/v1/modules/macros/?kind=mcode")
         rows = resp.json()["macros"]
         assert len(rows) == 1
+        assert rows[0]["macro_name"] == "M101"
+        assert rows[0]["macro_kind"] == "mcode"
         assert rows[0]["name"] == "M101"
-        assert rows[0]["kind"] == "mcode"
 
     def test_out_of_range_name_returns_400(
         self, tmp_data_root, clean_env, isolated_storage, isolated_mcodes

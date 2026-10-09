@@ -77,7 +77,7 @@ test("MachinesExplorer: root-level folders get Start + Set main", () => {
   // Root-level gate: folders without a parent are machine folders.
   assert.match(
     text,
-    /function isMachineFolder\(entry: DirectoryEntryModel\): boolean \{\s*return entry\.kind === "folder" && !entry\.parent;?\s*\}/,
+    /function isMachineFolder\(entry: FileEntry\): boolean \{\s*return entry\.kind === "folder" && !entry\.parent;?\s*\}/,
     "buttons must be gated to ROOT-level folders only",
   );
   assert.match(text, /v-if="isMachineFolder\(entry\)"/, "row must gate the lifecycle actions");

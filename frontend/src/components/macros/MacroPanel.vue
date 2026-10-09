@@ -32,6 +32,7 @@ import { useMachineStore as useFacadeStore } from "../../stores/stateFacade";
 import type { MacroEntry, MacroLastRunResult, MacroRunCounters } from "../../stores/macrosTypes";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 
 const store = useMacrosStore();
 const machine = useFacadeStore();
@@ -158,7 +159,7 @@ function formatResult(entry: MacroLastRunResult | null): string {
             </span>
           </div>
           <div class="text-xs text-gray-500">
-            {{ row.size_bytes }} bytes
+            {{ formatFileSize(row.file.sizeBytes) }} · {{ formatFileDate(row.file.modified) }}
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">

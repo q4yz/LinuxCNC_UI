@@ -2,6 +2,8 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+from models.FileModels import FileEntryResponse
+
 
 class StatusMessage(BaseModel):
     """Generic status + message response."""
@@ -10,41 +12,12 @@ class StatusMessage(BaseModel):
     message: str = Field(..., description="Human-readable confirmation")
 
 
-class DirectoryEntryModel(BaseModel):
-    """Single node in a directory listing.
-
-    Mirrors :class:`services.file_service.FileMetadata` but in the
-    Pydantic shape the frontend codegen can type-check.
-    """
-
-    name: str = Field(..., description="Basename of the entry")
-    path: str = Field(
-        ..., description="Forward-slash path relative to the root directory"
-    )
-    parent: Optional[str] = Field(
-        default=None,
-        description="Parent path relative to the root, or null at the top level",
-    )
-    kind: str = Field(..., description="'file' or 'folder'")
-    size_bytes: int = Field(default=0, description="File size in bytes (0 for folders)")
-    read_only: bool = Field(
-        default=False,
-        description="True when the POSIX write bits are cleared on this entry",
-    )
-    has_marker: bool = Field(
-        default=False,
-        description=(
-            "True when the file contains the active compiler's source marker "
-            "(e.g. '#Start'). Drives the inline 'Compile' button."
-        ),
-    )
-
 
 class DirectoryListing(BaseModel):
     """Flat listing of every file/folder under a root."""
 
     root: str = Field(..., description="'profiles' | 'staged' | 'active'")
-    entries: List[DirectoryEntryModel] = Field(default_factory=list)
+    entries: List[FileEntryResponse] = Field(default_factory=list)
 
 
 class ProfileContent(BaseModel):
@@ -60,24 +33,11 @@ class ProfileWriteRequest(BaseModel):
     content: str = Field(..., description="Raw text to overwrite the file with")
 
 
-class MCodeEntry(BaseModel):
-    """One row of ``GET /m-codes/list``.
-
-    Mirrors :class:`MacroListItem` so the frontend can re-use its
-    listing reducer. ``path`` is the bare ``M<num>`` token — the
-    filesystem path is implicit (the m-codes root resolved against
-    the project).
-    """
-
-    name: str = Field(..., description="Bare M-code token, e.g. M101")
-    kind: str = Field(default="mcode", description="Always 'mcode'.")
-    size_bytes: int = Field(..., description="On-disk byte size")
-
 
 class MCodeListResponse(BaseModel):
     """Response body of ``GET /m-codes/list``."""
 
-    mcodes: List[MCodeEntry] = Field(
+    mcodes: List[FileEntryResponse] = Field(
         default_factory=list,
         description="Sorted list of M-codes currently on disk.",
     )

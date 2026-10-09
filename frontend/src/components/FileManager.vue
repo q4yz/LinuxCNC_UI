@@ -1,22 +1,21 @@
 <script setup lang="ts">
 // File manager — G-code file list, upload, delete, load, edit.
-// All HTTP calls go through the generated OpenAPI client so the
-// paths, error mapping, and types stay in sync with the backend
-// schema. Routes the user to ``EditorView`` on Edit so the page
-// chrome (sidebar / header) stays visible while editing.
+// File calls go through ``filesFacade``, Load through
+// ``progressFacade``; rows are the shared ``FileEntry`` entity.
+// Upload is the shared ``FileDropZone`` (drag & drop or picker,
+// several files at once). Routes the user to ``EditorView`` on Edit
+// so the page chrome (sidebar / header) stays visible while editing.
 
-import {ref, computed, onMounted, watch} from 'vue'
+import {ref, shallowRef, computed, onMounted, watch} from 'vue'
 
-import {
-  ModulesProgramService,
-  ProgramFilesService,
-} from '../../generated/api/index.ts'
 import {useConsoleStore} from '../stores/console'
 import {openInEditor} from '../helpers/openInEditor'
-import {describeErrorOr} from '../core/error-format'
-import {ApiError} from '../../generated/api/core/ApiError'
-import type {FileInfo} from '../../generated/api/models/FileInfo'
-import {BaseButton} from '../ui/index.ts'
+import {describeErrorOr, errorStatus} from '../core/error-format'
+import {filesFacade} from '../facades/filesFacade'
+import {progressFacade} from '../facades/progressFacade'
+import type {FileEntry} from '../entities/files'
+import {formatFileDate as formatDate, formatFileSize as formatSize} from '../helpers/fileFormat'
+import {BaseButton, FileDropZone} from '../ui/index.ts'
 import {Icon} from "../ui";
 import { useFileThumbnails } from '../composables/useFileThumbnails'
 import { useMachineOnline } from '../composables/useMachineOnline'
@@ -27,15 +26,16 @@ import { ensureEmbeddedThumbnail } from '../helpers/gcodeThumbnail'
 
 const consoleStore = useConsoleStore()
 
-const files = ref<FileInfo[]>([])
+// ``shallowRef``: a deep ref would unwrap the entity's private fields.
+const files = shallowRef<FileEntry[]>([])
 const isUploading = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
+const ACCEPTED = '.ngc,.gcode,.nc'
 
 // Newest upload first — ``modified`` doubles as "uploaded at" since
 // nc_files are write-once (Upload creates them, Edit rewrites the
 // same timestamp forward, there's no separate "created" field).
 const sortedFiles = computed(() =>
-  [...files.value].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified))
+  files.value.filter((f) => f.isFile).sort((a, b) => b.modifiedMs - a.modifiedMs)
 )
 
 // Load only works while the machine service (:8000) is up — the
@@ -57,25 +57,25 @@ const loadBlockedTitle = 'Machine service is offline — start the machine to lo
 const { thumbnails, ensure } = useFileThumbnails()
 
 watch(files, (list) => {
-  for (const file of list) void ensure(file.filename)
+  for (const file of list) void ensure(file.name)
 })
 
-const previewFile = ref<FileInfo | null>(null)
+const previewFile = shallowRef<FileEntry | null>(null)
 const previewLoading = ref(false)
 const previewError = ref('')
 const previewSegments = ref<ParsedSegment[]>([])
 
-async function openPreview(file: FileInfo) {
+async function openPreview(file: FileEntry) {
   previewFile.value = file
   previewLoading.value = true
   previewError.value = ''
   previewSegments.value = []
-  void ensure(file.filename)
+  void ensure(file.name)
   try {
-    const text = await readFileContent(file.filename)
+    const text = await readFileContent(file.name)
     previewSegments.value = parseGcodeToolpath(text)
   } catch (error) {
-    previewError.value = `Failed to parse ${file.filename}: ${describeError(error)}`
+    previewError.value = `Failed to parse ${file.name}: ${describeError(error)}`
   } finally {
     previewLoading.value = false
   }
@@ -97,104 +97,93 @@ function closePreview() {
 const describeError = (error: unknown) => describeErrorOr(error, 'Unknown error');
 
 // ---- File management: list / upload / delete / read -------------- //
-//
-// Every call goes through ``ProgramFilesService`` (the OpenAPI-
-// generated client for the ``/api/v1/programs`` router — tag
-// ``Program Files``). ``ModulesProgramService`` stays for the
-// lifecycle calls (``runProgram`` etc.) that live on the program
-// module — different endpoint family, different service.
 
 async function fetchFiles() {
   try {
-    files.value = await ProgramFilesService.listFiles()
+    files.value = await filesFacade.listFiles()
   } catch (error) {
     consoleStore.error(`Failed to fetch files: ${describeError(error)}`)
   }
 }
 
 async function readFileContent(filename: string) {
-  // ``readFile`` throws ``ApiError`` on 404. Treat that as
-  // "brand-new file" so the editor mounts with empty content
-  // instead of blocking the user.
+  // ``readFile`` throws on 404. Treat that as "brand-new file" so
+  // the editor mounts with empty content instead of blocking the user.
   try {
-    return await ProgramFilesService.readFile(filename)
+    return await filesFacade.readFile(filename)
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return ''
+    if (errorStatus(error) === 404) return ''
     throw error
   }
 }
 
-async function handleUpload(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
+// Thumbnail embedding: if a file carries no slicer thumbnail, render
+// one from its toolpath (top-down, like the slicers do) and prepend
+// the standard '; thumbnail begin/end' comment block BEFORE storing —
+// so the preview icon renders everywhere. Files that already have one
+// are stored byte-for-byte. A ``File`` (not a plain ``Blob``!) is
+// uploaded: a nameless Blob makes the multipart part default to the
+// filename "blob". The ``File``'s ``name`` keeps the original name.
+async function withThumbnail(file: File): Promise<File> {
+  const rawText = await file.text()
+  const segments = parseGcodeToolpath(rawText)
+  const finalText = ensureEmbeddedThumbnail(rawText, segments)
+  return new File([finalText], file.name, { type: 'text/plain' })
+}
 
+// Several files at once: each is uploaded on its own; a failure is
+// reported for that file and the rest still go through.
+async function uploadFiles(selected: File[]) {
   isUploading.value = true
+  let uploaded = 0
   try {
-    // Thumbnail embedding: if the file carries no slicer thumbnail,
-    // render one from its toolpath (top-down, like the slicers do)
-    // and prepend the standard '; thumbnail begin/end' comment block
-    // BEFORE storing — so the preview icon renders everywhere. Files
-    // that already have one are stored byte-for-byte.
-    const rawText = await file.text()
-    const segments = parseGcodeToolpath(rawText)
-    const finalText = ensureEmbeddedThumbnail(rawText, segments)
-    // ``Body_uploadFile.file`` is typed ``string`` by the codegen
-    // but the request layer's ``isBlob`` check accepts ``Blob`` and
-    // ``File`` instances at runtime (``/^(Blob|File)$/`` on the
-    // constructor name) — cast through ``unknown`` so TypeScript is
-    // happy. A ``File`` (not a plain ``Blob``!) is required: a
-    // nameless Blob makes the multipart part default to the filename
-    // "blob", and the backend stores the file under that name. The
-    // ``File``'s ``name`` keeps the original filename intact.
-    const payload = new File([finalText], file.name, { type: 'text/plain' })
-    await ProgramFilesService.uploadFile({
-      file: payload as unknown as string
-    })
-    consoleStore.success(`Successfully uploaded ${file.name}`)
+    for (const file of selected) {
+      try {
+        const result = await filesFacade.uploadFile(file.name, await withThumbnail(file))
+        if (result.ok) uploaded++
+        else consoleStore.error(`Upload of ${file.name} failed: ${result.failureReason}`)
+      } catch (error) {
+        consoleStore.error(`Upload of ${file.name} failed: ${describeError(error)}`)
+      }
+    }
+    if (uploaded) consoleStore.success(`Uploaded ${uploaded} of ${selected.length} file(s)`)
     await fetchFiles()
-  } catch (error) {
-    consoleStore.error(`Upload failed: ${describeError(error)}`)
   } finally {
     isUploading.value = false
-    // Reset input so the same file can be uploaded again if needed
-    if (fileInput.value) fileInput.value.value = ''
   }
 }
 
-function triggerFileInput() {
-  if (fileInput.value) fileInput.value.click()
+function rejectFiles(rejected: File[]) {
+  consoleStore.error(`Not a G-code file (${ACCEPTED}): ${rejected.map((f) => f.name).join(', ')}`)
 }
 
 async function deleteFile(filename: string) {
   if (!confirm(`Are you sure you want to delete ${filename}?`)) return
 
-  try {
-    await ProgramFilesService.deleteFile(filename)
-    consoleStore.success(`Deleted file ${filename}`)
-    await fetchFiles()
-  } catch (error) {
-    consoleStore.error(`Failed to delete ${filename}: ${describeError(error)}`)
+  const result = await filesFacade.deleteFile(filename)
+  if (!result.ok) {
+    consoleStore.error(`Failed to delete ${filename}: ${result.failureReason}`)
+    return
   }
+  consoleStore.success(`Deleted file ${filename}`)
+  await fetchFiles()
 }
 
-// ---- Program lifecycle: load + run via ``ModulesProgramService`` -- //
+// ---- Program lifecycle: load via ``progressFacade`` -------------- //
 //
 // Lifecycle calls live on the program module (``/api/v1/modules/program``)
 // — different endpoint family than the file CRUD above, hence the
-// separate service. The button label is "Load" because it mirrors
+// separate facade. The button label is "Load" because it mirrors
 // LinuxCNC's ``program_open`` (the "load" step in the two-step
 // lifecycle); the operator still has to press Start in the
 // dashboard widget to begin execution.
 
 async function loadFile(filename: string) {
   if (!isMachineOnline.value) return
-  try {
-    consoleStore.command(`Loading file ${filename}...`)
-    await ModulesProgramService.loadProgram({filename})
-    consoleStore.success(`Loaded ${filename} — press Start to begin.`)
-  } catch (error) {
-    consoleStore.error(`Failed to load ${filename}: ${describeError(error)}`)
-  }
+  consoleStore.command(`Loading file ${filename}...`)
+  const result = await progressFacade.loadProgram(filename)
+  if (result.ok) consoleStore.success(`Loaded ${filename} — press Start to begin.`)
+  else consoleStore.error(`Failed to load ${filename}: ${result.failureReason}`)
 }
 
 // ---- Download -------------------------------------------------- //
@@ -234,18 +223,6 @@ async function editFile(filename: string) {
   await openInEditor({source: 'programs', name: filename})
 }
 
-function formatSize(bytes: number) {
-  if (bytes < 1024) return bytes + ' B'
-  else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'
-  else return (bytes / 1048576).toFixed(1) + ' MB'
-}
-
-function formatDate(iso: string) {
-  const parsed = new Date(iso)
-  if (Number.isNaN(parsed.getTime())) return '—'
-  return parsed.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'})
-}
-
 onMounted(() => {
   fetchFiles()
 })
@@ -254,7 +231,15 @@ onMounted(() => {
 <template>
   <!-- Full-page dedicated view: fill the parent container end-to-end
        instead of being a small dashboard card. -->
-  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden w-full h-full flex flex-col">
+  <FileDropZone
+      v-slot="{ openPicker }"
+      target="G-code files"
+      :accept="ACCEPTED"
+      :disabled="isUploading"
+      class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden w-full h-full flex flex-col"
+      @files="uploadFiles"
+      @rejected="rejectFiles"
+  >
     <!-- Header & Upload -->
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex  items-center shrink-0">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
@@ -262,18 +247,12 @@ onMounted(() => {
       </h2>
 
       <div>
-        <input
-            type="file"
-            ref="fileInput"
-            class="hidden"
-            accept=".ngc,.gcode,.nc"
-            @change="handleUpload"
-        />
         <BaseButton
             variant="primary"
             class="ml-4"
             :loading="isUploading"
-            @click="triggerFileInput"
+            data-test="file-upload"
+            @click="openPicker"
         >
           <span class="mr-1">⬆</span> {{ isUploading ? 'Uploading...' : 'Upload' }}
         </BaseButton>
@@ -295,43 +274,43 @@ onMounted(() => {
         <tbody>
         <tr
             v-for="file in sortedFiles"
-            :key="file.filename"
+            :key="file.name"
             class="border-b border-gray-700/50 hover:bg-gray-700/40 cursor-pointer"
             @click="openPreview(file)"
         >
           <td class="py-2 px-2">
             <img
-                v-if="thumbnails[file.filename]?.dataUrl"
-                :src="thumbnails[file.filename]?.dataUrl ?? ''"
-                :alt="`Preview of ${file.filename}`"
+                v-if="thumbnails[file.name]?.dataUrl"
+                :src="thumbnails[file.name]?.dataUrl ?? ''"
+                :alt="`Preview of ${file.name}`"
                 class="h-10 w-14 rounded border border-gray-600 object-contain bg-gray-900"
-                :data-test="`file-thumb-${file.filename}`"
+                :data-test="`file-thumb-${file.name}`"
             />
             <span
                 v-else
                 class="flex h-10 w-14 items-center justify-center rounded border border-gray-600 bg-gray-900 text-lg"
-                :data-test="`file-thumb-${file.filename}`"
+                :data-test="`file-thumb-${file.name}`"
                 title="No embedded thumbnail"
             >📄</span>
           </td>
-          <td class="py-2 px-2 font-mono">{{ file.filename }}</td>
-          <td class="py-2 px-2">{{ formatSize(file.size_bytes || 0) }}</td>
+          <td class="py-2 px-2 font-mono">{{ file.name }}</td>
+          <td class="py-2 px-2">{{ formatSize(file.sizeBytes) }}</td>
           <td class="py-2 px-2 text-gray-400">{{ formatDate(file.modified) }}</td>
           <td class="py-2 px-2 text-right space-x-2" @click.stop>
 
             <BaseButton
                 variant="ghost"
                 size="sm"
-                @click="downloadFile(file.filename)"
-                :data-test="`file-download-${file.filename}`"
+                @click="downloadFile(file.name)"
+                :data-test="`file-download-${file.name}`"
                 title="Download"
                 aria-label="Download"
             >↓</BaseButton>
             <BaseButton
                 variant="primary"
                 size="sm"
-                @click="editFile(file.filename)"
-                :data-test="`file-edit-${file.filename}`"
+                @click="editFile(file.name)"
+                :data-test="`file-edit-${file.name}`"
             >
               <Icon name="edit"/>
               Edit
@@ -342,8 +321,8 @@ onMounted(() => {
             <BaseButton
                 variant="secondary"
                 size="sm"
-                @click="deleteFile(file.filename)"
-                :data-test="`file-delete-${file.filename}`"
+                @click="deleteFile(file.name)"
+                :data-test="`file-delete-${file.name}`"
             >
               <Icon name="trash" />
               Delete
@@ -358,7 +337,7 @@ onMounted(() => {
           class="flex flex-col items-center justify-center py-12 text-gray-500"
       >
         <p class="text-sm font-semibold">No G-code files yet</p>
-        <p class="text-xs mt-1">Use the Upload button to add your first file.</p>
+        <p class="text-xs mt-1">Drop files here or use the Upload button.</p>
       </div>
     </div>
 
@@ -373,9 +352,9 @@ onMounted(() => {
         <div class="w-full max-w-4xl rounded-lg border border-gray-600 bg-gray-800">
           <header class="flex items-center justify-between gap-2 border-b border-gray-700 px-4 py-3">
             <div class="min-w-0">
-              <h3 class="truncate font-mono text-sm font-semibold text-gray-100">{{ previewFile.filename }}</h3>
+              <h3 class="truncate font-mono text-sm font-semibold text-gray-100">{{ previewFile.name }}</h3>
               <p class="text-xs text-gray-500">
-                {{ formatSize(previewFile.size_bytes || 0) }}
+                {{ formatSize(previewFile.sizeBytes) }}
                 <template v-if="!previewLoading && !previewError">
                   · {{ previewSegments.length }} moves
                 </template>
@@ -390,8 +369,8 @@ onMounted(() => {
                   size="sm"
                   :disabled="!isMachineOnline"
                   :title="isMachineOnline ? undefined : loadBlockedTitle"
-                  @click="loadFile(previewFile.filename)"
-                  :data-test="`file-load-${previewFile.filename}`"
+                  @click="loadFile(previewFile.name)"
+                  :data-test="`file-load-${previewFile.name}`"
               >
                 <Icon name="refresh"/>
                 Load
@@ -406,9 +385,9 @@ onMounted(() => {
             <!-- Left: embedded slicer image -->
             <div class="flex flex-col items-center justify-center gap-3">
               <img
-                  v-if="thumbnails[previewFile.filename]?.dataUrl"
-                  :src="thumbnails[previewFile.filename]?.dataUrl ?? ''"
-                  :alt="`Slicer preview of ${previewFile.filename}`"
+                  v-if="thumbnails[previewFile.name]?.dataUrl"
+                  :src="thumbnails[previewFile.name]?.dataUrl ?? ''"
+                  :alt="`Slicer preview of ${previewFile.name}`"
                   class="max-h-64 w-full rounded border border-gray-600 object-contain bg-gray-900"
                   data-test="preview-thumb"
               />
@@ -446,5 +425,5 @@ onMounted(() => {
         </div>
       </div>
     </Teleport>
-  </div>
+  </FileDropZone>
 </template>

@@ -23,7 +23,7 @@
 // through ``reportCommandFailure``.
 
 import { defineStore } from "pinia";
-import { computed, reactive, ref } from "vue";
+import { computed, ref, shallowReactive } from "vue";
 
 import { useConsoleStore } from "./console";
 import {
@@ -33,13 +33,13 @@ import {
 } from "../core/error-format";
 import { CommandResult } from "../entities/common/CommandResult";
 import { machineconfigFacade } from "../facades/machineconfigFacade";
-import type { DirectoryEntryModel } from "../../generated/api/models/DirectoryEntryModel";
+import type { FileEntry } from "../entities/files";
 
 const STORE_ID = "machineconfig";
 
 interface ProfilesTree {
   root: string;
-  entries: DirectoryEntryModel[];
+  entries: FileEntry[];
 }
 
 export interface MachineGenerateOutcome {
@@ -53,23 +53,21 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   // --- Reactive state ---------------------------------------------- //
 
-  const profilesTree = reactive<ProfilesTree>({ root: "profiles", entries: [] });
+  // ``shallowReactive``: entries are replaced as a whole on reload; a
+  // deep proxy would unwrap the ``FileEntry`` class's private fields.
+  const profilesTree = shallowReactive<ProfilesTree>({ root: "profiles", entries: [] });
   const selectedProfilePath = ref<string>("");
 
-  const machinesTree = reactive<ProfilesTree>({ root: "machines", entries: [] });
+  const machinesTree = shallowReactive<ProfilesTree>({ root: "machines", entries: [] });
 
   const isBusy = ref<boolean>(false);
 
   // --- Derived state ----------------------------------------------- //
 
-  const selectedProfile = computed<DirectoryEntryModel | null>(() => {
+  const selectedProfile = computed<FileEntry | null>(() => {
     const path = selectedProfilePath.value;
     if (!path) return null;
-    return (
-      profilesTree.entries.find(
-        (e: DirectoryEntryModel) => e.path === path && e.kind === "file",
-      ) || null
-    );
+    return profilesTree.entries.find((e) => e.path === path && e.isFile) || null;
   });
 
   // --- Error-mapping helper --------------------------------------- //
@@ -102,11 +100,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   async function loadProfilesTree(): Promise<void> {
     try {
-      const response = await machineconfigFacade.listProfiles();
-      profilesTree.entries.splice(0, profilesTree.entries.length);
-      for (const entry of (response as { entries?: DirectoryEntryModel[] }).entries || []) {
-        profilesTree.entries.push(entry);
-      }
+      profilesTree.entries = await machineconfigFacade.listProfiles();
     } catch (error: unknown) {
       const result = commandResultFromCaught(error, "load-profiles-tree");
       reportCommandFailure("load profiles tree", result);
@@ -115,11 +109,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   async function loadMachinesTree(): Promise<void> {
     try {
-      const response = await machineconfigFacade.listMachines();
-      machinesTree.entries.splice(0, machinesTree.entries.length);
-      for (const entry of (response as { entries?: DirectoryEntryModel[] }).entries || []) {
-        machinesTree.entries.push(entry);
-      }
+      machinesTree.entries = await machineconfigFacade.listMachines();
     } catch (error: unknown) {
       const result = commandResultFromCaught(error, "load-machines-tree");
       reportCommandFailure("load machines tree", result);

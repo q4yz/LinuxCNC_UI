@@ -332,6 +332,19 @@ class Probe(BaseModel):
     pin: str | None = None
 
 
+class ToolLengthSensor(BaseModel):
+    """The tool-length sensor / tool setter (`.agent/component/probe.md`).
+
+    One field, ``pin``. ``HardwareJson.tool_length_sensor`` is ``None``
+    when the machine has none. In HAL it is OR-ed with the probe into
+    ``motion.probe-input``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pin: str | None = None
+
+
 class McuInfo(BaseModel):
     """A single MCU record exposed in ``hardware.json``.
 
@@ -536,6 +549,10 @@ class HardwareJson(BaseModel):
     # the normal case, not something ``build_hardware_json`` enforces
     # against. See :class:`Probe`.
     probe: "Probe | None" = None
+
+    # The tool-length sensor. ``None`` when the machine has none. See
+    # :class:`ToolLengthSensor`.
+    tool_length_sensor: "ToolLengthSensor | None" = None
 
     axes: list[Axis] = Field(default_factory=list)
     joints: list[Stepper] = Field(default_factory=list)
@@ -767,6 +784,7 @@ __all__ = [
     "Probe",
     "Stepper",
     "TemperatureSensor",
+    "ToolLengthSensor",
     "Tool",
     "ToolType",
     "model_validate",

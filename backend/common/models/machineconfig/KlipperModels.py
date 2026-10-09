@@ -320,6 +320,18 @@ class Probe:
 
 
 @dataclass(slots=True)
+class ToolLengthSensor:
+    """The machine's tool-length sensor / tool setter (`.agent/component/probe.md`).
+
+    One optional digital input. LinuxCNC has a single probe input, so
+    the HAL compiler OR-s this pin with :class:`Probe`'s into
+    ``motion.probe-input``; each keeps its own ``!`` (NC/NO) inversion.
+    """
+
+    pin: str | None = None
+
+
+@dataclass(slots=True)
 class MCU:
     """One MCU configuration (transport settings + optional identity).
 
@@ -403,6 +415,8 @@ class MachineConfigGraph:
     # parsing AND for a machine that legitimately has no probe at all
     # — unlike ``estop``, absence is never enforced as an error.
     probe: Probe | None = None
+    # The tool-length sensor. ``None`` when the section is absent.
+    tool_length_sensor: ToolLengthSensor | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
     endstop_switches: dict[str, EndstopSwitch] = field(default_factory=dict)
     heaters: dict[str, Heater] = field(default_factory=dict)
@@ -485,5 +499,6 @@ __all__ = [
     "SpindleDigital",
     "Stepper",
     "TMC2209",
+    "ToolLengthSensor",
     "connection_to_hal_type",
 ]

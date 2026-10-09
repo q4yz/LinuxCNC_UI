@@ -8,36 +8,29 @@ BACKEND_SYSTEM_SERVICE="linuxcnc-ui-system.service"
 
 echo "Rebuilding UI in: $PROJECT_DIR"
 
-# --- 1. Spin up both temporary backends ---
+# --- 1. Dump both services' OpenAPI schemas ---
 # The frontend's typed API client is generated from BOTH services'
 # merged OpenAPI schema (frontend/scripts/generate-api.mjs +
-# merge-openapi.mjs), so both need to be briefly reachable here.
-echo "Temporarily starting both backends to generate API schemas..."
+# merge-openapi.mjs). backend/dump_openapi.py reads each app's schema
+# in-process — no server is started, so nothing answers on
+# :8000/:8001 while the real services are down. (Temporary backends on
+# the real ports made the UI's update screen think the system was back.)
+echo "Dumping the API schemas (no backend is started)..."
 
 # Activate the shared virtual environment
 source "$PROJECT_DIR/backend/venv/bin/activate"
 
-cd "$PROJECT_DIR/backend/machine"
-uvicorn main:app --host 127.0.0.1 --port 8000 > "$PROJECT_DIR/backend-machine.log" 2>&1 &
-MACHINE_BACKEND_PID=$!
-
-cd "$PROJECT_DIR/backend/system"
-uvicorn main:app --host 127.0.0.1 --port 8001 > "$PROJECT_DIR/backend-system.log" 2>&1 &
-SYSTEM_BACKEND_PID=$!
-
-# CRITICAL: Ensure both backends are killed when this script exits, even if npm build fails
-trap "kill $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID 2>/dev/null; wait $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID 2>/dev/null || true" EXIT
-
-echo "Waiting for both backends to expose their OpenAPI schemas..."
-timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
-timeout 15 bash -c 'until curl -s http://127.0.0.1:8001/openapi.json > /dev/null; do sleep 1; done'
+SCHEMA_DIR="$(mktemp -d)"
+trap 'rm -rf "$SCHEMA_DIR"' EXIT
+python "$PROJECT_DIR/backend/dump_openapi.py" machine "$SCHEMA_DIR/machine.json"
+python "$PROJECT_DIR/backend/dump_openapi.py" system "$SCHEMA_DIR/system.json"
 # ------------------------------------
 
 # --- 2. Build the Frontend ---
 cd "$PROJECT_DIR/frontend"
 
 echo "Generating API client..."
-npm run generate-api
+OPENAPI_FILE="$SCHEMA_DIR/machine.json" OPENAPI_FILE_SYSTEM="$SCHEMA_DIR/system.json" npm run generate-api
 
 echo "Compiling Vite application..."
 npm run build

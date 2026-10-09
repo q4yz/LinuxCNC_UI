@@ -236,7 +236,11 @@ class HalAssembler:
         ``[probe]`` at all — unlike estop, that's the normal case, not
         something to fall back to a default object for."""
         probe = self._payload.get("probe")
-        return ProbeHalMapper.to_fragment(probe if isinstance(probe, dict) else None)
+        sensor = self._payload.get("tool_length_sensor")
+        return ProbeHalMapper.to_fragment(
+            probe if isinstance(probe, dict) else None,
+            sensor if isinstance(sensor, dict) else None,
+        )
 
     def _driver_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         """A `TMC2209` firmware module per joint whose driver has a UART pin.

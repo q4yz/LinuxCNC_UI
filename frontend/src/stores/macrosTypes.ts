@@ -4,13 +4,19 @@
 // the store that owns the runtime shape (and the structural
 // tests expect to find ``Object.freeze`` there).
 
+import type { FileEntry } from "../entities/files";
+
 export type MacroKind = "macro" | "ngc" | "mcode";
 
-/** Listing-row shape produced by the backend. Mirrors ``MacroListItem``. */
+/**
+ * One listed macro: its own identity (``name`` without extension +
+ * ``kind``, what the macro endpoints address it by) plus the shared
+ * file record every file listing carries (size, change date, ...).
+ */
 export interface MacroEntry {
   name: string;
   kind: MacroKind;
-  size_bytes: number;
+  file: FileEntry;
 }
 
 /** A single block produced by ``parseMacro``. */

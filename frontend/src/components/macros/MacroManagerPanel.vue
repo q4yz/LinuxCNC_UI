@@ -33,6 +33,7 @@ import { validateMacroKindName } from "../../parsers/macrosParser";
 import { openInEditor } from "../../helpers/openInEditor";
 import type { MacroKind } from "../../stores/macrosTypes";
 import { BaseButton } from "../../ui/index.ts";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 import BaseCard from "../../ui/BaseCard.vue";
 import BaseInput from "../../ui/BaseInput.vue";
 import {Icon} from "../../ui";
@@ -59,31 +60,22 @@ interface MacroCard {
   name: string;
   displayName: string;
   size: number;
+  modified: string | null;
 }
 
+// Size and change date come from the listed file record — the same
+// ``FileEntry`` every file list uses.
 const macroCards = computed<MacroCard[]>(() =>
   [...macroFiles.value, ...ngcFiles.value]
-    .map((row): MacroCard => {
-      const cached = contents.value[`${row.kind}:${row.name}`];
-      const size = typeof cached === "string" ? new Blob([cached]).size : 0;
-      return {
-        kind: row.kind,
-        name: row.name,
-        displayName:
-          row.kind === MACRO_KIND.NGC
-            ? `${row.name}.ngc`
-            : `${row.name}.macro`,
-        size,
-      };
-    })
+    .map((row): MacroCard => ({
+      kind: row.kind,
+      name: row.name,
+      displayName: row.file.name,
+      size: row.file.sizeBytes,
+      modified: row.file.modified,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name)),
 );
-
-function formatSize(bytes: number): string {
-  if (!bytes) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
 
 // "Edit" used to mount ``Editor`` inline inside a full-height
 // modal. Issue #132 moves the editor to ``EditorView`` only; we
@@ -200,7 +192,7 @@ watch(() => store.lastError, (value) => {
             </span>
           </div>
           <div class="text-xs text-gray-400">
-            {{ formatSize(card.size) }}
+            {{ formatFileSize(card.size) }} · {{ formatFileDate(card.modified) }}
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">

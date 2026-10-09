@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMachineStore } from '../stores/machine'
 import { useConsoleStore } from '../stores/console'
+import { useSystemUpdateStore } from '../stores/systemUpdate'
 import { systemFacade } from '../facades/systemFacade'
 import { CommandResult } from '../entities/common/CommandResult'
 import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
@@ -10,9 +10,11 @@ import { BaseButton } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
 import { openInEditor, EDITOR_SOURCES } from '../helpers/openInEditor'
 
-const store = useMachineStore()
 const consoleStore = useConsoleStore()
-const { isUpdating } = storeToRefs(store)
+// The update itself is tracked app-wide (stores/systemUpdate.ts +
+// UpdateOverlay.vue in App.vue) so it survives navigation and reloads.
+const updateStore = useSystemUpdateStore()
+const { isRunning: isUpdating } = storeToRefs(updateStore)
 
 const currentVersion = ref('loading...')
 const latestVersion = ref('unknown')
@@ -56,19 +58,9 @@ const updateSystem = async () => {
     return
   }
 
-  store.$patch({ isUpdating: true })
-  consoleStore.warning("System update initiated. Connection may be lost temporarily...")
-  const result = await systemFacade.triggerUpdate()
-  if (!result.ok) {
-    store.$patch({ isUpdating: false })
-    consoleStore.error(`Update failed to start: ${result.failureReason}`)
-    return
-  }
-  // We expect the websocket to drop or page to reload eventually,
-  // but we can optionally reload after a timeout.
-  setTimeout(() => {
-    window.location.reload()
-  }, 10000)
+  // Overlay, progress, reload and the finish / failure notification
+  // follow the status the update script writes — no fixed timer.
+  await updateStore.start()
 }
 
 async function refreshMachineStatus() {
@@ -202,18 +194,5 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Fullscreen Overlay using Teleport -->
-    <Teleport to="body">
-      <div
-        v-if="isUpdating"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/90 backdrop-blur-sm"
-      >
-        <div class="flex flex-col items-center p-8 bg-gray-800 border border-gray-700 rounded-xl max-w-md w-full text-center">
-          <div class="w-16 h-16 mb-6 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
-          <h2 class="text-2xl font-bold text-white mb-2 tracking-wide">UPDATING SYSTEM</h2>
-          <p class="text-gray-400">Please wait while the system pulls the latest updates and reinstalls dependencies. The page will reload automatically.</p>
-        </div>
-      </div>
-    </Teleport>
   </BaseCard>
 </template>

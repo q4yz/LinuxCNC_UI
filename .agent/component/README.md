@@ -25,7 +25,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
 | `estop.md` | `[estop]` | Required exactly once. UI pulse chain unconditional; physical chain optional. |
-| `probe.md` | `[probe]` | Genuinely optional — absent entirely on a machine with no touch probe. |
+| `probe.md` | `[probe]`, `[tool_length_sensor]` | Both optional. Both trigger `motion.probe-input`; when both are declared they are OR-ed (`or2`). |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
@@ -200,7 +200,9 @@ hardware-agnostic signals that the router consumes:
 | `spindle-at-speed` | into `spindle.0.at-speed` | spindle |
 | `estop-out` | out of `iocontrol.0.user-enable-out` | estop (`EstopHalMapper`, class A/C only — see `estop.md` § 3) |
 | `estop-fault` | into `estop-latch.0.fault-in` | estop (`EstopHalMapper`, class A/C only) |
-| `probe-in` | into `motion.probe-input` | probe (`ProbeHalMapper`, every class — see `probe.md` § 3) |
+| `probe-in` | into `motion.probe-input` (or `probe-or.in0`) | probe (`ProbeHalMapper`, every class — see `probe.md` § 3) |
+| `tool-length-sensor-in` | into `motion.probe-input` (or `probe-or.in1`) | tool-length sensor (`ProbeHalMapper`, see `probe.md` § 3) |
+| `probe-or-out` | `probe-or.out` → `motion.probe-input` | only when both `[probe]` and `[tool_length_sensor]` have a pin |
 
 `webgui.*` pins are the userspace UI component's surface — the
 authoritative list is generated per machine into the `machine.hal`

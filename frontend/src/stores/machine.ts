@@ -67,7 +67,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Central UI setting (``machine.default_jog_velocity``): its default
     // until the stored value arrives — a UI preference, so that's fine.
     const defaultJogVelocity = computed(() => defaultJogVelocitySetting.value ?? defaultJogVelocitySetting.defaultValue);
-    const isUpdating = ref(false);
 
     // ──────────────────────────────────────────────────────────────── //
     // Derived values (Using the new ServoThreadState getters!)           //
@@ -399,7 +398,6 @@ export const useMachineStore = defineStore(STORE_ID, () => {
         connectionStatus,
         status,
         defaultJogVelocity,
-        isUpdating,
         droX,
         droY,
         droZ,

@@ -4,8 +4,9 @@ import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
-import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
-import { BaseButton, Icon } from "../../ui/index.ts";
+import type { FileEntry } from "../../entities/files";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
+import { BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
 import BaseCard from "../../ui/BaseCard.vue";
 
@@ -27,15 +28,12 @@ const entries = computed(() =>
 );
 
 
-const isDragging = ref(false);
-let dragCounter = 0;
-
 const breadcrumbs = computed(() => currentDirectory.value.split("/").filter(Boolean));
 
 function joinPath(directory: string, name: string) {
   return [directory, name].filter(Boolean).join("/");
 }
-function navigate(entry: DirectoryEntryModel) {
+function navigate(entry: FileEntry) {
   activeMenu.value = "";
   if (entry.kind === "folder") currentDirectory.value = entry.path;
   else store.selectProfile(entry.path);
@@ -47,7 +45,7 @@ function goBack() {
 function goToCrumb(index: number) {
   currentDirectory.value = breadcrumbs.value.slice(0, index + 1).join("/");
 }
-async function editFile(entry: DirectoryEntryModel) {
+async function editFile(entry: FileEntry) {
   if (entry.kind === "file") {
     store.selectProfile(entry.path);
 
@@ -59,13 +57,7 @@ async function editFile(entry: DirectoryEntryModel) {
     emit("edit", entry.path, false, "profile", content);
   }
 }
-function formatSize(bytes: number) {
-  if (!bytes) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-async function onGenerate(entry: DirectoryEntryModel) {
+async function onGenerate(entry: FileEntry) {
   store.selectProfile(entry.path);
   const outcome = await store.generateMachine(entry.path);
   if (outcome.status === "conflict") {
@@ -88,17 +80,17 @@ async function onCreate() {
   newEntryName.value = "";
   createOpen.value = false;
 }
-async function renameEntry(entry: DirectoryEntryModel) {
+async function renameEntry(entry: FileEntry) {
   activeMenu.value = "";
   const name = window.prompt("New name", entry.name)?.trim();
   if (name && name !== entry.name) await store.renameProfile(entry.path, joinPath(entry.parent || "", name));
 }
-async function copyOrMove(entry: DirectoryEntryModel) {
+async function copyOrMove(entry: FileEntry) {
   activeMenu.value = "";
   const destination = window.prompt("Move to path", entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameProfile(entry.path, destination);
 }
-async function deleteEntry(entry: DirectoryEntryModel) {
+async function deleteEntry(entry: FileEntry) {
   activeMenu.value = "";
   const shouldDelete = await useConfirm({
     title: "Profil löschen",
@@ -109,12 +101,10 @@ async function deleteEntry(entry: DirectoryEntryModel) {
   });
   if (shouldDelete) await store.deleteProfile(entry.path);
 }
-async function dropFiles(event: DragEvent) {
-  isDragging.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length) await store.uploadProfiles(currentDirectory.value, files);
+async function uploadFiles(files: File[]) {
+  await store.uploadProfiles(currentDirectory.value, files);
 }
-async function downloadProfile(entry: DirectoryEntryModel) {
+async function downloadProfile(entry: FileEntry) {
   const content = await store.readProfileContent(entry.path);
   if (content === null) return;
   downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
@@ -144,39 +134,25 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
 
 
 
-function onDragEnter() {
-  dragCounter++;
-  isDragging.value = true;
-}
-
-function onDragLeave() {
-  dragCounter--;
-  if (dragCounter <= 0) {
-    dragCounter = 0;
-    isDragging.value = false;
-  }
-}
-
-function onDrop(e: DragEvent) {
-  dragCounter = 0;
-  isDragging.value = false;
-  dropFiles(e);
-}
-
 </script>
 
 <template>
-  <BaseCard
-    class="relative flex min-h-[360px] flex-col   "
-    :class="isDragging ? 'border-blue-400 bg-blue-950/30' : 'border-gray-700'"
-    @dragenter.prevent="onDragEnter"
-    @dragover.prevent
-    @dragleave.prevent="onDragLeave"
-    @drop.prevent="onDrop"
+  <FileDropZone
+    v-slot="{ openPicker }"
+    :target="currentDirectory || 'profiles'"
+    :disabled="isBusy"
+    class="flex min-h-[360px] flex-col"
+    @files="uploadFiles"
   >
+  <BaseCard class="relative flex flex-1 flex-col">
     <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
       <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Profiles</h2>
-      <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+        <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="profiles-upload" @click="openPicker">
+          <span class="mr-1">⬆</span> Upload
+        </BaseButton>
+      </div>
     </div>
 
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
@@ -190,10 +166,6 @@ function onDrop(e: DragEvent) {
       </template>
     </nav>
 
-    <div v-if="isDragging" class="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-gray-950/80 font-semibold text-blue-200">
-      Drop files into {{ currentDirectory || 'profiles' }}
-    </div>
-
     <ul v-if="entries.length" class="flex-1 space-y-1 overflow-y-auto p-2 pb-20">
       <li v-for="entry in entries" :key="entry.path" class="relative">
         <div
@@ -205,9 +177,11 @@ function onDrop(e: DragEvent) {
           <span>{{ entry.kind === 'folder' ? '📁' : '📄' }}</span>
           <div class="min-w-0 flex-1">
             <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
-            <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes ?? 0) }}</div>
+            <div class="text-[11px] text-gray-500" data-test="file-entry-meta">
+              <template v-if="entry.isFile">{{ formatFileSize(entry.sizeBytes) }} · </template>{{ formatFileDate(entry.modified) }}
+            </div>
           </div>
-          <span v-if="entry.kind === 'file' && entry.has_marker" class="rounded bg-purple-700/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-200">#Start</span>
+          <span v-if="entry.kind === 'file' && entry.hasMarker" class="rounded bg-purple-700/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-200">#Start</span>
           <BaseButton v-if="entry.kind === 'file' && entry.name.toLowerCase().endsWith('.cfg')" variant="success" size="sm" :disabled="isBusy" @click.stop="onGenerate(entry)">Generate</BaseButton>
           <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadProfile(entry)">↓</BaseButton>
           <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
@@ -238,4 +212,5 @@ function onDrop(e: DragEvent) {
       </form>
     </div>
   </BaseCard>
+  </FileDropZone>
 </template>

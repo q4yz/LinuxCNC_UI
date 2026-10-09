@@ -14,8 +14,8 @@ import {
   ModulesProgramService,
   ProgramFilesService,
 } from "../../generated/api";
-import { ProgramFile } from "../entities/progress";
-import { toProgramFileListing } from "../mappers/programfilesMapper";
+import { FileEntry } from "../entities/files";
+import { toFileListing } from "../mappers/filesMapper";
 import { CommandResult } from "../entities";
 import { describeError, errorStatus } from "../core/error-format";
 
@@ -25,11 +25,10 @@ export class ProgressFacade {
    * Fetch and map the list of available G-code programs.
    * Returns an empty array on 404.
    */
-  public async listProgramFiles(): Promise<ProgramFile[]> {
+  public async listProgramFiles(): Promise<FileEntry[]> {
     try {
       const listing = await ProgramFilesService.listFiles();
-      // Delegate to the robust mapper we just built
-      return toProgramFileListing(listing);
+      return toFileListing(listing);
     } catch (err: unknown) {
       if (errorStatus(err) === 404) return [];
       throw err;

@@ -79,5 +79,7 @@ img/
 /machine_config/ready_for_deploy/machine.hal
 # Central UI settings — per-installation runtime data.
 /backend/data/settings.json
+# Progress of the last system update (scripts/update.sh).
+/backend/data/update_status.json
 /machine_config/example/goal/machine.cfg
 /machine_config/example/goal/machine.hal

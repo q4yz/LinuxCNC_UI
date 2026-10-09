@@ -57,14 +57,13 @@ from typing import List
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Path, Query, Request, Response, UploadFile, File
 from fastapi.responses import JSONResponse
 
+from mappers.files import FileEntryMapper
 from models.machineconfig.MachineConfigApiModels import (
     CreateEntryRequest,
-    DirectoryEntryModel,
     DirectoryListing,
     GenerateRequest,
     GenerateResponse,
     MCodeContentResponse,
-    MCodeEntry,
     MCodeListResponse,
     MCodeStatusMessage,
     MCodeWriteRequest,
@@ -223,7 +222,7 @@ def get_profiles_tree() -> DirectoryListing:
         entry.has_marker = _has_marker(target)
     return DirectoryListing(
         root="profiles",
-        entries=[DirectoryEntryModel(**e.to_dict()) for e in entries],
+        entries=FileEntryMapper.to_responses(entries),
     )
 
 
@@ -407,7 +406,7 @@ def get_machines_tree() -> DirectoryListing:
     entries = service.list_files()
     return DirectoryListing(
         root="machines",
-        entries=[DirectoryEntryModel(**e.to_dict()) for e in entries],
+        entries=FileEntryMapper.to_responses(entries),
     )
 
 
@@ -681,13 +680,11 @@ def _validate_mcode_name(name: str) -> str:
 def list_mcodes() -> MCodeListResponse:
     """List M-codes via :class:`MCodeFileService`."""
     service: MCodeFileService = get_mcode_service()
-    entries = [
-        MCodeEntry(name=entry.name, size_bytes=entry.size_bytes)
-        for entry in service.list_files()
-        if entry.kind == "file"
-    ]
-    entries.sort(key=lambda entry: entry.name)
-    return MCodeListResponse(mcodes=entries)
+    entries = sorted(
+        (entry for entry in service.list_files() if entry.kind == "file"),
+        key=lambda entry: entry.name,
+    )
+    return MCodeListResponse(mcodes=FileEntryMapper.to_responses(entries))
 
 
 @router.get(

@@ -23,3 +23,4 @@ export { default as Drawer } from "./Drawer.vue";
 export { default as Confirm } from "./Confirm.vue";
 export { default as MacroButton } from "./MacroButton.vue";
 export { default as MacroButtonEditor } from "./MacroButtonEditor.vue";
+export { default as FileDropZone } from "./FileDropZone.vue";

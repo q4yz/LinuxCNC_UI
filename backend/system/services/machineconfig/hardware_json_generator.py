@@ -198,6 +198,14 @@ def _probe_payload(probe) -> dict[str, Any] | None:
     return {"pin": probe.pin}
 
 
+def _tool_length_sensor_payload(sensor) -> dict[str, Any] | None:
+    """The top-level ``tool_length_sensor`` object, or ``None`` when the
+    machine declared no ``[tool_length_sensor]`` section."""
+    if sensor is None:
+        return None
+    return {"pin": sensor.pin}
+
+
 # ---------------------------------------------------------------------- #
 # Tool payload                                                            #
 # ---------------------------------------------------------------------- #
@@ -991,6 +999,7 @@ def build_hardware_json(
         "max_z_accel": _fmt_float(getattr(graph.printer, "max_z_accel", None)),
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
+        "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),
         "axes": axes_records,
         "joints": joint_records,
         "drivers": driver_records,

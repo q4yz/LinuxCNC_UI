@@ -24,6 +24,16 @@ MACROS_DIR = _PROJECT_ROOT / "macros"
 #: read it by key via ``core.ui_settings_reader``.
 UI_SETTINGS_FILE = _BACKEND_ROOT / "data" / "settings.json"
 
+#: Progress of the last system update — written by ``scripts/update.sh``
+#: (through ``scripts/update_status.py``), read by the system service's
+#: ``GET /api/v1/system/update/status``. The script is the only party
+#: that knows when the update is really finished.
+UPDATE_STATUS_FILE = _BACKEND_ROOT / "data" / "update_status.json"
+
+#: The system update script and the log it appends to.
+UPDATE_SCRIPT = _PROJECT_ROOT / "scripts" / "update.sh"
+UPDATE_LOG_FILE = _PROJECT_ROOT / "update.log"
+
 #: Name of the persisted default-machine pointer file, sibling of
 #: ``machines/`` (see ``system.services.MachineLifecycleService``,
 #: which is the only writer — this module only ever reads it).

@@ -58,6 +58,7 @@ class SectionKind(str, Enum):
     DUPLICATE_PIN_OVERRIDE = "duplicate_pin_override"
     ESTOP = "estop"
     PROBE = "probe"
+    TOOL_LENGTH_SENSOR = "tool_length_sensor"
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +186,10 @@ ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
 # all (no "empty block is still valid" requirement — there's nothing
 # UI-driven to fall back to).
 PROBE_KEYS = frozenset({"pin"})
+# The tool-length sensor (tool setter) — a second digital input that
+# is OR-ed with the probe into ``motion.probe-input``
+# (`.agent/component/probe.md` § 3). Same single optional ``pin``.
+TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # Fan sections accept ``pin``, an optional ``max_power`` (0.0–1.0,
 # the runtime's ``PWM Max`` in the Remora board JSON), and an optional
 # ``shutdown_speed`` (duty on estop/shutdown — Klipper's own field,
@@ -268,6 +273,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.DUPLICATE_PIN_OVERRIDE: DUPLICATE_PIN_OVERRIDE_KEYS,
     SectionKind.ESTOP: ESTOP_KEYS,
     SectionKind.PROBE: PROBE_KEYS,
+    SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -357,6 +363,11 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "probe":
         return SectionSchema(SectionKind.PROBE, PROBE_KEYS, "probe")
+
+    if section == "tool_length_sensor":
+        return SectionSchema(
+            SectionKind.TOOL_LENGTH_SENSOR, TOOL_LENGTH_SENSOR_KEYS, "tool_length_sensor"
+        )
 
     stepper_match = _STEPPER_SECTION.fullmatch(section)
     if stepper_match:
@@ -459,6 +470,7 @@ __all__ = [
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
     "PROBE_KEYS",
+    "TOOL_LENGTH_SENSOR_KEYS",
     "SECTION_SCHEMAS",
     "SPINDLE_ANALOG_KEYS",
     "SPINDLE_KEYS",

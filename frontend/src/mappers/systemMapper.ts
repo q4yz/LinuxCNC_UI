@@ -1,7 +1,10 @@
 // System version mapper.
 
+import type { UpdateStatusResponse } from "../../generated/api/models/UpdateStatusResponse";
 import type { VersionInfoResponse } from "../../generated/api/models/VersionInfoResponse";
-import { SystemVersion } from "../entities/system";
+import { SystemVersion, UpdateStatus, type UpdateState } from "../entities/system";
+
+const UPDATE_STATES: readonly UpdateState[] = ["idle", "running", "done", "failed"];
 
 export function toSystemVersion(wire: unknown): SystemVersion {
   if (!wire || typeof wire !== "object") {
@@ -20,5 +23,20 @@ export function toSystemVersion(wire: unknown): SystemVersion {
     isUpdatable: Boolean(w.update_available ?? w.isUpdatable),
     releaseNotes:
       typeof w.release_notes === "string" ? w.release_notes : null,
+  });
+}
+
+export function toUpdateStatus(wire: UpdateStatusResponse | null | undefined): UpdateStatus {
+  if (!wire || typeof wire !== "object") return new UpdateStatus();
+  return new UpdateStatus({
+    runId: wire.run_id ?? null,
+    state: UPDATE_STATES.includes(wire.state) ? wire.state : "idle",
+    phase: wire.phase ?? "",
+    message: wire.message ?? "",
+    startedAt: wire.started_at ?? null,
+    finishedAt: wire.finished_at ?? null,
+    commitBefore: wire.commit_before ?? null,
+    commitAfter: wire.commit_after ?? null,
+    logTail: wire.log_tail ?? "",
   });
 }

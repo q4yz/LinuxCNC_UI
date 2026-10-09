@@ -33,6 +33,7 @@ from .HardwareJsonModels import (
     Stepper as HardwareStepper,
     TemperatureSensor,
     Tool as HardwareTool,
+    ToolLengthSensor as HardwareToolLengthSensor,
     model_validate as validate_hardware_json,
     to_dict as hardware_json_to_dict,
 )
@@ -53,6 +54,7 @@ from .KlipperModels import (
     SpindleDigital,
     Stepper,
     TMC2209,
+    ToolLengthSensor,
     connection_to_hal_type,
 )
 from .LinuxCNCModels import (
@@ -80,6 +82,7 @@ __all__ = [
     "HardwareProbe",
     "HardwareStepper",
     "HardwareTool",
+    "HardwareToolLengthSensor",
     "Heater",
     "HeaterFan",
     "IniConfig",
@@ -95,6 +98,7 @@ __all__ = [
     "Stepper",
     "TemperatureSensor",
     "TMC2209",
+    "ToolLengthSensor",
     "connection_to_hal_type",
     "hardware_json_to_dict",
     "validate_hardware_json",

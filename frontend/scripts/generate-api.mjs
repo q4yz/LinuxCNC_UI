@@ -18,9 +18,15 @@
 // Usage:
 //   npm run generate-api                       # uses :8000 (machine) + :8001 (system)
 //   OPENAPI_URL=http://host:8000 OPENAPI_URL_SYSTEM=http://host:8001 npm run generate-api
+//   OPENAPI_FILE=machine.json OPENAPI_FILE_SYSTEM=system.json npm run generate-api
+//
+// The file form needs no running backend: `backend/dump_openapi.py`
+// writes each app's schema without binding a port. The update
+// (`rebuild_ui.sh`) uses it so nothing answers on :8000/:8001 while
+// the real services are down.
 
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,6 +56,10 @@ const installMode =
 
 const openApiUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8000/openapi.json';
 const openApiUrlSystem = process.env.OPENAPI_URL_SYSTEM ?? 'http://127.0.0.1:8001/openapi.json';
+// When both are set, the schemas are read from these files instead of
+// fetched from the URLs above.
+const openApiFile = process.env.OPENAPI_FILE;
+const openApiFileSystem = process.env.OPENAPI_FILE_SYSTEM;
 const generatedDir = path.join(projectRoot, 'generated');
 const outputDir = path.join(generatedDir, 'api');
 const cacheDir = path.join(generatedDir, '.openapi-cache');
@@ -76,11 +86,18 @@ async function fetchSpec(url) {
   return JSON.parse(await response.text());
 }
 
+async function readSpec(file) {
+  console.log(`[generate-api] Reading OpenAPI schema from ${file}`);
+  return JSON.parse(await readFile(file, 'utf-8'));
+}
+
 async function downloadSpec() {
-  const [machineSpec, systemSpec] = await Promise.all([
-    fetchSpec(openApiUrl),
-    fetchSpec(openApiUrlSystem),
-  ]);
+  const fromFiles = Boolean(openApiFile && openApiFileSystem);
+  const [machineSpec, systemSpec] = await Promise.all(
+    fromFiles
+      ? [readSpec(openApiFile), readSpec(openApiFileSystem)]
+      : [fetchSpec(openApiUrl), fetchSpec(openApiUrlSystem)],
+  );
   const merged = mergeOpenApiSpecs(machineSpec, systemSpec);
   const text = JSON.stringify(merged, null, 2);
   await mkdir(cacheDir, { recursive: true });

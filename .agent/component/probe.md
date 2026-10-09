@@ -12,6 +12,12 @@
 > missing `[probe]`; a machine with no touch probe simply omits the
 > `probe` key from `hardware.json` altogether.
 
+> **Tool-length sensor:** `[tool_length_sensor]` is a second,
+> independent section with the same single optional `pin`. LinuxCNC
+> has one probe input, so both switches are merged into
+> `motion.probe-input` (§ 3). NC/NO is each pin's own `!`, so a probe
+> and a tool setter may have opposite polarities.
+
 ## 1. INGESTION (Hand-Written CFG)
 
 **Instruction:** Parse the user's `.cfg` text for the block matching
@@ -33,6 +39,14 @@ An empty `[probe]` block (no `pin` at all) is valid but contributes
 nothing to `machine.hal` — same leniency as every other component,
 just with no UI-only fallback behind it.
 
+```cfg
+[tool_length_sensor]
+    pin: string // (Optional) the tool setter's digital input, e.g. "!par0:13"
+```
+
+Same rules as `[probe]`: bare section only, at most one, an empty
+block contributes nothing.
+
 ## 2. UI ABSTRACTION (hardware.json)
 
 ```json
@@ -42,6 +56,17 @@ just with no UI-only fallback behind it.
   }
 }
 ```
+
+```json
+{
+  "tool_length_sensor": {
+    "pin": "<parameters.pin | null>"
+  }
+}
+```
+
+`tool_length_sensor` follows exactly the same presence rules as
+`probe` below.
 
 A top-level singleton object, same shape as `estop` — but genuinely
 optional at the *object* level, not just per-field: `probe` is
@@ -71,6 +96,28 @@ machine.hal
 net probe-in => motion.probe-input
 net probe-in <= <pin>                         # <- pin (input)
 ```
+
+When **both** `[probe]` and `[tool_length_sensor]` declare a pin,
+either switch must trip the single probe input, so they are OR-ed:
+
+```hal
+loadrt or2 names=probe-or
+addf probe-or servo-thread                    # input stage (order 0), before motion
+net probe-in              => probe-or.in0
+net tool-length-sensor-in => probe-or.in1
+net probe-or-out probe-or.out => motion.probe-input
+net probe-in              <= <probe pin>              # router half
+net tool-length-sensor-in <= <tool_length_sensor pin> # router half
+```
+
+With only `[tool_length_sensor]` declared, it is wired straight to
+`motion.probe-input` exactly like a lone probe
+(`net tool-length-sensor-in => motion.probe-input`).
+
+**Polarity (NC/NO)** is never handled by the OR: each pin's `!` is
+resolved by the MCU router that binds its `PinRequest`, MCU-specific —
+`parport.0.pin-NN-in-not`, `remora.input.NN.not`, or an explicit `not`
+stage for `vfdmod`. The OR always sees "1 = triggered".
 
 The two `net probe-in ...` lines are the component-owned half
 (emitted directly by `ProbeHalMapper`) and the router-owned half

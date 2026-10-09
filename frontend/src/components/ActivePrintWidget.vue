@@ -26,7 +26,7 @@ import {useBaseThreadStore} from "../stores/baseThread";
 import {useConsoleStore} from "../stores/console";
 import {progressFacade} from "../facades/progressFacade";
 import {reportCommandFailure, describeErrorOr} from "../core/error-format";
-import {ProgramFile} from "../entities/progress";
+import {FileEntry} from "../entities/files";
 import {BaseButton} from "../ui/index.ts";
 import BaseCard from "../ui/BaseCard.vue";
 
@@ -42,8 +42,8 @@ const {progress} = storeToRefs(baseThread);
 // `files` is the canonical list of programs on the active
 // backend root. Refreshed on mount and after every successful load.
 // ``shallowRef`` — entities are immutable snapshots and ``ref``'s
-// deep ``UnwrapRef`` would strip the ``ProgramFile`` class privates.
-const files = shallowRef<ProgramFile[]>([]);
+// deep ``UnwrapRef`` would strip the ``FileEntry`` class privates.
+const files = shallowRef<FileEntry[]>([]);
 const isLoadingList = ref<boolean>(false);
 const loadError = ref<string | null>(null);
 
@@ -177,7 +177,7 @@ let remainingTimerId: ReturnType<typeof setInterval> | null = null;
 // Cap the recent-files list to the five newest G-code / NGC entries.
 const PRINTABLE_EXTENSIONS = [".gcode", ".ngc"];
 
-const printableFiles = computed<ProgramFile[]>(() => {
+const printableFiles = computed<FileEntry[]>(() => {
   if (!Array.isArray(files.value)) return [];
   return files.value
       .filter((entry) => {
@@ -187,8 +187,8 @@ const printableFiles = computed<ProgramFile[]>(() => {
       })
       .slice()
       .sort((a, b) => {
-        const aTime = Date.parse(a.modified || "") || 0;
-        const bTime = Date.parse(b.modified || "") || 0;
+        const aTime = a.modifiedMs;
+        const bTime = b.modifiedMs;
         return bTime - aTime;
       })
       .slice(0, 3);

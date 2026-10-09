@@ -15,19 +15,20 @@ import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { useConsoleStore } from "../../stores/console";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
-import type { DirectoryEntryModel } from "../../../generated/api/models/DirectoryEntryModel";
+import type { FileEntry } from "../../entities/files";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
-import { BaseButton, Icon } from "../../ui/index.ts";
+import { BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
 
 const router = useRouter();
 
-function isHalFile(entry: DirectoryEntryModel): boolean {
+function isHalFile(entry: FileEntry): boolean {
   return entry.kind === "file" && entry.name.toLowerCase().endsWith(".hal");
 }
 
-function openHalEditor(entry: DirectoryEntryModel): void {
+function openHalEditor(entry: FileEntry): void {
   router.push({ name: "hal-editor", query: { file: entry.path } });
 }
 
@@ -50,7 +51,7 @@ const startingPath = ref<string | null>(null);
 const settingMainPath = ref<string | null>(null);
 
 /** Root-level folders are machine folders. */
-function isMachineFolder(entry: DirectoryEntryModel): boolean {
+function isMachineFolder(entry: FileEntry): boolean {
   return entry.kind === "folder" && !entry.parent;
 }
 
@@ -69,7 +70,7 @@ function lifecycleError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function startMachine(entry: DirectoryEntryModel): Promise<void> {
+async function startMachine(entry: FileEntry): Promise<void> {
   activeMenu.value = "";
   if (startingPath.value !== null) return;
 
@@ -118,7 +119,7 @@ async function startMachine(entry: DirectoryEntryModel): Promise<void> {
   }
 }
 
-async function selectAsMain(entry: DirectoryEntryModel): Promise<void> {
+async function selectAsMain(entry: FileEntry): Promise<void> {
   activeMenu.value = "";
   if (settingMainPath.value !== null) return;
 
@@ -151,7 +152,6 @@ const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
-const isDragging = ref(false);
 const entries = computed(() =>
   machinesTree.value.entries
     .filter((entry) => (entry.parent || "") === currentDirectory.value)
@@ -163,7 +163,7 @@ const breadcrumbs = computed(() => currentDirectory.value.split("/").filter(Bool
 function joinPath(directory: string, name: string) {
   return [directory, name].filter(Boolean).join("/");
 }
-function navigate(entry: DirectoryEntryModel) {
+function navigate(entry: FileEntry) {
   activeMenu.value = "";
   if (entry.kind === "folder") currentDirectory.value = entry.path;
   else editFile(entry);
@@ -175,18 +175,12 @@ function goBack() {
 function goToCrumb(index: number) {
   currentDirectory.value = breadcrumbs.value.slice(0, index + 1).join("/");
 }
-async function editFile(entry: DirectoryEntryModel) {
+async function editFile(entry: FileEntry) {
   if (entry.kind === "file") {
     const content = await store.readMachineContent(entry.path);
     if (content === null) return;
     emit("edit", entry.path, false, "machines", content);
   }
-}
-function formatSize(bytes: number) {
-  if (!bytes) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 async function onCreate() {
   const name = newEntryName.value.trim();
@@ -197,17 +191,17 @@ async function onCreate() {
   newEntryName.value = "";
   createOpen.value = false;
 }
-async function renameEntry(entry: DirectoryEntryModel) {
+async function renameEntry(entry: FileEntry) {
   activeMenu.value = "";
   const name = window.prompt("New name", entry.name)?.trim();
   if (name && name !== entry.name) await store.renameMachine(entry.path, joinPath(entry.parent || "", name));
 }
-async function copyOrMove(entry: DirectoryEntryModel) {
+async function copyOrMove(entry: FileEntry) {
   activeMenu.value = "";
   const destination = window.prompt("Move to path", entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameMachine(entry.path, destination);
 }
-async function deleteEntry(entry: DirectoryEntryModel) {
+async function deleteEntry(entry: FileEntry) {
   activeMenu.value = "";
   const shouldDelete = await useConfirm({
     title: "Delete entry",
@@ -218,12 +212,10 @@ async function deleteEntry(entry: DirectoryEntryModel) {
   });
   if (shouldDelete) await store.deleteMachine(entry.path);
 }
-async function dropFiles(event: DragEvent) {
-  isDragging.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length) await store.uploadMachines(currentDirectory.value, files);
+async function uploadFiles(files: File[]) {
+  await store.uploadMachines(currentDirectory.value, files);
 }
-async function downloadMachineFile(entry: DirectoryEntryModel) {
+async function downloadMachineFile(entry: FileEntry) {
   const content = await store.readMachineContent(entry.path);
   if (content === null) return;
   downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
@@ -250,17 +242,21 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
 </script>
 
 <template>
-  <div
-    class="relative flex min-h-[360px] flex-col overflow-hidden rounded-lg border bg-gray-800 transition-colors"
-    :class="isDragging ? 'border-blue-400 bg-blue-950/30' : 'border-gray-700'"
-    @dragenter.prevent="isDragging = true"
-    @dragover.prevent="isDragging = true"
-    @dragleave.self="isDragging = false"
-    @drop.prevent="dropFiles"
+  <FileDropZone
+    v-slot="{ openPicker }"
+    :target="currentDirectory || 'machines'"
+    :disabled="isBusy"
+    class="flex min-h-[360px] flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-800"
+    @files="uploadFiles"
   >
     <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
       <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Machines</h2>
-      <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+        <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="machines-upload" @click="openPicker">
+          <span class="mr-1">⬆</span> Upload
+        </BaseButton>
+      </div>
     </div>
 
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
@@ -274,10 +270,6 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
       </template>
     </nav>
 
-    <div v-if="isDragging" class="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-gray-950/80 font-semibold text-blue-200">
-      Drop files into {{ currentDirectory || 'machines' }}
-    </div>
-
     <ul v-if="entries.length" class="flex-1 space-y-1 overflow-y-auto p-2 pb-20">
       <li v-for="entry in entries" :key="entry.path" class="relative">
         <div
@@ -289,7 +281,9 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
           <span>{{ entry.kind === 'folder' ? '📁' : '📄' }}</span>
           <div class="min-w-0 flex-1">
             <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
-            <div v-if="entry.kind === 'file'" class="text-[11px] text-gray-500">{{ formatSize(entry.size_bytes ?? 0) }}</div>
+            <div class="text-[11px] text-gray-500" data-test="file-entry-meta">
+              <template v-if="entry.isFile">{{ formatFileSize(entry.sizeBytes) }} · </template>{{ formatFileDate(entry.modified) }}
+            </div>
           </div>
           <!-- Root-level machine folders: lifecycle actions.
                "Start" persists the machine as default AND launches
@@ -340,7 +334,7 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
       </li>
     </ul>
     <div v-else class="flex-1 p-8 text-center text-sm text-gray-500">
-      No machines yet. Generate one from a profile in the Profiles explorer.
+      No machines yet. Generate one from a profile in the Profiles explorer, or drop files here.
     </div>
 
     <button type="button" class="sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
@@ -359,5 +353,5 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
         </div>
       </form>
     </div>
-  </div>
+  </FileDropZone>
 </template>

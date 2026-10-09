@@ -27,6 +27,8 @@ import { useMachineOnline } from './composables/useMachineOnline'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
+import UpdateOverlay from './components/UpdateOverlay.vue'
+import { useSystemUpdateStore } from './stores/systemUpdate'
 import EStopHeader from './components/EStopHeader.vue'
 import MachineGate from './components/machine/MachineGate.vue'
 import NgcCoordinateSystemViewer from './components/NgcCoordinateSystemViewer.vue'
@@ -107,8 +109,13 @@ watch(isMachineOnline, (next) => {
   }
 })
 
+const systemUpdate = useSystemUpdateStore()
+
 onMounted(() => {
   startHeartbeat()
+  // Pick up a running update (reload / other browser) or announce a
+  // just-finished one — the reload after "done" lands here.
+  void systemUpdate.resume()
 })
 
 onUnmounted(() => {
@@ -162,6 +169,7 @@ onUnmounted(() => {
 
     <!-- Global Overlays -->
     <ModalConfirmHost />
+    <UpdateOverlay />
     <ToastContainer />
 
   </div>

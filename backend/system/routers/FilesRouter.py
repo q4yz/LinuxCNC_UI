@@ -31,6 +31,9 @@ from typing import List, Optional
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from mappers.files import FileEntryMapper
+from models.FileModels import FileEntryResponse
+
 from services import ProgramFileService, get_program_service
 from services.gcode_thumbnail import extract_thumbnail
 
@@ -41,14 +44,6 @@ router = APIRouter(prefix="/api/v1/programs", tags=["Program Files"])
 # Slicer thumbnails always live in the first few KB of the file, well
 # below this cap — the head-scan never loads multi-MB programs.
 THUMBNAIL_HEAD_BYTES = 512 * 1024
-
-
-class FileInfo(BaseModel):
-    """Metadata describing a single G-code file on disk."""
-
-    filename: str = Field(..., description="Filename (basename, no path)")
-    size_bytes: int = Field(..., description="File size in bytes")
-    modified: str = Field(..., description="ISO-8601 timestamp of the last modification")
 
 
 class UploadFileResponse(BaseModel):
@@ -86,20 +81,13 @@ class FileThumbnailResponse(BaseModel):
     summary="List Files",
     description="Returns a list of all G-code files in the nc_files directory.",
     operation_id="listFiles",
-    response_model=List[FileInfo],
+    response_model=List[FileEntryResponse],
 )
-def list_files() -> List[FileInfo]:
+def list_files() -> List[FileEntryResponse]:
     """List G-code files via :class:`ProgramFileService`."""
     try:
         service: ProgramFileService = get_program_service()
-        return [
-            FileInfo(
-                filename=entry.name,
-                size_bytes=entry.size_bytes,
-                modified=entry.modified or "",
-            )
-            for entry in service.list_program_files()
-        ]
+        return FileEntryMapper.to_responses(service.list_program_files())
     except Exception as exc:  # noqa: BLE001 - last-resort guard
         logger.error("Failed to list files: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to list files.") from exc

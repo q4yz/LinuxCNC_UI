@@ -25,6 +25,7 @@ import type { MacroEntry } from "../../stores/macrosTypes";
 import {BaseButton, Icon} from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
 import BaseInput from "../../ui/BaseInput.vue";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 
 const store = useMacrosStore();
 const { mcodeFiles, isBusy } = storeToRefs(store);
@@ -40,12 +41,6 @@ onMounted(async () => {
 const sorted = computed<MacroEntry[]>(() =>
   [...mcodeFiles.value].sort((a, b) => a.name.localeCompare(b.name)),
 );
-
-function formatSize(bytes: number): string {
-  if (!bytes) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  return (bytes / 1024).toFixed(1) + " KB";
-}
 
 function openEditor(name: string): void {
   // The universal editor handles the M-code body via
@@ -140,7 +135,7 @@ watch(() => store.lastError, (value) => {
             </span>
           </div>
           <div class="text-xs text-gray-400">
-            {{ formatSize(row.size_bytes) }}
+            {{ formatFileSize(row.file.sizeBytes) }} · {{ formatFileDate(row.file.modified) }}
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">

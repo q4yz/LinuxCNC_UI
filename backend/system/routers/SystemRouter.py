@@ -1,11 +1,12 @@
 import logging
 import subprocess
-import sys
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from models.UpdateModels import SystemUpdateResponse, UpdateStatusResponse
+from services.UpdateService import UpdateLaunchError, get_update_service
 
 logger = logging.getLogger("backend.routers.system")
 
@@ -18,11 +19,6 @@ class VersionInfoResponse(BaseModel):
     current_version: str = Field(..., description="Human-readable current release tag")
     latest_version: str = Field(..., description="Human-readable latest known release tag")
     update_available: bool = Field(..., description="Whether a newer release is known to be available")
-
-
-class SystemUpdateResponse(BaseModel):
-    """Response model for POST /system/update."""
-    status: str = Field(..., description="Outcome summary describing the update state")
 
 
 def _project_root() -> Path:
@@ -47,48 +43,6 @@ def _current_commit_hash() -> str:
         return "unknown"
 
 
-def _launch_update_script() -> bool:
-    """Detach scripts/update.sh from this Uvicorn process (git pull + pip install).
-
-    The script stops and restarts linuxcnc-ui-system — the very service serving
-    this request — so it must not run inside our session/process group and must
-    not be awaited. A blocking run (or a BackgroundTask thread) deadlocks the
-    shutdown until systemd's stop timeout SIGKILLs the whole cgroup, killing the
-    script mid-update. start_new_session=True promotes it to its own process
-    leader, and with KillMode=process in the unit file systemd signals only the
-    main Uvicorn PID, so the script survives the restart. Output is appended to
-    update.log in the repo root (same convention as rebuild_ui.sh).
-    """
-    script_path = _project_root() / "scripts" / "update.sh"
-    if not script_path.exists():
-        logger.error("Update script not found at %s", script_path)
-        return False
-
-    log_path = _project_root() / "update.log"
-    popen_kwargs: dict[str, Any] = {}
-    if sys.platform != "win32":
-        popen_kwargs["start_new_session"] = True
-
-    try:
-        with log_path.open("ab") as log_file:
-            subprocess.Popen(
-                ["bash", str(script_path)],
-                cwd=str(_project_root()),
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                **popen_kwargs,
-            )
-    except FileNotFoundError:
-        logger.error("bash executable not found; cannot run update.sh")
-        return False
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to launch update script")
-        return False
-    logger.info("Update script launched detached; output appending to %s", log_path)
-    return True
-
-
 @router.get(
     "/version",
     summary="Get Version Info",
@@ -108,12 +62,33 @@ def get_version() -> VersionInfoResponse:
 @router.post(
     "/update",
     summary="Trigger System Update",
-    description="Launch scripts/update.sh (git pull + pip install) as a detached process so it survives the service restart it performs.",
+    description=(
+        "Launch scripts/update.sh (git pull, dependencies, UI rebuild, service restart) "
+        "as a detached process so it survives the service restart it performs. "
+        "Follow it with GET /update/status and the returned run_id. 409 while an update runs."
+    ),
     operation_id="triggerSystemUpdate",
     response_model=SystemUpdateResponse,
+    responses={409: {"description": "An update is already running."}},
 )
 def trigger_update() -> SystemUpdateResponse:
     logger.warning("System update initiated via API.")
-    if not _launch_update_script():
-        raise HTTPException(status_code=500, detail="Failed to launch update script")
-    return SystemUpdateResponse(status="update initiated; system is restarting")
+    try:
+        run_id = get_update_service().start()
+    except UpdateLaunchError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to launch update script: {exc}") from exc
+    return SystemUpdateResponse(status="update initiated; system is restarting", run_id=run_id)
+
+
+@router.get(
+    "/update/status",
+    summary="Get System Update Status",
+    description=(
+        "Progress of the last update, written by scripts/update.sh. 'done' is written only "
+        "after the restarted services answered, so the UI may reload on it."
+    ),
+    operation_id="getSystemUpdateStatus",
+    response_model=UpdateStatusResponse,
+)
+def get_update_status() -> UpdateStatusResponse:
+    return get_update_service().status()

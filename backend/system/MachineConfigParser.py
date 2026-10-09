@@ -23,6 +23,7 @@ from models.machineconfig import (
     SpindleDigital,
     Stepper,
     TMC2209,
+    ToolLengthSensor,
 )
 from machineconfig_schema import (
     ALLOWED_CONNECTION_TYPES,
@@ -711,6 +712,10 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.TOOL_LENGTH_SENSOR:
+                graph.tool_length_sensor = ToolLengthSensor(
+                    pin=self._optional_string(section, "pin"),
+                )
 
         # Resolve after all sections are parsed so an endstop may appear before
         # its target stepper in the source file.
@@ -1295,6 +1300,10 @@ class MachineConfigParser:
         if graph.probe is not None:
             MachineConfigParser._validate_pin_mcu(
                 "probe", "pin", graph.probe.pin, declared
+            )
+        if graph.tool_length_sensor is not None:
+            MachineConfigParser._validate_pin_mcu(
+                "tool_length_sensor", "pin", graph.tool_length_sensor.pin, declared
             )
 
     def _parse_fan(

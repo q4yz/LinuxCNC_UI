@@ -136,15 +136,6 @@ test("facade exposes isEstopActive covering both raw safety signals", () => {
   assert.match(text, /TASK_STATE\.ESTOP/);
 });
 
-test("facade ships a mocked recentFiles getter with the FileInfo shape", () => {
-  const text = readFacade();
-  assert.match(text, /recentFiles\s*\(\s*\)\s*\{/);
-  // Each entry exposes ``filename`` so the widget can render without
-  // changes when the real backend list lands.
-  assert.match(text, /filename:/);
-  assert.match(text, /modified:/);
-});
-
 test("facade defines updateStatus action that mutates the raw state", () => {
   const text = readFacade();
   assert.match(

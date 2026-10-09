@@ -14,6 +14,8 @@ from exceptions import BadRequestError, NotFoundError
 
 
 from domain_file_services import get_macro_service, get_mcode_service
+from domain_file_services.FileService import FileMetadata
+from mappers.files import FileEntryMapper
 from models.MacroModels import MacroContentResponse, MacroListItem, MacroListResponse, MacroWriteResponse
 from storage.MacroStorage import VALID_KINDS, MacroKind
 
@@ -61,6 +63,14 @@ class MacrosService:
         except ValueError:
             return 0
 
+    @staticmethod
+    def _list_item(entry: FileMetadata, macro_name: str, kind: str) -> MacroListItem:
+        return MacroListItem(
+            **FileEntryMapper.to_response(entry).model_dump(),
+            macro_name=macro_name,
+            macro_kind=kind,
+        )
+
     def list_macros(self, kind: str) -> MacroListResponse:
         self._validate_kind(kind)
         service = self._get_service(kind)
@@ -72,15 +82,13 @@ class MacrosService:
 
             if kind == MacroKind.MCODE:
                 if self._MCODE_RE.match(entry.name):
-                    items.append(MacroListItem(name=entry.name, kind=kind, size_bytes=entry.size_bytes))
+                    items.append(self._list_item(entry, entry.name, kind))
             else:
                 ext = f".{kind}"
                 if entry.name.endswith(ext):
-                    # Strip the extension for the logical API response
-                    base_name = entry.name[:-len(ext)]
-                    items.append(MacroListItem(name=base_name, kind=kind, size_bytes=entry.size_bytes))
+                    items.append(self._list_item(entry, entry.name[:-len(ext)], kind))
 
-        items.sort(key=lambda item: item.name)
+        items.sort(key=lambda item: item.macro_name)
         return MacroListResponse(macros=items)
 
     def read_macro(self, name: str, kind: str) -> str:

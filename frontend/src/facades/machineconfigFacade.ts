@@ -15,6 +15,8 @@
 import { ModulesMachineconfigService, ApiError } from "../../generated/api/index";
 import { CommandResult } from "../entities/common/CommandResult";
 import { describeError, errorStatus } from "../core/error-format";
+import type { FileEntry } from "../entities/files";
+import { toFileListing } from "../mappers/filesMapper";
 
 async function _commandResultFrom(
   promise: Promise<{ status?: string; message?: string } | void>,
@@ -38,8 +40,10 @@ async function _commandResultFrom(
 
 // --- Profiles CRUD ----------------------------------------------------
 
-async function listProfiles() {
-  return ModulesMachineconfigService.getProfilesTreeApiV1ModulesMachineconfigProfilesTreeGet();
+/** Every file/folder under ``profiles/`` (flat, ``parent`` links them). */
+async function listProfiles(): Promise<FileEntry[]> {
+  const listing = await ModulesMachineconfigService.getProfilesTreeApiV1ModulesMachineconfigProfilesTreeGet();
+  return toFileListing(listing?.entries);
 }
 
 async function readProfile(path: string) {
@@ -79,34 +83,46 @@ async function createFile(path: string): Promise<CommandResult> {
   );
 }
 
-async function uploadProfile(
+/**
+ * Upload several files into ``directory``, one request each. A failed
+ * file does not stop the rest; the result names every file that
+ * failed (and why), or reports how many were uploaded.
+ */
+async function _uploadEach(
   directory: string,
   files: File[],
+  uploadOne: (path: string, file: File) => Promise<unknown>,
 ): Promise<CommandResult> {
-  // Upload is sequence-sensitive: a failure on file N must abort the
-  // remaining uploads. Surface only a single ``CommandResult`` so
-  // the store can react uniformly.
-  try {
-    for (const file of files) {
-      const path = [directory, file.name].filter(Boolean).join("/");
-      // ``Body_upload_profile...post.file`` is typed as ``string``
-      // by the codegen but ``request.ts::isBlob`` accepts ``File``
-      // at runtime. Pass the raw ``File`` so multipart upload works.
-      await ModulesMachineconfigService.uploadProfileApiV1ModulesMachineconfigProfilesUploadPost(
-        path,
-        { file: file as unknown as string },
-      );
+  const commandId = `upload:${directory}`;
+  const failures: string[] = [];
+  let lastStatus: number | null = null;
+  for (const file of files) {
+    const path = [directory, file.name].filter(Boolean).join("/");
+    try {
+      await uploadOne(path, file);
+    } catch (err: unknown) {
+      failures.push(`${file.name}: ${describeError(err)}`);
+      lastStatus = errorStatus(err);
     }
-    return CommandResult.success({
-      commandId: `upload:${directory}`,
-      message: `Uploaded ${files.length} file(s)`,
-    });
-  } catch (err: unknown) {
-    return CommandResult.failure(describeError(err), {
-      commandId: `upload:${directory}`,
-      statusCode: errorStatus(err),
-    });
   }
+  if (failures.length) {
+    return CommandResult.failure(
+      `${failures.length} of ${files.length} file(s) failed — ${failures.join("; ")}`,
+      { commandId, statusCode: lastStatus },
+    );
+  }
+  return CommandResult.success({ commandId, message: `Uploaded ${files.length} file(s)` });
+}
+
+async function uploadProfile(directory: string, files: File[]): Promise<CommandResult> {
+  // ``Body_upload_profile...post.file`` is typed as ``string`` by the
+  // codegen but ``request.ts::isBlob`` accepts ``File`` at runtime.
+  return _uploadEach(directory, files, (path, file) =>
+    ModulesMachineconfigService.uploadProfileApiV1ModulesMachineconfigProfilesUploadPost(
+      path,
+      { file: file as unknown as string },
+    ),
+  );
 }
 
 async function renameProfile(
@@ -206,8 +222,10 @@ async function generateMachine({
   }
 }
 
-async function listMachines() {
-  return ModulesMachineconfigService.getMachinesTreeApiV1ModulesMachineconfigMachinesTreeGet();
+/** Every file/folder under ``machines/`` (flat, ``parent`` links them). */
+async function listMachines(): Promise<FileEntry[]> {
+  const listing = await ModulesMachineconfigService.getMachinesTreeApiV1ModulesMachineconfigMachinesTreeGet();
+  return toFileListing(listing?.entries);
 }
 
 async function readMachine(path: string) {
@@ -242,28 +260,13 @@ async function createMachineFile(path: string): Promise<CommandResult> {
   );
 }
 
-async function uploadMachine(
-  directory: string,
-  files: File[],
-): Promise<CommandResult> {
-  try {
-    for (const file of files) {
-      const path = [directory, file.name].filter(Boolean).join("/");
-      await ModulesMachineconfigService.uploadMachineFileApiV1ModulesMachineconfigMachinesUploadPost(
-        path,
-        { file: file as unknown as string },
-      );
-    }
-    return CommandResult.success({
-      commandId: `machine-upload:${directory}`,
-      message: `Uploaded ${files.length} file(s)`,
-    });
-  } catch (err: unknown) {
-    return CommandResult.failure(describeError(err), {
-      commandId: `machine-upload:${directory}`,
-      statusCode: errorStatus(err),
-    });
-  }
+async function uploadMachine(directory: string, files: File[]): Promise<CommandResult> {
+  return _uploadEach(directory, files, (path, file) =>
+    ModulesMachineconfigService.uploadMachineFileApiV1ModulesMachineconfigMachinesUploadPost(
+      path,
+      { file: file as unknown as string },
+    ),
+  );
 }
 
 async function renameMachine(source: string, destination: string): Promise<CommandResult> {

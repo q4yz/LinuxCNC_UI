@@ -43,7 +43,10 @@
 // in ``.agent/LESSONS_LEARNED.md`` § 2.4.
 
 import { defineStore } from "pinia";
-import { reactive, ref, type Ref } from "vue";
+import { reactive, ref, shallowRef, type Ref } from "vue";
+import type { MacroListResponse } from "../../generated/api/models/MacroListResponse";
+import { FileEntry } from "../entities/files";
+import { toFileEntry } from "../mappers/filesMapper";
 
 import { macrosFacade } from "../facades/macrosFacade";
 import { useConsoleStore } from "./console";
@@ -102,14 +105,18 @@ function normalizeEmpty(body: string): string {
 }
 
 /**
- * Translate the generated client's ``MacroListResponse.macros`` into
- * a plain array of ``{ name, kind, size_bytes }`` records. The
- * generated ``MacroListItem`` is structurally identical so we keep
- * the field names the same.
+ * Translate the generated client's ``MacroListResponse.macros`` (the
+ * shared file record + ``macro_name`` / ``macro_kind``) into
+ * ``MacroEntry`` rows of ``kind``.
  */
-function normalizeListEntries(response: unknown): MacroEntry[] {
-  const raw = (response as { macros?: unknown } | null | undefined)?.macros;
-  return Array.isArray(raw) ? (raw as MacroEntry[]) : [];
+function normalizeListEntries(response: MacroListResponse | null | undefined, kind: MacroKind): MacroEntry[] {
+  const rows = Array.isArray(response?.macros) ? response.macros : [];
+  const entries: MacroEntry[] = [];
+  for (const row of rows) {
+    const file = toFileEntry(row);
+    if (file && row.macro_name) entries.push({ name: row.macro_name, kind, file });
+  }
+  return entries;
 }
 
 /**
@@ -155,9 +162,11 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
    * pick the right ref (or join ``macroFiles`` + ``ngcFiles`` for
    * the legacy MacroPanel) directly.
    */
-  const macroFiles: Ref<MacroEntry[]> = ref([]);
-  const ngcFiles: Ref<MacroEntry[]> = ref([]);
-  const mcodeFiles: Ref<MacroEntry[]> = ref([]);
+  // Shallow: rows are replaced as a whole, and a deep ref would
+  // unwrap the ``FileEntry`` class's private fields.
+  const macroFiles: Ref<MacroEntry[]> = shallowRef([]);
+  const ngcFiles: Ref<MacroEntry[]> = shallowRef([]);
+  const mcodeFiles: Ref<MacroEntry[]> = shallowRef([]);
 
   /**
    * Cache of fetched payloads. Keyed by ``<kind>:<name>`` so the
@@ -202,13 +211,9 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     const target = listRefFor(kind);
     try {
       const response = await macrosFacade.list(kind);
-      // Tag every row with its kind so the dashboard panels can
+      // Every row is tagged with its kind so the dashboard panels can
       // join the macro + ngc refs without losing the source.
-      const entries: MacroEntry[] = normalizeListEntries(response).map((row) => ({
-        ...row,
-        kind,
-      }));
-      target.value = entries;
+      target.value = normalizeListEntries(response, kind);
       return target.value;
     } catch (error: unknown) {
       lastError.value = describeError(error);
@@ -296,11 +301,23 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
         `Saved macro '${name}' (${kind}, ${safeBody.length} bytes).`,
       );
       const target = listRefFor(kind);
-      const size_bytes = new Blob([safeBody]).size;
-      const row: MacroEntry = { name, kind, size_bytes };
       const idx = target.value.findIndex((entry) => entry.name === name);
-      if (idx === -1) target.value.push(row);
-      else target.value.splice(idx, 1, row);
+      const previous = idx === -1 ? null : target.value[idx].file;
+      const fileName = kind === MACRO_KIND.MCODE ? name : `${name}.${kind}`;
+      const row: MacroEntry = {
+        name,
+        kind,
+        file: new FileEntry({
+          name: previous?.name ?? fileName,
+          path: previous?.path ?? fileName,
+          sizeBytes: new Blob([safeBody]).size,
+          modified: new Date().toISOString(),
+        }),
+      };
+      // Replace the array (the list refs are shallow).
+      target.value = idx === -1
+        ? [...target.value, row]
+        : target.value.map((entry, i) => (i === idx ? row : entry));
     }
     isBusy.value = false;
     return result;
@@ -322,8 +339,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       delete contents[cacheKey(kind, name)];
       useConsoleStore().success(`Deleted macro '${name}' (${kind}).`);
       const target = listRefFor(kind);
-      const idx = target.value.findIndex((entry) => entry.name === name);
-      if (idx !== -1) target.value.splice(idx, 1);
+      target.value = target.value.filter((entry) => entry.name !== name);
     }
     isBusy.value = false;
     return result;

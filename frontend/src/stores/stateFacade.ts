@@ -203,22 +203,6 @@ export const useMachineStore = defineStore("machineStore", {
         state.status.task_state === TASK_STATE.ESTOP
       );
     },
-
-    /**
-     * Mocked recent-files list — the real implementation will read
-     * from the file manager (or a future
-     * ``recentFiles`` endpoint) once it lands. Shape matches
-     * ``FileInfo`` so ``ActivePrintWidget`` does not have to change.
-     */
-    recentFiles() {
-      return [
-        { filename: "demo_box.gcode", modified: "2026-07-25T10:00:00Z", size_bytes: 24576 },
-        { filename: "spiral_v2.ngc",   modified: "2026-07-24T15:30:00Z", size_bytes: 16384 },
-        { filename: "calibration.ngc", modified: "2026-07-23T09:15:00Z", size_bytes: 8192  },
-        { filename: "hex_grid.gcode",  modified: "2026-07-22T18:45:00Z", size_bytes: 32768 },
-        { filename: "first_run.gcode", modified: "2026-07-21T12:05:00Z", size_bytes: 4096  },
-      ];
-    },
   },
 
   actions: {

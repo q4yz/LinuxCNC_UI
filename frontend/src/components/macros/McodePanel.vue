@@ -22,6 +22,7 @@ import { openInEditor } from "../../helpers/openInEditor";
 import type { MacroEntry } from "../../stores/macrosTypes";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
+import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 
 const store = useMacrosStore();
 const { isBusy, mcodeFiles } = storeToRefs(store);
@@ -85,7 +86,7 @@ async function onDelete(name: string): Promise<void> {
             </span>
           </div>
           <div class="text-xs text-gray-500">
-            {{ row.size_bytes }} bytes
+            {{ formatFileSize(row.file.sizeBytes) }} · {{ formatFileDate(row.file.modified) }}
           </div>
         </div>
         <div class="flex items-center gap-3 shrink-0">

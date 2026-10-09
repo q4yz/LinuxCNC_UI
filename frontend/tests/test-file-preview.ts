@@ -61,7 +61,7 @@ test("FileManager shows thumbnails and opens the preview modal", () => {
   const text = read("components/FileManager.vue");
 
   assert.match(text, /useFileThumbnails/, "thumbnail composable wired");
-  assert.match(text, /file-thumb-\$\{file\.filename\}/, "row thumbnail icon");
+  assert.match(text, /file-thumb-\$\{file\.name\}/, "row thumbnail icon");
   assert.match(text, /data-test="file-preview-modal"/, "preview modal");
   assert.match(text, /data-test="preview-thumb"/, "large embedded image in the modal");
   assert.match(text, /ToolpathViewer/, "modal renders the 3D toolpath viewer");
@@ -79,11 +79,11 @@ test("row actions offer Download instead of Load; Load lives in the preview", ()
   // survives (guarded further below).
   assert.doesNotMatch(
     text,
-    /data-test="`file-load-\$\{file\.filename\}`"/,
+    /data-test="`file-load-\$\{file\.name\}`"/,
     "the per-row Load button must be removed",
   );
-  assert.match(text, /data-test="`file-download-\$\{file\.filename\}`"/, "row must offer Download");
-  assert.match(text, /downloadFile\(file\.filename\)/, "download button calls downloadFile");
+  assert.match(text, /data-test="`file-download-\$\{file\.name\}`"/, "row must offer Download");
+  assert.match(text, /downloadFile\(file\.name\)/, "download button calls downloadFile");
   assert.match(text, /createObjectURL/, "download must build a Blob URL");
 });
 
@@ -94,12 +94,12 @@ test("Load only works while the machine service is up", () => {
   // Load lives in the preview modal now, keyed to the previewed file.
   assert.match(
     text,
-    /data-test="`file-load-\$\{previewFile\.filename\}`"/,
+    /data-test="`file-load-\$\{previewFile\.name\}`"/,
     "the preview modal must offer Load for the previewed file",
   );
   assert.match(
     text,
-    /:disabled="!isMachineOnline"[\s\S]{0,200}loadFile\(previewFile\.filename\)/,
+    /:disabled="!isMachineOnline"[\s\S]{0,200}loadFile\(previewFile\.name\)/,
     "the preview's Load button must be disabled while the machine service is offline",
   );
   // Defense in depth: the handler itself refuses even if a disabled
@@ -119,7 +119,7 @@ test("file list shows an upload date and sorts newest-first", () => {
   assert.match(text, /sortedFiles/, "list must be sorted before rendering");
   assert.match(
     text,
-    /Date\.parse\(b\.modified\)\s*-\s*Date\.parse\(a\.modified\)/,
+    /b\.modifiedMs\s*-\s*a\.modifiedMs/,
     "sort must be newest-first by modified",
   );
   assert.match(text, /v-for="file in sortedFiles"/, "table body must iterate the sorted list");
