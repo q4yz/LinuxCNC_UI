@@ -3,7 +3,8 @@ import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
 import { useConsoleStore } from '../stores/console'
-import { SystemService } from '../../generated/api/services/SystemService'
+import { systemFacade } from '../facades/systemFacade'
+import { CommandResult } from '../entities/common/CommandResult'
 import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
 import { BaseButton } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
@@ -37,17 +38,16 @@ function openConsoleLog() {
 }
 
 const fetchVersion = async () => {
-  try {
-    const res = await SystemService.getVersionInfo()
-    // Prefer the simple `version` field (commit hash) if present
-    currentVersion.value = res.version || res.current_version || 'unknown'
-    latestVersion.value = res.latest_version || res.version || 'unknown'
-    if (res.update_available) {
-      consoleStore.info('Update available')
-    }
-  } catch (error) {
-    consoleStore.error(`Failed to fetch version: ${error instanceof Error ? error.message : String(error)}`)
+  const result = await systemFacade.fetchVersion()
+  if (result instanceof CommandResult) {
+    consoleStore.error(`Failed to fetch version: ${result.failureReason}`)
     currentVersion.value = 'error'
+    return
+  }
+  currentVersion.value = result.version || 'unknown'
+  latestVersion.value = result.latestVersion || 'unknown'
+  if (result.isUpdatable) {
+    consoleStore.info('Update available')
   }
 }
 
@@ -56,20 +56,19 @@ const updateSystem = async () => {
     return
   }
 
-  try {
-    store.$patch({ isUpdating: true })
-    consoleStore.warning("System update initiated. Connection may be lost temporarily...")
-    await SystemService.triggerSystemUpdate()
-
-    // We expect the websocket to drop or page to reload eventually,
-    // but we can optionally reload after a timeout.
-    setTimeout(() => {
-      window.location.reload()
-    }, 10000)
-  } catch (error) {
+  store.$patch({ isUpdating: true })
+  consoleStore.warning("System update initiated. Connection may be lost temporarily...")
+  const result = await systemFacade.triggerUpdate()
+  if (!result.ok) {
     store.$patch({ isUpdating: false })
-    consoleStore.error(`Update failed to start: ${error instanceof Error ? error.message : String(error)}`)
+    consoleStore.error(`Update failed to start: ${result.failureReason}`)
+    return
   }
+  // We expect the websocket to drop or page to reload eventually,
+  // but we can optionally reload after a timeout.
+  setTimeout(() => {
+    window.location.reload()
+  }, 10000)
 }
 
 async function refreshMachineStatus() {

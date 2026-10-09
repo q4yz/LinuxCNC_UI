@@ -11,7 +11,8 @@ from mappers.mcu.McuMapper import McuMapper
 from models.McuModels import McuStateResponse
 from services.McuService import get_mcu_service
 from services.AxisService import get_axis_service
-from services.ProgramService import ProgramProgressResponse, get_program_lifecycle_service
+from models.program.ProgramModels import ProgramProgressResponse
+from services.ProgramService import get_program_lifecycle_service
 from factories.temperature.TemperatureResponseFactory import TemperatureResponseFactory
 from models.TemperatureStateResponse import TemperatureStateResponse
 from services.TemperatureService import get_temperature_service

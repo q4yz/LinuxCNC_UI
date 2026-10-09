@@ -224,9 +224,8 @@ test("facade manual disconnect does not arm the reconnect loop", () => {
 test("machine-level widgets are wrapped in MachineGate", () => {
   const expectations = [
     ["views/DashboardView.vue", ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget"]],
-    ["views/RunningView.vue", ["AxisSpeedControl", "ToolPanel"]],
+    ["views/RunningView.vue", ["ActivePrintWidget", "AxisSpeedControl", "ToolPanel"]],
     ["views/DebugView.vue", ["DebugPanel"]],
-    ["views/FilesView.vue", ["ActivePrintWidget"]],
     // The Settings page itself is ungated (settings live in the system
     // service); only the camera device list needs the machine backend.
     ["settings/components/SettingCameraPreferences.vue", ["CameraSettings"]],

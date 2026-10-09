@@ -222,11 +222,11 @@ class TestExecuteGcode:
         ``None`` → 503. The router surfaces this as a clear
         "service unavailable" rather than crashing the worker.
         """
-        from fastapi import HTTPException
+        from hardware.Connection.errors import LinuxCNCUnavailableError
 
         with patch.object(cmd_mod, "get_stat_channel", return_value=None):
             with patch.object(cmd_mod, "get_cmd_channel", return_value=None):
-                with pytest.raises(HTTPException) as excinfo:
+                with pytest.raises(LinuxCNCUnavailableError) as excinfo:
                     execute_gcode("G28")
         assert excinfo.value.status_code == 503
 
@@ -303,12 +303,12 @@ class TestDispatchMdi:
                 assert cmd_mod.dispatch_mdi("G1 X10") == 7
 
     def test_rcs_error_raises_400(self):
-        from fastapi import HTTPException
+        from hardware.Connection.errors import CommandRejectedError
 
         fake_stat, fake_cmd = self._channels(getattr(conn_mod.linuxcnc, "RCS_ERROR", 3))
         with patch.object(cmd_mod, "get_stat_channel", return_value=fake_stat):
             with patch.object(cmd_mod, "get_cmd_channel", return_value=fake_cmd):
-                with pytest.raises(HTTPException) as excinfo:
+                with pytest.raises(CommandRejectedError) as excinfo:
                     cmd_mod.dispatch_mdi("G1 X10")
         assert excinfo.value.status_code == 400
         assert not cmd_mod._cmd_lock.locked()

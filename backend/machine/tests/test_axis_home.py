@@ -151,7 +151,7 @@ def test_axis_home_endpoint_requires_axis_field(
 ):
     """Missing ``axis`` field → 422 (Pydantic validation).
 
-    The handler signature is ``cmd: _HomeCommand`` so FastAPI
+    The handler signature is ``cmd: HomeAxisCommand`` so FastAPI
     enforces the schema before the function body runs.
     """
     app, _ = _axis_app(tmp_data_root, clean_env)

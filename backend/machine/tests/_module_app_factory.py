@@ -22,6 +22,8 @@ from typing import Iterable, Optional
 
 from fastapi import APIRouter, FastAPI
 
+from exceptions import register_command_error_handler
+
 _ROUTERS = {
     "axis": "routers.axis",
     "machine_state": "routers.state",
@@ -51,6 +53,7 @@ def build_module_app(
     the machine side persists settings any more.
     """
     app = FastAPI()
+    register_command_error_handler(app)  # same as machine/main.py
     app.include_router(_resolve_router(module_id))
     for router in extra_routers or ():
         app.include_router(router)

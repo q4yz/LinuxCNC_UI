@@ -7,15 +7,16 @@ from fastapi.testclient import TestClient
 
 from core.UiSettingsStore import UiSettingsStore
 from routers import ui_settings
+from services.UiSettingsService import UiSettingsService, set_ui_settings_service
 
 
 @pytest.fixture()
 def client(tmp_path):
-    ui_settings.set_ui_settings_store(UiSettingsStore(tmp_path / "settings.json"))
+    set_ui_settings_service(UiSettingsService(UiSettingsStore(tmp_path / "settings.json")))
     app = FastAPI()
     app.include_router(ui_settings.router)
     yield TestClient(app)
-    ui_settings.set_ui_settings_store(None)
+    set_ui_settings_service(None)
 
 
 def test_list_is_empty_until_something_is_written(client):

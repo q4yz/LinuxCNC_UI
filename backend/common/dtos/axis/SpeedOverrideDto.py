@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SpeedOverrideDTO:
     """Live speed override state, read from LinuxCNC's status channel.
 

@@ -6,8 +6,6 @@
 // the layout-vs-display boundary and lets the file list be reused
 // in other layouts.
 import FileManager from '../components/FileManager.vue';
-import ActivePrintWidget from "../components/ActivePrintWidget.vue";
-import MachineGate from "../components/machine/MachineGate.vue";
 
 const emit = defineEmits(['edit']);
 

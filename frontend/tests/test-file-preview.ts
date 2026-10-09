@@ -155,7 +155,9 @@ test("ToolpathViewer is dependency-free and binds no keyboard handlers", () => {
     /import type \{ ParsedSegment \} from ["']\.\.\/parsers\/gcodeParser["']/,
     "must reuse the coordinate viewer's parser types",
   );
-  assert.match(text, /new THREE\.BufferAttribute\(flat, 3\)/, "same flat-array mesh build");
+  // The Float32Array build runs in toolpathWorker.ts; the viewer only
+  // wraps the transferred buffers.
+  assert.match(text, /new THREE\.BufferAttribute\(positions, 3\)/, "mesh built from the worker's position buffer");
   assert.match(text, /OrbitControls/, "orbit controls for inspection");
 
   // The whole point of the extraction: NO machine stores, NO key
@@ -220,12 +222,12 @@ test("ToolpathViewer frames the part top-down from Z+ with no base grid", () => 
   assert.ok(!/GridHelper/.test(text), "base grid must be removed");
   assert.match(
     text,
-    /center\.z \+ distance/,
+    /centerZ \+ distance/,
     "camera must sit mainly on +Z looking down towards Z−",
   );
   assert.match(
     text,
-    /controls\.target\.copy\(center\)/,
+    /controls\.target\.set\(centerX, centerY, centerZ\)/,
     "camera must look at the part center",
   );
 });

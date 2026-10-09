@@ -27,7 +27,12 @@ from __future__ import annotations
 import threading
 from typing import Any, Dict, Optional
 
-from fastapi import HTTPException
+from .errors import (
+    CommandError,
+    CommandRejectedError,
+    CommandTimeoutError,
+    LinuxCNCUnavailableError,
+)
 
 from core.NonRepeatingLogger import NonRepeatingLogger
 
@@ -62,8 +67,8 @@ def _wait_for_completion(cmd_channel: Any, timeout: float) -> None:
         timeout (float): The maximum time to wait in seconds.
 
     Raises:
-        HTTPException (400): If the command returns an execution error.
-        HTTPException (408): If the command exceeds the timeout.
+        CommandRejectedError (400): If the command returns an execution error.
+        CommandTimeoutError (408): If the command exceeds the timeout.
     """
     if timeout <= 0:
         return
@@ -73,9 +78,9 @@ def _wait_for_completion(cmd_channel: Any, timeout: float) -> None:
     if result == RcsStatus.DONE:
         return
     elif result == RcsStatus.ERROR:
-        raise HTTPException(status_code=400, detail="Command execution error")
+        raise CommandRejectedError("Command execution error")
     else:
-        raise HTTPException(status_code=408, detail="Command timed out")
+        raise CommandTimeoutError("Command timed out")
 
 
 def _switch_to_mdi_mode(stat_channel: Any, cmd_channel: Any) -> None:
@@ -110,19 +115,16 @@ def execute_gcode(gcode: str, timeout: float = 10.0) -> Dict[str, Any]:
         dict: A status dictionary containing the executed G-code.
 
     Raises:
-        HTTPException (503): If the LinuxCNC channels are unavailable.
-        HTTPException (400): If the G-code triggers an execution error.
-        HTTPException (408): If the command times out.
-        HTTPException (500): On unexpected internal errors.
+        LinuxCNCUnavailableError (503): If the LinuxCNC channels are unavailable.
+        CommandRejectedError (400): If the G-code triggers an execution error.
+        CommandTimeoutError (408): If the command times out.
+        CommandError (500): On unexpected internal errors.
     """
     cmd = get_cmd_channel()
     stat = get_stat_channel()
 
     if cmd is None or stat is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
-        )
+        raise LinuxCNCUnavailableError("LinuxCNC is not running. Start LinuxCNC and retry.")
 
     try:
         with _cmd_lock:
@@ -133,19 +135,17 @@ def execute_gcode(gcode: str, timeout: float = 10.0) -> Dict[str, Any]:
             # and re-raise it with G-Code specific context if needed.
             try:
                 _wait_for_completion(cmd, timeout)
-            except HTTPException as he:
-                if he.status_code == 400:
-                    raise HTTPException(status_code=400, detail=f"G-code execution error: {gcode}")
-                raise
+            except CommandRejectedError:
+                raise CommandRejectedError(f"G-code execution error: {gcode}")
 
         return {"status": "success", "gcode": gcode}
 
-    except HTTPException:
-        # Re-raise known API errors (400, 408, 503) cleanly
+    except CommandError:
+        # Re-raise known command errors (400, 408, 503) cleanly
         raise
     except Exception as e:  # noqa: BLE001
         logger.error("G-code execution failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise CommandError(str(e))
 
 
 def dispatch_mdi(gcode: str, ack_timeout: float = 1.0) -> Optional[int]:
@@ -172,18 +172,15 @@ def dispatch_mdi(gcode: str, ack_timeout: float = 1.0) -> Optional[int]:
         not expose one.
 
     Raises:
-        HTTPException (503): If the LinuxCNC channels are unavailable.
-        HTTPException (400): If LinuxCNC rejects the command.
-        HTTPException (500): On unexpected internal errors.
+        LinuxCNCUnavailableError (503): If the LinuxCNC channels are unavailable.
+        CommandRejectedError (400): If LinuxCNC rejects the command.
+        CommandError (500): On unexpected internal errors.
     """
     cmd = get_cmd_channel()
     stat = get_stat_channel()
 
     if cmd is None or stat is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LinuxCNC is not running. Start LinuxCNC and retry.",
-        )
+        raise LinuxCNCUnavailableError("LinuxCNC is not running. Start LinuxCNC and retry.")
 
     try:
         with _cmd_lock:
@@ -191,14 +188,14 @@ def dispatch_mdi(gcode: str, ack_timeout: float = 1.0) -> Optional[int]:
             cmd.mdi(gcode)
             result = cmd.wait_complete(ack_timeout)
             serial = getattr(cmd, "serial", None)
-    except HTTPException:
+    except CommandError:
         raise
     except Exception as e:  # noqa: BLE001
         logger.error("MDI dispatch failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise CommandError(str(e))
 
     if result == RcsStatus.ERROR:
-        raise HTTPException(status_code=400, detail=f"G-code execution error: {gcode}")
+        raise CommandRejectedError(f"G-code execution error: {gcode}")
     return serial
 
 
@@ -215,20 +212,20 @@ def execute_sync_cmd(cmd_name: str, timeout: float = 0, *args) -> Dict[str, str]
         dict: A success status dictionary `{"status": "success"}`.
 
     Raises:
-        HTTPException (503): If the LinuxCNC command channel is unavailable.
-        HTTPException (500): If the command does not exist or an internal error occurs.
-        HTTPException (400): If the command returns an execution error.
-        HTTPException (408): If the command exceeds `timeout`.
+        LinuxCNCUnavailableError (503): If the LinuxCNC command channel is unavailable.
+        CommandError (500): If the command does not exist or an internal error occurs.
+        CommandRejectedError (400): If the command returns an execution error.
+        CommandTimeoutError (408): If the command exceeds `timeout`.
     """
     cmd = get_cmd_channel()
     if cmd is None:
-        raise HTTPException(status_code=503, detail="LinuxCNC is not running. Start LinuxCNC and retry.")
+        raise LinuxCNCUnavailableError("LinuxCNC is not running. Start LinuxCNC and retry.")
 
     # 1. Resolve command binding
     try:
         func = getattr(cmd, cmd_name)
     except AttributeError:
-        raise HTTPException(status_code=500, detail=f"Command '{cmd_name}' not implemented in hardware interface.")
+        raise CommandError(f"Command '{cmd_name}' not implemented in hardware interface.")
 
     # 2. Execute and wait
     try:
@@ -236,11 +233,11 @@ def execute_sync_cmd(cmd_name: str, timeout: float = 0, *args) -> Dict[str, str]
             func(*args)
             _wait_for_completion(cmd, timeout)
         return {"status": "success"}
-    except HTTPException:
+    except CommandError:
         raise
     except Exception as e:  # noqa: BLE001
         logger.error(f"Command execution failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise CommandError(str(e))
 
 
 def ensure_mdi_mode() -> None:

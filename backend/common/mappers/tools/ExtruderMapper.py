@@ -11,7 +11,7 @@ from mappers.tools.OptionalMappers import OptionalMappers
 from models.tools.ExtruderModels import ExtruderStateResponse
 
 if TYPE_CHECKING:
-    from routers.tools import ExtruderCommand
+    from models.tools.ExtruderModels import ExtruderCommand
 
 
 class ExtruderMapper:

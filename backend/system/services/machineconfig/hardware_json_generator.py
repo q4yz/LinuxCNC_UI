@@ -857,9 +857,9 @@ def build_hardware_json(
     # the wire ``joints[]`` is a complete enumeration (matches the
     # LinuxCNC-side ``Joint`` list produced by ``AxisBuilder``).
     # Each extruder joint carries the extruder's pins + scaling
-    # fields, exactly like a regular stepper, but has no driver
-    # (drivers[] is motor-driver only) and an id matching its
-    # ``tools[]`` entry.
+    # fields, exactly like a regular stepper, and an id matching its
+    # ``tools[]`` entry. Its driver is set only when the profile
+    # declares a ``[tmc2209 extruder]`` section.
     from models.machineconfig import Extruder
     extruder_joint_records: list[dict[str, Any]] = []
     for tool in tool_records:
@@ -878,11 +878,20 @@ def build_hardware_json(
             # has a matching ``Extruder`` instance on the graph —
             # but skipping is safer than crashing the compile.
             continue
+        # A ``[tmc2209 extruder]`` section is the extruder motor's
+        # driver; emit it like a stepper's so its settings are not lost.
+        extruder_tmc = graph.tmc2209s.get(section)
+        extruder_driver_id = None
+        if extruder_tmc is not None:
+            extruder_driver_id = _driver_id(graph, section)
+            driver_records.append(
+                _driver_payload(extruder_driver_id, extruder_obj, extruder_tmc)
+            )
         extruder_joint_records.append(
             {
                 "id": tool["id"],
                 "joint_number": joint_number,
-                "driver": None,
+                "driver": extruder_driver_id,
                 "step_pin": getattr(extruder_obj, "step_pin", None),
                 "dir_pin": getattr(extruder_obj, "dir_pin", None),
                 "enable_pin": getattr(extruder_obj, "enable_pin", None),

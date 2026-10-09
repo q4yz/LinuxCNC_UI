@@ -26,6 +26,11 @@ async function listFiles(): Promise<ReturnType<typeof toFileListing>> {
   }
 }
 
+/** Raw text of one program file. Throws on failure (404 included). */
+async function readFile(name: string): Promise<string> {
+  return ProgramFilesService.readFile(name);
+}
+
 async function _commandResultFrom(
   promise: Promise<unknown>,
   commandId: string,
@@ -63,6 +68,7 @@ async function deleteFile(path: string): Promise<CommandResult> {
 
 export const filesFacade = Object.freeze({
   listFiles,
+  readFile,
   uploadFile,
   deleteFile,
 });

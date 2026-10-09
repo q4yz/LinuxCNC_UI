@@ -11,7 +11,7 @@ import threading
 import time
 
 import pytest
-from fastapi import HTTPException
+from hardware.Connection.errors import LinuxCNCUnavailableError
 
 from hardware.Connection import (
     INITIAL_BACKOFF_S,
@@ -105,7 +105,7 @@ def test_lazy_channel_rate_limits_within_backoff_window(fresh_lazy_channel):
 def test_execute_sync_cmd_returns_503_when_channel_offline(
     fresh_lazy_channel, monkeypatch
 ):
-    """``execute_sync_cmd`` raises HTTPException(503) when the
+    """``execute_sync_cmd`` raises LinuxCNCUnavailableError (503) when the
     command channel has not yet connected.
     """
     # Force the command channel to report offline by pointing it
@@ -118,7 +118,7 @@ def test_execute_sync_cmd_returns_503_when_channel_offline(
     monkeypatch.setattr(_cmd_ch, "_last_error_at", None)
     monkeypatch.setattr(_cmd_ch, "_backoff_s", INITIAL_BACKOFF_S)
 
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(LinuxCNCUnavailableError) as excinfo:
         execute_sync_cmd("mode", 0, 1)
     assert excinfo.value.status_code == 503
     assert "linuxcnc" in excinfo.value.detail.lower()

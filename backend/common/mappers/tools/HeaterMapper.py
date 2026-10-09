@@ -11,7 +11,7 @@ from mappers.tools.OptionalMappers import OptionalMappers
 from models.tools.HeaterModels import HeaterStateResponse
 
 if TYPE_CHECKING:
-    from routers.tools import HeaterCommand
+    from models.tools.HeaterModels import HeaterCommand
 
 
 class HeaterMapper:

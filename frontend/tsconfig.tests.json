@@ -10,7 +10,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     // Tests are runtime-only — they run via `node --test` through
     // the strip-types loader. Their bodies are largely file-content
     // matchers and synthetic assertions that don't benefit from full

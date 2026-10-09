@@ -13,7 +13,9 @@ export function toSystemVersion(wire: unknown): SystemVersion {
     isUpdatable?: unknown;
   };
   return new SystemVersion({
-    version: typeof w.version === "string" ? w.version : "",
+    // ``version`` is the commit hash; fall back to the release tag.
+    version: w.version || w.current_version || "",
+    latestVersion: w.latest_version || w.version || "",
     commit: typeof w.commit === "string" ? w.commit : "",
     isUpdatable: Boolean(w.update_available ?? w.isUpdatable),
     releaseNotes:

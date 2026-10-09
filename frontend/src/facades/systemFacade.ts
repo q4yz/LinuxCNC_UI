@@ -6,15 +6,16 @@ import { SystemVersion } from "../entities/system/SystemVersion";
 import { toSystemVersion } from "../mappers/systemMapper";
 import { describeError, errorStatus } from "../core/error-format";
 
-/**
- * @returns {Promise<SystemVersion>}
- */
-async function fetchVersion() {
+/** Version info, or a failed ``CommandResult`` describing why it could not be read. */
+async function fetchVersion(): Promise<SystemVersion | CommandResult> {
   try {
     const wire = await SystemService.getVersionInfo();
     return toSystemVersion(wire);
-  } catch (err) {
-    return new SystemVersion();
+  } catch (err: unknown) {
+    return CommandResult.failure(describeError(err), {
+      commandId: "system-version",
+      statusCode: errorStatus(err),
+    });
   }
 }
 

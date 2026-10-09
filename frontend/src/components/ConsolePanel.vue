@@ -2,7 +2,7 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useConsoleStore, LOG_LEVELS } from '../stores/console'
-import { ModulesMachineStateService } from '../../generated/api/services/ModulesMachineStateService'
+import { machineStateFacade } from '../facades/machineStateFacade'
 import { filterAutocompleteCommands } from '../config/gcodes'
 import { useMachineStore } from '../stores/machine'
 import { BaseButton } from '../ui/index.ts'
@@ -99,16 +99,13 @@ const submitCommand = async () => {
   commandHistory.value.push(cmd)
   historyIndex.value = commandHistory.value.length
 
-  try {
-    // Cannot send commands while in ESTOP
-    if (machineStore.isEstop) {
-       consoleStore.error("Machine is in ESTOP. Command rejected.")
-    } else {
-       await ModulesMachineStateService.runMdiCommand({ command: cmd })
-       consoleStore.success(`Executed: ${cmd}`)
-    }
-  } catch (e) {
-    consoleStore.error(`Error: ${e instanceof Error ? e.message : String(e)}`)
+  // Cannot send commands while in ESTOP
+  if (machineStore.isEstop) {
+    consoleStore.error("Machine is in ESTOP. Command rejected.")
+  } else {
+    const result = await machineStateFacade.sendMdi(cmd)
+    if (result.ok) consoleStore.success(`Executed: ${cmd}`)
+    else consoleStore.error(`Error: ${result.failureReason}`)
   }
 
   commandInput.value = ''

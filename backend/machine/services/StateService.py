@@ -22,7 +22,7 @@ import time
 import warnings
 from typing import List, Optional, Any, Tuple
 
-from fastapi import HTTPException
+from exceptions import ServiceUnavailableError
 
 from dtos.EStopDto import EStopPin
 from dtos.LinuxCNCError import now_iso
@@ -152,10 +152,7 @@ class StateService:
             # Reset the pin so it is armed for the next time
             self._Estop.pressed.set_value(False)
         except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"HAL unreachable — cannot set webgui.estop: {e}"
-            )
+            raise ServiceUnavailableError(f"HAL unreachable — cannot set webgui.estop: {e}")
 
     def get_state(self) -> MachineState:
         """Translate the linuxcnc stat triple into a clean MachineState."""

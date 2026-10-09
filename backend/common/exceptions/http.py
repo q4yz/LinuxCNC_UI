@@ -27,13 +27,16 @@ Conventions
 """
 from __future__ import annotations
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 __all__ = [
     "BaseAPIException",
     "NotFoundError",
     "BadRequestError",
     "ConflictError",
+    "ServiceUnavailableError",
+    "register_command_error_handler",
 ]
 
 
@@ -84,3 +87,28 @@ class ConflictError(BaseAPIException):
 
     def __init__(self, msg: str) -> None:
         super().__init__(status_code=409, detail=msg)
+
+class ServiceUnavailableError(BaseAPIException):
+    """A ``503 Service Unavailable`` — a dependency (LinuxCNC, HAL, a
+    camera upstream) cannot be reached right now.
+    """
+
+    def __init__(self, msg: str) -> None:
+        super().__init__(status_code=503, detail=msg)
+
+
+async def _command_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    status_code = getattr(exc, "status_code", 500)
+    return JSONResponse(status_code=status_code, content={"detail": getattr(exc, "detail", str(exc))})
+
+
+def register_command_error_handler(app: FastAPI) -> None:
+    """Answer a hardware :class:`CommandError` with its own status code
+    and ``detail`` (the same shape as an ``HTTPException``).
+
+    Imported lazily: the system service uses this module too and must
+    not load the LinuxCNC connection package.
+    """
+    from hardware.Connection.errors import CommandError
+
+    app.add_exception_handler(CommandError, _command_error_handler)

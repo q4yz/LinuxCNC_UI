@@ -19,7 +19,7 @@ class SpindleAnalogStateDTO:
     min_rpm: float = 0.0
     max_rpm: float = 0.0
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SpindleAnalogSettingsDTO:
     id: str
     percent: float

@@ -1,49 +1,23 @@
 """``/api/v1/settings`` — the central UI settings store.
 
 Served by the system service so settings stay available while the
-machine backend is offline. See ``core/UiSettingsStore.py``.
+machine backend is offline. See ``services/UiSettingsService.py`` and
+``core/UiSettingsStore.py``.
 """
 from __future__ import annotations
 
-from typing import Optional
+from fastapi import APIRouter, Path, Response
 
-from fastapi import APIRouter, HTTPException, Path, Response
-
-from core.UiSettingsStore import (
-    InvalidSettingKeyError,
-    SettingValueTooLargeError,
-    UiSettingsStore,
-)
-from domain_file_services.paths import UI_SETTINGS_FILE
 from models.UiSettingsModels import (
     UiSettingResponse,
     UiSettingsListResponse,
     UiSettingValue,
 )
+from services.UiSettingsService import get_ui_settings_service
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
-_store: Optional[UiSettingsStore] = None
-
-
-def get_ui_settings_store() -> UiSettingsStore:
-    """Process-wide store (lazy). Tests swap it via :func:`set_ui_settings_store`."""
-    global _store
-    if _store is None:
-        _store = UiSettingsStore(UI_SETTINGS_FILE)
-    return _store
-
-
-def set_ui_settings_store(store: Optional[UiSettingsStore]) -> None:
-    global _store
-    _store = store
-
-
 _KEY = Path(..., description="Namespaced setting key, e.g. 'camera.ip_camera_url'.")
-
-
-def _bad_key(exc: Exception) -> HTTPException:
-    return HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get(
@@ -53,7 +27,7 @@ def _bad_key(exc: Exception) -> HTTPException:
     operation_id="listSettings",
 )
 def list_settings() -> UiSettingsListResponse:
-    return UiSettingsListResponse(values=get_ui_settings_store().read_all())
+    return UiSettingsListResponse(values=get_ui_settings_service().read_all())
 
 
 @router.get(
@@ -65,13 +39,7 @@ def list_settings() -> UiSettingsListResponse:
     responses={404: {"description": "Setting was never set — the frontend default applies."}},
 )
 def read_setting(key: str = _KEY) -> UiSettingResponse:
-    store = get_ui_settings_store()
-    try:
-        if not store.has_key(key):
-            raise HTTPException(status_code=404, detail=f"Setting {key!r} is not set")
-        return UiSettingResponse(key=key, value=store.read_key(key))
-    except InvalidSettingKeyError as exc:
-        raise _bad_key(exc)
+    return UiSettingResponse(key=key, value=get_ui_settings_service().read(key))
 
 
 @router.put(
@@ -82,11 +50,7 @@ def read_setting(key: str = _KEY) -> UiSettingResponse:
     operation_id="writeSetting",
 )
 def write_setting(body: UiSettingValue, key: str = _KEY) -> UiSettingResponse:
-    try:
-        stored = get_ui_settings_store().write_key(key, body.value)
-    except (InvalidSettingKeyError, SettingValueTooLargeError) as exc:
-        raise _bad_key(exc)
-    return UiSettingResponse(key=key, value=stored)
+    return UiSettingResponse(key=key, value=get_ui_settings_service().write(key, body.value))
 
 
 @router.delete(
@@ -97,11 +61,8 @@ def write_setting(body: UiSettingValue, key: str = _KEY) -> UiSettingResponse:
     operation_id="resetSetting",
 )
 def reset_setting(key: str = _KEY) -> Response:
-    try:
-        get_ui_settings_store().delete_key(key)
-    except InvalidSettingKeyError as exc:
-        raise _bad_key(exc)
+    get_ui_settings_service().reset(key)
     return Response(status_code=204)
 
 
-__all__ = ["router", "get_ui_settings_store", "set_ui_settings_store"]
+__all__ = ["router"]

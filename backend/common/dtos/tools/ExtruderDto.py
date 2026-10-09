@@ -17,7 +17,7 @@ class ExtruderStateDTO:
     heater: HeaterStateDTO
     position: float = 0.0
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ExtruderSettingsDTO:
     """Payload for commanding the extruder to a new state.
 

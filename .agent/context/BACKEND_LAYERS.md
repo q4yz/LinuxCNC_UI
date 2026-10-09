@@ -61,7 +61,7 @@ def control_spindle(cmd: SpindleDigitalCommand) -> ToolCommandResponse:
 **Hard rules** (all of them enforced by review):
 
 - Never `import hardware.*` from a router. Feature code must call
-  [`backend/common/hardware/Connection.py`](../../backend/common/hardware/Connection.py)
+  [`backend/common/hardware/Connection/`](../../backend/common/hardware/Connection/)
   through a service facade so the mock layer stays portable.
 - Pydantic `*Command` / `*Response` models live under
   [`backend/common/models/`](../../backend/common/models/) (or, for
@@ -210,20 +210,18 @@ def to_response(cls, dto: HeaterStateDTO, r: ResponseTier = ResponseTier.ALL) ->
 ### 1.5 Storage — persistence
 
 File: [`backend/common/storage/<Name>Storage.py`](../../backend/common/storage/),
-[`backend/common/core/settings_store.py`](../../backend/common/core/settings_store.py),
+[`backend/common/core/UiSettingsStore.py`](../../backend/common/core/UiSettingsStore.py),
 [`backend/common/domain_file_services/`](../../backend/common/domain_file_services/)
 
 Framework-agnostic CRUD over disk. Two flavours:
 
-- **Per-module settings** —
-  [`core/settings_store.py`](../../backend/common/core/settings_store.py).
-  One file per module at `<data_root>/modules/<module_id>/settings.json`,
-  where `<data_root>` is **per app** — `backend/machine/data/` for
-  modules owned by the machine backend, `backend/system/data/` for
-  modules owned by the system service (each `main.py` resolves it
-  relative to its own file, so the split holds regardless of the
-  process's working directory). Atomic write through
-  `tempfile.mkstemp + os.replace`. Thread-safe via `threading.Lock`.
+- **UI settings** —
+  [`core/UiSettingsStore.py`](../../backend/common/core/UiSettingsStore.py).
+  One flat key/value file `backend/data/settings.json`, owned by the
+  system service (see
+  [`.agent/contracts/settings-module.md`](../contracts/settings-module.md)).
+  Atomic write through `core/atomic_json.py`. Other processes read a
+  key with `core/ui_settings_reader.read_ui_setting`.
 - **Filesystem payloads** —
   [`storage/MacroStorage.py`](../../backend/common/storage/MacroStorage.py)
   for `.macro` / `.ngc` files;
@@ -347,7 +345,7 @@ def set_spindle(self, settings: SpindleDigitalSettingsDTO) -> str:
     return M5_STOP
 ```
 
-The service uses [`execute_sync_cmd`](../../backend/common/hardware/Connection.py)
+The service uses [`execute_sync_cmd`](../../backend/common/hardware/Connection/channel_cmd.py)
 to drive the linuxcnc task through the NML channel.
 
 ### 2.5 Wire shape — outbound
@@ -470,43 +468,13 @@ tool_service = get_tools_service()
 sensor_service = get_temperature_service()
 ```
 
-### 4.2 Per-module settings stores
+### 4.2 UI settings
 
-A `SettingsStore` is built once per module at import time, inside
-each app's own `main.py`, so the lifespan manager can hand the same
-instance to the watchdog, the camera supervisor, etc.:
-
-```python
-# backend/machine/main.py (sketch — backend/system/main.py mirrors this
-# with its own _MODULE_DOMAINS and its own backend/system/data/ root)
-_settings_stores: dict[str, SettingsStore] = {}
-_DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
-for _module_id, _settings_cls, _router in _MODULE_DOMAINS:
-    _settings_stores[_module_id] = SettingsStore(
-        module_id=_module_id,
-        data_root=_DATA_ROOT,
-        defaults=_settings_cls(),
-    )
-```
-
-### 4.3 The four canonical settings endpoints
-
-[`backend/common/module_settings_router.py`](../../backend/common/module_settings_router.py)
-mounts the same four endpoints under
-`/api/v1/modules/<id>/settings` for every module, in **both** apps.
-Modules never add their own `/settings` routes — see
-[`.agent/contracts/settings-module.md`](../contracts/settings-module.md) § 2.
-
-| Method | Path | Description |
-|--------|------|--------------|
-| `GET`  | `/api/v1/modules/{id}/settings` | Read full payload (defaults merged in). |
-| `GET`  | `/api/v1/modules/{id}/settings/{k}` | Read single key (404 if missing). |
-| `PUT`  | `/api/v1/modules/{id}/settings` | Replace full payload, returns merged. |
-| `PUT`  | `/api/v1/modules/{id}/settings/{k}` | Upsert single key, returns merged. |
-
-Settings endpoints are mounted **first** so a module that exposes
-a bare `/{name}` path cannot shadow them — Starlette matches in
-registration order (see each app's `main.py`).
+There are no per-module settings stores or endpoints. All UI settings
+live in one key/value document served by the system service:
+`routers/ui_settings.py` → `services/UiSettingsService.py` →
+`core/UiSettingsStore.py`, under `/api/v1/settings`. The contract is
+[`.agent/contracts/settings-module.md`](../contracts/settings-module.md).
 
 ## 5. ResponseTier + field masking
 
@@ -576,8 +544,18 @@ class ConflictError(BaseAPIException):
 Routers `raise` one of these — they never construct
 `HTTPException` directly for the 400/404/409 triple. Outside
 that triple, `HTTPException` is fine (e.g. `410 GONE` for the
-deprecated temperature router, `503` for offline hardware,
-`504` for the program-load timeout).
+deprecated temperature router, `504` for the program-load timeout).
+Services use `ServiceUnavailableError` (503) when a dependency such
+as HAL cannot be reached.
+
+The hardware layer never imports FastAPI. The LinuxCNC command
+channel raises the plain errors in
+[`hardware/Connection/errors.py`](../../backend/common/hardware/Connection/errors.py)
+(`LinuxCNCUnavailableError` 503, `CommandRejectedError` 400,
+`CommandTimeoutError` 408, `CommandError` 500). Each carries its own
+`status_code` / `detail`; `register_command_error_handler(app)` (called
+in `machine/main.py` and the machine test app factory) answers them
+with the same JSON shape as an `HTTPException`.
 
 ### 6.2 HAL pin handles
 
@@ -727,10 +705,10 @@ being rejected by FastAPI's validation layer as a `422` first.
 |-----------|-----|--------|-----------|-----|--------|-------------------|---------|------------|
 | `axis` | machine | [`routers/axis.py`](../../backend/machine/routers/axis.py) | [`AxisService`](../../backend/machine/services/AxisService.py) | [`common/dtos/axis/AxisDto.py`](../../backend/common/dtos/axis/AxisDto.py) | [`common/mappers/axis/AxisMapper.py`](../../backend/common/mappers/axis/AxisMapper.py) | [`common/models/AxisModels.py`](../../backend/common/models/AxisModels.py) | n/a (HAL-driven) | Yes |
 | `machine_state` | machine | [`routers/state.py`](../../backend/machine/routers/state.py) | [`StateService`](../../backend/machine/services/StateService.py) | [`common/dtos/state/MachineStateDto.py`](../../backend/common/dtos/state/MachineStateDto.py) (enum only) | n/a — service builds the response directly | [`common/models/state/StateModels.py`](../../backend/common/models/state/StateModels.py) | n/a | Yes — no mapper needed, see § 7.5 |
-| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py) for the router's own endpoints; `ProgramProgressResponse` is still inline in `ProgramService.py` (untouched — not named in § 7.5, tracked separately) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
+| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py) (including `ProgramProgressResponse`) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
 | `temperature` | machine | [`routers/temperature.py`](../../backend/machine/routers/temperature.py) | (deprecated) | (deprecated) | (deprecated) | (deprecated) | n/a | **Deprecated** — 410 redirect to `tools` |
-| `tools` | machine | [`routers/tools.py`](../../backend/machine/routers/tools.py) | [`ToolsService`](../../backend/machine/services/ToolsService.py), [`SpindleDigitalService`](../../backend/machine/services/SpindleDigitalService.py), [`ExtruderService`](../../backend/machine/services/ExtruderService.py), [`HeaterService`](../../backend/machine/services/HeaterService.py) | [`common/dtos/tools/`](../../backend/common/dtos/tools/) | [`common/mappers/tools/`](../../backend/common/mappers/tools/) | [`common/models/tools/`](../../backend/common/models/tools/), [`common/models/tools_settings.py`](../../backend/common/models/tools_settings.py) | `SettingsStore` (settings) | **Yes — canonical** |
-| `camera` | machine | [`routers/camera.py`](../../backend/machine/routers/camera.py) | [`UstreamerSupervisor`](../../backend/machine/services/camera/UstreamerSupervisor.py) | n/a | n/a | inline | `SettingsStore` | **Exception** — process-boundary split, not classical (§ 7.4) |
+| `tools` | machine | [`routers/tools.py`](../../backend/machine/routers/tools.py) | [`ToolsService`](../../backend/machine/services/ToolsService.py), [`SpindleDigitalService`](../../backend/machine/services/SpindleDigitalService.py), [`ExtruderService`](../../backend/machine/services/ExtruderService.py), [`HeaterService`](../../backend/machine/services/HeaterService.py) | [`common/dtos/tools/`](../../backend/common/dtos/tools/) | [`common/mappers/tools/`](../../backend/common/mappers/tools/) | [`common/models/tools/`](../../backend/common/models/tools/) | n/a (HAL-driven) | **Yes — canonical** |
+| `camera` | machine | [`routers/camera.py`](../../backend/machine/routers/camera.py) | [`UstreamerSupervisor`](../../backend/machine/services/camera/UstreamerSupervisor.py) | n/a | n/a | inline | central UI settings (read by key) | **Exception** — process-boundary split, not classical (§ 7.4) |
 | (telemetry) | machine | [`routers/BaseThreadRouter.py`](../../backend/machine/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/machine/services/BaseThreadService.py) | n/a | [`common/mappers/BaseThreadSnapshotMapper.py`](../../backend/common/mappers/BaseThreadSnapshotMapper.py) | [`common/models/BaseThreadStateResponse.py`](../../backend/common/models/BaseThreadStateResponse.py) | n/a | **Exception** — cross-domain aggregator (§ 7.1) |
 | (telemetry) | machine | [`routers/ServoThreadRouter.py`](../../backend/machine/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/machine/services/ServoThreadService.py) | [`common/dtos/ServoThreadState.py`](../../backend/common/dtos/ServoThreadState.py) | [`common/mappers/ServoThreadStateMapper.py`](../../backend/common/mappers/ServoThreadStateMapper.py) | [`common/models/ServoThreadStateResponse.py`](../../backend/common/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle (§ 7.2) |
 | `macros` (CRUD) | system | [`routers/macros.py`](../../backend/system/routers/macros.py) | [`MacroService`](../../backend/system/services/MacroService.py) | n/a | n/a | inline in `MacroService` | [`common/storage/MacroStorage.py`](../../backend/common/storage/MacroStorage.py), `MCodeFileService` | Yes — no DTO layer (text-in / text-out) |
@@ -769,7 +747,7 @@ Things that should never land in a code review:
   is the only place that decides between `400` / `404` / `409` / `503`.
 - **A storage class that imports FastAPI or Pydantic.** Storage is
   framework-agnostic and unit-testable with `tmp_path`. The
-  `MacroStorage` and `SettingsStore` classes are the reference
+  `MacroStorage` and `UiSettingsStore` classes are the reference
   shape.
 
 ---

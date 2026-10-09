@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from models.AxisModels import AxisStateResponse, SpeedOverrideResponse
 from models.McuModels import McuStateResponse
-from services.ProgramService import ProgramProgressResponse
+from models.program.ProgramModels import ProgramProgressResponse
 from models.TemperatureStateResponse import TemperatureStateResponse
 from factories.tools.ToolResponseFactory import ToolStateResponseModel
 from models.tools.HeaterModels import HeaterStateResponse

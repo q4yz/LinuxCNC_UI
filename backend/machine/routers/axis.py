@@ -28,8 +28,12 @@ registry, so the home endpoint is reachable at
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
-from typing import Literal
+
+from models.AxisModels import (
+    AxisSettingsCommand,
+    HomeAxisCommand,
+    AxisStatusResponse,
+)
 
 from services.AxisService import get_axis_service
 
@@ -40,56 +44,14 @@ router = APIRouter(
 )
 
 
-# ---------------------------------------------------------------------------
-# Pydantic request / response models (kept private to the module)
-# ---------------------------------------------------------------------------
-
-
-class _HomeCommand(BaseModel):
-    axis: Literal["x", "y", "z", "all"] = Field(
-        ...,
-        description=(
-            "Axis letter to home: 'x', 'y', 'z', or 'all'. The "
-            "service layer translates the letter into the matching "
-            "joint id(s) before dispatching the home command."
-        ),
-    )
-
-class _AxisSettingsCommand(BaseModel):
-    multiplier: float = Field(
-        ...,
-        ge=0.0,
-        le=5.0,
-        description="Feed-rate override multiplier (1.0 = 100%, range 0.0-5.0)."
-    )
-    # No hard-coded upper bound: the real ceiling is the machine's own
-    # (max axis velocity — the UI's slider top), and LinuxCNC clamps
-    # ``maxvel`` to [TRAJ] MAX_LINEAR_VELOCITY itself. A fixed 5000 used
-    # to 422 any machine faster than ~83 mm/s.
-    absolute_speed_limit: int = Field(
-        ...,
-        ge=0,
-        description="Absolute speed limit in mm/min (converted to machine units/second by the service)."
-    )
-
-
-class _StatusResponse(BaseModel):
-    status: str = Field(..., description="Outcome summary (e.g., 'ok')")
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.post(
     "/home",
     summary="Home Axis",
     description="Home a specific axis by letter ('x' / 'y' / 'z'), or every axis when axis='all'.",
     operation_id="homeAxis",
-    response_model=_StatusResponse,
+    response_model=AxisStatusResponse,
 )
-def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
+def _home_axis_endpoint(cmd: HomeAxisCommand) -> AxisStatusResponse:
     """Dispatch a home command via the facade.
 
     The endpoint always switches to ``MODE_MANUAL`` first so a stale
@@ -98,7 +60,7 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
     router only translates the HTTP edge.
     """
     get_axis_service().home_single_axes(cmd.axis)
-    return _StatusResponse(status="success")
+    return AxisStatusResponse(status="success")
 
 
 @router.post(
@@ -106,12 +68,12 @@ def _home_axis_endpoint(cmd: _HomeCommand) -> _StatusResponse:
     summary="Axis Settings",
     description="Update axis settings including speed multiplier and absolute limit.",
     operation_id="axisSettings",
-    response_model=_StatusResponse,
+    response_model=AxisStatusResponse,
 )
-def _axis_settings_endpoint(cmd: _AxisSettingsCommand) -> _StatusResponse:
+def _axis_settings_endpoint(cmd: AxisSettingsCommand) -> AxisStatusResponse:
     """Apply axis speed settings to the running LinuxCNC session."""
     get_axis_service().update_settings(cmd.multiplier, cmd.absolute_speed_limit)
-    return _StatusResponse(status="success")
+    return AxisStatusResponse(status="success")
 
 
 __all__ = ["router"]

@@ -48,7 +48,7 @@ class SpindleDigitalStateDTO:
     override: Optional[float] = None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SpindleDigitalSettingsDTO:
     """Single entry-point payload for spindle control.
 

@@ -9,7 +9,7 @@ _PROJECT_ROOT = _BACKEND_ROOT.parent
 #: Repository root — the single source of truth for any generator
 #: that needs to emit an absolute, deployment-location-independent
 #: path (e.g. the machine template generator's ``PROGRAM_PREFIX`` /
-#: ``USER_M_PATH`` / ``[APPLICATIONS] APP`` INI values).
+#: ``USER_M_PATH`` INI value).
 PROJECT_ROOT = _PROJECT_ROOT
 
 MACHINE_CONFIG_DIR = _PROJECT_ROOT / "machine_config"

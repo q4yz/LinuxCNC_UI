@@ -19,19 +19,12 @@ from exceptions import BadRequestError, ConflictError, NotFoundError
 from domain_file_services import get_macro_service, get_mcode_service
 from hardware import dispatch_mdi, get_stat_channel, linuxcnc
 from hardware.Connection import MachineMode, MachineState
+from storage.MacroStorage import VALID_KINDS, MacroKind
 from services.ConsoleLogger import get_console_logger, LogLevel
 from services.macro.macro_parser import MacroBlock, split_static_block, MacroParseError, parse_macro
 
 logger = logging.getLogger("backend.macro_execution_service")
 
-
-class MacroKind:
-    MACRO = "macro"
-    NGC = "ngc"
-    MCODE = "mcode"
-
-
-VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
 
 _MCODE_RE_LOGIC = "M-codes cannot be started from the machine backend"
 

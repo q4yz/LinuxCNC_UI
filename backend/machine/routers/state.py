@@ -134,9 +134,10 @@ def _run_mdi_endpoint(cmd: MdiCommand) -> StatusResponse:
     console_logger.log_command(cmd.command)
     try:
         get_state_service().run_mdi(cmd.command)
-    except HTTPException as exc:
+    except Exception as exc:
+        # HTTPException or a hardware CommandError — both carry ``detail``.
         console_logger.log_response(
-            f"Error: {exc.detail}",
+            f"Error: {getattr(exc, 'detail', exc)}",
             level=LogLevel.ERROR,
         )
         raise
@@ -176,13 +177,9 @@ async def _activate_estop_endpoint() -> StatusResponse:
     ``await`` it rather than fire-and-forget; a bare call would only
     construct the coroutine without ever running its body.
     """
-    try:
-        await get_state_service().activate_estop()
-    except HTTPException:
-        # ``activate_estop`` raises 503 on HAL write failure; let it
-        # propagate so the operator sees the wiring fault instead of
-        # a misleading 200 OK.
-        raise
+    # ``activate_estop`` raises 503 on HAL write failure; it propagates
+    # so the operator sees the wiring fault instead of a misleading 200 OK.
+    await get_state_service().activate_estop()
     return StatusResponse(status="success")
 
 

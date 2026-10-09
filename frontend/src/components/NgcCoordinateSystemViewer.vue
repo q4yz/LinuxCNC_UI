@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useMachineStore } from '../stores/machine'
 import { useBaseThreadStore } from '../stores/baseThread'
-import { ProgramFilesService } from '../../generated/api/services/ProgramFilesService'
+import { filesFacade } from '../facades/filesFacade'
 import { WORK_COORDINATE_SYSTEMS } from '../config/gcodes'
 import { parseGcodeToolpath } from '../parsers/gcodeParser'
 import type { ParsedSegment } from '../parsers/gcodeParser'
@@ -785,7 +785,7 @@ const loadProgramToolpath = async (filename: string) => {
 
   if (!parsedCache.has(basename)) {
     try {
-      const text = await ProgramFilesService.readFile(basename)
+      const text = await filesFacade.readFile(basename)
       if (typeof text !== 'string') return clearToolpath()
       const parsed = parseGcodeToolpath(text)
       parsedCache.set(basename, parsed)

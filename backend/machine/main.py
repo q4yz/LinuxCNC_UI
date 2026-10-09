@@ -44,6 +44,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from dtos.pins.HalPin import HalPin
+from exceptions import register_command_error_handler
 from hardware import HAS_HAL
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
@@ -205,6 +206,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Hardware command failures (``hardware.Connection.errors``) carry
+# their own HTTP status; answer them like an ``HTTPException``.
+register_command_error_handler(app)
 
 
 # Mount the two legacy flat routers.

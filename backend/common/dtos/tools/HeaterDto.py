@@ -22,7 +22,7 @@ class HeaterStateDTO:
     min_temp: float = 0.0
     max_temp: float = 0.0
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class HeaterSettingsDTO:
     """Payload for commanding the heater to a new target temperature."""
     id: str

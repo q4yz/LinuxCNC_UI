@@ -73,6 +73,9 @@ class MacroKind:
     MCODE = "mcode"
 
 
+VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
+
+
 # Map of kind → on-disk extension. ``MacroStorage`` consults this
 # table; ``MacroKind.MCODE`` deliberately resolves to an empty
 # string so any future accidental write through :class:`MacroStorage`
@@ -386,6 +389,7 @@ class MacroStorage:
 __all__ = [
     "MacroStorage",
     "MacroKind",
+    "VALID_KINDS",
     "EXTENSION",
     "InvalidMacroNameError",
     "InvalidMacroKindError",

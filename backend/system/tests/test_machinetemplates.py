@@ -270,7 +270,9 @@ def test_render_ini_template_is_live_and_loadable():
     assert "HALFILE = machine.hal" in text
     assert "HALFILE = custom.hal" in text
     assert "POSTGUI_HALFILE = postgui_call_list.hal" in text
-    assert "[APPLICATIONS]" in text
+    # start_network.sh runs from the linuxcnc-ui-cert systemd unit
+    # (install.sh), not as a LinuxCNC [APPLICATIONS] APP.
+    assert "[APPLICATIONS]" not in text
     assert "[EMCIO]" in text
     assert "TOOL_TABLE = tool.tbl" in text
 

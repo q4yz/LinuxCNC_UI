@@ -175,7 +175,9 @@ test("editor store wires machine_log as a read-only source fed by getConsoleLog(
 
 test("backend persists a default machine and starts machines/<name>/config/machine.ini", () => {
   const router = readRepo("backend/system/routers/machine_lifecycle.py");
-  assert.match(router, /class MachineStartRequest/, "/start must accept an optional body");
+  const models = readRepo("backend/common/models/MachineLifecycleModels.py");
+  assert.match(models, /class MachineStartRequest/, "/start must accept an optional body");
+  assert.match(router, /MachineStartRequest/, "/start must use the request model");
   assert.match(router, /payload\.machine/, "/start must forward the machine choice");
   assert.match(router, /@router\.post\(\s*"\/default"/, "POST /default endpoint must exist");
   assert.match(router, /default_machine/, "status must expose the default machine");

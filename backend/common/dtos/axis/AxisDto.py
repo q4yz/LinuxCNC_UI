@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class AxisStateDTO:
     """Internal backend representation of static axis configuration.
 

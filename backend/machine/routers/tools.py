@@ -28,12 +28,12 @@ prefixes it when mounting.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
 
-from exceptions.http import BadRequestError, NotFoundError
+
+from exceptions.http import BadRequestError
 from dtos.tools.SpindleDigitalDto import DirectionStateType
 from mappers.tools.SpindleDigitalMapper import SpindleDigitalMapper
 from mappers.tools.ExtruderMapper import ExtruderMapper
@@ -45,17 +45,8 @@ from models.tools.ToolModels import ToolCommandResponse
 from services.ExtruderService import get_extruder_service
 from services.HeaterService import get_heater_service
 from services.SpindleDigitalService import get_spindle_digital_service
-from services.ToolsService import get_tools_service
 
 logger = logging.getLogger("backend.tools_service")
-
-
-
-
-tool_service = get_tools_service()
-spindle_digital_service = get_spindle_digital_service()
-extruder_service = get_extruder_service()
-heater_service = get_heater_service()
 
 
 # ---------------------------------------------------------------------- #
@@ -99,7 +90,7 @@ def control_spindle(cmd: SpindleDigitalCommand) -> ToolCommandResponse:
         raise BadRequestError(f"Invalid spindle action: {cmd.action!r}")
 
     settings = SpindleDigitalMapper.from_command_to_settings_dto(cmd)
-    mdi = spindle_digital_service.set_spindle(settings)
+    mdi = get_spindle_digital_service().set_spindle(settings)
 
     return ToolCommandResponse(status="success", command=mdi, tool_id=cmd.tool_id)
 
@@ -125,7 +116,7 @@ def control_extruder(cmd: ExtruderCommand) -> ToolCommandResponse:
         raise BadRequestError(f"Invalid extruder action: {cmd.action!r}")
 
     settings = ExtruderMapper.from_command_to_settings_dto(cmd)
-    move = extruder_service.set_extruder(settings)
+    move = get_extruder_service().set_extruder(settings)
 
     return ToolCommandResponse(status="success", command=move, tool_id=cmd.tool_id)
 
@@ -143,7 +134,7 @@ def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateRespo
 
     settings = HeaterMapper.from_command_to_settings_dto(cmd)
 
-    result = heater_service.set_heater(settings)
+    result = get_heater_service().set_heater(settings)
 
     return HeaterCommandStateResponse(
         status="success",
@@ -156,7 +147,7 @@ def set_tool_target(tool_id: str, cmd: HeaterCommand) -> HeaterCommandStateRespo
 @router.get("/spindle/{tool_id}", response_model=SpindleDigitalStateResponse, operation_id="getSpindleState")
 def get_spindle_state(tool_id: str) -> SpindleDigitalStateResponse:
     """Return the live spindle state for ``tool_id``."""
-    state_dto = spindle_digital_service.get_spindle(tool_id)
+    state_dto = get_spindle_digital_service().get_spindle(tool_id)
     return SpindleDigitalMapper.to_response(state_dto)
 
 

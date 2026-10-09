@@ -54,6 +54,12 @@ from .channel_cmd import (
     execute_sync_cmd,
     ensure_mdi_mode,
 )
+from .errors import (
+    CommandError,
+    CommandRejectedError,
+    CommandTimeoutError,
+    LinuxCNCUnavailableError,
+)
 from ..DeviceConfigMapper import DeviceConfigMapper
 
 
@@ -87,4 +93,8 @@ __all__ = [
     "get_stat_channel",
     "get_cmd_channel",
     "get_error_channel",
+    "CommandError",
+    "CommandRejectedError",
+    "CommandTimeoutError",
+    "LinuxCNCUnavailableError",
 ]

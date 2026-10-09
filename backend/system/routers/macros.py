@@ -3,9 +3,14 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, Body, Path, Query, Response
 
-from storage.MacroStorage import MacroKind
-from services.MacroService import MacroListResponse, get_macros_service, MacroWriteResponse, MacroContentResponse, \
-    MacroContentPayload
+from models.MacroModels import (
+    MacroContentPayload,
+    MacroContentResponse,
+    MacroKind,
+    MacroListResponse,
+    MacroWriteResponse,
+)
+from services.MacroService import get_macros_service
 
 logger = logging.getLogger("backend.macros_service")
 
