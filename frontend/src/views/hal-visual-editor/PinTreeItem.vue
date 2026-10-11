@@ -26,9 +26,14 @@ const props = defineProps<{
   /** Optional pin id → current value. When given (the debug pin-state
    *  view), each pin shows its state; the editor doesn't pass it. */
   values?: Record<string, boolean | number | null>;
+  /** Optional: pins currently on the debug oscilloscope. When given, each
+   *  pin gets an "add to / remove from oscilloscope" toggle (``scope``). */
+  scopeIds?: Set<string>;
 }>();
 
-const emit = defineEmits<{ pick: [pin: HalPin]; toggle: [path: string] }>();
+const emit = defineEmits<{ pick: [pin: HalPin]; toggle: [path: string]; scope: [pin: HalPin] }>();
+
+const onScope = computed(() => props.node.kind === "pin" && !!props.scopeIds?.has(props.node.pin.id));
 
 const TYPE_BADGE: Record<Exclude<PinType, "auto">, string> = {
   bit: "bg-green-900/60 text-green-300 border border-green-700",
@@ -110,16 +115,18 @@ function onFolderClick() {
         :selected-ids="selectedIds"
         :depth="depth + 1"
         :values="values"
+        :scope-ids="scopeIds"
         @pick="emit('pick', $event)"
         @toggle="emit('toggle', $event)"
+        @scope="emit('scope', $event)"
       />
     </div>
   </div>
 
+  <div v-else class="flex items-stretch gap-1">
   <button
-    v-else
     type="button"
-    class="flex w-full items-center justify-between gap-2 rounded-md border py-1.5 pr-2 text-left transition-colors"
+    class="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md border py-1.5 pr-2 text-left transition-colors"
     :class="[
       isSelected ? 'border-green-600 bg-green-950/40' : 'border-gray-700 bg-gray-900 hover:border-gray-500',
       isSuffixMatch && !isSelected ? 'ring-1 ring-amber-500/70' : '',
@@ -152,4 +159,15 @@ function onFolderClick() {
       >{{ stateBadge.text }}</span>
     </span>
   </button>
+  <button
+    v-if="scopeIds"
+    type="button"
+    class="w-8 shrink-0 rounded-md border font-mono text-sm transition-colors"
+    :class="onScope ? 'border-yellow-500 bg-yellow-500/20 text-yellow-300' : 'border-gray-700 bg-gray-900 text-gray-500 hover:border-gray-500 hover:text-gray-200'"
+    :title="onScope ? 'Remove from oscilloscope' : 'Add to oscilloscope'"
+    :aria-pressed="onScope"
+    :data-test="`hal-pin-scope-${node.pin.id}`"
+    @click="emit('scope', node.pin)"
+  >∿</button>
+  </div>
 </template>

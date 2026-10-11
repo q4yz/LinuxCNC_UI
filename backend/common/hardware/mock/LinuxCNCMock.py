@@ -7,6 +7,7 @@ from hardware.mock.factory.MockToolFactory import MockToolFactory
 from hardware.mock.HalMock import HalMock
 from hardware.mock.facade.HalModuleFacade import HalModuleFacade
 from hardware.mock.facade.LinuxcncModuleFacade import LinuxcncModuleFacade
+from hardware.mock.MockDebugSignals import MockDebugSignals
 from hardware.mock.MockEStopComponent import MockEStopComponent
 from hardware.mock.StateMachineMock import StateMachineMock
 from hardware.mock.tools.MockSensor import MockSensor
@@ -28,6 +29,8 @@ class LinuxCNCMock:
         # been reseeded yet. See .agent/context/MOCK_ARCHITECTURE.md
         # § "Always-on vs tool-derived" for the decision table.
         self.internal_hal.register_component(MockEStopComponent(self.internal_state))
+        # Moving values for the dev HAL pin list (debug tab oscilloscope).
+        self.internal_hal.register_component(MockDebugSignals())
 
         self._running = False
         self._thread = None

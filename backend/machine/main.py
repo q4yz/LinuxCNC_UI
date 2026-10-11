@@ -54,6 +54,7 @@ from routers import (
     axis as axis_router,
     camera as camera_router,
     hal as hal_router,
+    hal_scope as hal_scope_router,
     macro_start as macro_start_router,
     mcu as mcu_router,
     program as program_router,
@@ -61,6 +62,7 @@ from routers import (
     temperature as temperature_router,
     tools as tools_router,
 )
+from services.HalScopeService import get_hal_scope_service
 from services.ServoThreadService import (
     get_servo_thread_service,
 )
@@ -182,6 +184,8 @@ async def lifespan(app: FastAPI):
         get_console_logger().close()
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("ConsoleLogger close failed during shutdown: %s", exc)
+    # No HAL reads may run while the component is being removed.
+    get_hal_scope_service().stop_all()
     HalPin.shutdown_component()
     logger.info("Machine backend shut down.")
 
@@ -240,6 +244,8 @@ app.include_router(ServoThreadRouter.router)
 
 # Mount the Visual HAL editor's standalone layout router.
 app.include_router(hal_router.router)
+# Debug tab: live pin values + oscilloscope stream (/ws/hal-scope).
+app.include_router(hal_scope_router.router)
 
 
 # Mount the machine-owned per-domain routers. UI settings are not

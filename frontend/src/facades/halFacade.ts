@@ -9,6 +9,7 @@ import { HalService } from "../../generated/api/services/HalService";
 import type { HalFileSaveRequest } from "../../generated/api/models/HalFileSaveRequest";
 import type { HalLayoutResponse } from "../../generated/api/models/HalLayoutResponse";
 import type { HalPinStatesResponse } from "../../generated/api/models/HalPinStatesResponse";
+import type { HalPinValuesResponse } from "../../generated/api/models/HalPinValuesResponse";
 
 export class HalVisualService {
     /**
@@ -57,6 +58,21 @@ export class HalVisualService {
             return await HalService.getHalPinStates();
         } catch (err: unknown) {
             console.error("[HalVisualService] Failed to read HAL pin states", err);
+            return null;
+        }
+    }
+
+    /**
+     * Current values of the given pins (`POST /api/v1/hal/pins/values`,
+     * in-process `hal.get_value` — cheap enough for the debug view's 1 Hz
+     * poll of the pins on screen). `null` on failure.
+     */
+    static async readPinValues(pins: string[]): Promise<HalPinValuesResponse | null> {
+        if (pins.length === 0) return { values: {}, read_at: new Date().toISOString() };
+        try {
+            return await HalService.readHalPinValues({ pins });
+        } catch (err: unknown) {
+            console.error("[HalVisualService] Failed to read HAL pin values", err);
             return null;
         }
     }

@@ -58,6 +58,11 @@ rules in [`context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md).
   `shutting_down`) + the system service's session status.
 - HAL compiler: `[tool_length_sensor]` OR-ed with `[probe]` into
   `motion.probe-input` (`component/probe.md`).
+- Debug tab HAL pins: live values at 1 Hz for the pins on screen
+  (`POST /api/v1/hal/pins/values`), and an oscilloscope
+  (`components/debug/scope/`, lazy chunk) streaming up to 16 pins over
+  `WS /ws/hal-scope` (`HalScopeService`, ≤ 1 kHz, 50 ms blocks). Dev
+  pins move via `hardware/mock/MockDebugSignals.py`.
 
 ---
 
@@ -75,7 +80,8 @@ rules in [`context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md).
 | 8 | Frontend still calling the generated client directly: `stores/editor.ts`, `stores/cameraStore.ts`, `FileManager.vue` (upload path via facade, editor reads not). | facades |
 | 9 | Class A (parport) heaters unsupported (`pwmgen`, no ADC); Remora `DIGITAL_OUT` not routed (documented); spindle manual-override triple not compiled. | component docs |
 | 10 | #119 — mypy `disable_error_code` backlog (`return-value`, `arg-type`, `override`, …) in `backend/mypy.ini`. #111 — no ESLint config in `frontend/` yet. #113 — fragile `Stepper.section_name`. | |
-| 11 | Observed once, re-verify: `hardware.json` uses the MERGE axis policy while `machine.ini` uses SPLIT; the extruder's `[AXIS_A]` got 0 limits. | `machineconfig/AxisBuilder.py` |
+| 11 | **Main JS bundle is ~2,085 kB — just under the PWA precache limit (2 MiB).** Anything bigger fails `npm run build` (CI and the update's rebuild). Lazy-load route views (3D viewer!) in the router. | `frontend/src/router`, `vite.config.mjs` |
+| 12 | Observed once, re-verify: `hardware.json` uses the MERGE axis policy while `machine.ini` uses SPLIT; the extruder's `[AXIS_A]` got 0 limits. | `machineconfig/AxisBuilder.py` |
 
 **Closed by now, close the GitHub issues after checking:** #117, #118
 (suites green), #120 (PascalCase sweep done; `settings_store.py` removed),

@@ -16,7 +16,7 @@ are flattened, frontend-friendly snapshots of the pure
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -117,4 +117,18 @@ class HalPinStatesResponse(BaseModel):
     fresh from HAL at ``read_at`` (no cache, unlike the editor layout)."""
 
     pins: List[HalPinResource] = Field(default_factory=list, description="Every HAL pin with its current value.")
+    read_at: str = Field(..., description="ISO-8601 UTC time the values were read.")
+
+
+class HalPinValuesRequest(BaseModel):
+    """Body of ``POST /api/v1/hal/pins/values`` — the pins to read."""
+
+    pins: List[str] = Field(..., description="Full HAL pin names (``<component>.<pin>``), e.g. the pins on screen.")
+
+
+class HalPinValuesResponse(BaseModel):
+    """Current values of the requested pins (``null`` when unreadable),
+    read in-process with ``hal.get_value`` — cheap enough to poll at 1 Hz."""
+
+    values: Dict[str, Union[bool, int, float, None]] = Field(default_factory=dict)
     read_at: str = Field(..., description="ISO-8601 UTC time the values were read.")
