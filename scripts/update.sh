@@ -98,6 +98,20 @@ if ! timeout 120 bash -c 'until curl -sf http://127.0.0.1:8001/api/v1/system/ver
     exit 1
 fi
 
+# Routes come from the tracked deploy/nginx/linuxcnc-ui-routes.conf,
+# applied by the nginx reload above — but only once the installed site
+# includes that file. An installation from before the include still has
+# its own inline copy (and misses every route added since); rewriting
+# it needs root once, so say so instead of silently serving 404s.
+DONE_MESSAGE="Update complete"
+NGINX_SITE="/etc/nginx/sites-available/linuxcnc-ui"
+if [ -f "$NGINX_SITE" ] && ! grep -q "linuxcnc-ui-routes.conf" "$NGINX_SITE"; then
+    NGINX_FIX="sudo bash $PROJECT_DIR/scripts/configure_nginx.sh"
+    echo "WARNING: $NGINX_SITE does not include deploy/nginx/linuxcnc-ui-routes.conf." >&2
+    echo "WARNING: new API routes will 404 until you run once: $NGINX_FIX" >&2
+    DONE_MESSAGE="Update complete — but the nginx routing is outdated (new API routes return 404). Run once on the machine: $NGINX_FIX"
+fi
+
 DONE=1
-status done "finished" "Update complete"
+status done "finished" "$DONE_MESSAGE"
 echo "Update Complete! ($(date -Is))"

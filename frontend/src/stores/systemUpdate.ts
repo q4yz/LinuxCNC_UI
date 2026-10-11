@@ -107,6 +107,15 @@ export const useSystemUpdateStore = defineStore("systemUpdate", () => {
         title: "System update",
         lifetime: 15,
       });
+      // The script appends what still needs a manual step (e.g. an
+      // outdated nginx site from before the shared routes file).
+      if (finished.message && finished.message !== "Update complete") {
+        consoleStore.warning(finished.message, {
+          popup: true,
+          title: "System update",
+          lifetime: null,
+        });
+      }
     } else {
       consoleStore.error(
         `System update failed during '${finished.phase}': ${finished.message || "see update.log"}`,

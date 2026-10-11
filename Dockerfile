@@ -96,6 +96,8 @@ COPY nc_files nc_files
 
 COPY --from=builder /app/frontend/dist /app/frontend/dist
 
+# Routes shared with real installations (included by docker/nginx.conf).
+COPY deploy/nginx deploy/nginx
 COPY docker/nginx.conf /etc/nginx/sites-available/linuxcnc-ui
 RUN rm -f /etc/nginx/sites-enabled/default \
     && ln -s /etc/nginx/sites-available/linuxcnc-ui /etc/nginx/sites-enabled/linuxcnc-ui
