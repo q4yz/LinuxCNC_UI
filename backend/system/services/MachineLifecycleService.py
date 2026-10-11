@@ -57,10 +57,13 @@ import shlex
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import IO, Any, Dict, Iterator, List, Literal, Optional
+from contextlib import contextmanager
 
+from core.atomic_json import atomic_write_json
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
 from domain_file_services import get_machine_service
@@ -107,31 +110,142 @@ _DEFAULT_MACHINE_FILE_NAME = "default_machine.json"
 _STOP_GRACE_SECONDS = 10.0
 
 
+#: One ``pgrep -x`` pattern for every session process name (``-x``
+#: anchors the whole alternation, so ``emc`` never matches ``emcsvr``).
+_PGREP_PATTERN = "|".join(PROCESS_PATTERNS)
+
+SessionState = Literal["stopped", "starting", "running", "stopping"]
+
+
+def _is_zombie(pid: int) -> bool:
+    """``True`` for an exited-but-unreaped process.
+
+    ``pgrep`` lists zombies too. A LinuxCNC that quit or crashed stays a
+    zombie named ``linuxcnc`` until its parent reaps it, and reporting
+    it as "running" made the UI wait forever and ``stop()`` escalate to
+    SIGKILL against a process that no longer exists. Reads the state
+    field of ``/proc/<pid>/stat``; without ``/proc`` nothing is a zombie.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    # ``pid (comm) S ...`` — comm may contain spaces/parens, so split
+    # after the *last* closing parenthesis.
+    rest = stat.rpartition(")")[2].split()
+    return bool(rest) and rest[0] == "Z"
+
+
+SessionOwner = Literal["ui", "external"]
+
+
+def _cmdline(pid: int) -> List[str]:
+    """``/proc/<pid>/cmdline`` split into arguments; ``[]`` when unreadable."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [arg.decode("utf-8", errors="replace") for arg in raw.split(b"\0") if arg]
+
+
+def running_inis(pids: List[int]) -> List[str]:
+    """The INI files the given session processes were started with.
+
+    ``linuxcnc [-r] <ini>`` carries it as an argument, ``milltask`` /
+    ``linuxcncsvr`` as ``-ini <ini>`` — every ``*.ini`` argument counts.
+    """
+    inis = {
+        arg
+        for pid in pids
+        for arg in _cmdline(pid)
+        if arg.lower().endswith(".ini")
+    }
+    return sorted(inis)
+
+
+def _is_ui_ini(ini: str) -> bool:
+    """An INI under ``machine_config/machines/`` — a machine generated for
+    this UI, whose session loads the ``webgui`` machine backend
+    (``postgui_call_list.hal``). Call-time path lookup so tests can
+    repoint ``MACHINES_DIR``."""
+    from domain_file_services.paths import MACHINES_DIR
+
+    try:
+        Path(ini).resolve().relative_to(Path(MACHINES_DIR).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def session_owner(pids: List[int]) -> Optional[SessionOwner]:
+    """Who runs the LinuxCNC session: ``ui`` (one of this UI's machine
+    INIs), ``external`` (any other INI — LinuxCNC started from another
+    desktop / terminal / config, with no machine backend for this UI),
+    ``None`` when nothing runs.
+
+    Decided by the INI, not by "did this service start it", so it
+    survives a system-service restart. A session whose INI cannot be
+    read counts as ``external``: the UI cannot talk to it either way.
+    """
+    if not pids:
+        return None
+    inis = running_inis(pids)
+    return "ui" if inis and all(_is_ui_ini(ini) for ini in inis) else "external"
+
+
 def linuxcnc_pids() -> List[int]:
     """Return the pids of every live LinuxCNC session process.
 
-    ``pgrep -x <name>`` is used because it needs no privileges and
-    survives PID recycling. When ``pgrep`` is unavailable (non-Linux
-    dev machine) the probe reports "not running" instead of failing.
+    One ``pgrep -x`` call for all :data:`PROCESS_PATTERNS` (no
+    privileges needed); zombies are dropped (see :func:`_is_zombie`).
+    When ``pgrep`` is unavailable (non-Linux dev machine) the probe
+    reports "not running" instead of failing.
     """
-    pids: List[int] = []
-    for name in PROCESS_PATTERNS:
-        try:
-            result = subprocess.run(
-                ["pgrep", "-x", name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            continue
-        if result.returncode == 0:
-            pids.extend(int(line) for line in result.stdout.split() if line.isdigit())
-    return sorted(set(pids))
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", _PGREP_PATTERN],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    pids = {int(line) for line in result.stdout.split() if line.isdigit()}
+    return sorted(pid for pid in pids if not _is_zombie(pid))
 
 
 class MachineLifecycleService:
-    """Start / stop / switch the LinuxCNC machine session."""
+    """Start / stop / switch the LinuxCNC machine session.
+
+    Start, stop and switch are serialised by one lock: FastAPI runs
+    these sync handlers in a thread pool, so two clicks (or two
+    browsers) used to run concurrently — two ``start()`` calls both saw
+    "not running" and launched two sessions. A request that arrives
+    while another transition runs gets a 409 naming it instead of
+    waiting (a stop can take 20 s). While a transition runs,
+    :meth:`status` reports it as ``state`` (``starting`` / ``stopping``)
+    so the UI can say what is happening.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._transition: Optional[SessionState] = None
+
+    @contextmanager
+    def _exclusive(self, transition: SessionState) -> Iterator[None]:
+        if not self._lock.acquire(blocking=False):
+            raise ConflictError(
+                f"LinuxCNC is {self._transition or 'busy'} — try again when that has finished."
+            )
+        self._transition = transition
+        try:
+            yield
+        finally:
+            self._transition = None
+            self._lock.release()
 
     # ------------------------------------------------------------------ #
     # Introspection                                                       #
@@ -208,12 +322,9 @@ class MachineLifecycleService:
         confusing place.
         """
         ini = self.machine_ini(machine)
-        path = self._default_machine_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps({"default_machine": machine}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # Atomic (temp file + replace): a crash mid-write must not leave
+        # a truncated file that silently "forgets" the default machine.
+        atomic_write_json(self._default_machine_file(), {"default_machine": machine})
         logger.info("Default machine set to '%s' (%s).", machine, ini)
         return ini
 
@@ -274,9 +385,14 @@ class MachineLifecycleService:
     def status(self) -> Dict[str, Any]:
         ini = self.default_ini()
         name = self.default_machine()
+        pids = linuxcnc_pids()
+        state: SessionState = self._transition or ("running" if pids else "stopped")
         return {
-            "running": self.is_running(),
-            "pids": linuxcnc_pids(),
+            "state": state,
+            "running": bool(pids),
+            "owner": session_owner(pids),
+            "running_ini": next(iter(running_inis(pids)), None),
+            "pids": pids,
             # ``machine_name`` is kept as a deprecated alias of
             # ``default_machine`` so the existing generated API model
             # stays valid until the client is regenerated.
@@ -291,6 +407,13 @@ class MachineLifecycleService:
     # ------------------------------------------------------------------ #
 
     def start(self, machine: Optional[str] = None) -> Dict[str, Any]:
+        """Run ``linuxcnc <ini>`` as a console process (exclusive, see class doc)."""
+        with self._exclusive("starting"):
+            result = self._start(machine)
+        # Re-read outside the transition so ``state`` is the settled one.
+        return {**result, **self.status()}
+
+    def _start(self, machine: Optional[str] = None) -> Dict[str, Any]:
         """Run ``linuxcnc <ini>`` as a console process.
 
         Args:
@@ -302,10 +425,17 @@ class MachineLifecycleService:
                 ``NotFoundError`` is raised when no default has been
                 selected yet.
         """
-        if self.is_running():
-            raise ConflictError(
-                f"LinuxCNC is already running (pids {linuxcnc_pids()})."
-            )
+        running = linuxcnc_pids()
+        if running:
+            if session_owner(running) == "external":
+                inis = running_inis(running)
+                started_with = f" with {', '.join(inis)}" if inis else ""
+                raise ConflictError(
+                    f"Cannot start: LinuxCNC is already running from another process "
+                    f"(pids {running}{started_with}). Terminate that LinuxCNC session first, "
+                    f"then start the machine from this UI."
+                )
+            raise ConflictError(f"LinuxCNC is already running (pids {running}).")
 
         if machine is not None:
             # Starting a specific machine makes it the default — one
@@ -338,7 +468,8 @@ class MachineLifecycleService:
                 # against the machine's own config folder — the
                 # deprecated active/ dir is no longer part of the
                 # start path.
-                stdin=subprocess.PIPE,
+                # Nothing is ever written to the session's stdin.
+                stdin=subprocess.DEVNULL,
                 cwd=str(ini.parent),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
@@ -360,6 +491,14 @@ class MachineLifecycleService:
             " ".join(command),
             _CONSOLE_LOG,
         )
+        # Reap the session when it ends (otherwise it lingers as a
+        # zombie of this service) and release our copy of the log fd.
+        threading.Thread(
+            target=self._reap,
+            args=(process, log_handle),
+            name=f"linuxcnc-reaper-{process.pid}",
+            daemon=True,
+        ).start()
 
         # Give the launcher a beat so an immediate crash (missing INI
         # section, realtime error, …) surfaces as an error instead of
@@ -415,11 +554,36 @@ class MachineLifecycleService:
     # Stop                                                                #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _reap(process: "subprocess.Popen[bytes]", log_handle: IO[str]) -> None:
+        try:
+            code = process.wait()
+            logger.info("LinuxCNC session (pid %s) exited with code %s.", process.pid, code)
+        finally:
+            log_handle.close()
+
     def stop(self, grace_seconds: float = _STOP_GRACE_SECONDS) -> Dict[str, Any]:
-        """Stop the running LinuxCNC session (SIGINT → SIGTERM → SIGKILL)."""
+        """Stop the running LinuxCNC session (exclusive, see class doc)."""
+        with self._exclusive("stopping"):
+            self._stop(grace_seconds)
+        return self.status()
+
+    def _stop(self, grace_seconds: float = _STOP_GRACE_SECONDS) -> Dict[str, Any]:
+        """Stop the running LinuxCNC session (SIGINT → SIGTERM → SIGKILL).
+
+        Stops *any* session — also one started from another process with
+        another INI (``owner == "external"``), which ``start()`` refuses
+        to run alongside; this is how the operator clears it.
+        """
         pids = linuxcnc_pids()
         if not pids:
             return self.status()
+        if session_owner(pids) == "external":
+            logger.warning(
+                "Stopping a LinuxCNC session started outside this UI (pids %s, INI %s).",
+                pids,
+                ", ".join(running_inis(pids)) or "unknown",
+            )
 
         self._signal_all(pids, signal.SIGINT)
         if self._wait_for_exit(grace_seconds):
@@ -483,21 +647,24 @@ class MachineLifecycleService:
             start_machine: Start the new machine session after
                 selecting it (default ``True``).
         """
-        if self.is_running():
-            self.stop()
+        with self._exclusive("stopping"):
+            if self.is_running():
+                self._stop()
 
-        if machine:
-            self._select_generated_machine(machine)
+            if machine:
+                self._select_generated_machine(machine)
 
-        if not start_machine:
-            return self.status()
+            if not start_machine:
+                result: Dict[str, Any] = {}
+            else:
+                # A fresh selection always means a fresh INI — drop the
+                # cached service instances so ``start()`` sees the new file.
+                from domain_file_services import reset_service_cache
 
-        # A fresh selection always means a fresh INI — drop the
-        # cached service instances so ``start()`` sees the new file.
-        from domain_file_services import reset_service_cache
-
-        reset_service_cache()
-        return self.start()
+                reset_service_cache()
+                self._transition = "starting"
+                result = self._start()
+        return {**result, **self.status()}
 
     def _select_generated_machine(self, machine: str) -> None:
         """Validate ``machine`` and persist it as the default.

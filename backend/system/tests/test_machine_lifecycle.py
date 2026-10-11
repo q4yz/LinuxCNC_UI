@@ -56,10 +56,10 @@ def no_processes(monkeypatch):
 
 @pytest.fixture()
 def running_process(monkeypatch):
-    """``pgrep -x linuxcnc`` reports pid 4242; every other pattern misses."""
+    """``pgrep -x 'linuxcnc|emc|…'`` reports pid 4242 (a live process)."""
 
     def fake_run(cmd, **kwargs):
-        if cmd[:3] == ["pgrep", "-x", "linuxcnc"]:
+        if cmd[:2] == ["pgrep", "-x"] and "linuxcnc" in cmd[2].split("|"):
             return SimpleNamespace(returncode=0, stdout="4242\n")
         return SimpleNamespace(returncode=1, stdout="")
 
@@ -80,6 +80,10 @@ class _FakePopen:
 
     def poll(self):
         return self._exit_code
+
+    def wait(self):
+        """Reaper thread — a fake session "exits" at once."""
+        return self._exit_code if self._exit_code is not None else 0
 
 
 def _service() -> MachineLifecycleService:
@@ -465,7 +469,7 @@ def test_stop_sends_sigint_and_succeeds(monkeypatch):
     state = {"alive": True}
 
     def fake_run(cmd, **kwargs):
-        if state["alive"] and cmd[:3] == ["pgrep", "-x", "linuxcnc"]:
+        if state["alive"] and cmd[:2] == ["pgrep", "-x"] and "linuxcnc" in cmd[2].split("|"):
             return SimpleNamespace(returncode=0, stdout="4242\n")
         return SimpleNamespace(returncode=1, stdout="")
 
@@ -491,7 +495,7 @@ def test_stop_escalates_to_sigterm_then_sigkill(monkeypatch):
     state = {"alive": True}
 
     def fake_run(cmd, **kwargs):
-        if state["alive"] and cmd[:3] == ["pgrep", "-x", "linuxcnc"]:
+        if state["alive"] and cmd[:2] == ["pgrep", "-x"] and "linuxcnc" in cmd[2].split("|"):
             return SimpleNamespace(returncode=0, stdout="4242\n")
         return SimpleNamespace(returncode=1, stdout="")
 
@@ -586,7 +590,10 @@ def test_get_status_endpoint_returns_200(no_processes, isolated_machines_root):
     assert response.status_code == 200
     body = response.json()
     assert body == {
+        "state": "stopped",
         "running": False,
+        "owner": None,
+        "running_ini": None,
         "pids": [],
         "machine_name": None,
         "default_machine": None,
@@ -677,3 +684,174 @@ def test_log_endpoint_reports_missing_file(isolated_logs):
     body = response.json()
     assert body["exists"] is False
     assert body["log"] == ""
+
+
+# --------------------------------------------------------------------- #
+# Robustness: zombies, concurrent transitions, reaping                    #
+# --------------------------------------------------------------------- #
+
+
+def test_zombie_session_is_not_reported_as_running(running_process, monkeypatch):
+    """An exited-but-unreaped ``linuxcnc`` is still listed by pgrep; it
+    must not keep the UI in "running" (nor make stop() SIGKILL a ghost)."""
+    monkeypatch.setattr(mls_module, "_is_zombie", lambda pid: True)
+    assert mls_module.linuxcnc_pids() == []
+    assert _service().status()["state"] == "stopped"
+
+
+def test_is_zombie_reads_the_proc_state_after_the_last_paren(monkeypatch):
+    stats = {
+        "/proc/1/stat": "1 (linuxcnc) Z 0 1 1 0",
+        "/proc/2/stat": "2 (weird) name)) S 0 2 2 0",
+    }
+
+    def fake_read_text(self, *args, **kwargs):
+        key = str(self).replace("\\", "/")
+        if key not in stats:
+            raise FileNotFoundError(key)
+        return stats[key]
+
+    monkeypatch.setattr(mls_module.Path, "read_text", fake_read_text)
+    assert mls_module._is_zombie(1) is True
+    assert mls_module._is_zombie(2) is False
+    assert mls_module._is_zombie(3) is False  # no /proc entry -> not a zombie
+
+
+def test_one_pgrep_call_covers_every_session_process(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=1, stdout="")
+
+    monkeypatch.setattr(mls_module.subprocess, "run", fake_run)
+    mls_module.linuxcnc_pids()
+    assert calls == [["pgrep", "-x", "linuxcnc|emc|milltask|linuxcncsvr"]]
+
+
+def test_a_second_transition_while_one_runs_is_a_conflict(no_processes):
+    """Two clicks / two browsers: the second start must not launch a
+    second session; status reports what is going on."""
+    service = _service()
+    with service._exclusive("stopping"):
+        assert service.status()["state"] == "stopping"
+        with pytest.raises(ConflictError) as exc_info:
+            service.start()
+        assert "stopping" in str(exc_info.value.detail)
+        with pytest.raises(ConflictError):
+            service.stop()
+    # Released again afterwards.
+    assert service.status()["state"] == "stopped"
+    assert service.stop()["state"] == "stopped"
+
+
+def test_started_session_is_reaped_and_its_log_closed(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    """The system service is the session's parent: it must wait() for it
+    (no zombie) and release its copy of the console-log fd."""
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _patch_launch(monkeypatch, tmp_path)
+
+    reaped = []
+    real_reap = MachineLifecycleService._reap
+
+    def recording_reap(process, log_handle):
+        real_reap(process, log_handle)
+        reaped.append(log_handle.closed)
+
+    monkeypatch.setattr(MachineLifecycleService, "_reap", staticmethod(recording_reap))
+    threads = []
+    real_thread = mls_module.threading.Thread
+
+    def capture_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(mls_module.threading, "Thread", capture_thread)
+
+    _service().start(machine="PrintNC")
+    for thread in threads:
+        thread.join(timeout=5)
+    assert reaped == [True]
+
+
+# --------------------------------------------------------------------- #
+# LinuxCNC started outside this UI                                        #
+# --------------------------------------------------------------------- #
+
+
+def _fake_cmdlines(monkeypatch, cmdlines):
+    monkeypatch.setattr(mls_module, "_cmdline", lambda pid: cmdlines.get(pid, []))
+
+
+def test_session_with_a_ui_machine_ini_is_owned_by_the_ui(isolated_machines_root, monkeypatch):
+    ini = _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _fake_cmdlines(monkeypatch, {
+        10: ["/bin/sh", "/usr/bin/linuxcnc", "-r", str(ini)],
+        11: ["milltask", "-ini", str(ini)],
+    })
+    assert mls_module.session_owner([10, 11]) == "ui"
+    assert mls_module.running_inis([10, 11]) == [str(ini)]
+
+
+def test_session_with_a_foreign_ini_is_external(isolated_machines_root, monkeypatch):
+    _fake_cmdlines(monkeypatch, {10: ["/bin/sh", "/usr/bin/linuxcnc", "/home/cnc/configs/sim/axis.ini"]})
+    assert mls_module.session_owner([10]) == "external"
+
+
+def test_session_whose_ini_cannot_be_read_is_external(monkeypatch):
+    _fake_cmdlines(monkeypatch, {})
+    assert mls_module.session_owner([10]) == "external"
+    assert mls_module.session_owner([]) is None
+
+
+def test_start_refuses_with_a_clear_error_while_an_external_session_runs(
+    running_process, isolated_machines_root, monkeypatch
+):
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _fake_cmdlines(monkeypatch, {4242: ["/bin/sh", "/usr/bin/linuxcnc", "/home/cnc/sim/axis.ini"]})
+
+    with pytest.raises(ConflictError) as exc_info:
+        _service().start(machine="PrintNC")
+    detail = str(exc_info.value.detail)
+    assert "another process" in detail
+    assert "/home/cnc/sim/axis.ini" in detail
+    assert "Terminate" in detail
+
+    status = _service().status()
+    assert (status["state"], status["owner"]) == ("running", "external")
+    assert status["running_ini"] == "/home/cnc/sim/axis.ini"
+
+
+def test_start_endpoint_returns_the_external_session_error(running_process, monkeypatch):
+    _fake_cmdlines(monkeypatch, {4242: ["linuxcnc", "/opt/other/machine.ini"]})
+    response = _client().post("/api/v1/system/machine/start")
+    assert response.status_code == 409
+    assert "another process" in response.json()["detail"]
+
+
+def test_stop_also_stops_a_session_started_from_another_process(monkeypatch):
+    """Stop works on any session — it is how an external one is cleared
+    before starting the machine from this UI."""
+    state = {"alive": True}
+
+    def fake_run(cmd, **kwargs):
+        if state["alive"] and cmd[:2] == ["pgrep", "-x"]:
+            return SimpleNamespace(returncode=0, stdout="4242\n")
+        return SimpleNamespace(returncode=1, stdout="")
+
+    killed = []
+
+    def fake_kill(pid, sig):
+        killed.append((pid, sig))
+        state["alive"] = False
+
+    monkeypatch.setattr(mls_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(mls_module.os, "kill", fake_kill)
+    _fake_cmdlines(monkeypatch, {4242: ["/bin/sh", "/usr/bin/linuxcnc", "/home/cnc/sim/axis.ini"]})
+
+    result = _service().stop()
+    assert killed == [(4242, signal.SIGINT)]
+    assert result["state"] == "stopped"

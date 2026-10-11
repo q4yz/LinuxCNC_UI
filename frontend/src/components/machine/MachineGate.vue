@@ -1,33 +1,45 @@
 <script setup lang="ts">
-// System/machine UI boundary gate.
-//
-// The split backend means two availability domains: the system
-// service (:8001, always up) and the machine service (:8000,
-// sometimes down). This component renders the machine-side UI only
-// when the global heartbeat (``composables/useMachineOnline.ts``)
-// has positively confirmed :8000 is reachable:
-//
-//   * ``null`` (loading) → neutral skeleton. Deliberately NOT the
-//     machine UI: treating unknown as online would mount the
-//     camera MJPEG, the WebSocket and 1 Hz polls against a possibly
-//     dead port — the "reverse flash" of 502 spam. One probe round
-//     trip (≤ 2 s timeout, usually instant) resolves it.
-//   * ``false`` (offline) → amber card with an optional Start
-//     button (``wakeMachine()`` via the always-up system service).
-//     Unmounting machine children via ``v-if`` also kills their
-//     network traffic — e.g. the camera's MJPEG ``<img>`` is
-//     removed from the DOM, which aborts the hanging stream.
-//   * ``true`` (online) → the default slot.
-//
-// ``label`` names the gated group in the loading/offline copy
-// (e.g. "Camera", "DRO"); defaults to "Machine".
+// Gates a machine-level widget on the shared machine-online heartbeat
+// (``composables/useMachineOnline.ts``). While the machine is not
+// online it says *why* (``offlineReason``) and offers the action that
+// fits: Start when stopped, Stop when LinuxCNC runs but the machine
+// backend does not respond, nothing while a transition is in progress.
 
+import { computed } from "vue";
 import { useMachineOnline } from "../../composables/useMachineOnline";
 import { BaseButton } from "../../ui/index.ts";
 
-withDefaults(defineProps<{ label?: string }>(), { label: "Machine" });
+const props = withDefaults(defineProps<{ label?: string }>(), { label: "Machine" });
 
-const { isMachineOnline, isStarting, wakeMachine } = useMachineOnline();
+const { isMachineOnline, isStarting, isStopping, offlineReason, runningIni, wakeMachine, stopMachine } =
+  useMachineOnline();
+
+const message = computed(() => {
+  switch (offlineReason.value) {
+    case "starting":
+      return "LinuxCNC is starting…";
+    case "connecting":
+      return "Connecting to LinuxCNC…";
+    case "stopping":
+      return "LinuxCNC is stopping…";
+    case "external":
+      return `${props.label} is offline — LinuxCNC is running from another process${
+        runningIni.value ? ` (${runningIni.value})` : ""
+      }, not from this UI. Terminate it before starting the machine here.`;
+    case "waiting":
+      return "LinuxCNC is running — waiting for the machine backend…";
+    case "unresponsive":
+      return "LinuxCNC is running, but the machine backend is not responding.";
+    case "system-offline":
+      return "The system service is not reachable — check the connection to the machine.";
+    default:
+      return `${props.label} is currently offline. Start the machine to view these controls.`;
+  }
+});
+
+const busy = computed(() =>
+  ["starting", "connecting", "stopping", "waiting"].includes(offlineReason.value ?? ""),
+);
 </script>
 
 <template>
@@ -54,19 +66,26 @@ const { isMachineOnline, isStarting, wakeMachine } = useMachineOnline();
     </div>
   </div>
 
-  <!-- OFFLINE: amber card + Start (spawn via the system service). -->
+  <!-- OFFLINE: why, plus the action that fits. -->
   <div
     v-else-if="isMachineOnline === false"
     data-testid="machine-gate-offline"
-    class="rounded-lg border border-amber-700 bg-gray-900 p-6 text-center"
+    :data-reason="offlineReason"
+    class="rounded-lg border bg-gray-900 p-6 text-center"
+    :class="offlineReason === 'unresponsive' || offlineReason === 'system-offline' ? 'border-red-700' : 'border-amber-700'"
     role="status"
     aria-live="polite"
   >
-    <p class="text-gray-300">
-      {{ label }} is currently offline.
-      Start the machine to view these controls.
+    <p class="flex items-center justify-center gap-2 text-gray-300">
+      <span
+        v-if="busy"
+        class="h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-amber-300"
+        aria-hidden="true"
+      ></span>
+      {{ message }}
     </p>
     <BaseButton
+      v-if="offlineReason === 'stopped' || offlineReason === 'external'"
       variant="primary"
       class="mt-4"
       data-testid="machine-gate-start"
@@ -74,6 +93,16 @@ const { isMachineOnline, isStarting, wakeMachine } = useMachineOnline();
       @click="wakeMachine()"
     >
       {{ isStarting ? "Starting…" : "Start machine" }}
+    </BaseButton>
+    <BaseButton
+      v-else-if="offlineReason === 'unresponsive'"
+      variant="danger"
+      class="mt-4"
+      data-testid="machine-gate-stop"
+      :loading="isStopping"
+      @click="stopMachine()"
+    >
+      Stop LinuxCNC
     </BaseButton>
   </div>
 

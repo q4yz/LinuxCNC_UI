@@ -45,7 +45,7 @@ logger = logging.getLogger("backend.axis_service")
 # ────────────────────────────────────────────────────────────────────── #
 
 # ``_active_jogs`` is keyed by axis index (``0`` = X, ``1`` = Y,
-# ``2`` = Z). Value is the ``time.time()`` timestamp of the last
+# ``2`` = Z). Value is the ``time.monotonic()`` stamp of the last
 # keep-alive ping. The watchdog force-stops any axis whose stamp is
 # older than ``WATCHDOG_TIMEOUT_S``. Both ``jog_axis`` (which writes)
 # and the watchdog (which reads + clears stale entries) acquire
@@ -62,7 +62,7 @@ def _register_active_jog(axis: int) -> None:
     and not registered.
     """
     with _active_jogs_lock:
-        _active_jogs[axis] = time.time()
+        _active_jogs[axis] = time.monotonic()
 
 
 def _unregister_active_jog(axis: int) -> None:
@@ -184,7 +184,7 @@ def jog_stop(axes: List[int]) -> None:
 
 def jog_keepalive(axes: List[int]) -> None:
     """Refresh the watchdog timer for ``axes``."""
-    now = time.time()
+    now = time.monotonic()
     with _active_jogs_lock:
         for axis in axes:
             if axis in _active_jogs:

@@ -19,6 +19,7 @@ import { ref, shallowRef, computed } from "vue";
 
 import { BaseThreadService } from "../facades/baseThreadFacade";
 import { useConsoleStore } from "./console";
+import { useMachineOnline } from "../composables/useMachineOnline";
 
 // Entity imports for state typing and re-exporting
 import { ReadingSet } from "../entities/temperature/ReadingSet";
@@ -135,6 +136,9 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       // Loud logging — silent swallows have masked two regressions already.
       console.error("[baseThread] refresh failed:", err);
       connectionStatus.value = "error";
+      // Don't wait for the next 3 s heartbeat tick: probe now, so a
+      // backend that just died gates the UI (and stops this poll) fast.
+      void useMachineOnline().checkMachineOnline();
     }
   }
 

@@ -1,12 +1,28 @@
 """Request / response models of ``/api/v1/system/machine`` (``routers/machine_lifecycle.py``)."""
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
 class MachineStatusResponse(BaseModel):
     """Live state of the LinuxCNC session and the default machine."""
 
+    state: Literal["stopped", "starting", "running", "stopping"] = Field(
+        ...,
+        description=(
+            "Session state. 'starting' / 'stopping' while the system service runs that "
+            "transition; otherwise 'running' when a (non-zombie) LinuxCNC process is alive."
+        ),
+    )
     running: bool = Field(..., description="Whether a LinuxCNC session process is alive.")
+    owner: Optional[Literal["ui", "external"]] = Field(
+        None,
+        description=(
+            "Who runs the session: 'ui' (an INI under machine_config/machines — it loads this "
+            "UI's machine backend) or 'external' (any other INI: started outside this UI, no "
+            "machine backend). null when nothing runs."
+        ),
+    )
+    running_ini: Optional[str] = Field(None, description="INI the running session was started with, if readable.")
     pids: List[int] = Field(..., description="Pids of the detected LinuxCNC processes.")
     machine_name: Optional[str] = Field(
         None,

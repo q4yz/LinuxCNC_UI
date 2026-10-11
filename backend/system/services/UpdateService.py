@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,9 @@ class UpdateService:
         self._status_file = status_file
         self._script = script
         self._log_file = log_file
+        # Check-then-launch must be atomic: two simultaneous POSTs would
+        # otherwise both see "not running" and start two update scripts.
+        self._start_lock = threading.Lock()
 
     # -- status ---------------------------------------------------------- #
 
@@ -74,6 +78,10 @@ class UpdateService:
 
     def start(self) -> str:
         """Launch the update detached; returns its run id."""
+        with self._start_lock:
+            return self._start()
+
+    def _start(self) -> str:
         current = self.status()
         if current.state == "running":
             raise ConflictError(f"An update is already running (phase: {current.phase or 'starting'})")

@@ -108,7 +108,13 @@ async function stopMachine() {
     machineStatus.value = status
     consoleStore.info('Machine stopped')
   } catch (error) {
-    consoleStore.error(`Failed to stop machine: ${error instanceof Error ? error.message : String(error)}`)
+    // e.g. 409: LinuxCNC was started from another process — the
+    // backend's reason says so; keep it until the operator closes it.
+    consoleStore.error(`Failed to stop machine: ${error instanceof Error ? error.message : String(error)}`, {
+      popup: true,
+      title: 'Stop machine',
+      lifetime: null,
+    })
   } finally {
     isStoppingMachine.value = false
     void refreshMachineStatus()

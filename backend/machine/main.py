@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from dtos.pins.HalPin import HalPin
 from exceptions import register_command_error_handler
-from hardware import HAS_HAL
+from hardware import HAS_HAL, get_stat_channel
 from hardware.mock.LinuxCNCMock import mock_system
 from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
 from routers import (
@@ -100,6 +100,10 @@ mcu_service = get_mcu_service()
 program_service = get_program_lifecycle_service()
 
 
+#: Set at the start of shutdown; reported by ``/api/v1/health``.
+_shutting_down = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI Lifespan Context Manager.
@@ -151,17 +155,35 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown gracefully.
+    # Shutdown — LinuxCNC's ``halcmd unloadusr`` waits for this process,
+    # so every step is bounded and none may abort the others.
+    global _shutting_down
+    _shutting_down = True
     logger.info("Shutting down LinuxCNC background tasks...")
+    stop_watchdog_if_running()
     task_telemetry.cancel()
+    try:
+        await asyncio.wait_for(task_telemetry, timeout=2.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Telemetry loop ended with %s during shutdown", exc)
+    try:
+        await asyncio.wait_for(get_servo_thread_service().close_all(), timeout=3.0)
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Closing WebSocket clients failed during shutdown: %s", exc)
+    try:
+        await asyncio.wait_for(camera_router.stop_manager_async(), timeout=5.0)
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("Camera shutdown failed: %s", exc)
     # Flush the persistent console history so any in-flight rows
     # survive the uvicorn shutdown.
     try:
         get_console_logger().close()
     except Exception as exc:  # noqa: BLE001 - defensive
         logger.warning("ConsoleLogger close failed during shutdown: %s", exc)
-    stop_watchdog_if_running()
-    camera_router.stop_manager()
+    HalPin.shutdown_component()
+    logger.info("Machine backend shut down.")
 
 
 def start_watchdog_if_available() -> None:
@@ -240,7 +262,7 @@ def read_root():
 
 
 @app.get("/api/v1/health")
-def machine_health():
+async def machine_health():
     """Liveness probe for the frontend's machine-online heartbeat.
 
     The browser can only reach this service through the ``/api`` proxy
@@ -249,8 +271,37 @@ def machine_health():
     polls this route every 3 s with a 2 s ``AbortSignal.timeout``; any
     non-200 or timeout counts as "machine offline" and the UI gates all
     machine-level traffic on that verdict.
+
+    ``async`` on purpose: it answers from the event loop, so a thread
+    pool busy with slow NML calls cannot make a healthy service look
+    dead — while a blocked event loop (which really breaks telemetry)
+    still does. ``linuxcnc_connected`` says whether LinuxCNC's status
+    buffer can be read right now, so the UI can tell "backend up,
+    LinuxCNC not (yet) talking" from "fully online".
     """
-    return {"status": "ok", "service": "machine"}
+    return {
+        "status": "ok",
+        "service": "machine",
+        "linuxcnc_connected": _linuxcnc_reachable(),
+        "shutting_down": _shutting_down,
+    }
+
+
+def _linuxcnc_reachable() -> bool:
+    """Poll this thread's ``stat`` channel (a shared-memory read).
+
+    Not ``is_linuxcnc_connected()``: that only means "every channel
+    connected at least once", and the command channel connects lazily on
+    the first command — a healthy, idle machine would report False.
+    """
+    stat = get_stat_channel()
+    if stat is None:
+        return False
+    try:
+        stat.poll()
+    except Exception:  # noqa: BLE001 - linuxcnc.error when the task is gone
+        return False
+    return True
 
 
 if __name__ == "__main__":
@@ -272,4 +323,9 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=_reload,
+        # Camera MJPEG streams are endless responses: without a bound,
+        # one open stream kept this process alive after SIGTERM, which
+        # stalled LinuxCNC's own shutdown (halcmd waits for ``webgui``)
+        # until the system service escalated to SIGKILL.
+        timeout_graceful_shutdown=3,
     )

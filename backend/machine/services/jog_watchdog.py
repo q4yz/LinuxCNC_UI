@@ -46,8 +46,11 @@ async def _loop() -> None:
     delegated to ``JogService.stop_axis(axis)`` so this module
     never imports ``hardware``.
 
-    Capped at 10 minutes (``MAX_LIFETIME_S``) so a leaked task
-    does not run forever in degenerate test environments.
+    Runs for the whole life of the process — it is a safety function,
+    so it has no lifetime cap (an earlier 10-minute cap meant to bound
+    tests silently disabled jog protection on a real machine) and no
+    error may end it: every iteration is guarded. Only cancellation
+    (``stop_watchdog`` at shutdown) stops it.
     """
     from hal_service.JogService import (
         snapshot_active_jogs,
@@ -55,22 +58,17 @@ async def _loop() -> None:
         _unregister_active_jog,
     )
 
-    started_at = time.monotonic()
     while True:
-        # Hard cap so a wedged loop is bounded in CI.
-        if time.monotonic() - started_at > 600:
-            logger.warning(
-                "watchdog loop exceeded 10 minute lifetime; exiting."
-            )
-            return
-
         await asyncio.sleep(0.1)
-        now = time.time()
-        timeout_s = WATCHDOG_TIMEOUT_S
-        active = snapshot_active_jogs()
-        expired = [
-            axis for axis, t in active.items() if now - t > timeout_s
-        ]
+        try:
+            now = time.monotonic()
+            active = snapshot_active_jogs()
+            expired = [
+                axis for axis, t in active.items() if now - t > WATCHDOG_TIMEOUT_S
+            ]
+        except Exception:
+            logger.exception("Watchdog could not read the active jogs")
+            continue
         for axis in expired:
             _unregister_active_jog(axis)
             logger.warning(

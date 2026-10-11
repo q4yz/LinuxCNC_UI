@@ -90,14 +90,18 @@ test("heartbeat cadence: 3 s normal, 1 Hz while waking, 30 s give-up", () => {
   );
 });
 
-test("wakeMachine spawns via the always-up system service and tolerates 409", () => {
+test("wakeMachine spawns via the always-up system service and reports a 409", () => {
   const text = read("composables/useMachineOnline.ts");
   assert.match(
     text,
     /SystemMachineLifecycleService\.startMachineSession\(\)/,
     "wake must call the :8001 system service, never the dead machine backend",
   );
-  assert.match(text, /status\s*===\s*409/, "409 (already running) must keep polling, not error");
+  // 409 = LinuxCNC already runs (e.g. started from another process) or a
+  // start/stop is in progress: surface the system service's reason
+  // instead of silently waiting for a backend that never comes.
+  assert.match(text, /status\s*===\s*409/, "409 must be handled explicitly");
+  assert.match(text, /describeErrorOr\(err, "LinuxCNC is already running\."\)/, "409 must show the backend's reason");
   assert.match(
     text,
     /isStarting\.value\s*=\s*false/,

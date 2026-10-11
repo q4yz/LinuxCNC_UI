@@ -12,9 +12,18 @@ from dtos.ServoThreadState import ServoThreadStateDTO
 from services.AxisService import get_axis_service
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.StateService import get_state_service
+from core.NonRepeatingLogger import NonRepeatingLogger
 from hardware.Connection import message_severity
 
 logger = logging.getLogger("backend.services.servo_thread")
+# The loop runs at 10 Hz: a persistent fault (LinuxCNC gone, mapper
+# bug) must not write ten identical lines per second.
+loop_logger = NonRepeatingLogger("backend.services.servo_thread.loop")
+
+#: A client that cannot take a frame within this time is dropped. One
+#: stalled browser (Wi-Fi gone, tab frozen, full TCP buffer) used to
+#: block every other client and the whole loop on its send.
+SEND_TIMEOUT_S = 1.0
 
 
 class ServoThreadService:
@@ -36,13 +45,32 @@ class ServoThreadService:
             self.active_connections.remove(websocket)
             logger.info(f"WebSocket Client disconnected. Total clients: {len(self.active_connections)}")
 
-    async def broadcast(self, message: str):
-        for connection in list(self.active_connections):
+    async def _send(self, connection: WebSocket, message: str) -> None:
+        try:
+            await asyncio.wait_for(connection.send_text(message), SEND_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 - includes asyncio.TimeoutError
+            logger.warning("Dropping WebSocket client (%s): %s", type(e).__name__, e)
+            self.disconnect(connection)
             try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"Error broadcasting to client: {e}")
-                self.disconnect(connection)
+                await asyncio.wait_for(connection.close(code=1011), SEND_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 - already broken
+                pass
+
+    async def broadcast(self, message: str):
+        """Send to every client concurrently, each bounded by ``SEND_TIMEOUT_S``."""
+        connections = list(self.active_connections)
+        if connections:
+            await asyncio.gather(*(self._send(c, message) for c in connections))
+
+    async def close_all(self) -> None:
+        """Shutdown: tell every client the server is going away (1001)."""
+        connections = list(self.active_connections)
+        self.active_connections.clear()
+        for connection in connections:
+            try:
+                await asyncio.wait_for(connection.close(code=1001), SEND_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 - best effort
+                pass
 
     def get_initial_state_json(self) -> str:
         """Generates the full state payload for a newly connected client."""
@@ -150,8 +178,10 @@ class ServoThreadService:
                     })
                     await self.broadcast(heartbeat_json)
 
-            except Exception as e:
-                logger.error(f"Error in telemetry loop: {e}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - the loop must keep running
+                loop_logger.error("Error in telemetry loop: %s", e)
 
             # Sleep for 100ms (10Hz refresh rate)
             await asyncio.sleep(0.1)

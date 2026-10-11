@@ -79,7 +79,7 @@ def test_ws_keepalive_dispatches_to_watchdog(machine_app):
     # the same lock the REST handler takes.
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
-    initial = time.time() - 10.0  # far in the past
+    initial = time.monotonic() - 10.0  # far in the past
     with jog._active_jogs_lock:
         jog._active_jogs[0] = initial
         jog._active_jogs[1] = initial
@@ -171,8 +171,8 @@ def test_ws_jog_stop_removes_axis_from_active_set(machine_app):
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
-        jog._active_jogs[0] = time.time()
-        jog._active_jogs[1] = time.time()
+        jog._active_jogs[0] = time.monotonic()
+        jog._active_jogs[1] = time.monotonic()
 
     _ws_dispatch({"type": "jog_stop", "axes": [0]})
     with jog._active_jogs_lock:
@@ -211,7 +211,7 @@ def test_ws_dispatch_rejects_malformed_axes(machine_app):
 
     with jog._active_jogs_lock:
         jog._active_jogs.clear()
-        jog._active_jogs[0] = time.time()
+        jog._active_jogs[0] = time.monotonic()
         initial = jog._active_jogs[0]
 
     # String-typed ``axes`` — dispatcher warns and returns. The

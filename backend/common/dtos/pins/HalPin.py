@@ -59,6 +59,27 @@ class HalPin(ABC, Generic[T]):
         logger.info("HAL Component '%s' is ready with %d pins.", cls._component_name, len(cls._pending_pins))
 
     @classmethod
+    def shutdown_component(cls) -> None:
+        """Remove the HAL component on shutdown (idempotent).
+
+        LinuxCNC stops this process with ``halcmd unloadusr`` and then
+        waits for the ``webgui`` component to disappear; exiting it
+        explicitly makes that immediate instead of relying on the
+        interpreter's teardown order.
+        """
+        comp = cls._comp_instance
+        if comp is None:
+            return
+        cls._comp_instance = None
+        exit_fn = getattr(comp, "exit", None)
+        if callable(exit_fn):
+            try:
+                exit_fn()
+                logger.info("HAL Component '%s' exited.", cls._component_name)
+            except Exception as exc:  # noqa: BLE001 - shutdown must continue
+                logger.warning("HAL Component '%s' exit failed: %s", cls._component_name, exc)
+
+    @classmethod
     def check_and_register(cls, pin_name: str, hal_type: Optional[HalDataType] = None, hal_dir: Optional[int] = None) -> None:
         """Registers a pin name. If it's dynamic, queues it for creation."""
         if not pin_name:

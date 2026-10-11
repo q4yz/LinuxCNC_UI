@@ -24,8 +24,21 @@
 // these four functions can migrate onto
 // ``SystemMachineLifecycleService`` unchanged.
 
+/** Session state reported by the system service. */
+export type MachineSessionState = "stopped" | "starting" | "running" | "stopping";
+
 export interface MachineStatus {
+  /** Absent on a system service older than the state field. */
+  state?: MachineSessionState;
   running: boolean;
+  /**
+   * ``ui``: the session runs one of this UI's machine INIs (and so its
+   * machine backend); ``external``: LinuxCNC started elsewhere with
+   * another INI — this UI cannot talk to it. ``null`` when stopped.
+   */
+  owner?: "ui" | "external" | null;
+  /** INI the running session was started with, if readable. */
+  running_ini?: string | null;
   pids: number[];
   /** Deprecated alias of ``default_machine`` (generated-model compat). */
   machine_name: string | null;

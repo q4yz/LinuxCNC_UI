@@ -63,14 +63,14 @@ def _seed_active_jog(axis: int, timeout_ms: int) -> float:
     enough in the past that the watchdog considers it stale on the
     next tick.
 
-    Returns the ``time.time()`` value used so the test can compare.
+    Returns the ``time.monotonic()`` value used so the test can compare.
     """
     from hal_service import JogService as jog
 
     # Subtracting a generous offset pushes the stamp well past the
     # 500 ms watchdog window. We bypass ``now - t > timeout`` to a
     # comfortable margin so the test is not flaky on slow CI.
-    stale = time.time() - (timeout_ms / 1000.0) - 0.5
+    stale = time.monotonic() - (timeout_ms / 1000.0) - 0.5
     with jog._active_jogs_lock:
         jog._active_jogs[axis] = stale
     return stale
@@ -97,7 +97,7 @@ def test_watchdog_halts_expired_axis_within_one_loop():
         # The watchdog's own ``_loop`` does the real work in
         # production; here we mirror it for an in-process test.
         await asyncio.sleep(0.1)
-        now = time.time()
+        now = time.monotonic()
         timeout_s = timeout_ms / 1000.0
         expired = []
         with jog._active_jogs_lock:
@@ -119,13 +119,13 @@ def test_watchdog_skips_fresh_axes():
     from hal_service import JogService as jog
 
     timeout_ms = 500
-    fresh = time.time()
+    fresh = time.monotonic()
     with jog._active_jogs_lock:
         jog._active_jogs[0] = fresh
 
     async def fake_loop():
         await asyncio.sleep(0.05)
-        now = time.time()
+        now = time.monotonic()
         timeout_s = timeout_ms / 1000.0
         expired = []
         with jog._active_jogs_lock:
@@ -156,14 +156,14 @@ def test_keepalive_refresh_blocks_force_stop():
         # also runs at the same cadence; we mimic the loop body
         # to check that no axis gets past the timeout while pings
         # keep arriving.
-        now = time.time()
+        now = time.monotonic()
         jog._active_jogs[0] = now
-        deadline = time.time() + 1.0
+        deadline = time.monotonic() + 1.0
         timeout_s = timeout_ms / 1000.0
         forced = []
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             await asyncio.sleep(0.1)
-            now = time.time()
+            now = time.monotonic()
             jog._active_jogs[0] = now  # keep-alive
             expired = []
             with jog._active_jogs_lock:
@@ -197,9 +197,54 @@ def test_clear_active_jogs_drops_every_entry():
     from hal_service import JogService as jog
 
     with jog._active_jogs_lock:
-        jog._active_jogs[0] = time.time()
-        jog._active_jogs[1] = time.time()
+        jog._active_jogs[0] = time.monotonic()
+        jog._active_jogs[1] = time.monotonic()
     jog.clear_active_jogs()
     assert jog._active_jogs == {}
 
 
+
+
+def test_real_watchdog_loop_still_stops_a_jog_after_hours_of_uptime(monkeypatch):
+    """Regression: the loop used to return after 10 minutes of uptime,
+    silently disabling continuous-jog protection on a real machine.
+
+    The monotonic clock is advanced by one hour per tick; a stale jog
+    seeded after "hours" of uptime must still be force-stopped by the
+    real :func:`jog_watchdog._loop`.
+    """
+    from hal_service import JogService as jog
+    from services import jog_watchdog
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(jog_watchdog.time, "monotonic", lambda: clock["now"])
+
+    stopped: List[int] = []
+    monkeypatch.setattr(jog, "stop_axis", lambda axis: stopped.append(axis))
+
+    real_sleep = asyncio.sleep
+    ticks = {"n": 0}
+
+    async def fast_sleep(_seconds):
+        ticks["n"] += 1
+        clock["now"] += 3600.0  # one hour of "uptime" per tick
+        if ticks["n"] == 5:  # ~5 hours in: an operator starts a jog...
+            with jog._active_jogs_lock:
+                jog._active_jogs[2] = clock["now"] - 10.0  # ...whose keep-alive is lost
+        await real_sleep(0)
+
+    monkeypatch.setattr(jog_watchdog.asyncio, "sleep", fast_sleep)
+
+    async def run():
+        task = asyncio.ensure_future(jog_watchdog._loop())
+        for _ in range(200):
+            await real_sleep(0)
+            if stopped:
+                break
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return task
+
+    asyncio.run(run())
+    assert stopped == [2]

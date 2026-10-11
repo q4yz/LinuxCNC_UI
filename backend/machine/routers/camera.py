@@ -415,6 +415,14 @@ def camera_status() -> Dict[str, object]:
 # ---------------------------------------------------------------------- #
 
 
+async def stop_manager_async() -> None:
+    """Shutdown: stop the ustreamer children, then *await* the closing of
+    every MJPEG fan-out proxy (``stop_manager`` can only schedule it,
+    and a task scheduled during the lifespan teardown may never run)."""
+    await asyncio.to_thread(_supervisor.shutdown)
+    await MjpegFanout.aclose_all()
+
+
 def stop_manager() -> None:
     """Tear the supervisor down for ``on_unload``.
 
@@ -438,6 +446,7 @@ def stop_manager() -> None:
 
 
 __all__ = [
+    "stop_manager_async",
     "UstreamerSupervisor",
     "USBDeviceInfo",
     "router",
