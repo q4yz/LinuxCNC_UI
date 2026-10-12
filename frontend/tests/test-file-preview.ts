@@ -16,7 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -33,7 +33,7 @@ test("backend exposes a head-scan thumbnail endpoint on the programs router", ()
     resolve(repoRoot, "backend/system/routers/FilesRouter.py"),
     "utf-8",
   );
-  assert.match(text, /@router\.get\(\s*"\/thumbnail\/\{filename\}"/, "thumbnail route must exist");
+  assert.match(text, /@router\.get\(\s*"\/thumbnail\/\{filename:path\}"/, "thumbnail route must exist (subfolders too)");
   assert.match(text, /operation_id="getFileThumbnail"/, "operation id pinned for client generation");
   assert.match(text, /THUMBNAIL_HEAD_BYTES/, "head-scan cap constant must exist");
   assert.match(text, /read_head\(/, "endpoint must read only the file head");
@@ -72,19 +72,35 @@ test("FileManager shows thumbnails and opens the preview modal", () => {
   assert.match(text, /@click\.stop/, "action buttons stop propagation");
 });
 
-test("row actions offer Download instead of Load; Load lives in the preview", () => {
+test("row: Load / Unload outside, Edit / Download / Delete in the ⋮ menu, loaded file highlighted", () => {
   const text = read("components/FileManager.vue");
 
-  // The row-level Load button is gone; only the preview modal's
-  // survives (guarded further below).
-  assert.doesNotMatch(
-    text,
-    /data-test="`file-load-\$\{file\.name\}`"/,
-    "the per-row Load button must be removed",
-  );
-  assert.match(text, /data-test="`file-download-\$\{file\.name\}`"/, "row must offer Download");
-  assert.match(text, /downloadFile\(file\.name\)/, "download button calls downloadFile");
+  // Load is the one visible row action; the loaded file offers Unload.
+  // Rows are addressed by path (``project/part.ngc``) — names repeat across folders.
+  assert.match(text, /data-test="`file-row-load-\$\{file\.path\}`"/, "row offers Load");
+  assert.match(text, /isLoaded\(file\.path\) \? unloadFile\(file\.path\) : loadFile\(file\.path\)/);
+  assert.match(text, /:disabled="!isMachineOnline \|\| busyFile !== null"/, "Load needs the machine service");
+
+  // Everything else lives in the shared menu.
+  assert.match(text, /<ActionMenu :items="ROW_MENU"/);
+  for (const key of ["edit", "download", "copy", "move", "delete"]) {
+    assert.match(text, new RegExp(`key: '${key}'`), `menu offers ${key}`);
+  }
+  assert.doesNotMatch(text, /data-test="`file-(edit|delete|download)-\$\{file\.name\}`"/, "no inline Edit / Delete / Download");
+  assert.match(text, /key === 'download'\) await downloadFile\(file\.path\)/, "menu Download calls downloadFile");
   assert.match(text, /createObjectURL/, "download must build a Blob URL");
+
+  // The loaded program is highlighted (same rule as the dashboard widget).
+  assert.match(text, /useLoadedProgram\(\)/);
+  assert.match(text, /loadedPathAmong\(/, "matched by path, not base name");
+  assert.match(text, /:class="isLoaded\(file\.path\) \? 'bg-blue-900\/40/);
+});
+
+test("useLoadedProgram compares by base name", async () => {
+  const { programBaseName } = await import(pathToFileURL(resolve(src, "composables/useLoadedProgram.ts")).href);
+  assert.equal(programBaseName("/home/cnc/nc_files/part.ngc"), "part.ngc");
+  assert.equal(programBaseName("C:\\nc\\part.ngc"), "part.ngc");
+  assert.equal(programBaseName(null), "");
 });
 
 test("Load only works while the machine service is up", () => {
@@ -94,12 +110,12 @@ test("Load only works while the machine service is up", () => {
   // Load lives in the preview modal now, keyed to the previewed file.
   assert.match(
     text,
-    /data-test="`file-load-\$\{previewFile\.name\}`"/,
+    /data-test="`file-load-\$\{previewFile\.path\}`"/,
     "the preview modal must offer Load for the previewed file",
   );
   assert.match(
     text,
-    /:disabled="!isMachineOnline"[\s\S]{0,200}loadFile\(previewFile\.name\)/,
+    /:disabled="!isMachineOnline"[\s\S]{0,200}loadFile\(previewFile\.path\)/,
     "the preview's Load button must be disabled while the machine service is offline",
   );
   // Defense in depth: the handler itself refuses even if a disabled
@@ -230,4 +246,38 @@ test("ToolpathViewer frames the part top-down from Z+ with no base grid", () => 
     /controls\.target\.set\(centerX, centerY, centerZ\)/,
     "camera must look at the part center",
   );
+});
+
+test("G-code files: project folders — browse, create (blue ⊕), upload into the open folder", () => {
+  const text = read("components/FileManager.vue");
+
+  // The open folder lives in the URL and filters the rows.
+  assert.match(text, /useDirectoryQuery\('programsDir'\)/);
+  assert.match(text, /v-for="folder in folders"/, "folders are listed");
+  assert.match(text, /@click="openFolder\(folder\.path\)"/, "a folder row opens the folder");
+  assert.match(text, /data-test="programs-breadcrumbs"/, "breadcrumbs back up the tree");
+
+  // Folder ⋮ menu; deleting one with content goes through the shared warning.
+  assert.match(text, /<ActionMenu :items="FOLDER_MENU"/);
+  assert.match(text, /confirmDelete\(entry, files\.value\)/);
+  assert.match(text, /filesFacade\.deleteFile\(entry\.path, recursive\)/);
+
+  // Blue round "+" in the bottom-right creates a folder in the open folder.
+  assert.match(text, /data-test="programs-new-folder"[\s\S]{0,200}@click="openFolderDialog"/);
+  assert.match(text, /bottom-6 right-6[^"]*rounded-full bg-blue-600[^"]*text-white/);
+  assert.match(text, /filesFacade\.createFolder\(path\)/);
+  assert.match(text, /joinPath\(currentDirectory\.value, name\)/);
+
+  // Uploads land in the open folder.
+  assert.match(text, /filesFacade\.uploadFile\(file\.name, await withThumbnail\(file\), directory\)/);
+});
+
+test("the loaded program is matched by its path among the folders", async () => {
+  const { matchLoadedPath } = await import(pathToFileURL(resolve(src, "composables/useLoadedProgram.ts")).href);
+  const paths = ["a.ngc", "project/a.ngc", "b.ngc"];
+  assert.equal(matchLoadedPath("/home/cnc/nc_files/project/a.ngc", paths), "project/a.ngc");
+  assert.equal(matchLoadedPath("/home/cnc/nc_files/a.ngc", paths), "a.ngc");
+  assert.equal(matchLoadedPath("C:\\nc_files\\project\\a.ngc", paths), "project/a.ngc");
+  assert.equal(matchLoadedPath("/home/cnc/nc_files/xb.ngc", paths), null, "only at a folder boundary");
+  assert.equal(matchLoadedPath(null, paths), null);
 });

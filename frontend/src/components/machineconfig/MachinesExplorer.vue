@@ -1,25 +1,25 @@
 <script setup lang="ts">
 // MachinesExplorer — browse the generated machine template sets under
 // ``machine_config/machines/`` (``<machine>/configs/...``). Mirrors
-// ProfilesExplorer one-for-one (folders at every depth, rename /
-// move / delete, drag-drop upload, download) with a couple of
-// differences: files are templates and therefore editable, generation
-// is started from the Profiles explorer, and ``.hal`` files get one
-// extra per-file action — opening the Visual HAL Editor scoped to
-// that file (mirrors the ``.cfg`` -> Generate button pattern in
-// ProfilesExplorer.vue).
+// ProfilesExplorer (folders at every depth, drag-drop upload, every
+// row action in the "⋮" menu: edit, download, copy, move, delete).
+// Differences: files are templates and therefore editable, generation
+// is started from the Profiles explorer, ``.hal`` files can open the
+// Visual HAL Editor scoped to that file, and root-level folders (the
+// machines) can be started / set as the default machine.
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useMachineConfigStore } from "../../stores/machineconfigStore";
 import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { useConsoleStore } from "../../stores/console";
-import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { FileEntry } from "../../entities/files";
 import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
-import { BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
+import { ActionMenu, BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
+import type { ActionMenuItem } from "../../ui/ActionMenu.vue";
+import { confirmDelete, downloadText, suggestCopyPath } from "./explorerActions";
 import BaseInput from "../../ui/BaseInput.vue";
 
 const router = useRouter();
@@ -46,7 +46,6 @@ const { machinesTree, isBusy } = storeToRefs(store);
 // see ``backend/system/routers/machine_lifecycle.py``.
 // ─────────────────────────────────────────────────────────────────
 const defaultMachine = ref<string | null>(null);
-const sessionRunning = ref(false);
 const startingPath = ref<string | null>(null);
 const settingMainPath = ref<string | null>(null);
 
@@ -59,7 +58,6 @@ async function refreshLifecycleStatus(): Promise<void> {
   try {
     const status = await MachineLifecycleFacade.getStatus();
     defaultMachine.value = status.default_machine;
-    sessionRunning.value = status.running;
   } catch {
     // The explorer stays fully usable without lifecycle info —
     // the buttons surface errors when pressed.
@@ -71,34 +69,20 @@ function lifecycleError(err: unknown): string {
 }
 
 async function startMachine(entry: FileEntry): Promise<void> {
-  activeMenu.value = "";
   if (startingPath.value !== null) return;
-
-  // Starting a machine stops a running session first (backend
-  // behaviour) — make that explicit when one is live.
-  if (sessionRunning.value) {
-    const confirmed = await useConfirm({
-      title: "Start machine",
-      question: `Starting ${entry.name} stops the running machine session first. Continue?`,
-      confirmButtonText: "Start",
-      confirmButtonStyle: ModalButtonStyle.DANGER,
-      rejectButtonText: "Cancel",
-    });
-    if (!confirmed) return;
-  }
-
+  // The backend refuses (409) while any LinuxCNC session runs — its
+  // reason (e.g. started from another process) is shown below.
   startingPath.value = entry.path;
   try {
     const status = await MachineLifecycleFacade.startMachine(entry.name);
     defaultMachine.value = status.default_machine;
-    sessionRunning.value = status.running;
     consoleStore.success(
       `Machine ${entry.name} started (pid ${status.started_pid ?? "?"})`,
     );
   } catch (err: unknown) {
     const status = (err as { status?: unknown } | null)?.status;
     if (status === 409) {
-      consoleStore.warning("LinuxCNC is already running");
+      consoleStore.warning(`Cannot start ${entry.name}: ${lifecycleError(err)}`, { popup: true, lifetime: null });
     } else if (status === 404) {
       consoleStore.error(
         `Cannot start ${entry.name}: no machines/${entry.name}/config/machine.ini`,
@@ -120,7 +104,6 @@ async function startMachine(entry: FileEntry): Promise<void> {
 }
 
 async function selectAsMain(entry: FileEntry): Promise<void> {
-  activeMenu.value = "";
   if (settingMainPath.value !== null) return;
 
   settingMainPath.value = entry.path;
@@ -148,7 +131,6 @@ onMounted(() => {
 
 // Lives in the URL so opening a file and coming back keeps the folder.
 const currentDirectory = useDirectoryQuery("machinesDir");
-const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
@@ -164,7 +146,6 @@ function joinPath(directory: string, name: string) {
   return [directory, name].filter(Boolean).join("/");
 }
 function navigate(entry: FileEntry) {
-  activeMenu.value = "";
   if (entry.kind === "folder") currentDirectory.value = entry.path;
   else editFile(entry);
 }
@@ -191,53 +172,68 @@ async function onCreate() {
   newEntryName.value = "";
   createOpen.value = false;
 }
-async function renameEntry(entry: FileEntry) {
-  activeMenu.value = "";
-  const name = window.prompt("New name", entry.name)?.trim();
-  if (name && name !== entry.name) await store.renameMachine(entry.path, joinPath(entry.parent || "", name));
+// --- "⋮" menu ---------------------------------------------------------- //
+
+const COMMON_ITEMS: ActionMenuItem[] = [
+  { key: "copy", label: "Copy…", separated: true },
+  { key: "move", label: "Move / rename…" },
+  { key: "delete", label: "Delete", danger: true, separated: true },
+];
+
+function menuItems(entry: FileEntry): ActionMenuItem[] {
+  if (entry.isFolder) {
+    const lifecycle: ActionMenuItem[] = isMachineFolder(entry)
+      ? [
+          { key: "start", label: "Start machine", disabled: startingPath.value !== null },
+        ]
+      : [];
+    return [{ key: "open", label: "Open" }, ...lifecycle, ...COMMON_ITEMS];
+  }
+  return [
+    { key: "edit", label: "Edit" },
+    ...(isHalFile(entry) ? [{ key: "hal", label: "Open in Visual HAL Editor" }] : []),
+    { key: "download", label: "Download" },
+    ...COMMON_ITEMS,
+  ];
 }
-async function copyOrMove(entry: FileEntry) {
-  activeMenu.value = "";
-  const destination = window.prompt("Move to path", entry.path)?.trim();
+
+async function onMenu(entry: FileEntry, key: string): Promise<void> {
+  if (key === "open") navigate(entry);
+  else if (key === "edit") await editFile(entry);
+  else if (key === "hal") openHalEditor(entry);
+  else if (key === "start") await startMachine(entry);
+  else if (key === "download") await downloadMachineFile(entry);
+  else if (key === "copy") await copyEntry(entry);
+  else if (key === "move") await moveEntry(entry);
+  else if (key === "delete") await deleteEntry(entry);
+}
+
+async function copyEntry(entry: FileEntry) {
+  const taken = new Set(machinesTree.value.entries.map((e) => e.path));
+  const destination = window.prompt(`Copy ${entry.path} to`, suggestCopyPath(entry.path, taken))?.trim();
+  if (destination && destination !== entry.path) await store.copyMachine(entry.path, destination);
+}
+async function moveEntry(entry: FileEntry) {
+  const destination = window.prompt(`Move / rename ${entry.path} to`, entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameMachine(entry.path, destination);
 }
 async function deleteEntry(entry: FileEntry) {
-  activeMenu.value = "";
-  const shouldDelete = await useConfirm({
-    title: "Delete entry",
-    question: `Delete ${entry.path}? This cannot be undone.`,
-    confirmButtonText: "Delete",
-    confirmButtonStyle: ModalButtonStyle.DANGER,
-    rejectButtonText: "Cancel",
-  });
-  if (shouldDelete) await store.deleteMachine(entry.path);
+  const isDefault = isMachineFolder(entry) && defaultMachine.value === entry.name;
+  const { confirmed, recursive } = await confirmDelete(
+    entry,
+    machinesTree.value.entries,
+    isDefault ? `${entry.name} is the default ("main") machine — Start machine will have nothing to start.` : "",
+  );
+  if (!confirmed) return;
+  await store.deleteMachine(entry.path, recursive);
+  if (isDefault) void refreshLifecycleStatus();
 }
 async function uploadFiles(files: File[]) {
   await store.uploadMachines(currentDirectory.value, files);
 }
 async function downloadMachineFile(entry: FileEntry) {
   const content = await store.readMachineContent(entry.path);
-  if (content === null) return;
-  downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
-}
-function downloadBlob(content: string | Blob | object, name: string, mimeType = "text/plain;charset=utf-8") {
-  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
-
-  const blob = new Blob([data], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-
-  anchor.href = url;
-  anchor.download = name;
-  anchor.style.display = "none";
-
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 150);
+  if (content !== null) downloadText(entry.name, content);
 }
 </script>
 
@@ -285,10 +281,13 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
               <template v-if="entry.isFile">{{ formatFileSize(entry.sizeBytes) }} · </template>{{ formatFileDate(entry.modified) }}
             </div>
           </div>
-          <!-- Root-level machine folders: lifecycle actions.
-               "Start" persists the machine as default AND launches
-               it; "Set main" only persists the default. -->
+          <!-- Root-level machine folders: the default ("main") badge or the
+               "Set as default" button next to ⋮; Start lives in the menu. -->
           <template v-if="isMachineFolder(entry)">
+            <span
+              v-if="startingPath === entry.path"
+              class="rounded border border-blue-600 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-blue-300"
+            >starting…</span>
             <span
               v-if="defaultMachine === entry.name"
               class="rounded border border-amber-600 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-amber-300"
@@ -297,39 +296,20 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
               main
             </span>
             <BaseButton
-              variant="ghost"
-              size="sm"
-              :loading="startingPath === entry.path"
-              :disabled="startingPath !== null"
-              :title="defaultMachine === entry.name ? 'Start default machine' : 'Start this machine (makes it the default)'"
-              aria-label="Start machine"
-              @click.stop="startMachine(entry)"
-            >▶</BaseButton>
-            <BaseButton
-              variant="ghost"
+              v-else
+              variant="secondary"
               size="sm"
               :loading="settingMainPath === entry.path"
-              :disabled="settingMainPath !== null || defaultMachine === entry.name"
-              :title="defaultMachine === entry.name ? 'Already the default machine' : 'Set as default machine'"
-              aria-label="Set as default machine"
+              :disabled="settingMainPath !== null"
+              title="Make this the default machine (started by the generic Start-machine buttons)"
+              :data-test="`machines-set-default-${entry.path}`"
               @click.stop="selectAsMain(entry)"
-            >★</BaseButton>
+              @dblclick.stop
+            >Set as default</BaseButton>
           </template>
-          <BaseButton
-            v-if="isHalFile(entry)"
-            variant="ghost"
-            size="sm"
-            title="Open in Visual HAL Editor"
-            aria-label="Open in Visual HAL Editor"
-            @click.stop="openHalEditor(entry)"
-          >⚡</BaseButton>
-          <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadMachineFile(entry)">↓</BaseButton>
-          <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
-        </div>
-        <div v-if="activeMenu === entry.path" class="absolute right-2 top-10 z-10 w-36 rounded border border-gray-600 bg-gray-900 py-1 text-sm">
-          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="renameEntry(entry)">Rename</button>
-          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="copyOrMove(entry)">Copy (Move)</button>
-          <button type="button" class="block w-full px-3 py-2 text-left text-red-300 hover:bg-red-900/40" @click="deleteEntry(entry)">Delete</button>
+          <span @click.stop @dblclick.stop>
+            <ActionMenu :items="menuItems(entry)" :test-id="`machines-entry-${entry.path}`" @select="onMenu(entry, $event)" />
+          </span>
         </div>
       </li>
     </ul>

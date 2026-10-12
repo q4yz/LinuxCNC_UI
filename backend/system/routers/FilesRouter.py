@@ -17,18 +17,23 @@ stays single-sourced.
 Endpoint naming follows the same pattern as the machineconfig
 module:
 
-    GET    /api/v1/programs                   â€” list files
-    POST   /api/v1/programs/upload           â€” upload file
-    DELETE /api/v1/programs/{filename}       â€” delete file
-    GET    /api/v1/programs/content/{filename} â€” read file content
-    PUT    /api/v1/programs/content/{filename} â€” write file content
-    POST   /api/v1/programs/load_program     â€” load program into controller
+    GET    /api/v1/programs                     — list files and folders (recursive)
+    POST   /api/v1/programs/upload             — upload a file (optional ``directory``)
+    POST   /api/v1/programs/folder             — create a folder
+    PUT    /api/v1/programs/rename             — move / rename a file or folder
+    POST   /api/v1/programs/copy               — copy a file or folder
+    DELETE /api/v1/programs/{path}             — delete (``recursive`` for a folder with content)
+    GET    /api/v1/programs/content/{path}     — read file content
+    PUT    /api/v1/programs/content/{path}     — write file content
+
+Every ``path`` is relative to ``nc_files/`` and may contain folders
+(``project/part.ngc``) — programs of one project live together.
 """
 
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from mappers.files import FileEntryMapper
@@ -100,14 +105,20 @@ def list_files() -> List[FileEntryResponse]:
     operation_id="uploadFile",
     response_model=UploadFileResponse,
 )
-def upload_file(file: UploadFile = File(...)) -> UploadFileResponse:
+def upload_file(
+    file: UploadFile = File(...),
+    directory: str = Form("", description="Folder under nc_files/ to store the file in ('' = top level)."),
+) -> UploadFileResponse:
     """Persist an uploaded G-code file via :class:`ProgramFileService`."""
     service: ProgramFileService = get_program_service()
     try:
-        # Normalise the filename through the service so ``\`` segments
-        # and ``..`` traversal are rejected the same way as a direct
-        # ``safe_join`` call would reject them.
-        safe_filename = service.safe_join(file.filename or "").name
+        # Only the uploaded file's own name counts (no client-side
+        # folders); ``safe_join`` rejects ``..`` traversal in either part.
+        name = service.safe_join(file.filename or "").name
+        safe_filename = "/".join(p for p in (directory.strip("/"), name) if p)
+        service.safe_join(safe_filename)
+        if not name:
+            raise ValueError("empty filename")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid filename.") from exc
 
@@ -133,20 +144,94 @@ def upload_file(file: UploadFile = File(...)) -> UploadFileResponse:
     )
 
 
+class ProgramFolderRequest(BaseModel):
+    """Body of ``POST /api/v1/programs/folder``."""
+
+    path: str = Field(..., description="New folder, relative to nc_files/ (e.g. 'project' or 'project/v2')")
+
+
+class ProgramMoveRequest(BaseModel):
+    """Body of ``PUT /api/v1/programs/rename`` and ``POST /api/v1/programs/copy``."""
+
+    source: str = Field(..., description="Existing file or folder, relative to nc_files/")
+    destination: str = Field(..., description="New path, relative to nc_files/ (must not exist yet)")
+
+
+def _entry_errors(action: str, path: str, call) -> None:
+    """Run ``call`` with the shared error → HTTP status mapping."""
+    try:
+        call()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Not found: {path}") from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - last-resort guard
+        logger.error("Failed to %s %s: %s", action, path, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to {action} {path}.") from exc
+
+
+@router.post(
+    "/folder",
+    summary="Create Folder",
+    description="Create a folder (and missing parents) under nc_files — e.g. one per project.",
+    operation_id="createProgramFolder",
+    response_model=StatusMessageResponse,
+)
+def create_folder(payload: ProgramFolderRequest) -> StatusMessageResponse:
+    service: ProgramFileService = get_program_service()
+    _entry_errors("create", payload.path, lambda: service.create_directory(payload.path))
+    return StatusMessageResponse(status="success", message=f"Created {payload.path}")
+
+
+@router.put(
+    "/rename",
+    summary="Move / Rename File or Folder",
+    description="Move or rename a file or folder under nc_files. Never overwrites (409).",
+    operation_id="moveProgramEntry",
+    response_model=StatusMessageResponse,
+)
+def move_entry(payload: ProgramMoveRequest) -> StatusMessageResponse:
+    service: ProgramFileService = get_program_service()
+    _entry_errors("move", payload.source, lambda: service.rename(payload.source, payload.destination))
+    return StatusMessageResponse(status="success", message=f"Moved {payload.source} -> {payload.destination}")
+
+
+@router.post(
+    "/copy",
+    summary="Copy File or Folder",
+    description="Copy a file or a whole folder under nc_files. Never overwrites (409).",
+    operation_id="copyProgramEntry",
+    response_model=StatusMessageResponse,
+)
+def copy_entry(payload: ProgramMoveRequest) -> StatusMessageResponse:
+    service: ProgramFileService = get_program_service()
+    _entry_errors("copy", payload.source, lambda: service.copy(payload.source, payload.destination))
+    return StatusMessageResponse(status="success", message=f"Copied {payload.source} -> {payload.destination}")
+
+
 @router.delete(
-    "/{filename}",
-    summary="Delete File",
-    description="Deletes a G-code file from the nc_files directory.",
+    "/{filename:path}",
+    summary="Delete File or Folder",
+    description=(
+        "Deletes a G-code file or a folder under nc_files. A folder with "
+        "content needs recursive=true (the UI asks the operator first)."
+    ),
     operation_id="deleteFile",
     response_model=StatusMessageResponse,
 )
-def delete_file(filename: str) -> StatusMessageResponse:
-    """Delete a G-code file via :class:`ProgramFileService`."""
+def delete_file(filename: str, recursive: bool = False) -> StatusMessageResponse:
+    """Delete a G-code file or folder via :class:`ProgramFileService`."""
     service: ProgramFileService = get_program_service()
     try:
-        service.delete_file(filename)
+        service.delete_file(filename, recursive=recursive)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="File not found.") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=f"Folder is not empty: {filename}") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
@@ -158,7 +243,7 @@ def delete_file(filename: str) -> StatusMessageResponse:
 
 
 @router.get(
-    "/thumbnail/{filename}",
+    "/thumbnail/{filename:path}",
     summary="Get File Thumbnail",
     description=(
         "Extracts the largest slicer-embedded thumbnail (the "
@@ -196,7 +281,7 @@ def get_file_thumbnail(filename: str) -> FileThumbnailResponse:
 
 
 @router.get(
-    "/content/{filename}",
+    "/content/{filename:path}",
     summary="Read File Content",
     description=(
         "Returns the raw text content of a G-code file. Used by the "
@@ -236,7 +321,7 @@ class GCodeContentPayload(BaseModel):
 
 
 @router.put(
-    "/content/{filename}",
+    "/content/{filename:path}",
     summary="Write File Content",
     description=(
         "Overwrite the text content of a G-code file. Mirrors the "

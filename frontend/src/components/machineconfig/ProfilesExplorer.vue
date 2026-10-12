@@ -6,7 +6,9 @@ import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { FileEntry } from "../../entities/files";
 import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
-import { BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
+import { ActionMenu, BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
+import type { ActionMenuItem } from "../../ui/ActionMenu.vue";
+import { confirmDelete, downloadText, suggestCopyPath } from "./explorerActions";
 import BaseInput from "../../ui/BaseInput.vue";
 import BaseCard from "../../ui/BaseCard.vue";
 
@@ -16,7 +18,6 @@ const { profilesTree, selectedProfilePath, isBusy } = storeToRefs(store);
 
 // Lives in the URL so opening a file and coming back keeps the folder.
 const currentDirectory = useDirectoryQuery("profilesDir");
-const activeMenu = ref("");
 const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
@@ -34,7 +35,6 @@ function joinPath(directory: string, name: string) {
   return [directory, name].filter(Boolean).join("/");
 }
 function navigate(entry: FileEntry) {
-  activeMenu.value = "";
   if (entry.kind === "folder") currentDirectory.value = entry.path;
   else store.selectProfile(entry.path);
 }
@@ -80,60 +80,59 @@ async function onCreate() {
   newEntryName.value = "";
   createOpen.value = false;
 }
-async function renameEntry(entry: FileEntry) {
-  activeMenu.value = "";
-  const name = window.prompt("New name", entry.name)?.trim();
-  if (name && name !== entry.name) await store.renameProfile(entry.path, joinPath(entry.parent || "", name));
+// --- "⋮" menu ---------------------------------------------------------- //
+
+function isProfileCfg(entry: FileEntry): boolean {
+  return entry.isFile && entry.name.toLowerCase().endsWith(".cfg");
 }
-async function copyOrMove(entry: FileEntry) {
-  activeMenu.value = "";
-  const destination = window.prompt("Move to path", entry.path)?.trim();
+
+function menuItems(entry: FileEntry): ActionMenuItem[] {
+  if (entry.isFolder) {
+    return [
+      { key: "open", label: "Open" },
+      { key: "copy", label: "Copy…", separated: true },
+      { key: "move", label: "Move / rename…" },
+      { key: "delete", label: "Delete", danger: true, separated: true },
+    ];
+  }
+  return [
+    { key: "edit", label: "Edit" },
+    { key: "download", label: "Download" },
+    { key: "copy", label: "Copy…", separated: true },
+    { key: "move", label: "Move / rename…" },
+    { key: "delete", label: "Delete", danger: true, separated: true },
+  ];
+}
+
+async function onMenu(entry: FileEntry, key: string): Promise<void> {
+  if (key === "open") navigate(entry);
+  else if (key === "edit") await editFile(entry);
+  else if (key === "download") await downloadProfile(entry);
+  else if (key === "copy") await copyEntry(entry);
+  else if (key === "move") await moveEntry(entry);
+  else if (key === "delete") await deleteEntry(entry);
+}
+
+async function copyEntry(entry: FileEntry) {
+  const taken = new Set(profilesTree.value.entries.map((e) => e.path));
+  const destination = window.prompt(`Copy ${entry.path} to`, suggestCopyPath(entry.path, taken))?.trim();
+  if (destination && destination !== entry.path) await store.copyProfile(entry.path, destination);
+}
+async function moveEntry(entry: FileEntry) {
+  const destination = window.prompt(`Move / rename ${entry.path} to`, entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameProfile(entry.path, destination);
 }
 async function deleteEntry(entry: FileEntry) {
-  activeMenu.value = "";
-  const shouldDelete = await useConfirm({
-    title: "Profil löschen",
-    question: `Delete ${entry.path}? This cannot be undone.`,
-    confirmButtonText: "Löschen",
-    confirmButtonStyle: ModalButtonStyle.DANGER,
-    rejectButtonText: "Abbrechen",
-  });
-  if (shouldDelete) await store.deleteProfile(entry.path);
+  const { confirmed, recursive } = await confirmDelete(entry, profilesTree.value.entries);
+  if (confirmed) await store.deleteProfile(entry.path, recursive);
 }
 async function uploadFiles(files: File[]) {
   await store.uploadProfiles(currentDirectory.value, files);
 }
 async function downloadProfile(entry: FileEntry) {
   const content = await store.readProfileContent(entry.path);
-  if (content === null) return;
-  downloadBlob(new Blob([content], { type: "text/plain;charset=utf-8" }), entry.name);
+  if (content !== null) downloadText(entry.name, content);
 }
-function downloadBlob(content: string | Blob | object, name: string, mimeType = "text/plain;charset=utf-8") {
-  // Prevent the Axios [object Object] trap
-  const data = typeof content === "object" ? JSON.stringify(content, null, 2) : content;
-
-  const blob = new Blob([data], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-
-  anchor.href = url;
-  anchor.download = name;
-  anchor.style.display = "none";
-
-  // Prevent the Firefox trap
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-
-  // Prevent the Safari trap
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 150);
-}
-
-
-
 </script>
 
 <template>
@@ -182,14 +181,19 @@ function downloadBlob(content: string | Blob | object, name: string, mimeType = 
             </div>
           </div>
           <span v-if="entry.kind === 'file' && entry.hasMarker" class="rounded bg-purple-700/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-purple-200">#Start</span>
-          <BaseButton v-if="entry.kind === 'file' && entry.name.toLowerCase().endsWith('.cfg')" variant="success" size="sm" :disabled="isBusy" @click.stop="onGenerate(entry)">Generate</BaseButton>
-          <BaseButton v-if="entry.kind === 'file'" variant="ghost" size="sm" title="Download" aria-label="Download" @click.stop="downloadProfile(entry)">↓</BaseButton>
-          <BaseButton variant="ghost" size="sm" title="More actions" aria-label="More actions" @click.stop="activeMenu = activeMenu === entry.path ? '' : entry.path">⋮</BaseButton>
-        </div>
-        <div v-if="activeMenu === entry.path" class="absolute right-2 top-10 z-10 w-36 rounded border border-gray-600 bg-gray-900 py-1 text-sm">
-          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="renameEntry(entry)">Rename</button>
-          <button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-700" @click="copyOrMove(entry)">Copy (Move)</button>
-          <button type="button" class="block w-full px-3 py-2 text-left text-red-300 hover:bg-red-900/40" @click="deleteEntry(entry)">Delete</button>
+          <!-- The one frequent action stays visible; everything else is in ⋮. -->
+          <BaseButton
+            v-if="isProfileCfg(entry)"
+            variant="success"
+            size="sm"
+            :disabled="isBusy"
+            :data-test="`profiles-generate-${entry.path}`"
+            @click.stop="onGenerate(entry)"
+            @dblclick.stop
+          >Generate</BaseButton>
+          <span @click.stop @dblclick.stop>
+            <ActionMenu :items="menuItems(entry)" :test-id="`profiles-entry-${entry.path}`" @select="onMenu(entry, $event)" />
+          </span>
         </div>
       </li>
     </ul>

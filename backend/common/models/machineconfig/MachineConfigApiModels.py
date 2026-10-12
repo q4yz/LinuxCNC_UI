@@ -72,6 +72,13 @@ class CreateEntryRequest(BaseModel):
     )
 
 
+class CopyRequest(BaseModel):
+    """Body of ``POST /profiles/copy`` / ``POST /machines/copy``."""
+
+    source: str = Field(..., description="Existing file or folder (relative path)")
+    destination: str = Field(..., description="New path of the copy (must not exist yet)")
+
+
 class RenameRequest(BaseModel):
     """Body of ``PUT /profiles/rename``."""
 

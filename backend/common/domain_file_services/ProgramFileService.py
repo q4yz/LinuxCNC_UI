@@ -33,11 +33,16 @@ class ProgramFileService(FileService):
     def save_upload(self, filename: str, data: bytes) -> None:
         self.write_bytes(filename, data, overwrite=True)
 
-    def delete_file(self, filename: str) -> None:
-        self.delete(filename)
+    #: Loaded by "unload" (the machine backend's empty program) — never deleted.
+    EMPTY_PROGRAM = "EmptyProgram.ngc"
+
+    def delete_file(self, filename: str, recursive: bool = False) -> None:
+        if self.safe_join(filename) == self.safe_join(self.EMPTY_PROGRAM):
+            raise PermissionError(f"{self.EMPTY_PROGRAM} is needed to unload programs")
+        self.delete(filename, recursive=recursive)
 
     def resolve_program_path(self, filename: str) -> Path:
         return self.safe_join(filename)
 
     def list_program_files(self) -> List[FileMetadata]:
-        return [file for file in self.list_files() if file.name != "EmptyProgram.ngc"]
+        return [file for file in self.list_files() if file.path != self.EMPTY_PROGRAM]

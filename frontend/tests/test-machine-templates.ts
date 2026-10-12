@@ -139,7 +139,7 @@ test("closing an editor steps back instead of pushing a fixed route", () => {
 test("Profiles explorer generates machines with an override confirm", () => {
   const text = read("components/machineconfig/ProfilesExplorer.vue");
 
-  assert.match(text, /Generate</, "profiles rows must carry a Generate button");
+  assert.match(text, />Generate<\/BaseButton>/, "profiles rows must carry a Generate button");
   assert.match(text, /onGenerate/, "profiles must call the generate action");
   assert.match(
     text,

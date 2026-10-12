@@ -24,6 +24,7 @@ import {storeToRefs} from "pinia";
 import {useMachineStore, SystemState} from "../stores/stateFacade";
 import {useBaseThreadStore} from "../stores/baseThread";
 import {useConsoleStore} from "../stores/console";
+import {useLoadedProgram} from "../composables/useLoadedProgram";
 import {progressFacade} from "../facades/progressFacade";
 import {reportCommandFailure, describeErrorOr} from "../core/error-format";
 import {FileEntry} from "../entities/files";
@@ -88,24 +89,12 @@ const isLoaded = computed(() => systemState.value === SystemState.LOADED);
 const isPaused = computed(() => systemState.value === SystemState.PAUSED);
 const isRunning = computed(() => systemState.value === SystemState.RUNNING);
 
-// --- Loaded-file lookup --------------------------------------------------
-const isLoadedFile = (filename: string | undefined): boolean => {
-  const loaded = status.value?.file;
-
-  if (systemState.value === SystemState.IDLE) {
-    return false;
-  }
-
-  if (typeof loaded !== "string" || loaded.length === 0 || !filename) {
-    return false;
-  }
-
-  // Extract just the file name, ignoring any leading directories or slashes.
-  const loadedBase = loaded.split('/').pop()?.split('\\').pop();
-  const targetBase = filename.split('/').pop()?.split('\\').pop();
-
-  return loadedBase === targetBase;
-};
+// --- Loaded-file lookup (shared with the G-code file list) -------------
+// Files are addressed by their path under nc_files/ (programs may live
+// in project folders), so "loaded" is matched by path, not base name.
+const { loadedPathAmong } = useLoadedProgram();
+const loadedPath = computed(() => loadedPathAmong(files.value.filter((f) => f.isFile).map((f) => f.path)));
+const isLoadedFile = (path: string): boolean => loadedPath.value === path;
 
 // --- Print-in-flight state ----------------------------------------------
 const isLoading = ref<boolean>(false);
@@ -181,7 +170,7 @@ const printableFiles = computed<FileEntry[]>(() => {
   if (!Array.isArray(files.value)) return [];
   return files.value
       .filter((entry) => {
-        if (!entry || typeof entry.name !== "string") return false;
+        if (!entry || !entry.isFile || typeof entry.name !== "string") return false;
         const lowered = entry.name.toLowerCase();
         return PRINTABLE_EXTENSIONS.some((ext) => lowered.endsWith(ext));
       })
@@ -344,26 +333,26 @@ async function stopPrint() {
       <ul v-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
         <li
             v-for="file in printableFiles"
-            :key="file.name"
+            :key="file.path"
             class="flex items-center justify-between py-2 gap-3 rounded px-2"
-            :class="isLoadedFile(file.name) ? 'bg-blue-900/40 ring-1 ring-blue-500/40' : ''"
+            :class="isLoadedFile(file.path) ? 'bg-blue-900/40 ring-1 ring-blue-500/40' : ''"
         >
           <span
               class="text-sm font-mono truncate"
-              :class="isLoadedFile(file.name) ? 'text-blue-300 font-semibold' : 'text-gray-200'"
-              :title="file.name"
+              :class="isLoadedFile(file.path) ? 'text-blue-300 font-semibold' : 'text-gray-200'"
+              :title="file.path"
           >
-            {{ file.name }}
+            {{ file.path }}
           </span>
           <BaseButton
-              :variant="isLoadedFile(file.name) ? 'danger' : 'primary'"
+              :variant="isLoadedFile(file.path) ? 'danger' : 'primary'"
               size="sm"
               class="shrink-0"
-              :loading="isLoading && !isLoadedFile(file.name)"
+              :loading="isLoading && !isLoadedFile(file.path)"
               :disabled="isLoading || (systemState === SystemState.RUNNING || systemState === SystemState.PAUSED)"
-              @click="isLoadedFile(file.name) ? unloadProgram() : loadFile(file.name)"
+              @click="isLoadedFile(file.path) ? unloadProgram() : loadFile(file.path)"
           >
-            <span v-if="isLoadedFile(file.name)">Unload</span>
+            <span v-if="isLoadedFile(file.path)">Unload</span>
             <span v-else>Load</span>
           </BaseButton>
         </li>

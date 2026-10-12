@@ -213,14 +213,27 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
-  async function deleteProfile(path: string): Promise<CommandResult> {
+  async function copyProfile(source: string, destination: string): Promise<CommandResult> {
     isBusy.value = true;
-    const result = await machineconfigFacade.deleteProfile(path);
+    const result = await machineconfigFacade.copyProfile(source, destination);
+    if (result.failed) {
+      reportCommandFailure(`copy ${source} -> ${destination}`, result);
+    } else {
+      consoleStore.success(`Copied ${source} -> ${destination}`);
+      await loadProfilesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function deleteProfile(path: string, recursive = false): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.deleteProfile(path, recursive);
     if (result.failed) {
       reportCommandFailure(`delete profile ${path}`, result);
     } else {
       consoleStore.success(`Deleted ${path}`);
-      if (selectedProfilePath.value === path) {
+      if (selectedProfilePath.value === path || selectedProfilePath.value.startsWith(`${path}/`)) {
         selectedProfilePath.value = "";
       }
       await loadProfilesTree();
@@ -351,9 +364,22 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
-  async function deleteMachine(path: string): Promise<CommandResult> {
+  async function copyMachine(source: string, destination: string): Promise<CommandResult> {
     isBusy.value = true;
-    const result = await machineconfigFacade.deleteMachine(path);
+    const result = await machineconfigFacade.copyMachine(source, destination);
+    if (result.failed) {
+      reportCommandFailure(`copy ${source} -> ${destination}`, result);
+    } else {
+      consoleStore.success(`Copied ${source} -> ${destination}`);
+      await loadMachinesTree();
+    }
+    isBusy.value = false;
+    return result;
+  }
+
+  async function deleteMachine(path: string, recursive = false): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.deleteMachine(path, recursive);
     if (result.failed) {
       reportCommandFailure(`delete machine entry ${path}`, result);
     } else {
@@ -382,6 +408,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     createFile,
     uploadProfiles,
     renameProfile,
+    copyProfile,
     deleteProfile,
     generateMachine,
     readMachineContent,
@@ -390,6 +417,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     createMachineFile,
     uploadMachines,
     renameMachine,
+    copyMachine,
     deleteMachine,
   };
 });

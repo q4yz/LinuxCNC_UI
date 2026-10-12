@@ -59,6 +59,7 @@ from fastapi.responses import JSONResponse
 
 from mappers.files import FileEntryMapper
 from models.machineconfig.MachineConfigApiModels import (
+    CopyRequest,
     CreateEntryRequest,
     DirectoryListing,
     GenerateRequest,
@@ -334,6 +335,27 @@ async def upload_profile(path: str, file: UploadFile = File(...)) -> StatusMessa
     return StatusMessage(status="ok", message=f"Uploaded {path}")
 
 
+@router.post(
+    "/profiles/copy",
+    summary="Copy a profiles entry",
+    description="Copy a file or a whole folder under machine_config/profiles. Never overwrites (409).",
+    response_model=StatusMessage,
+)
+def copy_profiles_entry(payload: CopyRequest) -> StatusMessage:
+    service: ConfigFileService = get_config_service()
+    try:
+        service.copy(payload.source, payload.destination)
+    except FileNotFoundError as exc:
+        raise NotFoundError(f"Not found: {payload.source}") from exc
+    except FileExistsError as exc:
+        raise ConflictError(f"Already exists: {payload.destination}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(
+        status="ok", message=f"Copied {payload.source} -> {payload.destination}"
+    )
+
+
 @router.put(
     "/profiles/rename",
     summary="Rename a profiles entry",
@@ -359,7 +381,8 @@ def rename_profile(payload: RenameRequest) -> StatusMessage:
     "/profiles/entry",
     summary="Delete a profiles entry",
     description=(
-        "Delete a file or empty folder under machine_config/profiles. "
+        "Delete a file or folder under machine_config/profiles; a folder "
+        "with content only with ``recursive=true``. "
         "The relative path is supplied as the ``path`` query "
         "parameter. The ``/entry`` suffix avoids a bare "
         "``DELETE /profiles`` endpoint, which is semantically "
@@ -367,10 +390,10 @@ def rename_profile(payload: RenameRequest) -> StatusMessage:
     ),
     response_model=StatusMessage,
 )
-def delete_profile(path: str) -> StatusMessage:
+def delete_profile(path: str, recursive: bool = False) -> StatusMessage:
     service: ConfigFileService = get_config_service()
     try:
-        service.delete(path)
+        service.delete(path, recursive=recursive)
     except FileNotFoundError as exc:
         raise NotFoundError(f"Not found: {path}") from exc
     except IsADirectoryError as exc:
@@ -588,6 +611,27 @@ async def upload_machine_file(path: str, file: UploadFile = File(...)) -> Status
     return StatusMessage(status="ok", message=f"Uploaded {path}")
 
 
+@router.post(
+    "/machines/copy",
+    summary="Copy a machines entry",
+    description="Copy a file or a whole folder under machine_config/machines. Never overwrites (409).",
+    response_model=StatusMessage,
+)
+def copy_machines_entry(payload: CopyRequest) -> StatusMessage:
+    service: MachineFileService = get_machine_service()
+    try:
+        service.copy(payload.source, payload.destination)
+    except FileNotFoundError as exc:
+        raise NotFoundError(f"Not found: {payload.source}") from exc
+    except FileExistsError as exc:
+        raise ConflictError(f"Already exists: {payload.destination}") from exc
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    return StatusMessage(
+        status="ok", message=f"Copied {payload.source} -> {payload.destination}"
+    )
+
+
 @router.put(
     "/machines/rename",
     summary="Rename a machines entry",
@@ -613,15 +657,16 @@ def rename_machine_entry(payload: RenameRequest) -> StatusMessage:
     "/machines/entry",
     summary="Delete a machines entry",
     description=(
-        "Delete a file or empty folder under machine_config/machines. "
+        "Delete a file or folder under machine_config/machines; a folder "
+        "with content only with ``recursive=true``. "
         "The relative path is supplied as the ``path`` query parameter."
     ),
     response_model=StatusMessage,
 )
-def delete_machine_entry(path: str) -> StatusMessage:
+def delete_machine_entry(path: str, recursive: bool = False) -> StatusMessage:
     service: MachineFileService = get_machine_service()
     try:
-        service.delete(path)
+        service.delete(path, recursive=recursive)
     except FileNotFoundError as exc:
         raise NotFoundError(f"Not found: {path}") from exc
     except IsADirectoryError as exc:

@@ -289,18 +289,25 @@ class FileService:
             raise FileExistsError(f"Already exists: {dirpath}")
         target.mkdir(parents=True, exist_ok=False)
 
-    def delete(self, path: str) -> None:
-        """Delete a file or empty folder under the root.
+    def delete(self, path: str, recursive: bool = False) -> None:
+        """Delete a file or folder under the root.
 
-        A populated folder raises :class:`IsADirectoryError`; the
-        router surfaces that as 400. Recursive folder deletion is
-        out of scope for this pass — the legacy behaviour matched
-        the same constraint.
+        A populated folder raises :class:`IsADirectoryError` unless
+        ``recursive`` is set (the UI asks the operator first, naming
+        what the folder still contains). The root itself is never
+        deleted.
         """
         target = self.safe_join(path)
         if not target.exists():
             raise FileNotFoundError(f"Not found: {path}")
+        if target.resolve() == self.root.resolve():
+            raise ValueError("Refusing to delete the root folder")
         if target.is_dir():
+            if recursive:
+                import shutil
+
+                shutil.rmtree(target)
+                return
             try:
                 target.rmdir()
             except OSError as exc:
@@ -388,6 +395,28 @@ class FileService:
             copied.append(item.name)
         return sorted(copied)
 
+    def copy(self, source: str, destination: str) -> None:
+        """Copy a file or a whole folder to ``destination`` under the root.
+
+        Never overwrites: an existing ``destination`` raises
+        :class:`FileExistsError`. A folder cannot be copied into itself.
+        """
+        import shutil
+
+        src = self.safe_join(source)
+        dst = self.safe_join(destination)
+        if not src.exists():
+            raise FileNotFoundError(f"Not found: {source}")
+        if dst.exists():
+            raise FileExistsError(f"Already exists: {destination}")
+        if src.is_dir() and (dst.resolve() == src.resolve() or src.resolve() in dst.resolve().parents):
+            raise ValueError(f"Cannot copy a folder into itself: {source} -> {destination}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
     def rename(self, source: str, destination: str) -> None:
         """Rename ``source`` to ``destination`` under the root.
 
@@ -402,6 +431,8 @@ class FileService:
             raise FileExistsError(f"Already exists: {destination}")
         if self._is_path_read_only(src):
             raise PermissionError(f"Refusing to rename read-only entry: {source}")
+        if src.is_dir() and src.resolve() in dst.resolve().parents:
+            raise ValueError(f"Cannot move a folder into itself: {source} -> {destination}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
 

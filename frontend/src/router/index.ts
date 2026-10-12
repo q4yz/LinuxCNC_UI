@@ -2,15 +2,18 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 import DashboardView from '../views/DashboardView.vue'
 import FilesView from '../views/FilesView.vue'
-import EditorView from '../views/EditorView.vue'
-import SettingsView from '../views/SettingsView.vue'
-import VisualHalEditor from '../views/VisualHalEditor.vue'
-import ConfigView from '../views/ConfigView.vue'
 import CameraViewer from '../components/camera/CameraViewer.vue'
 import JoggingView from "../views/JoggingView.vue";
 import RunningView from "../views/RunningView.vue";
-import DebugView from "../views/DebugView.vue";
-import ProbingView from "../views/ProbingView.vue";
+
+// Rarely-opened / heavy views load on demand: keeps the main bundle
+// under the PWA's 2 MiB precache limit per file.
+const EditorView = () => import('../views/EditorView.vue')
+const SettingsView = () => import('../views/SettingsView.vue')
+const VisualHalEditor = () => import('../views/VisualHalEditor.vue')
+const ConfigView = () => import('../views/ConfigView.vue')
+const DebugView = () => import('../views/DebugView.vue')
+const ProbingView = () => import('../views/ProbingView.vue')
 
 const BUILTIN_ROUTES = [
   {path: '/', name: 'dashboard', component: DashboardView, meta: { label: 'Dashboard' },},

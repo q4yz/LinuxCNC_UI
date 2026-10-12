@@ -46,23 +46,42 @@ async function _commandResultFrom(
   }
 }
 
-async function uploadFile(path: string, blob: Blob): Promise<CommandResult> {
-  // ``ProgramFilesService.uploadFile`` accepts a single
-  // ``Body_uploadFile`` envelope (just ``file`` — ``path`` is
-  // encoded in the multipart form by the caller). The generated
-  // type declares ``file`` as ``string`` but multipart upload
-  // accepts ``File`` / ``Blob`` at runtime, so pass the raw value
-  // through.
+/**
+ * Upload `blob` (a ``File`` — its name is the stored file name) into
+ * `directory` under nc_files ('' = top level). The generated type
+ * declares ``file`` as ``string`` but multipart upload accepts
+ * ``File`` / ``Blob`` at runtime, so the raw value is passed through.
+ */
+async function uploadFile(name: string, blob: Blob, directory = ""): Promise<CommandResult> {
   return _commandResultFrom(
-    ProgramFilesService.uploadFile({ file: blob as unknown as string }),
-    `upload:${path}`,
+    ProgramFilesService.uploadFile({ file: blob as unknown as string, directory }),
+    `upload:${directory ? `${directory}/` : ""}${name}`,
   );
 }
 
-async function deleteFile(path: string): Promise<CommandResult> {
+/** ``recursive``: also a folder with content (the UI asks first). */
+async function deleteFile(path: string, recursive = false): Promise<CommandResult> {
   return _commandResultFrom(
-    ProgramFilesService.deleteFile(path),
+    ProgramFilesService.deleteFile(path, recursive),
     `delete:${path}`,
+  );
+}
+
+async function createFolder(path: string): Promise<CommandResult> {
+  return _commandResultFrom(ProgramFilesService.createProgramFolder({ path }), `folder:${path}`);
+}
+
+async function moveEntry(source: string, destination: string): Promise<CommandResult> {
+  return _commandResultFrom(
+    ProgramFilesService.moveProgramEntry({ source, destination }),
+    `move:${source}->${destination}`,
+  );
+}
+
+async function copyEntry(source: string, destination: string): Promise<CommandResult> {
+  return _commandResultFrom(
+    ProgramFilesService.copyProgramEntry({ source, destination }),
+    `copy:${source}->${destination}`,
   );
 }
 
@@ -71,6 +90,9 @@ export const filesFacade = Object.freeze({
   readFile,
   uploadFile,
   deleteFile,
+  createFolder,
+  moveEntry,
+  copyEntry,
 });
 
 export default filesFacade;

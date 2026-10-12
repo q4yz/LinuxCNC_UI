@@ -138,12 +138,24 @@ async function renameProfile(
   );
 }
 
-async function deleteProfile(path: string): Promise<CommandResult> {
+/** ``recursive``: also a folder with content (the UI asks first). */
+async function deleteProfile(path: string, recursive = false): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesMachineconfigService.deleteProfileApiV1ModulesMachineconfigProfilesEntryDelete(
       path,
+      recursive,
     ),
     `delete-profile:${path}`,
+  );
+}
+
+async function copyProfile(source: string, destination: string): Promise<CommandResult> {
+  return _commandResultFrom(
+    ModulesMachineconfigService.copyProfilesEntryApiV1ModulesMachineconfigProfilesCopyPost({
+      source,
+      destination,
+    }),
+    `copy:${source}->${destination}`,
   );
 }
 
@@ -279,12 +291,24 @@ async function renameMachine(source: string, destination: string): Promise<Comma
   );
 }
 
-async function deleteMachine(path: string): Promise<CommandResult> {
+/** ``recursive``: also a folder with content (the UI asks first). */
+async function deleteMachine(path: string, recursive = false): Promise<CommandResult> {
   return _commandResultFrom(
     ModulesMachineconfigService.deleteMachineEntryApiV1ModulesMachineconfigMachinesEntryDelete(
       path,
+      recursive,
     ),
     `delete-machine:${path}`,
+  );
+}
+
+async function copyMachine(source: string, destination: string): Promise<CommandResult> {
+  return _commandResultFrom(
+    ModulesMachineconfigService.copyMachinesEntryApiV1ModulesMachineconfigMachinesCopyPost({
+      source,
+      destination,
+    }),
+    `machine-copy:${source}->${destination}`,
   );
 }
 
@@ -296,6 +320,7 @@ export const machineconfigFacade = Object.freeze({
   createFile,
   uploadProfile,
   renameProfile,
+  copyProfile,
   deleteProfile,
   generateMachine,
   listMachines,
@@ -305,6 +330,7 @@ export const machineconfigFacade = Object.freeze({
   createMachineFile,
   uploadMachine,
   renameMachine,
+  copyMachine,
   deleteMachine,
 });
 
