@@ -196,17 +196,18 @@ def test_home_backoff_is_skipped_for_a_joint_with_no_real_travel_range():
 
 def test_home_sequence_is_z_then_y_then_x():
     """Verified against a real, working PrintNC machine.ini: Z homes
-    alone first (phase 0, clears the tool from the work), Y homes
-    second (phase 1, both gantry joints together), X homes last
-    (phase 2, alone). A fixed, deliberately simple policy — anything
+    alone first (phase 1, clears the tool from the work), Y homes
+    second (phase 2, both gantry joints together), X homes last
+    (phase 3, alone). Counting starts at 1 so a gantry axis always has
+    a negative phase. A fixed, deliberately simple policy — anything
     more elaborate is a homing macro's job, not the compiler's."""
     graph = MachineConfigParser().parse_string(_CONFIG)
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
 
     by_letter = {axis.letter: axis for axis in axes}
-    assert by_letter["Z"].joints[0].home_sequence == 0
-    assert by_letter["Y"].joints[0].home_sequence == 1
-    assert by_letter["X"].joints[0].home_sequence == 2
+    assert by_letter["Z"].joints[0].home_sequence == 1
+    assert by_letter["Y"].joints[0].home_sequence == 2
+    assert by_letter["X"].joints[0].home_sequence == 3
 
 
 def test_gantry_axis_home_sequence_is_negative_on_every_joint():
@@ -221,12 +222,30 @@ def test_gantry_axis_home_sequence_is_negative_on_every_joint():
     by_letter = {axis.letter: axis for axis in axes}
     y_joints = by_letter["Y"].joints
     assert len(y_joints) == 2
-    assert y_joints[0].home_sequence == -1
-    assert y_joints[1].home_sequence == -1
+    assert y_joints[0].home_sequence == -2
+    assert y_joints[1].home_sequence == -2
 
     # Single-joint axes on the same machine stay positive.
-    assert by_letter["X"].joints[0].home_sequence == 2
-    assert by_letter["Z"].joints[0].home_sequence == 0
+    assert by_letter["X"].joints[0].home_sequence == 3
+    assert by_letter["Z"].joints[0].home_sequence == 1
+
+
+def test_dual_motor_z_homes_synchronised_with_minus_one():
+    """Z homes first; with two motors both joints need -1 — the old
+    0-based phase left them on 0, which has no negative sign."""
+    config = _GANTRY_CONFIG + """
+[stepper_z1]
+step_pin: PG6
+dir_pin: PG7
+rotation_distance: 40.0
+"""
+    graph = MachineConfigParser().parse_string(config)
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+
+    by_letter = {axis.letter: axis for axis in axes}
+    assert [j.home_sequence for j in by_letter["Z"].joints] == [-1, -1]
+    assert [j.home_sequence for j in by_letter["Y"].joints] == [-2, -2]
+    assert by_letter["X"].joints[0].home_sequence == 3
 
 
 _Z_VELOCITY_CONFIG = """

@@ -46,10 +46,10 @@ FULL_STEPS_PER_REVOLUTION = 200
 #: ``HOME_SEQUENCE`` phase per axis letter — LinuxCNC homes phases in
 #: increasing order (by absolute value), joints sharing one phase move
 #: together. Verified against a real, working PrintNC machine.ini/
-#: machine.hal pair: Z homes alone first (phase 0, clears the tool
-#: from the work), Y homes second (phase 1, both gantry joints
+#: machine.hal pair: Z homes alone first (phase 1, clears the tool
+#: from the work), Y homes second (phase 2, both gantry joints
 #: simultaneously — see :meth:`_negate_gantry_home_sequences` for the
-#: negative sign), X homes last (phase 2, alone — the same reference
+#: negative sign), X homes last (phase 3, alone — the same reference
 #: machine has X and Z sharing one physical switch, and homes them in
 #: separate phases with no other special handling: no
 #: ``HOME_IS_SHARED``, just each axis fully retracting off the switch
@@ -57,9 +57,13 @@ FULL_STEPS_PER_REVOLUTION = 200
 #: :meth:`_home_position_with_backoff`). Deliberately just these three fixed
 #: phases, not one per axis — a machine that needs a different order
 #: does it with a homing macro instead; the compiler only owns this
-#: one verified, common case. An axis letter not listed here (e.g. the
-#: extruder's synthetic "A") keeps the pre-existing default of 0.
-_HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 0, "Y": 1, "X": 2}
+#: one verified, common case. Counting starts at 1, never 0: a gantry
+#: axis is marked by a negative phase, and 0 has no negative — a
+#: dual-motor Z on phase 0 would home its joints unsynchronised. An
+#: axis letter not listed here (e.g. the extruder's synthetic "A")
+#: shares Z's first phase, as before.
+_HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 1, "Y": 2, "X": 3}
+_FIRST_HOME_SEQUENCE = 1
 
 #: How far ``HOME`` (the final resting position after homing) pulls
 #: back off ``HOME_OFFSET`` (the switch's own coordinate) — see
@@ -212,7 +216,9 @@ class AxisBuilder:
         number, is what tells LinuxCNC's homing state machine "these
         joints home together and latch independently to square the
         gantry" rather than just "these happen to share a phase".
-        A single-joint axis is never touched (stays positive/0)."""
+        Every joint of the axis gets the same negative number (phases
+        start at 1, so it is never the sign-less 0). A single-joint
+        axis is never touched (stays positive)."""
         for axis in axes:
             if len(axis.joints) <= 1:
                 continue
@@ -320,7 +326,7 @@ class AxisBuilder:
             home_offset=position_endstop,
             home_search_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
             home_latch_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
-            home_sequence=_HOME_SEQUENCE_BY_AXIS.get(letter, 0),
+            home_sequence=_HOME_SEQUENCE_BY_AXIS.get(letter, _FIRST_HOME_SEQUENCE),
             scale=stepgen_scale(stepper) * self._direction_sign(stepper),
             ferror=2.0 if letter != "Y" else 9.0,
             min_ferror=1.0 if letter != "Y" else 5.0,
