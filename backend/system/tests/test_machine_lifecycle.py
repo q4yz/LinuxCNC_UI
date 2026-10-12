@@ -11,6 +11,7 @@ matching the rest of the system service's test suite.
 from __future__ import annotations
 
 import signal
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -270,6 +271,25 @@ def test_start_persists_and_launches_the_requested_machine(
     assert _FakePopen.last_command == ["linuxcnc", "-r", str(ini)]
     assert result["started_pid"] == 1234
     assert result["default_machine"] == "PrintNC"
+
+
+def test_start_keeps_stdin_open_so_the_dummy_display_does_not_exit(
+    no_processes, isolated_machines_root, monkeypatch, tmp_path
+):
+    # DISPLAY = dummy waits for ENTER on stdin; /dev/null (EOF) ended
+    # every session ~1 s after start, so the machine stayed offline.
+    _make_machine(isolated_machines_root["machines"], "PrintNC")
+    _patch_launch(monkeypatch, tmp_path)
+    seen: dict = {}
+    monkeypatch.setattr(
+        mls_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: seen.update(kwargs) or _FakePopen(command, pid=1234),
+    )
+
+    _service().start(machine="PrintNC")
+
+    assert seen["stdin"] is subprocess.PIPE
 
 
 def test_start_without_machine_launches_the_default(

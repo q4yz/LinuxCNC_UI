@@ -468,8 +468,12 @@ class MachineLifecycleService:
                 # against the machine's own config folder — the
                 # deprecated active/ dir is no longer part of the
                 # start path.
-                # Nothing is ever written to the session's stdin.
-                stdin=subprocess.DEVNULL,
+                # An open pipe nothing is ever written to — NOT DEVNULL:
+                # with DISPLAY = dummy LinuxCNC's display waits for ENTER
+                # ("press <ENTER> to continue") and an EOF stdin shuts the
+                # whole session down within a second. The reaper thread
+                # holds ``process`` (and so the pipe) for the session's life.
+                stdin=subprocess.PIPE,
                 cwd=str(ini.parent),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
