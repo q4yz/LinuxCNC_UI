@@ -177,7 +177,7 @@ test("macro buttons persist as the machine.macro_buttons UI setting", () => {
   // sharing one store would overwrite each other's rows on save.
   assert.match(definitionsText, /new MacroButtonsSetting\(/);
   assert.match(definitionsText, /"machine\.macro_buttons"/);
-  for (const slot of ["dro.x", "dro.y", "dro.z", "viewer.1", "viewer.2", "viewer.3"]) {
+  for (const slot of ["dro.x", "dro.y", "dro.z", "viewer.1", "viewer.2", "viewer.3", "camera.1", "camera.2", "camera.3"]) {
     assert.ok(definitionsText.includes(`"${slot}"`), `slot ${slot} must be declared`);
   }
   // Hosts look buttons up by slot.
@@ -337,4 +337,12 @@ test("ui/index.ts re-exports MacroButton and MacroButtonEditor", () => {
   }
   // The old per-module composable is gone (replaced by the setting).
   assert.doesNotMatch(indexText, /useMacroButtonConfig/);
+});
+
+test("the camera view shows the three camera macro slots bottom-left", () => {
+  const text = readFileSync(resolve(repoRoot, "frontend/src/components/camera/CameraViewer.vue"), "utf-8");
+  assert.match(text, /\["camera\.1", "camera\.2", "camera\.3"\]/);
+  assert.match(text, /macroButtons\.bySlot/);
+  assert.match(text, /class="absolute bottom-4 left-4[^"]*"[^>]*data-test="camera-macro-buttons"/);
+  assert.match(text, /<MacroButton[\s\S]{0,80}:descriptor="buttonsBySlot\[slot\]"/);
 });

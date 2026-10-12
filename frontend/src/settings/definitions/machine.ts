@@ -16,8 +16,8 @@ export const defaultJogVelocity = new NumberSetting(
 );
 
 /**
- * One-click macro buttons next to the DRO axis rows and in the toolpath
- * viewer. One list for all slots: two lists sharing a store would
+ * One-click macro buttons next to the DRO axis rows, in the toolpath
+ * viewer and in the camera view. One list for all slots: two lists sharing a store would
  * overwrite each other's rows on save.
  */
 export const macroButtons = new MacroButtonsSetting(
@@ -31,9 +31,12 @@ export const macroButtons = new MacroButtonsSetting(
     { id: "viewer.1", label: "Toolpath viewer — slot 1 (bottom-left)" },
     { id: "viewer.2", label: "Toolpath viewer — slot 2 (bottom-left)" },
     { id: "viewer.3", label: "Toolpath viewer — slot 3 (bottom-left)" },
+    { id: "camera.1", label: "Camera view — slot 1 (bottom-left)" },
+    { id: "camera.2", label: "Camera view — slot 2 (bottom-left)" },
+    { id: "camera.3", label: "Camera view — slot 3 (bottom-left)" },
   ],
   {
     description:
-      "A button next to each DRO axis row or in the toolpath viewer's bottom-left corner runs a macro. Leave the macro empty to hide the button.",
+      "A button next to each DRO axis row or in the bottom-left corner of the toolpath viewer / camera view runs a macro. Leave the macro empty to hide the button.",
   },
 );

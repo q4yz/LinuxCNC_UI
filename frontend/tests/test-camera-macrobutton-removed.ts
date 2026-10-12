@@ -1,19 +1,12 @@
-// Regression guard: the camera module never gains ``macroButtons``
-// support until the ``CameraSettings`` Pydantic model adds the field.
+// Regression guard: the camera page never calls the old per-module
+// ``useMacroButtonConfig("camera")`` again.
 //
-// The previous version of ``CameraViewer.vue`` and ``CameraSettings.vue``
-// called ``useMacroButtonConfig("camera")`` which builds
-// ``/api/v1/modules/camera/settings/macroButtons``. The camera router
-// does not own a ``macroButtons`` key — the call landed on the
-// generic ``/settings/{key}`` endpoint and answered 404 every time
-// the camera page mounted, burning one of the browser's 6 HTTP/1.1
-// connection slots for nothing and contributing to the "all
-// pending" freeze reported on the box. The composable's home is
-// the ``axis`` (Machine) module — see ``MachineSettingsPanel.vue``,
-// ``DroPanel.vue``, ``NgcCoordinateSystemViewer.vue``.
-//
-// Re-enable the camera calls once ``CameraSettings`` in the
-// backend models gains a ``macroButtons: list[...] = []`` field.
+// That built ``/api/v1/modules/camera/settings/macroButtons``, a key the
+// camera router never owned — it answered 404 on every mount, burning
+// one of the browser's 6 HTTP/1.1 connection slots (the "all pending"
+// freeze). Camera macro buttons now come from the central
+// ``machine.macro_buttons`` UI setting (slots ``camera.1``–``camera.3``,
+// see test-macro-button.ts), loaded once at app start.
 //
 // Run with: ``node --test frontend/tests/test-camera-macrobutton-removed.ts``
 
@@ -33,13 +26,10 @@ test("CameraViewer does not feed the camera module into useMacroButtonConfig", (
   assert.doesNotMatch(
     text,
     /useMacroButtonConfig/,
-    "CameraViewer must not call useMacroButtonConfig until the backend CameraSettings model adds a macroButtons field",
+    "CameraViewer must not call the old per-module useMacroButtonConfig",
   );
-  assert.doesNotMatch(
-    text,
-    /<MacroButton\b/,
-    "CameraViewer must not render a MacroButton (it depends on the camera-keyed macroButtons slot)",
-  );
+  // Its buttons read the central setting instead (loaded once at app start).
+  assert.match(text, /macroButtons\.bySlot/);
 });
 
 test("CameraSettings does not feed the camera module into useMacroButtonConfig", () => {

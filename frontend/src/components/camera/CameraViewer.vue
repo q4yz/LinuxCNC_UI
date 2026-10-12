@@ -7,6 +7,8 @@ import { useCameraStore, defaultPreferenceForActive } from "../../stores/cameraS
 import type { CameraDevice, CameraPreference } from "../../stores/cameraTypes";
 import BaseButton from "../../ui/BaseButton.vue";
 import BaseCard from "../../ui/BaseCard.vue";
+import { MacroButton } from "../../ui";
+import { macroButtons } from "../../settings/definitions/machine";
 
 // Simple logger for the camera module. Uses console.debug so it
 // doesn't spam the production console.
@@ -17,6 +19,13 @@ const logger = {
 };
 
 const store = useCameraStore();
+
+// Custom macro buttons (camera.1 / camera.2 / camera.3) in the
+// bottom-left corner — same ``machine.macro_buttons`` setting as the DRO
+// and the toolpath viewer; ``MacroButton`` renders nothing for a
+// missing / disabled / empty slot.
+const CAMERA_MACRO_SLOTS = ["camera.1", "camera.2", "camera.3"] as const;
+const buttonsBySlot = computed(() => macroButtons.bySlot);
 const {
   devices,
   activeCameraId,
@@ -294,6 +303,19 @@ onBeforeUnmount(async () => {
       class="pointer-events-none absolute left-4 top-4 max-w-[80%] truncate rounded border border-gray-700 bg-gray-900/80 px-3 py-1.5 font-mono text-xs text-gray-200 backdrop-blur"
     >
       {{ cameraName }}
+    </div>
+
+    <!-- Macro buttons (bottom-left): shown with or without a stream. -->
+    <div class="absolute bottom-4 left-4 flex gap-2" data-test="camera-macro-buttons">
+      <template v-for="slot in CAMERA_MACRO_SLOTS" :key="slot">
+        <MacroButton
+          v-if="buttonsBySlot[slot]"
+          :descriptor="buttonsBySlot[slot]"
+          variant="secondary"
+          size="sm"
+          class="border-gray-700 bg-gray-900/80 px-2 py-1 text-xs backdrop-blur"
+        />
+      </template>
     </div>
 
     <BaseButton
