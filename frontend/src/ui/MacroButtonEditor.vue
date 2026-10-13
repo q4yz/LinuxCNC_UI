@@ -115,17 +115,17 @@ async function loadMacroOptions() {
       ModulesMacrosService.listMacros("macro"),
       ModulesMacrosService.listMacros("ngc"),
     ]);
-    // The generated ``MacroListResponse`` is
-    // ``{ macros: MacroListItem[] }`` where each item is
-    // ``{ name, kind, size_bytes }``. We only consume ``name``.
+    // Each ``MacroListItem`` is the shared file DTO: ``name`` is the
+    // file name (``probe.ngc``), ``macro_name`` the bare name the run
+    // endpoint and ``o<name> call`` expect (``probe``). Store the latter.
     macroEntries.value = Array.isArray(macroResp?.macros)
       ? macroResp.macros
-          .map((row) => row?.name)
+          .map((row) => row?.macro_name)
           .filter((n): n is string => Boolean(n))
       : [];
     ngcEntries.value = Array.isArray(ngcResp?.macros)
       ? ngcResp.macros
-          .map((row) => row?.name)
+          .map((row) => row?.macro_name)
           .filter((n): n is string => Boolean(n))
       : [];
   } catch (requestError) {
@@ -198,6 +198,12 @@ function emptyDescriptor(slot: string): MacroButtonRow {
   };
 }
 
+/** ``"probe.ngc"`` → ``"probe"`` for kind ``ngc``; other names unchanged. */
+function stripExtension(name: string, kind: string): string {
+  const suffix = `.${kind}`;
+  return name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
+}
+
 /**
  * Seed the working draft from the parent payload, plus a fresh
  * empty row for any slot the host declared that the parent has
@@ -215,14 +221,18 @@ function normaliseDraft(
     }
   }
   // Ensure every required field exists.
-  return rows.map((r) => ({
-    slot: r.slot,
-    enabled: !!r.enabled,
-    name: typeof r.name === "string" ? r.name : "",
-    icon: typeof r.icon === "string" ? r.icon : "",
-    macroKind: r.macroKind === "ngc" ? "ngc" : "macro",
-    macroName: typeof r.macroName === "string" ? r.macroName : "",
-  }));
+  return rows.map((r) => {
+    const macroKind = r.macroKind === "ngc" ? "ngc" : "macro";
+    return {
+      slot: r.slot,
+      enabled: !!r.enabled,
+      name: typeof r.name === "string" ? r.name : "",
+      icon: typeof r.icon === "string" ? r.icon : "",
+      macroKind,
+      // Rows saved with the file name (``probe.ngc``) select the bare name.
+      macroName: typeof r.macroName === "string" ? stripExtension(r.macroName, macroKind) : "",
+    };
+  });
 }
 
 function markDirty(slot: string) {

@@ -259,6 +259,14 @@ test("MacroButtonEditor filters the macro dropdown to macro + ngc only", () => {
   );
 });
 
+test("MacroButtonEditor stores the bare macro name, not the file name", () => {
+  // The list rows are the shared file DTO: ``name`` = "probe.ngc",
+  // ``macro_name`` = "probe". Saving ``name`` made the run endpoint 404.
+  assert.match(editorText, /\.map\(\(row\) => row\?\.macro_name\)/);
+  assert.doesNotMatch(editorText, /\.map\(\(row\) => row\?\.name\)/);
+  assert.match(editorText, /stripExtension\(r\.macroName, macroKind\)/, "old rows with an extension are cleaned up");
+});
+
 test("MacroButtonEditor fetches macro options via the generated client", () => {
   // Regression guard for the "dropdown does nothing" bug: the
   // editor used to source options from the macros Pinia store,

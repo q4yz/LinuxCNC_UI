@@ -123,6 +123,10 @@ class MacroExecutionService:
             )
         call_args = self._format_args(args)
 
+        # Buttons saved with the file name ("probe.ngc") still run: the
+        # file is "<name>.<kind>" and ``o<name> call`` takes the bare name.
+        name = name.removesuffix(f".{kind}")
+
         body = self._read_macro_body(name, kind)
 
         stat = get_stat_channel()

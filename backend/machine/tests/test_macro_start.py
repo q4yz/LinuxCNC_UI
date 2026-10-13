@@ -268,6 +268,24 @@ class TestStartMacroEndpoint:
         setup.join()
         assert setup.calls == ["o<coolant> call"]
 
+    def test_ngc_name_with_its_file_extension_still_runs(
+        self, tmp_data_root, clean_env, monkeypatch
+    ):
+        # Buttons saved with the file name ("custom_project_probe.ngc")
+        # used to 404 looking for "custom_project_probe.ngc.ngc".
+        setup = _Setup(tmp_data_root, monkeypatch)
+        setup.set_stat(monkeypatch, task_state=None)
+        client = setup.client(tmp_data_root)
+
+        (setup.macro_service.root / "custom_project_probe.ngc").write_text(
+            "O<custom_project_probe> sub\nM8\nO<custom_project_probe> endsub\n", encoding="utf-8"
+        )
+
+        resp = client.post("/api/v1/modules/macros/custom_project_probe.ngc/start?kind=ngc")
+        assert resp.status_code == 202, resp.text
+        setup.join()
+        assert setup.calls == ["o<custom_project_probe> call"]
+
     def test_ngc_args_become_positional_call_parameters(
         self, tmp_data_root, clean_env, monkeypatch
     ):
