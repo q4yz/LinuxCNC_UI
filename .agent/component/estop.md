@@ -93,11 +93,19 @@ machine.hal
 # --- IF parameters.fault_pin AND this pin's MCU is not class B ---
 # Physical E-stop chain — grounded in the real reference machine,
 # machine_config/example/PrintNC-WEBGUI/Machine.hal (lines 41-57).
-# Skipped on Remora/EtherCAT: RemoraRouterMapper.base_fragment()
-# already nets these same iocontrol.0 pins for its own SPI
-# link-health chain — wiring estop_latch on top would double-drive
-# them. The physical pin still routes (a real config.txt module);
-# only this linkage is skipped.
+# Not emitted here on Remora: RemoraRouterMapper.base_fragment()
+# owns these iocontrol.0 pins for its SPI link-health chain, so when
+# the fault_pin is read through that board (HalAssembler flags
+# `_estop_fault`) it builds the latch itself, ANDing link + fault:
+#   net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset estop-latch.0.reset
+#   net remora-status <= remora.SPI-status => estop-latch.0.ok-in
+#   net estop-fault => estop-latch.0.fault-in
+#   net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in
+# Typical use: a relay / optocoupler on the motor supply when the
+# physical E-stop cuts motor power but not the board's logic power.
+# Relay coil on the motor supply, NO contact from the input to GND,
+# `fault_pin: ^PG11`: power OK pulls the pin low (no fault); power
+# lost — or a broken wire — lets the pull-up read high = fault.
 loadrt estop_latch
 addf estop-latch.0 servo-thread
 net estop-fault => estop-latch.0.fault-in    # <- fault_pin (input)

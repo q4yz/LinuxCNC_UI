@@ -57,7 +57,7 @@ export const TOAST_TYPE_STYLES = {
     iconClass: "text-amber-400",
   },
   error: {
-    icon: "❌",
+    icon: "✕",
     borderClass: "border-l-4 border-red-500",
     iconClass: "text-red-400",
   },

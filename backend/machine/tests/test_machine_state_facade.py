@@ -568,3 +568,54 @@ class TestActivateEstopEndpoint:
         assert resp.status_code == 503
         assert resp.json()["detail"] == "HAL unreachable"
 
+
+
+# ---------------------------------------------------------------------- #
+# E-stop reset retry (Remora SPI link not ready on the first edge)        #
+# ---------------------------------------------------------------------- #
+
+
+class TestResetEstopRetry:
+    """``estop_reset`` re-tries while LinuxCNC falls straight back to
+    ESTOP — each retry is a fresh ``user-request-enable`` → ``SPI-reset``
+    edge, which is what the operator's second "on" used to provide."""
+
+    ESTOP = getattr(linuxcnc, "STATE_ESTOP", 1)
+    RESET = getattr(linuxcnc, "STATE_ESTOP_RESET", 2)
+
+    def _run(self, task_states):
+        svc = StateService()
+        stats = iter(_fake_stat(task_state=s) for s in task_states)
+        dispatched = []
+        with patch.object(services_StateService_mod, "execute_sync_cmd",
+                          side_effect=lambda *a: dispatched.append(a)), \
+             patch.object(services_StateService_mod, "get_stat_channel", side_effect=lambda: next(stats)), \
+             patch.object(services_StateService_mod.time, "sleep"):
+            try:
+                return svc.reset_estop(), dispatched
+            except Exception as exc:  # noqa: BLE001 - returned for asserts
+                return exc, dispatched
+
+    def test_first_attempt_that_holds_is_enough(self):
+        attempt, dispatched = self._run([self.RESET])
+        assert attempt == 1
+        assert len(dispatched) == 1
+
+    def test_retries_when_the_machine_falls_back_to_estop(self):
+        attempt, dispatched = self._run([self.ESTOP, self.RESET])
+        assert attempt == 2
+        assert [d[2] for d in dispatched] == [self.RESET, self.RESET]
+
+    def test_gives_up_with_a_conflict_after_the_last_attempt(self):
+        from exceptions import ConflictError
+
+        result, dispatched = self._run([self.ESTOP] * StateService.ESTOP_RESET_ATTEMPTS)
+        assert isinstance(result, ConflictError)
+        assert "Remora" in str(result.detail if hasattr(result, "detail") else result)
+        assert len(dispatched) == StateService.ESTOP_RESET_ATTEMPTS
+
+    def test_set_state_routes_estop_reset_through_the_retry(self):
+        svc = StateService()
+        with patch.object(StateService, "reset_estop", return_value=1) as reset:
+            svc.set_state("estop_reset")
+        reset.assert_called_once()

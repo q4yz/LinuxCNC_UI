@@ -28,7 +28,7 @@ import {useLoadedProgram} from "../composables/useLoadedProgram";
 import {progressFacade} from "../facades/progressFacade";
 import {reportCommandFailure, describeErrorOr} from "../core/error-format";
 import {FileEntry} from "../entities/files";
-import {BaseButton} from "../ui/index.ts";
+import {BaseButton, Icon} from "../ui/index.ts";
 import BaseCard from "../ui/BaseCard.vue";
 
 
@@ -305,7 +305,7 @@ async function stopPrint() {
 </script>
 
 <template>
-  <BaseCard title=" 📂 Programs">
+  <BaseCard title="Programs" icon="folder">
     <!-- Top-bar: Start button. (Hidden while active) -->
 
     <template #header-actions>
@@ -387,7 +387,7 @@ async function stopPrint() {
     <div v-else class="p-4 flex flex-col space-y-4">
       <div class="flex items-center">
         <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-          <span class="mr-2">🖨️</span>
+          <Icon name="running" class="mr-2" />
           {{ isPaused ? "Paused" : "Printing" }}
         </h2>
       </div>

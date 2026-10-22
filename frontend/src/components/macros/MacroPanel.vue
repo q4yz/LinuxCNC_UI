@@ -114,7 +114,7 @@ function formatResult(entry: MacroLastRunResult | null): string {
 </script>
 
 <template>
-  <BaseCard title="🧩 Macros &amp; NGC">
+  <BaseCard title="Macros &amp; NGC" icon="macro">
     <template #header-actions>
       <span class="text-xs text-gray-400 font-mono">
         {{ sorted.length }} file{{ sorted.length === 1 ? '' : 's' }}
@@ -146,7 +146,7 @@ function formatResult(entry: MacroLastRunResult | null): string {
       >
         <div class="min-w-0">
           <div class="font-mono text-sm font-semibold text-gray-100 truncate flex items-center gap-2">
-            🧩 {{ row.name }}
+            <Icon name="macro" class="text-gray-400" /> {{ row.name }}
             <span
               class="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider"
               :class="

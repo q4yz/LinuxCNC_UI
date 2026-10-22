@@ -5,7 +5,8 @@
 
 
     <div v-if="title" class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">
+      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center gap-2">
+        <Icon v-if="icon" :name="icon" />
         {{ title }}
       </h2>
 
@@ -33,10 +34,14 @@
 </template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import Icon from './Icon.vue';
 
 const props = withDefaults(
   defineProps<{
     title?: string;
+    // ``Icon`` name shown before the title (an SVG — not an emoji,
+    // which Linux renders as a blank box without an emoji font).
+    icon?: string;
     footer?: string;
     // Opt out of the staggered reveal below. Needed for a card whose
     // slot content is itself just a placeholder that something else

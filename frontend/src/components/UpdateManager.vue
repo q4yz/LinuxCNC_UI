@@ -6,7 +6,7 @@ import { useSystemUpdateStore } from '../stores/systemUpdate'
 import { systemFacade } from '../facades/systemFacade'
 import { CommandResult } from '../entities/common/CommandResult'
 import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
-import { BaseButton } from '../ui/index.ts'
+import { BaseButton, Icon } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
 import { openInEditor, EDITOR_SOURCES } from '../helpers/openInEditor'
 
@@ -128,7 +128,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <BaseCard title="⚙️ System Update">
+  <BaseCard title="System Update" icon="settings">
     <div class="flex items-center justify-between  p-4">
       <div class="flex flex-col">
         <span class="text-gray-400 text-xs">Current Version</span>
@@ -138,7 +138,7 @@ onMounted(() => {
       </div>
 
       <BaseButton variant="secondary" :loading="isUpdating" @click="updateSystem">
-        <span class="mr-2">🔄</span> Update System
+        <Icon name="refresh" class="mr-2" /> Update System
       </BaseButton>
     </div>
 
@@ -188,14 +188,14 @@ onMounted(() => {
           data-testid="machine-stop"
           @click="stopMachine"
         >
-          ⏹ Stop machine
+          <Icon name="stop" class="mr-1" /> Stop machine
         </BaseButton>
         <BaseButton
           variant="secondary"
           data-testid="machine-view-log"
           @click="openConsoleLog"
         >
-          📜 View log
+          <Icon name="log" class="mr-1" /> View log
         </BaseButton>
       </div>
     </div>

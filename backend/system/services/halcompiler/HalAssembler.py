@@ -393,17 +393,22 @@ class HalAssembler:
         routed to a given VFD MCU belongs to the same spindle, so the
         first request's ``owner`` names it. Harmless no-op for every
         other router: they don't look for these keys.
+
+        Also flags ``_estop_fault`` when the `[estop]` ``fault_pin`` is
+        read through this MCU: a class-B router (Remora) owns
+        ``iocontrol.0.emc-enable-in`` for its link health and must gate
+        it on that input itself (``EstopHalMapper`` skips the chain there).
         """
         if not mcu_requests:
             return mcu
+        enriched = dict(mcu)
+        if any(request.signal == "estop-fault" for request in mcu_requests):
+            enriched["_estop_fault"] = True
         spindle = self._tools_by_id.get(mcu_requests[0].owner)
-        if not spindle:
-            return mcu
-        return {
-            **mcu,
-            "_spindle_min_rpm": spindle.get("min_rpm"),
-            "_spindle_max_rpm": spindle.get("max_rpm"),
-        }
+        if spindle:
+            enriched["_spindle_min_rpm"] = spindle.get("min_rpm")
+            enriched["_spindle_max_rpm"] = spindle.get("max_rpm")
+        return enriched
 
 
 def assemble_machine(payload: dict[str, Any]) -> HalFragment:

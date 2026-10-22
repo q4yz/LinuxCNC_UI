@@ -74,6 +74,24 @@ class RemoraRouterMapper:
             ],
         )
 
+        if mcu.get("_estop_fault"):
+            # `[estop] fault_pin` read through this board (e.g. a relay
+            # contact on the motor supply): LinuxCNC may only run while
+            # the SPI link is up AND no fault is present. `estop_latch`
+            # ANDs both (`ok-in` / `fault-in`) and latches a dropout
+            # until the operator resets (`user-request-enable`, the same
+            # edge that re-syncs the SPI link). remora.read (order 0)
+            # sets SPI-status before the latch (order 1) sees the reset.
+            fragment.loadrt.append("loadrt estop_latch")
+            fragment.addf.append(Addf("estop-latch.0", SERVO_THREAD, order=1))
+            fragment.nets = [
+                "net user-enable-out <= iocontrol.0.user-enable-out => remora.SPI-enable",
+                "net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset estop-latch.0.reset",
+                "net remora-status <= remora.SPI-status => estop-latch.0.ok-in",
+                "net estop-fault => estop-latch.0.fault-in",
+                "net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in",
+            ]
+
         reset_pin = mcu.get("reset_pin")
         if reset_pin:
             parsed = PinStringMapper.from_string(reset_pin)

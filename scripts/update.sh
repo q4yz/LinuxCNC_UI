@@ -112,6 +112,14 @@ if [ -f "$NGINX_SITE" ] && ! grep -q "linuxcnc-ui-routes.conf" "$NGINX_SITE"; th
     DONE_MESSAGE="Update complete — but the nginx routing is outdated (new API routes return 404). Run once on the machine: $NGINX_FIX"
 fi
 
+# Packages install.sh added since this machine was installed need root
+# once (an update has no passwordless apt) — say so instead of failing.
+if command -v dpkg >/dev/null 2>&1 && ! dpkg -s fonts-noto-color-emoji >/dev/null 2>&1; then
+    FONT_FIX="sudo apt-get install -y fonts-noto-color-emoji"
+    echo "NOTE: emoji font missing — emojis show as boxes on this screen. Run once: $FONT_FIX" >&2
+    DONE_MESSAGE="$DONE_MESSAGE — note: emoji font missing, run once on the machine: $FONT_FIX"
+fi
+
 DONE=1
 status done "finished" "$DONE_MESSAGE"
 echo "Update Complete! ($(date -Is))"

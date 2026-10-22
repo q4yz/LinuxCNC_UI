@@ -151,7 +151,7 @@ watch(() => store.lastError, (value) => {
 </script>
 
 <template>
-  <BaseCard title="🧩 Macros &amp; NGC" >
+  <BaseCard title="Macros &amp; NGC" icon="macro">
     <template #header-actions>
       <span class="text-xs text-gray-400 font-mono">
         {{ macroCards.length }} file{{ macroCards.length === 1 ? '' : 's' }}
@@ -179,7 +179,7 @@ watch(() => store.lastError, (value) => {
       >
         <div class="min-w-0">
           <div class="font-mono text-sm font-semibold text-gray-100 truncate flex items-center gap-2">
-            🧩 {{ card.displayName }}
+            <Icon name="macro" class="text-gray-400" /> {{ card.displayName }}
             <span
               class="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wider"
               :class="

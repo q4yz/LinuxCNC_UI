@@ -348,3 +348,20 @@ def test_pid_auto_is_wired_off_the_link_watchdog(fragment):
 def test_heater_and_sensor_pins_never_become_hal_nets(fragment):
     for pin in ("PB7", "PE3", "PA0", "PA1", "PB1"):
         assert not any(pin in n for n in fragment.nets), pin
+
+
+def test_estop_fault_pin_on_the_remora_board_compiles_to_one_latched_enable_chain():
+    """A power-loss input (`[estop] fault_pin`) on the Remora board ends
+    up as a firmware input + estop_latch gating emc-enable-in once."""
+    import copy
+
+    payload = copy.deepcopy(PAYLOAD)
+    payload["estop"] = {"fault_pin": "mcu:!PG11"}
+    fragment = HalAssembler(payload).assemble()
+
+    assert "loadrt estop_latch" in fragment.loadrt
+    nets = "\n".join(fragment.nets)
+    assert "remora.SPI-status => estop-latch.0.ok-in" in nets
+    assert "estop-latch.0.ok-out => iocontrol.0.emc-enable-in" in nets
+    assert nets.count("iocontrol.0.emc-enable-in") == 1
+    assert any(n.startswith("net estop-fault remora.input.") and n.endswith(".not") for n in fragment.nets)

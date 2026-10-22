@@ -10,3 +10,10 @@ sudo halcompile --install ./Remora-spi/remora-spi.c
 sudo halcompile --install ./PRUencoder/PRUencoder.c
 
 sudo halcompile --install ./NVMPG/nvmpg.c
+
+
+Userspace Python components are not compiled — load them from HAL with `loadusr`, e.g. the Raspberry Pi temperature/load monitor:
+
+    loadusr -Wn rpi-monitor python3 ./RPiMonitor/rpi_monitor.py
+
+See [RPiMonitor/readme.md](RPiMonitor/readme.md).

@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {HeaterControlRequest} from "../../entities/tools/Heater";
 import {TemperatureUnit} from "../../entities";
-import { BaseButton } from '../../ui/index.ts'
+import { BaseButton, Icon } from '../../ui/index.ts'
 import BaseCard from '../../ui/BaseCard.vue'
 import BaseInput from '../../ui/BaseInput.vue'
 import SettingSelect from '../../settings/components/SettingSelect.vue'
@@ -272,7 +272,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 </script>
 
 <template>
-  <BaseCard title="🔥 Temperatures" :min-height="600">
+  <BaseCard title="Temperatures" icon="flame" :min-height="600">
     <!-- Global unit toggle and Cool All -->
     <div class="mb-3 flex items-center justify-between">
 
@@ -290,7 +290,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
             title="Turn off all heaters"
             @click="turnOffAll"
         >
-          <span>❄️ All</span>
+          <Icon name="snowflake" class="mr-1" /><span>All</span>
         </BaseButton>
       </div>
 
@@ -373,8 +373,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
               :aria-pressed="visibleSensors[name] !== false"
               class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded border border-gray-600 hover:border-gray-400 bg-gray-900/50 flex items-center shrink-0"
           >
-            <span v-if="visibleSensors[name] !== false">👁</span>
-            <span v-else>🙈</span>
+            <Icon :name="visibleSensors[name] !== false ? 'eye' : 'eyeOff'" />
           </button>
 
         </div>

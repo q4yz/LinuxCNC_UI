@@ -6,7 +6,7 @@
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useSystemUpdateStore } from '../stores/systemUpdate'
-import { BaseButton } from '../ui/index.ts'
+import { BaseButton, Icon } from '../ui/index.ts'
 
 const store = useSystemUpdateStore()
 const { mode, status, unreachableSince } = storeToRefs(store)
@@ -73,7 +73,7 @@ const failedStep = computed(
 
         <!-- failed / unreachable -->
         <template v-else>
-          <div class="mb-4 text-5xl">❌</div>
+          <div class="mb-4 flex justify-center text-red-400"><Icon name="alert" size="h-14 w-14" /></div>
           <h2 class="mb-2 text-2xl font-bold tracking-wide text-red-300">UPDATE FAILED</h2>
           <p v-if="mode === 'failed'" class="mb-4 text-sm text-gray-300" data-test="update-failure">
             <template v-if="failedStep">Failed during <b>{{ failedStep }}</b>. </template>{{ status?.message }}

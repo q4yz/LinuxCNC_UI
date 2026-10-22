@@ -317,3 +317,27 @@ def test_endstop_and_analog_indices_do_not_collide():
     digital_pins = [m for m in fragment.firmware_modules if m.module["Type"] == "Digital Pin"]
     assert {m.module["Data Bit"] for m in digital_pins} == {0, 1}
     assert len(fragment.firmware_modules) == 3
+
+
+def test_estop_fault_on_this_board_gates_emc_enable_through_a_latch():
+    """`[estop] fault_pin` read through the Remora board (e.g. a relay on
+    the motor supply): enable needs the SPI link AND no fault, latched
+    until the operator resets — and emc-enable-in has exactly one driver."""
+    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "_estop_fault": True})
+
+    assert "loadrt estop_latch" in fragment.loadrt
+    assert {a.func: a.order for a in fragment.addf}["estop-latch.0"] == 1
+    assert "net remora-status <= remora.SPI-status => estop-latch.0.ok-in" in fragment.nets
+    assert "net estop-fault => estop-latch.0.fault-in" in fragment.nets
+    assert (
+        "net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset estop-latch.0.reset"
+        in fragment.nets
+    )
+    assert "net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in" in fragment.nets
+    assert sum("iocontrol.0.emc-enable-in" in net for net in fragment.nets) == 1
+
+
+def test_without_an_estop_fault_the_link_drives_emc_enable_directly():
+    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    assert "loadrt estop_latch" not in fragment.loadrt
+    assert not any("estop-latch" in net for net in fragment.nets)

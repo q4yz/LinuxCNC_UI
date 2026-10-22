@@ -100,7 +100,7 @@ watch(() => store.lastError, (value) => {
 </script>
 
 <template>
-  <BaseCard title="⚙️ M-Codes">
+  <BaseCard title="M-Codes" icon="settings">
     <template #header-actions>
       <span class="text-xs text-gray-400 font-mono">
         {{ sorted.length }} M-code{{ sorted.length === 1 ? '' : 's' }}

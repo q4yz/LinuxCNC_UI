@@ -370,7 +370,7 @@ onMounted(() => {
     <!-- Header & Upload -->
     <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex  items-center shrink-0">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <span class="mr-2">📂</span> G-Code Files
+        <Icon name="folder" class="mr-2" /> G-Code Files
       </h2>
 
       <div>
@@ -381,7 +381,7 @@ onMounted(() => {
             data-test="file-upload"
             @click="openPicker"
         >
-          <span class="mr-1">⬆</span> {{ isUploading ? 'Uploading...' : 'Upload' }}
+          <Icon name="upload" class="mr-1" /> {{ isUploading ? 'Uploading...' : 'Upload' }}
         </BaseButton>
       </div>
     </div>
@@ -419,7 +419,7 @@ onMounted(() => {
             @click="openFolder(folder.path)"
         >
           <td class="py-2 px-2">
-            <span class="flex h-10 w-14 items-center justify-center rounded border border-gray-600 bg-gray-900 text-xl">📁</span>
+            <span class="flex h-10 w-14 items-center justify-center rounded border border-gray-600 bg-gray-900 text-gray-400"><Icon name="folder" size="h-6 w-6" /></span>
           </td>
           <td class="py-2 px-2 font-mono">
             {{ folder.name }}
@@ -459,7 +459,7 @@ onMounted(() => {
                 class="flex h-10 w-14 items-center justify-center rounded border border-gray-600 bg-gray-900 text-lg"
                 :data-test="`file-thumb-${file.name}`"
                 title="No embedded thumbnail"
-            >📄</span>
+            ><Icon name="file" size="h-6 w-6" class="text-gray-500" /></span>
           </td>
           <td class="py-2 px-2 font-mono" :class="isLoaded(file.path) ? 'font-semibold text-blue-300' : ''">
             {{ file.name }}
@@ -578,7 +578,7 @@ onMounted(() => {
                   class="flex h-40 w-full items-center justify-center rounded border border-dashed border-gray-600 bg-gray-900 text-4xl text-gray-600"
                   data-test="preview-thumb-empty"
                   title="This file has no embedded slicer thumbnail"
-              >📄</span>
+              ><Icon name="file" size="h-6 w-6" class="text-gray-500" /></span>
               <p class="text-center text-xs text-gray-500">
                 Thumbnail embedded by the slicer.
                 The 3D view is parsed from the G-code itself.

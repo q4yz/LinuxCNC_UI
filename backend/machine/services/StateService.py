@@ -22,7 +22,7 @@ import time
 import warnings
 from typing import List, Optional, Any, Tuple
 
-from exceptions import ServiceUnavailableError
+from exceptions import ConflictError, ServiceUnavailableError
 
 from dtos.EStopDto import EStopPin
 from dtos.LinuxCNCError import now_iso
@@ -93,7 +93,52 @@ class StateService:
             )
         return code
 
+    #: E-stop reset attempts before giving up, and how long each one must
+    #: hold before it counts (LinuxCNC drops back to ESTOP within a few
+    #: servo cycles when ``emc-enable-in`` is low).
+    ESTOP_RESET_ATTEMPTS = 3
+    ESTOP_RESET_SETTLE_S = 0.4
+    ESTOP_RESET_RETRY_DELAY_S = 1.0
+
+    def reset_estop(self) -> int:
+        """Leave E-stop, retrying while the machine falls straight back.
+
+        Remora (and any MCU wired the same way) only re-syncs its link on
+        the rising edge of ``iocontrol.0.user-request-enable`` →
+        ``remora.SPI-reset``. Right after LinuxCNC was stopped mid-run the
+        board is often still recovering, so the first edge reads a bad
+        payload, ``SPI-status`` stays low → ``emc-enable-in`` low → back
+        to ESTOP, and only a second "on" worked. Each retry is a fresh
+        edge after the board had time to come back. Returns the attempt
+        that held; raises :class:`ConflictError` when none did.
+        """
+        code = self._resolve(self._STATE_CODES, "estop_reset")
+        estop_code = getattr(linuxcnc, "STATE_ESTOP", 1)
+        for attempt in range(1, self.ESTOP_RESET_ATTEMPTS + 1):
+            execute_sync_cmd("state", 3.0, code)
+            time.sleep(self.ESTOP_RESET_SETTLE_S)
+            stat = self.get_polled_stat()
+            if stat is None or getattr(stat, "task_state", estop_code) != estop_code:
+                if attempt > 1:
+                    logger.warning("E-stop reset held on attempt %d (MCU link was not ready).", attempt)
+                return attempt
+            logger.warning(
+                "E-stop reset fell back to ESTOP (attempt %d/%d) — MCU link "
+                "(e.g. remora.SPI-status) or an external E-stop not ready.",
+                attempt, self.ESTOP_RESET_ATTEMPTS,
+            )
+            if attempt < self.ESTOP_RESET_ATTEMPTS:
+                time.sleep(self.ESTOP_RESET_RETRY_DELAY_S)
+        raise ConflictError(
+            f"E-stop reset did not hold after {self.ESTOP_RESET_ATTEMPTS} attempts: the "
+            "machine fell back to E-STOP. Check the MCU connection (Remora SPI) and any "
+            "external E-stop switch, or reset the MCU."
+        )
+
     def set_state(self, name: str) -> None:
+        if name == "estop_reset":
+            self.reset_estop()
+            return
         code = self._resolve(self._STATE_CODES, name)
         execute_sync_cmd("state", 3.0, code)
         warnings.warn(

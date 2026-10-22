@@ -22,7 +22,10 @@ echo "=========================================="
 # 1. Update and install core system packages
 echo -e "\n---> Installing system dependencies..."
 apt-get update
-apt-get install -y curl wget git nginx python3-venv mkcert libnss3-tools ustreamer
+# fonts-noto-color-emoji: the browser on the machine's own screen has no
+# emoji font otherwise — user-typed emojis (e.g. macro button icons)
+# would show as blank boxes. The UI's own icons are SVG and need none.
+apt-get install -y curl wget git nginx python3-venv mkcert libnss3-tools ustreamer fonts-noto-color-emoji
 
 # 2. Install Node.js (LTS version)
 echo -e "\n---> Installing Node.js..."

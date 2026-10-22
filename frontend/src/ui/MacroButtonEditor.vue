@@ -366,7 +366,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
               <input
                 type="text"
                 :value="descriptorFor(slot)?.icon ?? ''"
-                placeholder="💡 or icon name"
+                placeholder="icon name or text"
                 class="w-28 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-icon-${slot.id}`"
                 @change="

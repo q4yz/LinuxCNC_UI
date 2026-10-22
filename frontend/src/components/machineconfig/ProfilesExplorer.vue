@@ -149,7 +149,7 @@ async function downloadProfile(entry: FileEntry) {
       <div class="flex items-center gap-3">
         <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
         <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="profiles-upload" @click="openPicker">
-          <span class="mr-1">⬆</span> Upload
+          <Icon name="upload" class="mr-1" /> Upload
         </BaseButton>
       </div>
     </div>
@@ -173,7 +173,7 @@ async function downloadProfile(entry: FileEntry) {
           @click="navigate(entry)"
           @dblclick="editFile(entry)"
         >
-          <span>{{ entry.kind === 'folder' ? '📁' : '📄' }}</span>
+          <Icon :name="entry.kind === 'folder' ? 'folder' : 'file'" class="text-gray-400" />
           <div class="min-w-0 flex-1">
             <div class="truncate font-mono text-sm text-gray-200" :title="entry.path">{{ entry.name }}</div>
             <div class="text-[11px] text-gray-500" data-test="file-entry-meta">

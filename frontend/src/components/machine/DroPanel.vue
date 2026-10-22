@@ -4,7 +4,7 @@ import {storeToRefs} from 'pinia'
 import {Axis, useMachineStore} from '../../stores/machine'
 import {useBaseThreadStore} from '../../stores/baseThread'
 import {WORK_COORDINATE_SYSTEMS} from '../../config/gcodes'
-import {MacroButton} from '../../ui'
+import {Icon, MacroButton} from '../../ui'
 import {macroButtons} from '../../settings/definitions/machine'
 import BaseCard from "../../ui/BaseCard.vue";
 import {BaseButton} from "../../ui";
@@ -137,7 +137,7 @@ function selectWcs(index: string | number) {
               class="text-base"
               title="Home X Axis"
           >
-            🏠
+            <Icon name="home" />
           </BaseButton>
           <MacroButton
               :descriptor="buttonsBySlot['dro.x']"
@@ -172,7 +172,7 @@ function selectWcs(index: string | number) {
               class="text-base"
               title="Home Y Axis"
           >
-            🏠
+            <Icon name="home" />
           </BaseButton>
           <MacroButton
               :descriptor="buttonsBySlot['dro.y']"
@@ -207,7 +207,7 @@ function selectWcs(index: string | number) {
               class="text-base"
               title="Home Z Axis"
           >
-            🏠
+            <Icon name="home" />
           </BaseButton>
           <MacroButton
               :descriptor="buttonsBySlot['dro.z']"
