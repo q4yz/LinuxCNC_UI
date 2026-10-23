@@ -14,6 +14,16 @@
 
 set -e
 
+# Never run as root: Python would leave root-owned __pycache__ files in
+# the project tree. Re-run as the invoking user instead.
+if [ "$EUID" -eq 0 ]; then
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        exec sudo -u "$SUDO_USER" -H bash "$0" "$@"
+    fi
+    echo "Error: do not run as root; run as the user that owns the project." >&2
+    exit 1
+fi
+
 # Resolve the repo root regardless of where the script is invoked from.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT/backend"

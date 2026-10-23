@@ -10,6 +10,17 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# Never update as root: git/pip/npm would create root-owned files that
+# the normal-user update (the system service's own) could not overwrite
+# afterwards. Re-run as the invoking user instead.
+if [ "$EUID" -eq 0 ]; then
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        exec sudo -u "$SUDO_USER" -H bash "$0" "$@"
+    fi
+    echo "Error: do not run as root; run as the user that owns the project." >&2
+    exit 1
+fi
+
 echo "Starting update process... ($(date -Is))"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
@@ -49,6 +60,17 @@ fi
 # Safety Check 2: Check if LinuxCNC is currently running to prevent updating active system files
 if pgrep -x "linuxcnc" > /dev/null || pgrep -x "emc" > /dev/null; then
     echo "Error: LinuxCNC is currently running. Please stop LinuxCNC before running the update." >&2
+    exit 1
+fi
+
+# Safety Check 3: root-owned files in the tree (left by an older install
+# or a hand-run sudo) cannot be overwritten without root. Fail early with
+# the one-line fix instead of half-way through the pull/build.
+ROOT_OWNED="$(find "$PROJECT_DIR" -xdev -user root -not -path "$PROJECT_DIR/.git/*" 2>/dev/null | head -n 5)"
+if [ -n "$ROOT_OWNED" ]; then
+    echo "Error: root-owned files in the project tree block the update, e.g.:" >&2
+    echo "$ROOT_OWNED" >&2
+    echo "Fix once with: sudo chown -R $(id -un):$(id -gn) $PROJECT_DIR" >&2
     exit 1
 fi
 

@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+# Never build as root: node_modules/, dist/ and the generated API client
+# would end up root-owned and the next (non-root) update could not
+# overwrite them. Re-run as the invoking user instead.
+if [ "$EUID" -eq 0 ]; then
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        exec sudo -u "$SUDO_USER" -H bash "$0" "$@"
+    fi
+    echo "Error: do not run as root; run as the user that owns the project." >&2
+    exit 1
+fi
+
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
 # Update this variable with the exact name of your systemd service

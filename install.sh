@@ -9,6 +9,8 @@ fi
 
 # Get the original user who ran sudo (so we don't create venv as root)
 REAL_USER=${SUDO_USER:-$USER}
+REAL_GROUP=$(id -gn "$REAL_USER")
+REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 PROJECT_DIR=$(pwd)
 CERT_DIR="$PROJECT_DIR/frontend/.cert"
 UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
@@ -18,6 +20,16 @@ echo " Starting LinuxCNC UI Installation"
 echo " User: $REAL_USER"
 echo " Project Dir: $PROJECT_DIR"
 echo "=========================================="
+
+# 0. Nothing in the project tree may belong to root.
+#
+# scripts/update.sh runs as $REAL_USER and must be able to overwrite
+# every project file without sudo. Only /etc (systemd units, nginx,
+# sudoers) is root-owned; everything below $PROJECT_DIR is written by
+# `sudo -u "$REAL_USER"`. This repairs trees left behind by an earlier
+# install or a hand-run `sudo` command.
+echo -e "\n---> Making sure the project tree belongs to $REAL_USER..."
+find "$PROJECT_DIR" -xdev -user root -exec chown -h "$REAL_USER:$REAL_GROUP" {} +
 
 # 1. Update and install core system packages
 echo -e "\n---> Installing system dependencies..."
@@ -91,12 +103,14 @@ echo -e "\n---> Configuring local Certificate Authority..."
 sudo -u "$REAL_USER" mkcert -install
 
 # Locate the generated Root CA
-CA_ROOT="/home/$REAL_USER/.local/share/mkcert/rootCA.pem"
+CA_ROOT="$REAL_HOME/.local/share/mkcert/rootCA.pem"
 
 echo -e "\n---> Copying Root CA for the Vue frontend..."
-# Copy it directly into the built Vue files so your popup can link to "/cnc-root.crt"
-cp "$CA_ROOT" "$UI_DIST_DIR/cnc-root.crt"
-chmod 644 "$UI_DIST_DIR/cnc-root.crt"
+# Copy it directly into the built Vue files so your popup can link to "/cnc-root.crt".
+# As the user (not root): a root-owned file here could not be replaced by
+# rebuild_ui.sh during a non-root update.
+sudo -u "$REAL_USER" cp "$CA_ROOT" "$UI_DIST_DIR/cnc-root.crt"
+sudo -u "$REAL_USER" chmod 644 "$UI_DIST_DIR/cnc-root.crt"
 
 # 6. Generate the initial SSL Certificate
 echo -e "\n---> Generating initial SSL certificate..."
@@ -195,16 +209,16 @@ ExecStart=$PROJECT_DIR/start_network.sh
 WantedBy=multi-user.target
 EOF
 
-chmod +x "$PROJECT_DIR/start_network.sh"
+sudo -u "$REAL_USER" chmod +x "$PROJECT_DIR/start_network.sh"
 systemctl daemon-reload
 systemctl enable linuxcnc-ui-cert
 
 # 8. Fix Directory Permissions for Nginx
 echo -e "\n---> Fixing directory permissions so Nginx can serve files..."
 # Nginx (www-data user) needs traverse (execute) permissions up the entire directory tree
-chmod 755 "/home/$REAL_USER"
+chmod 755 "$REAL_HOME"
 chmod 755 "$PROJECT_DIR"
-chmod -R 755 "$UI_DIST_DIR"
+sudo -u "$REAL_USER" chmod -R 755 "$UI_DIST_DIR"
 
 # 9. Configure Nginx
 # The site file only carries ports/TLS/paths; every route lives in the
@@ -257,9 +271,12 @@ ExecStart=$PROJECT_DIR/start_network.sh
 WantedBy=multi-user.target
 EOF
 
-chmod +x "$PROJECT_DIR/start_network.sh"
+sudo -u "$REAL_USER" chmod +x "$PROJECT_DIR/start_network.sh"
 systemctl daemon-reload
 systemctl enable linuxcnc-ui-cert
+
+# Final check: nothing above may have left a root-owned file in the tree.
+find "$PROJECT_DIR" -xdev -user root -exec chown -h "$REAL_USER:$REAL_GROUP" {} +
 
 echo "=========================================="
 echo " Installation Complete!"
