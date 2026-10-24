@@ -3,7 +3,7 @@
 import { SystemService } from "../../generated/api/services/SystemService";
 import { CommandResult } from "../entities/common/CommandResult";
 import { SystemVersion } from "../entities/system/SystemVersion";
-import type { UpdateStatus } from "../entities/system/UpdateStatus";
+import type { UpdateMode, UpdateStatus } from "../entities/system/UpdateStatus";
 import { toSystemVersion, toUpdateStatus } from "../mappers/systemMapper";
 import { describeError, errorStatus } from "../core/error-format";
 
@@ -23,10 +23,13 @@ async function fetchVersion(): Promise<SystemVersion | CommandResult> {
 /**
  * Start the update. On success ``result.message`` is the run id to
  * follow with :func:`fetchUpdateStatus`; 409 while an update runs.
+ *
+ * ``commit`` builds the newest commit on the board (testing);
+ * ``release`` installs the latest release with its prebuilt UI.
  */
-async function triggerUpdate(): Promise<CommandResult> {
+async function triggerUpdate(mode: UpdateMode = "commit"): Promise<CommandResult> {
   try {
-    const wire = await SystemService.triggerSystemUpdate();
+    const wire = await SystemService.triggerSystemUpdate({ mode });
     return CommandResult.success({ commandId: "system-update", message: wire.run_id });
   } catch (err: unknown) {
     return CommandResult.failure(describeError(err), {

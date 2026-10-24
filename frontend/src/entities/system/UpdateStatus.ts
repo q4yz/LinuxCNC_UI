@@ -3,10 +3,13 @@
 // after the restarted services answered, so the UI may reload on it.
 
 export type UpdateState = "idle" | "running" | "done" | "failed";
+/** commit: newest commit, built on the board. release: prebuilt GitHub release. */
+export type UpdateMode = "commit" | "release";
 
 export interface UpdateStatusParams {
   runId?: string | null;
   state?: UpdateState;
+  mode?: UpdateMode | null;
   phase?: string;
   message?: string;
   startedAt?: string | null;
@@ -19,6 +22,7 @@ export interface UpdateStatusParams {
 export class UpdateStatus {
   private readonly _runId: string | null;
   private readonly _state: UpdateState;
+  private readonly _mode: UpdateMode | null;
   private readonly _phase: string;
   private readonly _message: string;
   private readonly _startedAt: string | null;
@@ -30,6 +34,7 @@ export class UpdateStatus {
   constructor({
     runId = null,
     state = "idle",
+    mode = null,
     phase = "",
     message = "",
     startedAt = null,
@@ -40,6 +45,7 @@ export class UpdateStatus {
   }: UpdateStatusParams = {}) {
     this._runId = runId || null;
     this._state = state;
+    this._mode = mode;
     this._phase = phase;
     this._message = message;
     this._startedAt = startedAt || null;
@@ -55,6 +61,11 @@ export class UpdateStatus {
 
   get state(): UpdateState {
     return this._state;
+  }
+
+  /** ``null`` for runs from before the two update modes existed. */
+  get mode(): UpdateMode | null {
+    return this._mode;
   }
 
   get phase(): string {

@@ -15,6 +15,7 @@ never finishes early.
 Environment (set by the system service when it launches the update):
     UPDATE_STATUS_FILE   where to write (default backend/data/update_status.json)
     UPDATE_RUN_ID        id of this update run ("manual" when run by hand)
+    UPDATE_MODE          commit | release (set by update.sh)
 
 Standard library only — it runs while the backend services are down.
 """
@@ -40,9 +41,10 @@ def _now() -> str:
 
 
 def _commit() -> str | None:
+    """Release tag when on one (``v1.2.0``), else ``v1.2.0-3-gabc1234`` / ``abc1234``."""
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "describe", "--tags", "--always"],
             cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=5, check=True,
         )
         return out.stdout.strip() or None
@@ -95,6 +97,7 @@ def main(argv: list[str]) -> int:
     payload = {
         "run_id": run_id,
         "state": state,
+        "mode": os.environ.get("UPDATE_MODE") or (previous.get("mode") if same_run else None),
         "phase": phase,
         "message": message,
         "started_at": previous.get("started_at") if same_run else _now(),

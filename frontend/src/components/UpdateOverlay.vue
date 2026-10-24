@@ -11,18 +11,21 @@ import { BaseButton, Icon } from '../ui/index.ts'
 const store = useSystemUpdateStore()
 const { mode, status, unreachableSince } = storeToRefs(store)
 
-// The steps scripts/update.sh reports, in order.
-const STEPS = [
+// The steps scripts/update.sh reports, in order. A release update
+// installs the prebuilt interface instead of building it.
+const STEPS = computed(() => [
   { phase: 'checks', label: 'Checks' },
-  { phase: 'pull', label: 'Download update' },
+  { phase: 'pull', label: status.value?.mode === 'release' ? 'Download release' : 'Download update' },
   { phase: 'dependencies', label: 'Install dependencies' },
   { phase: 'stopping services', label: 'Stop services' },
-  { phase: 'rebuilding UI', label: 'Rebuild interface' },
+  status.value?.mode === 'release'
+    ? { phase: 'installing UI', label: 'Install interface' }
+    : { phase: 'rebuilding UI', label: 'Rebuild interface' },
   { phase: 'waiting for services', label: 'Restart services' },
-]
+])
 
 const currentIndex = computed(() =>
-  STEPS.findIndex((step) => step.phase === status.value?.phase),
+  STEPS.value.findIndex((step) => step.phase === status.value?.phase),
 )
 
 function stepState(index: number): 'done' | 'current' | 'pending' {
@@ -32,7 +35,7 @@ function stepState(index: number): 'done' | 'current' | 'pending' {
 }
 
 const failedStep = computed(
-  () => STEPS.find((step) => step.phase === status.value?.phase)?.label ?? status.value?.phase ?? '',
+  () => STEPS.value.find((step) => step.phase === status.value?.phase)?.label ?? status.value?.phase ?? '',
 )
 </script>
 

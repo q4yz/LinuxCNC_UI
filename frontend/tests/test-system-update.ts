@@ -38,7 +38,11 @@ SystemService.getSystemUpdateStatus = async () => {
   if (current === "down") throw new Error("502 Bad Gateway");
   return current;
 };
-SystemService.triggerSystemUpdate = async () => ({ status: "update initiated", run_id: "run-new" });
+let triggeredWith: unknown[] = [];
+SystemService.triggerSystemUpdate = async (...args: unknown[]) => {
+  triggeredWith = args;
+  return { status: "update initiated", run_id: "run-new" };
+};
 
 const now = () => new Date().toISOString();
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
@@ -84,6 +88,21 @@ test("overlay stays through the outage and an older run's status; done reloads",
   current = { run_id: "run-new", state: "done", phase: "finished", finished_at: now(), commit_after: "abc1234" };
   await tick();
   assert.equal(reloads, 1, "done reloads into the new build");
+});
+
+test("an update defaults to the newest commit; the release button asks for a release", async () => {
+  const store = useSystemUpdateStore();
+  await store.start();
+  assert.deepEqual(triggeredWith, [{ mode: "commit" }]);
+
+  setActivePinia(createPinia());
+  const releaseStore = useSystemUpdateStore();
+  await releaseStore.start("release");
+  assert.deepEqual(triggeredWith, [{ mode: "release" }]);
+
+  current = { run_id: "run-new", state: "running", mode: "release", phase: "installing UI", updated_at: now() };
+  await tick();
+  assert.equal(releaseStore.status.mode, "release");
 });
 
 test("failure keeps the overlay with the reason and notifies once", async () => {
@@ -150,7 +169,7 @@ test("UpdateManager no longer reloads on a fixed timer; the overlay lives in App
   const manager = read("components/UpdateManager.vue");
   assert.doesNotMatch(manager, /setTimeout/);
   assert.doesNotMatch(manager, /window\.location\.reload/);
-  assert.match(manager, /updateStore\.start\(\)/);
+  assert.match(manager, /updateStore\.start\(mode\)/);
   const app = read("App.vue");
   assert.match(app, /<UpdateOverlay \/>/);
   assert.match(app, /systemUpdate\.resume\(\)/);

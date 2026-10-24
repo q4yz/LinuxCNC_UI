@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e # Exit immediately if a command fails
 
+# Usage:
+#   sudo ./install.sh                    build the checked-out commit on this board
+#   sudo ./install.sh --release [vX.Y.Z] install a GitHub release (latest if no tag):
+#                                        prebuilt frontend, no Node.js / npm / vite —
+#                                        for 1 GB boards like the BTT CB1
+RELEASE_MODE=0
+RELEASE_TAG=""
+if [ "$1" = "--release" ]; then
+  RELEASE_MODE=1
+  RELEASE_TAG="$2"
+fi
+
 # Ensure the script is run with sudo
 if [ "$EUID" -ne 0 ]; then
   echo "Please run this script with sudo: sudo ./install.sh"
@@ -39,9 +51,29 @@ apt-get update
 # would show as blank boxes. The UI's own icons are SVG and need none.
 apt-get install -y curl wget git nginx python3-venv mkcert libnss3-tools ustreamer fonts-noto-color-emoji
 
-# 2. Install Node.js (LTS version)
+# 1b. Release install: check out the release tag and fetch its
+# prebuilt frontend now, so the venv below gets that tag's requirements.
+if [ "$RELEASE_MODE" -eq 1 ]; then
+    echo -e "\n---> Fetching release ${RELEASE_TAG:-(latest)}..."
+    RELEASE_TAG=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" tag $RELEASE_TAG)
+    RELEASE_WORK=$(sudo -u "$REAL_USER" mktemp -d)
+    RELEASE_TARBALL=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" download "$RELEASE_TAG" "$RELEASE_WORK")
+    sudo -u "$REAL_USER" git -C "$PROJECT_DIR" fetch --force --tags origin
+    CURRENT_BRANCH=$(sudo -u "$REAL_USER" git -C "$PROJECT_DIR" symbolic-ref --short -q HEAD || true)
+    if [ -n "$CURRENT_BRANCH" ]; then
+        # "Build newest commit" returns to this branch later (scripts/update.sh).
+        sudo -u "$REAL_USER" mkdir -p "$PROJECT_DIR/backend/data"
+        echo "$CURRENT_BRANCH" | sudo -u "$REAL_USER" tee "$PROJECT_DIR/backend/data/update_branch" > /dev/null
+    fi
+    sudo -u "$REAL_USER" git -C "$PROJECT_DIR" checkout --detach "refs/tags/$RELEASE_TAG"
+    echo "Installing release $RELEASE_TAG"
+fi
+
+# 2. Install Node.js (LTS version) — not needed for a release install
 echo -e "\n---> Installing Node.js..."
-if ! command -v node >/dev/null 2>&1; then
+if [ "$RELEASE_MODE" -eq 1 ]; then
+    echo "Release install: prebuilt frontend, Node.js not needed."
+elif ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
 else
@@ -64,39 +96,33 @@ elif [ -f "requirements.txt" ]; then
     sudo -u "$REAL_USER" ./venv/bin/pip install -r requirements.txt
 fi
 
-# --- Temporary Backend Spin-up (both services, for OpenAPI codegen) ---
-# The frontend's typed API client is generated from BOTH services'
-# merged OpenAPI schema (frontend/scripts/generate-api.mjs +
-# merge-openapi.mjs), so both need to be briefly reachable here.
-echo -e "\n---> Temporarily starting both backends to generate API schemas..."
-cd "$PROJECT_DIR/backend/machine"
-sudo -u "$REAL_USER" bash -c "'$PROJECT_DIR/backend/venv/bin/uvicorn' main:app --host 127.0.0.1 --port 8000 > '$PROJECT_DIR/backend-machine.log' 2>&1" &
-MACHINE_BACKEND_PID=$!
+if [ "$RELEASE_MODE" -eq 1 ]; then
+    # 4. Release install: unpack the frontend CI built for this tag.
+    echo -e "\n---> Installing prebuilt frontend ($RELEASE_TAG)..."
+    sudo -u "$REAL_USER" rm -rf "$UI_DIST_DIR"
+    sudo -u "$REAL_USER" mkdir -p "$UI_DIST_DIR"
+    sudo -u "$REAL_USER" tar -xzf "$RELEASE_TARBALL" -C "$UI_DIST_DIR"
+    rm -rf "$RELEASE_WORK"
+else
+    # 4. Set up the Frontend and Build
+    #
+    # The typed API client is generated from BOTH services' merged
+    # OpenAPI schema. backend/dump_openapi.py reads each app's schema
+    # in-process (same as rebuild_ui.sh and CI) — no temporary servers.
+    echo -e "\n---> Installing Frontend dependencies and building production app..."
+    cd "$PROJECT_DIR/frontend"
+    sudo -u "$REAL_USER" npm install
 
-cd "$PROJECT_DIR/backend/system"
-sudo -u "$REAL_USER" bash -c "'$PROJECT_DIR/backend/venv/bin/uvicorn' main:app --host 127.0.0.1 --port 8001 > '$PROJECT_DIR/backend-system.log' 2>&1" &
-SYSTEM_BACKEND_PID=$!
+    echo "Generating API client..."
+    SCHEMA_DIR=$(sudo -u "$REAL_USER" mktemp -d)
+    sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/python" "$PROJECT_DIR/backend/dump_openapi.py" machine "$SCHEMA_DIR/machine.json"
+    sudo -u "$REAL_USER" "$PROJECT_DIR/backend/venv/bin/python" "$PROJECT_DIR/backend/dump_openapi.py" system "$SCHEMA_DIR/system.json"
+    sudo -u "$REAL_USER" env OPENAPI_FILE="$SCHEMA_DIR/machine.json" OPENAPI_FILE_SYSTEM="$SCHEMA_DIR/system.json" npm run generate-api
+    rm -rf "$SCHEMA_DIR"
 
-echo "Waiting for both backends to expose their OpenAPI schemas..."
-timeout 15 bash -c 'until curl -s http://127.0.0.1:8000/openapi.json > /dev/null; do sleep 1; done'
-timeout 15 bash -c 'until curl -s http://127.0.0.1:8001/openapi.json > /dev/null; do sleep 1; done'
-
-# 4. Set up the Frontend and Build
-echo -e "\n---> Installing Frontend dependencies and building production app..."
-cd "$PROJECT_DIR/frontend"
-sudo -u "$REAL_USER" npm install
-
-echo "Generating API client..."
-sudo -u "$REAL_USER" npm run generate-api
-
-echo "Building Vite application..."
-sudo -u "$REAL_USER" npm run build
-
-# --- CRITICAL: Clean up temporary backends ---
-echo "Tearing down temporary backends..."
-kill $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID >/dev/null 2>&1
-wait $MACHINE_BACKEND_PID $SYSTEM_BACKEND_PID >/dev/null 2>&1 || true
-# --------------------------------------------
+    echo "Building Vite application..."
+    sudo -u "$REAL_USER" npm run build
+fi
 
 # 5. Set up mkcert and the Root CA
 echo -e "\n---> Configuring local Certificate Authority..."

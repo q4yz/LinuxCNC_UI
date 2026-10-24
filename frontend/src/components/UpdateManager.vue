@@ -5,6 +5,7 @@ import { useConsoleStore } from '../stores/console'
 import { useSystemUpdateStore } from '../stores/systemUpdate'
 import { systemFacade } from '../facades/systemFacade'
 import { CommandResult } from '../entities/common/CommandResult'
+import type { UpdateMode } from '../entities/system'
 import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
 import { BaseButton, Icon } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
@@ -17,7 +18,9 @@ const updateStore = useSystemUpdateStore()
 const { isRunning: isUpdating } = storeToRefs(updateStore)
 
 const currentVersion = ref('loading...')
-const latestVersion = ref('unknown')
+// Tag of the latest GitHub release; '' when none exists or GitHub is unreachable.
+const latestRelease = ref('')
+const releaseAvailable = ref(false)
 
 // Machine lifecycle (system service :8001). "Start default machine"
 // launches the persisted default machine's config/machine.ini —
@@ -47,20 +50,33 @@ const fetchVersion = async () => {
     return
   }
   currentVersion.value = result.version || 'unknown'
-  latestVersion.value = result.latestVersion || 'unknown'
+  latestRelease.value = result.latestVersion
+  releaseAvailable.value = result.isUpdatable
   if (result.isUpdatable) {
-    consoleStore.info('Update available')
+    consoleStore.info(`Release ${result.latestVersion} available`)
   }
 }
 
-const updateSystem = async () => {
-  if (!confirm("Are you sure you want to update the system? The machine will stop and connection may be lost.")) {
-    return
-  }
+// Two update paths (scripts/update.sh --mode):
+//   commit  — git pull + frontend built on this board. For testing;
+//             vite needs more RAM than 1 GB boards (CB1) have.
+//   release — the latest GitHub release with the frontend CI prebuilt;
+//             nothing is compiled here.
+const UPDATE_CONFIRM: Record<UpdateMode, string> = {
+  commit:
+    'Build the newest commit on this machine?\n\nFor testing: the interface is compiled here, which needs ' +
+    'about 2 GB of RAM and several minutes. The machine stops and the connection may be lost.',
+  release:
+    'Install the latest release?\n\nThe prebuilt interface is downloaded — nothing is compiled here. ' +
+    'The machine stops and the connection may be lost.',
+}
+
+const updateSystem = async (mode: UpdateMode) => {
+  if (!confirm(UPDATE_CONFIRM[mode])) return
 
   // Overlay, progress, reload and the finish / failure notification
   // follow the status the update script writes — no fixed timer.
-  await updateStore.start()
+  await updateStore.start(mode)
 }
 
 async function refreshMachineStatus() {
@@ -133,13 +149,38 @@ onMounted(() => {
       <div class="flex flex-col">
         <span class="text-gray-400 text-xs">Current Version</span>
         <span class="font-mono text-lg font-bold text-gray-200">{{ currentVersion }}</span>
-        <span class="text-gray-400 text-xs">Latest</span>
-        <span class="font-mono text-sm text-gray-400">{{ latestVersion }}</span>
+        <span class="text-gray-400 text-xs">Latest Release</span>
+        <span class="flex items-center gap-2 font-mono text-sm text-gray-400" data-testid="latest-release">
+          {{ latestRelease || 'none found' }}
+          <span
+            v-if="releaseAvailable"
+            class="rounded border border-emerald-700 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-emerald-300"
+          >
+            new
+          </span>
+        </span>
       </div>
 
-      <BaseButton variant="secondary" :loading="isUpdating" @click="updateSystem">
-        <Icon name="refresh" class="mr-2" /> Update System
-      </BaseButton>
+      <div class="flex flex-wrap justify-end gap-2">
+        <BaseButton
+          variant="secondary"
+          :disabled="isUpdating"
+          title="git pull + build the interface on this machine (testing; needs ~2 GB RAM)"
+          data-testid="update-commit"
+          @click="updateSystem('commit')"
+        >
+          <Icon name="refresh" class="mr-2" /> Build newest commit
+        </BaseButton>
+        <BaseButton
+          :variant="releaseAvailable ? 'success' : 'secondary'"
+          :disabled="isUpdating || !latestRelease"
+          :title="latestRelease ? `Download release ${latestRelease} (prebuilt, nothing compiled here)` : 'No release found on GitHub'"
+          data-testid="update-release"
+          @click="updateSystem('release')"
+        >
+          <Icon name="download" class="mr-2" /> Install latest release
+        </BaseButton>
+      </div>
     </div>
 
     <!--

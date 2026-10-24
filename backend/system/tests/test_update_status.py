@@ -31,7 +31,7 @@ def service(tmp_path, monkeypatch):
     script.write_text("#!/bin/bash\n", encoding="utf-8")
     svc = UpdateService(status_file=tmp_path / "update_status.json", script=script, log_file=tmp_path / "update.log")
     launched: list[dict[str, str]] = []
-    monkeypatch.setattr(svc, "_launch", lambda env: launched.append(env))
+    monkeypatch.setattr(svc, "_launch", lambda env, mode: launched.append({**env, "launched_mode": mode}))
     svc.launched = launched
     return svc
 
@@ -83,6 +83,20 @@ def test_start_records_the_run_before_launching(service):
     [env] = service.launched
     assert env["UPDATE_RUN_ID"] == run_id
     assert env["UPDATE_STATUS_FILE"] == str(service._status_file)
+
+
+def test_start_defaults_to_a_commit_update(service):
+    service.start()
+    [env] = service.launched
+    assert env["UPDATE_MODE"] == env["launched_mode"] == "commit"
+    assert service.status().mode == "commit"
+
+
+def test_release_mode_reaches_the_script_and_the_status(service):
+    service.start("release")
+    [env] = service.launched
+    assert env["UPDATE_MODE"] == env["launched_mode"] == "release"
+    assert service.status().mode == "release"
 
 
 def test_second_start_while_running_is_a_conflict(service):
@@ -137,3 +151,15 @@ def test_endpoints_start_and_report(client):
     assert status["state"] == "running"
 
     assert client.post("/api/v1/system/update").status_code == 409
+
+
+def test_endpoint_passes_the_release_mode(client, service):
+    resp = client.post("/api/v1/system/update", json={"mode": "release"})
+    assert resp.status_code == 200
+    assert service.launched[-1]["launched_mode"] == "release"
+    assert client.get("/api/v1/system/update/status").json()["mode"] == "release"
+
+
+def test_endpoint_rejects_an_unknown_mode(client, service):
+    assert client.post("/api/v1/system/update", json={"mode": "nightly"}).status_code == 422
+    assert service.launched == []

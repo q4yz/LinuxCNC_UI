@@ -1,7 +1,15 @@
 #!/bin/bash
 # Make sure to run: chmod +x scripts/update.sh
 #
-# System update: git pull, dependencies, UI rebuild, service restart.
+# System update. Two modes:
+#
+#   update.sh --mode commit               newest commit of the branch, frontend built
+#                                         on the board (testing; needs RAM for vite)
+#   update.sh --mode release [--tag vX]   a GitHub release (latest if no --tag): code
+#                                         checked out at the tag, the frontend CI built
+#                                         for that tag downloaded — no npm on the board
+#                                         (1 GB boards like the CB1)
+#
 # Launched detached by the system service (POST /api/v1/system/update);
 # can also be run by hand. Every step is recorded through
 # scripts/update_status.py so the UI's update screen can follow it and
@@ -21,13 +29,32 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
-echo "Starting update process... ($(date -Is))"
+MODE="commit"
+TAG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --mode) MODE="$2"; shift 2 ;;
+        --tag)  TAG="$2"; shift 2 ;;
+        *) echo "Error: unknown argument '$1' (usage: update.sh [--mode commit|release] [--tag vX.Y.Z])" >&2; exit 2 ;;
+    esac
+done
+if [ "$MODE" != "commit" ] && [ "$MODE" != "release" ]; then
+    echo "Error: --mode must be 'commit' or 'release', got '$MODE'" >&2
+    exit 2
+fi
+export UPDATE_MODE="$MODE"
+
+echo "Starting $MODE update process... ($(date -Is))"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
 
 STATUS_SCRIPT="$PROJECT_DIR/scripts/update_status.py"
+# Branch to return to when a commit update follows a release update
+# (a release checks out a tag, which leaves no branch to pull).
+BRANCH_FILE="$PROJECT_DIR/backend/data/update_branch"
 PHASE="starting"
 DONE=0
+WORK_DIR=""
 
 status() {
     # status <state> <phase> [message] — never let a status write abort the update
@@ -42,6 +69,7 @@ phase() {
 
 on_exit() {
     local code=$?
+    [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"
     if [ "$DONE" -ne 1 ]; then
         echo "Update FAILED during '$PHASE' (exit code $code)" >&2
         status failed "$PHASE" "Update failed during '$PHASE' (exit code $code)"
@@ -75,8 +103,43 @@ if [ -n "$ROOT_OWNED" ]; then
 fi
 
 phase "pull"
-# Just 'git pull' so it updates whichever branch is currently checked out (e.g., dev or main)
-git pull
+if [ "$MODE" = "release" ]; then
+    # Download first: a missing release / asset / network must fail
+    # before the code changes, never leave new code with an old UI.
+    TAG="$(python3 scripts/fetch_release.py tag $TAG)"
+    echo "Release: $TAG"
+    WORK_DIR="$(mktemp -d)"
+    TARBALL="$(python3 scripts/fetch_release.py download "$TAG" "$WORK_DIR")"
+
+    CURRENT_BRANCH="$(git symbolic-ref --short -q HEAD || true)"
+    if [ -n "$CURRENT_BRANCH" ]; then
+        mkdir -p "$(dirname "$BRANCH_FILE")"
+        echo "$CURRENT_BRANCH" > "$BRANCH_FILE"
+    fi
+    git fetch --force --tags origin
+    git checkout --detach "refs/tags/$TAG"
+
+    # The dist must belong to exactly this code: the typed API client
+    # inside it was generated from this tag's backend.
+    mkdir "$WORK_DIR/dist"
+    tar -xzf "$TARBALL" -C "$WORK_DIR/dist"
+    DIST_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$WORK_DIR/dist/release.json")"
+    TAG_COMMIT="$(git rev-parse HEAD)"
+    if [ "$DIST_COMMIT" != "$TAG_COMMIT" ]; then
+        echo "Error: release dist was built from $DIST_COMMIT, but $TAG is $TAG_COMMIT" >&2
+        exit 1
+    fi
+else
+    # A previous release update left a detached tag checkout — go back
+    # to the branch it came from before pulling.
+    if ! git symbolic-ref -q HEAD > /dev/null; then
+        BRANCH="$(cat "$BRANCH_FILE" 2>/dev/null || echo main)"
+        echo "Detached HEAD (release install) — switching back to branch $BRANCH"
+        git checkout "$BRANCH"
+    fi
+    # Just 'git pull' so it updates whichever branch is currently checked out (e.g., dev or main)
+    git pull
+fi
 
 phase "dependencies"
 # One venv shared by both services (backend/machine + backend/system)
@@ -107,10 +170,20 @@ echo "Cleaning up orphaned backend processes..."
 pkill -f "uvicorn" || true
 pkill -f "python.*backend" || true
 
-phase "rebuilding UI"
-# API client from the apps' schemas (no ports opened), frontend build,
-# system service restart, nginx reload.
-bash "$PROJECT_DIR/rebuild_ui.sh"
+if [ "$MODE" = "release" ]; then
+    phase "installing UI"
+    # Swap in the downloaded dist — no npm / vite on the board.
+    rm -rf frontend/dist.old
+    [ -d frontend/dist ] && mv frontend/dist frontend/dist.old
+    mv "$WORK_DIR/dist" frontend/dist
+    rm -rf frontend/dist.old
+    bash "$PROJECT_DIR/scripts/activate_ui.sh"
+else
+    phase "rebuilding UI"
+    # API client from the apps' schemas (no ports opened), frontend build,
+    # system service restart, nginx reload.
+    bash "$PROJECT_DIR/rebuild_ui.sh"
+fi
 
 phase "waiting for services"
 # "done" only once the restarted system service really answers — it is
@@ -131,7 +204,7 @@ if [ -f "$NGINX_SITE" ] && ! grep -q "linuxcnc-ui-routes.conf" "$NGINX_SITE"; th
     NGINX_FIX="sudo bash $PROJECT_DIR/scripts/configure_nginx.sh"
     echo "WARNING: $NGINX_SITE does not include deploy/nginx/linuxcnc-ui-routes.conf." >&2
     echo "WARNING: new API routes will 404 until you run once: $NGINX_FIX" >&2
-    DONE_MESSAGE="Update complete — but the nginx routing is outdated (new API routes return 404). Run once on the machine: $NGINX_FIX"
+    DONE_MESSAGE="$DONE_MESSAGE — but the nginx routing is outdated (new API routes return 404). Run once on the machine: $NGINX_FIX"
 fi
 
 # Packages install.sh added since this machine was installed need root

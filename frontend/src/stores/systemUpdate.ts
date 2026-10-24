@@ -21,7 +21,7 @@ import { defineStore } from "pinia";
 import { computed, ref, shallowRef } from "vue";
 
 import type { CommandResult } from "../entities/common/CommandResult";
-import type { UpdateStatus } from "../entities/system";
+import type { UpdateMode as UpdateKind, UpdateStatus } from "../entities/system";
 import { systemFacade } from "../facades/systemFacade";
 import { useConsoleStore } from "./console";
 
@@ -171,9 +171,9 @@ export const useSystemUpdateStore = defineStore("systemUpdate", () => {
     schedule();
   }
 
-  /** Start an update and follow it. */
-  async function start(): Promise<CommandResult> {
-    const result = await systemFacade.triggerUpdate();
+  /** Start an update (newest commit or latest release) and follow it. */
+  async function start(updateMode: UpdateKind = "commit"): Promise<CommandResult> {
+    const result = await systemFacade.triggerUpdate(updateMode);
     if (!result.ok) {
       consoleStore.error(`Update failed to start: ${result.failureReason}`, { popup: true, title: "System update" });
       return result;

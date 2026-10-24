@@ -13,9 +13,6 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-UI_DIST_DIR="$PROJECT_DIR/frontend/dist"
-# Update this variable with the exact name of your systemd service
-BACKEND_SYSTEM_SERVICE="linuxcnc-ui-system.service"
 
 echo "Rebuilding UI in: $PROJECT_DIR"
 
@@ -46,24 +43,8 @@ OPENAPI_FILE="$SCHEMA_DIR/machine.json" OPENAPI_FILE_SYSTEM="$SCHEMA_DIR/system.
 echo "Compiling Vite application..."
 npm run build
 
-# --- 3. Restore the Root CA for the popup ---
-echo "Restoring Root CA to the dist directory..."
-CA_ROOT="$HOME/.local/share/mkcert/rootCA.pem"
-
-if [ -f "$CA_ROOT" ]; then
-    cp "$CA_ROOT" "$UI_DIST_DIR/cnc-root.crt"
-    chmod 644 "$UI_DIST_DIR/cnc-root.crt"
-    echo "Root CA restored successfully."
-else
-    echo "Warning: Root CA not found at $CA_ROOT. The download button may not work."
-fi
-
-# --- 4. Restart Backend System Service ---
-echo "Restarting the backend system service..."
-sudo /bin/systemctl restart "$BACKEND_SYSTEM_SERVICE"
-
-# --- 5. Reload Nginx ---
-echo "Reloading Nginx..."
-sudo /bin/systemctl reload nginx
+# --- 3. Put it live: Root CA, service restart, nginx reload ---
+# Shared with the release update (prebuilt dist), see scripts/activate_ui.sh.
+bash "$PROJECT_DIR/scripts/activate_ui.sh"
 
 echo "Build and reload complete! Nginx is now serving the updated frontend and proxying to the fresh backend."

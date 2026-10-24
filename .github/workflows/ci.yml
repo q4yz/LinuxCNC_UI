@@ -1,9 +1,15 @@
 name: CI Pipeline
 
-# Run this workflow on pushes and pull requests to the main branch
+# Pushes / PRs to main + ai_dev run the checks. A version tag (v1.2.0)
+# additionally publishes a GitHub Release with the prebuilt frontend —
+# what the "Install latest release" update and `install.sh --release`
+# download, so 1 GB boards (BTT CB1) never run `vite build` themselves.
+#
+#   git tag v1.2.0 && git push origin v1.2.0
 on:
   push:
     branches: [ "main" , "ai_dev"]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main", "ai_dev" ]
 
@@ -17,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 1. Set up Node
       # Node 22.6+ is required for --experimental-strip-types, which
@@ -25,15 +31,15 @@ jobs:
       # frontend/package.json's "test" script). Node 20 doesn't
       # recognize the flag at all and exits with "bad option".
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: ./frontend/package-lock.json
 
-      # 2. Set up Python (Needed to boot the backends)
+      # 2. Set up Python (the API client is generated from the backends' schemas)
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
           cache: 'pip'
@@ -50,23 +56,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-system.txt -r requirements-machine.txt
 
-      # 4. Boot backends in the background and generate API
+      # 4. Generate the API client from both apps' schemas — read
+      # in-process by backend/dump_openapi.py, the same way the update
+      # (rebuild_ui.sh) does it. No servers, no `sleep` race.
       - name: Generate API Client
         run: |
-          # Start Machine Backend
-          cd backend/machine
-          uvicorn main:app --port 8000 &
-          
-          # Start System Backend
-          cd ../system
-          uvicorn main:app --port 8001 &
-          
-          # Wait for them to be ready
-          sleep 5 
-          
-          # Generate the client
-          cd ../../frontend
-          npm run generate-api
+          python backend/dump_openapi.py machine "$RUNNER_TEMP/machine.json"
+          python backend/dump_openapi.py system "$RUNNER_TEMP/system.json"
+          cd frontend
+          OPENAPI_FILE="$RUNNER_TEMP/machine.json" OPENAPI_FILE_SYSTEM="$RUNNER_TEMP/system.json" npm run generate-api
 
       # 5. Finally, build
       - name: Vue Type Check
@@ -81,6 +79,24 @@ jobs:
         working-directory: ./frontend
         run: npm run build
 
+      # 6. Package the dist. release.json ties it to its commit: the
+      # release update refuses a dist whose commit is not the tag's
+      # (the API client inside was generated from that backend).
+      - name: Package Frontend
+        run: |
+          printf '{"tag": "%s", "commit": "%s"}\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" > frontend/dist/release.json
+          tar -czf linuxcnc-ui-dist.tar.gz -C frontend/dist .
+          sha256sum linuxcnc-ui-dist.tar.gz > linuxcnc-ui-dist.tar.gz.sha256
+
+      - name: Upload Frontend Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: linuxcnc-ui-dist
+          path: |
+            linuxcnc-ui-dist.tar.gz
+            linuxcnc-ui-dist.tar.gz.sha256
+          retention-days: 14
+
 
   # ----------------------------------------
   # BACKEND JOB (FastAPI, Python)
@@ -94,10 +110,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13' # Matching your traceback
           cache: 'pip'
@@ -108,7 +124,7 @@ jobs:
           python -m pip install --upgrade pip
           # Install both backend dependencies
           pip install -r requirements-system.txt -r requirements-machine.txt
-          
+
           # Install testing and linting tools
           pip install pytest ruff mypy
 
@@ -131,3 +147,36 @@ jobs:
       - name: Run Common Tests
         working-directory: ./backend/common
         run: pytest tests/
+
+
+  # ----------------------------------------
+  # RELEASE JOB (version tags only)
+  # ----------------------------------------
+  release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ frontend, backend ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Download Frontend Package
+        uses: actions/download-artifact@v4
+        with:
+          name: linuxcnc-ui-dist
+
+      # A tag with a suffix (v1.3.0-rc1) becomes a prerelease, which the
+      # "latest release" lookup skips — boards only get it with --tag.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" \
+            linuxcnc-ui-dist.tar.gz linuxcnc-ui-dist.tar.gz.sha256 \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag $PRERELEASE

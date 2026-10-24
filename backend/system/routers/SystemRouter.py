@@ -1,12 +1,12 @@
 import logging
-import subprocess
-from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from models.UpdateModels import SystemUpdateResponse, UpdateStatusResponse
+from models.UpdateModels import SystemUpdateRequest, SystemUpdateResponse, UpdateStatusResponse
 from services.UpdateService import UpdateLaunchError, get_update_service
+from services.VersionService import get_version_service
 
 logger = logging.getLogger("backend.routers.system")
 
@@ -16,31 +16,9 @@ router = APIRouter(prefix="/api/v1/system", tags=["System"])
 class VersionInfoResponse(BaseModel):
     """Response model for GET /system/version."""
     version: str = Field(..., description="Short git commit hash identifying the running build")
-    current_version: str = Field(..., description="Human-readable current release tag")
-    latest_version: str = Field(..., description="Human-readable latest known release tag")
-    update_available: bool = Field(..., description="Whether a newer release is known to be available")
-
-
-def _project_root() -> Path:
-    """Return the repository root (three levels above this file: routers/ -> system/ -> backend/ -> repo)."""
-    return Path(__file__).resolve().parents[3]
-
-
-def _current_commit_hash() -> str:
-    """Return the short git commit hash for the repo, or 'unknown' if it cannot be determined."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_project_root()),
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
-        return result.stdout.strip() or "unknown"
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.warning("Unable to determine git commit hash: %s", exc)
-        return "unknown"
+    current_version: str = Field(..., description="Running version (git describe: release tag, or tag-N-gHASH on a commit build)")
+    latest_version: Optional[str] = Field(default=None, description="Tag of the latest GitHub release; null when none exists or GitHub is unreachable")
+    update_available: bool = Field(..., description="Whether the latest release is newer than the release this build is on / based on")
 
 
 @router.get(
@@ -51,11 +29,13 @@ def _current_commit_hash() -> str:
     response_model=VersionInfoResponse,
 )
 def get_version() -> VersionInfoResponse:
+    versions = get_version_service()
+    latest = versions.latest_release()
     return VersionInfoResponse(
-        version=_current_commit_hash(),
-        current_version="v1.0.0",
-        latest_version="v1.0.1",
-        update_available=True,
+        version=versions.commit(),
+        current_version=versions.describe(),
+        latest_version=latest,
+        update_available=versions.release_available(latest),
     )
 
 
@@ -63,18 +43,21 @@ def get_version() -> VersionInfoResponse:
     "/update",
     summary="Trigger System Update",
     description=(
-        "Launch scripts/update.sh (git pull, dependencies, UI rebuild, service restart) "
-        "as a detached process so it survives the service restart it performs. "
+        "Launch scripts/update.sh as a detached process so it survives the service restart "
+        "it performs. mode=commit: git pull + UI build on the board (testing). "
+        "mode=release: check out the latest GitHub release and install its prebuilt UI "
+        "(no npm on the board). "
         "Follow it with GET /update/status and the returned run_id. 409 while an update runs."
     ),
     operation_id="triggerSystemUpdate",
     response_model=SystemUpdateResponse,
     responses={409: {"description": "An update is already running."}},
 )
-def trigger_update() -> SystemUpdateResponse:
-    logger.warning("System update initiated via API.")
+def trigger_update(request: Optional[SystemUpdateRequest] = None) -> SystemUpdateResponse:
+    mode = request.mode if request else "commit"
+    logger.warning("System update (%s) initiated via API.", mode)
     try:
-        run_id = get_update_service().start()
+        run_id = get_update_service().start(mode)
     except UpdateLaunchError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to launch update script: {exc}") from exc
     return SystemUpdateResponse(status="update initiated; system is restarting", run_id=run_id)

@@ -45,6 +45,13 @@ rules in [`context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md).
   (via `scripts/update_status.py`); UI follows `GET /api/v1/system/update/status`
   (`stores/systemUpdate.ts`, `UpdateOverlay.vue`). API client is generated
   from `backend/dump_openapi.py` — **no temporary backends on :8000/:8001**.
+  Two modes (`update.sh --mode commit|release`, `POST /system/update {mode}`):
+  *commit* = git pull + build on the board (testing); *release* = check out the
+  latest GitHub release tag + download the dist CI built for it
+  (`scripts/fetch_release.py`, sha256 + `release.json` commit check) — no npm
+  on 1 GB boards (CB1). CI's `release` job publishes the dist on `v*` tags;
+  `install.sh --release` uses the same path. `GET /system/version` reports the
+  latest release (`services/VersionService.py`, GitHub API, cached).
 - One file record everywhere — `FileEntryResponse` / frontend `FileEntry`;
   every file selector uses `ui/FileDropZone.vue` (drag & drop, multi-file).
 - LinuxCNC session lifecycle — `MachineLifecycleService`: one lock for

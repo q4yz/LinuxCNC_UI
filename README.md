@@ -40,7 +40,33 @@ A web-based operator interface for LinuxCNC. The backend wraps the LinuxCNC Pyth
 
 ## Install
 
-Just execute `install.sh` on the LinuxCNC machine.
+Just execute `install.sh` on the LinuxCNC machine:
+
+```bash
+sudo ./install.sh                  # builds the checked-out commit on the board (needs ~2 GB RAM)
+sudo ./install.sh --release        # latest GitHub release, prebuilt UI — for 1 GB boards (BTT CB1)
+sudo ./install.sh --release v1.2.0 # a specific release
+```
+
+## Update
+
+The System Update card has two buttons:
+
+- **Build newest commit** — `git pull` on the current branch and build the UI on the board. For testing; `vite build` needs more RAM than a 1 GB board has.
+- **Install latest release** — check out the latest release tag and download the UI CI prebuilt for it. Nothing is compiled on the board.
+
+By hand: `scripts/update.sh --mode commit` or `scripts/update.sh --mode release [--tag v1.2.0]`, always as the normal user, never with `sudo`.
+
+## Releasing
+
+Pushing a version tag runs the full CI. When it passes, CI publishes a GitHub Release with `linuxcnc-ui-dist.tar.gz` (the built `frontend/dist`) and its `.sha256` attached:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+A tag with a suffix (`v1.3.0-rc1`) becomes a prerelease. "Install latest release" skips prereleases; you can still install one with `--tag`.
 
 Starting: if the machine is configured correctly, simply call
 
