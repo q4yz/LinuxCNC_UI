@@ -141,8 +141,9 @@ def test_compiler_relevant_fields_are_emitted() -> None:
     the compiler-facing ones land under the names the component
     templates in ``.agent/component/`` expect.
     """
-    # printer.cfg: a tracked profile (klipper.cfg is gitignored, absent in CI)
-    graph = MachineConfigParser().parse(PROFILE_DIR / "printer.cfg")
+    # A test-only fixture (heaters, PID, TMC UART drivers): user profiles
+    # in machine_config/profiles may change or be absent in CI.
+    graph = MachineConfigParser().parse(Path(__file__).resolve().parent / "fixtures" / "profiles" / "full_klipper.cfg")
     payload = json.loads(json.dumps(build_hardware_json(graph, "test")))
 
     assert payload["version"] == "2.2"

@@ -403,6 +403,10 @@ def _profiles() -> list[Path]:
     return sorted((REPO_ROOT / "machine_config" / "profiles").glob("*.cfg"))
 
 
+#: Test-only profiles: not in machine_config/profiles, so the UI never lists them.
+FIXTURE_PROFILES = Path(__file__).resolve().parent / "fixtures" / "profiles"
+
+
 @pytest.mark.parametrize("profile", _profiles(), ids=lambda p: p.name)
 def test_profiles_with_an_mcu_pass_the_gate(profile: Path):
     """Every profile that declares a board must compile end to end."""
@@ -417,16 +421,14 @@ def test_profiles_with_an_mcu_pass_the_gate(profile: Path):
 def test_a_profile_without_an_mcu_is_rejected():
     """No board means nowhere to route pins — the gate must say so.
 
-    ``motion_only_no_mcu.cfg`` ships without an ``[mcu]`` section (a
-    dedicated fixture — the profile it used to piggyback off of,
-    ``printer.cfg``, is now someone's real hardware profile and always
-    declares a board). It is a valid Klipper-ish profile and valid
-    hardware.json, but not a compilable machine, and the failure has
-    to name that rather than emitting HAL full of dangling signals.
+    ``tests/fixtures/profiles/motion_only_no_mcu.cfg`` has no ``[mcu]``
+    section. It lives with the tests, not in ``machine_config/profiles``,
+    so it never shows up as a profile in the UI. It is a valid
+    Klipper-ish profile and valid hardware.json, but not a compilable
+    machine, and the failure has to name that rather than emitting HAL
+    full of dangling signals.
     """
-    without_mcu = [p for p in _profiles() if not _generated(p).get("mcus")]
-    assert without_mcu, "expected at least one MCU-less profile in the repo"
-
-    for profile in without_mcu:
-        codes = {d.code for d in validate_machine(_generated(profile))}
-        assert "E_NO_MCU" in codes, profile.name
+    payload = _generated(FIXTURE_PROFILES / "motion_only_no_mcu.cfg")
+    assert not payload.get("mcus")
+    codes = {d.code for d in validate_machine(payload)}
+    assert "E_NO_MCU" in codes
