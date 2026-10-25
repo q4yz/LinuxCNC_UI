@@ -207,6 +207,18 @@ if [ -f "$NGINX_SITE" ] && ! grep -q "linuxcnc-ui-routes.conf" "$NGINX_SITE"; th
     DONE_MESSAGE="$DONE_MESSAGE — but the nginx routing is outdated (new API routes return 404). Run once on the machine: $NGINX_FIX"
 fi
 
+# HAL components (Remora drivers etc.) come from the Remora-m8p fork's
+# main branch. If it has commits newer than the installed build — or
+# none was ever recorded — reinstalling needs root once. A failed lookup
+# (offline) is silent: it must never fail the update.
+HAL_STATE="/var/lib/linuxcnc-ui/hal-components.commit"
+HAL_REMOTE="$(timeout 15 git ls-remote "${REMORA_REPO:-https://github.com/q4yz/Remora-m8p.git}" "refs/heads/${REMORA_REF:-main}" 2>/dev/null | cut -f1 || true)"
+if [ -n "$HAL_REMOTE" ] && [ "$HAL_REMOTE" != "$(cat "$HAL_STATE" 2>/dev/null)" ]; then
+    HAL_FIX="sudo bash $PROJECT_DIR/scripts/install_hal_components.sh"
+    echo "NOTE: newer HAL components (Remora-m8p ${HAL_REMOTE:0:12}) are available. Run once: $HAL_FIX" >&2
+    DONE_MESSAGE="$DONE_MESSAGE — note: newer HAL components available, run once on the machine: $HAL_FIX"
+fi
+
 # Packages install.sh added since this machine was installed need root
 # once (an update has no passwordless apt) — say so instead of failing.
 if command -v dpkg >/dev/null 2>&1 && ! dpkg -s fonts-noto-color-emoji >/dev/null 2>&1; then

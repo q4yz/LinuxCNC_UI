@@ -69,6 +69,18 @@ if [ "$RELEASE_MODE" -eq 1 ]; then
     echo "Installing release $RELEASE_TAG"
 fi
 
+# 1c. LinuxCNC HAL components (remora-spi, remora_lpc, PIDcontroller,
+# rpi-monitor, ...) — built from the Remora-m8p fork
+# (github.com/q4yz/Remora-m8p, LinuxCNC/Components, main branch).
+# machine.hal loadrt's them; without the .so
+# LinuxCNC stops at "dlopen: .../remora-spi.so: cannot open shared object
+# file". Not fatal here — the UI installs fine without them, and the
+# script can be re-run by hand: sudo bash scripts/install_hal_components.sh
+echo -e "\n---> Compiling and installing LinuxCNC HAL components..."
+if ! bash "$PROJECT_DIR/scripts/install_hal_components.sh"; then
+    echo "WARNING: not every HAL component installed (see above). Re-run: sudo bash $PROJECT_DIR/scripts/install_hal_components.sh" >&2
+fi
+
 # 2. Install Node.js (LTS version) — not needed for a release install
 echo -e "\n---> Installing Node.js..."
 if [ "$RELEASE_MODE" -eq 1 ]; then
