@@ -114,3 +114,12 @@ def test_download_rejects_a_corrupt_tarball(fetch_release, monkeypatch, tmp_path
     with pytest.raises(SystemExit, match="Checksum mismatch"):
         fetch_release.download("v1.2.0", tmp_path)
     assert not (tmp_path / fetch_release.DIST_ASSET).exists()
+
+
+def test_latest_release_is_fetched_right_after_boot(monkeypatch):
+    # monotonic() counts from boot: on a fresh CI runner / board it is
+    # below the cache TTL — the first call must still fetch.
+    monkeypatch.setattr("services.VersionService.time.monotonic", lambda: 5.0)
+    versions = _StubVersions(latest="v1.0.0")
+    assert versions.latest_release() == "v1.0.0"
+    assert versions.fetches == 1

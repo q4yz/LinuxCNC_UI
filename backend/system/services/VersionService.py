@@ -40,7 +40,9 @@ class VersionService:
         self._root = project_root
         self._lock = threading.Lock()
         self._latest: Optional[str] = None
-        self._checked_at = 0.0
+        # None = never checked. Not 0.0: monotonic() counts from boot, so
+        # on a freshly booted machine it can still be below the TTL.
+        self._checked_at: Optional[float] = None
         self._ttl = CACHE_TTL_S
 
     # -- running version -------------------------------------------------- #
@@ -90,7 +92,7 @@ class VersionService:
 
     def latest_release(self) -> Optional[str]:
         with self._lock:
-            if time.monotonic() - self._checked_at > self._ttl:
+            if self._checked_at is None or time.monotonic() - self._checked_at > self._ttl:
                 self._latest = self._fetch_latest()
                 self._checked_at = time.monotonic()
                 self._ttl = CACHE_TTL_S if self._latest else FAILED_RETRY_S

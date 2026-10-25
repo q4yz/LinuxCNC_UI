@@ -126,7 +126,13 @@ class FileService:
         so the contract is byte-for-byte identical for the existing
         call sites. The router still gets a :class:`ValueError` it
         can translate into HTTP 400.
+
+        Backslashes are rejected on every OS: Windows treats them as a
+        separator (``..\\..`` would escape), Linux as a filename
+        character — the same request must not mean different things.
         """
+        if any("\\" in part for part in parts):
+            raise ValueError(f"Backslash in path {'/'.join(parts)!r} is not allowed")
         candidate = self.root.joinpath(*parts).resolve()
         root_resolved = self.root.resolve()
         try:
