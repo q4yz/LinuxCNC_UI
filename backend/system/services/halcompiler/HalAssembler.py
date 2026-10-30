@@ -123,13 +123,15 @@ class HalAssembler:
         pulses, so there is nothing to route). Not "the first declared
         MCU": a machine can carry an unrelated class-C MCU (a VFD
         spindle) alongside its motion controller, and declaration order
-        says nothing about which one carries joints.
+        says nothing about which one carries joints. A CAN node's joint
+        is its hub's (``remora.joint.N`` through the hub).
         """
         for joint in self._joints_by_number.values():
             step_pin = joint.get("step_pin")
             if not step_pin:
                 continue
-            mcu = self._mcus_by_id.get(PinStringMapper.from_string(step_pin).mcu_id)
+            mcu_id = self._routing_mcu_id(PinStringMapper.from_string(step_pin).mcu_id)
+            mcu = self._mcus_by_id.get(mcu_id)
             if mcu is None:
                 continue
             resolved = CapabilityClass.for_connection(mcu.get("connection"))
@@ -138,7 +140,8 @@ class HalAssembler:
         return CapabilityClass.STEP_DIR
 
     def _motion_mcu_ids(self) -> set[str]:
-        """Every MCU that owns at least one joint's ``step_pin``.
+        """Every MCU that owns at least one joint's ``step_pin`` — a CAN
+        node's hub for a node joint.
 
         Used by ``_route`` to force that MCU's ``base_fragment()`` to
         run even with zero routed :class:`PinRequest`\\ s — see the
@@ -148,7 +151,7 @@ class HalAssembler:
         for joint in self._joints_by_number.values():
             step_pin = joint.get("step_pin")
             if step_pin:
-                ids.add(PinStringMapper.from_string(step_pin).mcu_id)
+                ids.add(self._routing_mcu_id(PinStringMapper.from_string(step_pin).mcu_id))
         return ids
 
     # -- pass 1: components ---------------------------------------------- #

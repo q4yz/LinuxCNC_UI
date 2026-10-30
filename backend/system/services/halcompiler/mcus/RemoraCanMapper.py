@@ -1,8 +1,9 @@
 """Remora CAN expansion: nodes behind a ``remora-spi`` hub.
 
 Remora-m8p ``CAN_PROTOCOL.md``: LinuxCNC only sees the hub. A node's
-modules live in the hub's ``config.txt`` (``"CAN" -> "Nodes"``), and
-their ``Data Bit``\\ s are the hub's LinuxCNC bits (``remora.input.NN``
+modules live in the hub's ``config.txt`` (``"CAN" -> "Nodes"``), their
+``Joint Number``\\ s are the hub's ``remora.joint.N``, and their
+``Data Bit``\\ s are the hub's LinuxCNC bits (``remora.input.NN``
 / ``remora.output.NN``) — so a node's pin requests are routed through
 the hub's :class:`RemoraRouterMapper` (one shared bit-space) and only
 the finished modules move into the node's entry here.
@@ -73,8 +74,17 @@ class RemoraCanMapper:
         the ``"Modifier"`` key there — and an input gets ``"Lost State":
         "Low"``, what LinuxCNC reads while the node is lost: always Low,
         like every output's Safe State (the machine must be safe at Low).
+        A ``"Stepgen"`` keeps its joint number (``remora.joint.N`` on the
+        hub) and a ``"TMC2209"`` its keys, but neither has a ``"Name"`` /
+        ``"Thread"``: the node runs them in its own base thread; a
+        Stepgen's name becomes its comment.
         """
         out = dict(module)
+        if out.get("Type") == "Stepgen":
+            out["Comment"] = str(out.pop("Name", None) or out.get("Comment", ""))
+        if out.get("Type") in ("Stepgen", "TMC2209"):
+            out.pop("Name", None)
+            out.pop("Thread", None)
         pin = str(out.get("Pin", ""))
         if pin.startswith("^"):
             out["Pin"] = pin[1:]

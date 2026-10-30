@@ -115,6 +115,78 @@ def test_a_node_output_is_always_safe_low(tmp_path):
     assert "Lost State" not in out
 
 
+NODE_JOINT = (
+    "\n[stepper_y]\nstep_pin: toolhead:PD0\ndir_pin: toolhead:PD1\nenable_pin: !toolhead:PD2\n"
+    "position_endstop: 0\nposition_max: 200\n"
+)
+
+
+def test_a_node_joint_is_a_stepgen_in_the_node_entry_and_a_hub_joint_in_hal(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_JOINT)
+    assert not [d for d in validate_machine(payload) if d.is_error]
+
+    fragment, config = _assemble(payload)
+    [stepgen] = [m for m in config["CAN"]["Nodes"][0]["Modules"] if m["Type"] == "Stepgen"]
+    assert stepgen == {
+        "Type": "Stepgen", "Comment": "stepper_y", "Joint Number": 1,
+        "Step Pin": "PD_0", "Direction Pin": "PD_1", "Enable Pin": "PD_2",
+    }
+    # Not a Stepgen of the hub itself — only stepper_x is.
+    assert [m["Joint Number"] for m in config["Modules"] if m.get("Type") == "Stepgen"] == [0]
+    # LinuxCNC sees no difference: the joint is the hub's remora.joint.1.
+    assert "net j1pos-cmd joint.1.motor-pos-cmd => remora.joint.1.pos-cmd" in fragment.nets
+
+
+def test_a_machine_whose_first_joint_is_on_a_node_still_compiles_as_remora(tmp_path):
+    cfg = tmp_path / "machine.cfg"
+    cfg.write_text(
+        "[mcu]\nconnection: remora-spi\n\n[mcu toolhead]\nconnection: remora-can\n"
+        "canbus_uuid: 0e0d81e4210c\n" + NODE_JOINT.replace("stepper_y", "stepper_x") + "\n[estop]\n",
+        encoding="utf-8",
+    )
+    payload = json.loads(json.dumps(build_hardware_json(MachineConfigParser().parse(cfg), "can")))
+    text = compile_machine_hal(payload)
+    assert "loadrt remora-spi" in text
+    assert "remora.joint.0.pos-cmd" in text
+
+
+def test_a_node_runs_at_most_two_joints(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_JOINT)
+    node_joint = next(j for j in payload["joints"] if j["id"] == "stepper_y")
+    for n, name in ((2, "stepper_z"), (3, "stepper_a")):
+        payload["joints"].append(dict(node_joint, id=name, joint_number=n))
+    codes = [d for d in validate_machine(payload) if d.code == "E_CAN_NODE_JOINT"]
+    assert len(codes) == 1 and codes[0].where == "toolhead"
+
+
+def test_a_node_joint_needs_all_its_pins_on_that_node(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_JOINT.replace("toolhead:PD1", "PG1"))
+    assert "E_CAN_NODE_JOINT" in _codes(payload)
+
+
+def test_a_tmc_uart_on_a_node_is_a_tmc2209_module_in_the_node_entry(tmp_path):
+    payload = _payload(
+        tmp_path,
+        estop=NODE_JOINT + "\n[tmc2209 stepper_y]\nuart_pin: toolhead:PA15\nrun_current: 0.8\n",
+    )
+    assert not [d for d in validate_machine(payload) if d.is_error]
+
+    _fragment, config = _assemble(payload)
+    [tmc] = [m for m in config["CAN"]["Nodes"][0]["Modules"] if m["Type"] == "TMC2209"]
+    assert (tmc["RX pin"], tmc["Current"], tmc["Microsteps"]) == ("PA_15", 800, 16)
+    assert "Name" not in tmc and "Thread" not in tmc
+    assert not any(m.get("Type") == "TMC2209" for m in config["Modules"])
+
+
+def test_a_node_configures_at_most_two_tmc_drivers(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_JOINT + "\n[tmc2209 stepper_y]\nuart_pin: toolhead:PA15\n")
+    driver = next(d for d in payload["drivers"] if d.get("uart_pin") == "toolhead:PA15")
+    payload["drivers"] += [dict(driver, id="d2", uart_pin="toolhead:PA14"),
+                           dict(driver, id="d3", uart_pin="toolhead:PA13")]
+    errors = [d for d in validate_machine(payload) if d.code == "E_CAN_NODE_PIN"]
+    assert len(errors) == 1 and errors[0].where == "toolhead"
+
+
 # -- validation ----------------------------------------------------------- #
 
 

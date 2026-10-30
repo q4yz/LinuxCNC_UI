@@ -3,7 +3,7 @@
 > **Implemented status:** CAN expansion phase 2 of the Remora-m8p fork
 > (`Firmware/FirmwareSource/Remora-OS6/TARGET_STM32G0/drivers/can/CAN_PROTOCOL.md`):
 > a node (BTT EBB42 ...) behind a `remora-spi` hub (Manta M8P) carries
-> **Digital Pin** inputs / outputs only. Code: `RemoraCanMapper`
+> **Digital Pin** inputs / outputs and up to two **joints** (Stepgen). Code: `RemoraCanMapper`
 > (`backend/system/services/halcompiler/mcus/RemoraCanMapper.py`), routing
 > in `HalAssembler`, E-stop wiring in `RemoraRouterMapper.base_fragment`,
 > rules in `MachineValidator._check_can`. Tests: `test_remora_can.py`.
@@ -25,10 +25,18 @@ can_hub: mcu                  // (Optional) default: the machine's only remora-s
 mandatory: true               // (Optional) default true: losing the node means E-stop
 ```
 
-Node pins: endstops (`endstop_pin: toolhead:^PB9`) and `[estop]
-fault_pin` / `out_pin`. Anything else on a node is
-`E_CAN_NODE_PIN` — heaters, fans, sensors and stepgen are later firmware
-phases, and the few-ms CAN latency rules out a touch probe.
+Node pins: endstops (`endstop_pin: toolhead:^PB9`), `[estop]
+fault_pin` / `out_pin`, a joint's `step_pin` / `dir_pin` /
+`enable_pin` (`[extruder] step_pin: toolhead:PD0`) and a `[tmc2209 ...]
+uart_pin` (at most 2 per node). Anything else on a node is
+`E_CAN_NODE_PIN` — heaters, fans and sensors are later firmware phases,
+and the few-ms CAN latency rules out a touch probe.
+
+Joints on a node: at most 2 per node, every pin of the joint on that
+node (`E_CAN_NODE_JOINT`). The position reaches LinuxCNC one servo
+period (~1 ms) later than a local joint's, so the following error grows
+by speed × 1 ms — `FERROR` may need a little more room. Each node with
+joints uses about a quarter of the CAN bus.
 
 ## 2. hardware.json
 
@@ -50,7 +58,17 @@ finished modules move into the hub's `config_<hub>.txt`:
 ```
 
 Node dialect: pull-up is `"Modifier": "Pull Up"` (no `^` prefix), inputs
-get `"Lost State": "Low"`. Digital inputs skip the status bit.
+get `"Lost State": "Low"`. Digital inputs skip the status bit. A joint is
+a `"Stepgen"` with the machine's joint number (LinuxCNC still sees
+`remora.joint.N` on the hub), no `"Name"` / `"Thread"`:
+
+```json
+{ "Type": "Stepgen", "Comment": "extruder", "Joint Number": 3,
+  "Step Pin": "PD_0", "Direction Pin": "PD_1", "Enable Pin": "PD_2" }
+```
+
+A TMC2209 is the local module (`RemoraDriverFirmwareMapper`) without
+`"Name"` / `"Thread"`; the node configures it over its own UART.
 
 **Fallback levels are fixed, never configurable:** every output's `Safe
 State` (LinuxCNC / hub gone) and every node input's `Lost State` (node
@@ -80,5 +98,5 @@ mandatory node there is no status bit unless `can_status_bit` is declared.
 ## 4. RULES
 
 `E_CAN_NO_HUB`, `E_CAN_DUPLICATE_UUID`, `E_CAN_NODE_NUMBER` (unique,
-1 ... 15, at most 15 per hub), `E_CAN_NODE_PIN`; more than 16 digital
+1 ... 15, at most 15 per hub), `E_CAN_NODE_PIN`, `E_CAN_NODE_JOINT`; more than 16 digital
 inputs or outputs on one hub (nodes included) fails the compile.

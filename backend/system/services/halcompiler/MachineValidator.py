@@ -46,10 +46,14 @@ _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-#: Pins a CAN node can carry (Remora-m8p CAN expansion, phase 2: Digital
-#: Pin only) — besides every ``endstops[].pin``.
+#: Pins a CAN node can carry (Remora-m8p CAN expansion: Digital Pin and
+#: Stepgen) — besides every ``endstops[].pin`` and every joint pin.
 _CAN_NODE_PIN_FIELDS = frozenset({("estop", "fault_pin"), ("estop", "out_pin")})
 MAX_CAN_NODES = 15
+#: Step generators one node runs (firmware limit).
+MAX_CAN_NODE_JOINTS = 2
+#: TMC2209 drivers one node configures over its UART (firmware limit).
+MAX_CAN_NODE_DRIVERS = 2
 
 
 class MachineValidator:
@@ -103,11 +107,15 @@ class MachineValidator:
         self._found.append(Diagnostic(code, Severity.WARNING, message, where))
 
     def _mcu_classes(self) -> dict[str, CapabilityClass | None]:
-        return {
-            str(m["id"]): CapabilityClass.for_connection(m.get("connection"))
-            for m in self._records("mcus")
-            if m.get("id")
-        }
+        """Each MCU's class — a CAN node's is its hub's: its joints reach
+        LinuxCNC as ``remora.joint.N`` through the hub."""
+        mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
+        classes: dict[str, CapabilityClass | None] = {}
+        for mcu_id, mcu in mcus_by_id.items():
+            if RemoraCanMapper.is_node(mcu):
+                mcu = mcus_by_id.get(RemoraCanMapper.hub_id(mcu, mcus_by_id) or "", mcu)
+            classes[mcu_id] = CapabilityClass.for_connection(mcu.get("connection"))
+        return classes
 
     def _parsed_pins(self) -> list[tuple[ParsedPin, str, str, bool]]:
         """Every parseable pin as ``(pin, owner_id, field, drives_joint)``."""
@@ -253,10 +261,13 @@ class MachineValidator:
 
         A node needs a hub it can name or find (``E_CAN_NO_HUB``), a
         unique UUID (``E_CAN_DUPLICATE_UUID``) and a free number 1 ... 15
-        (``E_CAN_NODE_NUMBER``). It only carries digital pins so far —
-        endstops and the E-stop pins (``E_CAN_NODE_PIN``): heaters, fans,
-        sensors and stepgen follow in later firmware phases, and the
-        few-millisecond latency rules out a touch probe.
+        (``E_CAN_NODE_NUMBER``). It carries digital pins — endstops and
+        the E-stop pins — and up to two joints, each with all its pins on
+        that node (``E_CAN_NODE_JOINT``), and up to two TMC2209 UART
+        drivers; anything else is
+        ``E_CAN_NODE_PIN``: heaters, fans and sensors follow in later
+        firmware phases, and
+        the few-millisecond latency rules out a touch probe.
         """
         mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
         nodes = [m for m in mcus_by_id.values() if RemoraCanMapper.is_node(m)]
@@ -299,14 +310,78 @@ class MachineValidator:
 
         node_ids = {str(n["id"]) for n in nodes}
         endstops = self._ids("endstops")
-        for pin, owner, field, _drives_joint in self._pins:
-            allowed = (owner, field) in _CAN_NODE_PIN_FIELDS or (field == "pin" and owner in endstops)
+        for pin, owner, field, drives_joint in self._pins:
+            allowed = (
+                drives_joint
+                or (owner, field) in _CAN_NODE_PIN_FIELDS
+                or (field == "pin" and owner in endstops)
+            )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
                     "E_CAN_NODE_PIN",
                     f"{owner}.{field} {pin.raw!r} is on CAN node {pin.mcu_id!r}, which only "
-                    "carries endstops and the E-stop fault_pin / out_pin so far.",
+                    "carries joints, endstops and the E-stop fault_pin / out_pin so far.",
                     owner,
+                )
+        self._check_can_joints(node_ids)
+        self._check_can_drivers(node_ids)
+
+    def _check_can_joints(self, node_ids: set[str]) -> None:
+        """A node joint has every pin on that node, and a node runs at
+        most :data:`MAX_CAN_NODE_JOINTS` of them."""
+        joints_per_node: dict[str, list[str]] = {}
+        for joint in self._records("joints"):
+            owner = str(joint.get("id", "?"))
+            mcus: set[str] = set()
+            for field in ("step_pin", "dir_pin", "enable_pin"):
+                if not joint.get(field):
+                    continue
+                try:
+                    mcus.add(PinStringMapper.from_string(joint[field]).mcu_id)
+                except ValueError:
+                    continue  # E_MALFORMED_PIN, reported once already
+            on_nodes = mcus & node_ids
+            if not on_nodes:
+                continue
+            if len(mcus) > 1:
+                self._error(
+                    "E_CAN_NODE_JOINT",
+                    f"joint {owner!r} has pins on {', '.join(sorted(mcus))}: a joint on a "
+                    "CAN node needs its step, dir and enable pins all on that node.",
+                    owner,
+                )
+                continue
+            joints_per_node.setdefault(next(iter(on_nodes)), []).append(owner)
+        for node_id, joints in joints_per_node.items():
+            if len(joints) > MAX_CAN_NODE_JOINTS:
+                self._error(
+                    "E_CAN_NODE_JOINT",
+                    f"CAN node {node_id!r} carries {len(joints)} joints ({', '.join(joints)}); "
+                    f"a node runs at most {MAX_CAN_NODE_JOINTS}.",
+                    node_id,
+                )
+
+    def _check_can_drivers(self, node_ids: set[str]) -> None:
+        """A node configures at most :data:`MAX_CAN_NODE_DRIVERS` TMC2209
+        drivers over its UART (firmware limit)."""
+        drivers_per_node: dict[str, list[str]] = {}
+        for driver in self._records("drivers"):
+            raw = driver.get("uart_pin")
+            if not raw:
+                continue
+            try:
+                pin = PinStringMapper.from_string(raw)
+            except ValueError:
+                continue
+            if pin.mcu_id in node_ids:
+                drivers_per_node.setdefault(pin.mcu_id, []).append(str(driver.get("id", "?")))
+        for node_id, drivers in drivers_per_node.items():
+            if len(drivers) > MAX_CAN_NODE_DRIVERS:
+                self._error(
+                    "E_CAN_NODE_PIN",
+                    f"CAN node {node_id!r} has {len(drivers)} TMC2209 UART drivers "
+                    f"({', '.join(drivers)}); a node configures at most {MAX_CAN_NODE_DRIVERS}.",
+                    node_id,
                 )
 
     def _check_references(self) -> None:
