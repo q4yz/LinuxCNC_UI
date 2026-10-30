@@ -1,5 +1,6 @@
 #!/bin/bash
-# Compile and install the LinuxCNC HAL components from the Remora fork
+# Compile and install the LinuxCNC HAL components (and the remora-upload
+# tool) from the Remora fork
 # (https://github.com/q4yz/Remora-m8p, LinuxCNC/Components) into
 # LinuxCNC's module directory, so `loadrt remora-spi` etc. in the
 # generated machine.hal find their .so. Run as root — the module
@@ -47,8 +48,20 @@ declare -A SOURCES=(
     [nvmpg]="NVMPG/nvmpg.c"
     [PRUencoder]="PRUencoder/PRUencoder.c"
     [rpi-monitor]="RPiMonitor/rpi_monitor.py"
+    # Not a HAL module: the tool that puts config.txt on a Remora SPI
+    # board's SD card. Generated machine.hal files run it at every
+    # LinuxCNC start, before `loadrt remora-spi`:
+    #   loadusr -w remora-upload --sync [--spi-cs-pin PC10 -s 1000000] config_mcu.txt
+    [remora-upload]="../Tools/remora-upload/remora-upload.c"
 )
-ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller nvmpg PRUencoder rpi-monitor)
+ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller nvmpg PRUencoder rpi-monitor remora-upload)
+# LinuxCNC runs as the normal user, so `loadusr remora-upload` does too:
+# it needs the spidev node and — for a GPIO chip select (BTT CB1) — the
+# gpiochip nodes. Raspberry Pi OS already has both groups; reuse them.
+REAL_USER="${SUDO_USER:-}"
+SPI_GROUP="spi"
+GPIO_GROUP="gpio"
+UDEV_RULE="/etc/udev/rules.d/99-linuxcnc-ui-spidev.rules"
 
 if [ $# -gt 0 ]; then
     SELECTED=("$@")
@@ -89,6 +102,28 @@ for name in "${SELECTED[@]}"; do
         # Userspace component: loadusr -Wn rpi-monitor rpi-monitor
         if install -m 0755 "$src" "$USER_BIN_DIR/$name"; then
             INSTALLED+=("$name")
+        else
+            FAILED+=("$name")
+        fi
+    elif [ "$name" = "remora-upload" ]; then
+        if gcc -O2 -Wall -o "$WORK_DIR/remora-upload" "$src" \
+                && install -m 0755 "$WORK_DIR/remora-upload" "$USER_BIN_DIR/remora-upload"; then
+            INSTALLED+=("$name")
+            # spidev / gpiochip nodes are root-only by default (Armbian on the CB1).
+            groupadd -f "$SPI_GROUP"
+            groupadd -f "$GPIO_GROUP"
+            cat > "$UDEV_RULE" <<EOF
+SUBSYSTEM=="spidev", GROUP="$SPI_GROUP", MODE="0660"
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="$GPIO_GROUP", MODE="0660"
+EOF
+            udevadm control --reload-rules 2>/dev/null || true
+            udevadm trigger --subsystem-match=spidev --subsystem-match=gpio 2>/dev/null || true
+            if [ -n "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
+                usermod -aG "$SPI_GROUP,$GPIO_GROUP" "$REAL_USER"
+                echo "$REAL_USER is in groups $SPI_GROUP, $GPIO_GROUP (takes effect after: sudo systemctl restart linuxcnc-ui-system)"
+            fi
+            ls /dev/spidev* >/dev/null 2>&1 \
+                || echo "NOTE: no /dev/spidev* — enable SPI (dtparam=spi=on on a Pi, the spidev overlay on a CB1) and reboot"
         else
             FAILED+=("$name")
         fi

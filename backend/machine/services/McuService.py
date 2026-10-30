@@ -18,7 +18,7 @@ class McuService:
     """Owns every ``hardware.json`` MCU's runtime surface.
 
     Registers ``webgui.<id>-reset`` for each resettable (Remora +
-    ``reset_pin``) MCU and pulses them on request. Connecting that pin
+    ``board_reset_pin``) MCU and pulses them on request. Connecting that pin
     to the board in ``machine.hal`` is the HAL compiler's job and not
     done yet — until then the pulse lands on an unconnected HAL pin.
     """
@@ -55,7 +55,7 @@ class McuService:
         """
         mcus = [mcu for mcu in self.get_halpins() if mcu.resettable]
         if not mcus:
-            raise ConflictError("No resettable MCU — declare a `reset_pin` on a Remora `[mcu]` section.")
+            raise ConflictError("No resettable MCU — declare a `board_reset_pin` on a Remora `[mcu]` section.")
 
         for mcu in mcus:
             mcu.reset.set_value(True)

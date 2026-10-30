@@ -6,11 +6,12 @@ from pydantic import BaseModel, Field
 class MachineStatusResponse(BaseModel):
     """Live state of the LinuxCNC session and the default machine."""
 
-    state: Literal["stopped", "starting", "running", "stopping"] = Field(
+    state: Literal["stopped", "starting", "running", "stopping", "uploading"] = Field(
         ...,
         description=(
             "Session state. 'starting' / 'stopping' while the system service runs that "
-            "transition; otherwise 'running' when a (non-zombie) LinuxCNC process is alive."
+            "transition, 'uploading' while a file goes to a Remora board; otherwise "
+            "'running' when a (non-zombie) LinuxCNC process is alive."
         ),
     )
     running: bool = Field(..., description="Whether a LinuxCNC session process is alive.")

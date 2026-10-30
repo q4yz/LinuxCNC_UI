@@ -980,8 +980,17 @@ def build_hardware_json(
             mcu_record["node_id"] = mcu.node_id
         if mcu.parity is not None:
             mcu_record["parity"] = mcu.parity
-        if mcu.reset_pin is not None:
-            mcu_record["reset_pin"] = mcu.reset_pin
+        # Board-side reset pin + host side of a remora-spi link — only
+        # what was declared.
+        for key in (
+            "board_reset_pin", "spi_freq", "spi_clk_div", "pru_base_freq",
+            "spi_cs_pin", "spi_cs_chip", "reset_pin", "reset_chip", "sync_config",
+            "can_bitrate", "can_status_bit", "canbus_uuid", "can_node", "can_hub",
+            "mandatory",
+        ):
+            value = getattr(mcu, key)
+            if value is not None:
+                mcu_record[key] = value
         mcu_records.append(mcu_record)
 
     # Validate the structured payload against the strict model.

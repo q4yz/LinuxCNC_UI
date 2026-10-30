@@ -150,7 +150,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
     /**
      * Reset every resettable MCU (Remora boards that declared a
-     * ``reset_pin``). The backend pulses each board's
+     * ``board_reset_pin``). The backend pulses each board's
      * ``webgui.<id>-reset`` HAL pin; the button is only shown when
      * ``baseThread.hasResettableMcu`` is true.
      */

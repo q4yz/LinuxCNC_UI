@@ -1,6 +1,6 @@
 """MCU reset: ``hardware.json`` ``mcus[]`` -> ``webgui.<id>-reset`` -> UI.
 
-Only a Remora board that declared a ``reset_pin`` is resettable; the
+Only a Remora board that declared a ``board_reset_pin`` is resettable; the
 reset endpoint pulses every such MCU's pin True -> False. Connecting
 the pin to the board in ``machine.hal`` is not done yet (HAL compiler,
 out of scope), so these tests stop at the pin.
@@ -27,9 +27,9 @@ from services.McuService import McuService
 # ---------------------------------------------------------------- #
 
 
-def test_remora_mcu_with_reset_pin_is_resettable():
+def test_remora_mcu_with_board_reset_pin_is_resettable():
     pins = McuMapper.from_dict_to_McuPins(
-        {"id": "mcu_reset_test", "connection": "remora-spi", "reset_pin": "PC15"}
+        {"id": "mcu_reset_test", "connection": "remora-spi", "board_reset_pin": "PC15"}
     )
     assert pins.resettable is True
     assert pins.reset.get_pin_name() == "mcu_reset_test-reset"
@@ -38,9 +38,9 @@ def test_remora_mcu_with_reset_pin_is_resettable():
 @pytest.mark.parametrize(
     "record",
     [
-        {"id": "mcu", "connection": "remora-spi"},                      # no reset_pin
-        {"id": "mcu", "connection": "parallelport", "reset_pin": "x"},  # not Remora
-        {"id": "mcu", "connection": "remora-eth", "reset_pin": ""},     # empty
+        {"id": "mcu", "connection": "remora-spi"},                      # no board_reset_pin
+        {"id": "mcu", "connection": "parallelport", "board_reset_pin": "x"},  # not Remora
+        {"id": "mcu", "connection": "remora-eth", "board_reset_pin": ""},     # empty
     ],
 )
 def test_other_mcus_are_not_resettable_and_get_no_pin(record):

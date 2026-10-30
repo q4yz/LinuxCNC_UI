@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import configparser
 import logging
+import re
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,9 @@ from machineconfig_schema import (
     FAN_IGNORED_KEYS,
     HEATER_KEYS,
     PRINTER_IGNORED_KEYS,
+    REMORA_CAN_HUB_KEYS,
+    REMORA_CAN_NODE_KEYS,
+    REMORA_SPI_HOST_KEYS,
     SectionKind,
     schema_for_section,
 )
@@ -1149,8 +1153,10 @@ class MachineConfigParser:
         The RS-485 serial trio (``baud_rate`` / ``node_id`` /
         ``parity``) is only accepted on a ``vfd_rs485`` (or legacy
         ``rs485``) MCU — anywhere else it's a typo, not a tuning knob.
-        ``reset_pin`` is the mirror case: only accepted on a
-        ``remora-spi``/``remora-eth`` MCU.
+        ``board_reset_pin`` is the mirror case: only accepted on a
+        ``remora-spi``/``remora-eth`` MCU. The host side of an SPI link
+        (``REMORA_SPI_HOST_KEYS``: ``SPI_freq``, ``reset_pin``, ...) only
+        on ``remora-spi``, with ``SPI_freq`` / ``SPI_clk_div`` exclusive.
         """
         connection_raw = (
             self._optional_string(section, "connection") or "remora-spi"
@@ -1171,14 +1177,44 @@ class MachineConfigParser:
                         "'vfd_rs485' MCU section",
                     )
         if connection_raw not in ("remora-spi", "remora-eth"):
-            if self._optional_string(section, "reset_pin") is not None:
+            if self._optional_string(section, "board_reset_pin") is not None:
                 raise InvalidValueError(
                     section_name,
-                    "reset_pin",
-                    section["reset_pin"],
+                    "board_reset_pin",
+                    section["board_reset_pin"],
                     "unset — this keyword is only valid on a "
                     "'remora-spi'/'remora-eth' MCU section",
                 )
+        if connection_raw != "remora-spi":
+            for key in sorted(REMORA_SPI_HOST_KEYS):
+                if self._optional_string(section, key) is not None:
+                    raise InvalidValueError(
+                        section_name,
+                        key,
+                        section[key],
+                        "unset — this keyword is only valid on a 'remora-spi' MCU section",
+                    )
+        for keys, allowed in ((REMORA_CAN_HUB_KEYS, "remora-spi"), (REMORA_CAN_NODE_KEYS, "remora-can")):
+            if connection_raw == allowed:
+                continue
+            for key in sorted(keys):
+                if self._optional_string(section, key) is not None:
+                    raise InvalidValueError(
+                        section_name, key, section[key],
+                        f"unset — this keyword is only valid on a '{allowed}' MCU section",
+                    )
+        can = self._parse_can(section_name, section, connection_raw)
+        if _option_present(section, "SPI_freq") and _option_present(section, "SPI_clk_div"):
+            raise InvalidValueError(
+                section_name,
+                "SPI_clk_div",
+                section["SPI_clk_div"],
+                "unset when SPI_freq is declared — the two set the same SPI clock "
+                "(SPI_freq in Hz, SPI_clk_div as a Raspberry Pi 3/4 divider)",
+            )
+        sync_config = self._optional_bool(section, "sync_config")
+        if sync_config is None and _option_present(section, "sync_config"):
+            raise InvalidValueError(section_name, "sync_config", section["sync_config"], "true or false")
         return MCU(
             connection=connection_raw,
             interface=self._optional_string(section, "interface"),
@@ -1186,8 +1222,58 @@ class MachineConfigParser:
             baud_rate=self._optional_int(section_name, section, "baud_rate"),
             node_id=self._optional_int(section_name, section, "node_id"),
             parity=self._parse_parity(section_name, section),
+            board_reset_pin=self._optional_string(section, "board_reset_pin"),
+            spi_freq=self._optional_int(section_name, section, "SPI_freq"),
+            spi_clk_div=self._optional_int(section_name, section, "SPI_clk_div"),
+            pru_base_freq=self._optional_int(section_name, section, "PRU_base_freq"),
+            spi_cs_pin=self._optional_string(section, "spi_cs_pin"),
+            spi_cs_chip=self._optional_string(section, "spi_cs_chip"),
             reset_pin=self._optional_string(section, "reset_pin"),
+            reset_chip=self._optional_string(section, "reset_chip"),
+            sync_config=sync_config,
+            **can,
         )
+
+    def _parse_can(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+        connection: str,
+    ) -> dict[str, Any]:
+        """The CAN keys of a hub (``remora-spi``) or node (``remora-can``).
+
+        Single-section checks only (UUID format, ranges); which hub a
+        node belongs to and duplicate UUIDs / numbers are machine-wide —
+        the validator's ``E_CAN_*`` rules.
+        """
+        if connection == "remora-spi":
+            status_bit = self._optional_int(section_name, section, "can_status_bit")
+            if status_bit is not None and not 0 <= status_bit <= 15:
+                raise InvalidValueError(section_name, "can_status_bit", section["can_status_bit"], "an input bit 0 ... 15")
+            return {
+                "can_bitrate": self._optional_int(section_name, section, "can_bitrate"),
+                "can_status_bit": status_bit,
+            }
+        if connection != "remora-can":
+            return {}
+        uuid = (self._optional_string(section, "canbus_uuid") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{12}", uuid):
+            raise InvalidValueError(
+                section_name, "canbus_uuid", section.get("canbus_uuid", ""),
+                "the node's 12-hex-digit UUID (printed on the hub's debug console)",
+            )
+        node = self._optional_int(section_name, section, "can_node")
+        if node is not None and not 1 <= node <= 15:
+            raise InvalidValueError(section_name, "can_node", section["can_node"], "a node number 1 ... 15")
+        mandatory = self._optional_bool(section, "mandatory")
+        if mandatory is None and _option_present(section, "mandatory"):
+            raise InvalidValueError(section_name, "mandatory", section["mandatory"], "true or false")
+        return {
+            "canbus_uuid": uuid,
+            "can_node": node,
+            "can_hub": self._optional_string(section, "can_hub"),
+            "mandatory": mandatory,
+        }
 
     def _parse_parity(
         self,

@@ -67,6 +67,7 @@ from core.atomic_json import atomic_write_json
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
 from domain_file_services import get_machine_service
+from services.RemoraBoardUploader import RemoraBoardUploader
 
 logger = logging.getLogger("backend.system.machine_lifecycle")
 
@@ -114,7 +115,7 @@ _STOP_GRACE_SECONDS = 10.0
 #: anchors the whole alternation, so ``emc`` never matches ``emcsvr``).
 _PGREP_PATTERN = "|".join(PROCESS_PATTERNS)
 
-SessionState = Literal["stopped", "starting", "running", "stopping"]
+SessionState = Literal["stopped", "starting", "running", "stopping", "uploading"]
 
 
 def _is_zombie(pid: int) -> bool:
@@ -629,6 +630,22 @@ class MachineLifecycleService:
                 return True
             time.sleep(0.25)
         return not linuxcnc_pids()
+
+    # ------------------------------------------------------------------ #
+    # Upload to a Remora board                                            #
+    # ------------------------------------------------------------------ #
+
+    def upload_to_board(self, file: Path) -> str:
+        """Put ``config_<mcu>.txt`` / ``firmware.bin`` on its Remora board.
+
+        Exclusive with start / stop / switch (a start must not grab the
+        SPI link mid-upload), and refused while LinuxCNC runs — the
+        driver owns the link then.
+        """
+        with self._exclusive("uploading"):
+            if self.is_running():
+                raise ConflictError("Stop LinuxCNC first — it owns the SPI link to the board.")
+            return RemoraBoardUploader().upload(file)
 
     # ------------------------------------------------------------------ #
     # Switch machine                                                      #

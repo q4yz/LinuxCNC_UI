@@ -97,7 +97,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     return limits.length ? Math.max(...limits) : null;
   });
 
-  /** True when at least one MCU can be reset from the UI (Remora + ``reset_pin``). */
+  /** True when at least one MCU can be reset from the UI (Remora + ``board_reset_pin``). */
   const hasResettableMcu = computed(() => Object.values(mcus.value).some((m) => m.resettable));
 
   const progressFraction = computed(() => {

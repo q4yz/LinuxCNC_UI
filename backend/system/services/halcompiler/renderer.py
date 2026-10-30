@@ -66,6 +66,8 @@ def _merge_loadrt(lines: list[str]) -> list[str]:
 def render_hal(fragment: HalFragment) -> str:
     sections: list[str] = []
 
+    if fragment.preload:
+        sections.append("\n".join(fragment.preload))
     if fragment.loadrt:
         sections.append("\n".join(_merge_loadrt(fragment.loadrt)))
     if fragment.loadusr:

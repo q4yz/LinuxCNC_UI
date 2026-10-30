@@ -45,6 +45,8 @@ from models.machineconfig.HalFragmentModels import (
 )
 from models.machineconfig.PinModels import CapabilityClass
 
+from ..mcus.RemoraCanMapper import RemoraCanMapper
+
 
 class EstopHalMapper:
     """The `[estop]` component's optional physical E-stop chain."""
@@ -95,28 +97,36 @@ class EstopHalMapper:
 
     @staticmethod
     def _out_chain(
-        fragment: HalFragment, out_pin: str, mcus_by_id: dict[str, dict[str, Any]]
+        fragment: HalFragment,
+        out_pin: str,
+        mcus_by_id: dict[str, dict[str, Any]],
     ) -> None:
+        # A Remora board already puts iocontrol.0.user-enable-out on its
+        # own `user-enable-out` signal (link enable) and a HAL pin can sit
+        # on one signal only — so the output joins that signal there.
+        owns_chain = EstopHalMapper._owns_iocontrol_chain(out_pin, mcus_by_id)
         fragment.requests.append(
             PinRequest(
-                signal="estop-out",
+                signal="estop-out" if owns_chain else "user-enable-out",
                 role=PinRole.DIGITAL_OUT,
                 pin=PinStringMapper.from_string(out_pin),
                 owner="estop",
             )
         )
-        if not EstopHalMapper._owns_iocontrol_chain(out_pin, mcus_by_id):
-            return
-        fragment.nets.append("net estop-out <= iocontrol.0.user-enable-out")
+        if owns_chain:
+            fragment.nets.append("net estop-out <= iocontrol.0.user-enable-out")
 
     @staticmethod
     def _owns_iocontrol_chain(
         pin_string: str, mcus_by_id: dict[str, dict[str, Any]]
     ) -> bool:
         """False when the MCU this pin targets already claims
-        `iocontrol.0`'s enable chain for its own link-health wiring."""
+        `iocontrol.0`'s enable chain for its own link-health wiring.
+        A CAN node's pin counts as its hub's — it routes through it."""
         mcu_id = PinStringMapper.from_string(pin_string).mcu_id
         mcu = mcus_by_id.get(mcu_id) or {}
+        if RemoraCanMapper.is_node(mcu):
+            mcu = mcus_by_id.get(RemoraCanMapper.hub_id(mcu, mcus_by_id) or "") or {}
         return CapabilityClass.for_connection(mcu.get("connection")) is not CapabilityClass.POSITION
 
 

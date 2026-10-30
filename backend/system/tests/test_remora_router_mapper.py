@@ -57,7 +57,7 @@ def test_base_fragment_addf_order_sandwiches_motion_at_order_one():
     assert all(a.thread == "servo-thread" for a in fragment.addf)
 
 
-def test_base_fragment_with_no_reset_pin_emits_no_firmware_module():
+def test_base_fragment_with_no_board_reset_pin_emits_no_firmware_module():
     fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
     assert fragment.firmware_modules == []
 
@@ -66,7 +66,7 @@ def test_base_fragment_emits_the_reset_pin_module_when_declared():
     """Module shape verified against the real, working
     `machine_config/example/ender3/config.txt` — its very first
     module, before any joint or driver."""
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "reset_pin": "PC15"})
+    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "board_reset_pin": "PC15"})
     assert len(fragment.firmware_modules) == 1
     request = fragment.firmware_modules[0]
     assert request.mcu_id == "mcu"
@@ -80,7 +80,7 @@ def test_base_fragment_emits_the_reset_pin_module_when_declared():
 
 
 def test_base_fragment_reset_pin_mcu_id_falls_back_to_the_mcu_record_id():
-    fragment = RemoraRouterMapper.base_fragment({"id": "board_a", "reset_pin": "PC15"})
+    fragment = RemoraRouterMapper.base_fragment({"id": "board_a", "board_reset_pin": "PC15"})
     assert fragment.firmware_modules[0].mcu_id == "board_a"
 
 
@@ -281,17 +281,42 @@ def test_endstop_and_digital_in_share_one_input_bit_space():
     assert data_bits == {0, 1}
 
 
-def test_digital_out_request_is_an_honest_gap_not_a_crash():
-    """No real reference `config.txt` shows a digital *output* module
-    (every example is `Mode: Input`) — routing one through Remora
-    produces no firmware module and no net, same "honest gap" class
-    as ANALOG_IN's missing Temperature module, rather than a
-    fabricated, unverified shape."""
+def test_digital_out_routes_to_an_output_bit_with_a_safe_state():
+    """Shape of the Remora-m8p fork's verified output sample (BTT_EBB42):
+    Mode Output, its own Data Bit space, Safe State always Low."""
     fragment = RemoraRouterMapper.route(
-        [_request("estop-out", PinRole.DIGITAL_OUT, "PG7", owner="estop")]
+        [_request("user-enable-out", PinRole.DIGITAL_OUT, "PG7", owner="estop")]
     )
-    assert fragment.nets == []
-    assert fragment.firmware_modules == []
+    assert fragment.nets == ["net user-enable-out => remora.output.00"]
+    assert [r.module for r in fragment.firmware_modules] == [{
+        "Name": "digital_out_estop",
+        "Thread": "Servo",
+        "Type": "Digital Pin",
+        "Comment": "estop",
+        "Pin": "PG_7",
+        "Mode": "Output",
+        "Data Bit": 0,
+        "Safe State": "Low",
+    }]
+
+
+def test_an_inverted_output_is_inverted_in_the_firmware_but_still_safe_low():
+    # Safe State is the physical level (the firmware does not invert it),
+    # and always Low: the machine must be safe at Low.
+    fragment = RemoraRouterMapper.route([_request("out", PinRole.DIGITAL_OUT, "!PG7", owner="lamp")])
+    module = fragment.firmware_modules[0].module
+    assert (module["Safe State"], module["Invert"]) == ("Low", "True")
+
+
+def test_outputs_and_inputs_count_their_bits_separately():
+    fragment = RemoraRouterMapper.route([
+        _request("endstop-x", PinRole.ENDSTOP, "PG6"),
+        _request("out-a", PinRole.DIGITAL_OUT, "PG7", owner="a"),
+        _request("out-b", PinRole.DIGITAL_OUT, "PG8", owner="b"),
+    ])
+    assert "net out-b => remora.output.01" in fragment.nets
+    bits = {m.module["Name"]: m.module["Data Bit"] for m in fragment.firmware_modules}
+    assert bits == {"endstop_endstop_x": 0, "digital_out_a": 0, "digital_out_b": 1}
 
 
 def test_endstop_and_analog_indices_do_not_collide():
@@ -341,3 +366,51 @@ def test_without_an_estop_fault_the_link_drives_emc_enable_directly():
     fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
     assert "loadrt estop_latch" not in fragment.loadrt
     assert not any("estop-latch" in net for net in fragment.nets)
+
+
+# -- host side of the SPI link (BTT CB1) + config sync ---------------------- #
+
+CB1 = {
+    "id": "mcu",
+    "connection": "remora-spi",
+    "pru_base_freq": 40000,
+    "spi_freq": 1000000,
+    "spi_cs_pin": "PC10",
+    "reset_pin": "PC12",
+}
+
+
+def test_cb1_host_params_reach_the_driver_line():
+    fragment = RemoraRouterMapper.base_fragment(CB1)
+    assert fragment.loadrt == [
+        "loadrt remora-spi PRU_base_freq=40000 SPI_freq=1000000 spi_cs_pin=PC10 reset_pin=PC12"
+    ]
+
+
+def test_interface_and_gpio_chips_are_passed_through():
+    fragment = RemoraRouterMapper.base_fragment(
+        {**CB1, "interface": "/dev/spidev1.0", "spi_cs_chip": "/dev/gpiochip0", "reset_chip": "/dev/gpiochip1"}
+    )
+    line = fragment.loadrt[0]
+    assert "spi_dev=/dev/spidev1.0" in line
+    assert "spi_cs_chip=/dev/gpiochip0" in line
+    assert "reset_chip=/dev/gpiochip1" in line
+
+
+def test_sync_line_uses_the_same_link_as_the_driver():
+    assert RemoraRouterMapper.config_sync_line(CB1, "config_mcu.txt") == (
+        "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
+    )
+
+
+def test_sync_line_on_a_raspberry_pi_needs_no_options():
+    assert RemoraRouterMapper.config_sync_line({"id": "mcu"}, "config_mcu.txt") == (
+        "loadusr -w remora-upload --sync config_mcu.txt"
+    )
+
+
+def test_sync_can_be_turned_off_and_never_targets_an_lpc_board():
+    assert RemoraRouterMapper.config_sync_line({**CB1, "sync_config": False}, "config_mcu.txt") is None
+    assert RemoraRouterMapper.config_sync_line(
+        {"id": "mcu", "parameters": {"chip": "lpc17xx"}}, "config_mcu.txt"
+    ) is None

@@ -91,7 +91,7 @@ CONNECT_HINTS: Dict[str, Dict[str, str]] = {
         "EstopWebguiMapper wires this automatically, see .agent/component/estop.md)",
     },
     "McuPins": {
-        "reset": "sink into the board's reset input (the MCU's `reset_pin`) — "
+        "reset": "sink into the board's reset input (the MCU's `board_reset_pin`) — "
         "McuService pulses it from the UI's RESET MCU button; not wired by "
         "the HAL compiler yet",
     },
@@ -401,7 +401,7 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
             ReadWriteDynamicHalPin("inspect-spindle-inhibit", HalDataType.BIT, ""),
         ),
     ]
-    # Only resettable MCUs (Remora + `reset_pin`) own a webgui pin.
+    # Only resettable MCUs (Remora + `board_reset_pin`) own a webgui pin.
     for mcu in _valid_dicts("mcus"):
         mcu_pins = McuMapper.from_dict_to_McuPins(mcu)
         if mcu_pins.resettable:

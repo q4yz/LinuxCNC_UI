@@ -86,6 +86,7 @@ class PinRequest:
     module needs — the router has no other way to see a sensor's
     ``temperature_sensors[].type`` field, since it only ever receives
     the flat request list, not the source records.
+
     """
 
     signal: str
@@ -119,6 +120,10 @@ class HalFragment:
     thread order is a cross-component invariant, not a per-fragment one.
     """
 
+    #: Commands that must finish before any realtime component loads —
+    #: rendered first (e.g. ``loadusr -w remora-upload --sync``, which
+    #: needs the SPI link before ``loadrt remora-spi`` takes it).
+    preload: list[str] = field(default_factory=list)
     loadrt: list[str] = field(default_factory=list)
     loadusr: list[str] = field(default_factory=list)
     addf: list[Addf] = field(default_factory=list)
@@ -132,6 +137,7 @@ class HalFragment:
 
     def extend(self, other: "HalFragment") -> None:
         """Append every field of ``other`` onto ``self``, in place."""
+        self.preload.extend(other.preload)
         self.loadrt.extend(other.loadrt)
         self.loadusr.extend(other.loadusr)
         self.addf.extend(other.addf)

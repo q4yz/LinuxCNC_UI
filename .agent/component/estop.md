@@ -28,11 +28,13 @@
 > at all" case). The physical chain is skipped on a class-B MCU
 > (Remora/EtherCAT) — that router's own `base_fragment()` already
 > claims `iocontrol.0`'s enable chain for its SPI/EtherCAT link-health
-> wiring; see § 3's "Physical chain" note. No `Digital Pin` **output**
-> firmware module exists for Remora yet (`out_pin` on that class): no
-> real reference `config.txt` shows one — an honest gap, not a
-> fabricated shape, same class as `heater.md`'s missing thermistor
-> module.
+> wiring; see § 3's "Physical chain" note. There `out_pin` joins the
+> board's own `user-enable-out` signal (one HAL pin, one signal) and
+> becomes a `Digital Pin` **output** module (`remora.output.NN`, the
+> Remora-m8p fork's verified shape) with `Safe State: Low`: the physical
+> level while LinuxCNC is disconnected is always Low — inverted pin or
+> not (the firmware does not invert it), never configurable. The machine
+> must be safe at Low.
 
 ## 1. INGESTION (Hand-Written CFG)
 
@@ -117,6 +119,8 @@ net estop-ext => iocontrol.0.emc-enable-in
 # --- IF parameters.out_pin AND this pin's MCU is not class B ---
 net estop-out <= iocontrol.0.user-enable-out
 net estop-out => <out_pin>                    # <- out_pin (output)
+# --- IF parameters.out_pin on a Remora board (class B) ---
+net user-enable-out => remora.output.NN       # + config.txt "Digital Pin" Mode Output, Safe State Low
 ```
 
 webgui_connections.hal
@@ -155,7 +159,7 @@ digital input/output that isn't an endstop:
 | Role | Meaning | Parport | Remora |
 |---|---|---|---|
 | `DIGITAL_IN` | plain level read | `pin-NN-in`/`-in-not` | `remora.input.NN` + `"Digital Pin"`/`Mode: Input` (shares one bit-space with `ENDSTOP`) |
-| `DIGITAL_OUT` | plain level write | `pin-NN-out` | no firmware module (honest gap — no real reference) |
+| `DIGITAL_OUT` | plain level write | `pin-NN-out` | `remora.output.NN` + `"Digital Pin"`/`Mode: Output`, own bit-space, `Safe State: Low` always (+ `Invert` for `!pin`) |
 
 `estop-out` / `estop-fault` are the "machine core" signal names
 `.agent/component/README.md` § 5 already reserved for this component

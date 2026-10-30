@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/v1/modules/mcu", tags=["modules:mcu"])
     summary="Reset MCUs",
     description=(
         "Pulse the ``webgui.<id>-reset`` HAL pin of every resettable MCU "
-        "(a Remora board that declared a ``reset_pin``). Returns ``409`` "
+        "(a Remora board that declared a ``board_reset_pin``). Returns ``409`` "
         "when the machine has no resettable MCU."
     ),
     operation_id="resetMcus",

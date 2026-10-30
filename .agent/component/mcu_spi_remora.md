@@ -6,7 +6,7 @@
 > belong to *which* MCU; the firmware target's own JSON shape is a
 > mapper's job, same as every other Remora-specific shape here).
 > `RemoraRouterMapper.base_fragment()` emits the board's `"Reset Pin"`
-> module when `reset_pin` is declared, and `route()`'s `ANALOG_IN`
+> module when `board_reset_pin` is declared, and `route()`'s `ANALOG_IN`
 > branch emits a real `"Temperature"` module (§ 4) when
 > `temperature_sensors[].type` matches a known thermistor preset
 > ("Generic 3950" — the standard NTC 100K B3950 curve, not fabricated)
@@ -35,9 +35,25 @@
                    // needs a board to compile firmware; this HAL pipeline does not.
     interface: string // (Optional) transport selector, e.g. a spidev path
     servo_period: integer // (Optional) ns per servo cycle, default 1000000
-    reset_pin: string // (Optional) the board's own reset GPIO. Real, not invented:
+    board_reset_pin: string // (Optional) a pin on the Remora board itself. Real, not invented:
                         // every module in the reference config.txt is preceded by a
                         // "Reset Pin" module. Only valid on remora-spi/remora-eth.
+
+    // Host side of the SPI link — `loadrt remora-spi` (and `remora-upload
+    // --sync`) parameters, NOT firmware pins, spelled exactly like the driver's
+    // parameters (keys are case-sensitive). All optional, remora-spi only.
+    // `interface` above is the spidev path (driver `spi_dev`).
+    SPI_freq: integer       // SPI clock in Hz, e.g. 1000000 (Pi 5, generic spidev / BTT CB1)
+    SPI_clk_div: integer    // OR: bcm2835 clock divider (Pi 3/4) — exclusive with SPI_freq;
+                            // neither = SPI_clk_div=64
+    PRU_base_freq: integer  // PRU base thread frequency in Hz (driver default 40000)
+    spi_cs_pin: string      // chip select on a host GPIO, e.g. PC10 (BTT CB1: no CS on the header)
+    spi_cs_chip: string     // gpiochip of spi_cs_pin
+    reset_pin: string       // host GPIO that resets the board, e.g. PC12 (not board_reset_pin)
+    reset_chip: string      // gpiochip of reset_pin
+    sync_config: bool       // default true: put config_<id>.txt on the board's SD card at every
+                            // LinuxCNC start (the board compares the CRC; failure stops LinuxCNC).
+                            // false for firmware without SD upload support.
 ```
 
 **No step timing here.** Remora is capability class B (`README.md` § 2):
@@ -89,11 +105,21 @@ JOINTS = <joint count, extruders included>
 
 machine.hal
 ```hal
+# Before any loadrt (HalFragment.preload) — only for a remora-spi board
+# that got a config_<id>.txt, and not with sync_config: false / an LPC chip:
+loadusr -w remora-upload --sync [-d <interface>] [--spi-cs-pin <spi_cs_pin>] [--spi-cs-chip <spi_cs_chip>] [-s <SPI_freq>] config_<id>.txt
+
 loadrt [KINS]KINEMATICS
 loadrt [EMCMOT]EMCMOT base_period_nsec=[EMCMOT]BASE_PERIOD servo_period_nsec=[EMCMOT]SERVO_PERIOD num_joints=[KINS]JOINTS
 
-# Component: <id>
-loadrt <computed.component> SPI_clk_div=<parameters.spi_clk_div>
+# Component: <id> — only the declared host keys appear
+loadrt <computed.component> [PRU_base_freq=<PRU_base_freq>] (SPI_freq=<SPI_freq> | SPI_clk_div=<SPI_clk_div, 64>) [spi_dev=<interface>] [spi_cs_pin=<spi_cs_pin>] [spi_cs_chip=<spi_cs_chip>] [reset_pin=<reset_pin>] [reset_chip=<reset_chip>]
+# Manual upload (Machines explorer "Upload to board" on config_<id>.txt / firmware.bin,
+# POST /modules/machineconfig/machines/board-upload): remora-upload with the same
+# -d / --spi-cs-pin / --spi-cs-chip / -s options (RemoraRouterMapper.link_args), LinuxCNC stopped.
+# e.g. BTT CB1:
+#   loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt
+#   loadrt remora-spi PRU_base_freq=40000 SPI_freq=1000000 spi_cs_pin=PC10 reset_pin=PC12
 
 # ------------------------------------------------------------------
 # E-STOP / LINK CHAIN
@@ -175,17 +201,17 @@ Sweep behaviour — `pin_id` here is an MCU-native port name (`PF13`,
 ### The board's own reset pin → `config.txt`, nothing in HAL
 
 MCU-intrinsic, emitted unconditionally by `RemoraRouterMapper.
-base_fragment()` whenever `reset_pin` is declared — the same way the
+base_fragment()` whenever `board_reset_pin` is declared — the same way the
 SPI-enable/reset/status chain above it is, not something any routed
 request triggers. Always the *first* module in the file (matches the
 real reference exactly):
 
 ```json
 { "Name": "reset_pin", "Thread": "Servo", "Type": "Reset Pin",
-  "Comment": "Reset pin", "Pin": "<firmware pin of reset_pin>" }
+  "Comment": "Reset pin", "Pin": "<firmware pin of board_reset_pin>" }
 ```
 
-**Runtime / UI side (implemented).** A Remora MCU with `reset_pin`
+**Runtime / UI side (implemented).** A Remora MCU with `board_reset_pin`
 is *resettable*: the machine backend (`McuService`, via
 `McuMapper`) registers a `webgui.<mcu_id>-reset` BIT pin (HAL_OUT)
 for it, the base-thread snapshot's static tier lists it under `mcus`

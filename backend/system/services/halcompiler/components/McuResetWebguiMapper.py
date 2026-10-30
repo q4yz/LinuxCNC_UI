@@ -2,7 +2,7 @@
 
 `McuService.reset_mcus()` (machine backend) pulses
 ``webgui.<mcu_id>-reset`` True -> False for every resettable MCU (a
-Remora board that declared a ``reset_pin``). This binds that pin to
+Remora board that declared a ``board_reset_pin``). This binds that pin to
 the Remora driver's ``PRU-reset`` input — a plain passthrough net, the
 same shape as the E-stop binding (`EstopWebguiMapper`).
 

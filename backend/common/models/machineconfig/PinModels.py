@@ -71,6 +71,9 @@ class CapabilityClass(Enum):
             "parallelport": cls.STEP_DIR,
             "remora-spi": cls.POSITION,
             "remora-eth": cls.POSITION,
+            # A CAN node behind a Remora hub: digital I/O only so far
+            # (Remora-m8p CAN_PROTOCOL.md — remote stepgen is phase 4).
+            "remora-can": cls.IO_ONLY,
             # An EtherCAT servo drive closes its own position loop from a
             # cyclic setpoint (mcu_ethercat.md) — class B like Remora.
             "ethercat": cls.POSITION,

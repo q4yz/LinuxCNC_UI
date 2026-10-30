@@ -54,6 +54,32 @@ function isMachineFolder(entry: FileEntry): boolean {
   return entry.kind === "folder" && !entry.parent;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Upload to board — config_<mcu>.txt / firmware.bin onto the Remora
+// SPI board's SD card (remora-upload on the system service, over the
+// link the machine's hardware.json declares). Only while LinuxCNC is
+// stopped; the backend answers 409 otherwise.
+// ─────────────────────────────────────────────────────────────────
+const uploadingPath = ref<string | null>(null);
+
+function isBoardFile(entry: FileEntry): boolean {
+  return entry.kind === "file" && (entry.name === "firmware.bin" || /^config_[A-Za-z0-9_.-]+\.txt$/.test(entry.name));
+}
+
+async function uploadToBoard(entry: FileEntry): Promise<void> {
+  const firmware = entry.name === "firmware.bin";
+  const question = firmware
+    ? `Flash ${entry.path} onto the Remora board?\n\nThe board reboots and its SD bootloader flashes the new firmware (about 15 s). LinuxCNC must be stopped.`
+    : `Upload ${entry.path} to the Remora board as config.txt?\n\nThe board reboots with the new configuration. LinuxCNC must be stopped.`;
+  if (!window.confirm(question)) return;
+  uploadingPath.value = entry.path;
+  try {
+    await store.uploadToBoard(entry.path);
+  } finally {
+    uploadingPath.value = null;
+  }
+}
+
 async function refreshLifecycleStatus(): Promise<void> {
   try {
     const status = await MachineLifecycleFacade.getStatus();
@@ -307,6 +333,19 @@ async function downloadMachineFile(entry: FileEntry) {
               @dblclick.stop
             >Set as default</BaseButton>
           </template>
+          <BaseButton
+            v-if="isBoardFile(entry)"
+            variant="secondary"
+            size="sm"
+            :loading="uploadingPath === entry.path"
+            :disabled="uploadingPath !== null"
+            :title="entry.name === 'firmware.bin' ? 'Flash this firmware onto the Remora board' : 'Upload this config to the Remora board as config.txt'"
+            :data-test="`machines-board-upload-${entry.path}`"
+            @click.stop="uploadToBoard(entry)"
+            @dblclick.stop
+          >
+            <Icon name="upload" class="mr-1" /> Upload to board
+          </BaseButton>
           <span @click.stop @dblclick.stop>
             <ActionMenu :items="menuItems(entry)" :test-id="`machines-entry-${entry.path}`" @select="onMenu(entry, $event)" />
           </span>

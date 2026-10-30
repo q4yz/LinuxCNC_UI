@@ -26,6 +26,7 @@ ConnectionType = Literal[
     "vfd_rs485",
     "remora-spi",
     "remora-eth",
+    "remora-can",
     "parallelport",
     "ethercat",
     "usb_arduino",
@@ -49,7 +50,7 @@ def connection_to_hal_type(connection: ConnectionType) -> str:
       transports land in the parallel-mode template until a
       dedicated renderer is added).
     """
-    if connection in {"remora-spi", "remora-eth"}:
+    if connection in {"remora-spi", "remora-eth", "remora-can"}:
         return "remora"
     return "parallel"
 
@@ -358,13 +359,24 @@ class MCU:
       sections. ``parity`` is normalised to ``none``/``even``/
       ``odd``; all three stay ``None`` when undeclared so the
       router applies its documented defaults (9600 / 1 / none).
-    * ``reset_pin`` — the board's own reset GPIO, only valid on
-      ``remora-spi``/``remora-eth``. Real, not invented: every module
-      in the reference firmware config
+    * ``board_reset_pin`` — a pin on the Remora board itself, only
+      valid on ``remora-spi``/``remora-eth``. Real, not invented: every
+      module in the reference firmware config
       (`machine_config/example/ender3/config.txt`) is preceded by a
       `"Reset Pin"` module; this is a physical pin string like any
       other (`.agent/component/README.md` § 1 grammar), formatted at
       emission time the same way a joint's `step_pin` is.
+    * ``spi_freq`` / ``spi_clk_div`` (exclusive) / ``pru_base_freq`` /
+      ``spi_cs_pin`` / ``spi_cs_chip`` / ``reset_pin`` / ``reset_chip``
+      — the host side of a ``remora-spi`` link, one-to-one the
+      ``loadrt remora-spi`` parameters (``reset_pin`` is a host GPIO,
+      not the board-side ``board_reset_pin`` above).
+    * ``sync_config`` — ``False`` drops the ``remora-upload --sync``
+      line (firmware without SD upload); ``None`` means on.
+    * ``can_bitrate`` / ``can_status_bit`` — a ``remora-spi`` hub's CAN
+      bus (the firmware ``"CAN"`` block); ``canbus_uuid`` / ``can_node``
+      / ``can_hub`` / ``mandatory`` — a ``remora-can``
+      node behind it (Remora-m8p ``CAN_PROTOCOL.md``).
 
     The ``hal_type`` property collapses :attr:`connection` to
     the legacy two-value discriminator the original HAL generator
@@ -378,7 +390,21 @@ class MCU:
     baud_rate: int | None = None
     node_id: int | None = None
     parity: str | None = None
+    board_reset_pin: str | None = None
+    spi_freq: int | None = None
+    spi_clk_div: int | None = None
+    pru_base_freq: int | None = None
+    spi_cs_pin: str | None = None
+    spi_cs_chip: str | None = None
     reset_pin: str | None = None
+    reset_chip: str | None = None
+    sync_config: bool | None = None
+    can_bitrate: int | None = None
+    can_status_bit: int | None = None
+    canbus_uuid: str | None = None
+    can_node: int | None = None
+    can_hub: str | None = None
+    mandatory: bool | None = None
 
     @property
     def hal_type(self) -> str:

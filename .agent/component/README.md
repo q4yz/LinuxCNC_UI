@@ -28,6 +28,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `probe.md` | `[probe]`, `[tool_length_sensor]` | Both optional. Both trigger `motion.probe-input`; when both are declared they are OR-ed (`or2`). |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
+| `mcu_can_remora.md` | `[mcu NAME]` `connection: remora-can` | **Class C** — a CAN node behind a remora-spi hub: digital I/O, Status Bit into the E-stop. |
 | `mcu_ethercat.md` | `[mcu]` `type: ethercat` | **Class B.** |
 | `mcu_vfd_rs485.md` | `[mcu]` `type: vfd_rs485` | **Class C** — carries a spindle, never a joint. |
 | `mcu_usb_arduino.md` | `[mcu]` `type: usb_arduino` | **Class C — I/O only.** |

@@ -32,6 +32,7 @@ from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
 from .components.StepperHalMapper import StepperHalMapper
 from .mcus.ParportRouterMapper import ParportRouterMapper
+from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
 from .mcus.VfdRs485RouterMapper import VfdRs485RouterMapper
 
@@ -326,10 +327,35 @@ class HalAssembler:
         for request in fragment.firmware_modules:
             by_mcu.setdefault(request.mcu_id, []).append(request.module)
 
+        # CAN nodes have no SD card: their modules go into the hub's
+        # config.txt ("CAN" -> "Nodes"), never a config_<node>.txt.
+        node_modules = {
+            mcu_id: by_mcu.pop(mcu_id)
+            for mcu_id in list(by_mcu)
+            if RemoraCanMapper.is_node(self._mcus_by_id.get(mcu_id))
+        }
+        hubs = {
+            hub_id for mcu in self._mcus_by_id.values()
+            if RemoraCanMapper.is_node(mcu) and (hub_id := RemoraCanMapper.hub_id(mcu, self._mcus_by_id))
+        }
+        for hub_id in hubs:
+            by_mcu.setdefault(hub_id, [])
+
         for mcu_id, modules in by_mcu.items():
             mcu = self._mcus_by_id.get(mcu_id) or {}
             config = RemoraFirmwareConfigMapper.to_config(mcu, modules)
-            fragment.files[f"config_{mcu_id}.txt"] = json.dumps(config, indent=2)
+            if mcu_id in hubs:
+                config["CAN"] = RemoraCanMapper.can_block(
+                    mcu, RemoraCanMapper.nodes_of(mcu_id, self._mcus_by_id), node_modules
+                )
+            config_file = f"config_{mcu_id}.txt"
+            fragment.files[config_file] = json.dumps(config, indent=2)
+            # The file exists now, so the board can be synced from it at
+            # every LinuxCNC start (relative: HAL runs in this folder).
+            if mcu.get("connection") == "remora-spi":
+                sync = RemoraRouterMapper.config_sync_line(mcu, config_file)
+                if sync:
+                    fragment.preload.append(sync)
 
     # -- pass 2: routing --------------------------------------------------- #
 
@@ -347,10 +373,24 @@ class HalAssembler:
                 by_signal.setdefault(request.signal, request)
         return list(by_signal.values())
 
+    def _routing_mcu_id(self, mcu_id: str) -> str:
+        """A CAN node's pins route through its hub (one shared bit-space,
+        `RemoraCanMapper`); every other MCU routes its own."""
+        mcu = self._mcus_by_id.get(mcu_id)
+        if RemoraCanMapper.is_node(mcu):
+            return RemoraCanMapper.hub_id(mcu, self._mcus_by_id) or mcu_id
+        return mcu_id
+
+    def _can_status_bit(self, mcu_id: str) -> int | None:
+        mcu = self._mcus_by_id.get(mcu_id) or {}
+        if mcu.get("connection") != "remora-spi":
+            return None
+        return RemoraCanMapper.status_bit(mcu, RemoraCanMapper.nodes_of(mcu_id, self._mcus_by_id))
+
     def _route(self, requests: list[PinRequest]) -> tuple[list[HalFragment], list[HalFragment]]:
         by_mcu: dict[str, list[PinRequest]] = {}
         for request in requests:
-            by_mcu.setdefault(request.pin.mcu_id, []).append(request)
+            by_mcu.setdefault(self._routing_mcu_id(request.pin.mcu_id), []).append(request)
 
         # A class B motion MCU (Remora) generates no step/dir/enable
         # PinRequest at all — the board owns the pulses, so a bare
@@ -376,7 +416,10 @@ class HalAssembler:
                     f"(connection={mcu.get('connection')!r})"
                 )
             bases.append(router.base_fragment(self._enrich_mcu_for_base(mcu, mcu_requests)))
-            routes.append(router.route(mcu_requests))
+            if router is RemoraRouterMapper:
+                routes.append(router.route(mcu_requests, reserved_input=self._can_status_bit(mcu_id)))
+            else:
+                routes.append(router.route(mcu_requests))
         return bases, routes
 
     def _enrich_mcu_for_base(
@@ -399,9 +442,13 @@ class HalAssembler:
         ``iocontrol.0.emc-enable-in`` for its link health and must gate
         it on that input itself (``EstopHalMapper`` skips the chain there).
         """
-        if not mcu_requests:
-            return mcu
         enriched = dict(mcu)
+        # A CAN hub gates LinuxCNC's enable on its nodes' status bit.
+        status_bit = self._can_status_bit(str(mcu.get("id")))
+        if status_bit is not None:
+            enriched["_can_status_bit"] = status_bit
+        if not mcu_requests:
+            return enriched
         if any(request.signal == "estop-fault" for request in mcu_requests):
             enriched["_estop_fault"] = True
         spindle = self._tools_by_id.get(mcu_requests[0].owner)

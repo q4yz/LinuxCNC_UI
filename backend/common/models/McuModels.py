@@ -25,7 +25,7 @@ class McuStateResponse(BaseModel):
         default=None,
         description=(
             "True when the board can be reset from the UI — a Remora MCU "
-            "that declared a `reset_pin`. `POST /api/v1/modules/mcu/reset` "
+            "that declared a `board_reset_pin`. `POST /api/v1/modules/mcu/reset` "
             "pulses every resettable MCU's `webgui.<id>-reset` pin."
         ),
     )

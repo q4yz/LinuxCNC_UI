@@ -12,7 +12,7 @@ import { describeError, errorStatus } from "../core/error-format";
 
 /**
  * Pulse the reset pin of every resettable MCU (Remora boards that
- * declared a ``reset_pin``). The backend answers 409 when there is
+ * declared a ``board_reset_pin``). The backend answers 409 when there is
  * none; on success ``message`` lists the reset MCU ids.
  */
 async function resetMcus(): Promise<CommandResult> {

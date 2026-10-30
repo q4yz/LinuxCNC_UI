@@ -377,6 +377,23 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     return result;
   }
 
+  /** ``config_<mcu>.txt`` / ``firmware.bin`` -> the machine's Remora board. */
+  async function uploadToBoard(path: string): Promise<CommandResult> {
+    isBusy.value = true;
+    const result = await machineconfigFacade.uploadToBoard(path);
+    if (result.failed) {
+      reportCommandFailure(`upload ${path} to the board`, result);
+    } else {
+      consoleStore.success(result.message || `Uploaded ${path} to the board`, {
+        popup: true,
+        title: "Upload to board",
+        lifetime: 15,
+      });
+    }
+    isBusy.value = false;
+    return result;
+  }
+
   async function deleteMachine(path: string, recursive = false): Promise<CommandResult> {
     isBusy.value = true;
     const result = await machineconfigFacade.deleteMachine(path, recursive);
@@ -419,5 +436,6 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     renameMachine,
     copyMachine,
     deleteMachine,
+    uploadToBoard,
   };
 });

@@ -21,6 +21,8 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
+from .mcus.RemoraCanMapper import RemoraCanMapper
+
 #: ``(list name, field)`` pairs that hold a pin string, and whether the
 #: pin drives a joint (which is what the capability rules care about).
 _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
@@ -44,6 +46,12 @@ _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
+#: Pins a CAN node can carry (Remora-m8p CAN expansion, phase 2: Digital
+#: Pin only) — besides every ``endstops[].pin``.
+_CAN_NODE_PIN_FIELDS = frozenset({("estop", "fault_pin"), ("estop", "out_pin")})
+MAX_CAN_NODES = 15
+
+
 class MachineValidator:
     """Collects diagnostics for one ``hardware.json`` payload."""
 
@@ -63,8 +71,11 @@ class MachineValidator:
     def validate(self) -> list[Diagnostic]:
         """Run every rule. Errors first, then warnings, else declaration order."""
         self._found = []
+        # Parsed once: a malformed pin is reported once, not per rule.
+        self._pins = self._parsed_pins()
         self._check_mcus()
         self._check_pins()
+        self._check_can()
         self._check_references()
         self._check_joints_and_axes()
         self._check_ranges()
@@ -163,7 +174,7 @@ class MachineValidator:
         claimed: dict[str, tuple[str, str]] = {}
         motion_classes: set[CapabilityClass] = set()
 
-        for pin, owner, field, drives_joint in self._parsed_pins():
+        for pin, owner, field, drives_joint in self._pins:
             if pin.mcu_id not in classes:
                 code = "E_NO_DEFAULT_MCU" if pin.mcu_id == "mcu" else "E_UNKNOWN_MCU"
                 self._error(
@@ -236,6 +247,67 @@ class MachineValidator:
             f"and {owner}.{field}.",
             owner,
         )
+
+    def _check_can(self) -> None:
+        """CAN nodes (``remora-can``) behind a Remora hub.
+
+        A node needs a hub it can name or find (``E_CAN_NO_HUB``), a
+        unique UUID (``E_CAN_DUPLICATE_UUID``) and a free number 1 ... 15
+        (``E_CAN_NODE_NUMBER``). It only carries digital pins so far —
+        endstops and the E-stop pins (``E_CAN_NODE_PIN``): heaters, fans,
+        sensors and stepgen follow in later firmware phases, and the
+        few-millisecond latency rules out a touch probe.
+        """
+        mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
+        nodes = [m for m in mcus_by_id.values() if RemoraCanMapper.is_node(m)]
+        if not nodes:
+            return
+
+        uuids: dict[str, str] = {}
+        by_hub: dict[str, list[dict[str, Any]]] = {}
+        for node in nodes:
+            node_id = str(node["id"])
+            hub_id = RemoraCanMapper.hub_id(node, mcus_by_id)
+            if hub_id is None:
+                self._error(
+                    "E_CAN_NO_HUB",
+                    f"CAN node {node_id!r} has no hub: set can_hub to a remora-spi MCU"
+                    + (f" ({node['can_hub']!r} is none)" if node.get("can_hub") else
+                       " (needed when the machine has not exactly one remora-spi MCU)."),
+                    node_id,
+                )
+            else:
+                by_hub.setdefault(hub_id, []).append(node)
+            uuid = str(node.get("canbus_uuid") or "")
+            if uuid in uuids:
+                self._error(
+                    "E_CAN_DUPLICATE_UUID",
+                    f"canbus_uuid {uuid} is used by both {uuids[uuid]!r} and {node_id!r}.",
+                    node_id,
+                )
+            uuids.setdefault(uuid, node_id)
+
+        for hub_id, hub_nodes in by_hub.items():
+            declared = [int(n["can_node"]) for n in hub_nodes if n.get("can_node")]
+            if len(hub_nodes) > MAX_CAN_NODES or len(declared) != len(set(declared)):
+                self._error(
+                    "E_CAN_NODE_NUMBER",
+                    f"hub {hub_id!r}: node numbers must be unique, 1 ... {MAX_CAN_NODES} "
+                    f"({len(hub_nodes)} node(s), declared numbers {sorted(declared)}).",
+                    hub_id,
+                )
+
+        node_ids = {str(n["id"]) for n in nodes}
+        endstops = self._ids("endstops")
+        for pin, owner, field, _drives_joint in self._pins:
+            allowed = (owner, field) in _CAN_NODE_PIN_FIELDS or (field == "pin" and owner in endstops)
+            if pin.mcu_id in node_ids and not allowed:
+                self._error(
+                    "E_CAN_NODE_PIN",
+                    f"{owner}.{field} {pin.raw!r} is on CAN node {pin.mcu_id!r}, which only "
+                    "carries endstops and the E-stop fault_pin / out_pin so far.",
+                    owner,
+                )
 
     def _check_references(self) -> None:
         sensors = self._ids("temperature_sensors")

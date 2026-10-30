@@ -10,7 +10,7 @@ class McuPins:
 
     ``reset`` is only a real pin (``webgui.<id>-reset``) on a board
     that can be reset from the UI — a Remora MCU that declared a
-    ``reset_pin``. Every other MCU keeps the unconnected placeholder
+    ``board_reset_pin``. Every other MCU keeps the unconnected placeholder
     and ``resettable`` stays ``False``.
     """
     id: str

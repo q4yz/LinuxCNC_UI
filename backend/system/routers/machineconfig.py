@@ -59,6 +59,7 @@ from fastapi.responses import JSONResponse
 
 from mappers.files import FileEntryMapper
 from models.machineconfig.MachineConfigApiModels import (
+    BoardUploadRequest,
     CopyRequest,
     CreateEntryRequest,
     DirectoryListing,
@@ -609,6 +610,27 @@ async def upload_machine_file(path: str, file: UploadFile = File(...)) -> Status
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
     return StatusMessage(status="ok", message=f"Uploaded {path}")
+
+
+@router.post(
+    "/machines/board-upload",
+    summary="Upload a file to the machine's Remora board",
+    description=(
+        "Put config_<mcu>.txt or firmware.bin on the SD card of the machine's Remora SPI board "
+        "with remora-upload, over the link its hardware.json declares (spidev, GPIO chip select, "
+        "SPI clock). The board reboots; firmware.bin is then flashed by its SD bootloader. "
+        "409 while LinuxCNC runs or a start/stop is in progress."
+    ),
+    response_model=StatusMessage,
+    operation_id="uploadMachineFileToBoard",
+)
+def upload_machine_file_to_board(payload: BoardUploadRequest) -> StatusMessage:
+    try:
+        file = get_machine_service().safe_join(payload.path)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    output = get_machine_lifecycle_service().upload_to_board(file)
+    return StatusMessage(status="ok", message=output or f"Uploaded {file.name} to the board")
 
 
 @router.post(

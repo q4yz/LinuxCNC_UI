@@ -60,6 +60,7 @@ HARDWARE_MCU_CONNECTION_TYPES = frozenset(
         "rs485",
         "remora-spi",
         "remora-eth",
+        "remora-can",
         "parallelport",
         "ethercat",
         "usb_arduino",
@@ -369,6 +370,7 @@ class McuInfo(BaseModel):
         "rs485",
         "remora-spi",
         "remora-eth",
+        "remora-can",
         "parallelport",
         "ethercat",
         "usb_arduino",
@@ -382,10 +384,31 @@ class McuInfo(BaseModel):
     baud_rate: int | None = None
     node_id: int | None = None
     parity: Literal["none", "even", "odd"] | None = None
-    # The board's own reset GPIO — present only on remora-spi/
-    # remora-eth MCUs that declared one. Real firmware field, not
-    # invented: see `.agent/component/mcu_spi_remora.md`.
+    # A pin on the Remora board itself (firmware "Reset Pin" module) —
+    # present only on remora-spi/remora-eth MCUs that declared one.
+    # Real firmware field, not invented: see `mcu_spi_remora.md`.
+    board_reset_pin: str | None = None
+    # Host side of a remora-spi link — the `loadrt remora-spi`
+    # parameters, present only when declared (`reset_pin` is a host
+    # GPIO; `spi_freq` / `spi_clk_div` are exclusive); `sync_config:
+    # false` drops the `remora-upload --sync` line. `mcu_spi_remora.md` § 3.
+    spi_freq: int | None = None
+    spi_clk_div: int | None = None
+    pru_base_freq: int | None = None
+    spi_cs_pin: str | None = None
+    spi_cs_chip: str | None = None
     reset_pin: str | None = None
+    reset_chip: str | None = None
+    sync_config: bool | None = None
+    # CAN — a remora-spi hub's `can_bitrate` / `can_status_bit`, a
+    # remora-can node's `canbus_uuid` / `can_node` / `can_hub` /
+    # `mandatory`; present only when declared.
+    can_bitrate: int | None = None
+    can_status_bit: int | None = Field(default=None, ge=0, le=15)
+    canbus_uuid: str | None = Field(default=None, pattern=r"^[0-9a-f]{12}$")
+    can_node: int | None = Field(default=None, ge=1, le=15)
+    can_hub: str | None = None
+    mandatory: bool | None = None
 
 
 # ---------------------------------------------------------------------- #

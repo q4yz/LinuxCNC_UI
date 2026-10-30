@@ -52,6 +52,22 @@ rules in [`context/BACKEND_LAYERS.md`](.agent/context/BACKEND_LAYERS.md).
   on 1 GB boards (CB1). CI's `release` job publishes the dist on `v*` tags;
   `install.sh --release` uses the same path. `GET /system/version` reports the
   latest release (`services/VersionService.py`, GitHub API, cached).
+- Remora config sync — the HAL compiler puts `loadusr -w remora-upload --sync
+  config_<mcu>.txt` (same spidev / GPIO chip select / clock as the driver)
+  before `loadrt remora-spi` (`HalFragment.preload`,
+  `RemoraRouterMapper.config_sync_line`); the board compares the CRC and only
+  rewrites its SD card on a change, a failed sync stops LinuxCNC. Host-side
+  `[mcu]` keys spelled like the driver (`SPI_freq` | `SPI_clk_div`, `PRU_base_freq`,
+  `spi_cs_pin`, `reset_pin` = host GPIO, ..., `sync_config`; the board-side pin is
+  `board_reset_pin`) feed both lines. Machines explorer "Upload to board" on
+  `config_<mcu>.txt` / `firmware.bin` (`RemoraBoardUploader`, lifecycle lock,
+  state `uploading`). Remora `DIGITAL_OUT` routed with `Safe State`
+  always Low (node inputs' `Lost State` too — not configurable) — `component/mcu_spi_remora.md` § 3. CAN nodes
+  (`connection: remora-can`, `canbus_uuid`, ...) route through their hub; their
+  modules land in the hub's config.txt `"CAN"` block and the `Status Bit`
+  (default 15) latches E-stop — `component/mcu_can_remora.md`. `remora-upload`
+  and the HAL components come from github.com/q4yz/Remora-m8p `main`
+  (`scripts/install_hal_components.sh`), not this repo.
 - One file record everywhere — `FileEntryResponse` / frontend `FileEntry`;
   every file selector uses `ui/FileDropZone.vue` (drag & drop, multi-file).
 - LinuxCNC session lifecycle — `MachineLifecycleService`: one lock for

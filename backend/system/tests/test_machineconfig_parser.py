@@ -1062,37 +1062,37 @@ baud_rate: 9600
     assert "vfd_rs485" in str(exc_info.value)
 
 
-def test_remora_mcu_parses_the_reset_pin() -> None:
+def test_remora_mcu_parses_the_board_reset_pin() -> None:
     config = """
 [mcu]
 connection: remora-spi
-reset_pin: PC15
+board_reset_pin: PC15
 """
     graph = MachineConfigParser().parse_string(config)
-    assert graph.mcus["mcu"].reset_pin == "PC15"
+    assert graph.mcus["mcu"].board_reset_pin == "PC15"
 
 
-def test_reset_pin_is_optional() -> None:
+def test_board_reset_pin_is_optional() -> None:
     config = """
 [mcu]
 connection: remora-spi
 """
     graph = MachineConfigParser().parse_string(config)
-    assert graph.mcus["mcu"].reset_pin is None
+    assert graph.mcus["mcu"].board_reset_pin is None
 
 
-def test_reset_pin_rejected_on_non_remora_mcu() -> None:
-    """``reset_pin`` on a parport MCU is a typo, not a tuning knob —
+def test_board_reset_pin_rejected_on_non_remora_mcu() -> None:
+    """``board_reset_pin`` on a parport MCU is a typo, not a tuning knob —
     mirrors the RS-485 serial trio's own restriction."""
     config = """
 [mcu]
 connection: parallelport
-reset_pin: PC15
+board_reset_pin: PC15
 """
     with pytest.raises(InvalidValueError) as exc_info:
         MachineConfigParser().parse_string(config)
     assert exc_info.value.section == "mcu"
-    assert exc_info.value.key == "reset_pin"
+    assert exc_info.value.key == "board_reset_pin"
     assert "remora" in str(exc_info.value)
 
 

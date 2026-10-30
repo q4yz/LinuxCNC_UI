@@ -60,7 +60,7 @@ PAYLOAD: dict[str, Any] = {
             "id": "mcu",
             "connection": "remora-spi",
             "board": "BIGTREETECH OCTOPUS",
-            "reset_pin": "PC15",
+            "board_reset_pin": "PC15",
             "parameters": {"spi_clk_div": 64},
         }
     ],
@@ -203,7 +203,7 @@ def test_firmware_config_carries_every_joint_and_endstop_module(fragment):
     `{"Board": ..., "Modules": [...]}` (no top-level frequency block),
     steppers are `"Stepgen"`, endstops are `"Digital Pin"` (the space
     matters), heater/fan outputs get a `"PWM"` module, a declared
-    `reset_pin` gets a `"Reset Pin"` module, and a "Generic 3950"
+    `board_reset_pin` gets a `"Reset Pin"` module, and a "Generic 3950"
     sensor gets a `"Temperature"` module with the matching curve."""
     config_key = next(k for k in fragment.files if k.startswith("config_"))
     assert config_key == "config_mcu.txt"
@@ -275,9 +275,11 @@ def test_full_render_is_well_formed_hal_text():
     text = compile_machine_hal(PAYLOAD)
     assert text.count("loadrt remora-spi") == 1
     lines = [l for l in text.splitlines() if l.strip()]
-    assert all(
-        l.startswith(("loadrt ", "addf ", "setp ", "net ", "#")) for l in lines
-    ), [l for l in lines if not l.startswith(("loadrt ", "addf ", "setp ", "net ", "#"))]
+    commands = ("loadusr ", "loadrt ", "addf ", "setp ", "net ", "#")
+    assert all(l.startswith(commands) for l in lines), [l for l in lines if not l.startswith(commands)]
+    # The board gets its config before the driver takes the SPI link.
+    sync = lines.index("loadusr -w remora-upload --sync config_mcu.txt")
+    assert sync < next(i for i, l in enumerate(lines) if l.startswith("loadrt remora-spi"))
 
 
 # -- heaters -------------------------------------------------------------- #

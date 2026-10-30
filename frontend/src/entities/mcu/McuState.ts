@@ -3,7 +3,7 @@
 // ``mcus[]``). Wholly static for a machine session.
 //
 // ``resettable`` is true for a Remora board that declared a
-// ``reset_pin`` — the UI offers a reset button only when at least one
+// ``board_reset_pin`` — the UI offers a reset button only when at least one
 // MCU is resettable (``POST /api/v1/modules/mcu/reset``).
 
 export interface McuStateParams {

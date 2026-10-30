@@ -37,6 +37,10 @@ _LPC_CHIP = "lpc17xx"
 #: A `type` not listed here is an honest gap: no module is emitted
 #: rather than guessing a curve that would silently misreport real
 #: temperatures.
+#: Digital inputs / outputs per board — the SPI frame's 16-bit words
+#: (`remora.input.NN` / `remora.output.NN`), shared with its CAN nodes.
+_DIGITAL_BITS = 16
+
 _THERMISTOR_CURVES: dict[str, tuple[int, int, int]] = {
     "generic 3950": (3950, 100000, 25),
 }
@@ -49,7 +53,7 @@ class RemoraRouterMapper:
     def base_fragment(mcu: dict[str, Any]) -> HalFragment:
         """§ 3 — component load, E-stop/SPI chain, thread attachment,
         plus the board's own `"Reset Pin"` firmware module when
-        `reset_pin` is declared. MCU-intrinsic, same as the SPI-enable
+        `board_reset_pin` is declared. MCU-intrinsic, same as the SPI-enable
         chain above it — not something any routed request triggers."""
         params = mcu.get("parameters") or {}
         chip = str(params.get("chip", "stm32")).strip().lower()
@@ -57,8 +61,7 @@ class RemoraRouterMapper:
         if chip == _LPC_CHIP:
             loadrt = ["loadrt remora_lpc"]
         else:
-            spi_clk_div = params.get("spi_clk_div", 64)
-            loadrt = [f"loadrt remora-spi SPI_clk_div={spi_clk_div}"]
+            loadrt = ["loadrt remora-spi " + " ".join(RemoraRouterMapper._driver_params(mcu))]
 
         fragment = HalFragment(
             loadrt=loadrt,
@@ -74,27 +77,49 @@ class RemoraRouterMapper:
             ],
         )
 
+        # Fault sources gating LinuxCNC's enable on top of the SPI link:
+        # `[estop] fault_pin` read through this board (e.g. a relay
+        # contact on the motor supply) and the CAN "Status Bit" (0 while
+        # a mandatory node is missing — its `.not` twin is the fault).
+        faults: list[str] = []
         if mcu.get("_estop_fault"):
-            # `[estop] fault_pin` read through this board (e.g. a relay
-            # contact on the motor supply): LinuxCNC may only run while
-            # the SPI link is up AND no fault is present. `estop_latch`
-            # ANDs both (`ok-in` / `fault-in`) and latches a dropout
-            # until the operator resets (`user-request-enable`, the same
-            # edge that re-syncs the SPI link). remora.read (order 0)
-            # sets SPI-status before the latch (order 1) sees the reset.
+            faults.append("estop-fault")
+        can_status_bit = mcu.get("_can_status_bit")
+        if can_status_bit is not None:
+            faults.append("can-fault")
+        if faults:
+            # LinuxCNC may only run while the SPI link is up AND no fault
+            # is present. `estop_latch` ANDs both (`ok-in` / `fault-in`)
+            # and latches a dropout until the operator resets
+            # (`user-request-enable`, the same edge that re-syncs the SPI
+            # link). remora.read (order 0) sets SPI-status before the
+            # latch (order 1) sees the reset; two faults are ORed first
+            # (or2 also order 1, emitted before the latch: a stable sort).
             fragment.loadrt.append("loadrt estop_latch")
+            if len(faults) > 1:
+                fragment.loadrt.append("loadrt or2 names=estop-fault-or")
+                fragment.addf.append(Addf("estop-fault-or", SERVO_THREAD, order=1))
             fragment.addf.append(Addf("estop-latch.0", SERVO_THREAD, order=1))
             fragment.nets = [
                 "net user-enable-out <= iocontrol.0.user-enable-out => remora.SPI-enable",
                 "net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset estop-latch.0.reset",
                 "net remora-status <= remora.SPI-status => estop-latch.0.ok-in",
-                "net estop-fault => estop-latch.0.fault-in",
-                "net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in",
             ]
+            if can_status_bit is not None:
+                fragment.nets.append(f"net can-fault <= remora.input.{int(can_status_bit):02d}.not")
+            if len(faults) > 1:
+                fragment.nets += [
+                    "net estop-fault => estop-fault-or.in0",
+                    "net can-fault => estop-fault-or.in1",
+                    "net estop-fault-any <= estop-fault-or.out => estop-latch.0.fault-in",
+                ]
+            else:
+                fragment.nets.append(f"net {faults[0]} => estop-latch.0.fault-in")
+            fragment.nets.append("net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in")
 
-        reset_pin = mcu.get("reset_pin")
-        if reset_pin:
-            parsed = PinStringMapper.from_string(reset_pin)
+        board_reset_pin = mcu.get("board_reset_pin")
+        if board_reset_pin:
+            parsed = PinStringMapper.from_string(board_reset_pin)
             fragment.firmware_modules.append(
                 FirmwareModuleRequest(
                     mcu_id=str(mcu.get("id", "mcu")),
@@ -111,7 +136,69 @@ class RemoraRouterMapper:
         return fragment
 
     @staticmethod
-    def route(requests: list[PinRequest]) -> HalFragment:
+    def _driver_params(mcu: dict[str, Any]) -> list[str]:
+        """``loadrt remora-spi`` parameters for the declared host side.
+
+        The SPI clock is ``SPI_freq`` (Hz — the generic spidev driver on
+        the BTT CB1, the Pi 5 driver) or ``SPI_clk_div`` (the bcm2835
+        divider on a Pi 3/4; the parser keeps them exclusive), with
+        ``SPI_clk_div=64`` when neither is declared. ``reset_pin`` is a
+        host GPIO here, not the board-side ``board_reset_pin``.
+        """
+        params = mcu.get("parameters") or {}
+        driver: list[str] = []
+        if mcu.get("pru_base_freq"):
+            driver.append(f"PRU_base_freq={mcu['pru_base_freq']}")
+        if mcu.get("spi_freq"):
+            driver.append(f"SPI_freq={mcu['spi_freq']}")
+        else:
+            driver.append(f"SPI_clk_div={mcu.get('spi_clk_div') or params.get('spi_clk_div', 64)}")
+        for key, param in (
+            ("interface", "spi_dev"),
+            ("spi_cs_pin", "spi_cs_pin"),
+            ("spi_cs_chip", "spi_cs_chip"),
+            ("reset_pin", "reset_pin"),
+            ("reset_chip", "reset_chip"),
+        ):
+            if mcu.get(key):
+                driver.append(f"{param}={mcu[key]}")
+        return driver
+
+    @staticmethod
+    def config_sync_line(mcu: dict[str, Any], config_file: str) -> str | None:
+        """``loadusr -w remora-upload --sync ... config_<mcu>.txt``.
+
+        Runs before ``loadrt remora-spi`` (the driver then owns the SPI
+        link): the board compares the CRC-32 of the ``config.txt`` it
+        booted with and only rewrites its SD card when it differs; with
+        ``-w`` a failed sync stops LinuxCNC instead of running a board
+        with a stale pin configuration. Same device, chip select and
+        clock as the driver line. ``None`` for an LPC board (no SD
+        upload) or ``sync_config: false`` (firmware without it).
+        """
+        params = mcu.get("parameters") or {}
+        if str(params.get("chip", "stm32")).strip().lower() == _LPC_CHIP or mcu.get("sync_config") is False:
+            return None
+        return " ".join(["loadusr", "-w", "remora-upload", "--sync", *RemoraRouterMapper.link_args(mcu), config_file])
+
+    @staticmethod
+    def link_args(mcu: dict[str, Any]) -> list[str]:
+        """``remora-upload`` options for the link the driver line uses —
+        spidev, GPIO chip select and SPI clock. Shared by the HAL sync
+        line and the manual upload (``RemoraBoardUploader``)."""
+        args: list[str] = []
+        if mcu.get("interface"):
+            args += ["-d", str(mcu["interface"])]
+        if mcu.get("spi_cs_pin"):
+            args += ["--spi-cs-pin", str(mcu["spi_cs_pin"])]
+        if mcu.get("spi_cs_chip"):
+            args += ["--spi-cs-chip", str(mcu["spi_cs_chip"])]
+        if mcu.get("spi_freq"):
+            args += ["-s", str(mcu["spi_freq"])]
+        return args
+
+    @staticmethod
+    def route(requests: list[PinRequest], reserved_input: int | None = None) -> HalFragment:
         """§ 4 — digital inputs (endstops, E-stop `fault_pin`, ...) +
         analog SP/PV channels.
 
@@ -127,22 +214,30 @@ class RemoraRouterMapper:
         distinct so `config.txt` never calls an E-stop input pin
         "endstop_..."), not the routing itself.
 
-        No ``DIGITAL_OUT`` case exists here — unlike ``ANALOG_OUT``
-        (a verified "PWM" module), there is no real reference
-        `config.txt` with a digital *output* module to ground one
-        against (every real example only shows ``Mode: Input``). A
-        `DIGITAL_OUT` request routed through this MCU is an honest
-        gap, same class as `ANALOG_IN`'s missing thermistor module
-        below — see `.agent/component/estop.md`.
+        ``DIGITAL_OUT`` has its own bit-space: `remora.output.NN` and a
+        "Digital Pin" with ``Mode: Output`` — the shape of the Remora-m8p
+        fork's verified sample (`Firmware/ConfigSamples/BTT_EBB42`). Its
+        ``Safe State`` — the *physical* level while LinuxCNC is
+        disconnected (the firmware does not apply ``Invert`` to it) — is
+        always Low, inverted pin or not: the machine must be safe at Low. Inversion is the module's ``Invert`` key here — outputs have
+        no HAL-side `.not` twin.
         """
         fragment = HalFragment()
-        digital_in_index = 0
+        # The CAN "Status Bit" (``reserved_input``) is a hub input bit
+        # too — the firmware owns it, so no Digital Pin may take it.
+        inputs = (bit for bit in range(_DIGITAL_BITS) if bit != reserved_input)
+        digital_out_index = 0
         sp_index = 0
         pv_index = 0
         for request in requests:
             if request.role in (PinRole.ENDSTOP, PinRole.DIGITAL_IN):
-                nn = f"{digital_in_index:02d}"
-                digital_in_index += 1
+                bit = next(inputs, None)
+                if bit is None:
+                    raise ValueError(
+                        f"{request.owner}: more than {_DIGITAL_BITS - (reserved_input is not None)} digital "
+                        "inputs on one Remora board (its nodes included)"
+                    )
+                nn = f"{bit:02d}"
                 # Writer only — the component mapper already emitted the
                 # reader side (`net <signal> => joint.N....`) as a separate
                 # `net` line; HAL lets the same net name accumulate pins
@@ -176,10 +271,34 @@ class RemoraRouterMapper:
                             "Comment": request.owner,
                             "Pin": pin,
                             "Mode": "Input",
-                            "Data Bit": digital_in_index - 1,
+                            "Data Bit": bit,
                         },
                     )
                 )
+            elif request.role is PinRole.DIGITAL_OUT:
+                if digital_out_index >= _DIGITAL_BITS:
+                    raise ValueError(
+                        f"{request.owner}: more than {_DIGITAL_BITS} digital outputs on one Remora board "
+                        "(its nodes included)"
+                    )
+                nn = f"{digital_out_index:02d}"
+                fragment.nets.append(f"net {request.signal} => remora.output.{nn}")
+                module: dict[str, object] = {
+                    "Name": f"digital_out_{request.owner}",
+                    "Thread": "Servo",
+                    "Type": "Digital Pin",
+                    "Comment": request.owner,
+                    "Pin": RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id),
+                    "Mode": "Output",
+                    "Data Bit": digital_out_index,
+                    "Safe State": "Low",
+                }
+                if request.pin.invert:
+                    module["Invert"] = "True"
+                fragment.firmware_modules.append(
+                    FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=module)
+                )
+                digital_out_index += 1
             elif request.role is PinRole.ANALOG_OUT:
                 fragment.nets.append(f"net {request.signal} => remora.SP.{sp_index}")
                 firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)

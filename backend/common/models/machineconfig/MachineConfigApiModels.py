@@ -79,6 +79,15 @@ class CopyRequest(BaseModel):
     destination: str = Field(..., description="New path of the copy (must not exist yet)")
 
 
+class BoardUploadRequest(BaseModel):
+    """Body of ``POST /machines/board-upload``."""
+
+    path: str = Field(
+        ...,
+        description="Machine file to put on its Remora board: config_<mcu>.txt or firmware.bin (relative to machines/)",
+    )
+
+
 class RenameRequest(BaseModel):
     """Body of ``PUT /profiles/rename``."""
 

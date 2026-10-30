@@ -84,7 +84,8 @@ def test_class_b_mcu_gets_the_physical_pin_routed_but_not_the_iocontrol_chain():
     `emc-enable-in` for its SPI link-health chain — wiring
     `estop_latch` on top of the same pins would double-drive them.
     The physical pin still routes (a real `config.txt` module), only
-    the core iocontrol linkage is skipped."""
+    the core iocontrol linkage is skipped — the output joins the board's
+    own `user-enable-out` signal instead (one HAL pin, one signal)."""
     fragment = EstopHalMapper.to_fragment(
         {"fault_pin": "PG6", "out_pin": "PG7"}, _REMORA_MCU
     )
@@ -95,7 +96,7 @@ def test_class_b_mcu_gets_the_physical_pin_routed_but_not_the_iocontrol_chain():
 
     signals = {r.signal: r for r in fragment.requests}
     assert signals["estop-fault"].role is PinRole.DIGITAL_IN
-    assert signals["estop-out"].role is PinRole.DIGITAL_OUT
+    assert signals["user-enable-out"].role is PinRole.DIGITAL_OUT
 
 
 def test_gating_is_per_pin_not_per_machine():

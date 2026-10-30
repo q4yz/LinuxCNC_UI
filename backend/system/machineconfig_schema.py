@@ -33,6 +33,9 @@ ALLOWED_CONNECTION_TYPES: frozenset[str] = frozenset(
         "rs485",
         "remora-spi",
         "remora-eth",
+        # A CAN expansion board (BTT EBB42 ...) behind a remora-spi hub
+        # (Remora-m8p CAN_PROTOCOL.md): digital I/O only so far.
+        "remora-can",
         "parallelport",
         "ethercat",
         "usb_arduino",
@@ -242,10 +245,52 @@ HEATER_FAN_KEYS = (
 # about protocols and device paths, not PCB names. The RS-485 trio
 # (``baud_rate`` / ``node_id`` / ``parity``) is constrained by the
 # parser to ``vfd_rs485`` (and legacy ``rs485``) sections only.
-# ``reset_pin`` is constrained to ``remora-spi``/``remora-eth`` only
-# — the real reference firmware config (`machine_config/example/
-# ender3/config.txt`) always carries a `"Reset Pin"` module; no other
-# connection type has anything that reads it.
+# ``board_reset_pin`` is constrained to ``remora-spi``/``remora-eth``
+# only — a pin on the Remora board itself, emitted as the firmware's
+# `"Reset Pin"` module (the reference `machine_config/example/ender3/
+# config.txt` always carries one); no other connection type reads it.
+# The host side of a ``remora-spi`` link — parameters of the
+# ``loadrt remora-spi`` driver line (and of the ``remora-upload --sync``
+# line before it), not firmware pins, spelled exactly like the driver's
+# own parameters (keys are case-sensitive, as ``pid_Kp``), so the block
+# reads one-to-one like the loadrt line: ``SPI_freq`` (Hz) **or**
+# ``SPI_clk_div`` (bcm2835 divider, Pi 3/4 — mutually exclusive, the
+# divider depends on the Pi's core clock), ``PRU_base_freq`` (Hz),
+# ``spi_cs_pin`` / ``spi_cs_chip``
+# (chip select on a GPIO — the BTT CB1 has none on the header),
+# ``reset_pin`` / ``reset_chip`` (a host GPIO that resets the board)
+# and ``sync_config`` (default on: put ``config_<mcu>.txt`` on the
+# board's SD card at every LinuxCNC start). ``interface`` is the
+# spidev path. Only valid on ``remora-spi``.
+REMORA_SPI_HOST_KEYS = frozenset(
+    {
+        "SPI_freq",
+        "SPI_clk_div",
+        "PRU_base_freq",
+        "spi_cs_pin",
+        "spi_cs_chip",
+        "reset_pin",
+        "reset_chip",
+        "sync_config",
+    }
+)
+
+# The CAN side of a Remora hub (firmware ``"CAN"`` block in the hub's
+# config.txt — Remora-m8p CAN_PROTOCOL.md): ``can_bitrate`` (default
+# 1000000) and ``can_status_bit`` (the LinuxCNC input bit that is 1 only
+# while every mandatory node runs — wired into the E-stop chain;
+# default 15 when the hub has a mandatory node). Only on ``remora-spi``.
+REMORA_CAN_HUB_KEYS = frozenset({"can_bitrate", "can_status_bit"})
+
+# A CAN node (``connection: remora-can``): ``canbus_uuid`` (required,
+# the node's 12-hex-digit UUID, Klipper's own key name), ``can_node``
+# (1-15, default: next free in declaration order), ``can_hub`` (the
+# hub's MCU name, default: the machine's only remora-spi MCU),
+# ``mandatory`` (default true: losing it means E-stop). Only on
+# ``remora-can``. No lost / safe state key: every pin falls back to Low
+# (outputs' Safe State, inputs' Lost State) — the machine must be safe at Low.
+REMORA_CAN_NODE_KEYS = frozenset({"canbus_uuid", "can_node", "can_hub", "mandatory"})
+
 MCU_KEYS = frozenset(
     {
         "connection",
@@ -254,9 +299,9 @@ MCU_KEYS = frozenset(
         "baud_rate",
         "node_id",
         "parity",
-        "reset_pin",
+        "board_reset_pin",
     }
-)
+) | REMORA_SPI_HOST_KEYS | REMORA_CAN_HUB_KEYS | REMORA_CAN_NODE_KEYS
 
 SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.MCU: MCU_KEYS,

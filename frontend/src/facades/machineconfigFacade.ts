@@ -312,6 +312,21 @@ async function copyMachine(source: string, destination: string): Promise<Command
   );
 }
 
+/**
+ * Put ``config_<mcu>.txt`` / ``firmware.bin`` on the machine's Remora
+ * board (``remora-upload`` on the system service). On success
+ * ``message`` is the tool's output; 409 while LinuxCNC runs.
+ */
+async function uploadToBoard(path: string): Promise<CommandResult> {
+  const commandId = `board-upload:${path}`;
+  try {
+    const response = await ModulesMachineconfigService.uploadMachineFileToBoard({ path });
+    return CommandResult.success({ commandId, message: response.message });
+  } catch (err: unknown) {
+    return CommandResult.failure(describeError(err), { commandId, statusCode: errorStatus(err) });
+  }
+}
+
 export const machineconfigFacade = Object.freeze({
   listProfiles,
   readProfile,
@@ -332,6 +347,7 @@ export const machineconfigFacade = Object.freeze({
   renameMachine,
   copyMachine,
   deleteMachine,
+  uploadToBoard,
 });
 
 export default machineconfigFacade;

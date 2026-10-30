@@ -8,7 +8,7 @@ import { BaseButton } from "../../ui";
 const store = useMachineStore()
 const { isEstop, isMachineOn, machineStateText } = storeToRefs(store)
 // Static (hardware.json mcus[]): only Remora boards with a declared
-// ``reset_pin`` can be reset, so the button only exists on those machines.
+// ``board_reset_pin`` can be reset, so the button only exists on those machines.
 const { hasResettableMcu } = storeToRefs(useBaseThreadStore())
 
 </script>
@@ -31,7 +31,7 @@ const { hasResettableMcu } = storeToRefs(useBaseThreadStore())
             @click="store.resetMcus()"
             variant="secondary"
             size="lg"
-            title="Pulse the reset pin of every Remora board that declares a reset_pin"
+            title="Pulse the reset pin of every Remora board that declares a board_reset_pin"
             data-testid="mcu-reset"
         >
           RESET MCU
