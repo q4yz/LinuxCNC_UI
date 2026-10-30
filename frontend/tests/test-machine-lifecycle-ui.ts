@@ -169,6 +169,43 @@ test("editor store wires machine_log as a read-only source fed by getConsoleLog(
   );
 });
 
+test("the UI's own log has its own button and read-only source, apart from LinuxCNC's", () => {
+  const manager = read("components/UpdateManager.vue");
+  assert.match(manager, /data-testid="machine-view-ui-log"/, "must offer a separate UI log button");
+  assert.match(
+    manager,
+    /openInEditor\(\{\s*source:\s*EDITOR_SOURCES\.UI_LOG/,
+    "UI log must open the ui_log source",
+  );
+
+  const editor = read("stores/editor.ts");
+  assert.match(editor, /UI_LOG:\s*['"]ui_log['"]/);
+  assert.match(
+    editor,
+    /READ_ONLY_SOURCES = new Set<string>\(\[[\s\S]*?EDITOR_SOURCES\.UI_LOG[\s\S]*?\]\)/,
+    "ui_log must be read-only",
+  );
+  assert.match(editor, /case EDITOR_SOURCES\.UI_LOG: return readUiLogContent\(\)/);
+  assert.match(editor, /MachineLifecycleFacade\.getUiLog\(\)/);
+
+  assert.match(read("facades/machineLifecycleFacade.ts"), /\/api\/v1\/system\/machine\/log\/ui\?lines=/);
+});
+
+test("a failed generate puts a '!' next to Generate that lists every problem", () => {
+  const facade = read("facades/machineconfigFacade.ts");
+  assert.match(facade, /err\.status === 422/, "the 422 machine_invalid answer must be recognised");
+  assert.match(facade, /detail\?\.kind === "machine_invalid"/);
+  assert.match(facade, /problems: generateProblems\(err\)/, "every other failure still yields a problem line");
+
+  const store = read("stores/machineconfigStore.ts");
+  assert.match(store, /const generateProblems = ref<Record<string, string\[\]>>/);
+
+  const explorer = read("components/machineconfig/ProfilesExplorer.vue");
+  assert.match(explorer, /v-if="problemsOf\(entry\)\.length"[\s\S]*?>!<\/button>/, "the '!' only shows after a failure");
+  assert.match(explorer, /data-test="profiles-generate-problems-dialog"/);
+  assert.match(explorer, /v-for="\(problem, index\) in generateProblems\[problemsPath\]"/);
+});
+
 // ------------------------------------------------------------------ //
 // Backend contract                                                       //
 // ------------------------------------------------------------------ //

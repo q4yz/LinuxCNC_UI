@@ -66,6 +66,24 @@ def get_machine_log(
     return MachineLogResponse(**get_machine_lifecycle_service().console_log(lines=lines))
 
 
+@router.get(
+    "/log/ui",
+    summary="Get the LinuxCNC UI's own log tail",
+    description=(
+        "Returns the tail of this UI's own application logs — "
+        "logs/ui_system.log (system service) and logs/ui_machine.log "
+        "(machine service) — under labelled sections. Kept apart from "
+        "GET /log, which only carries LinuxCNC's output."
+    ),
+    operation_id="getUiLog",
+    response_model=MachineLogResponse,
+)
+def get_ui_log(
+    lines: int = Query(200, ge=1, le=5000, description="Number of trailing lines to return."),
+) -> MachineLogResponse:
+    return MachineLogResponse(**get_machine_lifecycle_service().ui_log(lines=lines))
+
+
 @router.post(
     "/start",
     summary="Start the LinuxCNC session",

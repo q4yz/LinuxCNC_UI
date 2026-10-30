@@ -178,6 +178,32 @@ export interface GenerateMachineOutcome {
   machine: string | null;
   /** Structured 409 payload when the machine already exists. */
   existsConflict: MachineExistsConflict | null;
+  /**
+   * Why the generate failed, one line per problem — every diagnostic
+   * of a 422 ``machine_invalid``, else the single error. Empty on
+   * success and on the 409 conflict.
+   */
+  problems: string[];
+}
+
+interface MachineDiagnosticBody {
+  code?: string;
+  where?: string | null;
+  message?: string;
+}
+
+/** One line per problem of a failed generate (see ``problems``). */
+function generateProblems(err: unknown): string[] {
+  if (err instanceof ApiError && err.status === 422) {
+    const detail = (err.body as { detail?: { kind?: string; diagnostics?: MachineDiagnosticBody[] } } | undefined)
+      ?.detail;
+    if (detail?.kind === "machine_invalid" && detail.diagnostics?.length) {
+      return detail.diagnostics.map(
+        (d) => `${d.code ?? "ERROR"}${d.where ? ` [${d.where}]` : ""}: ${d.message ?? ""}`,
+      );
+    }
+  }
+  return [describeError(err) || "Generate failed."];
 }
 
 /**
@@ -204,6 +230,7 @@ async function generateMachine({
       }),
       machine: response?.machine ?? null,
       existsConflict: null,
+      problems: [],
     };
   } catch (err: unknown) {
     if (err instanceof ApiError && err.status === 409) {
@@ -220,6 +247,7 @@ async function generateMachine({
             machine: detail.machine ?? "",
             existing: detail.existing ?? [],
           },
+          problems: [],
         };
       }
     }
@@ -230,6 +258,7 @@ async function generateMachine({
       }),
       machine: null,
       existsConflict: null,
+      problems: generateProblems(err),
     };
   }
 }

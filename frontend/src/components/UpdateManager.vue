@@ -29,15 +29,22 @@ const machineStatus = ref<MachineStatus | null>(null)
 const isStartingMachine = ref(false)
 const isStoppingMachine = ref(false)
 
-// The console log (logs/linuxcnc_console.log — tee'd stdout+stderr
-// of the last LinuxCNC session) opens in the universal read-only
-// editor, same as "Active Config" / "Compiled Output". "View log"
-// opens it on demand; a start failure opens it automatically so the
-// operator sees why without shell access.
+// Two logs, two buttons, each in the universal read-only editor:
+// "LinuxCNC log" is LinuxCNC's own output (logs/linuxcnc_console.log
+// plus ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt) — a start failure
+// opens it automatically; "UI log" is this UI's own backends
+// (logs/ui_system.log, logs/ui_machine.log).
 function openConsoleLog() {
   void openInEditor({
     source: EDITOR_SOURCES.MACHINE_LOG,
     name: 'linuxcnc_console.log',
+    readOnly: true,
+  })
+}
+function openUiLog() {
+  void openInEditor({
+    source: EDITOR_SOURCES.UI_LOG,
+    name: 'linuxcnc_ui.log',
     readOnly: true,
   })
 }
@@ -236,7 +243,14 @@ onMounted(() => {
           data-testid="machine-view-log"
           @click="openConsoleLog"
         >
-          <Icon name="log" class="mr-1" /> View log
+          <Icon name="log" class="mr-1" /> LinuxCNC log
+        </BaseButton>
+        <BaseButton
+          variant="secondary"
+          data-testid="machine-view-ui-log"
+          @click="openUiLog"
+        >
+          <Icon name="log" class="mr-1" /> UI log
         </BaseButton>
       </div>
     </div>

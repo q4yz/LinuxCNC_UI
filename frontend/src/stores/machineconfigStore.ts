@@ -62,6 +62,10 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
 
   const isBusy = ref<boolean>(false);
 
+  // Why the last generate of a profile failed, keyed by profile path —
+  // behind the "!" next to its Generate button until a generate succeeds.
+  const generateProblems = ref<Record<string, string[]>>({});
+
   // --- Derived state ----------------------------------------------- //
 
   const selectedProfile = computed<FileEntry | null>(() => {
@@ -265,6 +269,11 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     });
     isBusy.value = false;
 
+    const { [profilePath]: _previous, ...otherProblems } = generateProblems.value;
+    generateProblems.value = outcome.problems.length
+      ? { ...otherProblems, [profilePath]: outcome.problems }
+      : otherProblems;
+
     if (outcome.result.ok) {
       consoleStore.success(
         `Generated machine templates for ${outcome.machine ?? profilePath}.`,
@@ -415,6 +424,7 @@ export const useMachineConfigStore = defineStore(STORE_ID, () => {
     selectedProfile,
     machinesTree,
     isBusy,
+    generateProblems,
     loadProfilesTree,
     loadMachinesTree,
     loadAll,

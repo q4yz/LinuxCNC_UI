@@ -22,6 +22,8 @@ from fastapi.testclient import TestClient
 from tests._module_app_factory import build_module_app
 
 PROFILE_BODY = (
+    "[mcu]\n"
+    "connection: remora-spi\n\n"
     "[machine]\n"
     "kinematics: cartesian\n"
     "max_velocity: 300\n\n"
@@ -214,27 +216,6 @@ def test_render_hal_template_is_inert_documentation():
     assert "config.txt" in text  # the do-not-flash note
 
 
-def test_render_hal_template_appendix_mode_drops_the_standalone_framing():
-    """``standalone=False`` is what ``_render_machine_hal`` appends after
-    real compiled HAL — it must not claim the whole file is inert."""
-    from services.machinetemplates import build_pin_catalog, render_hal_template
-
-    spindle, estop = _spindle_container()
-    catalog = build_pin_catalog(
-        tool_containers=[spindle], sensor_containers=[], state_containers=[estop]
-    )
-    text = render_hal_template("my_machine", catalog, standalone=False)
-
-    assert "TEMPLATE - NOT FUNCTIONAL" not in text
-    assert "WEBGUI PIN REFERENCE" in text
-    assert "Next steps" not in text
-    # The per-pin catalog body itself is unaffected.
-    assert "net spindle_at_speed => webgui.spindle-at-speed" in text
-    # Still entirely inert — an appendix must never look executable.
-    live = [l for l in text.splitlines() if l and not l.startswith("#")]
-    assert live == []
-
-
 def _axis(letter, *joint_numbers, max_velocity=50.0, max_limit=300.0):
     from models.machineconfig.LinuxCNCModels import Axis, Joint
 
@@ -414,25 +395,17 @@ def test_render_ini_template_without_tools_is_unaffected():
 
 def test_generate_writes_full_template_set(isolated_roots):
     from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import (
-        GENERATED_FILES,
-        build_pin_catalog,
-        generate_machine_templates,
-    )
+    from services.machinetemplates import GENERATED_FILES, generate_machine_templates
 
-    spindle, estop = _spindle_container()
-    catalog = build_pin_catalog(
-        tool_containers=[spindle], sensor_containers=[], state_containers=[estop]
-    )
     result = generate_machine_templates(
         "my_machine.cfg",
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
-        catalog=catalog,
     )
 
     assert result.machine == "my_machine"
-    assert sorted(Path(f).name for f in result.files) == sorted(GENERATED_FILES)
+    names = [Path(f).name for f in result.files]
+    assert sorted(names) == sorted([*GENERATED_FILES, "config_mcu.txt"])
 
     configs = isolated_roots["machines"] / "my_machine" / "configs"
     # Source copy is verbatim.
@@ -469,27 +442,46 @@ def test_generate_writes_full_template_set(isolated_roots):
     assert "T100" not in tool_tbl
 
 
-def test_generate_falls_back_to_the_catalog_when_the_machine_does_not_compile(isolated_roots):
-    """`PROFILE_BODY` declares no `[mcu]` at all — `E_NO_MCU` blocks
-    compilation. The old catalog-only behaviour must survive exactly:
-    a fully-commented file, never a crash, never half-real HAL."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
+NO_MCU_BODY = PROFILE_BODY.replace("[mcu]\nconnection: remora-spi\n\n", "")
 
-    generate_machine_templates(
-        "my_machine.cfg",
+
+def test_generate_refuses_a_machine_that_does_not_compile(isolated_roots):
+    """No `[mcu]` -> `E_NO_MCU`: the generate fails with every
+    diagnostic instead of writing a non-functional machine."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import MachineInvalidError, generate_machine_templates
+
+    (isolated_roots["profiles"] / "broken.cfg").write_text(NO_MCU_BODY, encoding="utf-8")
+    with pytest.raises(MachineInvalidError) as excinfo:
+        generate_machine_templates(
+            "broken.cfg",
+            config_service=ConfigFileService(root=isolated_roots["profiles"]),
+            machine_service=MachineFileService(root=isolated_roots["machines"]),
+        )
+
+    assert excinfo.value.machine == "broken"
+    assert "E_NO_MCU" in {d.code for d in excinfo.value.diagnostics}
+    assert all(d.is_error for d in excinfo.value.diagnostics)
+    assert not (isolated_roots["machines"] / "broken").exists()
+
+
+def test_a_failed_regenerate_leaves_the_existing_machine_untouched(isolated_roots):
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import MachineInvalidError, generate_machine_templates
+
+    services = dict(
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
     )
+    generate_machine_templates("my_machine.cfg", **services)
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    before = {p.name: p.read_bytes() for p in configs.iterdir()}
 
-    hal = (isolated_roots["machines"] / "my_machine" / "configs" / "machine.hal").read_text(
-        encoding="utf-8"
-    )
-    assert "could not generate real wiring" in hal
-    assert "E_NO_MCU" in hal
-    assert "TEMPLATE - NOT FUNCTIONAL" in hal
-    live = [l for l in hal.splitlines() if l.strip() and not l.strip().startswith("#")]
-    assert live == []
+    (isolated_roots["profiles"] / "my_machine.cfg").write_text(NO_MCU_BODY, encoding="utf-8")
+    with pytest.raises(MachineInvalidError):
+        generate_machine_templates("my_machine.cfg", confirm_override=True, **services)
+
+    assert {p.name: p.read_bytes() for p in configs.iterdir()} == before
 
 
 def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_roots):
@@ -531,8 +523,10 @@ def test_generate_writes_real_compiled_hal_when_the_machine_validates(isolated_r
     # Real, live lines exist now — not everything commented.
     live = [l for l in hal.splitlines() if l.strip() and not l.strip().startswith("#")]
     assert live
-    # The webgui pin reference still trails, in its appendix framing.
-    assert "WEBGUI PIN REFERENCE" in hal
+    # Fully generated: a short header, no pin catalog appendix.
+    assert hal.startswith("# machine.hal - machine HAL")
+    assert "AUTO-GENERATED" in hal
+    assert "webgui.spindle-at-speed" not in hal
     assert "TEMPLATE - NOT FUNCTIONAL" not in hal
 
     # The Remora firmware payload is written too, keyed by MCU id.
@@ -642,167 +636,6 @@ def test_generate_gives_each_remora_board_its_own_config_txt(isolated_roots):
     assert "dual_board/configs/config_mcu_b.txt" in result.files
 
 
-def test_generate_writes_no_sidecars_when_the_machine_does_not_compile(isolated_roots):
-    """The fallback path must not leave a stale/half-assembled sidecar
-    behind — no real assembly happened, so no files should exist."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
-
-    generate_machine_templates(
-        "my_machine.cfg",
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-    configs = isolated_roots["machines"] / "my_machine" / "configs"
-    assert not any(p.name.startswith("config_") for p in configs.iterdir())
-
-
-def test_generate_overwrites_hand_edited_webgui_connections_on_confirmed_override(
-    isolated_roots,
-):
-    """webgui_connections.hal is no longer spared on a regenerate —
-    once the operator confirms the "replace this machine" warning,
-    every file is replaced, hand-wiring included. The one thing that
-    actually blocks an accidental override is
-    ``MainMachineProtectedError`` (see the tests below), not a
-    selective per-file preserve."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
-
-    kwargs = dict(
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-    generate_machine_templates("my_machine.cfg", **kwargs)
-
-    configs = isolated_roots["machines"] / "my_machine" / "configs"
-    hand_wiring = "# hand-wired VFD net lines\nnet spindle-cmd => vfdmod.speed\n"
-    (configs / "webgui_connections.hal").write_text(hand_wiring, encoding="utf-8")
-
-    generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
-
-    text = (configs / "webgui_connections.hal").read_text(encoding="utf-8")
-    assert text != hand_wiring
-    assert "webgui_connections.hal - wire the" in text
-    # Everything else really was regenerated too (sanity check the
-    # swap isn't a no-op skip of the whole directory).
-    assert "MACHINE = my_machine" in (configs / "machine.ini").read_text(encoding="utf-8")
-
-
-def test_generate_refuses_to_override_the_protected_main_machine(isolated_roots):
-    """The currently-selected "main" machine can't be regenerated via
-    this endpoint at all — confirm_override or not. This is the real
-    accident guard: clicking through a generic "replace?" warning
-    must never be able to touch the machine LinuxCNC would start
-    next."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import (
-        MainMachineProtectedError,
-        generate_machine_templates,
-    )
-
-    kwargs = dict(
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-    generate_machine_templates("my_machine.cfg", **kwargs)
-
-    with pytest.raises(MainMachineProtectedError):
-        generate_machine_templates(
-            "my_machine.cfg",
-            confirm_override=True,
-            protected_machine="my_machine",
-            **kwargs,
-        )
-
-    # Untouched — not even the confirm_override write happened.
-    configs = isolated_roots["machines"] / "my_machine" / "configs"
-    assert (configs / "webgui_connections.hal").exists()
-
-
-def test_protected_machine_only_blocks_when_the_folder_actually_exists(isolated_roots):
-    """A stale ``default_machine.json`` pointer (the operator deleted
-    the folder by hand, exactly as the error message tells them to)
-    must not permanently lock out that name — first generation under
-    a protected name is a fresh folder, not an override."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
-
-    kwargs = dict(
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-    generate_machine_templates("my_machine.cfg", protected_machine="my_machine", **kwargs)
-
-    configs = isolated_roots["machines"] / "my_machine" / "configs"
-    assert (configs / "machine.cfg").exists()
-
-
-def test_protected_machine_check_respects_target_folder(isolated_roots):
-    """The protected name is ``target_folder/machine_name`` — a
-    protected bare name must not accidentally block a same-named
-    machine nested under a target folder, or vice versa."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
-
-    kwargs = dict(
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-    # Protected name is "group/my_machine" — the bare-root generate
-    # below is a different target and must proceed normally.
-    generate_machine_templates(
-        "my_machine.cfg", protected_machine="group/my_machine", **kwargs
-    )
-    configs = isolated_roots["machines"] / "my_machine" / "configs"
-    assert (configs / "machine.cfg").exists()
-
-
-def test_generate_seeds_webgui_connections_with_real_spindle_and_heater_bindings(
-    isolated_roots,
-):
-    """First generation of a machine with a spindle + a heater gets a
-    working `webgui_connections.hal`, not just the static header — and
-    a regenerate must still preserve whatever the operator did to it
-    afterward (the existing preserve-on-regenerate test covers that
-    half; this one is about what gets seeded in the first place)."""
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
-
-    profile = (
-        "[mcu]\nconnection: remora-spi\n\n"
-        "[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nrotation_distance: 40\nposition_max: 300\n\n"
-        "[heater_bed]\n"
-        "heater_pin: PB7\nsensor_pin: PA0\nsensor_type: Generic 3950\n"
-        "control: pid\npid_Kp: 20\npid_Ki: 1.5\npid_Kd: 5\nmin_temp: 0\nmax_temp: 130\n\n"
-        "[mcu vfd0]\nconnection: vfd_rs485\n\n"
-        "[spindle]\n"
-        "run_pin: vfd0:run-forward\nspeed_pin: vfd0:rpm-in\n"
-        "is_connected_pin: vfd0:is-connected\nmax_rpm: 24000\nmin_rpm: 5000\n\n"
-        "[estop]\n"
-    )
-    (isolated_roots["profiles"] / "printer.cfg").write_text(profile, encoding="utf-8")
-
-    generate_machine_templates(
-        "printer.cfg",
-        config_service=ConfigFileService(root=isolated_roots["profiles"]),
-        machine_service=MachineFileService(root=isolated_roots["machines"]),
-    )
-
-    text = (isolated_roots["machines"] / "printer" / "configs" / "webgui_connections.hal").read_text(
-        encoding="utf-8"
-    )
-    assert "# Spindle: spindle_digital" in text
-    assert "net spindle_digital-target-rpm => webgui.TargetRpm" in text
-    assert "net spindle_digital-is-connected => webgui.is-connected" in text
-    assert "# Heater: heater_bed" in text
-    assert "net heater_bed-SP <= webgui.target-temperature_bed" in text
-    assert "net bed-PV => webgui.bed" in text
-    # The old static header text is still there too — this is a seed,
-    # not a replacement of the operator-facing framing.
-    assert "custom.hal always sources this file" in text
-
-
 def test_generate_multi_motor_axis_emits_one_joint_per_motor(isolated_roots):
     """A dual-motor axis (``[stepper_y]`` + ``[stepper_y1]``) must
     render as one AXIS_Y with two [JOINT_N] blocks — not as two
@@ -811,6 +644,7 @@ def test_generate_multi_motor_axis_emits_one_joint_per_motor(isolated_roots):
     from services.machinetemplates import generate_machine_templates
 
     (isolated_roots["profiles"] / "gantry.cfg").write_text(
+        "[mcu]\nconnection: remora-spi\n\n"
         "[stepper_x]\nstep_pin: PA0\ndir_pin: PA1\nposition_max: 300\n\n"
         "[stepper_y]\nstep_pin: PA2\ndir_pin: PA3\nposition_max: 400\n\n"
         "[stepper_y1]\nstep_pin: PA4\ndir_pin: PA5\nposition_max: 400\n\n"
@@ -850,7 +684,6 @@ def test_generate_existing_machine_raises_without_confirm(isolated_roots):
     kwargs = dict(
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
-        catalog=None,
     )
     generate_machine_templates("my_machine.cfg", **kwargs)
 
@@ -859,11 +692,11 @@ def test_generate_existing_machine_raises_without_confirm(isolated_roots):
     with pytest.raises(MachineExistsError) as excinfo:
         generate_machine_templates("my_machine.cfg", **kwargs)
     assert excinfo.value.machine == "my_machine"
-    assert len(excinfo.value.existing_files) == len(GENERATED_FILES)
+    assert len(excinfo.value.existing_files) == len(GENERATED_FILES) + 1  # + config_mcu.txt
 
     # confirm_override replaces the set (still the full artifact set).
     result = generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
-    assert len(result.files) == len(GENERATED_FILES)
+    assert len(result.files) == len(GENERATED_FILES) + 1  # + config_mcu.txt
 
 
 def test_generate_into_nested_target_folder(isolated_roots):
@@ -875,7 +708,6 @@ def test_generate_into_nested_target_folder(isolated_roots):
         target_folder="workshop/mills",
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
-        catalog=None,
     )
     assert result.target_folder == "workshop/mills"
     assert (isolated_roots["machines"] / "workshop" / "mills" / "my_machine" / "configs" / "machine.hal").exists()
@@ -885,7 +717,6 @@ def test_generate_into_nested_target_folder(isolated_roots):
         "my_machine.cfg",
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
-        catalog=None,
     )
     assert result2.files[0].startswith("my_machine/")
 
@@ -897,7 +728,6 @@ def test_generate_rejects_bad_paths(isolated_roots):
     kwargs = dict(
         config_service=ConfigFileService(root=isolated_roots["profiles"]),
         machine_service=MachineFileService(root=isolated_roots["machines"]),
-        catalog=None,
     )
     with pytest.raises(FileNotFoundError):
         generate_machine_templates("missing.cfg", **kwargs)
@@ -929,7 +759,7 @@ def test_machines_tree_and_generate_roundtrip(machine_app, isolated_roots):
     assert body["machine"] == "my_machine"
     from services.machinetemplates import GENERATED_FILES
 
-    assert sorted(f["name"] for f in body["files"]) == sorted(GENERATED_FILES)
+    assert sorted(f["name"] for f in body["files"]) == sorted([*GENERATED_FILES, "config_mcu.txt"])
 
     resp = client.get("/api/v1/modules/machineconfig/machines/tree")
     paths = [e["path"] for e in resp.json()["entries"]]
@@ -954,13 +784,29 @@ def test_generate_machine_exists_conflict_flow(machine_app, isolated_roots):
     assert detail["machine"] == "my_machine"
     from services.machinetemplates import GENERATED_FILES
 
-    assert len(detail["existing"]) == len(GENERATED_FILES)
+    assert len(detail["existing"]) == len(GENERATED_FILES) + 1  # + config_mcu.txt
 
     override = client.post(
         "/api/v1/modules/machineconfig/machines/generate",
         json={**payload, "confirm_override": True},
     )
     assert override.status_code == 200
+
+
+def test_generate_answers_422_with_every_diagnostic_for_an_invalid_machine(
+    machine_app, isolated_roots
+):
+    (isolated_roots["profiles"] / "broken.cfg").write_text(NO_MCU_BODY, encoding="utf-8")
+
+    response = TestClient(machine_app).post(
+        "/api/v1/modules/machineconfig/machines/generate", json={"profile_path": "broken.cfg"}
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert (detail["kind"], detail["machine"]) == ("machine_invalid", "broken")
+    assert {"code": "E_NO_MCU", "where": None, "message": "The machine declares no MCU."} in detail["diagnostics"]
+    assert any(d["where"] == "stepper_x" for d in detail["diagnostics"])
 
 
 def test_generate_main_machine_conflict_flow(machine_app, isolated_roots, monkeypatch):

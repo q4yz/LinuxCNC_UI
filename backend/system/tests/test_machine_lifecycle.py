@@ -42,7 +42,14 @@ def isolated_logs(monkeypatch, tmp_path):
     monkeypatch.setattr(mls_module, "_CONSOLE_LOG", console)
     monkeypatch.setattr(mls_module, "_HOME_PRINT_LOG", print_log)
     monkeypatch.setattr(mls_module, "_HOME_DEBUG_LOG", debug_log)
-    return {"console": console, "print": print_log, "debug": debug_log}
+    ui_system = tmp_path / "ui_system.log"
+    ui_machine = tmp_path / "ui_machine.log"
+    monkeypatch.setattr(mls_module, "_UI_SYSTEM_LOG", ui_system)
+    monkeypatch.setattr(mls_module, "_UI_MACHINE_LOG", ui_machine)
+    return {
+        "console": console, "print": print_log, "debug": debug_log,
+        "ui_system": ui_system, "ui_machine": ui_machine,
+    }
 
 
 @pytest.fixture()
@@ -470,6 +477,27 @@ def test_console_log_labels_each_present_source(isolated_logs):
     assert "linuxcnc_debug.txt" not in result["log"]
 
 
+def test_console_log_and_ui_log_never_mix(isolated_logs):
+    isolated_logs["console"].write_text("linuxcnc output\n", encoding="utf-8")
+    isolated_logs["ui_system"].write_text("system service line\n", encoding="utf-8")
+    isolated_logs["ui_machine"].write_text("machine service line\n", encoding="utf-8")
+
+    linuxcnc = _service().console_log()["log"]
+    ui = _service().ui_log()
+
+    assert "linuxcnc output" in linuxcnc and "service line" not in linuxcnc
+    assert "linuxcnc output" not in ui["log"]
+    assert "ui_system.log" in ui["log"] and "system service line" in ui["log"]
+    assert "ui_machine.log" in ui["log"] and "machine service line" in ui["log"]
+    assert ui["path"] == str(isolated_logs["ui_system"])
+
+
+def test_ui_log_reports_missing_files(isolated_logs):
+    assert _service().ui_log() == {
+        "path": str(isolated_logs["ui_system"]), "exists": False, "log": "",
+    }
+
+
 # --------------------------------------------------------------------- #
 # stop()                                                                  #
 # --------------------------------------------------------------------- #
@@ -695,6 +723,15 @@ def test_log_endpoint_returns_the_tail(isolated_logs):
     body = response.json()
     assert body["exists"] is True
     assert "boom: config error" in body["log"]
+
+
+def test_ui_log_endpoint_returns_the_ui_tail(isolated_logs):
+    isolated_logs["ui_machine"].write_text("ERROR backend.machine: boom\n", encoding="utf-8")
+
+    response = _client().get("/api/v1/system/machine/log/ui", params={"lines": 5})
+
+    assert response.status_code == 200
+    assert "ERROR backend.machine: boom" in response.json()["log"]
 
 
 def test_log_endpoint_reports_missing_file(isolated_logs):

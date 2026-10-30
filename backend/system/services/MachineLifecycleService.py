@@ -66,7 +66,7 @@ from contextlib import contextmanager
 from core.atomic_json import atomic_write_json
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
-from domain_file_services import get_machine_service
+from domain_file_services import get_machine_service, paths
 from services.RemoraBoardUploader import RemoraBoardUploader
 
 logger = logging.getLogger("backend.system.machine_lifecycle")
@@ -93,6 +93,10 @@ _CONSOLE_LOG = _REPO_ROOT / "logs" / "linuxcnc_console.log"
 #: path it actually took.
 _HOME_PRINT_LOG = Path.home() / "linuxcnc_print.txt"
 _HOME_DEBUG_LOG = Path.home() / "linuxcnc_debug.txt"
+
+#: The UI backends' own application logs (``core.ui_log``).
+_UI_SYSTEM_LOG = paths.UI_SYSTEM_LOG_FILE
+_UI_MACHINE_LOG = paths.UI_MACHINE_LOG_FILE
 
 #: Bytes read from the tail of each log source per request — caps
 #: memory when a log has accumulated many sessions' worth of output.
@@ -361,12 +365,29 @@ class MachineLifecycleService:
         ``_LOG_TAIL_MAX_BYTES``) under a header naming it, so a crash
         is visible no matter which path it took.
         """
-        sources = [
-            ("logs/linuxcnc_console.log (this UI's own tee)", _CONSOLE_LOG),
-            ("~/linuxcnc_print.txt (LinuxCNC's stdout)", _HOME_PRINT_LOG),
-            ("~/linuxcnc_debug.txt (LinuxCNC's debug/error log)", _HOME_DEBUG_LOG),
-        ]
+        return self._merged_tail(
+            [
+                ("logs/linuxcnc_console.log (this UI's own tee)", _CONSOLE_LOG),
+                ("~/linuxcnc_print.txt (LinuxCNC's stdout)", _HOME_PRINT_LOG),
+                ("~/linuxcnc_debug.txt (LinuxCNC's debug/error log)", _HOME_DEBUG_LOG),
+            ],
+            lines,
+        )
 
+    def ui_log(self, lines: int = 200) -> Dict[str, Any]:
+        """Tail of the UI's own application logs (``core.ui_log``), one
+        section per backend — kept apart from LinuxCNC's log above."""
+        return self._merged_tail(
+            [
+                ("logs/ui_system.log (system service)", _UI_SYSTEM_LOG),
+                ("logs/ui_machine.log (machine service)", _UI_MACHINE_LOG),
+            ],
+            lines,
+        )
+
+    def _merged_tail(self, sources: List[tuple[str, Path]], lines: int) -> Dict[str, Any]:
+        """The last ``lines`` lines of every source that exists, each
+        under a header naming it; ``path`` is the first source."""
         sections: List[str] = []
         any_exists = False
         for label, path in sources:
@@ -378,7 +399,7 @@ class MachineLifecycleService:
             sections.append(f"--- {label} ---\n" + ("\n".join(tail_lines) or "(empty)"))
 
         return {
-            "path": str(_CONSOLE_LOG),
+            "path": str(sources[0][1]),
             "exists": any_exists,
             "log": "\n\n".join(sections),
         }

@@ -34,6 +34,13 @@ UPDATE_STATUS_FILE = _BACKEND_ROOT / "data" / "update_status.json"
 UPDATE_SCRIPT = _PROJECT_ROOT / "scripts" / "update.sh"
 UPDATE_LOG_FILE = _PROJECT_ROOT / "update.log"
 
+#: Runtime logs. LinuxCNC's own console goes to ``linuxcnc_console.log``
+#: (``MachineLifecycleService``); each UI backend writes its own
+#: application log (``core.ui_log``) so the two never mix.
+LOGS_DIR = _PROJECT_ROOT / "logs"
+UI_SYSTEM_LOG_FILE = LOGS_DIR / "ui_system.log"
+UI_MACHINE_LOG_FILE = LOGS_DIR / "ui_machine.log"
+
 #: Name of the persisted default-machine pointer file, sibling of
 #: ``machines/`` (see ``system.services.MachineLifecycleService``,
 #: which is the only writer — this module only ever reads it).

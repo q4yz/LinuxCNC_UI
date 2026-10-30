@@ -19,7 +19,8 @@
 //     'm_codes'    →  GET/PUT /api/v1/modules/machineconfig/m-codes/content
 //     'programs'   →  GET/PUT /api/v1/programs/content/{filename}
 //     'macros'     →  GET/PUT /api/v1/modules/macros/{name}/content
-//     'machine_log' → GET    /api/v1/system/machine/log (read-only)
+//     'machine_log' → GET    /api/v1/system/machine/log (read-only, LinuxCNC)
+//     'ui_log'      → GET    /api/v1/system/machine/log/ui (read-only, this UI)
 //
 // ``source`` is decided by the caller (typically ``openInEditor``)
 // based on **where the file lives**, never by its filename extension.
@@ -51,6 +52,7 @@ export const EDITOR_SOURCES = Object.freeze({
   PROGRAMS: 'programs',
   MACROS: 'macros',
   MACHINE_LOG: 'machine_log',
+  UI_LOG: 'ui_log',
 } as const)
 export type EditorSource = (typeof EDITOR_SOURCES)[keyof typeof EDITOR_SOURCES]
 
@@ -65,7 +67,8 @@ export const EDITOR_SOURCE_LABELS: Readonly<Record<EditorSource, string>> = Obje
   [EDITOR_SOURCES.M_CODES]:  'M-codes',
   [EDITOR_SOURCES.PROGRAMS]: 'G-code Programs',
   [EDITOR_SOURCES.MACROS]:   'Macros',
-  [EDITOR_SOURCES.MACHINE_LOG]: 'Console Log',
+  [EDITOR_SOURCES.MACHINE_LOG]: 'LinuxCNC Log',
+  [EDITOR_SOURCES.UI_LOG]: 'UI Log',
 })
 
 export function sourceLabel(source: string): string {
@@ -74,6 +77,7 @@ export function sourceLabel(source: string): string {
 
 const READ_ONLY_SOURCES = new Set<string>([
   EDITOR_SOURCES.MACHINE_LOG,
+  EDITOR_SOURCES.UI_LOG,
 ])
 
 // ---------------------------------------------------------------------- //
@@ -243,6 +247,13 @@ async function readMachineLogContent(): Promise<string> {
     : 'No console log yet — start the machine to generate one.'
 }
 
+async function readUiLogContent(): Promise<string> {
+  const result = await MachineLifecycleFacade.getUiLog()
+  return result.exists
+    ? result.log || '(log file is empty — nothing has been written to it yet)'
+    : 'No UI log yet — it is written once the UI services restart with this version.'
+}
+
 async function dispatchRead(source: EditorSource, name: string): Promise<string> {
   switch (source) {
     case EDITOR_SOURCES.PROFILES: return readProfileContent(name)
@@ -251,6 +262,7 @@ async function dispatchRead(source: EditorSource, name: string): Promise<string>
     case EDITOR_SOURCES.PROGRAMS: return readProgramContent(name)
     case EDITOR_SOURCES.MACROS:   return readMacroContent(name)
     case EDITOR_SOURCES.MACHINE_LOG: return readMachineLogContent()
+    case EDITOR_SOURCES.UI_LOG: return readUiLogContent()
     default:
       throw new Error(`Unknown editor source: ${JSON.stringify(source)}`)
   }

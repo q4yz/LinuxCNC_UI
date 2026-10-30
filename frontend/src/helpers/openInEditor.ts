@@ -7,9 +7,9 @@
 //
 //     source   →  one of EDITOR_SOURCES:
 //                   'profiles' | 'machines'
-//                 | 'm_codes' | 'programs' | 'macros' | 'machine_log'
+//                 | 'm_codes' | 'programs' | 'macros' | 'machine_log' | 'ui_log'
 //     name     →  filename (or path under ``profiles``)
-//     readOnly →  optional; ``machine_log`` defaults to true
+//     readOnly →  optional; the log sources are always read-only
 //
 // The helper validates ``source`` against the enum so a typo does
 // not silently navigate to a route the editor cannot serve.

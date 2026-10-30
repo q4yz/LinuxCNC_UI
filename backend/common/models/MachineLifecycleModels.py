@@ -74,15 +74,14 @@ class MachineDefaultRequest(BaseModel):
 
 
 class MachineLogResponse(BaseModel):
-    """Merged tail of every known LinuxCNC log."""
+    """Merged tail of a group of logs (LinuxCNC's, or the UI's own)."""
 
-    path: str = Field(..., description="Absolute path of this UI's own console-log tee.")
+    path: str = Field(..., description="Absolute path of the group's first log file.")
     exists: bool = Field(..., description="Whether at least one of the known log sources exists yet.")
     log: str = Field(
         ...,
         description=(
-            "Merged, labelled tail of every log source that exists (this UI's "
-            "tee plus LinuxCNC's own ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt), "
+            "Merged, labelled tail of every log source in the group that exists, "
             "most recent lines last within each section. Empty when none exist yet."
         ),
     )

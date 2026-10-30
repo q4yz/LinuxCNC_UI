@@ -14,13 +14,15 @@ import BaseCard from "../../ui/BaseCard.vue";
 
 const emit = defineEmits(["edit"]);
 const store = useMachineConfigStore();
-const { profilesTree, selectedProfilePath, isBusy } = storeToRefs(store);
+const { profilesTree, selectedProfilePath, isBusy, generateProblems } = storeToRefs(store);
 
 // Lives in the URL so opening a file and coming back keeps the folder.
 const currentDirectory = useDirectoryQuery("profilesDir");
 const createOpen = ref(false);
 const newEntryKind = ref("file");
 const newEntryName = ref("");
+// Profile whose failed-generate problems are open (the "!" popup).
+const problemsPath = ref<string | null>(null);
 
 const entries = computed(() =>
   profilesTree.value.entries
@@ -70,6 +72,9 @@ async function onGenerate(entry: FileEntry) {
     });
     if (override) await store.generateMachine(entry.path, { confirmOverride: true });
   }
+}
+function problemsOf(entry: FileEntry): string[] {
+  return generateProblems.value[entry.path] ?? [];
 }
 async function onCreate() {
   const name = newEntryName.value.trim();
@@ -191,6 +196,17 @@ async function downloadProfile(entry: FileEntry) {
             @click.stop="onGenerate(entry)"
             @dblclick.stop
           >Generate</BaseButton>
+          <!-- The last generate failed: "!" opens every reason. -->
+          <button
+            v-if="problemsOf(entry).length"
+            type="button"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white hover:bg-red-500"
+            :title="`Generate failed (${problemsOf(entry).length} problem${problemsOf(entry).length === 1 ? '' : 's'}) — show details`"
+            :aria-label="`Show why generating ${entry.name} failed`"
+            :data-test="`profiles-generate-problems-${entry.path}`"
+            @click.stop="problemsPath = entry.path"
+            @dblclick.stop
+          >!</button>
           <span @click.stop @dblclick.stop>
             <ActionMenu :items="menuItems(entry)" :test-id="`profiles-entry-${entry.path}`" @select="onMenu(entry, $event)" />
           </span>
@@ -200,6 +216,32 @@ async function downloadProfile(entry: FileEntry) {
     <div v-else class="flex-1 p-8 text-center text-sm text-gray-500">This folder is empty. Drop files here or use + to create one.</div>
 
     <button type="button" class=" block sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
+
+    <Teleport to="body">
+    <div
+      v-if="problemsPath && generateProblems[problemsPath]"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      data-test="profiles-generate-problems-dialog"
+      @click.self="problemsPath = null"
+    >
+      <div class="flex max-h-[85vh] w-full max-w-2xl flex-col space-y-3 rounded-lg border border-red-700 bg-gray-800 p-4">
+        <h3 class="font-semibold text-red-300">
+          {{ problemsPath }} does not generate a runnable machine
+        </h3>
+        <p class="text-xs text-gray-400">Nothing was written. Fix these in the profile and generate again.</p>
+        <ul class="flex-1 space-y-1 overflow-y-auto font-mono text-xs text-gray-200">
+          <li
+            v-for="(problem, index) in generateProblems[problemsPath]"
+            :key="index"
+            class="rounded border border-gray-700 bg-gray-900/60 px-2 py-1 whitespace-pre-wrap break-words"
+          >{{ problem }}</li>
+        </ul>
+        <div class="flex justify-end">
+          <BaseButton variant="secondary" @click="problemsPath = null">Close</BaseButton>
+        </div>
+      </div>
+    </div>
+    </Teleport>
 
     <div v-if="createOpen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4" @click.self="createOpen = false">
       <form class="w-full max-w-sm space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-4" @submit.prevent="onCreate">

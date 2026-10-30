@@ -168,6 +168,11 @@ backend or the machine itself is down:
   instead. So the UI can show why a session crashed without shell
   access; an immediate-crash `start()` failure folds the merged tail
   straight into its 400 response.
+- `GET /api/v1/system/machine/log/ui` (`?lines=N`) — the UI's own
+  application logs, kept apart from LinuxCNC's: each backend writes
+  `logs/ui_system.log` / `logs/ui_machine.log` (`core.ui_log`, 1 MB
+  rotating, not under pytest). Config page: "LinuxCNC log" and
+  "UI log" buttons.
 - `POST /api/v1/system/machine/stop` — SIGINT → (grace period) →
   SIGTERM → SIGKILL escalation.
 - `POST /api/v1/system/machine/switch` — stop → persist the selected

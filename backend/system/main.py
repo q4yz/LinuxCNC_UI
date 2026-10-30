@@ -31,6 +31,9 @@ if str(_COMMON_DIR) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from core.ui_log import setup_ui_logging
+from domain_file_services.paths import UI_SYSTEM_LOG_FILE
+
 from routers import (
     FilesRouter,
     SystemRouter,
@@ -41,8 +44,9 @@ from routers import (
 )
 
 
-# Configure global logging
-logging.basicConfig(level=logging.INFO)
+# Configure global logging: stderr plus this service's own UI log file
+# (not under pytest — a test run must not fill the real log).
+setup_ui_logging(None if "pytest" in sys.modules else UI_SYSTEM_LOG_FILE)
 logger = logging.getLogger("backend.system.main")
 
 

@@ -87,6 +87,7 @@ from services import (
 )
 from services.machinetemplates import (
     MachineExistsError,
+    MachineInvalidError,
     MainMachineProtectedError,
     generate_machine_templates,
 )
@@ -441,12 +442,14 @@ def get_machines_tree() -> DirectoryListing:
         "Generate the per-machine template set from a profile into "
         "machine_config/machines/<target_folder>/<stem>/configs/: a "
         "verbatim machine.cfg copy, the real hardware.json, and the "
-        "machine.ini / machine.hal templates (config.txt is intentionally "
-        "not generated). Answers 409 when the machine already exists "
+        "compiled machine.ini / machine.hal, plus one config_<mcu>.txt "
+        "per Remora board. Answers 409 when the machine already exists "
         "unless confirm_override is set, in which case the whole folder "
         "is replaced. Answers 403, regardless of confirm_override, when "
         "the target is the currently-selected main machine — that one "
-        "has to be deleted manually first."
+        "has to be deleted manually first. Answers 422 (kind "
+        "machine_invalid, with every diagnostic) when the profile does "
+        "not compile into a runnable machine; nothing is written then."
     ),
     response_model=GenerateResponse,
 )
@@ -489,6 +492,22 @@ def generate_machine(payload: GenerateRequest) -> GenerateResponse:
                     f"Machine '{exc.machine}' already exists. "
                     "Confirm to override the existing configuration."
                 ),
+            },
+        ) from exc
+    except MachineInvalidError as exc:
+        # Structured 422: the profile parsed but is not a runnable
+        # machine. Nothing was written; the frontend lists every
+        # diagnostic behind the "!" next to Generate.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "kind": "machine_invalid",
+                "machine": exc.machine,
+                "message": str(exc),
+                "diagnostics": [
+                    {"code": d.code, "where": d.where, "message": d.message}
+                    for d in exc.diagnostics
+                ],
             },
         ) from exc
     except ConfigValidationError:
