@@ -37,17 +37,24 @@ _LPC_CHIP = "lpc17xx"
 #: A `type` not listed here is an honest gap: no module is emitted
 #: rather than guessing a curve that would silently misreport real
 #: temperatures.
-#: Digital inputs / outputs per board — the SPI frame's 16-bit words
-#: (`remora.input.NN` / `remora.output.NN`), shared with its CAN nodes.
-_DIGITAL_BITS = 16
-
 _THERMISTOR_CURVES: dict[str, tuple[int, int, int]] = {
     "generic 3950": (3950, 100000, 25),
 }
 
 
+#: Digital inputs / outputs per board — the SPI frame's 16-bit words
+#: (`remora.input.NN` / `remora.output.NN`), shared with its CAN nodes.
+_DIGITAL_BITS = 16
+
+
 class RemoraRouterMapper:
     """Routes :class:`PinRequest` entries whose ``pin.mcu_id`` is this MCU."""
+
+    @staticmethod
+    def thermistor_curve(sensor_type: str | None) -> tuple[int, int, int] | None:
+        """``(beta, r0, t0)`` for a ``temperature_sensors[].type``, or
+        ``None`` when no curve is known (see ``_THERMISTOR_CURVES``)."""
+        return _THERMISTOR_CURVES.get(str(sensor_type or "").strip().lower())
 
     @staticmethod
     def base_fragment(mcu: dict[str, Any]) -> HalFragment:
@@ -318,9 +325,7 @@ class RemoraRouterMapper:
                 sp_index += 1
             elif request.role is PinRole.ANALOG_IN:
                 fragment.nets.append(f"net {request.signal} <= remora.PV.{pv_index}")
-                curve = _THERMISTOR_CURVES.get(
-                    str(request.sensor_type or "").strip().lower()
-                )
+                curve = RemoraRouterMapper.thermistor_curve(request.sensor_type)
                 if curve is not None:
                     beta, r0, t0 = curve
                     firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)

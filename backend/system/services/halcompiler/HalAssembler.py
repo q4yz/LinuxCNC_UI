@@ -102,13 +102,15 @@ class HalAssembler:
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
 
         requests = self._deduplicated_requests(component_fragments)
+        # A heater on a CAN node: a pulsed Digital Pin, not PWM (no PWM on nodes yet).
+        requests, node_pulses = RemoraCanMapper.pulse_node_outputs(requests, self._mcus_by_id)
         router_bases, router_routes = self._route(requests)
 
         # Order per README § 4: loadrt (motion, then MCU drivers) -> addf
         # -> setp -> component-local nets -> router nets. combine()
         # concatenates each field in fragment order, so this list order
         # is what actually produces that field-level ordering.
-        result = combine([motion, *router_bases, *component_fragments, *router_routes])
+        result = combine([motion, *router_bases, *component_fragments, node_pulses, *router_routes])
         self._render_firmware_configs(result)
         return result
 

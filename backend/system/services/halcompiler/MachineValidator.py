@@ -22,6 +22,7 @@ from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
 from .mcus.RemoraCanMapper import RemoraCanMapper
+from .mcus.RemoraRouterMapper import RemoraRouterMapper
 
 #: ``(list name, field)`` pairs that hold a pin string, and whether the
 #: pin drives a joint (which is what the capability rules care about).
@@ -54,6 +55,8 @@ MAX_CAN_NODES = 15
 MAX_CAN_NODE_JOINTS = 2
 #: TMC2209 drivers one node configures over its UART (firmware limit).
 MAX_CAN_NODE_DRIVERS = 2
+#: Thermistors one node reads (firmware limit).
+MAX_CAN_NODE_SENSORS = 4
 
 
 class MachineValidator:
@@ -263,10 +266,11 @@ class MachineValidator:
         unique UUID (``E_CAN_DUPLICATE_UUID``) and a free number 1 ... 15
         (``E_CAN_NODE_NUMBER``). It carries digital pins — endstops and
         the E-stop pins — and up to two joints, each with all its pins on
-        that node (``E_CAN_NODE_JOINT``), and up to two TMC2209 UART
-        drivers; anything else is
-        ``E_CAN_NODE_PIN``: heaters, fans and sensors follow in later
-        firmware phases, and
+        that node (``E_CAN_NODE_JOINT``), up to two TMC2209 UART drivers,
+        heater outputs (pulsed, ``RemoraCanMapper.pulse_node_outputs``)
+        and up to four NTC thermistors; anything else is
+        ``E_CAN_NODE_PIN``: fans need the node PWM output of a later
+        firmware phase, and
         the few-millisecond latency rules out a touch probe.
         """
         mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
@@ -310,21 +314,60 @@ class MachineValidator:
 
         node_ids = {str(n["id"]) for n in nodes}
         endstops = self._ids("endstops")
+        sensors = self._ids("temperature_sensors")
+        # A heater's generated placeholder fan shares its heater_pin and
+        # routes as the heater itself — not a fan of its own.
+        heater_pins = {pin.qualified for pin, _owner, field, _j in self._pins if field == "heater_pin"}
         for pin, owner, field, drives_joint in self._pins:
             allowed = (
                 drives_joint
                 or (owner, field) in _CAN_NODE_PIN_FIELDS
-                or (field == "pin" and owner in endstops)
+                or field == "heater_pin"
+                or (field == "pin" and (owner in endstops or owner in sensors))
+                or (field == "pin" and pin.qualified in heater_pins)
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
                     "E_CAN_NODE_PIN",
                     f"{owner}.{field} {pin.raw!r} is on CAN node {pin.mcu_id!r}, which only "
-                    "carries joints, endstops and the E-stop fault_pin / out_pin so far.",
+                    "carries joints, heaters, thermistors, endstops and the E-stop "
+                    "fault_pin / out_pin so far (no PWM output for fans yet).",
                     owner,
                 )
         self._check_can_joints(node_ids)
         self._check_can_drivers(node_ids)
+        self._check_can_sensors(node_ids)
+
+    def _check_can_sensors(self, node_ids: set[str]) -> None:
+        """A node reads at most :data:`MAX_CAN_NODE_SENSORS` NTC
+        thermistors, each of a type with a known beta curve — a node
+        sensor without one would read nothing at all."""
+        sensors_per_node: dict[str, list[str]] = {}
+        for sensor in self._records("temperature_sensors"):
+            try:
+                pin = PinStringMapper.from_string(sensor["pin"]) if sensor.get("pin") else None
+            except ValueError:
+                continue
+            if pin is None or pin.mcu_id not in node_ids:
+                continue
+            owner = str(sensor.get("id", "?"))
+            sensors_per_node.setdefault(pin.mcu_id, []).append(owner)
+            if RemoraRouterMapper.thermistor_curve(sensor.get("type")) is None:
+                self._error(
+                    "E_CAN_NODE_PIN",
+                    f"{owner} on CAN node {pin.mcu_id!r}: sensor_type {sensor.get('type')!r} has "
+                    "no known NTC beta curve (a node reads NTC thermistors only, e.g. "
+                    "'Generic 3950').",
+                    owner,
+                )
+        for node_id, owners in sensors_per_node.items():
+            if len(owners) > MAX_CAN_NODE_SENSORS:
+                self._error(
+                    "E_CAN_NODE_PIN",
+                    f"CAN node {node_id!r} has {len(owners)} thermistors ({', '.join(owners)}); "
+                    f"a node reads at most {MAX_CAN_NODE_SENSORS}.",
+                    node_id,
+                )
 
     def _check_can_joints(self, node_ids: set[str]) -> None:
         """A node joint has every pin on that node, and a node runs at

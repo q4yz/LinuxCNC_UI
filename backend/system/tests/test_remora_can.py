@@ -187,6 +187,52 @@ def test_a_node_configures_at_most_two_tmc_drivers(tmp_path):
     assert len(errors) == 1 and errors[0].where == "toolhead"
 
 
+NODE_BED = (
+    "\n[heater_bed]\nheater_pin: toolhead:PB13\nsensor_type: Generic 3950\n"
+    "sensor_pin: toolhead:PA3\ncontrol: pid\npid_Kp: 22\npid_Ki: 1\npid_Kd: 100\n"
+    "min_temp: 0\nmax_temp: 120\n"
+)
+
+
+def test_a_node_thermistor_and_heater_are_a_temperature_and_a_pulsed_digital_pin(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_BED)
+    assert not [d for d in validate_machine(payload) if d.is_error]
+
+    fragment, config = _assemble(payload)
+    modules = config["CAN"]["Nodes"][0]["Modules"]
+    [temp] = [m for m in modules if m["Type"] == "Temperature"]
+    assert (temp["PV[i]"], temp["Thermistor"]["Pin"], temp["Thermistor"]["beta"]) == (0, "PA_3", 3950)
+    [heater] = [m for m in modules if m.get("Mode") == "Output"]
+    assert (heater["Pin"], heater["Data Bit"], heater["Safe State"]) == ("PB_13", 0, "Low")
+    assert all("Name" not in m and "Thread" not in m for m in modules)
+    # No PWM on the hub for it — the PID output is pulsed in HAL instead.
+    assert not any(m.get("Type") == "PWM" for m in config["Modules"])
+
+    text = compile_machine_hal(payload)
+    assert "loadrt pwmgen output_type=0" in text
+    assert "setp pwmgen.0.scale 100" in text
+    assert "net heater_bed-heater-SP => pwmgen.0.value" in text
+    assert "net heater_bed-heater-SP-pulse <= pwmgen.0.pwm" in text
+    assert "net heater_bed-heater-SP-pulse => remora.output.00" in text
+    assert "net bed-PV <= remora.PV.0" in text
+
+
+def test_a_node_thermistor_needs_a_known_ntc_curve(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_BED.replace("Generic 3950", "PT1000"))
+    errors = [d for d in validate_machine(payload) if d.code == "E_CAN_NODE_PIN"]
+    assert len(errors) == 1 and "PT1000" in errors[0].message
+
+
+def test_a_node_reads_at_most_four_thermistors(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_BED)
+    sensor = payload["temperature_sensors"][0]
+    payload["temperature_sensors"] += [
+        dict(sensor, id=f"t{n}", pin=f"toolhead:PA{n}") for n in (4, 5, 6, 7)
+    ]
+    errors = [d for d in validate_machine(payload) if d.code == "E_CAN_NODE_PIN"]
+    assert len(errors) == 1 and errors[0].where == "toolhead"
+
+
 # -- validation ----------------------------------------------------------- #
 
 

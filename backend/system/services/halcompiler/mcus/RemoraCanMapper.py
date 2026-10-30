@@ -15,9 +15,22 @@ E-stop latch. It defaults to bit 15 once the hub has a mandatory node.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
+from models.machineconfig.HalFragmentModels import (
+    SERVO_THREAD,
+    Addf,
+    HalFragment,
+    PinRequest,
+    PinRole,
+)
+
 DEFAULT_BITRATE = 1_000_000
+#: A node output standing in for PWM (``pulse_node_outputs``): one
+#: period per second, 0 ... 100 % duty like ``remora.SP.N``.
+PULSE_FREQ_HZ = 1
+PULSE_SCALE = 100
 #: Every pin's fallback while LinuxCNC / the node is gone — never configurable.
 SAFE_LEVEL = "Low"
 DEFAULT_STATUS_BIT = 15
@@ -74,17 +87,16 @@ class RemoraCanMapper:
         the ``"Modifier"`` key there — and an input gets ``"Lost State":
         "Low"``, what LinuxCNC reads while the node is lost: always Low,
         like every output's Safe State (the machine must be safe at Low).
-        A ``"Stepgen"`` keeps its joint number (``remora.joint.N`` on the
-        hub) and a ``"TMC2209"`` its keys, but neither has a ``"Name"`` /
-        ``"Thread"``: the node runs them in its own base thread; a
-        Stepgen's name becomes its comment.
+        Every module keeps its hub numbers (``Joint Number``, ``PV[i]``,
+        ``Data Bit``) and its keys, but none has a ``"Name"`` /
+        ``"Thread"``: the node schedules them itself. A Stepgen's name
+        becomes its comment.
         """
         out = dict(module)
-        if out.get("Type") == "Stepgen":
-            out["Comment"] = str(out.pop("Name", None) or out.get("Comment", ""))
-        if out.get("Type") in ("Stepgen", "TMC2209"):
-            out.pop("Name", None)
-            out.pop("Thread", None)
+        name = out.pop("Name", None)
+        out.pop("Thread", None)
+        if out.get("Type") == "Stepgen" and name:
+            out["Comment"] = str(name)
         pin = str(out.get("Pin", ""))
         if pin.startswith("^"):
             out["Pin"] = pin[1:]
@@ -92,6 +104,54 @@ class RemoraCanMapper:
         if out.get("Mode") == "Input":
             out["Lost State"] = SAFE_LEVEL
         return out
+
+    @staticmethod
+    def pulse_node_outputs(
+        requests: list[PinRequest], mcus_by_id: dict[str, dict[str, Any]]
+    ) -> tuple[list[PinRequest], HalFragment]:
+        """A node has no PWM output yet: each analog output on a node
+        (a heater's PID output, 0 ... 100 %) becomes a Digital Pin output
+        that a slow ``pwmgen`` in the servo thread pulses at
+        :data:`PULSE_FREQ_HZ` — plenty for a heater's thermal mass. The
+        node drives the pin Low the moment it loses the hub or LinuxCNC.
+
+        Returns the requests with those outputs rewritten, plus the
+        ``pwmgen`` fragment (empty when no node output needs one).
+        """
+        rewritten: list[PinRequest] = []
+        pulsed: list[PinRequest] = []
+        for request in requests:
+            if request.role is PinRole.ANALOG_OUT and RemoraCanMapper.is_node(
+                mcus_by_id.get(request.pin.mcu_id)
+            ):
+                pulsed.append(request)
+                request = dataclasses.replace(
+                    request, signal=f"{request.signal}-pulse", role=PinRole.DIGITAL_OUT
+                )
+            rewritten.append(request)
+
+        fragment = HalFragment()
+        if not pulsed:
+            return rewritten, fragment
+        fragment.loadrt.append(f"loadrt pwmgen output_type={','.join('0' for _ in pulsed)}")
+        fragment.addf.extend(
+            [Addf("pwmgen.update", SERVO_THREAD, order=1), Addf("pwmgen.make-pulses", SERVO_THREAD, order=1)]
+        )
+        for n, request in enumerate(pulsed):
+            fragment.setp.extend(
+                [
+                    f"setp pwmgen.{n}.scale {PULSE_SCALE}",
+                    f"setp pwmgen.{n}.pwm-freq {PULSE_FREQ_HZ}",
+                    f"setp pwmgen.{n}.enable 1",
+                ]
+            )
+            fragment.nets.extend(
+                [
+                    f"net {request.signal} => pwmgen.{n}.value",
+                    f"net {request.signal}-pulse <= pwmgen.{n}.pwm",
+                ]
+            )
+        return rewritten, fragment
 
     @staticmethod
     def can_block(
