@@ -57,6 +57,8 @@ MAX_CAN_NODE_JOINTS = 2
 MAX_CAN_NODE_DRIVERS = 2
 #: Thermistors one node reads (firmware limit).
 MAX_CAN_NODE_SENSORS = 4
+#: PWM outputs (heaters and fans) one node makes (firmware limit).
+MAX_CAN_NODE_PWM = 4
 
 
 class MachineValidator:
@@ -267,10 +269,8 @@ class MachineValidator:
         (``E_CAN_NODE_NUMBER``). It carries digital pins — endstops and
         the E-stop pins — and up to two joints, each with all its pins on
         that node (``E_CAN_NODE_JOINT``), up to two TMC2209 UART drivers,
-        heater outputs (pulsed, ``RemoraCanMapper.pulse_node_outputs``)
-        and up to four NTC thermistors; anything else is
-        ``E_CAN_NODE_PIN``: fans need the node PWM output of a later
-        firmware phase, and
+        up to four PWM outputs (heaters, fans) and up to four NTC
+        thermistors; anything else is ``E_CAN_NODE_PIN``, and
         the few-millisecond latency rules out a touch probe.
         """
         mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
@@ -315,28 +315,45 @@ class MachineValidator:
         node_ids = {str(n["id"]) for n in nodes}
         endstops = self._ids("endstops")
         sensors = self._ids("temperature_sensors")
-        # A heater's generated placeholder fan shares its heater_pin and
-        # routes as the heater itself — not a fan of its own.
-        heater_pins = {pin.qualified for pin, _owner, field, _j in self._pins if field == "heater_pin"}
+        fans = self._ids("fans")
         for pin, owner, field, drives_joint in self._pins:
             allowed = (
                 drives_joint
                 or (owner, field) in _CAN_NODE_PIN_FIELDS
                 or field == "heater_pin"
-                or (field == "pin" and (owner in endstops or owner in sensors))
-                or (field == "pin" and pin.qualified in heater_pins)
+                or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
                     "E_CAN_NODE_PIN",
                     f"{owner}.{field} {pin.raw!r} is on CAN node {pin.mcu_id!r}, which only "
-                    "carries joints, heaters, thermistors, endstops and the E-stop "
-                    "fault_pin / out_pin so far (no PWM output for fans yet).",
+                    "carries joints, heaters, fans, thermistors, endstops and the E-stop "
+                    "fault_pin / out_pin so far.",
                     owner,
                 )
         self._check_can_joints(node_ids)
         self._check_can_drivers(node_ids)
         self._check_can_sensors(node_ids)
+        self._check_can_pwm(node_ids)
+
+    def _check_can_pwm(self, node_ids: set[str]) -> None:
+        """A node makes at most :data:`MAX_CAN_NODE_PWM` PWM outputs —
+        heaters and fans. A heater's generated placeholder fan shares its
+        heater_pin and routes as the heater itself, so a pin counts once."""
+        fans = self._ids("fans")
+        pwm_pins: dict[str, set[str]] = {}
+        for pin, owner, field, _drives_joint in self._pins:
+            is_pwm = field == "heater_pin" or (field == "pin" and owner in fans)
+            if is_pwm and pin.mcu_id in node_ids:
+                pwm_pins.setdefault(pin.mcu_id, set()).add(pin.qualified)
+        for node_id, pins in pwm_pins.items():
+            if len(pins) > MAX_CAN_NODE_PWM:
+                self._error(
+                    "E_CAN_NODE_PIN",
+                    f"CAN node {node_id!r} has {len(pins)} PWM outputs (heaters and fans: "
+                    f"{', '.join(sorted(pins))}); a node makes at most {MAX_CAN_NODE_PWM}.",
+                    node_id,
+                )
 
     def _check_can_sensors(self, node_ids: set[str]) -> None:
         """A node reads at most :data:`MAX_CAN_NODE_SENSORS` NTC

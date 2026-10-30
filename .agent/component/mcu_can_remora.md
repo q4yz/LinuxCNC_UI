@@ -28,23 +28,31 @@ mandatory: true               // (Optional) default true: losing the node means 
 Node pins: endstops (`endstop_pin: toolhead:^PB9`), `[estop]
 fault_pin` / `out_pin`, a joint's `step_pin` / `dir_pin` /
 `enable_pin` (`[extruder] step_pin: toolhead:PD0`), a `[tmc2209 ...]
-uart_pin` (at most 2 per node), a `heater_pin` and a `sensor_pin` (NTC
-thermistors with a known beta curve, e.g. `Generic 3950` — no PT1000; at
-most 4 per node). Anything else on a node is `E_CAN_NODE_PIN` — fans need
-the node PWM output of a later firmware phase, and the few-ms CAN
+uart_pin` (at most 2 per node), `heater_pin`s and fan `pin`s (PWM, at
+most 4 per node) and `sensor_pin`s (NTC thermistors with a known beta
+curve, e.g. `Generic 3950` — no PT1000; at most 4 per node). Anything
+else on a node is `E_CAN_NODE_PIN` (spindles, ...), and the few-ms CAN
 latency rules out a touch probe.
 
-Heater on a node: there is no PWM on a node yet, so the heater pin is a
-Digital Pin output that a slow `pwmgen` (1 Hz, `scale 100` for the PID's
-0 ... 100 %) pulses in the servo thread — plenty for a heater's thermal
-mass. The node drives it Low as soon as it loses the hub or LinuxCNC.
+Heater and fans on a node: a `"PWM"` module with the next free SP
+number (shared with the hub, `remora.SP.N`, 0 ... 100 %); the node makes
+the PWM itself. `RemoraCanMapper.pwm_settings` adds `"Period us"` and
+`"Safe Duty"` (the duty after boot, while LinuxCNC is gone and when the
+node loses the hub):
 
-```hal
-loadrt pwmgen output_type=0
-net heater_extruder-heater-SP => pwmgen.0.value
-net heater_extruder-heater-SP-pulse <= pwmgen.0.pwm
-net heater_extruder-heater-SP-pulse => remora.output.00
+| Output | `Period us` | `Safe Duty` |
+|---|---|---|
+| heater (`heater_pin`) | 100000 (10 Hz) | 0 |
+| part fan (`[fan]`, `[fan_generic]`) | 10000 (100 Hz) | 0 |
+| hotend fan (`[heater_fan]`) | 10000 | 100 — keeps cooling the hotend |
+
+```json
+{ "Type": "PWM", "Comment": "heater_extruder", "SP[i]": 0, "PWM Pin": "PB_13",
+  "Period us": 100000, "Safe Duty": 0 }
 ```
+
+4-pin fans that need 25 kHz PWM are not supported (nor `"Hardware PWM"`
+/ `"Variable Freq"`).
 
 Thermistor on a node: a `"Temperature"` module with the next free PV
 number (shared with the hub, `remora.PV.N`); the node reports 999 when
@@ -86,7 +94,7 @@ a `"Stepgen"` with the machine's joint number (LinuxCNC still sees
   "Step Pin": "PD_0", "Direction Pin": "PD_1", "Enable Pin": "PD_2" }
 ```
 
-A TMC2209 or a Temperature is the local module without `"Name"` /
+A TMC2209, a Temperature or a PWM is the local module without `"Name"` /
 `"Thread"` (no node module carries those); the node configures the
 driver over its own UART.
 

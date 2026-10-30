@@ -15,22 +15,14 @@ E-stop latch. It defaults to bit 15 once the hub has a mandatory node.
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
-from models.machineconfig.HalFragmentModels import (
-    SERVO_THREAD,
-    Addf,
-    HalFragment,
-    PinRequest,
-    PinRole,
-)
-
 DEFAULT_BITRATE = 1_000_000
-#: A node output standing in for PWM (``pulse_node_outputs``): one
-#: period per second, 0 ... 100 % duty like ``remora.SP.N``.
-PULSE_FREQ_HZ = 1
-PULSE_SCALE = 100
+#: Node PWM periods (the node makes the PWM itself, 0 ... 100 % from
+#: ``remora.SP.N``): a slow one for a heater's thermal mass, 100 Hz
+#: (0.25 % steps, the firmware default) for a fan.
+HEATER_PERIOD_US = 100_000
+FAN_PERIOD_US = 10_000
 #: Every pin's fallback while LinuxCNC / the node is gone — never configurable.
 SAFE_LEVEL = "Low"
 DEFAULT_STATUS_BIT = 15
@@ -106,52 +98,26 @@ class RemoraCanMapper:
         return out
 
     @staticmethod
-    def pulse_node_outputs(
-        requests: list[PinRequest], mcus_by_id: dict[str, dict[str, Any]]
-    ) -> tuple[list[PinRequest], HalFragment]:
-        """A node has no PWM output yet: each analog output on a node
-        (a heater's PID output, 0 ... 100 %) becomes a Digital Pin output
-        that a slow ``pwmgen`` in the servo thread pulses at
-        :data:`PULSE_FREQ_HZ` — plenty for a heater's thermal mass. The
-        node drives the pin Low the moment it loses the hub or LinuxCNC.
-
-        Returns the requests with those outputs rewritten, plus the
-        ``pwmgen`` fragment (empty when no node output needs one).
+    def pwm_settings(
+        module: dict[str, object],
+        tools_by_id: dict[str, dict[str, Any]],
+        fans_by_id: dict[str, dict[str, Any]],
+    ) -> dict[str, object]:
+        """A node ``"PWM"`` module with its ``"Period us"`` and its
+        ``"Safe Duty"`` — the duty after boot, while LinuxCNC is gone and
+        when the node loses the hub: 0 for a heater and a part fan, 100
+        for a hotend fan (``kind: heater``), which must keep cooling.
+        Any other module passes through unchanged.
         """
-        rewritten: list[PinRequest] = []
-        pulsed: list[PinRequest] = []
-        for request in requests:
-            if request.role is PinRole.ANALOG_OUT and RemoraCanMapper.is_node(
-                mcus_by_id.get(request.pin.mcu_id)
-            ):
-                pulsed.append(request)
-                request = dataclasses.replace(
-                    request, signal=f"{request.signal}-pulse", role=PinRole.DIGITAL_OUT
-                )
-            rewritten.append(request)
-
-        fragment = HalFragment()
-        if not pulsed:
-            return rewritten, fragment
-        fragment.loadrt.append(f"loadrt pwmgen output_type={','.join('0' for _ in pulsed)}")
-        fragment.addf.extend(
-            [Addf("pwmgen.update", SERVO_THREAD, order=1), Addf("pwmgen.make-pulses", SERVO_THREAD, order=1)]
-        )
-        for n, request in enumerate(pulsed):
-            fragment.setp.extend(
-                [
-                    f"setp pwmgen.{n}.scale {PULSE_SCALE}",
-                    f"setp pwmgen.{n}.pwm-freq {PULSE_FREQ_HZ}",
-                    f"setp pwmgen.{n}.enable 1",
-                ]
-            )
-            fragment.nets.extend(
-                [
-                    f"net {request.signal} => pwmgen.{n}.value",
-                    f"net {request.signal}-pulse <= pwmgen.{n}.pwm",
-                ]
-            )
-        return rewritten, fragment
+        if module.get("Type") != "PWM":
+            return module
+        owner = str(module.get("Comment", ""))
+        if owner in tools_by_id:
+            period, safe_duty = HEATER_PERIOD_US, 0
+        else:
+            hotend_fan = (fans_by_id.get(owner) or {}).get("kind") == "heater"
+            period, safe_duty = FAN_PERIOD_US, 100 if hotend_fan else 0
+        return {**module, "Period us": period, "Safe Duty": safe_duty}
 
     @staticmethod
     def can_block(

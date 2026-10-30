@@ -102,15 +102,13 @@ class HalAssembler:
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
 
         requests = self._deduplicated_requests(component_fragments)
-        # A heater on a CAN node: a pulsed Digital Pin, not PWM (no PWM on nodes yet).
-        requests, node_pulses = RemoraCanMapper.pulse_node_outputs(requests, self._mcus_by_id)
         router_bases, router_routes = self._route(requests)
 
         # Order per README § 4: loadrt (motion, then MCU drivers) -> addf
         # -> setp -> component-local nets -> router nets. combine()
         # concatenates each field in fragment order, so this list order
         # is what actually produces that field-level ordering.
-        result = combine([motion, *router_bases, *component_fragments, node_pulses, *router_routes])
+        result = combine([motion, *router_bases, *component_fragments, *router_routes])
         self._render_firmware_configs(result)
         return result
 
@@ -335,7 +333,10 @@ class HalAssembler:
         # CAN nodes have no SD card: their modules go into the hub's
         # config.txt ("CAN" -> "Nodes"), never a config_<node>.txt.
         node_modules = {
-            mcu_id: by_mcu.pop(mcu_id)
+            mcu_id: [
+                RemoraCanMapper.pwm_settings(module, self._tools_by_id, self._fans_by_id)
+                for module in by_mcu.pop(mcu_id)
+            ]
             for mcu_id in list(by_mcu)
             if RemoraCanMapper.is_node(self._mcus_by_id.get(mcu_id))
         }

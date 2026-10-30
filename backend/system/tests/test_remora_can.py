@@ -194,27 +194,50 @@ NODE_BED = (
 )
 
 
-def test_a_node_thermistor_and_heater_are_a_temperature_and_a_pulsed_digital_pin(tmp_path):
+def test_a_node_thermistor_and_heater_are_a_temperature_and_a_slow_pwm(tmp_path):
     payload = _payload(tmp_path, estop=NODE_BED)
     assert not [d for d in validate_machine(payload) if d.is_error]
 
-    fragment, config = _assemble(payload)
+    _fragment, config = _assemble(payload)
     modules = config["CAN"]["Nodes"][0]["Modules"]
     [temp] = [m for m in modules if m["Type"] == "Temperature"]
     assert (temp["PV[i]"], temp["Thermistor"]["Pin"], temp["Thermistor"]["beta"]) == (0, "PA_3", 3950)
-    [heater] = [m for m in modules if m.get("Mode") == "Output"]
-    assert (heater["Pin"], heater["Data Bit"], heater["Safe State"]) == ("PB_13", 0, "Low")
+    [heater] = [m for m in modules if m["Type"] == "PWM"]
+    assert heater == {
+        "Type": "PWM", "Comment": "heater_bed", "SP[i]": 0, "PWM Pin": "PB_13",
+        "Period us": 100000, "Safe Duty": 0,
+    }
     assert all("Name" not in m and "Thread" not in m for m in modules)
-    # No PWM on the hub for it — the PID output is pulsed in HAL instead.
     assert not any(m.get("Type") == "PWM" for m in config["Modules"])
 
     text = compile_machine_hal(payload)
-    assert "loadrt pwmgen output_type=0" in text
-    assert "setp pwmgen.0.scale 100" in text
-    assert "net heater_bed-heater-SP => pwmgen.0.value" in text
-    assert "net heater_bed-heater-SP-pulse <= pwmgen.0.pwm" in text
-    assert "net heater_bed-heater-SP-pulse => remora.output.00" in text
+    assert "net heater_bed-heater-SP => remora.SP.0" in text
     assert "net bed-PV <= remora.PV.0" in text
+    assert "pwmgen" not in text
+
+
+def test_node_fans_are_pwm_and_only_the_hotend_fan_stays_on_when_safe(tmp_path):
+    fans = (
+        NODE_BED
+        + "\n[fan]\npin: toolhead:PA0\n"
+        + "\n[heater_fan hotend_fan]\npin: toolhead:PA1\nheater: heater_bed\n"
+    )
+    payload = _payload(tmp_path, estop=fans)
+    assert not [d for d in validate_machine(payload) if d.is_error]
+
+    _fragment, config = _assemble(payload)
+    pwm = {m["PWM Pin"]: m for m in config["CAN"]["Nodes"][0]["Modules"] if m["Type"] == "PWM"}
+    assert (pwm["PA_0"]["Period us"], pwm["PA_0"]["Safe Duty"]) == (10000, 0)
+    assert (pwm["PA_1"]["Period us"], pwm["PA_1"]["Safe Duty"]) == (10000, 100)
+    # SP numbers are one space across the hub and its nodes.
+    assert sorted(m["SP[i]"] for m in pwm.values()) == [0, 1, 2]
+
+
+def test_a_node_makes_at_most_four_pwm_outputs(tmp_path):
+    payload = _payload(tmp_path, estop=NODE_BED)
+    payload["fans"] += [{"id": f"f{n}", "pin": f"toolhead:PA{n}", "kind": "part"} for n in (4, 5, 6, 7)]
+    errors = [d for d in validate_machine(payload) if d.code == "E_CAN_NODE_PIN"]
+    assert len(errors) == 1 and errors[0].where == "toolhead"
 
 
 def test_a_node_thermistor_needs_a_known_ntc_curve(tmp_path):
@@ -240,9 +263,9 @@ def _codes(payload):
     return {d.code for d in validate_machine(payload)}
 
 
-def test_a_heater_on_a_node_is_rejected(tmp_path):
+def test_a_spindle_on_a_node_is_rejected(tmp_path):
     payload = _payload(tmp_path)
-    payload["fans"] = [{"id": "fan_part", "pin": "toolhead:PA0"}]
+    payload["tools"] = [{"id": "spindle", "type": "spindle", "run_pin": "toolhead:PA0"}]
     assert "E_CAN_NODE_PIN" in _codes(payload)
 
 
