@@ -175,9 +175,18 @@ setp PID-<id>.SPmax     [<HEATER_SECTION>]PID_SPMAX
 setp PID-<id>.CVmin     [<HEATER_SECTION>]PID_CVMIN
 setp PID-<id>.CVmax     [<HEATER_SECTION>]PID_CVMAX
 
-# auto: hold the loop in manual until the link is up, so a dead MCU
-# cannot leave the output latched at its last value.
-net remora-status  => PID-<id>.auto
+# E-stop gate (both control modes): heat only while the link is up AND
+# the machine is out of E-stop. user-enable-out is the Remora base
+# fragment's iocontrol.0.user-enable-out signal.
+loadrt and2 names=heat-ok-<id>
+addf heat-ok-<id> servo-thread
+net remora-status   => heat-ok-<id>.in0
+net user-enable-out => heat-ok-<id>.in1
+net <id>-heat-ok    <= heat-ok-<id>.out
+
+# auto: manual mode outputs 0 (PIDcontroller), so a dead MCU or an
+# E-stop turns the heater off instead of latching its last value.
+net <id>-heat-ok   => PID-<id>.auto
 net <id>-SP        => PID-<id>.SP     # setpoint, from the UI
 net <sensor.id>-PV => PID-<id>.PV     # reading, from the MCU
 net <id>-heater-SP <= PID-<id>.CV     # duty cycle, to the MCU
@@ -202,7 +211,10 @@ setp duty-<id>.gain <parameters.max_power || 100.0>
 
 net <sensor.id>-PV    => comp-<id>.in0
 net <id>-SP           => comp-<id>.in1
-net <id>-heat-bit     comp-<id>.out => conv-<id>.in
+# E-stop gate: loadrt and2 names=heat-gate-<id> (+ addf)
+net <id>-heat-bit     comp-<id>.out => heat-gate-<id>.in0
+net <id>-heat-ok      => heat-gate-<id>.in1
+net <id>-heat-on      heat-gate-<id>.out => conv-<id>.in
 net <id>-heat-frac    conv-<id>.out => duty-<id>.in
 net <id>-heater-SP <= duty-<id>.out
 

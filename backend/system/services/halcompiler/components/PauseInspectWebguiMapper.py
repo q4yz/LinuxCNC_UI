@@ -58,6 +58,8 @@ way the old `estop-out` source did.
 
 from __future__ import annotations
 
+from .BedMeshHalMapper import COUNTS_PER_MM, LIFT_FLOAT
+
 
 class PauseInspectWebguiMapper:
     """`net`/`setp` lines wiring the Pause & Inspect safety feature."""
@@ -76,7 +78,13 @@ class PauseInspectWebguiMapper:
     _SPINDLE_INDEX = 0
 
     @staticmethod
-    def to_lines() -> list[str]:
+    def to_lines(bed_mesh: bool = False) -> list[str]:
+        """``bed_mesh``: Z's external offset is shared with the bed mesh
+        compensation (`BedMeshHalMapper`) — the lift then goes into its
+        sum in mm (scale 0.001 mm per count) instead of straight into
+        ``axis.z.eoffset-counts``."""
+        if bed_mesh:
+            return PauseInspectWebguiMapper._shared_lines()
         return [
             "# Pause & Inspect (external offsets & spindle inhibit)",
             f"net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.{PauseInspectWebguiMapper._SPINDLE_INDEX}.inhibit",
@@ -96,6 +104,20 @@ class PauseInspectWebguiMapper:
             "addf inspect-z-lift-conv servo-thread",
             "net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in",
             "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts",
+            "",
+        ]
+
+    @staticmethod
+    def _shared_lines() -> list[str]:
+        return [
+            "# Pause & Inspect (external offsets & spindle inhibit) — Z offset shared with the bed mesh",
+            f"net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.{PauseInspectWebguiMapper._SPINDLE_INDEX}.inhibit",
+            "",
+            "setp axis.z.eoffset-enable 1",
+            f"setp axis.z.eoffset-scale {1 / COUNTS_PER_MM}",
+            "net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear",
+            # 1 = a lift of COUNTS_PER_MM counts (1 mm), summed in machine.hal.
+            f"net inspect-z-lift-bit webgui.inspect-z-lift => {LIFT_FLOAT}.in",
             "",
         ]
 

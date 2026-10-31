@@ -39,25 +39,6 @@ TEMPLATE_HEADER = """\
 #   out -> the webgui pin is a HAL output: net <signal> <= webgui.<pin>
 """
 
-#: Used instead of :data:`TEMPLATE_HEADER` when this catalog is
-#: appended after real, compiled HAL text rather than standing alone —
-#: see ``generator._render_machine_hal``. The file above this point
-#: already loaded and wired the machine; this section is reference
-#: only, for hand-wiring ``webgui_connections.hal``.
-APPENDIX_HEADER = """\
-#{sep}
-# WEBGUI PIN REFERENCE ({pin_count} pins on the "{component}" component)
-#{sep}
-# Everything above this line is real, compiled HAL. Everything below
-# is documentation only (every line is a comment) — wire the pins you
-# need in webgui_connections.hal using the net lines as a starting
-# point.
-#
-# Direction legend:
-#   in  -> the webgui pin is a HAL input:  net <signal> => webgui.<pin>
-#   out -> the webgui pin is a HAL output: net <signal> <= webgui.<pin>
-"""
-
 _GROUP_TITLES = {
     "tools": "Tools",
     "sensors": "Sensors / Temperature",
@@ -99,52 +80,41 @@ def _render_container(container: PinContainerDescriptor) -> List[str]:
     return lines
 
 
-def render_hal_template(
-    machine_name: str, catalog: PinCatalog, *, standalone: bool = True
-) -> str:
+def render_hal_template(machine_name: str, catalog: PinCatalog) -> str:
     """Render the pin catalog as a commented wiring reference.
+
+    Only used as the ``machine.hal`` fallback when the HAL compiler
+    cannot generate real wiring for the machine yet (see
+    ``generator._fallback_machine_hal``).
 
     Args:
         machine_name: Machine name for the header comment.
         catalog: The pin catalog (see :mod:`.PinCatalog`).
-        standalone: ``True`` (default) renders this as the whole file
-            — a `machine.hal` with no compiled wiring, the historical
-            behaviour. ``False`` renders it as an appendix meant to
-            follow real, compiled HAL text in the same file (see
-            ``generator._render_machine_hal``): a shorter header that
-            doesn't claim the whole file is inert, and no "next steps"
-            footer describing a template that no longer applies.
     """
-    if standalone:
-        header = TEMPLATE_HEADER.format(
-            machine_name=machine_name,
-            component=COMPONENT_NAME,
-            pin_count=catalog.total_pins(),
-        )
-    else:
-        header = APPENDIX_HEADER.format(
-            component=COMPONENT_NAME, pin_count=catalog.total_pins(), sep="-" * 74
-        )
+    header = TEMPLATE_HEADER.format(
+        machine_name=machine_name,
+        component=COMPONENT_NAME,
+        pin_count=catalog.total_pins(),
+    )
     lines: List[str] = [header.rstrip()]
 
     for group in catalog.groups():
         for container in catalog.for_group(group):
             lines.extend(_render_container(container))
 
-    if standalone:
-        lines.extend(
-            [
-                "",
-                "#" + "-" * 74,
-                "# Next steps",
-                "#" + "-" * 74,
-                "# 1. Wire each pin above with a named signal (un-comment the net lines).",
-                "# 2. Load the realtime components your machine needs (motmod / stepgen / vfdmod / ...).",
-                "# 3. Reference this file from machine.ini ([HAL] HALFILE = machine.hal).",
-                "# 4. Do NOT flash config.txt - it is intentionally not generated for templates.",
-                "",
-            ]
-        )
+    lines.extend(
+        [
+            "",
+            "#" + "-" * 74,
+            "# Next steps",
+            "#" + "-" * 74,
+            "# 1. Wire each pin above with a named signal (un-comment the net lines).",
+            "# 2. Load the realtime components your machine needs (motmod / stepgen / vfdmod / ...).",
+            "# 3. Reference this file from machine.ini ([HAL] HALFILE = machine.hal).",
+            "# 4. Do NOT flash config.txt - it is intentionally not generated for templates.",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

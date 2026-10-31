@@ -36,6 +36,7 @@ from domain_file_services.paths import UI_SYSTEM_LOG_FILE
 
 from routers import (
     FilesRouter,
+    bed_mesh as bed_mesh_router,
     SystemRouter,
     machine_lifecycle as machine_lifecycle_router,
     machineconfig as machineconfig_router,
@@ -52,6 +53,7 @@ logger = logging.getLogger("backend.system.main")
 
 # System-owned per-domain routers (``/api/v1/modules/<id>``).
 _MODULE_ROUTERS = [
+    bed_mesh_router.router,
     machineconfig_router.router,
     macros_router.router,
 ]

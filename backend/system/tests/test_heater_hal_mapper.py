@@ -19,7 +19,7 @@ def test_pid_loop_matches_the_reference_machine_shape():
     fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
 
     assert "loadrt PIDcontroller names=PID-heater_bed" in fragment.loadrt
-    assert "net remora-status => PID-heater_bed.auto" in fragment.nets
+    assert "net heater_bed-heat-ok => PID-heater_bed.auto" in fragment.nets
     assert "net heater_bed-SP => PID-heater_bed.SP" in fragment.nets
     assert "net bed-PV => PID-heater_bed.PV" in fragment.nets
     assert "net heater_bed-heater-SP <= PID-heater_bed.CV" in fragment.nets
@@ -82,7 +82,9 @@ def test_watermark_loop_converts_the_comparator_bit_to_a_duty_float():
     assert "loadrt conv_bit_float names=conv-heater_bed" in fragment.loadrt
     assert "loadrt scale names=duty-heater_bed" in fragment.loadrt
     assert "setp duty-heater_bed.gain 100.0" in fragment.setp
-    assert "net heater_bed-heat-bit comp-heater_bed.out => conv-heater_bed.in" in fragment.nets
+    assert "net heater_bed-heat-bit comp-heater_bed.out => heat-gate-heater_bed.in0" in fragment.nets
+    assert "net heater_bed-heat-ok => heat-gate-heater_bed.in1" in fragment.nets
+    assert "net heater_bed-heat-on heat-gate-heater_bed.out => conv-heater_bed.in" in fragment.nets
     assert "net heater_bed-heat-frac conv-heater_bed.out => duty-heater_bed.in" in fragment.nets
     assert "net heater_bed-heater-SP <= duty-heater_bed.out" in fragment.nets
     # The old direct bit->float link must be gone, not just supplemented.
@@ -144,3 +146,14 @@ def test_a_fan_referenced_but_not_resolved_is_skipped_not_crashed():
     heater = dict(BED, fan="ghost_fan")
     fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
     assert not any(r.signal == "ghost_fan-SP" for r in fragment.requests)
+
+
+def test_an_estop_or_a_dead_link_turns_every_heater_off():
+    """`heat-ok-<id>` = board answers AND machine out of E-stop; the PID
+    runs only while it holds (manual mode outputs 0)."""
+    for control in ("pid", "watermark"):
+        fragment = HeaterHalMapper.to_fragment({**BED, "control": control}, BED_SENSOR, None)
+        assert "loadrt and2 names=heat-ok-heater_bed" in fragment.loadrt
+        assert "net remora-status => heat-ok-heater_bed.in0" in fragment.nets
+        assert "net user-enable-out => heat-ok-heater_bed.in1" in fragment.nets
+        assert "net heater_bed-heat-ok <= heat-ok-heater_bed.out" in fragment.nets

@@ -26,6 +26,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
 | `estop.md` | `[estop]` | Required exactly once. UI pulse chain unconditional; physical chain optional. |
 | `probe.md` | `[probe]`, `[tool_length_sensor]` | Both optional. Both trigger `motion.probe-input`; when both are declared they are OR-ed (`or2`). |
+| `bed_mesh.md` | `[bed_mesh]` | Optional. `probe_count` only; Z compensation via the Remora `compensation` component, summed with the pause lift into `axis.z.eoffset-counts`. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_can_remora.md` | `[mcu NAME]` `connection: remora-can` | **Class C** — a CAN node behind a remora-spi hub: digital I/O, Status Bit into the E-stop. |

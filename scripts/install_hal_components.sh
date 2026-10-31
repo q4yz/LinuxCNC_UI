@@ -39,7 +39,7 @@ USER_BIN_DIR="/usr/local/bin"
 # own folder is on halcompile's include path, so remora-spi.c's
 # `#include "bcm2835.c"` etc. resolve.
 # Not built: Extruder/Extruder.c (a .comp source, unfinished), Heater/
-# (empty), Compensation/ (an NGC/Python tool, not a HAL module).
+# (empty).
 declare -A SOURCES=(
     [remora-spi]="Remora-spi/remora-spi.c"
     [remora-eth-3.0]="Remora-eth/remora-eth-3.0.c"
@@ -48,13 +48,17 @@ declare -A SOURCES=(
     [nvmpg]="NVMPG/nvmpg.c"
     [PRUencoder]="PRUencoder/PRUencoder.c"
     [rpi-monitor]="RPiMonitor/rpi_monitor.py"
+    # Bed mesh Z compensation (external offsets), generated HAL loads it
+    # for a machine with [bed_mesh]:
+    #   loadusr -Wn compensation python3 remora-compensation <mesh file> cubic
+    [remora-compensation]="Compensation/compensation.py"
     # Not a HAL module: the tool that puts config.txt on a Remora SPI
     # board's SD card. Generated machine.hal files run it at every
     # LinuxCNC start, before `loadrt remora-spi`:
     #   loadusr -w remora-upload --sync [--spi-cs-pin PC10 -s 1000000] config_mcu.txt
     [remora-upload]="../Tools/remora-upload/remora-upload.c"
 )
-ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller nvmpg PRUencoder rpi-monitor remora-upload)
+ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller nvmpg PRUencoder rpi-monitor remora-compensation remora-upload)
 # LinuxCNC runs as the normal user, so `loadusr remora-upload` does too:
 # it needs the spidev node and — for a GPIO chip select (BTT CB1) — the
 # gpiochip nodes. Raspberry Pi OS already has both groups; reuse them.
@@ -98,6 +102,10 @@ cd "$COMPONENTS_DIR"
 for name in "${SELECTED[@]}"; do
     src="${SOURCES[$name]}"
     echo -e "\n---> $name ($src)"
+    if [ "$name" = "remora-compensation" ] && ! python3 -c "import numpy, scipy" 2>/dev/null; then
+        echo "---> Installing python3-numpy, python3-scipy (bed mesh interpolation)..."
+        apt-get install -y python3-numpy python3-scipy || true
+    fi
     if [[ "$src" == *.py ]]; then
         # Userspace component: loadusr -Wn rpi-monitor rpi-monitor
         if install -m 0755 "$src" "$USER_BIN_DIR/$name"; then

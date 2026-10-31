@@ -156,7 +156,9 @@ def test_addf_is_all_servo_thread_no_base_thread_at_all():
         "remora.read",
         "motion-command-handler",
         "motion-controller",
+        "heat-ok-heater_bed",
         "PID-heater_bed.compute",
+        "heat-ok-heater_extruder",
         "PID-heater_extruder.compute",
         "remora.update-freq",
         "remora.write",
@@ -342,9 +344,11 @@ def test_endstop_indices_are_unaffected_by_the_added_heaters(fragment):
     assert "net endstop_z-sw remora.input.02" in fragment.nets
 
 
-def test_pid_auto_is_wired_off_the_link_watchdog(fragment):
-    assert "net remora-status => PID-heater_bed.auto" in fragment.nets
-    assert "net remora-status => PID-heater_extruder.auto" in fragment.nets
+def test_pid_auto_is_wired_off_the_link_watchdog_and_the_estop(fragment):
+    for heater in ("heater_bed", "heater_extruder"):
+        assert f"net remora-status => heat-ok-{heater}.in0" in fragment.nets
+        assert f"net user-enable-out => heat-ok-{heater}.in1" in fragment.nets
+        assert f"net {heater}-heat-ok => PID-{heater}.auto" in fragment.nets
 
 
 def test_heater_and_sensor_pins_never_become_hal_nets(fragment):

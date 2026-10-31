@@ -30,6 +30,7 @@ const DEV_PROXY = {
   '/api/v1/programs': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/machineconfig': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/macros': { target: SYSTEM_TARGET, changeOrigin: true },
+  '/api/v1/modules/bedmesh': { target: SYSTEM_TARGET, changeOrigin: true },
 
   '/api': { target: MACHINE_TARGET, changeOrigin: true },
   '/ws': { target: MACHINE_TARGET.replace('http', 'ws'), ws: true },

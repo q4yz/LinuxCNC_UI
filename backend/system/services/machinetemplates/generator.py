@@ -65,6 +65,7 @@ from services.halcompiler import (
     validate_machine,
 )
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
+from services.BedMeshService import get_bed_mesh_service
 from services.machineconfig import AxisBuilder, AxisMappingPolicy
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
@@ -423,6 +424,11 @@ def generate_machine_templates(
     ]
     for filename, content in mcu_sidecar_files.items():
         (configs_dir / filename).write_text(content, encoding="utf-8")
+
+    # 4c. The compensation component loads the active bed mesh at start:
+    # a first-time [bed_mesh] machine gets a flat one.
+    if isinstance(payload.get("bed_mesh"), dict):
+        get_bed_mesh_service().ensure_active(payload)
 
     # 5. custom.hal always loads webgui and sources the file below —
     # regenerated every time so a repo-layout change (e.g. a venv

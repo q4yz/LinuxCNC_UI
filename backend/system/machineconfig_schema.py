@@ -62,6 +62,7 @@ class SectionKind(str, Enum):
     ESTOP = "estop"
     PROBE = "probe"
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
+    BED_MESH = "bed_mesh"
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +194,10 @@ PROBE_KEYS = frozenset({"pin"})
 # is OR-ed with the probe into ``motion.probe-input``
 # (`.agent/component/probe.md` § 3). Same single optional ``pin``.
 TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
+# Bed mesh / Z compensation (`.agent/component/bed_mesh.md`). Minimal
+# for now: the probe grid only; the mesh itself is probed / edited at
+# runtime and applied by the Remora `compensation` HAL component.
+BED_MESH_KEYS = frozenset({"probe_count"})
 # Fan sections accept ``pin``, an optional ``max_power`` (0.0–1.0,
 # the runtime's ``PWM Max`` in the Remora board JSON), and an optional
 # ``shutdown_speed`` (duty on estop/shutdown — Klipper's own field,
@@ -319,6 +324,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.ESTOP: ESTOP_KEYS,
     SectionKind.PROBE: PROBE_KEYS,
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
+    SectionKind.BED_MESH: BED_MESH_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -408,6 +414,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "probe":
         return SectionSchema(SectionKind.PROBE, PROBE_KEYS, "probe")
+
+    if section == "bed_mesh":
+        return SectionSchema(SectionKind.BED_MESH, BED_MESH_KEYS, "bed_mesh")
 
     if section == "tool_length_sensor":
         return SectionSchema(
@@ -503,6 +512,7 @@ def schema_for_section(section: str) -> SectionSchema | None:
 __all__ = [
     "ALLOWED_CONNECTION_TYPES",
     "ALLOWED_KEYS",
+    "BED_MESH_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "ESTOP_KEYS",

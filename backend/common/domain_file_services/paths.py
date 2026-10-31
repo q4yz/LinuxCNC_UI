@@ -19,6 +19,12 @@ NC_FILES_DIR = _PROJECT_ROOT / "nc_files"
 M_CODES_DIR = MACHINE_CONFIG_DIR / "m_codes"
 MACROS_DIR = _PROJECT_ROOT / "macros"
 
+#: Bed meshes (``x y z`` per line, gridprobe format), one file per mesh,
+#: and the copy of the selected one the ``compensation`` HAL component
+#: reads (``BedMeshHalMapper``) — its first line names the mesh.
+BED_MESHES_DIR = MACHINE_CONFIG_DIR / "bed_meshes"
+ACTIVE_BED_MESH_FILE = MACHINE_CONFIG_DIR / "bed_mesh_active.txt"
+
 #: The single UI settings document (flat ``{key: value}``). Written only
 #: by the system service (``core.UiSettingsStore``); other processes
 #: read it by key via ``core.ui_settings_reader``.

@@ -56,6 +56,7 @@ class HeaterHalMapper:
         heater_id = str(heater["id"])
         sensor_id = str(sensor["id"]) if sensor else None
 
+        HeaterHalMapper._heat_ok(fragment, heater_id)
         control = (heater.get("control") or "pid").strip().lower()
         if control == "watermark":
             HeaterHalMapper._watermark_loop(fragment, heater, heater_id, sensor_id)
@@ -91,6 +92,26 @@ class HeaterHalMapper:
 
         return fragment
 
+    # -- E-stop gate --------------------------------------------------------- #
+
+    @staticmethod
+    def _heat_ok(fragment: HalFragment, heater_id: str) -> None:
+        """``<id>-heat-ok``: the board answers (``remora-status``) AND the
+        machine is out of E-stop (``user-enable-out``, the Remora base
+        fragment's ``iocontrol.0.user-enable-out`` signal). Both loops
+        heat only while it is high — an E-stop turns every heater off.
+        """
+        gate = f"heat-ok-{heater_id}"
+        fragment.loadrt.append(f"loadrt and2 names={gate}")
+        fragment.addf.append(Addf(gate, SERVO_THREAD, order=1))
+        fragment.nets.extend(
+            [
+                f"net remora-status => {gate}.in0",
+                f"net user-enable-out => {gate}.in1",
+                f"net {heater_id}-heat-ok <= {gate}.out",
+            ]
+        )
+
     # -- control loops ----------------------------------------------------- #
 
     @staticmethod
@@ -101,7 +122,8 @@ class HeaterHalMapper:
         fragment.loadrt.append(f"loadrt PIDcontroller names={pid}")
         fragment.addf.append(Addf(f"{pid}.compute", SERVO_THREAD, order=1))
 
-        fragment.nets.append(f"net remora-status => {pid}.auto")
+        # Manual mode outputs 0 (PIDcontroller), so no link or an E-stop = off.
+        fragment.nets.append(f"net {heater_id}-heat-ok => {pid}.auto")
         fragment.nets.append(f"net {heater_id}-SP => {pid}.SP")
         if sensor_id is not None:
             fragment.nets.append(f"net {sensor_id}-PV => {pid}.PV")
@@ -137,15 +159,24 @@ class HeaterHalMapper:
         rather than `1.0`, matching the PID branch's CVmax convention.
         """
         comp = f"comp-{heater_id}"
+        gate = f"heat-gate-{heater_id}"
         conv = f"conv-{heater_id}"
         duty = f"duty-{heater_id}"
         hysteresis = heater.get("hysteresis", _DEFAULT_HYSTERESIS)
         max_power = heater.get("max_power", _DEFAULT_MAX_POWER)
 
-        fragment.loadrt.extend([f"loadrt comp names={comp}", f"loadrt conv_bit_float names={conv}", f"loadrt scale names={duty}"])
+        fragment.loadrt.extend(
+            [
+                f"loadrt comp names={comp}",
+                f"loadrt and2 names={gate}",
+                f"loadrt conv_bit_float names={conv}",
+                f"loadrt scale names={duty}",
+            ]
+        )
         fragment.addf.extend(
             [
                 Addf(comp, SERVO_THREAD, order=1),
+                Addf(gate, SERVO_THREAD, order=1),
                 Addf(conv, SERVO_THREAD, order=1),
                 Addf(duty, SERVO_THREAD, order=1),
             ]
@@ -155,7 +186,10 @@ class HeaterHalMapper:
         if sensor_id is not None:
             fragment.nets.append(f"net {sensor_id}-PV => {comp}.in0")
         fragment.nets.append(f"net {heater_id}-SP => {comp}.in1")
-        fragment.nets.append(f"net {heater_id}-heat-bit {comp}.out => {conv}.in")
+        # Heat only while the comparator asks for it AND `<id>-heat-ok` holds.
+        fragment.nets.append(f"net {heater_id}-heat-bit {comp}.out => {gate}.in0")
+        fragment.nets.append(f"net {heater_id}-heat-ok => {gate}.in1")
+        fragment.nets.append(f"net {heater_id}-heat-on {gate}.out => {conv}.in")
         fragment.nets.append(f"net {heater_id}-heat-frac {conv}.out => {duty}.in")
         fragment.nets.append(f"net {heater_id}-heater-SP <= {duty}.out")
 

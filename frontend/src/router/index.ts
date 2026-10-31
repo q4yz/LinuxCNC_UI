@@ -14,6 +14,7 @@ const VisualHalEditor = () => import('../views/VisualHalEditor.vue')
 const ConfigView = () => import('../views/ConfigView.vue')
 const DebugView = () => import('../views/DebugView.vue')
 const ProbingView = () => import('../views/ProbingView.vue')
+const BedMeshView = () => import('../views/BedMeshView.vue')
 
 const BUILTIN_ROUTES = [
   {path: '/', name: 'dashboard', component: DashboardView, meta: { label: 'Dashboard' },},
@@ -21,6 +22,7 @@ const BUILTIN_ROUTES = [
   {path: '/jogging', name: 'jogging', component: JoggingView, meta: { label: 'G-Code Files' },},
   {path: '/running', name: 'running', component: RunningView, meta: { label: 'G-Code Files' },},
   {path: '/probing', name: 'probing', component: ProbingView, meta: { label: 'Probing' },},
+  {path: '/bedmesh', name: 'bedmesh', component: BedMeshView, meta: { label: 'Bed Mesh' },},
   {path: '/editor', name: 'editor', component: EditorView, meta: { label: 'Editor' },},
   {path: '/settings', name: 'settings', component: SettingsView, meta: { label: 'Settings' },},
   {path: '/camera', name: 'camera', component: CameraViewer, meta: { label: 'Camera' },},

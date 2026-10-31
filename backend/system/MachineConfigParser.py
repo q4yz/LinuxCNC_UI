@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import (
+    BedMesh,
     EndstopSwitch,
     Estop,
     Extruder,
@@ -716,6 +717,8 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.BED_MESH:
+                graph.bed_mesh = self._parse_bed_mesh(section_name, section)
             elif section_schema.kind is SectionKind.TOOL_LENGTH_SENSOR:
                 graph.tool_length_sensor = ToolLengthSensor(
                     pin=self._optional_string(section, "pin"),
@@ -1121,6 +1124,33 @@ class MachineConfigParser:
             fault_pin=self._optional_string(section, "fault_pin"),
             out_pin=self._optional_string(section, "out_pin"),
         )
+
+    def _parse_bed_mesh(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> BedMesh:
+        """Build the machine's :class:`BedMesh`.
+
+        ``probe_count`` is ``X, Y`` or a single value for both axes
+        (Klipper's own syntax), at least 3 points per axis; default
+        ``3, 3``.
+        """
+        raw = self._optional_string(section, "probe_count")
+        if raw is None:
+            return BedMesh()
+        parts = [p.strip() for p in raw.split(",")]
+        try:
+            counts = [int(p) for p in parts]
+        except ValueError:
+            counts = []
+        if len(counts) == 1:
+            counts *= 2
+        if len(counts) != 2 or min(counts) < 3:
+            raise InvalidValueError(
+                section_name, "probe_count", raw, "'X, Y' (or one value), each at least 3"
+            )
+        return BedMesh(probe_count=(counts[0], counts[1]))
 
     def _parse_probe(
         self,

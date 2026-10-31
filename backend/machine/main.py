@@ -59,6 +59,7 @@ from routers import (
     hal as hal_router,
     hal_scope as hal_scope_router,
     macro_start as macro_start_router,
+    bed_mesh as bed_mesh_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
@@ -76,6 +77,7 @@ from services.StateService import get_state_service
 from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
 from services.ConsoleLogger import get_console_logger
+from services.BedMeshService import get_bed_mesh_service
 
 
 
@@ -132,6 +134,7 @@ async def lifespan(app: FastAPI):
         fans_service.preload_hal_pins()
         mcu_service.preload_hal_pins()
         program_service.preload_hal_pins()
+        get_bed_mesh_service().preload_hal_pins()
         HalPin.initialize_component()
 
         reseed_from_hardware_json()
@@ -263,6 +266,7 @@ app.include_router(macro_start_router.router)
 
 # MCU actions (reset). The MCU list rides on the base-thread snapshot.
 app.include_router(mcu_router.router)
+app.include_router(bed_mesh_router.router)
 
 
 @app.get("/")
@@ -325,6 +329,7 @@ if __name__ == "__main__":
     fans_service.preload_hal_pins()
     mcu_service.preload_hal_pins()
     program_service.preload_hal_pins()
+    get_bed_mesh_service().preload_hal_pins()
     HalPin.initialize_component()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")

@@ -18,6 +18,7 @@ live in ``.agent/component/``.
 from mappers.machineconfig import PinStringMapper
 
 from .HalAssembler import HalAssembler, UnsupportedMcuError, assemble_machine
+from .components.BedMeshWebguiMapper import BedMeshWebguiMapper
 from .components.EstopWebguiMapper import EstopWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
@@ -93,7 +94,10 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
         # cartesian`), not tied to any tool entry, so it rides the same
         # "is this a real machine payload" gate as Estop rather than a
         # `tools[]`/`fans[]` presence check.
-        lines.extend(PauseInspectWebguiMapper.to_lines())
+        bed_mesh = isinstance(payload.get("bed_mesh"), dict)
+        lines.extend(PauseInspectWebguiMapper.to_lines(bed_mesh=bed_mesh))
+        if bed_mesh:
+            lines.extend(BedMeshWebguiMapper.to_lines())
     for tool in payload.get("tools", []) or []:
         if not isinstance(tool, dict):
             continue

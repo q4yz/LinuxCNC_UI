@@ -318,6 +318,15 @@ class Estop(BaseModel):
     out_pin: str | None = None
 
 
+class BedMesh(BaseModel):
+    """The machine's bed mesh (`.agent/component/bed_mesh.md`):
+    ``probe_count`` is the probe grid as ``[x, y]`` points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    probe_count: list[int] = Field(default_factory=lambda: [3, 3])
+
+
 class Probe(BaseModel):
     """The machine's single touch-probe component (`.agent/component/probe.md`).
 
@@ -573,6 +582,9 @@ class HardwareJson(BaseModel):
     # against. See :class:`Probe`.
     probe: "Probe | None" = None
 
+    # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
+    bed_mesh: "BedMesh | None" = None
+
     # The tool-length sensor. ``None`` when the machine has none. See
     # :class:`ToolLengthSensor`.
     tool_length_sensor: "ToolLengthSensor | None" = None
@@ -804,6 +816,7 @@ __all__ = [
     "Fan",
     "HardwareJson",
     "McuInfo",
+    "BedMesh",
     "Probe",
     "Stepper",
     "TemperatureSensor",

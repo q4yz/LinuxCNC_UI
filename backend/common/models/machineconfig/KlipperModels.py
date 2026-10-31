@@ -306,6 +306,18 @@ class Estop:
 
 
 @dataclass(slots=True)
+class BedMesh:
+    """The machine's bed mesh (`.agent/component/bed_mesh.md`).
+
+    ``probe_count`` is the probe grid, ``(x, y)`` points — Klipper's
+    ``probe_count: 3, 3``. The measured mesh itself is runtime data
+    (``machine_config/bed_meshes/``), not part of the profile.
+    """
+
+    probe_count: tuple[int, int] = (3, 3)
+
+
+@dataclass(slots=True)
 class Probe:
     """The machine's single touch-probe component (`.agent/component/probe.md`).
 
@@ -441,6 +453,8 @@ class MachineConfigGraph:
     # parsing AND for a machine that legitimately has no probe at all
     # — unlike ``estop``, absence is never enforced as an error.
     probe: Probe | None = None
+    # ``None`` when the profile declares no ``[bed_mesh]``.
+    bed_mesh: BedMesh | None = None
     # The tool-length sensor. ``None`` when the section is absent.
     tool_length_sensor: ToolLengthSensor | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
@@ -509,6 +523,7 @@ MachineConfig = MachineConfigGraph
 
 
 __all__ = [
+    "BedMesh",
     "ConnectionType",
     "EndstopSwitch",
     "Estop",

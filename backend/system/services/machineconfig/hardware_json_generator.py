@@ -188,6 +188,13 @@ def _estop_payload(estop) -> dict[str, Any]:
     }
 
 
+def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
+    """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``."""
+    if bed_mesh is None:
+        return None
+    return {"probe_count": list(bed_mesh.probe_count)}
+
+
 def _probe_payload(probe) -> dict[str, Any] | None:
     """Build the top-level ``probe`` object, or ``None`` when the
     machine declared no ``[probe]`` section at all — unlike
@@ -1008,6 +1015,7 @@ def build_hardware_json(
         "max_z_accel": _fmt_float(getattr(graph.printer, "max_z_accel", None)),
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
+        "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
         "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),
         "axes": axes_records,
         "joints": joint_records,

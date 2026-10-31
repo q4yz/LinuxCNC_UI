@@ -21,6 +21,9 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, combine
 from models.machineconfig.PinModels import CapabilityClass
 
+from domain_file_services.paths import ACTIVE_BED_MESH_FILE
+
+from .components.BedMeshHalMapper import BedMeshHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
 from .components.FanHalMapper import FanHalMapper
@@ -97,6 +100,7 @@ class HalAssembler:
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]
+            + self._bed_mesh_fragments()
         )
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
@@ -234,6 +238,12 @@ class HalAssembler:
         return EstopHalMapper.to_fragment(
             estop if isinstance(estop, dict) else {}, self._mcus_by_id
         )
+
+    def _bed_mesh_fragments(self) -> list[HalFragment]:
+        """The bed mesh compensation, only with ``[bed_mesh]``."""
+        if not isinstance(self._payload.get("bed_mesh"), dict):
+            return []
+        return [BedMeshHalMapper.to_fragment(ACTIVE_BED_MESH_FILE.as_posix())]
 
     def _probe_fragment(self) -> HalFragment:
         """A no-op empty fragment when the machine declared no

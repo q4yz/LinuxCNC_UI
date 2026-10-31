@@ -205,6 +205,11 @@ const ICONS = {
     path: "M9 9v-1a3 3 0 0 1 6 0v1 M8 9h8a6 6 0 0 1 1 3v3a5 5 0 0 1 -10 0v-3a6 6 0 0 1 1 -3 M3 13h4 M17 13h4 M12 20v-6 M4 19l3.35-2 M20 19l-3.35-2 M4 7l3.75 2.4 M20 7l-3.75 2.4",
     stroke: true,
   },
+  mesh: {
+    label: "Bed mesh",
+    path: "M4 4h16v16H4z M4 9.33h16 M4 14.67h16 M9.33 4v16 M14.67 4v16",
+    stroke: true,
+  },
   probing: {
     label: "Probing",
     path: "M12 2v3 M12 19v3 M2 12h3 M19 12h3 M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0",
