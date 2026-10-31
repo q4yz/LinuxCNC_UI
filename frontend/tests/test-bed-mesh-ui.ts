@@ -37,9 +37,13 @@ test("the view lists, uses, deletes, edits and creates meshes", () => {
   assert.match(view, /compensation === null \? "unavailable"/, "no machine backend: the switch says so");
 });
 
-test("the heatmap draws Y up and colours by the largest deviation", () => {
+test("the heatmap is a clickable canvas image with a gradient, not a cell grid", () => {
   const heatmap = read("components/bedmesh/BedMeshHeatmap.vue");
-  assert.match(heatmap, /\.reverse\(\)/, "highest Y row first, so the front-left corner is bottom-left");
-  assert.match(heatmap, /Math\.abs\(z\) \/ maxAbs\.value/);
-  assert.match(heatmap, /emit\("update:cell", row, col, value\)/);
+  assert.match(heatmap, /<canvas[\s\S]*data-testid="bed-mesh-canvas"[\s\S]*@click="onClick"/);
+  assert.doesNotMatch(heatmap, /<table|v-for="\(x, col\) in grid\.xs"/, "no table / input per probe point");
+  assert.match(heatmap, /gradientColor\(interpolate\(props\.grid, x, y\), maxAbs\.value\)/, "every pixel interpolated");
+  assert.match(heatmap, /PAD\.top \+ ph - fy \* ph/, "Y up: the front-left corner is bottom-left");
+  assert.match(heatmap, /:style="\{ background: GRADIENT_CSS \}"/, "the legend shows the same gradient");
+  assert.match(heatmap, /data-testid="bed-mesh-spot"/);
+  assert.match(heatmap, /emit\("update:cell", info\.point\.row, info\.point\.col, value\)/, "edit the nearest probe point");
 });
