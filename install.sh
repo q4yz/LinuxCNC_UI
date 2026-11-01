@@ -6,11 +6,17 @@ set -e # Exit immediately if a command fails
 #   sudo ./install.sh --release [vX.Y.Z] install a GitHub release (latest if no tag):
 #                                        prebuilt frontend, no Node.js / npm / vite —
 #                                        for 1 GB boards like the BTT CB1
+#   sudo ./install.sh --dist <tarball>   the same with a CI build's linuxcnc-ui-dist.tar.gz
+#                                        (any branch — see scripts/install_artifact.sh)
 RELEASE_MODE=0
 RELEASE_TAG=""
+DIST_TARBALL=""
 if [ "$1" = "--release" ]; then
   RELEASE_MODE=1
   RELEASE_TAG="$2"
+elif [ "$1" = "--dist" ]; then
+  RELEASE_MODE=1
+  DIST_TARBALL=$(realpath "$2")
 fi
 
 # Ensure the script is run with sudo
@@ -54,18 +60,29 @@ apt-get install -y curl wget git nginx python3-venv mkcert libnss3-tools ustream
 # 1b. Release install: check out the release tag and fetch its
 # prebuilt frontend now, so the venv below gets that tag's requirements.
 if [ "$RELEASE_MODE" -eq 1 ]; then
-    echo -e "\n---> Fetching release ${RELEASE_TAG:-(latest)}..."
-    RELEASE_TAG=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" tag $RELEASE_TAG)
     RELEASE_WORK=$(sudo -u "$REAL_USER" mktemp -d)
-    RELEASE_TARBALL=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" download "$RELEASE_TAG" "$RELEASE_WORK")
+    if [ -n "$DIST_TARBALL" ]; then
+        # A CI build: its release.json names the commit it was built from.
+        RELEASE_TARBALL="$DIST_TARBALL"
+        RELEASE_TAG=$(tar -xzOf "$RELEASE_TARBALL" ./release.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')
+        RELEASE_REF="$RELEASE_TAG"
+    else
+        echo -e "\n---> Fetching release ${RELEASE_TAG:-(latest)}..."
+        RELEASE_TAG=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" tag $RELEASE_TAG)
+        RELEASE_TARBALL=$(sudo -u "$REAL_USER" python3 "$PROJECT_DIR/scripts/fetch_release.py" download "$RELEASE_TAG" "$RELEASE_WORK")
+        RELEASE_REF="refs/tags/$RELEASE_TAG"
+    fi
     sudo -u "$REAL_USER" git -C "$PROJECT_DIR" fetch --force --tags origin
+    if ! sudo -u "$REAL_USER" git -C "$PROJECT_DIR" cat-file -e "$RELEASE_REF^{commit}" 2>/dev/null; then
+        sudo -u "$REAL_USER" git -C "$PROJECT_DIR" fetch origin "$RELEASE_REF"
+    fi
     CURRENT_BRANCH=$(sudo -u "$REAL_USER" git -C "$PROJECT_DIR" symbolic-ref --short -q HEAD || true)
     if [ -n "$CURRENT_BRANCH" ]; then
         # "Build newest commit" returns to this branch later (scripts/update.sh).
         sudo -u "$REAL_USER" mkdir -p "$PROJECT_DIR/backend/data"
         echo "$CURRENT_BRANCH" | sudo -u "$REAL_USER" tee "$PROJECT_DIR/backend/data/update_branch" > /dev/null
     fi
-    sudo -u "$REAL_USER" git -C "$PROJECT_DIR" checkout --detach "refs/tags/$RELEASE_TAG"
+    sudo -u "$REAL_USER" git -C "$PROJECT_DIR" checkout --detach "$RELEASE_REF"
     echo "Installing release $RELEASE_TAG"
 fi
 

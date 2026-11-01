@@ -9,6 +9,9 @@
 #                                         checked out at the tag, the frontend CI built
 #                                         for that tag downloaded — no npm on the board
 #                                         (1 GB boards like the CB1)
+#   update.sh --mode dist --dist <tarball>
+#                                         the same with a CI build's linuxcnc-ui-dist.tar.gz
+#                                         (any branch — see scripts/install_artifact.sh)
 #
 # Launched detached by the system service (POST /api/v1/system/update);
 # can also be run by hand. Every step is recorded through
@@ -31,18 +34,29 @@ fi
 
 MODE="commit"
 TAG=""
+DIST=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode) MODE="$2"; shift 2 ;;
         --tag)  TAG="$2"; shift 2 ;;
-        *) echo "Error: unknown argument '$1' (usage: update.sh [--mode commit|release] [--tag vX.Y.Z])" >&2; exit 2 ;;
+        --dist) DIST="$(realpath "$2")"; shift 2 ;;
+        *) echo "Error: unknown argument '$1' (usage: update.sh [--mode commit|release|dist] [--tag vX.Y.Z] [--dist <tarball>])" >&2; exit 2 ;;
     esac
 done
-if [ "$MODE" != "commit" ] && [ "$MODE" != "release" ]; then
-    echo "Error: --mode must be 'commit' or 'release', got '$MODE'" >&2
+if [ "$MODE" != "commit" ] && [ "$MODE" != "release" ] && [ "$MODE" != "dist" ]; then
+    echo "Error: --mode must be 'commit', 'release' or 'dist', got '$MODE'" >&2
     exit 2
 fi
-export UPDATE_MODE="$MODE"
+if [ "$MODE" = "dist" ] && [ ! -f "$DIST" ]; then
+    echo "Error: --mode dist needs --dist <linuxcnc-ui-dist.tar.gz>" >&2
+    exit 2
+fi
+# The status API knows commit | release; a CI build is a prebuilt UI too.
+if [ "$MODE" = "dist" ]; then
+    export UPDATE_MODE="release"
+else
+    export UPDATE_MODE="$MODE"
+fi
 
 echo "Starting $MODE update process... ($(date -Is))"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -103,13 +117,25 @@ if [ -n "$ROOT_OWNED" ]; then
 fi
 
 phase "pull"
-if [ "$MODE" = "release" ]; then
+if [ "$MODE" != "commit" ]; then
     # Download first: a missing release / asset / network must fail
     # before the code changes, never leave new code with an old UI.
-    TAG="$(python3 scripts/fetch_release.py tag $TAG)"
-    echo "Release: $TAG"
     WORK_DIR="$(mktemp -d)"
-    TARBALL="$(python3 scripts/fetch_release.py download "$TAG" "$WORK_DIR")"
+    mkdir "$WORK_DIR/dist"
+    if [ "$MODE" = "release" ]; then
+        TAG="$(python3 scripts/fetch_release.py tag $TAG)"
+        echo "Release: $TAG"
+        TARBALL="$(python3 scripts/fetch_release.py download "$TAG" "$WORK_DIR")"
+        tar -xzf "$TARBALL" -C "$WORK_DIR/dist"
+        REF="refs/tags/$TAG"
+    else
+        tar -xzf "$DIST" -C "$WORK_DIR/dist"
+    fi
+    DIST_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$WORK_DIR/dist/release.json")"
+    if [ "$MODE" = "dist" ]; then
+        TAG="CI build $DIST_COMMIT"
+        REF="$DIST_COMMIT"
+    fi
 
     CURRENT_BRANCH="$(git symbolic-ref --short -q HEAD || true)"
     if [ -n "$CURRENT_BRANCH" ]; then
@@ -117,13 +143,14 @@ if [ "$MODE" = "release" ]; then
         echo "$CURRENT_BRANCH" > "$BRANCH_FILE"
     fi
     git fetch --force --tags origin
-    git checkout --detach "refs/tags/$TAG"
+    # A pull-request build is a merge commit no branch contains.
+    if ! git cat-file -e "$REF^{commit}" 2>/dev/null; then
+        git fetch origin "$REF"
+    fi
+    git checkout --detach "$REF"
 
     # The dist must belong to exactly this code: the typed API client
     # inside it was generated from this tag's backend.
-    mkdir "$WORK_DIR/dist"
-    tar -xzf "$TARBALL" -C "$WORK_DIR/dist"
-    DIST_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$WORK_DIR/dist/release.json")"
     TAG_COMMIT="$(git rev-parse HEAD)"
     if [ "$DIST_COMMIT" != "$TAG_COMMIT" ]; then
         echo "Error: release dist was built from $DIST_COMMIT, but $TAG is $TAG_COMMIT" >&2
@@ -170,7 +197,7 @@ echo "Cleaning up orphaned backend processes..."
 pkill -f "uvicorn" || true
 pkill -f "python.*backend" || true
 
-if [ "$MODE" = "release" ]; then
+if [ "$MODE" != "commit" ]; then
     phase "installing UI"
     # Swap in the downloaded dist — no npm / vite on the board.
     rm -rf frontend/dist.old

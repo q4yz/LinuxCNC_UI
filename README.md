@@ -48,6 +48,20 @@ sudo ./install.sh --release        # latest GitHub release, prebuilt UI — for 
 sudo ./install.sh --release v1.2.0 # a specific release
 ```
 
+Any CI build (every branch, not only releases) installs over SSH with its prebuilt UI. Pass the URL of the run's `linuxcnc-ui-dist` artifact. The script clones the source when it is missing, checks out the commit the artifact was built from, and runs `install.sh` (first install) or `scripts/update.sh`. GitHub serves artifacts only with a token that can read the repo's Actions:
+
+```bash
+ssh pi@cb1 "GITHUB_TOKEN=<token> bash -s -- https://github.com/q4yz/LinuxCNC_UI/actions/runs/<run>/artifacts/<id>" < scripts/install_artifact.sh
+```
+
+This works for updates, which need no password. A first install (or `--full`) runs `sudo ./install.sh`, which needs a terminal for the password, so copy the script over first:
+
+```bash
+scp scripts/install_artifact.sh pi@cb1: && ssh -t pi@cb1 "GITHUB_TOKEN=<token> bash install_artifact.sh <artifact-url>"
+```
+
+Options: `--dir <checkout>` (default `~/LinuxCNC_UI`) and `--full` (re-run `install.sh` on an installed board, e.g. for new apt packages).
+
 ## Update
 
 The System Update card has two buttons:
