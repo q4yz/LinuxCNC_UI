@@ -17,8 +17,10 @@ from models.machineconfig import (
     Fan,
     Heater,
     HeaterFan,
+    InputPin,
     MachineConfigGraph,
     MCU,
+    OutputPin,
     Printer,
     Probe,
     SpindleAnalog,
@@ -590,11 +592,11 @@ class MachineConfigParser:
             raise FileNotFoundError(f"Configuration file not found: {path}")
 
         parser = self._new_ini_parser()
-        with path.open(encoding="utf-8") as handle:
-            try:
-                parser.read_file(handle, source=str(path))
-            except configparser.Error as exc:
-                raise _wrap_configparser_error(exc) from exc
+        text = _drop_indented_comments(path.read_text(encoding="utf-8"))
+        try:
+            parser.read_file(StringIO(text), source=str(path))
+        except configparser.Error as exc:
+            raise _wrap_configparser_error(exc) from exc
         return self._build_graph(parser)
 
     def parse_string(
@@ -607,7 +609,7 @@ class MachineConfigParser:
 
         parser = self._new_ini_parser()
         try:
-            parser.read_file(StringIO(content), source=source)
+            parser.read_file(StringIO(_drop_indented_comments(content)), source=source)
         except configparser.Error as exc:
             raise _wrap_configparser_error(exc) from exc
         return self._build_graph(parser)
@@ -719,6 +721,12 @@ class MachineConfigParser:
                 graph.probe = self._parse_probe(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
+            elif section_schema.kind is SectionKind.OUTPUT_PIN:
+                output_pin = self._parse_output_pin(section_name, section_schema.object_name, section)
+                graph.output_pins[output_pin.name] = output_pin
+            elif section_schema.kind is SectionKind.INPUT_PIN:
+                input_pin = self._parse_input_pin(section_name, section_schema.object_name, section)
+                graph.input_pins[input_pin.name] = input_pin
             elif section_schema.kind is SectionKind.TOOL_LENGTH_SENSOR:
                 graph.tool_length_sensor = ToolLengthSensor(
                     pin=self._optional_string(section, "pin"),
@@ -1125,6 +1133,95 @@ class MachineConfigParser:
             out_pin=self._optional_string(section, "out_pin"),
         )
 
+    def _parse_output_pin(
+        self,
+        section_name: str,
+        name: str,
+        section: configparser.SectionProxy,
+    ) -> OutputPin:
+        """Build an :class:`OutputPin` (Klipper's keys and defaults).
+
+        ``shutdown_value`` may only be 0: every pin falls back to Low
+        when LinuxCNC or the board link is gone (``Safe State`` /
+        ``Safe Duty``), never configurable. A switched output starts at
+        0 or ``scale``; a PWM one anywhere in 0 ... ``scale``.
+        """
+        pwm_raw = self._optional_string(section, "pwm")
+        pwm = self._optional_bool(section, "pwm")
+        if pwm_raw is not None and pwm is None:
+            raise InvalidValueError(section_name, "pwm", pwm_raw, "True or False")
+        scale = self._optional_float(section_name, section, "scale")
+        scale = 1.0 if scale is None else scale
+        if scale <= 0:
+            raise InvalidValueError(section_name, "scale", str(scale), "a number above 0")
+        value = self._optional_float(section_name, section, "value") or 0.0
+        if (pwm and not 0 <= value <= scale) or (not pwm and value not in (0.0, scale)):
+            expected = f"0 ... {scale:g}" if pwm else f"0 or {scale:g}"
+            raise InvalidValueError(section_name, "value", f"{value:g}", expected)
+        shutdown = self._optional_float(section_name, section, "shutdown_value") or 0.0
+        if shutdown != 0:
+            raise InvalidValueError(
+                section_name, "shutdown_value", f"{shutdown:g}",
+                "0 — every pin falls back to Low when LinuxCNC or the board is gone",
+            )
+        cycle_time = self._optional_float(section_name, section, "cycle_time")
+        cycle_time = 0.1 if cycle_time is None else cycle_time
+        if cycle_time <= 0:
+            raise InvalidValueError(section_name, "cycle_time", f"{cycle_time:g}", "seconds above 0")
+        return OutputPin(
+            name=name,
+            pin=self._required_string(section_name, section, "pin"),
+            pwm=bool(pwm),
+            value=value,
+            shutdown_value=0.0,
+            cycle_time=cycle_time,
+            scale=scale,
+        )
+
+    def _parse_input_pin(
+        self,
+        section_name: str,
+        name: str,
+        section: configparser.SectionProxy,
+    ) -> InputPin:
+        """Build an :class:`InputPin`; the G-code keys keep their lines
+        (comment lines and blanks dropped)."""
+        return InputPin(
+            name=name,
+            pin=self._required_string(section_name, section, "pin"),
+            rising_ngc=self._ngc_lines(section, "rising_ngc"),
+            falling_ngc=self._ngc_lines(section, "falling_ngc"),
+            rising_halpin_set=self._halpin_sets(section_name, section, "rising_halpin_set"),
+            falling_halpin_set=self._halpin_sets(section_name, section, "falling_halpin_set"),
+        )
+
+    def _halpin_sets(
+        self, section_name: str, section: configparser.SectionProxy, key: str
+    ) -> list[tuple[str, float]]:
+        """``<output_pin>, <value>``, one per line. Whether the output
+        exists and takes that value is the validator's job."""
+        if key not in section:
+            return []
+        sets: list[tuple[str, float]] = []
+        for line in section[key].splitlines():
+            if not line.strip():
+                continue
+            target, _, raw_value = line.partition(",")
+            try:
+                sets.append((target.strip(), float(raw_value)))
+            except ValueError:
+                raise InvalidValueError(section_name, key, line.strip(), "'<output_pin>, <value>'") from None
+            if not target.strip():
+                raise InvalidValueError(section_name, key, line.strip(), "'<output_pin>, <value>'")
+        return sets
+
+    @staticmethod
+    def _ngc_lines(section: configparser.SectionProxy, key: str) -> str | None:
+        if key not in section:
+            return None
+        lines = [line.strip() for line in section[key].splitlines()]
+        return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
+
     def _parse_bed_mesh(
         self,
         section_name: str,
@@ -1417,6 +1514,8 @@ class MachineConfigParser:
             MachineConfigParser._validate_pin_mcu(
                 "probe", "pin", graph.probe.pin, declared
             )
+        for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
+            MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
         if graph.tool_length_sensor is not None:
             MachineConfigParser._validate_pin_mcu(
                 "tool_length_sensor", "pin", graph.tool_length_sensor.pin, declared
@@ -1583,6 +1682,21 @@ class MachineConfigParser:
         if value in {"false", "no", "off", "0"}:
             return False
         return None
+
+
+def _drop_indented_comments(text: str) -> str:
+    """Remove indented ``#`` / ``;`` comment lines.
+
+    Inside a multi-line value (``rising_ngc:`` and its indented G-code
+    lines, Klipper style) configparser ends the value at a comment line
+    and then rejects the next indented line. Only indented comments can
+    sit inside a value; top-level ones stay, so line numbers in errors
+    only shift after an indented comment.
+    """
+    return "".join(
+        line for line in text.splitlines(keepends=True)
+        if not (line[:1] in (" ", "\t") and line.strip().startswith(("#", ";")))
+    )
 
 
 def _option_present(section: configparser.SectionProxy, key: str) -> bool:

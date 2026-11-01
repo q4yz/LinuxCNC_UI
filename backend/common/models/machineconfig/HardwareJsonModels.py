@@ -318,6 +318,42 @@ class Estop(BaseModel):
     out_pin: str | None = None
 
 
+class OutputPin(BaseModel):
+    """``[output_pin NAME]`` (`.agent/component/io_pins.md`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    pin: str
+    pwm: bool = False
+    value: float = 0.0
+    shutdown_value: float = 0.0
+    cycle_time: float = 0.1
+    scale: float = 1.0
+
+
+class HalpinSet(BaseModel):
+    """An input edge sets an ``[output_pin]`` to ``value``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    output: str
+    value: float
+
+
+class InputPin(BaseModel):
+    """``[input_pin NAME]`` (`.agent/component/io_pins.md`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    pin: str
+    rising_ngc: str | None = None
+    falling_ngc: str | None = None
+    rising_halpin_set: list[HalpinSet] = Field(default_factory=list)
+    falling_halpin_set: list[HalpinSet] = Field(default_factory=list)
+
+
 class BedMesh(BaseModel):
     """The machine's bed mesh (`.agent/component/bed_mesh.md`):
     ``probe_count`` is the probe grid as ``[x, y]`` points."""
@@ -585,6 +621,10 @@ class HardwareJson(BaseModel):
     # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
     bed_mesh: "BedMesh | None" = None
 
+    # ``[output_pin NAME]`` / ``[input_pin NAME]``, in declaration order.
+    output_pins: list[OutputPin] = Field(default_factory=list)
+    input_pins: list[InputPin] = Field(default_factory=list)
+
     # The tool-length sensor. ``None`` when the machine has none. See
     # :class:`ToolLengthSensor`.
     tool_length_sensor: "ToolLengthSensor | None" = None
@@ -817,6 +857,8 @@ __all__ = [
     "HardwareJson",
     "McuInfo",
     "BedMesh",
+    "InputPin",
+    "OutputPin",
     "Probe",
     "Stepper",
     "TemperatureSensor",

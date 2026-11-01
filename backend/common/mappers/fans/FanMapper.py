@@ -24,7 +24,7 @@ class FanMapper:
         fan_id = str(data["id"])
         return FanPins(
             id=fan_id,
-            speed=ReadWriteDynamicHalPin(fan_id, HalDataType.FLOAT, "Fan speed setpoint (0.0-1.0)"),
+            speed=ReadWriteDynamicHalPin(fan_id, HalDataType.FLOAT, "Fan speed setpoint (0-100 %, remora.SP.N)"),
         )
 
 

@@ -117,7 +117,8 @@ class RemoraCanMapper:
         else:
             hotend_fan = (fans_by_id.get(owner) or {}).get("kind") == "heater"
             period, safe_duty = FAN_PERIOD_US, 100 if hotend_fan else 0
-        return {**module, "Period us": period, "Safe Duty": safe_duty}
+        # an [output_pin]'s own cycle_time is already on the module
+        return {**module, "Period us": module.get("Period us", period), "Safe Duty": safe_duty}
 
     @staticmethod
     def can_block(

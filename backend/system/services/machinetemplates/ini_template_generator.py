@@ -45,6 +45,10 @@ _DEFAULT_PID_CVMAX = 100.0
 #: ceiling reserved for the lift, leaving 80% for normal G-code motion.
 _OFFSET_AV_RATIO = 0.2
 
+#: ``[input_pin]`` edge subroutines, next to machine.ini (relative paths
+#: in ``SUBROUTINE_PATH`` are resolved from the INI's folder).
+SUBROUTINES_DIR = "subroutines"
+
 #: PrintNC-WEBGUI's known-good ``[DISPLAY]`` block (see
 #: ``machine_config/example/PrintNC-WEBGUI/Machine.ini``) — every
 #: value here is a sane default for a bench mill/router, not
@@ -171,7 +175,10 @@ def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
 
 
 def render_ini_template(
-    machine_name: str, axes: List[Axis], tools: List[Dict[str, Any]] | None = None
+    machine_name: str,
+    axes: List[Axis],
+    tools: List[Dict[str, Any]] | None = None,
+    mdi_commands: List[str] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -190,8 +197,13 @@ def render_ini_template(
             gets a matching ``[<SECTION>]PID_*`` block; ``None`` or a
             tool-less profile renders none, same as before this
             parameter existed.
+        mdi_commands: ``[HALUI] MDI_COMMAND`` lines, in
+            ``halui.mdi-command-NN`` order (an ``[input_pin]``'s edges,
+            ``IoPinHalMapper.mdi_commands``); their subroutines live in
+            the config's ``subroutines/`` folder.
     """
     tools = tools or []
+    mdi_commands = mdi_commands or []
     joint_count = _joint_count(axes)
     coordinates = _coordinates(axes) or "X"
 
@@ -229,7 +241,7 @@ def render_ini_template(
         "PARAMETER_FILE = linuxcnc.var",
         f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
         # ``o<name> call`` (macros / probing cycles) looks subroutines up here.
-        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}",
+        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}" + (f":{SUBROUTINES_DIR}" if mdi_commands else ""),
         "",
         "[EMCMOT]",
         "EMCMOT = motmod",
@@ -243,6 +255,7 @@ def render_ini_template(
         "POSTGUI_HALFILE = postgui_call_list.hal",
         "HALUI = halui",
         "",
+        *(["[HALUI]", *mdi_commands, ""] if mdi_commands else []),
         "[TRAJ]",
         f"COORDINATES = {coordinates}",
         "LINEAR_UNITS = mm",

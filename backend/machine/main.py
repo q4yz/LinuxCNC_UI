@@ -60,6 +60,7 @@ from routers import (
     hal_scope as hal_scope_router,
     macro_start as macro_start_router,
     bed_mesh as bed_mesh_router,
+    io as io_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
@@ -78,6 +79,7 @@ from services.TemperatureService import get_temperature_service
 from services.ToolsService import get_tools_service
 from services.ConsoleLogger import get_console_logger
 from services.BedMeshService import get_bed_mesh_service
+from services.IoService import get_io_service
 
 
 
@@ -135,7 +137,9 @@ async def lifespan(app: FastAPI):
         mcu_service.preload_hal_pins()
         program_service.preload_hal_pins()
         get_bed_mesh_service().preload_hal_pins()
+        get_io_service().preload_hal_pins()
         HalPin.initialize_component()
+        get_io_service().apply_start_values()
 
         reseed_from_hardware_json()
         mock_system.start_simulation()
@@ -267,6 +271,7 @@ app.include_router(macro_start_router.router)
 # MCU actions (reset). The MCU list rides on the base-thread snapshot.
 app.include_router(mcu_router.router)
 app.include_router(bed_mesh_router.router)
+app.include_router(io_router.router)
 
 
 @app.get("/")
@@ -330,7 +335,9 @@ if __name__ == "__main__":
     mcu_service.preload_hal_pins()
     program_service.preload_hal_pins()
     get_bed_mesh_service().preload_hal_pins()
+    get_io_service().preload_hal_pins()
     HalPin.initialize_component()
+    get_io_service().apply_start_values()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")
     uvicorn.run(

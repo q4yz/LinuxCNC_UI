@@ -188,6 +188,29 @@ def _estop_payload(estop) -> dict[str, Any]:
     }
 
 
+def _output_pin_payload(output_pin) -> dict[str, Any]:
+    return {
+        "id": output_pin.name,
+        "pin": output_pin.pin,
+        "pwm": output_pin.pwm,
+        "value": output_pin.value,
+        "shutdown_value": output_pin.shutdown_value,
+        "cycle_time": output_pin.cycle_time,
+        "scale": output_pin.scale,
+    }
+
+
+def _input_pin_payload(input_pin) -> dict[str, Any]:
+    return {
+        "id": input_pin.name,
+        "pin": input_pin.pin,
+        "rising_ngc": input_pin.rising_ngc,
+        "falling_ngc": input_pin.falling_ngc,
+        "rising_halpin_set": [{"output": o, "value": v} for o, v in input_pin.rising_halpin_set],
+        "falling_halpin_set": [{"output": o, "value": v} for o, v in input_pin.falling_halpin_set],
+    }
+
+
 def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
     """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``."""
     if bed_mesh is None:
@@ -1016,6 +1039,8 @@ def build_hardware_json(
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "output_pins": [_output_pin_payload(p) for p in graph.output_pins.values()],
+        "input_pins": [_input_pin_payload(p) for p in graph.input_pins.values()],
         "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),
         "axes": axes_records,
         "joints": joint_records,

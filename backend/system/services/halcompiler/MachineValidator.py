@@ -44,6 +44,8 @@ _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
     ("tools", "error_count_pin", False),
     ("temperature_sensors", "pin", False),
     ("fans", "pin", False),
+    ("output_pins", "pin", False),
+    ("input_pins", "pin", False),
 )
 
 
@@ -86,6 +88,8 @@ class MachineValidator:
         self._check_pins()
         self._check_can()
         self._check_references()
+        self._check_io_ids()
+        self._check_halpin_sets()
         self._check_joints_and_axes()
         self._check_ranges()
         self._check_heaters()
@@ -322,6 +326,7 @@ class MachineValidator:
                 or (owner, field) in _CAN_NODE_PIN_FIELDS
                 or field == "heater_pin"
                 or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
+                or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins"))
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
@@ -340,10 +345,12 @@ class MachineValidator:
         """A node makes at most :data:`MAX_CAN_NODE_PWM` PWM outputs —
         heaters and fans. A heater's generated placeholder fan shares its
         heater_pin and routes as the heater itself, so a pin counts once."""
-        fans = self._ids("fans")
+        pwm_owners = self._ids("fans") | {
+            str(p["id"]) for p in self._records("output_pins") if p.get("pwm") and p.get("id")
+        }
         pwm_pins: dict[str, set[str]] = {}
         for pin, owner, field, _drives_joint in self._pins:
-            is_pwm = field == "heater_pin" or (field == "pin" and owner in fans)
+            is_pwm = field == "heater_pin" or (field == "pin" and owner in pwm_owners)
             if is_pwm and pin.mcu_id in node_ids:
                 pwm_pins.setdefault(pin.mcu_id, set()).add(pin.qualified)
         for node_id, pins in pwm_pins.items():
@@ -443,6 +450,50 @@ class MachineValidator:
                     f"({', '.join(drivers)}); a node configures at most {MAX_CAN_NODE_DRIVERS}.",
                     node_id,
                 )
+
+    def _check_io_ids(self) -> None:
+        """An ``[output_pin]`` / ``[input_pin]`` name is its HAL signal
+        and ``webgui.<name>`` pin, so it must not repeat any other
+        component id (fans, tools, sensors, the other I/O pins)."""
+        taken = self._ids("fans") | self._ids("tools") | self._ids("temperature_sensors")
+        for record in [*self._records("output_pins"), *self._records("input_pins")]:
+            pin_id = str(record.get("id", "?"))
+            if pin_id in taken:
+                self._error(
+                    "E_IO_ID_CONFLICT",
+                    f"{pin_id!r} is already the id of another component; give the "
+                    "[output_pin] / [input_pin] section another name.",
+                    pin_id,
+                )
+            taken.add(pin_id)
+
+    def _check_halpin_sets(self) -> None:
+        """``*_halpin_set`` targets one of the profile's own outputs (the
+        only signals the compiler owns, so no second HAL writer) with a
+        value it takes: 0 / 1 switched, 0 ... scale PWM."""
+        outputs = {str(p["id"]): p for p in self._records("output_pins") if p.get("id")}
+        for record in self._records("input_pins"):
+            owner = str(record.get("id", "?"))
+            for edge in ("rising", "falling"):
+                for entry in record.get(f"{edge}_halpin_set") or []:
+                    target, value = str(entry.get("output")), float(entry.get("value", 0))
+                    out = outputs.get(target)
+                    if out is None:
+                        self._error(
+                            "E_IO_TARGET",
+                            f"{edge}_halpin_set targets {target!r}, which is no [output_pin].",
+                            owner,
+                        )
+                        continue
+                    scale = float(out.get("scale") or 1.0)
+                    ok = 0 <= value <= scale if out.get("pwm") else value in (0.0, 1.0)
+                    if not ok:
+                        expected = f"0 ... {scale:g}" if out.get("pwm") else "0 or 1"
+                        self._error(
+                            "E_IO_TARGET",
+                            f"{edge}_halpin_set sets {target!r} to {value:g}; it takes {expected}.",
+                            owner,
+                        )
 
     def _check_references(self) -> None:
         sensors = self._ids("temperature_sensors")

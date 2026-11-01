@@ -12,6 +12,17 @@ const servo = useServoThreadStore()
 const throttledState = ref({})
 let intervalId: ReturnType<typeof setInterval> | null = null
 
+// Pretty JSON, but an array of plain values (numbers, strings, ...) on one
+// line: "homed": [0, 0, 0] instead of one line per entry.
+function formatState(value: unknown): string {
+  // An array holding no object / array: join its lines (JSON strings never
+  // contain a raw newline, so this only removes the layout whitespace).
+  return JSON.stringify(value, null, 2).replace(
+    /\[\n\s*([^[\]{}]*?)\n\s*\]/g,
+    (_match, items: string) => `[${items.replace(/\n\s*/g, ' ')}]`,
+  )
+}
+
 function snapshot() {
   const s = servo.status
   throttledState.value = {
@@ -53,15 +64,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-full">
+  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
     <!-- Header -->
     <div class="bg-gray-700/50 px-4 py-2 border-b border-gray-600 flex justify-between items-center">
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Raw Machine State (3s Snapshot)</h2>
     </div>
     
     <!-- Code Area -->
-    <div class="flex-1 p-4 bg-gray-900 overflow-y-auto">
-      <pre><code class="text-xs text-green-400 font-mono">{{ JSON.stringify(throttledState, null, 2) }}</code></pre>
+    <div class="p-4 bg-gray-900 overflow-x-auto">
+      <pre class="text-xs text-green-400 font-mono"><code>{{ formatState(throttledState) }}</code></pre>
     </div>
   </div>
 </template>

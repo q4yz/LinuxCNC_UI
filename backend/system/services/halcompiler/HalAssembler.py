@@ -26,6 +26,7 @@ from domain_file_services.paths import ACTIVE_BED_MESH_FILE
 from .components.BedMeshHalMapper import BedMeshHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
+from .components.IoPinHalMapper import InputPinHalMapper, OutputPinHalMapper, halpin_sets
 from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
 from .components.MotionSystemHalMapper import MotionSystemHalMapper
@@ -79,6 +80,9 @@ class HalAssembler:
             s["id"]: s for s in payload.get("temperature_sensors", []) if s.get("id")
         }
         self._fans_by_id = {f["id"]: f for f in payload.get("fans", []) if f.get("id")}
+        self._output_pins_by_id = {
+            str(p["id"]): p for p in payload.get("output_pins") or [] if isinstance(p, dict) and p.get("id")
+        }
         self._tools_by_id = {
             t["id"]: t for t in payload.get("tools", []) if isinstance(t, dict) and t.get("id")
         }
@@ -101,6 +105,7 @@ class HalAssembler:
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]
             + self._bed_mesh_fragments()
+            + self._io_pin_fragments()
         )
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
@@ -239,6 +244,23 @@ class HalAssembler:
             estop if isinstance(estop, dict) else {}, self._mcus_by_id
         )
 
+    def _io_pin_fragments(self) -> list[HalFragment]:
+        """``[output_pin]`` / ``[input_pin]``, any MCU that can route them."""
+        input_pins = self._payload.get("input_pins") or []
+        sets = halpin_sets(input_pins)
+        return [
+            OutputPinHalMapper.to_fragment(p, [s for s in sets if s.output_id == p["id"]])
+            for p in self._payload.get("output_pins") or []
+        ] + [InputPinHalMapper.to_fragment(p) for p in input_pins]
+
+    def _with_output_pin_period(self, module: dict[str, object]) -> dict[str, object]:
+        """An ``[output_pin]`` PWM module gets ``"Period us"`` from its
+        ``cycle_time`` (seconds)."""
+        output_pin = self._output_pins_by_id.get(str(module.get("Comment", "")))
+        if module.get("Type") != "PWM" or output_pin is None:
+            return module
+        return {**module, "Period us": round(float(output_pin.get("cycle_time") or 0.1) * 1_000_000)}
+
     def _bed_mesh_fragments(self) -> list[HalFragment]:
         """The bed mesh compensation, only with ``[bed_mesh]``."""
         if not isinstance(self._payload.get("bed_mesh"), dict):
@@ -338,7 +360,7 @@ class HalAssembler:
         """
         by_mcu: dict[str, list[dict[str, object]]] = {}
         for request in fragment.firmware_modules:
-            by_mcu.setdefault(request.mcu_id, []).append(request.module)
+            by_mcu.setdefault(request.mcu_id, []).append(self._with_output_pin_period(request.module))
 
         # CAN nodes have no SD card: their modules go into the hub's
         # config.txt ("CAN" -> "Nodes"), never a config_<node>.txt.

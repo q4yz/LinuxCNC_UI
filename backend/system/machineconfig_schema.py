@@ -63,6 +63,8 @@ class SectionKind(str, Enum):
     PROBE = "probe"
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
     BED_MESH = "bed_mesh"
+    OUTPUT_PIN = "output_pin"
+    INPUT_PIN = "input_pin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +200,13 @@ TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # for now: the probe grid only; the mesh itself is probed / edited at
 # runtime and applied by the Remora `compensation` HAL component.
 BED_MESH_KEYS = frozenset({"probe_count"})
+# Generic I/O (`.agent/component/io_pins.md`), Klipper syntax. An
+# output is switched from the UI (or PWM with ``pwm: True``); an input
+# is shown in the UI and can run G-code on its edges.
+OUTPUT_PIN_KEYS = frozenset({"pin", "pwm", "value", "shutdown_value", "cycle_time", "scale"})
+INPUT_PIN_KEYS = frozenset({
+    "pin", "rising_ngc", "falling_ngc", "rising_halpin_set", "falling_halpin_set",
+})
 # Fan sections accept ``pin``, an optional ``max_power`` (0.0–1.0,
 # the runtime's ``PWM Max`` in the Remora board JSON), and an optional
 # ``shutdown_speed`` (duty on estop/shutdown — Klipper's own field,
@@ -325,6 +334,8 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.PROBE: PROBE_KEYS,
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
     SectionKind.BED_MESH: BED_MESH_KEYS,
+    SectionKind.OUTPUT_PIN: OUTPUT_PIN_KEYS,
+    SectionKind.INPUT_PIN: INPUT_PIN_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -373,6 +384,10 @@ _HEATER_FAN_SECTION = re.compile(
 # The canonical id is intentionally distinct from the section header
 # so the runtime vocabulary ("spindle_digital" type tag) and the
 # Klipper vocabulary ("spindle" section header) stay decoupled.
+# [output_pin case_light] / [input_pin my_button] — always named; the
+# name is the component id (webgui.<name>).
+_OUTPUT_PIN_SECTION = re.compile(r"^output_pin\s+(?P<name>[A-Za-z0-9_]+)$")
+_INPUT_PIN_SECTION = re.compile(r"^input_pin\s+(?P<name>[A-Za-z0-9_]+)$")
 _SPINDLE_DIGITAL_SECTION = re.compile(
     r"^spindle(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
 )
@@ -417,6 +432,14 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "bed_mesh":
         return SectionSchema(SectionKind.BED_MESH, BED_MESH_KEYS, "bed_mesh")
+
+    output_match = _OUTPUT_PIN_SECTION.fullmatch(section)
+    if output_match:
+        return SectionSchema(SectionKind.OUTPUT_PIN, OUTPUT_PIN_KEYS, output_match.group("name"))
+
+    input_match = _INPUT_PIN_SECTION.fullmatch(section)
+    if input_match:
+        return SectionSchema(SectionKind.INPUT_PIN, INPUT_PIN_KEYS, input_match.group("name"))
 
     if section == "tool_length_sensor":
         return SectionSchema(
@@ -513,6 +536,8 @@ __all__ = [
     "ALLOWED_CONNECTION_TYPES",
     "ALLOWED_KEYS",
     "BED_MESH_KEYS",
+    "INPUT_PIN_KEYS",
+    "OUTPUT_PIN_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",
     "ENDSTOP_SWITCH_KEYS",
     "ESTOP_KEYS",

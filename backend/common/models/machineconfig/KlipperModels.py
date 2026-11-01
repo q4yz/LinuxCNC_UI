@@ -306,6 +306,35 @@ class Estop:
 
 
 @dataclass(slots=True)
+class OutputPin:
+    """``[output_pin NAME]`` (`.agent/component/io_pins.md`): a switched
+    output, or PWM with ``pwm``. ``value`` is the start value and the UI
+    works in ``scale`` units (Klipper's ``scale``, default 1)."""
+
+    name: str
+    pin: str
+    pwm: bool = False
+    value: float = 0.0
+    shutdown_value: float = 0.0
+    cycle_time: float = 0.1
+    scale: float = 1.0
+
+
+@dataclass(slots=True)
+class InputPin:
+    """``[input_pin NAME]``: a digital input shown in the UI; the G-code
+    lines of ``rising_ngc`` / ``falling_ngc`` run on its edges."""
+
+    name: str
+    pin: str
+    rising_ngc: str | None = None
+    falling_ngc: str | None = None
+    # ``<edge>_halpin_set: <output_pin>, <value>`` lines: (output, value).
+    rising_halpin_set: list[tuple[str, float]] = field(default_factory=list)
+    falling_halpin_set: list[tuple[str, float]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
 
@@ -455,6 +484,8 @@ class MachineConfigGraph:
     probe: Probe | None = None
     # ``None`` when the profile declares no ``[bed_mesh]``.
     bed_mesh: BedMesh | None = None
+    output_pins: dict[str, OutputPin] = field(default_factory=dict)
+    input_pins: dict[str, InputPin] = field(default_factory=dict)
     # The tool-length sensor. ``None`` when the section is absent.
     tool_length_sensor: ToolLengthSensor | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
@@ -524,6 +555,8 @@ MachineConfig = MachineConfigGraph
 
 __all__ = [
     "BedMesh",
+    "InputPin",
+    "OutputPin",
     "ConnectionType",
     "EndstopSwitch",
     "Estop",

@@ -56,6 +56,7 @@ from MachineConfigParser import parse_config
 from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
+from services.halcompiler.components.IoPinHalMapper import mdi_commands
 from services.halcompiler import (
     MachineValidator,
     UnsupportedMcuError,
@@ -69,7 +70,7 @@ from services.BedMeshService import get_bed_mesh_service
 from services.machineconfig import AxisBuilder, AxisMappingPolicy
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
-from .ini_template_generator import render_ini_template
+from .ini_template_generator import SUBROUTINES_DIR, render_ini_template
 
 logger = logging.getLogger("backend.services.machinetemplates")
 
@@ -396,6 +397,8 @@ def generate_machine_templates(
     hal_text, mcu_sidecar_files = _compile_machine(machine_name, payload)
 
     machine_service.clear_directory(configs_dir)
+    # [input_pin] edges: halui MDI commands calling generated subroutines.
+    input_commands = mdi_commands(payload.get("input_pins") or [])
 
     # 1. Verbatim source copy (provenance).
     (configs_dir / "machine.cfg").write_bytes(source.read_bytes())
@@ -409,7 +412,10 @@ def generate_machine_templates(
     # (machine.hal's `setp PID-<id>.KP [<SECTION>]PID_KP` lines are
     # ini-var references; without this they resolve to nothing).
     (configs_dir / "machine.ini").write_text(
-        render_ini_template(machine_name, axes, payload.get("tools")), encoding="utf-8"
+        render_ini_template(
+            machine_name, axes, payload.get("tools"), [c.ini_line for c in input_commands]
+        ),
+        encoding="utf-8",
     )
 
     # 4. The real compiled wiring (motion/spindle/heaters), plus the
@@ -424,6 +430,13 @@ def generate_machine_templates(
     ]
     for filename, content in mcu_sidecar_files.items():
         (configs_dir / filename).write_text(content, encoding="utf-8")
+
+    # 4b'. One subroutine per [input_pin] edge with G-code.
+    for command in input_commands:
+        subroutines = configs_dir / SUBROUTINES_DIR
+        subroutines.mkdir(exist_ok=True)
+        (subroutines / command.file_name).write_text(command.file_content, encoding="utf-8")
+        sidecar_files.append(f"{configs_rel}/{SUBROUTINES_DIR}/{command.file_name}")
 
     # 4c. The compensation component loads the active bed mesh at start:
     # a first-time [bed_mesh] machine gets a flat one.

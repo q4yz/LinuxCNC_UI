@@ -20,6 +20,8 @@ from mappers.machineconfig import PinStringMapper
 from .HalAssembler import HalAssembler, UnsupportedMcuError, assemble_machine
 from .components.BedMeshWebguiMapper import BedMeshWebguiMapper
 from .components.EstopWebguiMapper import EstopWebguiMapper
+from .components.IoPinHalMapper import latched_output_ids, mdi_commands
+from .components.IoPinWebguiMapper import IoPinWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
@@ -113,6 +115,13 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
     for mcu in payload.get("mcus", []) or []:
         if isinstance(mcu, dict):
             lines.extend(McuResetWebguiMapper.to_lines(mcu))
+    input_pins = payload.get("input_pins") or []
+    latched = latched_output_ids(input_pins)
+    for output_pin in payload.get("output_pins") or []:
+        lines.extend(IoPinWebguiMapper.output_lines(output_pin, output_pin.get("id") in latched))
+    commands = mdi_commands(input_pins)
+    for input_pin in input_pins:
+        lines.extend(IoPinWebguiMapper.input_lines(input_pin, commands))
     if not lines:
         return ""
     return "\n".join(lines).rstrip("\n") + "\n"
