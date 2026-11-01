@@ -24,6 +24,7 @@ from models.machineconfig.PinModels import CapabilityClass
 from domain_file_services.paths import ACTIVE_BED_MESH_FILE
 
 from .components.BedMeshHalMapper import BedMeshHalMapper
+from .components.CoreXyHalMapper import CoreXyHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
 from .components.IoPinHalMapper import InputPinHalMapper, OutputPinHalMapper, halpin_sets
@@ -165,8 +166,17 @@ class HalAssembler:
 
     # -- pass 1: components ---------------------------------------------- #
 
+    def _corexy_joints(self) -> tuple[int, int] | None:
+        """The X / Y joint numbers of a ``kinematics: corexy`` machine
+        (validated: one joint each, `MachineValidator._check_corexy`)."""
+        if self._payload.get("kinematics") != "corexy":
+            return None
+        by_id = {str(a.get("id")): a.get("joint_numbers") or [] for a in self._payload.get("axes", [])}
+        return int(by_id["x"][0]), int(by_id["y"][0])
+
     def _component_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         mapper = _STEPPER_MAPPERS.get(capability_class, StepperHalMapper)
+        corexy = self._corexy_joints()
         fragments: list[HalFragment] = []
         for axis in self._payload.get("axes", []):
             joints = [
@@ -182,7 +192,12 @@ class HalAssembler:
             # per-joint ``endstop`` field); the mapper resolves each
             # joint's own reference itself instead of the whole axis
             # sharing one.
-            fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
+            if corexy and mapper is RemoraStepperHalMapper:
+                fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id, frozenset(corexy)))
+            else:
+                fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
+        if corexy:
+            fragments.append(CoreXyHalMapper.to_fragment(*corexy))
         return fragments
 
     def _spindle_fragments(self) -> list[HalFragment]:

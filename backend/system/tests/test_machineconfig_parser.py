@@ -55,10 +55,10 @@ def test_machine_section_defaults_kinematics_to_cartesian():
     assert graph.printer.kinematics == "cartesian"
 
 
-def test_machine_section_rejects_non_cartesian_kinematics():
-    """`cartesian` is the only kinematics this compiler (and the
-    `trivkins` LinuxCNC assumes in every generated INI) supports."""
-    config = "[machine]\nkinematics: corexy\n"
+def test_machine_section_rejects_unsupported_kinematics():
+    """`cartesian` and `corexy` (still `trivkins`; the belt math is in
+    HAL, `CoreXyHalMapper`) are the only kinematics this compiler supports."""
+    config = "[machine]\nkinematics: delta\n"
     with pytest.raises(InvalidValueError) as exc_info:
         MachineConfigParser().parse_string(config)
     assert exc_info.value.section == "machine"

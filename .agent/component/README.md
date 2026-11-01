@@ -28,6 +28,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `probe.md` | `[probe]`, `[tool_length_sensor]` | Both optional. Both trigger `motion.probe-input`; when both are declared they are OR-ed (`or2`). |
 | `bed_mesh.md` | `[bed_mesh]` | Optional. `probe_count` only; Z compensation via the Remora `compensation` component, summed with the pause lift into `axis.z.eoffset-counts`. |
 | `io_pins.md` | `[output_pin NAME]`, `[input_pin NAME]` | Optional, many. Switched / PWM outputs and inputs (edge G-code via halui MDI); UI card with fan sliders. |
+| `corexy.md` | `[machine] kinematics: corexy` | CoreXY math in HAL (`sum2`, A = X + Y, B = X − Y) between the trivkins joints and Remora; not `corexykins`. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
 | `mcu_can_remora.md` | `[mcu NAME]` `connection: remora-can` | **Class C** — a CAN node behind a remora-spi hub: digital I/O, Status Bit into the E-stop. |

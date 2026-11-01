@@ -57,13 +57,16 @@ class RemoraStepperHalMapper:
         axis: dict[str, Any],
         joints: list[dict[str, Any]],
         endstops_by_id: dict[str, dict[str, Any]],
+        corexy_joints: frozenset[int] = frozenset(),
     ) -> HalFragment:
+        """``corexy_joints``: their ``pos-cmd`` / ``pos-fb`` go through
+        `CoreXyHalMapper` instead of straight to ``remora.joint.N``."""
         fragment = HalFragment()
         axis_endstop_id = axis.get("endstop")
         requested_endstop_ids: set[str] = set()
 
         for joint in joints:
-            RemoraStepperHalMapper._joint(fragment, joint)
+            RemoraStepperHalMapper._joint(fragment, joint, joint["joint_number"] in corexy_joints)
             endstop_id = joint.get("endstop") or axis_endstop_id
             endstop = endstops_by_id.get(endstop_id) if endstop_id else None
             if endstop is None:
@@ -88,7 +91,7 @@ class RemoraStepperHalMapper:
         return fragment
 
     @staticmethod
-    def _joint(fragment: HalFragment, joint: dict[str, Any]) -> None:
+    def _joint(fragment: HalFragment, joint: dict[str, Any], corexy: bool = False) -> None:
         n = joint["joint_number"]
 
         fragment.setp.extend(
@@ -107,13 +110,14 @@ class RemoraStepperHalMapper:
             fragment.setp.append(f"setp remora.joint.{n}.deadband {joint['deadband']}")
         if joint.get("pgain") is not None:
             fragment.setp.append(f"setp remora.joint.{n}.pgain [JOINT_{n}]PGAIN")
-        fragment.nets.extend(
-            [
-                f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => remora.joint.{n}.pos-cmd",
-                f"net j{n}pos-fb remora.joint.{n}.pos-fb => joint.{n}.motor-pos-fb",
-                f"net j{n}enable joint.{n}.amp-enable-out => remora.joint.{n}.enable",
-            ]
-        )
+        if not corexy:
+            fragment.nets.extend(
+                [
+                    f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => remora.joint.{n}.pos-cmd",
+                    f"net j{n}pos-fb remora.joint.{n}.pos-fb => joint.{n}.motor-pos-fb",
+                ]
+            )
+        fragment.nets.append(f"net j{n}enable joint.{n}.amp-enable-out => remora.joint.{n}.enable")
 
         step_pin = joint.get("step_pin")
         if not step_pin:

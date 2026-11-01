@@ -209,3 +209,4 @@ img/
 /.idea/runConfigurations/Backend_System.xml
 /.idea/webResources.xml
 /.claude/launch.json
+/logs/ui_machine.log.1

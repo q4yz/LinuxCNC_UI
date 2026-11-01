@@ -67,7 +67,7 @@ class Printer:
     neither this nor the Z stepper's own ``max_velocity`` is set.
     """
 
-    kinematics: Literal["cartesian"] = "cartesian"
+    kinematics: Literal["cartesian", "corexy"] = "cartesian"
     max_velocity: float | None = None
     max_accel: float | None = None
     max_z_velocity: float | None = None

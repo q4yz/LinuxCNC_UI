@@ -413,7 +413,11 @@ def generate_machine_templates(
     # ini-var references; without this they resolve to nothing).
     (configs_dir / "machine.ini").write_text(
         render_ini_template(
-            machine_name, axes, payload.get("tools"), [c.ini_line for c in input_commands]
+            machine_name,
+            axes,
+            payload.get("tools"),
+            [c.ini_line for c in input_commands],
+            corexy=payload.get("kinematics") == "corexy",
         ),
         encoding="utf-8",
     )

@@ -121,7 +121,10 @@ def _render_axis_section(axis: Axis) -> List[str]:
     return lines
 
 
-def _render_joint_section(joint) -> List[str]:
+def _render_joint_section(joint, motor_accel_factor: float = 1.0) -> List[str]:
+    """``motor_accel_factor``: CoreXY X / Y — STEPGEN_MAXACCEL is the
+    Remora step generator's limit, i.e. per belt motor, and a motor sees
+    up to the X plus the Y acceleration (A = X + Y)."""
     return [
         f"[JOINT_{joint.joint_number}]",
         f"TYPE = {joint.type}",
@@ -130,7 +133,7 @@ def _render_joint_section(joint) -> List[str]:
         f"MAX_LIMIT = {_fmt(joint.max_limit)}",
         f"MAX_VELOCITY = {_fmt(joint.max_velocity)}",
         f"MAX_ACCELERATION = {_fmt(joint.max_acceleration)}",
-        f"STEPGEN_MAXACCEL = {_fmt(joint.stepgen_maxaccel)}",
+        f"STEPGEN_MAXACCEL = {_fmt(joint.stepgen_maxaccel * motor_accel_factor)}",
         f"SCALE = {_fmt(joint.scale)}",
         f"FERROR = {_fmt(joint.ferror)}",
         f"MIN_FERROR = {_fmt(joint.min_ferror)}",
@@ -179,6 +182,7 @@ def render_ini_template(
     axes: List[Axis],
     tools: List[Dict[str, Any]] | None = None,
     mdi_commands: List[str] | None = None,
+    corexy: bool = False,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -272,8 +276,9 @@ def render_ini_template(
 
     for axis in axes:
         lines.extend(_render_axis_section(axis))
+        factor = 2.0 if corexy and axis.letter in ("X", "Y") else 1.0
         for joint in axis.joints:
-            lines.extend(_render_joint_section(joint))
+            lines.extend(_render_joint_section(joint, factor))
 
     for tool in tools:
         if not isinstance(tool, dict) or tool.get("type") not in ("extruder", "heated_bed"):

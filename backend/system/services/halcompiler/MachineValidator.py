@@ -91,6 +91,7 @@ class MachineValidator:
         self._check_io_ids()
         self._check_halpin_sets()
         self._check_joints_and_axes()
+        self._check_corexy()
         self._check_ranges()
         self._check_heaters()
         self._check_spindles()
@@ -542,6 +543,32 @@ class MachineValidator:
                     f"endstop {axis['endstop']!r} is not declared.",
                     str(axis.get("id", "?")),
                 )
+
+    def _check_corexy(self) -> None:
+        """``kinematics: corexy`` — the belt math sits between LinuxCNC's
+        X / Y joints and a Remora board's step generators, so it needs
+        one joint each on X and Y, both on a position-class (Remora) MCU."""
+        if self._payload.get("kinematics") != "corexy":
+            return
+        axes = {str(a.get("id")): a for a in self._records("axes")}
+        for letter in ("x", "y"):
+            if len((axes.get(letter) or {}).get("joint_numbers") or []) != 1:
+                self._error(
+                    "E_COREXY",
+                    f"corexy needs exactly one joint on the {letter.upper()} axis "
+                    "([stepper_x] = motor A, [stepper_y] = motor B).",
+                    letter,
+                )
+        classes = self._mcu_classes()
+        for pin, owner, field, drives_joint in self._pins:
+            if drives_joint and field == "step_pin" and owner in ("stepper_x", "stepper_y"):
+                if classes.get(pin.mcu_id) is not CapabilityClass.POSITION:
+                    self._error(
+                        "E_COREXY",
+                        f"{owner} is on {pin.mcu_id!r}: corexy is computed for a Remora "
+                        "board's step generators (a position-class MCU).",
+                        owner,
+                    )
 
     def _check_joints_and_axes(self) -> None:
         joints = self._records("joints")

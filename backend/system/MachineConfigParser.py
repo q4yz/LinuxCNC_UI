@@ -937,16 +937,18 @@ class MachineConfigParser:
                     key,
                 )
 
+        # corexy: still trivkins in LinuxCNC, the belt math is in HAL
+        # (CoreXyHalMapper).
         kinematics = self._optional_string(section, "kinematics") or "cartesian"
-        if kinematics != "cartesian":
+        if kinematics not in ("cartesian", "corexy"):
             raise InvalidValueError(
                 section_name,
                 "kinematics",
                 kinematics,
-                "'cartesian'",
+                "'cartesian' or 'corexy'",
             )
         return Printer(
-            kinematics="cartesian",
+            kinematics=kinematics,  # checked above
             max_velocity=self._optional_float(section_name, section, "max_velocity"),
             max_accel=self._optional_float(section_name, section, "max_accel"),
             max_z_velocity=self._optional_float(section_name, section, "max_z_velocity"),
