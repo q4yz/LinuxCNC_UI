@@ -53,7 +53,10 @@ def get_machine_status() -> MachineStatusResponse:
         "labelled sections: this UI's own tee (logs/linuxcnc_console.log) "
         "plus LinuxCNC's own ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt "
         "(where its launcher redirects once it isn't talking to an "
-        "interactive terminal — true for every session we spawn). Lets "
+        "interactive terminal — true for every session we spawn), then "
+        "the system service's logs/ui_system.log. Every line starts with "
+        "'LinuxCNC: ' or 'UI: ' (the machine backend runs inside LinuxCNC, "
+        "so its lines are in LinuxCNC's logs) for filtering. Lets "
         "an operator see why a session crashed or failed to start "
         "without shell access to the machine."
     ),
@@ -64,24 +67,6 @@ def get_machine_log(
     lines: int = Query(200, ge=1, le=5000, description="Number of trailing lines to return."),
 ) -> MachineLogResponse:
     return MachineLogResponse(**get_machine_lifecycle_service().console_log(lines=lines))
-
-
-@router.get(
-    "/log/ui",
-    summary="Get the LinuxCNC UI's own log tail",
-    description=(
-        "Returns the tail of this UI's own application logs — "
-        "logs/ui_system.log (system service) and logs/ui_machine.log "
-        "(machine service) — under labelled sections. Kept apart from "
-        "GET /log, which only carries LinuxCNC's output."
-    ),
-    operation_id="getUiLog",
-    response_model=MachineLogResponse,
-)
-def get_ui_log(
-    lines: int = Query(200, ge=1, le=5000, description="Number of trailing lines to return."),
-) -> MachineLogResponse:
-    return MachineLogResponse(**get_machine_lifecycle_service().ui_log(lines=lines))
 
 
 @router.post(

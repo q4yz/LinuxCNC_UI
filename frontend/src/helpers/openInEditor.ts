@@ -7,7 +7,7 @@
 //
 //     source   →  one of EDITOR_SOURCES:
 //                   'profiles' | 'machines'
-//                 | 'm_codes' | 'programs' | 'macros' | 'machine_log' | 'ui_log'
+//                 | 'm_codes' | 'programs' | 'macros' | 'machine_log'
 //     name     →  filename (or path under ``profiles``)
 //     readOnly →  optional; the log sources are always read-only
 //

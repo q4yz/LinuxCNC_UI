@@ -60,10 +60,11 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import IO, Any, Dict, Iterator, List, Literal, Optional
+from typing import IO, Any, Callable, Dict, Iterator, List, Literal, Optional
 from contextlib import contextmanager
 
 from core.atomic_json import atomic_write_json
+from core.ui_log import LINUXCNC_PREFIX, UI_PREFIX
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
 from domain_file_services import get_machine_service, paths
@@ -94,9 +95,8 @@ _CONSOLE_LOG = _REPO_ROOT / "logs" / "linuxcnc_console.log"
 _HOME_PRINT_LOG = Path.home() / "linuxcnc_print.txt"
 _HOME_DEBUG_LOG = Path.home() / "linuxcnc_debug.txt"
 
-#: The UI backends' own application logs (``core.ui_log``).
+#: The system service's own application log (``core.ui_log``).
 _UI_SYSTEM_LOG = paths.UI_SYSTEM_LOG_FILE
-_UI_MACHINE_LOG = paths.UI_MACHINE_LOG_FILE
 
 #: Bytes read from the tail of each log source per request — caps
 #: memory when a log has accumulated many sessions' worth of output.
@@ -120,6 +120,32 @@ _STOP_GRACE_SECONDS = 10.0
 _PGREP_PATTERN = "|".join(PROCESS_PATTERNS)
 
 SessionState = Literal["stopped", "starting", "running", "stopping", "uploading"]
+
+
+def _tag_linuxcnc_line(line: str) -> str:
+    """``LinuxCNC: `` in front of a LinuxCNC log line the UI did not
+    tag itself (``UI: ``, ``core.ui_log``); blank lines stay blank."""
+    if not line.strip() or line.startswith(UI_PREFIX):
+        return line
+    return LINUXCNC_PREFIX + line
+
+
+def _tag_ui_line(line: str) -> str:
+    """``UI: `` in front of a line of the UI's own log file."""
+    return f"{UI_PREFIX}{line}" if line.strip() else line
+
+
+#: (header label, file, line tag function) of one section of the log.
+_LogSource = tuple[str, Path, Callable[[str], str]]
+
+def _linuxcnc_sources() -> List[_LogSource]:
+    """LinuxCNC's output: three files, because we don't control which
+    one gets the error text (see :meth:`MachineLifecycleService.console_log`)."""
+    return [
+        ("logs/linuxcnc_console.log (this UI's own tee)", _CONSOLE_LOG, _tag_linuxcnc_line),
+        ("~/linuxcnc_print.txt (LinuxCNC's stdout)", _HOME_PRINT_LOG, _tag_linuxcnc_line),
+        ("~/linuxcnc_debug.txt (LinuxCNC's debug/error log)", _HOME_DEBUG_LOG, _tag_linuxcnc_line),
+    ]
 
 
 def _is_zombie(pid: int) -> bool:
@@ -364,38 +390,32 @@ class MachineLifecycleService:
         that exists gets its own tail (last ``lines`` lines, capped at
         ``_LOG_TAIL_MAX_BYTES``) under a header naming it, so a crash
         is visible no matter which path it took.
+
+        One log for everything, tagged per line so the UI can filter it:
+        the machine backend runs inside LinuxCNC, so its lines are in
+        LinuxCNC's logs — already tagged ``UI: `` at the source
+        (``core.ui_log``); every other line there gets ``LinuxCNC: ``.
+        The system service runs outside LinuxCNC; its own log file
+        follows, every line tagged ``UI: ``. (The machine service's
+        ``logs/ui_machine.log`` would only repeat its lines.)
         """
         return self._merged_tail(
-            [
-                ("logs/linuxcnc_console.log (this UI's own tee)", _CONSOLE_LOG),
-                ("~/linuxcnc_print.txt (LinuxCNC's stdout)", _HOME_PRINT_LOG),
-                ("~/linuxcnc_debug.txt (LinuxCNC's debug/error log)", _HOME_DEBUG_LOG),
-            ],
+            [*_linuxcnc_sources(), ("logs/ui_system.log (system service)", _UI_SYSTEM_LOG, _tag_ui_line)],
             lines,
         )
 
-    def ui_log(self, lines: int = 200) -> Dict[str, Any]:
-        """Tail of the UI's own application logs (``core.ui_log``), one
-        section per backend — kept apart from LinuxCNC's log above."""
-        return self._merged_tail(
-            [
-                ("logs/ui_system.log (system service)", _UI_SYSTEM_LOG),
-                ("logs/ui_machine.log (machine service)", _UI_MACHINE_LOG),
-            ],
-            lines,
-        )
-
-    def _merged_tail(self, sources: List[tuple[str, Path]], lines: int) -> Dict[str, Any]:
-        """The last ``lines`` lines of every source that exists, each
-        under a header naming it; ``path`` is the first source."""
+    def _merged_tail(self, sources: List[_LogSource], lines: int) -> Dict[str, Any]:
+        """The last ``lines`` lines of every source that exists (each
+        through its tag function), under a header naming it; ``path``
+        is the first source."""
         sections: List[str] = []
         any_exists = False
-        for label, path in sources:
+        for label, path, tag in sources:
             text = self._read_log_tail(path)
             if text is None:
                 continue
             any_exists = True
-            tail_lines = text.splitlines()[-max(1, lines):] if text else []
+            tail_lines = [tag(line) for line in text.splitlines()[-max(1, lines):]] if text else []
             sections.append(f"--- {label} ---\n" + ("\n".join(tail_lines) or "(empty)"))
 
         return {
@@ -531,7 +551,7 @@ class MachineLifecycleService:
         # a phantom "running" status.
         time.sleep(0.5)
         if process.poll() is not None:
-            tail = self.console_log(lines=_CRASH_LOG_LINES)["log"]
+            tail = self._merged_tail(_linuxcnc_sources(), _CRASH_LOG_LINES)["log"]
             detail = f"LinuxCNC exited immediately (code {process.returncode})."
             if tail:
                 detail += f"\n\n--- last {_CRASH_LOG_LINES} lines of {_CONSOLE_LOG.name} ---\n{tail}"

@@ -39,6 +39,7 @@ import {
   sourceLabel,
 } from '../stores/editor';
 import { openInEditor } from '../helpers/openInEditor';
+import { filterLog, LOG_FILTERS, LOG_FILTER_LABELS, type LogFilter } from '../helpers/logFilter';
 import { closeToPrevious } from '../helpers/closeToPrevious';
 import {useConsoleStore} from "../stores/console";
 import { BaseButton } from '../ui/index.ts';
@@ -54,6 +55,15 @@ useUnsavedChangesGuard(() => editorStore.isDirty);
 // both directions (CodeMirror ↔ Pinia). The store still owns the
 // canonical copy.
 const editorContent = ref('');
+
+// The machine log is one read-only log with every line tagged
+// "LinuxCNC: " / "UI: "; the header filters it by that tag. Display
+// only — read-only, so nothing filtered is ever written back.
+const isMachineLog = computed(() => currentSource.value === EDITOR_SOURCES.MACHINE_LOG);
+const logFilter = ref<LogFilter>('all');
+const displayedContent = computed(() =>
+  isMachineLog.value ? filterLog(editorContent.value, logFilter.value) : editorContent.value,
+);
 
 // --- Query → store identity -------------------------------------- //
 //
@@ -260,6 +270,18 @@ onBeforeUnmount(() => {
           Editing {{ currentName }} ({{ sourceLabel(currentSource) }})
         </span>
         <div class="flex gap-2">
+          <div v-if="isMachineLog" class="mr-4 flex gap-1" role="group" aria-label="Filter log by source">
+            <BaseButton
+                v-for="filter in LOG_FILTERS"
+                :key="filter"
+                :variant="logFilter === filter ? 'primary' : 'secondary'"
+                :data-testid="`log-filter-${filter}`"
+                :aria-pressed="logFilter === filter"
+                @click="logFilter = filter"
+            >
+              {{ LOG_FILTER_LABELS[filter] }}
+            </BaseButton>
+          </div>
           <!-- ``Save`` and ``Save & Close`` are read-write affordances. -->
           <template v-if="!editorStore.readOnly">
             <BaseButton variant="primary" @click="saveAndCloseEditor">Save &amp; Close</BaseButton>
@@ -278,7 +300,7 @@ onBeforeUnmount(() => {
       <!-- ``min-h-0`` + ``flex-1`` lets the editor scroll inside the fixed-position overlay -->
       <div class="min-h-0 flex-1">
         <Editor
-            :model-value="editorContent"
+            :model-value="displayedContent"
             @update:model-value="handleEditorUpdate"
             :filename="currentName"
             :read-only="editorStore.readOnly"

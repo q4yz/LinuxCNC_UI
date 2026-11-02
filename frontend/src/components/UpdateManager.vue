@@ -29,22 +29,15 @@ const machineStatus = ref<MachineStatus | null>(null)
 const isStartingMachine = ref(false)
 const isStoppingMachine = ref(false)
 
-// Two logs, two buttons, each in the universal read-only editor:
-// "LinuxCNC log" is LinuxCNC's own output (logs/linuxcnc_console.log
-// plus ~/linuxcnc_print.txt / ~/linuxcnc_debug.txt) — a start failure
-// opens it automatically; "UI log" is this UI's own backends
-// (logs/ui_system.log, logs/ui_machine.log).
+// One log in the universal read-only editor: LinuxCNC's output
+// (logs/linuxcnc_console.log plus ~/linuxcnc_print.txt /
+// ~/linuxcnc_debug.txt) and the system service's logs/ui_system.log,
+// every line tagged "LinuxCNC: " / "UI: " — the editor filters by
+// that tag (helpers/logFilter.ts). A start failure opens it automatically.
 function openConsoleLog() {
   void openInEditor({
     source: EDITOR_SOURCES.MACHINE_LOG,
     name: 'linuxcnc_console.log',
-    readOnly: true,
-  })
-}
-function openUiLog() {
-  void openInEditor({
-    source: EDITOR_SOURCES.UI_LOG,
-    name: 'linuxcnc_ui.log',
     readOnly: true,
   })
 }
@@ -243,14 +236,7 @@ onMounted(() => {
           data-testid="machine-view-log"
           @click="openConsoleLog"
         >
-          <Icon name="log" class="mr-1" /> LinuxCNC log
-        </BaseButton>
-        <BaseButton
-          variant="secondary"
-          data-testid="machine-view-ui-log"
-          @click="openUiLog"
-        >
-          <Icon name="log" class="mr-1" /> UI log
+          <Icon name="log" class="mr-1" /> View log
         </BaseButton>
       </div>
     </div>

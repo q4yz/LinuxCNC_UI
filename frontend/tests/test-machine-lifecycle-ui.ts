@@ -19,6 +19,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { filterLog } from "../src/helpers/logFilter";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const src = resolve(repoRoot, "frontend/src");
@@ -169,26 +171,46 @@ test("editor store wires machine_log as a read-only source fed by getConsoleLog(
   );
 });
 
-test("the UI's own log has its own button and read-only source, apart from LinuxCNC's", () => {
+test("one log button — LinuxCNC and UI lines share one log, filtered in the editor", () => {
   const manager = read("components/UpdateManager.vue");
-  assert.match(manager, /data-testid="machine-view-ui-log"/, "must offer a separate UI log button");
-  assert.match(
-    manager,
-    /openInEditor\(\{\s*source:\s*EDITOR_SOURCES\.UI_LOG/,
-    "UI log must open the ui_log source",
-  );
+  assert.match(manager, /data-testid="machine-view-log"/);
+  assert.doesNotMatch(manager, /machine-view-ui-log|UI_LOG/, "the separate UI log button is gone");
+  assert.doesNotMatch(read("stores/editor.ts"), /UI_LOG|getUiLog/);
+  assert.doesNotMatch(read("facades/machineLifecycleFacade.ts"), /log\/ui/);
 
-  const editor = read("stores/editor.ts");
-  assert.match(editor, /UI_LOG:\s*['"]ui_log['"]/);
-  assert.match(
-    editor,
-    /READ_ONLY_SOURCES = new Set<string>\(\[[\s\S]*?EDITOR_SOURCES\.UI_LOG[\s\S]*?\]\)/,
-    "ui_log must be read-only",
-  );
-  assert.match(editor, /case EDITOR_SOURCES\.UI_LOG: return readUiLogContent\(\)/);
-  assert.match(editor, /MachineLifecycleFacade\.getUiLog\(\)/);
+  const view = read("views/EditorView.vue");
+  assert.match(view, /v-if="isMachineLog"/, "the filter only shows for the machine log");
+  assert.match(view, /data-testid="`log-filter-\$\{filter\}`"/);
+  assert.match(view, /:model-value="displayedContent"/);
+});
 
-  assert.match(read("facades/machineLifecycleFacade.ts"), /\/api\/v1\/system\/machine\/log\/ui\?lines=/);
+test("the log filter keeps the lines of one source under their section headers", () => {
+  const log = [
+    "--- ~/linuxcnc_print.txt (LinuxCNC's stdout) ---",
+    "LinuxCNC: Starting LinuxCNC...",
+    "UI: INFO:backend.machine.main:webgui ready",
+    "",
+    "--- logs/ui_system.log (system service) ---",
+    "UI: INFO:backend.system.main:started",
+  ].join("\n");
+
+  assert.equal(filterLog(log, "all"), log);
+  assert.equal(
+    filterLog(log, "linuxcnc"),
+    "--- ~/linuxcnc_print.txt (LinuxCNC's stdout) ---\nLinuxCNC: Starting LinuxCNC...",
+    "a section without LinuxCNC lines is dropped",
+  );
+  assert.equal(
+    filterLog(log, "ui"),
+    [
+      "--- ~/linuxcnc_print.txt (LinuxCNC's stdout) ---",
+      "UI: INFO:backend.machine.main:webgui ready",
+      "",
+      "--- logs/ui_system.log (system service) ---",
+      "UI: INFO:backend.system.main:started",
+    ].join("\n"),
+  );
+  assert.equal(filterLog("LinuxCNC: x", "ui"), "(no UI lines in this log)");
 });
 
 test("a failed generate puts a '!' next to Generate that lists every problem", () => {

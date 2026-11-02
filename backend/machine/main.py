@@ -43,7 +43,7 @@ if str(_COMMON_DIR) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.ui_log import setup_ui_logging
+from core.ui_log import setup_ui_logging, tag_std_streams
 from domain_file_services.paths import UI_MACHINE_LOG_FILE
 
 from dtos.pins.HalPin import HalPin
@@ -84,7 +84,11 @@ from services.IoService import get_io_service
 
 
 # Configure global logging: stderr plus this service's own UI log file
-# (not under pytest — a test run must not fill the real log).
+# (not under pytest — a test run must not fill the real log). Every
+# stdout/stderr line starts with "UI: " — the machine backend's land in
+# LinuxCNC's log (core.ui_log).
+if "pytest" not in sys.modules:
+    tag_std_streams()
 setup_ui_logging(None if "pytest" in sys.modules else UI_MACHINE_LOG_FILE)
 logger = logging.getLogger("backend.machine.main")
 

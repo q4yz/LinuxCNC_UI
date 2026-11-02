@@ -1,11 +1,13 @@
 """``core.ui_log``: a UI backend logs into its own file, once."""
 from __future__ import annotations
 
+import io
 import logging
+import sys
 
 import pytest
 
-from core.ui_log import setup_ui_logging
+from core.ui_log import PrefixedStream, setup_ui_logging, tag_std_streams
 
 
 @pytest.fixture()
@@ -36,3 +38,26 @@ def test_app_and_uvicorn_lines_reach_the_file_once(tmp_path, restore_handlers):
     text = log_file.read_text(encoding="utf-8")
     assert text.count("app line") == 1
     assert "uvicorn line" in text
+
+
+def test_every_line_starts_with_the_prefix():
+    raw = io.StringIO()
+    stream = PrefixedStream(raw, "UI: ")
+    print("first", file=stream)                      # text and "\n" in two writes
+    stream.write("two\nlines\n")
+    stream.write("partial ")
+    stream.write("line\nTraceback:\n  File x\n")
+    assert raw.getvalue().splitlines() == [
+        "UI: first", "UI: two", "UI: lines", "UI: partial line", "UI: Traceback:", "UI:   File x",
+    ]
+    assert stream.getvalue() == raw.getvalue()       # everything else is the wrapped stream's
+
+
+def test_tag_std_streams_wraps_once(monkeypatch):
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    tag_std_streams()
+    tag_std_streams()
+    print("hello")
+    assert isinstance(sys.stdout, PrefixedStream)
+    assert sys.stdout.getvalue() == "UI: hello\n"
