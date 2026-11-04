@@ -45,7 +45,7 @@ sensor_pin: cpu-temp
   (Remora-m8p `LinuxCNC/Components/RPiMonitor`, Raspberry Pi and BTT CB1):
 
   ```hal
-  loadusr -Wn rpi-monitor rpi-monitor 1.0
+  loadusr -Wn rpi-monitor python3 /path/to/RPiMonitor/rpi_monitor.py 1.0
   ```
 
 ## 2. hardware.json
