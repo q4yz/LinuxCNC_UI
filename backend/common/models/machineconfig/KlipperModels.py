@@ -335,6 +335,25 @@ class InputPin:
 
 
 @dataclass(slots=True)
+class TemperatureSensorConfig:
+    """``[temperature_sensor NAME]`` (`.agent/component/temperature_sensor.md`):
+    a reading with no heater behind it, shown in the temperature plot.
+
+    ``sensor_type: hal`` makes ``sensor_pin`` a HAL name — a float pin
+    (``rpi-monitor.cpu-temp``, it has a dot) or an existing signal (no
+    dot). Any other type is a thermistor on the board pin ``sensor_pin``.
+    """
+
+    name: str
+    sensor_type: str
+    sensor_pin: str
+
+    @property
+    def is_hal(self) -> bool:
+        return self.sensor_type.strip().lower() == "hal"
+
+
+@dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
 
@@ -486,6 +505,8 @@ class MachineConfigGraph:
     bed_mesh: BedMesh | None = None
     output_pins: dict[str, OutputPin] = field(default_factory=dict)
     input_pins: dict[str, InputPin] = field(default_factory=dict)
+    # ``[temperature_sensor NAME]`` sections, keyed by NAME.
+    temperature_sensors: dict[str, TemperatureSensorConfig] = field(default_factory=dict)
     # The tool-length sensor. ``None`` when the section is absent.
     tool_length_sensor: ToolLengthSensor | None = None
     steppers: dict[str, Stepper] = field(default_factory=dict)
@@ -556,6 +577,7 @@ MachineConfig = MachineConfigGraph
 __all__ = [
     "BedMesh",
     "InputPin",
+    "TemperatureSensorConfig",
     "OutputPin",
     "ConnectionType",
     "EndstopSwitch",

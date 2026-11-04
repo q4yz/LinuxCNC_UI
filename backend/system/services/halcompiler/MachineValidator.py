@@ -21,6 +21,7 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
+from .components.TemperatureSensorHalMapper import is_hal_sensor
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
 
@@ -135,6 +136,8 @@ class MachineValidator:
                 raw = record.get(field)
                 if not raw:
                     continue
+                if list_name == "temperature_sensors" and is_hal_sensor(record):
+                    continue  # a HAL name, not a board pin
                 owner = str(record.get("id", list_name))
                 try:
                     out.append((PinStringMapper.from_string(raw), owner, field, is_joint))
@@ -369,6 +372,8 @@ class MachineValidator:
         sensor without one would read nothing at all."""
         sensors_per_node: dict[str, list[str]] = {}
         for sensor in self._records("temperature_sensors"):
+            if is_hal_sensor(sensor):
+                continue
             try:
                 pin = PinStringMapper.from_string(sensor["pin"]) if sensor.get("pin") else None
             except ValueError:
@@ -502,6 +507,9 @@ class MachineValidator:
         drivers = self._ids("drivers")
         endstops = self._ids("endstops")
         tools = self._ids("tools")
+        hal_sensors = {
+            str(s["id"]) for s in self._records("temperature_sensors") if s.get("id") and is_hal_sensor(s)
+        }
 
         for tool in self._records("tools"):
             owner = str(tool.get("id", "?"))
@@ -509,6 +517,13 @@ class MachineValidator:
                 self._error(
                     "E_UNKNOWN_SENSOR",
                     f"sensor {tool['sensor']!r} is not declared in temperature_sensors[].",
+                    owner,
+                )
+            elif tool.get("sensor") and str(tool["sensor"]) in hal_sensors:
+                self._error(
+                    "E_HEATER_HAL_SENSOR",
+                    f"sensor {tool['sensor']!r} is a HAL reading (type: hal); a heater "
+                    "reads a thermistor on a board pin only so far.",
                     owner,
                 )
             if tool.get("fan") and str(tool["fan"]) not in fans:

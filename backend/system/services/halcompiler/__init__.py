@@ -27,6 +27,7 @@ from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
+from .components.TemperatureSensorHalMapper import TemperatureSensorWebguiMapper, unclaimed_sensors
 from .renderer import render_hal
 from .MachineValidator import MachineValidator, validate_machine
 
@@ -45,7 +46,7 @@ def compile_machine_hal(payload: dict[str, object]) -> str:
 
 
 def render_webgui_connections(payload: dict[str, object]) -> str:
-    """Estop/Pause-&-Inspect/spindle/heater/fan/MCU-reset UI bindings — `net`
+    """Estop/Pause-&-Inspect/spindle/heater/sensor/fan/MCU-reset UI bindings — `net`
     lines for a fresh ``webgui_connections.hal``, not ``machine.hal``.
 
     Used only to *seed* a machine's ``webgui_connections.hal`` the
@@ -107,6 +108,8 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
+    for sensor in unclaimed_sensors(payload):
+        lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:
         if not isinstance(fan, dict):
             continue
