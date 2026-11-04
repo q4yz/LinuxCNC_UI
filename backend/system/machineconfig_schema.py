@@ -65,6 +65,7 @@ class SectionKind(str, Enum):
     BED_MESH = "bed_mesh"
     OUTPUT_PIN = "output_pin"
     INPUT_PIN = "input_pin"
+    TEMPERATURE_SENSOR = "temperature_sensor"
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +205,10 @@ BED_MESH_KEYS = frozenset({"probe_count"})
 # output is switched from the UI (or PWM with ``pwm: True``); an input
 # is shown in the UI and can run G-code on its edges.
 OUTPUT_PIN_KEYS = frozenset({"pin", "pwm", "value", "shutdown_value", "cycle_time", "scale"})
+# A standalone temperature reading (`.agent/component/temperature_sensor.md`):
+# a thermistor on a board pin, or (``sensor_type: hal``) any float HAL
+# pin or signal, e.g. the host's own CPU temperature.
+TEMPERATURE_SENSOR_KEYS = frozenset({"sensor_type", "sensor_pin"})
 INPUT_PIN_KEYS = frozenset({
     "pin", "rising_ngc", "falling_ngc", "rising_halpin_set", "falling_halpin_set",
 })
@@ -336,6 +341,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.BED_MESH: BED_MESH_KEYS,
     SectionKind.OUTPUT_PIN: OUTPUT_PIN_KEYS,
     SectionKind.INPUT_PIN: INPUT_PIN_KEYS,
+    SectionKind.TEMPERATURE_SENSOR: TEMPERATURE_SENSOR_KEYS,
 }
 
 # Public alias for callers that only need the allowed-key lookup.
@@ -388,6 +394,9 @@ _HEATER_FAN_SECTION = re.compile(
 # name is the component id (webgui.<name>).
 _OUTPUT_PIN_SECTION = re.compile(r"^output_pin\s+(?P<name>[A-Za-z0-9_]+)$")
 _INPUT_PIN_SECTION = re.compile(r"^input_pin\s+(?P<name>[A-Za-z0-9_]+)$")
+# [temperature_sensor chamber] — always named; the name is the sensor id
+# (webgui.<name>), so it takes the hardware.json id pattern directly.
+_TEMPERATURE_SENSOR_SECTION = re.compile(r"^temperature_sensor\s+(?P<name>[a-z][a-z0-9_]*)$")
 _SPINDLE_DIGITAL_SECTION = re.compile(
     r"^spindle(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
 )
@@ -440,6 +449,12 @@ def schema_for_section(section: str) -> SectionSchema | None:
     input_match = _INPUT_PIN_SECTION.fullmatch(section)
     if input_match:
         return SectionSchema(SectionKind.INPUT_PIN, INPUT_PIN_KEYS, input_match.group("name"))
+
+    sensor_match = _TEMPERATURE_SENSOR_SECTION.fullmatch(section)
+    if sensor_match:
+        return SectionSchema(
+            SectionKind.TEMPERATURE_SENSOR, TEMPERATURE_SENSOR_KEYS, sensor_match.group("name")
+        )
 
     if section == "tool_length_sensor":
         return SectionSchema(
@@ -550,6 +565,7 @@ __all__ = [
     "PRINTER_IGNORED_KEYS",
     "PRINTER_KEYS",
     "PROBE_KEYS",
+    "TEMPERATURE_SENSOR_KEYS",
     "TOOL_LENGTH_SENSOR_KEYS",
     "SECTION_SCHEMAS",
     "SPINDLE_ANALOG_KEYS",

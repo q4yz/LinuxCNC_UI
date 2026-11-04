@@ -51,6 +51,11 @@ load-bearing, see § 2.
     hysteresis: float // (control: watermark) degrees of dead band, default 2.0
 ```
 
+> **Standalone sensors** (no heater) are implemented as
+> `[temperature_sensor NAME]` with `sensor_type` / `sensor_pin` — see
+> `temperature_sensor.md`. The block below is the original design
+> sketch; a heater still takes its sensor inline today.
+
 ```cfg
 [temperature_sensor <identifier>]
     sensor_type: string // e.g. "EPCOS 100K B57560G104F", "PT1000", "thermocouple"
