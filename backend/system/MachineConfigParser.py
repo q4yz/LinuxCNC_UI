@@ -26,6 +26,7 @@ from models.machineconfig import (
     SpindleAnalog,
     SpindleDigital,
     Stepper,
+    TemperatureSensorConfig,
     TMC2209,
     ToolLengthSensor,
 )
@@ -219,6 +220,23 @@ class DuplicateFanError(ConfigValidationError):
         super().__init__(
             f"Sections [{section_a}] and [{section_b}] both compile to "
             f"the same fan name '{name}'."
+        )
+
+
+class DuplicateTemperatureSensorError(ConfigValidationError):
+    """Raised when a ``[temperature_sensor NAME]`` reuses the id of a
+    heater's own sensor (``[heater_bed]`` reads sensor ``bed``)."""
+
+    kind = "duplicate_temperature_sensor"
+
+    def __init__(self, section_a: str, section_b: str, name: str) -> None:
+        self.section_a = section_a
+        self.section_b = section_b
+        self.name = name
+        super().__init__(
+            f"Sections [{section_a}] and [{section_b}] both compile to "
+            f"the same temperature sensor '{name}' — rename the "
+            f"[temperature_sensor] section."
         )
 
 
@@ -510,6 +528,23 @@ def derive_heater_name(section_name: str) -> str:
     return f"{kind}_{instance.replace(' ', '_')}"
 
 
+def derive_heater_sensor_id(heater_name: str) -> str:
+    """The ``temperature_sensors[].id`` a heater's own sensor gets.
+
+    ``extruder`` -> ``extruder``; ``heater_bed`` -> ``bed``;
+    ``heater_generic_chamber`` -> ``generic_chamber``. Shared with
+    ``hardware_json_generator`` so a ``[temperature_sensor NAME]`` can
+    be checked against it before the two ever collide in hardware.json.
+    """
+    if heater_name.startswith("heater_"):
+        return heater_name[len("heater_"):]
+    return heater_name
+
+
+#: A HAL pin or signal name, as ``sensor_type: hal`` takes it.
+_HAL_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*$")
+
+
 def derive_fan_name(section_name: str) -> str:
     """Return the canonical fan id for a Klipper section header.
 
@@ -727,6 +762,9 @@ class MachineConfigParser:
             elif section_schema.kind is SectionKind.INPUT_PIN:
                 input_pin = self._parse_input_pin(section_name, section_schema.object_name, section)
                 graph.input_pins[input_pin.name] = input_pin
+            elif section_schema.kind is SectionKind.TEMPERATURE_SENSOR:
+                sensor = self._parse_temperature_sensor(section_name, section_schema.object_name, section)
+                graph.temperature_sensors[sensor.name] = sensor
             elif section_schema.kind is SectionKind.TOOL_LENGTH_SENSOR:
                 graph.tool_length_sensor = ToolLengthSensor(
                     pin=self._optional_string(section, "pin"),
@@ -749,6 +787,7 @@ class MachineConfigParser:
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
         self._validate_spindle_uniqueness(spindle_section_order)
+        self._validate_temperature_sensor_uniqueness(graph)
         self._validate_stepper_pins(graph)
         self._validate_all_pin_mcu_references(graph)
 
@@ -904,6 +943,17 @@ class MachineConfigParser:
                     seen[canonical], section_name, canonical
                 )
             seen[canonical] = section_name
+
+    @staticmethod
+    def _validate_temperature_sensor_uniqueness(graph: MachineConfigGraph) -> None:
+        """A ``[temperature_sensor NAME]`` must not take the id a heater's
+        own sensor already has — both would be ``webgui.<id>``."""
+        heater_sensors = {derive_heater_sensor_id(name): name for name in graph.heaters}
+        for name in graph.temperature_sensors:
+            if name in heater_sensors:
+                raise DuplicateTemperatureSensorError(
+                    heater_sensors[name], f"temperature_sensor {name}", name
+                )
 
     @staticmethod
     def _validate_spindle_uniqueness(spindle_section_order: list[str]) -> None:
@@ -1196,6 +1246,29 @@ class MachineConfigParser:
             rising_halpin_set=self._halpin_sets(section_name, section, "rising_halpin_set"),
             falling_halpin_set=self._halpin_sets(section_name, section, "falling_halpin_set"),
         )
+
+    def _parse_temperature_sensor(
+        self,
+        section_name: str,
+        name: str,
+        section: configparser.SectionProxy,
+    ) -> TemperatureSensorConfig:
+        """Build a :class:`TemperatureSensorConfig`. With ``sensor_type:
+        hal`` the pin is a HAL name, checked here; a board pin's MCU
+        prefix is checked with every other pin afterwards."""
+        sensor = TemperatureSensorConfig(
+            name=name,
+            sensor_type=self._required_string(section_name, section, "sensor_type"),
+            sensor_pin=self._required_string(section_name, section, "sensor_pin"),
+        )
+        if sensor.is_hal:
+            sensor.sensor_type = "hal"
+            if not _HAL_NAME.fullmatch(sensor.sensor_pin):
+                raise InvalidValueError(
+                    section_name, "sensor_pin", sensor.sensor_pin,
+                    "a HAL pin (rpi-monitor.cpu-temp) or signal name",
+                )
+        return sensor
 
     def _halpin_sets(
         self, section_name: str, section: configparser.SectionProxy, key: str
@@ -1518,6 +1591,11 @@ class MachineConfigParser:
             )
         for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
             MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
+        for name, sensor in graph.temperature_sensors.items():
+            if not sensor.is_hal:
+                MachineConfigParser._validate_pin_mcu(
+                    f"temperature_sensor {name}", "sensor_pin", sensor.sensor_pin, declared
+                )
         if graph.tool_length_sensor is not None:
             MachineConfigParser._validate_pin_mcu(
                 "tool_length_sensor", "pin", graph.tool_length_sensor.pin, declared

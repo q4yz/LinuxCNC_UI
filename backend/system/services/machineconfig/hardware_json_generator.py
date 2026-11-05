@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from MachineConfigParser import MissingEstopSectionError, split_pin
+from MachineConfigParser import MissingEstopSectionError, derive_heater_sensor_id, split_pin
 from models.machineconfig.HardwareJsonModels import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -128,11 +128,7 @@ def _temperature_sensor_id(heater_section: str) -> str:
     to keep the type-agnostic ``id`` namespace uniform across the
     heater, sensor, and fan derived from the same source section).
     """
-    if heater_section == "extruder":
-        return "extruder"
-    if heater_section.startswith("heater_"):
-        return heater_section[len("heater_"):]
-    return heater_section
+    return derive_heater_sensor_id(heater_section)
 
 
 def _fan_id(heater_section: str) -> str:
@@ -881,6 +877,12 @@ def build_hardware_json(
             mcu_id, pin_id = split_pin(heater.heater_pin)
             if pin_id is not None:
                 auto_duplicate_pin_overrides.add(f"{mcu_id or 'mcu'}:{pin_id}")
+    # ``[temperature_sensor NAME]``: a reading no heater claims, shown in
+    # the temperature plot (`.agent/component/temperature_sensor.md`).
+    for sensor in graph.temperature_sensors.values():
+        temperature_sensor_records.append(
+            {"id": sensor.name, "pin": sensor.sensor_pin, "type": sensor.sensor_type}
+        )
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
     for spindle_id, spindle in graph.spindle_digitals.items():

@@ -36,6 +36,7 @@ from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
 from .components.StepperHalMapper import StepperHalMapper
+from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper, unclaimed_sensors
 from .mcus.ParportRouterMapper import ParportRouterMapper
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
@@ -102,6 +103,7 @@ class HalAssembler:
             self._component_fragments(capability_class)
             + self._spindle_fragments()
             + self._heater_fragments()
+            + self._sensor_fragments()
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]
@@ -231,6 +233,11 @@ class HalAssembler:
             fan = self._fans_by_id.get(tool.get("fan"))
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
         return fragments
+
+    def _sensor_fragments(self) -> list[HalFragment]:
+        """One fragment per temperature sensor no heater reads — a heater's
+        own sensor is already wired by ``HeaterHalMapper``."""
+        return [TemperatureSensorHalMapper.to_fragment(s) for s in unclaimed_sensors(self._payload)]
 
     def _fan_fragments(self) -> list[HalFragment]:
         """One fragment per fan — always its own direct pin route.

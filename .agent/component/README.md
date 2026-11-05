@@ -20,7 +20,8 @@ capability classes, and the validation rules a compiler must enforce.
 | `template.md` | — | Blank skeleton for a new component. |
 | `stepper.md` | `[stepper_<axis>]` | Axis / joint. Class A shown. |
 | `exturder.md` | `[extruder]` | Heater + joint. (Filename is transposed.) |
-| `heater.md` | `[heater_*]`, `[temperature_sensor]` | Bed / hot end. |
+| `heater.md` | `[heater_*]` | Bed / hot end (its own sensor inline). |
+| `temperature_sensor.md` | `[temperature_sensor NAME]` | Optional, many. A reading with no heater: board thermistor or any float HAL pin/signal (host CPU); shown in the temperature plot. |
 | `fan.md` | `[fan]`/`[fan_generic *]`, `[heater_fan *]` | Part (commandable) vs. heater-gated (HAL-managed only). |
 | `analog_spindle.md` | `[spindle_analog]` | 0–10 V via `pwmgen`. Class A only. |
 | `digital_spindle.md` | `[spindle]` | Any transport — declares pins, routed by its MCU. |
