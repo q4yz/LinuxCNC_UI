@@ -75,8 +75,8 @@ class RemoraCanMapper:
     def node_module(module: dict[str, object], node: dict[str, Any]) -> dict[str, object]:
         """A module the hub router built, in the node's dialect.
 
-        A node's pin string has no ``^`` modifier prefix — pull-ups are
-        the ``"Modifier"`` key there — and an input gets ``"Lost State":
+        Pin and ``"Modifier"`` pass through as the hub router wrote them
+        (no ``^`` prefix on either side), and an input gets ``"Lost State":
         "Low"``, what LinuxCNC reads while the node is lost: always Low,
         like every output's Safe State (the machine must be safe at Low).
         Every module keeps its hub numbers (``Joint Number``, ``PV[i]``,
@@ -89,10 +89,6 @@ class RemoraCanMapper:
         out.pop("Thread", None)
         if out.get("Type") == "Stepgen" and name:
             out["Comment"] = str(name)
-        pin = str(out.get("Pin", ""))
-        if pin.startswith("^"):
-            out["Pin"] = pin[1:]
-            out["Modifier"] = "Pull Up"
         if out.get("Mode") == "Input":
             out["Lost State"] = SAFE_LEVEL
         return out

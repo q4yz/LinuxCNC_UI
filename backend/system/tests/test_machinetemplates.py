@@ -370,6 +370,18 @@ def test_render_ini_template_emits_a_pid_section_per_pid_heater():
     assert "PID_SPMAX = 300.0" in text
 
 
+def test_heater_min_temp_is_never_a_set_point_floor():
+    """`min_temp` is a sensor-fault limit: as PID_SPMIN it would hold the
+    heater at min_temp with the target at 0 (heating with nothing set)."""
+    from services.machinetemplates import render_ini_template
+
+    tools = [{"id": "heater_extruder", "type": "extruder", "control": "pid",
+              "min_temp": 15.0, "max_temp": 280.0}]
+    text = render_ini_template("printer", [_axis("X", 0)], tools)
+    assert "PID_SPMIN = 0.0" in text
+    assert "PID_SPMIN = 15.0" not in text
+
+
 def test_render_ini_template_skips_watermark_heaters():
     """`HeaterHalMapper._watermark_loop` uses literals throughout — no
     ini-var references, so no section is needed (or emitted)."""

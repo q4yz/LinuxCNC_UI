@@ -22,6 +22,8 @@ const SYSTEM_TARGET = 'http://localhost:8001';
 // or the request falls through to the system service and 404s.
 const DEV_PROXY = {
   '^/api/v1/modules/macros/[^/]+/start(\\?.*)?$': { target: MACHINE_TARGET, changeOrigin: true },
+  // OctoPrint-compatible slicer upload (backend/system/routers/octoprint.py).
+  '^/api/(version|server|login|settings|printerprofiles|printer|job|connection|files)(/|\\?|$)': { target: SYSTEM_TARGET, changeOrigin: true },
 
   // Remove the trailing slashes here:
   '/api/v1/system': { target: SYSTEM_TARGET, changeOrigin: true },

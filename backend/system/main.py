@@ -41,6 +41,7 @@ from routers import (
     machine_lifecycle as machine_lifecycle_router,
     machineconfig as machineconfig_router,
     macros as macros_router,
+    octoprint as octoprint_router,
     ui_settings as ui_settings_router,
 )
 
@@ -139,8 +140,10 @@ app.include_router(SystemRouter.router)
 app.include_router(ui_settings_router.router)
 app.include_router(machine_lifecycle_router.router)
 
-# Program file uploads (nc_files/).
+# Program file uploads (nc_files/), and the OctoPrint-compatible API
+# slicers (Orca, PrusaSlicer, Cura) send G-code through.
 app.include_router(FilesRouter.router)
+app.include_router(octoprint_router.router)
 
 # Per-domain routers.
 for _router in _MODULE_ROUTERS:

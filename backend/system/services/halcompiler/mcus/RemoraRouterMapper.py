@@ -249,38 +249,37 @@ class RemoraRouterMapper:
                 # reader side (`net <signal> => joint.N....`) as a separate
                 # `net` line; HAL lets the same net name accumulate pins
                 # across statements, matching the reference file's split.
-                # `^` (pullup) is a real modifier the firmware's
-                # config.txt parser accepts on a "Digital Pin"'s
-                # ``Pin`` string. A leading ``!`` for inversion is
-                # not — confirmed against real Remora hardware, where
-                # writing it breaks the pin (the parser doesn't
-                # recognise it as a modifier the way it does `^`).
+                # The firmware's ``Pin`` string is the bare pin: no
+                # Klipper `^` / `~` / `!` prefix. Its STM32 pin parser
+                # rejects a prefixed name, the module then runs on an
+                # unconfigured pin and the board hard faults at start
+                # (a boot loop, no SPI upload possible). Pull-up /
+                # pull-down are the module's ``Modifier`` key.
                 # Inversion happens HAL-side instead: the Remora driver
                 # exports an inverted twin `remora.input.NN.not` next
                 # to every `remora.input.NN` (same idea as parport's
                 # `-in-not`), so `!PG6` reads the `.not` pin.
                 suffix = ".not" if request.pin.invert else ""
                 fragment.nets.append(f"net {request.signal} remora.input.{nn}{suffix}")
-                pullup = "^" if request.pin.pullup else ""
-                firmware_pin = RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id)
-                pin = f"{pullup}{firmware_pin}"
                 name_prefix = "endstop" if request.role is PinRole.ENDSTOP else "digital_in"
+                input_module: dict[str, object] = {
+                    "Name": f"{name_prefix}_{request.owner}",
+                    "Thread": "Servo",
+                    # "Digital Pin" (with the space) — the real
+                    # reference config.txt's literal key; not a
+                    # guess (machine_config/example/ender3/config.txt).
+                    "Type": "Digital Pin",
+                    "Comment": request.owner,
+                    "Pin": RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id),
+                    "Mode": "Input",
+                    "Data Bit": bit,
+                }
+                if request.pin.pullup:
+                    input_module["Modifier"] = "Pull Up"
+                elif request.pin.pulldown:
+                    input_module["Modifier"] = "Pull Down"
                 fragment.firmware_modules.append(
-                    FirmwareModuleRequest(
-                        mcu_id=request.pin.mcu_id,
-                        module={
-                            "Name": f"{name_prefix}_{request.owner}",
-                            "Thread": "Servo",
-                            # "Digital Pin" (with the space) — the real
-                            # reference config.txt's literal key; not a
-                            # guess (machine_config/example/ender3/config.txt).
-                            "Type": "Digital Pin",
-                            "Comment": request.owner,
-                            "Pin": pin,
-                            "Mode": "Input",
-                            "Data Bit": bit,
-                        },
-                    )
+                    FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=input_module)
                 )
             elif request.role is PinRole.DIGITAL_OUT:
                 if digital_out_index >= _DIGITAL_BITS:

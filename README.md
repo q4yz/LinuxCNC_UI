@@ -71,6 +71,15 @@ The System Update card has two buttons:
 
 By hand: `scripts/update.sh --mode commit` or `scripts/update.sh --mode release [--tag v1.2.0]`, always as the normal user, never with `sudo`.
 
+## Sending G-code from a slicer
+
+The machine answers the OctoPrint API that slicers already support, so G-code can be sent over the network. Files land in `nc_files/` (in the program list), also while the machine is off.
+
+- **OrcaSlicer / PrusaSlicer:** Printer → *Physical printer* / *Connection* → host type **OctoPrint**, hostname `http://<machine-ip>`. The API key can be anything (it is required but not checked). *Test* should answer "connected".
+- **Cura:** install the **OctoPrint Connection** plugin from the Marketplace, then Printer → *Manage printers* → *Connect OctoPrint* → *Add* with the machine's IP, port 80, and any API key.
+
+*Upload and print* (Orca) or *print after upload* (Cura) only **loads** the file into LinuxCNC, and only while it runs. Nothing is ever started from the network; start the program at the machine.
+
 ## Releasing
 
 Pushing a version tag runs the full CI. When it passes, CI publishes a GitHub Release with `linuxcnc-ui-dist.tar.gz` (the built `frontend/dist`) and its `.sha256` attached:

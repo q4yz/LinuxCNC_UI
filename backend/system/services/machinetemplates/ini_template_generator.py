@@ -160,7 +160,9 @@ def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
     and gets no section here.
     """
     section = heater_ini_section(str(tool["id"]))
-    min_temp = tool.get("min_temp")
+    # PID_SPMIN stays 0: `min_temp` is a sensor-fault limit (Klipper), not a
+    # set point floor. As SPmin it would lift a target of 0 to min_temp, and
+    # the PIDcontroller only switches a heater fully off at a set point of 0.
     max_temp = tool.get("max_temp")
     return [
         f"[{section}]",
@@ -169,7 +171,7 @@ def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
         f"PID_KP = {_fmt(tool.get('pid_kp') or 0.0)}",
         f"PID_KI = {_fmt(tool.get('pid_ki') or 0.0)}",
         f"PID_KD = {_fmt(tool.get('pid_kd') or 0.0)}",
-        f"PID_SPMIN = {_fmt(min_temp if min_temp is not None else 0.0)}",
+        "PID_SPMIN = 0.0",
         f"PID_SPMAX = {_fmt(max_temp if max_temp is not None else 0.0)}",
         "PID_CVMIN = 0.0",
         f"PID_CVMAX = {_fmt(_DEFAULT_PID_CVMAX)}",

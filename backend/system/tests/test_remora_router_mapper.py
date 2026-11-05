@@ -106,22 +106,32 @@ def test_endstop_firmware_module_carries_pullup_as_a_pin_flag():
         "Thread": "Servo",
         "Type": "Digital Pin",
         "Comment": "endstop_x",
-        "Pin": "^PC_0",
+        "Pin": "PC_0",
         "Mode": "Input",
         "Data Bit": 0,
+        "Modifier": "Pull Up",
     }
 
 
-def test_endstop_firmware_module_never_carries_a_bang_even_when_inverted():
-    """Confirmed against real Remora hardware: a leading ``!`` on a
-    "Digital Pin"'s ``Pin`` string is not a modifier the firmware's
-    config.txt parser recognises (unlike ``^`` for pullup) — writing
-    it breaks the pin. Inversion is done HAL-side instead (see the
-    `.not` tests below)."""
+def test_endstop_pull_down_and_no_pull():
+    """`~` is the module's "Pull Down" modifier; a bare pin gets none."""
+    down = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "~PC0")])
+    assert down.firmware_modules[0].module["Pin"] == "PC_0"
+    assert down.firmware_modules[0].module["Modifier"] == "Pull Down"
+    bare = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "PC0")])
+    assert "Modifier" not in bare.firmware_modules[0].module
+
+
+def test_endstop_firmware_pin_never_carries_a_klipper_prefix():
+    """The firmware's STM32 pin parser rejects ``^`` / ``!`` on a "Digital
+    Pin"'s ``Pin`` string: the module runs on an unconfigured pin and the
+    board hard faults at start (seen on a Manta M8P: ``^PF_4``, a boot
+    loop with no SPI upload). Pull-up is the ``Modifier`` key, inversion
+    is done HAL-side (see the `.not` tests below)."""
     fragment = RemoraRouterMapper.route([_request("endstop_x-sw", PinRole.ENDSTOP, "^!PC0")])
     module = fragment.firmware_modules[0].module
-    assert module["Pin"] == "^PC_0"
-    assert "!" not in module["Pin"]
+    assert module["Pin"] == "PC_0"
+    assert module["Modifier"] == "Pull Up"
 
 
 def test_inverted_endstop_nets_the_remora_not_twin():
