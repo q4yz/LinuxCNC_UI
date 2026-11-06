@@ -8,16 +8,19 @@ Platform behaviour:
 
 * **Linux (production target)**
     1. Enumerate ``/dev/video*`` via :mod:`glob`.
-    2. Parse ``v4l2-ctl --list-devices`` to recover the human-readable
-       card name for each device path. ``v4l2-ctl`` ships with the
-       ``v4l-utils`` package and is the standard way to query V4L2
-       metadata without opening the device.
-    3. Fall back to a synthetic name ``"USB Camera N"`` derived from
-       the device path when ``v4l2-ctl`` is missing or unable to
-       resolve the name. There is intentionally no further probe —
-       opening the device just to read its card name would race with
-       the streaming supervisor and is what motivated the move to
-       ``ustreamer`` in the first place.
+    2. Ask each node what it is (``VIDIOC_QUERYCAP``) and keep only
+       real capture devices. Not every node is a camera: on the BTT
+       CB1's Allwinner H616 ``/dev/video0`` is ``cedrus``, the hardware
+       video decoder (memory-to-memory), and a UVC webcam brings a
+       second, metadata-only node. ``QUERYCAP`` only reads the driver's
+       capability flags — it does not start or claim a stream, so it
+       never races ustreamer.
+    3. Name: the card name from ``QUERYCAP``, else
+       ``v4l2-ctl --list-devices``, else a synthetic ``"USB Camera N"``.
+    4. Id: the stable ``/dev/v4l/by-id/...`` link of the node (else
+       ``/dev/v4l/by-path/...``, else ``/dev/videoN``) — ``N`` can change
+       between boots or replugs, the by-id name does not. A saved
+       ``/dev/videoN`` still resolves through :func:`resolve_device_id`.
 
 * **Windows / macOS / other**
     Return an empty list. The camera module is Linux-only because
@@ -35,14 +38,16 @@ serves the result verbatim.
 """
 from __future__ import annotations
 
+import fcntl
 import glob
 import logging
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("backend.services.camera_detection")
 
@@ -112,43 +117,144 @@ def detect_usb_cameras() -> List[USBDeviceInfo]:
 
 
 def _detect_linux() -> List[USBDeviceInfo]:
-    """Linux detection: ``/dev/video*`` + ``v4l2-ctl --list-devices``."""
+    """Linux detection: capture-capable ``/dev/video*`` nodes, by stable id."""
     paths = _list_video_device_paths()
     if not paths:
         logger.info("No /dev/video* devices found.")
         return []
 
-    names_by_path = _query_v4l2_names(paths)
+    capture_paths: List[str] = []
+    card_names: Dict[str, str] = {}
+    for path in paths:
+        caps = _query_capabilities(path)
+        if caps is None:
+            # Could not ask (no permission, odd driver): keep the node,
+            # the supervisor reports whether ustreamer can open it.
+            capture_paths.append(path)
+            continue
+        card, device_caps = caps
+        if not _is_capture_device(device_caps):
+            logger.info("Skipping %s (%s): not a video capture device.", path, card or "?")
+            continue
+        capture_paths.append(path)
+        if card:
+            card_names[path] = card
+    if not capture_paths:
+        logger.info("No video capture devices among %s.", ", ".join(paths))
+        return []
+
+    missing = [p for p in capture_paths if p not in card_names]
+    names_by_path = {**(_query_v4l2_names(missing) if missing else {}), **card_names}
+    stable = _stable_links()
 
     devices: List[USBDeviceInfo] = []
-    for index, path in enumerate(paths):
+    for index, path in enumerate(capture_paths):
         name = names_by_path.get(path)
         if name is None:
-            # No ``v4l2-ctl`` (or the call failed). Fall back to a
-            # synthetic name so the picker still surfaces the device
-            # — the supervisor will tell us later whether the device
-            # is actually openable.
+            # No name from the driver or v4l2-ctl. Fall back to a
+            # synthetic one so the picker still surfaces the device.
             name = f"USB Camera {index}"
-        devices.append(USBDeviceInfo(id=path, name=name, index=index))
+        device_id = stable.get(os.path.realpath(path), path)
+        devices.append(USBDeviceInfo(id=device_id, name=name, index=index))
 
-    devices.sort(key=lambda d: d.index)
     logger.info("Detected %d USB camera(s) on Linux.", len(devices))
     return devices
+
+
+def resolve_device_id(camera_id: Optional[str]) -> Optional[str]:
+    """Map a saved camera id onto the id :func:`detect_usb_cameras` uses.
+
+    A ``/dev/videoN`` (what older versions stored) or any other link to
+    the same node resolves to that camera's stable id; URLs and unknown
+    ids come back unchanged.
+    """
+    if not camera_id or "://" in camera_id:
+        return camera_id
+    target = os.path.realpath(camera_id)
+    for device in detect_usb_cameras():
+        if device.id == camera_id or os.path.realpath(device.id) == target:
+            return device.id
+    return camera_id
+
+
+# ---------------------------------------------------------------------- #
+# V4L2 capabilities                                                       #
+# ---------------------------------------------------------------------- #
+
+# struct v4l2_capability: driver[16] card[32] bus_info[32] version
+# capabilities device_caps reserved[3] — 104 bytes.
+_V4L2_CAPABILITY = struct.Struct("16s32s32sIII3I")
+# _IOR('V', 0, struct v4l2_capability)
+_VIDIOC_QUERYCAP = (2 << 30) | (_V4L2_CAPABILITY.size << 16) | (ord("V") << 8) | 0
+_CAP_VIDEO_CAPTURE = 0x00000001
+_CAP_VIDEO_CAPTURE_MPLANE = 0x00001000
+_CAP_VIDEO_M2M_MPLANE = 0x00004000
+_CAP_VIDEO_M2M = 0x00008000
+_CAP_DEVICE_CAPS = 0x80000000
+
+
+def _query_capabilities(path: str) -> Optional[Tuple[str, int]]:
+    """``(card name, device caps)`` of one node via ``VIDIOC_QUERYCAP``,
+    or ``None`` when the node cannot be asked."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        buf = bytearray(_V4L2_CAPABILITY.size)
+        fcntl.ioctl(fd, _VIDIOC_QUERYCAP, buf)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    _driver, card, _bus, _version, caps, device_caps, *_ = _V4L2_CAPABILITY.unpack(bytes(buf))
+    if not caps & _CAP_DEVICE_CAPS:
+        device_caps = caps
+    return card.split(b"\0", 1)[0].decode("utf-8", "replace").strip(), device_caps
+
+
+def _is_capture_device(device_caps: int) -> bool:
+    """A camera: video capture, and not a memory-to-memory codec (which
+    also reports capture). Metadata-only nodes report neither."""
+    if device_caps & (_CAP_VIDEO_M2M | _CAP_VIDEO_M2M_MPLANE):
+        return False
+    return bool(device_caps & (_CAP_VIDEO_CAPTURE | _CAP_VIDEO_CAPTURE_MPLANE))
+
+
+#: udev's stable camera links, best first.
+_STABLE_LINK_DIRS = ("/dev/v4l/by-id", "/dev/v4l/by-path")
+
+
+def _stable_links() -> Dict[str, str]:
+    """``{real /dev/videoN: stable link}`` — ``/dev/v4l/by-id`` first,
+    ``/dev/v4l/by-path`` for a camera without a serial-style id."""
+    links: Dict[str, str] = {}
+    for folder in _STABLE_LINK_DIRS:
+        try:
+            entries = sorted(glob.glob(os.path.join(folder, "*")))
+        except Exception:  # noqa: BLE001 - glob can be sandboxed
+            continue
+        for link in entries:
+            links.setdefault(os.path.realpath(link), link)
+    return links
 
 
 def _list_video_device_paths() -> List[str]:
     """Enumerate ``/dev/video*`` paths, sorted ascending by index."""
     try:
-        paths = sorted(glob.glob("/dev/video*"))
+        paths = sorted(glob.glob("/dev/video*"), key=_video_number)
     except Exception as exc:  # noqa: BLE001 - glob can be sandboxed
         logger.warning("glob('/dev/video*') failed: %s", exc)
         return []
-    # Filter out metadata siblings (``/dev/video10`` is typically a
-    # metadata node on some UVC drivers and does not carry a frame
-    # stream). The supervisor will skip entries that ustreamer cannot
-    # open anyway, but pruning them at the source keeps the picker
-    # clean.
+    # Metadata nodes and codecs are dropped later, by their V4L2
+    # capabilities (``_is_capture_device``).
     return [p for p in paths if os.path.exists(p)]
+
+
+def _video_number(path: str) -> Tuple[int, str]:
+    """Sort key: ``/dev/video2`` before ``/dev/video10``."""
+    match = re.search(r"(\d+)$", path)
+    return (int(match.group(1)) if match else -1, path)
 
 
 # ---------------------------------------------------------------------- #
@@ -246,4 +352,4 @@ def _parse_v4l2ctl_output(
     return name_by_path
 
 
-__all__ = ["USBDeviceInfo", "detect_usb_cameras"]
+__all__ = ["USBDeviceInfo", "detect_usb_cameras", "resolve_device_id"]

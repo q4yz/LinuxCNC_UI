@@ -17,7 +17,7 @@ export const defaultCameraDevice = new TextSetting(
   "Default camera device",
   "camera.default_device_id",
   "",
-  { placeholder: "e.g. /dev/video0 — empty = first detected" },
+  { placeholder: "e.g. /dev/v4l/by-id/usb-…-video-index0 — empty = first detected" },
   { critical: true, order: 1, description: "Device the camera stream uses when none is selected." },
 );
 

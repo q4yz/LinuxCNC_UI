@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from core.ui_settings_reader import read_ui_setting
-from services.camera.camera_detection import detect_usb_cameras
+from services.camera.camera_detection import detect_usb_cameras, resolve_device_id
 from models.CameraSettings import CameraSettings
 
 logger = logging.getLogger("backend.camera_service")
@@ -40,6 +41,16 @@ logger = logging.getLogger("backend.camera_service")
 # stream URL can rely on the port staying put until the backend
 # restarts.
 _USTREAMER_BASE_PORT = 8080
+
+
+def _port_is_free(port: int) -> bool:
+    """Nothing listens on ``127.0.0.1:port`` (ustreamer's own bind)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
 
 
 class UstreamerSupervisor:
@@ -140,7 +151,7 @@ class UstreamerSupervisor:
 
     def read_default_device_id(self) -> Optional[str]:
         """Return the configured ``default_device_id`` (or ``None``)."""
-        value = getattr(self._load_settings(), "default_device_id", "")
+        value = resolve_device_id(getattr(self._load_settings(), "default_device_id", ""))
         return value or None
 
     def read_ip_camera_url(self) -> Optional[str]:
@@ -185,6 +196,8 @@ class UstreamerSupervisor:
         """
         if not camera_id:
             raise RuntimeError("camera_id is required")
+        # A saved /dev/videoN (older versions) -> the camera's stable id.
+        camera_id = resolve_device_id(camera_id) or camera_id
 
         with self._lock:
             # IP camera passthrough: the proxy fetches the upstream
@@ -390,7 +403,8 @@ class UstreamerSupervisor:
         Strategy: index by enumeration order, so ``/dev/video0`` →
         8080, ``/dev/video1`` → 8081, … The operator can therefore
         bookmark a single camera and have the URL stay stable across
-        restarts as long as the device order is preserved.
+        restarts as long as the device order is preserved. A port that
+        is already in use moves the camera to the next free one.
         """
         known = self.known_device_ids()
         try:
@@ -399,7 +413,13 @@ class UstreamerSupervisor:
             # Unknown id — fall back to hash-derived port. Rare path;
             # the operator must explicitly request an unknown id.
             idx = abs(hash(camera_id)) % 1000
-        return _USTREAMER_BASE_PORT + idx
+        # Skip ports another camera of ours or another program holds
+        # (e.g. a leftover ustreamer.service on 8081 from older installs).
+        taken = set(self._ports.values())
+        port = _USTREAMER_BASE_PORT + idx
+        while port in taken or not _port_is_free(port):
+            port += 1
+        return port
 
     def _stream_url(self, port: int) -> str:
         """Build the URL the frontend ``<img>`` follows."""

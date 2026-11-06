@@ -179,7 +179,7 @@ async def camera_stream(
     id: Optional[str] = Query(
         default=None,
         description=(
-            "Camera identifier (``/dev/videoN`` path, HTTP/HTTPS URL, "
+            "Camera identifier (``/dev/v4l/by-id/...`` or ``/dev/videoN`` path, HTTP/HTTPS URL, "
             "or RTSP URL — RTSP is not supported and returns 503). "
             "Defaults to the configured ``default_device_id``."
         ),

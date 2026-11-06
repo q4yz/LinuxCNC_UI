@@ -130,3 +130,28 @@ def test_out_safe_state_is_not_a_key(tmp_path):
     cfg.write_text(CFG.format(extra="").replace("[estop]\n", "[estop]\nout_safe_state: high\n"), encoding="utf-8")
     with pytest.raises(Exception, match="out_safe_state"):
         MachineConfigParser().parse(cfg)
+
+
+def test_pru_base_freq_sets_the_firmware_base_thread_too(tmp_path):
+    """One [mcu] key for both ends: the driver line and config_mcu.txt's
+    "Threads" block, so a regenerated config cannot fall back to the
+    firmware default while the driver is told another frequency."""
+    cfg = tmp_path / "machine.cfg"
+    cfg.write_text(CFG.format(extra="").replace("PRU_base_freq: 40000", "PRU_base_freq: 20000"), encoding="utf-8")
+    payload = json.loads(json.dumps(build_hardware_json(MachineConfigParser().parse(cfg), "cb1")))
+
+    from services.halcompiler.HalAssembler import HalAssembler
+    fragment = HalAssembler(payload).assemble()
+    config = json.loads(fragment.files["config_mcu.txt"])
+    assert config["Threads"] == [{"Thread": "Base", "Frequency": 20000}]
+    assert "PRU_base_freq=20000" in compile_machine_hal(payload)
+
+
+def test_no_pru_base_freq_no_threads_block(tmp_path):
+    cfg = tmp_path / "machine.cfg"
+    cfg.write_text(CFG.format(extra="").replace("PRU_base_freq: 40000\n", ""), encoding="utf-8")
+    payload = json.loads(json.dumps(build_hardware_json(MachineConfigParser().parse(cfg), "cb1")))
+
+    from services.halcompiler.HalAssembler import HalAssembler
+    config = json.loads(HalAssembler(payload).assemble().files["config_mcu.txt"])
+    assert "Threads" not in config
