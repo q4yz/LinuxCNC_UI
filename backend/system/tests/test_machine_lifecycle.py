@@ -933,3 +933,50 @@ def test_stop_also_stops_a_session_started_from_another_process(monkeypatch):
     result = _service().stop()
     assert killed == [(4242, signal.SIGINT)]
     assert result["state"] == "stopped"
+
+
+# --------------------------------------------------------------------- #
+# A failed start: the launcher waits on LinuxCNC's error dialog           #
+# --------------------------------------------------------------------- #
+
+
+def _failed_session(monkeypatch):
+    """The launcher (4242) lives while its error dialog (5151) is open."""
+    state = {"dialog": True}
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["pgrep", "-f"] and cmd[2] == "show_errors.tcl" and state["dialog"]:
+            return SimpleNamespace(returncode=0, stdout="5151\n")
+        if state["dialog"] and cmd[:2] == ["pgrep", "-x"] and "linuxcnc" in cmd[2].split("|"):
+            return SimpleNamespace(returncode=0, stdout="4242\n")
+        return SimpleNamespace(returncode=1, stdout="")
+
+    killed = []
+
+    def fake_kill(pid, sig):
+        killed.append((pid, sig))
+        if pid == 5151:
+            state["dialog"] = False   # closing the dialog ends the launcher
+
+    monkeypatch.setattr(mls_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(mls_module.os, "kill", fake_kill)
+    monkeypatch.setattr(mls_module.time, "sleep", lambda *_: None)
+    return killed
+
+
+def test_status_closes_the_error_dialog_of_a_failed_start(monkeypatch):
+    killed = _failed_session(monkeypatch)
+
+    status = _service().status()
+
+    assert killed == [(5151, signal.SIGTERM)]
+    assert status["running"] is False and status["state"] == "stopped"
+
+
+def test_stop_of_a_failed_start_needs_no_sigkill(monkeypatch):
+    killed = _failed_session(monkeypatch)
+
+    result = _service().stop()
+
+    assert killed == [(5151, signal.SIGTERM)]
+    assert result["running"] is False
