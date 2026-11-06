@@ -174,28 +174,18 @@ cd "$CERT_DIR"
 ALL_IPS=$(hostname -I)
 sudo -u "$REAL_USER" mkcert -cert-file localhost.pem -key-file localhost-key.pem localhost 127.0.0.1 $ALL_IPS
 
-# 7. Configure Camera Service (ustreamer)
-echo -e "\n---> Configuring uStreamer (USB Camera) service..."
-USTREAMER_SERVICE="/etc/systemd/system/ustreamer.service"
-cat << EOF > "$USTREAMER_SERVICE"
-[Unit]
-Description=uStreamer for CNC Camera
-After=network.target
-
-[Service]
-Type=simple
-User=$REAL_USER
-ExecStart=/usr/bin/ustreamer --device /dev/video0 --host 127.0.0.1 --port 8081 --resolution 1280x720 --desired-fps 15
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable ustreamer
-systemctl restart ustreamer
+# 7. Cameras: the machine backend starts one ustreamer per camera
+# itself (backend/machine/services/camera/UstreamerSupervisor.py), on
+# the camera picked in the UI. An older install created a fixed
+# ustreamer.service for /dev/video0 on port 8081 — on the BTT CB1 that
+# is the cedrus video decoder, not a camera, so the unit restarted
+# forever and held the port the UI's second camera needs. Remove it.
+if [ -f /etc/systemd/system/ustreamer.service ]; then
+    echo -e "\n---> Removing the old ustreamer.service (the UI manages cameras itself)..."
+    systemctl disable --now ustreamer.service || true
+    rm -f /etc/systemd/system/ustreamer.service
+    systemctl daemon-reload
+fi
 
 # 7b. Configure the system backend service (machine + system split —
 # see .agent/context/ARCHITECTURE.md). ONLY the system service (:8001)
