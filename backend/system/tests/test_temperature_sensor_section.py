@@ -81,8 +81,8 @@ def test_machine_hal_wiring(tmp_path):
     assert "net host-PV <= rpi-monitor.cpu-temp" in hal
     # A HAL signal is the operator's own — machine.hal leaves it alone.
     assert "cpu-temp" not in hal.replace("rpi-monitor.cpu-temp", "")
-    # The component behind a HAL pin is never loaded by the generator.
-    assert "rpi-monitor " not in hal and "loadusr -Wn rpi-monitor" not in hal
+    # rpi-monitor is a component the generator knows: loaded once.
+    assert hal.count("loadusr -Wn rpi-monitor python3 /usr/local/bin/rpi-monitor 1.0") == 1
 
 
 def test_board_thermistor_gets_firmware_module(tmp_path):
@@ -149,3 +149,58 @@ def test_io_pin_name_conflicts_with_sensor(tmp_path):
     payload = _payload(tmp_path, "[output_pin host]\npin: PB0\n")
     codes = {d.code for d in validate_machine(payload) if d.is_error}
     assert "E_IO_ID_CONFLICT" in codes
+
+
+def test_rpi_monitor_loaded_once_for_two_pins(tmp_path):
+    hal = compile_machine_hal(
+        _payload(tmp_path, "[temperature_sensor load]\nsensor_type: hal\nsensor_pin: rpi-monitor.cpu-load\n")
+    )
+    assert hal.count("loadusr -Wn rpi-monitor") == 1
+
+
+def test_other_hal_component_is_not_loaded(tmp_path):
+    payload = _payload(tmp_path)
+    payload["temperature_sensors"] = [s for s in payload["temperature_sensors"] if s["id"] != "host"]
+    assert "rpi-monitor" not in compile_machine_hal(payload)
+
+
+MCU_TEMP = "[temperature_sensor mcu]\nsensor_type: hal\nsensor_pin: remora.mcu-temp\n"
+
+
+def test_mcu_temp_gets_module_and_named_pin(tmp_path):
+    payload = _payload(tmp_path, MCU_TEMP)
+    assert not [d for d in validate_machine(payload) if d.is_error]
+    fragment = HalAssembler(payload).assemble()
+    hal = compile_machine_hal(payload)
+    # bed PV.0, chamber PV.1, then the MCU's own temperature.
+    assert "alias pin remora.PV.2 remora.mcu-temp" in hal
+    assert "net mcu-PV <= remora.mcu-temp" in hal
+    assert hal.index("alias pin remora.PV.2") < hal.index("net mcu-PV")
+    modules = json.loads(fragment.files["config_mcu.txt"])["Modules"]
+    assert {"Name": "mcu_temp", "Thread": "Servo", "Type": "MCU Temperature", "Comment": "mcu",
+            "PV[i]": 2} in modules
+    assert "net mcu-PV => webgui.mcu" in render_webgui_connections(payload).splitlines()
+
+
+def test_mcu_temp_declared_twice(tmp_path):
+    payload = _payload(tmp_path, MCU_TEMP + MCU_TEMP.replace("sensor mcu]", "sensor mcu2]"))
+    assert "E_MCU_TEMP_SHARED" in {d.code for d in validate_machine(payload) if d.is_error}
+
+
+def test_mcu_temp_needs_a_remora_board(tmp_path):
+    payload = _payload(tmp_path, MCU_TEMP)
+    payload["mcus"][0]["connection"] = "parport"
+    assert "E_MCU_TEMP_NO_REMORA" in {d.code for d in validate_machine(payload) if d.is_error}
+
+
+def test_threads_entry_follows_pru_base_freq(tmp_path):
+    def config(payload):
+        return json.loads(HalAssembler(payload).assemble().files["config_mcu.txt"])
+
+    assert "Threads" not in config(_payload(tmp_path))
+    payload = _payload(tmp_path)
+    payload["mcus"][0]["pru_base_freq"] = 20000
+    cfg = config(payload)
+    assert cfg["Threads"] == [{"Thread": "Base", "Frequency": 20000}]
+    assert list(cfg) == ["Board", "Threads", "Modules"]
+    assert "PRU_base_freq=20000" in compile_machine_hal(payload)

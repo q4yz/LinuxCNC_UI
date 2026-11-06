@@ -8,9 +8,11 @@
 > (`TemperatureService.preload_hal_pins`) and a line in the plot.
 > Tests: `backend/system/tests/test_temperature_sensor_section.py`.
 >
-> Not yet: the MCU's own internal temperature (Remora has no firmware
-> sensor type for it). Once a HAL pin carries it, it is just
-> `sensor_type: hal`.
+> Two HAL pins the generator provides itself, so the machine starts
+> without hand edits: `remora.mcu-temp` (the Remora board's MCU
+> temperature) and `rpi-monitor.*` (the host's CPU). Not yet: a CAN
+> node's (toolhead's) MCU temperature — the node firmware has no
+> "MCU Temperature" module.
 
 A reading with no heater behind it — chamber, electronics bay, the
 host's CPU. A heater's own sensor still comes from the heater section's
@@ -40,13 +42,15 @@ sensor_pin: cpu-temp
   dot it is a **pin**, without one an existing **signal** — a HAL pin
   sits on one signal only, so a pin your own HAL already wires is given
   by its signal instead.
-* The component behind a HAL pin is **not** loaded by the generator.
-  Load it in your own HAL file, e.g. for the host CPU
-  (Remora-m8p `LinuxCNC/Components/RPiMonitor`, Raspberry Pi and BTT CB1):
+* Known HAL pins:
 
-  ```hal
-  loadusr -Wn rpi-monitor python3 /path/to/RPiMonitor/rpi_monitor.py 1.0
-  ```
+  | `sensor_pin` | What the generator adds |
+  |---|---|
+  | `remora.mcu-temp` | The firmware's `"MCU Temperature"` module on the next free `PV[i]`, and `alias pin remora.PV.<N> remora.mcu-temp` so HAL shows the name. Needs a `remora-spi` MCU; one sensor per machine. |
+  | `rpi-monitor.cpu-temp` (any `rpi-monitor.*`) | `loadusr -Wn rpi-monitor python3 /usr/local/bin/rpi-monitor 1.0`, once (Remora-m8p `LinuxCNC/Components/RPiMonitor`, installed by `scripts/install_hal_components.sh`; Raspberry Pi and BTT CB1). |
+
+  Any other HAL pin's component is **not** loaded — load it in your own
+  HAL file.
 
 ## 2. hardware.json
 
@@ -67,7 +71,10 @@ machine.hal:
 
 ```hal
 net chamber-PV <= remora.PV.<N>          # board pin: routed like a heater's sensor
+loadusr -Wn rpi-monitor python3 /usr/local/bin/rpi-monitor 1.0
 net host-PV <= rpi-monitor.cpu-temp      # HAL pin
+alias pin remora.PV.<N> remora.mcu-temp  # remora.mcu-temp
+net mcu-PV <= remora.mcu-temp
                                          # HAL signal: nothing here
 ```
 
@@ -91,6 +98,8 @@ net cpu-temp => webgui.host_signal
 | `UndefinedMcuError` | a board pin's `mcu:` prefix names no `[mcu]`. |
 | `DuplicateTemperatureSensorError` | `NAME` is a heater's own sensor id (`[heater_bed]` -> `bed`, `[extruder]` -> `extruder`). |
 | `E_IO_ID_CONFLICT` | an `[output_pin]` / `[input_pin]` has the same name. |
+| `E_MCU_TEMP_NO_REMORA` | `remora.mcu-temp` on a machine without a `remora-spi` MCU. |
+| `E_MCU_TEMP_SHARED` | two sensors read `remora.mcu-temp`. |
 | `E_HEATER_HAL_SENSOR` | (hand-written hardware.json) a heater reads a `type: hal` sensor — heaters read a board thermistor only so far. |
 
 A `type: hal` pin is never checked as a board pin (no pin-conflict or

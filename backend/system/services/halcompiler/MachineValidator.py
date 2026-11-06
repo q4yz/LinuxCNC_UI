@@ -21,7 +21,7 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
-from .components.TemperatureSensorHalMapper import is_hal_sensor
+from .components.TemperatureSensorHalMapper import is_hal_sensor, is_mcu_temp_sensor, remora_mcu_id
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
 
@@ -90,6 +90,7 @@ class MachineValidator:
         self._check_can()
         self._check_references()
         self._check_io_ids()
+        self._check_mcu_temp()
         self._check_halpin_sets()
         self._check_joints_and_axes()
         self._check_corexy()
@@ -456,6 +457,24 @@ class MachineValidator:
                     f"({', '.join(drivers)}); a node configures at most {MAX_CAN_NODE_DRIVERS}.",
                     node_id,
                 )
+
+    def _check_mcu_temp(self) -> None:
+        """``remora.mcu-temp`` needs a ``remora-spi`` board, and that board
+        has one MCU temperature — one sensor reads it."""
+        owners = [str(s.get("id", "?")) for s in self._records("temperature_sensors") if is_mcu_temp_sensor(s)]
+        if owners and remora_mcu_id(self._payload) is None:
+            self._error(
+                "E_MCU_TEMP_NO_REMORA",
+                "remora.mcu-temp is the Remora board's MCU temperature; this machine has no "
+                "remora-spi MCU.",
+                owners[0],
+            )
+        if len(owners) > 1:
+            self._error(
+                "E_MCU_TEMP_SHARED",
+                f"remora.mcu-temp is read by {', '.join(owners)}; declare it once.",
+                owners[1],
+            )
 
     def _check_io_ids(self) -> None:
         """An ``[output_pin]`` / ``[input_pin]`` name is its HAL signal

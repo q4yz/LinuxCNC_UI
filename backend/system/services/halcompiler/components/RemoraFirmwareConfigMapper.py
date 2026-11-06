@@ -10,7 +10,9 @@ mapper, same as every other Remora-specific shape in this package
 
 Root shape verified against the real, working
 `machine_config/example/ender3/config.txt` — `{"Board": ..., "Modules":
-[...]}`, no top-level `"Thread"` frequency block.
+[...]}`. A `"Threads"` block (`[{"Thread": "Base", "Frequency": N}]`,
+Remora-m8p `main.cpp` configThreads) is added only when the MCU declares
+`PRU_base_freq`, so firmware and driver agree on the base rate.
 """
 
 from __future__ import annotations
@@ -31,10 +33,14 @@ class RemoraFirmwareConfigMapper:
 
     @staticmethod
     def to_config(mcu: dict[str, Any], modules: list[dict[str, object]]) -> dict[str, Any]:
-        return {
-            "Board": mcu.get("board") or DEFAULT_FIRMWARE_BOARD,
-            "Modules": modules,
-        }
+        config: dict[str, Any] = {"Board": mcu.get("board") or DEFAULT_FIRMWARE_BOARD}
+        if mcu.get("pru_base_freq"):
+            # The firmware's base thread must run at the rate the driver's
+            # ``PRU_base_freq`` assumes (the firmware default is 40 kHz),
+            # else every step rate is off by their ratio.
+            config["Threads"] = [{"Thread": "Base", "Frequency": int(mcu["pru_base_freq"])}]
+        config["Modules"] = modules
+        return config
 
 
 __all__ = ["DEFAULT_FIRMWARE_BOARD", "RemoraFirmwareConfigMapper"]

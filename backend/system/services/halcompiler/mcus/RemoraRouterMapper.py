@@ -47,6 +47,15 @@ _THERMISTOR_CURVES: dict[str, tuple[int, int, int]] = {
 _DIGITAL_BITS = 16
 
 
+#: ``sensor_type: hal`` pin name for a Remora board's own MCU (die)
+#: temperature. Not a driver pin: the compiler gives it a free
+#: ``remora.PV.N`` plus the firmware's "MCU Temperature" module and
+#: aliases that PV to this name.
+MCU_TEMP_PIN = "remora.mcu-temp"
+#: ``PinRequest.sensor_type`` marking that request.
+MCU_TEMP_SENSOR_TYPE = "mcu_temperature"
+
+
 class RemoraRouterMapper:
     """Routes :class:`PinRequest` entries whose ``pin.mcu_id`` is this MCU."""
 
@@ -322,6 +331,25 @@ class RemoraRouterMapper:
                     )
                 )
                 sp_index += 1
+            elif request.role is PinRole.ANALOG_IN and request.sensor_type == MCU_TEMP_SENSOR_TYPE:
+                # The board's own die temperature ("MCU Temperature"
+                # module, Remora-m8p modules/mcuTemp) on a free PV,
+                # named remora.mcu-temp so HAL never shows a bare number.
+                fragment.nets.append(f"alias pin remora.PV.{pv_index} {MCU_TEMP_PIN}")
+                fragment.nets.append(f"net {request.signal} <= {MCU_TEMP_PIN}")
+                fragment.firmware_modules.append(
+                    FirmwareModuleRequest(
+                        mcu_id=request.pin.mcu_id,
+                        module={
+                            "Name": "mcu_temp",
+                            "Thread": "Servo",
+                            "Type": "MCU Temperature",
+                            "Comment": request.owner,
+                            "PV[i]": pv_index,
+                        },
+                    )
+                )
+                pv_index += 1
             elif request.role is PinRole.ANALOG_IN:
                 fragment.nets.append(f"net {request.signal} <= remora.PV.{pv_index}")
                 curve = RemoraRouterMapper.thermistor_curve(request.sensor_type)
@@ -355,4 +383,4 @@ class RemoraRouterMapper:
         return fragment
 
 
-__all__ = ["RemoraRouterMapper"]
+__all__ = ["MCU_TEMP_PIN", "MCU_TEMP_SENSOR_TYPE", "RemoraRouterMapper"]
