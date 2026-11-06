@@ -10,9 +10,14 @@ mapper, same as every other Remora-specific shape in this package
 
 Root shape verified against the real, working
 `machine_config/example/ender3/config.txt` — `{"Board": ..., "Modules":
-[...]}`. A `"Threads"` block (`[{"Thread": "Base", "Frequency": N}]`,
-Remora-m8p `main.cpp` configThreads) is added only when the MCU declares
-`PRU_base_freq`, so firmware and driver agree on the base rate.
+[...]}`. A `"Threads"` block is added only when the MCU declares
+`PRU_base_freq`: the firmware's base thread then runs at the frequency
+the `loadrt remora-spi PRU_base_freq=` line tells the driver, both from
+the one `[mcu]` key. Without it the firmware ran its own default
+(40 kHz) whatever the driver was told, and a regenerated config dropped
+a hand-added block: an STM32G0 board (Manta M8P) is too slow for 40 kHz
+with five step generators, it stops answering SPI and the next
+`remora-upload --sync` fails.
 """
 
 from __future__ import annotations
@@ -34,13 +39,21 @@ class RemoraFirmwareConfigMapper:
     @staticmethod
     def to_config(mcu: dict[str, Any], modules: list[dict[str, object]]) -> dict[str, Any]:
         config: dict[str, Any] = {"Board": mcu.get("board") or DEFAULT_FIRMWARE_BOARD}
-        if mcu.get("pru_base_freq"):
-            # The firmware's base thread must run at the rate the driver's
-            # ``PRU_base_freq`` assumes (the firmware default is 40 kHz),
-            # else every step rate is off by their ratio.
-            config["Threads"] = [{"Thread": "Base", "Frequency": int(mcu["pru_base_freq"])}]
+        threads = RemoraFirmwareConfigMapper.threads(mcu)
+        if threads:
+            config["Threads"] = threads
         config["Modules"] = modules
         return config
+
+    @staticmethod
+    def threads(mcu: dict[str, Any]) -> list[dict[str, object]]:
+        """The firmware `"Threads"` block: the base thread at the MCU's
+        `PRU_base_freq` (the same value as the driver line), `[]` when
+        none is declared (firmware and driver keep their defaults)."""
+        base = mcu.get("pru_base_freq")
+        if not base:
+            return []
+        return [{"Thread": "Base", "Frequency": int(base)}]
 
 
 __all__ = ["DEFAULT_FIRMWARE_BOARD", "RemoraFirmwareConfigMapper"]

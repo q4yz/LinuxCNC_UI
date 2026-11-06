@@ -193,6 +193,17 @@ phase "stopping services"
 # so there is no linuxcnc-ui-machine unit to stop here.
 sudo /bin/systemctl stop linuxcnc-ui-system
 
+# Older installs created a fixed ustreamer.service (/dev/video0, port
+# 8081) that fights the UI's own camera handling. Remove it if sudo
+# allows it without a password; otherwise say how.
+if [ -f /etc/systemd/system/ustreamer.service ]; then
+    if sudo -n /bin/systemctl disable --now ustreamer.service 2>/dev/null; then
+        echo "Disabled the old ustreamer.service (the UI manages cameras itself)."
+    else
+        echo "NOTE: the old ustreamer.service blocks the camera. Run once: sudo systemctl disable --now ustreamer.service"
+    fi
+fi
+
 echo "Cleaning up orphaned backend processes..."
 pkill -f "uvicorn" || true
 pkill -f "python.*backend" || true

@@ -248,6 +248,62 @@ def linuxcnc_pids() -> List[int]:
     return sorted(pid for pid in pids if not _is_zombie(pid))
 
 
+#: The Tk dialog LinuxCNC's launcher shows a failed session in
+#: (``ErrorCheck`` in ``/usr/bin/linuxcnc``): with ``DISPLAY`` set and no
+#: tty — exactly how this service starts it — a start that fails (a HAL
+#: file error, ``remora-upload --sync`` without a reply from the board)
+#: opens it on the machine's screen and the launcher waits until someone
+#: closes it. Until then the session counted as "running" (the launcher
+#: is still a live ``linuxcnc`` process), start() refused with "already
+#: running" and stop() ended in SIGKILL (bash defers SIGINT / SIGTERM
+#: while it waits for the dialog). The error text is in the console log.
+_ERROR_DIALOG = "show_errors.tcl"
+_ERROR_DIALOG_EXIT_SECONDS = 3.0
+
+
+def error_dialog_pids() -> List[int]:
+    """Pids of LinuxCNC's failed-session dialog (``[]`` when none / no ``pgrep``)."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", _ERROR_DIALOG],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return sorted({int(line) for line in result.stdout.split() if line.isdigit()})
+
+
+def close_error_dialogs() -> bool:
+    """Close the failed-session dialog so the launcher exits; ``True``
+    when one was open. Waits briefly for the launcher to finish, then
+    the session reads as stopped."""
+    dialogs = error_dialog_pids()
+    if not dialogs:
+        return False
+    logger.warning(
+        "LinuxCNC failed to start and its launcher waits on the error dialog (pids %s): "
+        "closing it, the error is in %s.",
+        dialogs,
+        _CONSOLE_LOG,
+    )
+    for pid in dialogs:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            logger.warning("closing the LinuxCNC error dialog (pid %s) failed: %s", pid, exc)
+    deadline = time.monotonic() + _ERROR_DIALOG_EXIT_SECONDS
+    while linuxcnc_pids() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return True
+
+
 class MachineLifecycleService:
     """Start / stop / switch the LinuxCNC machine session.
 
@@ -427,6 +483,7 @@ class MachineLifecycleService:
     def status(self) -> Dict[str, Any]:
         ini = self.default_ini()
         name = self.default_machine()
+        close_error_dialogs()
         pids = linuxcnc_pids()
         state: SessionState = self._transition or ("running" if pids else "stopped")
         return {
@@ -467,6 +524,7 @@ class MachineLifecycleService:
                 ``NotFoundError`` is raised when no default has been
                 selected yet.
         """
+        close_error_dialogs()
         running = linuxcnc_pids()
         if running:
             if session_owner(running) == "external":
@@ -621,6 +679,7 @@ class MachineLifecycleService:
         another INI (``owner == "external"``), which ``start()`` refuses
         to run alongside; this is how the operator clears it.
         """
+        close_error_dialogs()
         pids = linuxcnc_pids()
         if not pids:
             return self.status()

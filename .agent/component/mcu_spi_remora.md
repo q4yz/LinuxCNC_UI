@@ -46,7 +46,10 @@
     SPI_freq: integer       // SPI clock in Hz, e.g. 1000000 (Pi 5, generic spidev / BTT CB1)
     SPI_clk_div: integer    // OR: bcm2835 clock divider (Pi 3/4) — exclusive with SPI_freq;
                             // neither = SPI_clk_div=64
-    PRU_base_freq: integer  // PRU base thread frequency in Hz (driver default 40000); also written to config.txt as "Threads": [{"Thread": "Base", "Frequency": N}] so the firmware runs at the same rate
+    PRU_base_freq: integer  // PRU base thread frequency in Hz (driver default 40000); also written
+                            // to config_<mcu>.txt as "Threads": [{"Thread": "Base", ...}] so the
+                            // firmware runs what the driver is told. STM32G0 (Manta M8P): 20000
+                            // (40 kHz with 5 stepgens starves the board, it stops answering SPI)
     spi_cs_pin: string      // chip select on a host GPIO, e.g. PC10 (BTT CB1: no CS on the header)
     spi_cs_chip: string     // gpiochip of spi_cs_pin
     reset_pin: string       // host GPIO that resets the board, e.g. PC12 (not board_reset_pin)
