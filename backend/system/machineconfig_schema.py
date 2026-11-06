@@ -206,9 +206,10 @@ BED_MESH_KEYS = frozenset({"probe_count"})
 # is shown in the UI and can run G-code on its edges.
 OUTPUT_PIN_KEYS = frozenset({"pin", "pwm", "value", "shutdown_value", "cycle_time", "scale"})
 # A standalone temperature reading (`.agent/component/temperature_sensor.md`):
-# a thermistor on a board pin, or (``sensor_type: hal``) any float HAL
-# pin or signal, e.g. the host's own CPU temperature.
-TEMPERATURE_SENSOR_KEYS = frozenset({"sensor_type", "sensor_pin"})
+# a thermistor on a board pin, any float HAL pin or signal
+# (``sensor_type: hal``), the host's CPU (``temperature_host``, with an
+# optional ``thermal_zone``) or the Remora board's MCU (``temperature_mcu``).
+TEMPERATURE_SENSOR_KEYS = frozenset({"sensor_type", "sensor_pin", "thermal_zone"})
 INPUT_PIN_KEYS = frozenset({
     "pin", "rising_ngc", "falling_ngc", "rising_halpin_set", "falling_halpin_set",
 })

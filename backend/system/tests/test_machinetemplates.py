@@ -250,6 +250,8 @@ def test_render_ini_template_is_live_and_loadable():
     assert "[HAL]" in text
     assert "HALFILE = machine.hal" in text
     assert "HALFILE = custom.hal" in text
+    # user.hal after machine.hal (its signals exist), before custom.hal.
+    assert text.index("HALFILE = machine.hal") < text.index("HALFILE = user.hal") < text.index("HALFILE = custom.hal")
     assert "POSTGUI_HALFILE = postgui_call_list.hal" in text
     # start_network.sh runs from the linuxcnc-ui-cert systemd unit
     # (install.sh), not as a LinuxCNC [APPLICATIONS] APP.
@@ -893,3 +895,22 @@ def test_machines_crud_roundtrip(machine_app, isolated_roots):
     client.post(f"{base}/file", json={"path": "busy/child.cfg"})
     resp = client.delete(f"{base}/entry", params={"path": "busy"})
     assert resp.status_code == 400
+
+
+def test_regenerate_keeps_user_hal(isolated_roots):
+    """user.hal is the operator's own: seeded once, never rewritten."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+    from services.machinetemplates.generator import USER_HAL_TEMPLATE
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", **kwargs)
+    user_hal = isolated_roots["machines"] / "my_machine" / "configs" / "user.hal"
+    assert user_hal.read_text(encoding="utf-8") == USER_HAL_TEMPLATE
+
+    user_hal.write_text("loadusr -Wn mysensor mysensor-program\n", encoding="utf-8")
+    generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
+    assert user_hal.read_text(encoding="utf-8") == "loadusr -Wn mysensor mysensor-program\n"

@@ -362,6 +362,28 @@ def _temperature_sensor_payload(heater_section: str, h) -> dict[str, Any]:
     }
 
 
+#: The host monitor's CPU temperature pin (Remora-m8p RPiMonitor).
+HOST_TEMP_PIN = "rpi-monitor.cpu-temp"
+
+
+def _standalone_sensor_payload(graph: MachineConfigGraph, sensor) -> dict[str, Any]:
+    """``[temperature_sensor NAME]`` -> ``temperature_sensors[]``. The
+    pin-less kinds get the pin they read: the host monitor's HAL pin, or
+    the Remora board (its MCU id) whose own temperature is read."""
+    pin = sensor.sensor_pin
+    if sensor.sensor_type == "temperature_host":
+        pin = HOST_TEMP_PIN
+    elif sensor.sensor_type == "temperature_mcu":
+        pin = next(
+            (mcu_id for mcu_id, mcu in graph.mcus.items() if getattr(mcu, "connection", None) == "remora-spi"),
+            next(iter(graph.mcus), "mcu"),
+        )
+    record: dict[str, Any] = {"id": sensor.name, "pin": pin, "type": sensor.sensor_type}
+    if sensor.thermal_zone is not None:
+        record["thermal_zone"] = sensor.thermal_zone
+    return record
+
+
 def _fan_payload(heater_section: str, h) -> dict[str, Any]:
     """Build a fan entry from a heater's heater_pin.
 
@@ -880,9 +902,7 @@ def build_hardware_json(
     # ``[temperature_sensor NAME]``: a reading no heater claims, shown in
     # the temperature plot (`.agent/component/temperature_sensor.md`).
     for sensor in graph.temperature_sensors.values():
-        temperature_sensor_records.append(
-            {"id": sensor.name, "pin": sensor.sensor_pin, "type": sensor.sensor_type}
-        )
+        temperature_sensor_records.append(_standalone_sensor_payload(graph, sensor))
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
     for spindle_id, spindle in graph.spindle_digitals.items():

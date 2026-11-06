@@ -1253,17 +1253,35 @@ class MachineConfigParser:
         name: str,
         section: configparser.SectionProxy,
     ) -> TemperatureSensorConfig:
-        """Build a :class:`TemperatureSensorConfig`. With ``sensor_type:
-        hal`` the pin is a HAL name, checked here; a board pin's MCU
-        prefix is checked with every other pin afterwards."""
+        """Build a :class:`TemperatureSensorConfig`. ``temperature_host`` /
+        ``temperature_mcu`` take no pin; with ``hal`` the pin is a HAL
+        name, checked here; a board pin's MCU prefix is checked with
+        every other pin afterwards."""
+        sensor_type = self._required_string(section_name, section, "sensor_type")
+        kind = sensor_type.strip().lower()
+        thermal_zone = self._optional_int(section_name, section, "thermal_zone")
+        if thermal_zone is not None and kind != "temperature_host":
+            raise InvalidValueError(
+                section_name, "thermal_zone", str(thermal_zone), "only with sensor_type: temperature_host"
+            )
+        if thermal_zone is not None and thermal_zone < 0:
+            raise InvalidValueError(section_name, "thermal_zone", str(thermal_zone), "a zone number, 0 or above")
+        if kind in ("temperature_host", "temperature_mcu"):
+            pin = self._optional_string(section, "sensor_pin")
+            if pin is not None:
+                raise InvalidValueError(
+                    section_name, "sensor_pin", pin,
+                    f"no sensor_pin — sensor_type: {kind} knows where it reads",
+                )
+            return TemperatureSensorConfig(name=name, sensor_type=kind, thermal_zone=thermal_zone)
         sensor = TemperatureSensorConfig(
             name=name,
-            sensor_type=self._required_string(section_name, section, "sensor_type"),
+            sensor_type=sensor_type,
             sensor_pin=self._required_string(section_name, section, "sensor_pin"),
         )
         if sensor.is_hal:
             sensor.sensor_type = "hal"
-            if not _HAL_NAME.fullmatch(sensor.sensor_pin):
+            if not _HAL_NAME.fullmatch(sensor.sensor_pin or ""):
                 raise InvalidValueError(
                     section_name, "sensor_pin", sensor.sensor_pin,
                     "a HAL pin (rpi-monitor.cpu-temp) or signal name",
@@ -1592,7 +1610,7 @@ class MachineConfigParser:
         for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
             MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
         for name, sensor in graph.temperature_sensors.items():
-            if not sensor.is_hal:
+            if sensor.is_board_pin:
                 MachineConfigParser._validate_pin_mcu(
                     f"temperature_sensor {name}", "sensor_pin", sensor.sensor_pin, declared
                 )

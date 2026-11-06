@@ -254,6 +254,9 @@ class TemperatureSensor(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
     type: str | None = None
+    #: ``type: temperature_host`` only — the ``/sys/class/thermal``
+    #: zone to read (BTT CB1: 2, the CPU; zone 0 is the GPU).
+    thermal_zone: int | None = None
 
 
 class Fan(BaseModel):

@@ -257,6 +257,10 @@ def render_ini_template(
         "",
         "[HAL]",
         "HALFILE = machine.hal",
+        # The operator's own HAL, never regenerated: after machine.hal
+        # (its signals exist), before custom.hal (webgui_connections.hal
+        # may read a pin a component loaded here creates).
+        "HALFILE = user.hal",
         "HALFILE = custom.hal",
         "POSTGUI_HALFILE = postgui_call_list.hal",
         "HALUI = halui",

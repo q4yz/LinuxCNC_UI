@@ -339,18 +339,29 @@ class TemperatureSensorConfig:
     """``[temperature_sensor NAME]`` (`.agent/component/temperature_sensor.md`):
     a reading with no heater behind it, shown in the temperature plot.
 
-    ``sensor_type: hal`` makes ``sensor_pin`` a HAL name — a float pin
-    (``rpi-monitor.cpu-temp``, it has a dot) or an existing signal (no
-    dot). Any other type is a thermistor on the board pin ``sensor_pin``.
+    ``sensor_type`` decides what ``sensor_pin`` is:
+
+    * ``hal`` — a HAL name: a float pin (``mycomp.temp``, it has a dot)
+      or an existing signal (no dot);
+    * ``temperature_host`` — no pin: the host's CPU (``rpi-monitor``,
+      loaded by the generator); ``thermal_zone`` picks the zone;
+    * ``temperature_mcu`` — no pin: the Remora board's own MCU;
+    * anything else — a thermistor type, on the board pin ``sensor_pin``.
     """
 
     name: str
     sensor_type: str
-    sensor_pin: str
+    sensor_pin: str | None = None
+    thermal_zone: int | None = None
 
     @property
     def is_hal(self) -> bool:
         return self.sensor_type.strip().lower() == "hal"
+
+    @property
+    def is_board_pin(self) -> bool:
+        """A thermistor on a board pin (the only kind with an MCU pin)."""
+        return self.sensor_type.strip().lower() not in ("hal", "temperature_host", "temperature_mcu")
 
 
 @dataclass(slots=True)
