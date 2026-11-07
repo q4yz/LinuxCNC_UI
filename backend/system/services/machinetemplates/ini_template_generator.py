@@ -185,6 +185,7 @@ def render_ini_template(
     tools: List[Dict[str, Any]] | None = None,
     mdi_commands: List[str] | None = None,
     corexy: bool = False,
+    homing_override: bool = False,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -207,6 +208,10 @@ def render_ini_template(
             ``halui.mdi-command-NN`` order (an ``[input_pin]``'s edges,
             ``IoPinHalMapper.mdi_commands``); their subroutines live in
             the config's ``subroutines/`` folder.
+        corexy: CoreXY kinematics instead of ``trivkins``.
+        homing_override: The machine homes with a ``[homing_override]``
+            routine — ``[TRAJ] NO_FORCE_HOMING = 1`` so the routine's
+            moves run before every joint is homed.
     """
     tools = tools or []
     mdi_commands = mdi_commands or []
@@ -257,6 +262,10 @@ def render_ini_template(
         "",
         "[HAL]",
         "HALFILE = machine.hal",
+        # The operator's own HAL, never regenerated: after machine.hal
+        # (its signals exist), before custom.hal (webgui_connections.hal
+        # may read a pin a component loaded here creates).
+        "HALFILE = user.hal",
         "HALFILE = custom.hal",
         "POSTGUI_HALFILE = postgui_call_list.hal",
         "HALUI = halui",
@@ -268,6 +277,10 @@ def render_ini_template(
         "ANGULAR_UNITS = degree",
         f"DEFAULT_LINEAR_VELOCITY = {_fmt(traj_default_velocity)}",
         f"MAX_LINEAR_VELOCITY = {_fmt(traj_max_velocity)}",
+        # [homing_override]: the routine moves before every joint is
+        # homed (e.g. lift Z clear), which LinuxCNC refuses otherwise.
+        # The UI still refuses to start a program until all are homed.
+        *(["NO_FORCE_HOMING = 1"] if homing_override else []),
         "",
         "[EMCIO]",
         "EMCIO = io",

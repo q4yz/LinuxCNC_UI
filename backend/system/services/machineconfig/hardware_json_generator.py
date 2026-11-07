@@ -57,7 +57,8 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from MachineConfigParser import MissingEstopSectionError, derive_heater_sensor_id, split_pin
+from core.homing_routine import homed_axes, parse_homing_routine
+from MachineConfigParser import InvalidValueError, MissingEstopSectionError, derive_heater_sensor_id, split_pin
 from models.machineconfig.HardwareJsonModels import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -205,6 +206,38 @@ def _input_pin_payload(input_pin) -> dict[str, Any]:
         "rising_halpin_set": [{"output": o, "value": v} for o, v in input_pin.rising_halpin_set],
         "falling_halpin_set": [{"output": o, "value": v} for o, v in input_pin.falling_halpin_set],
     }
+
+
+def _homing_override_payload(override, axis_ids: list[str]) -> dict[str, Any] | None:
+    """The top-level ``homing_override`` object, or ``None`` without one.
+
+    Checked against the machine's axes (the extruder's ``a`` included —
+    LinuxCNC needs every joint homed): ``axes`` defaults to all of them,
+    every ``G28`` names one of them, and the routine homes every axis in
+    ``axes`` — otherwise a home button would leave the machine unhomed.
+    """
+    if override is None:
+        return None
+    known = "".join(axis_ids)
+    axes = override.axes or known
+    unknown = [a for a in axes if a not in axis_ids]
+    if unknown:
+        raise InvalidValueError(
+            "homing_override", "axes", axes, f"axes of this machine ({known}); {''.join(unknown)} is none"
+        )
+    steps = parse_homing_routine(override.gcode)
+    for step in steps:
+        if any(a.lower() not in axis_ids for a in step.axes):
+            raise InvalidValueError("homing_override", "gcode", step.line, f"a G28 of this machine's axes ({known})")
+    homed = homed_axes(steps)
+    if homed is not None:
+        skipped = [a for a in axes if a.upper() not in homed]
+        if skipped:
+            raise InvalidValueError(
+                "homing_override", "gcode", "(the routine)",
+                f"a G28 for every axis in 'axes' ({axes}) — {''.join(skipped)} is never homed",
+            )
+    return {"gcode": override.gcode, "axes": axes}
 
 
 def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
@@ -360,6 +393,28 @@ def _temperature_sensor_payload(heater_section: str, h) -> dict[str, Any]:
         "pin": h.sensor_pin,
         "type": h.sensor_type,
     }
+
+
+#: The host monitor's CPU temperature pin (Remora-m8p RPiMonitor).
+HOST_TEMP_PIN = "rpi-monitor.cpu-temp"
+
+
+def _standalone_sensor_payload(graph: MachineConfigGraph, sensor) -> dict[str, Any]:
+    """``[temperature_sensor NAME]`` -> ``temperature_sensors[]``. The
+    pin-less kinds get the pin they read: the host monitor's HAL pin, or
+    the Remora board (its MCU id) whose own temperature is read."""
+    pin = sensor.sensor_pin
+    if sensor.sensor_type == "temperature_host":
+        pin = HOST_TEMP_PIN
+    elif sensor.sensor_type == "temperature_mcu":
+        pin = next(
+            (mcu_id for mcu_id, mcu in graph.mcus.items() if getattr(mcu, "connection", None) == "remora-spi"),
+            next(iter(graph.mcus), "mcu"),
+        )
+    record: dict[str, Any] = {"id": sensor.name, "pin": pin, "type": sensor.sensor_type}
+    if sensor.thermal_zone is not None:
+        record["thermal_zone"] = sensor.thermal_zone
+    return record
 
 
 def _fan_payload(heater_section: str, h) -> dict[str, Any]:
@@ -880,9 +935,7 @@ def build_hardware_json(
     # ``[temperature_sensor NAME]``: a reading no heater claims, shown in
     # the temperature plot (`.agent/component/temperature_sensor.md`).
     for sensor in graph.temperature_sensors.values():
-        temperature_sensor_records.append(
-            {"id": sensor.name, "pin": sensor.sensor_pin, "type": sensor.sensor_type}
-        )
+        temperature_sensor_records.append(_standalone_sensor_payload(graph, sensor))
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
     for spindle_id, spindle in graph.spindle_digitals.items():
@@ -1041,6 +1094,9 @@ def build_hardware_json(
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "homing_override": _homing_override_payload(
+            graph.homing_override, [str(a["id"]) for a in axes_records]
+        ),
         "output_pins": [_output_pin_payload(p) for p in graph.output_pins.values()],
         "input_pins": [_input_pin_payload(p) for p in graph.input_pins.values()],
         "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),

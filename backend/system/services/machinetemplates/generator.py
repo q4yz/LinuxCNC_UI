@@ -16,6 +16,8 @@ Generates the per-machine template set from a profile ``.cfg``:
                                webgui_connections.hal    (seeded with real spindle/heater bindings —
                                                            see _render_webgui_connections_starter)
                                postgui_call_list.hal     (empty placeholder; referenced by machine.ini)
+                               user.hal                  (the operator's own HAL — kept across
+                                                           regenerations, see USER_HAL_TEMPLATE)
                                tool.tbl                  (tools 1-99 pre-registered, Z/D zeroed —
                                                            see TOOL_TABLE_TEMPLATE)
 
@@ -37,7 +39,8 @@ folder already exists :class:`MachineExistsError` is raised unless
 the frontend confirms before retrying, and every file including
 ``webgui_connections.hal`` is regenerated from scratch (an operator
 who clicked through "this will replace the existing configuration"
-gets exactly that — no file is quietly spared, hand-wiring included).
+gets exactly that — no file is quietly spared, hand-wiring included —
+except ``user.hal``, the operator's own HAL, which is kept as it was).
 The one machine a regenerate can never touch, confirmed or not, is
 whichever one is currently selected as "main" (see
 :class:`MainMachineProtectedError`) — that one has to be deleted by
@@ -61,6 +64,7 @@ from services.halcompiler import (
     MachineValidator,
     UnsupportedMcuError,
     assemble_machine,
+    hal_pin_diagnostics,
     render_hal,
     render_webgui_connections,
     validate_machine,
@@ -83,8 +87,24 @@ GENERATED_FILES = (
     "custom.hal",
     "webgui_connections.hal",
     "postgui_call_list.hal",
+    "user.hal",
     "tool.tbl",
 )
+
+#: The one HAL file a regenerate never rewrites — the operator's own.
+USER_HAL = "user.hal"
+USER_HAL_TEMPLATE = """\
+# user.hal - your own HAL lines. NOT regenerated: kept as it is when the
+# machine is regenerated from its .cfg (every other file is rewritten).
+#
+# Runs after machine.hal (its signals exist) and before custom.hal /
+# webgui_connections.hal. Load extra components here, e.g. for a
+# [temperature_sensor] with sensor_type: hal:
+#
+#   loadusr -Wn mysensor mysensor-program
+#
+# and then sensor_pin: mysensor.temp in machine.cfg.
+"""
 
 #: The venv interpreter + machine backend entrypoint ``custom.hal``
 #: loads as the ``webgui`` HAL userspace component. Both paths are
@@ -178,7 +198,9 @@ TOOL_TABLE_TEMPLATE = (
 )
 
 
-def _compile_machine(machine_name: str, payload: Dict[str, Any]) -> tuple[str, Dict[str, str]]:
+def _compile_machine(
+    machine_name: str, payload: Dict[str, Any], user_hal: str = ""
+) -> tuple[str, Dict[str, str]]:
     """The compiled wiring, or :class:`MachineInvalidError` — never a
     half-working machine.
 
@@ -205,7 +227,13 @@ def _compile_machine(machine_name: str, payload: Dict[str, Any]) -> tuple[str, D
             machine_name, [Diagnostic("E_COMPILE", Severity.ERROR, str(exc))]
         ) from exc
 
-    hal_text = MACHINE_HAL_HEADER.format(machine_name=machine_name) + "\n" + render_hal(fragment)
+    body = render_hal(fragment)
+    # A ``type: hal`` sensor pin that nothing creates, or that is already
+    # wired, would abort LinuxCNC at start — refuse it here instead.
+    pin_errors = hal_pin_diagnostics(payload, body, user_hal)
+    if pin_errors:
+        raise MachineInvalidError(machine_name, pin_errors)
+    hal_text = MACHINE_HAL_HEADER.format(machine_name=machine_name) + "\n" + body
     return hal_text, dict(fragment.files)
 
 
@@ -392,11 +420,17 @@ def generate_machine_templates(
     payload: Dict[str, Any] = build_hardware_json(graph, machine_name)
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
 
+    # user.hal survives the regenerate (read before the folder is
+    # cleared) and its components count when the sensor pins are checked.
+    user_hal_file = configs_dir / USER_HAL
+    user_hal = user_hal_file.read_text(encoding="utf-8") if user_hal_file.is_file() else USER_HAL_TEMPLATE
+
     # Compiled before anything is touched: an invalid profile must not
     # replace a working machine with a broken one.
-    hal_text, mcu_sidecar_files = _compile_machine(machine_name, payload)
+    hal_text, mcu_sidecar_files = _compile_machine(machine_name, payload, user_hal)
 
     machine_service.clear_directory(configs_dir)
+    (configs_dir / USER_HAL).write_text(user_hal, encoding="utf-8")
     # [input_pin] edges: halui MDI commands calling generated subroutines.
     input_commands = mdi_commands(payload.get("input_pins") or [])
 
@@ -418,6 +452,7 @@ def generate_machine_templates(
             payload.get("tools"),
             [c.ini_line for c in input_commands],
             corexy=payload.get("kinematics") == "corexy",
+            homing_override=isinstance(payload.get("homing_override"), dict),
         ),
         encoding="utf-8",
     )

@@ -17,6 +17,7 @@ from models.machineconfig import (
     Fan,
     Heater,
     HeaterFan,
+    HomingOverride,
     InputPin,
     MachineConfigGraph,
     MCU,
@@ -30,6 +31,7 @@ from models.machineconfig import (
     TMC2209,
     ToolLengthSensor,
 )
+from core.homing_routine import AXIS_LETTERS, HomingRoutineError, parse_homing_routine
 from machineconfig_schema import (
     ALLOWED_CONNECTION_TYPES,
     EXTRUDER_KEYS,
@@ -754,6 +756,8 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.HOMING_OVERRIDE:
+                graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
             elif section_schema.kind is SectionKind.OUTPUT_PIN:
@@ -1253,17 +1257,35 @@ class MachineConfigParser:
         name: str,
         section: configparser.SectionProxy,
     ) -> TemperatureSensorConfig:
-        """Build a :class:`TemperatureSensorConfig`. With ``sensor_type:
-        hal`` the pin is a HAL name, checked here; a board pin's MCU
-        prefix is checked with every other pin afterwards."""
+        """Build a :class:`TemperatureSensorConfig`. ``temperature_host`` /
+        ``temperature_mcu`` take no pin; with ``hal`` the pin is a HAL
+        name, checked here; a board pin's MCU prefix is checked with
+        every other pin afterwards."""
+        sensor_type = self._required_string(section_name, section, "sensor_type")
+        kind = sensor_type.strip().lower()
+        thermal_zone = self._optional_int(section_name, section, "thermal_zone")
+        if thermal_zone is not None and kind != "temperature_host":
+            raise InvalidValueError(
+                section_name, "thermal_zone", str(thermal_zone), "only with sensor_type: temperature_host"
+            )
+        if thermal_zone is not None and thermal_zone < 0:
+            raise InvalidValueError(section_name, "thermal_zone", str(thermal_zone), "a zone number, 0 or above")
+        if kind in ("temperature_host", "temperature_mcu"):
+            pin = self._optional_string(section, "sensor_pin")
+            if pin is not None:
+                raise InvalidValueError(
+                    section_name, "sensor_pin", pin,
+                    f"no sensor_pin — sensor_type: {kind} knows where it reads",
+                )
+            return TemperatureSensorConfig(name=name, sensor_type=kind, thermal_zone=thermal_zone)
         sensor = TemperatureSensorConfig(
             name=name,
-            sensor_type=self._required_string(section_name, section, "sensor_type"),
+            sensor_type=sensor_type,
             sensor_pin=self._required_string(section_name, section, "sensor_pin"),
         )
         if sensor.is_hal:
             sensor.sensor_type = "hal"
-            if not _HAL_NAME.fullmatch(sensor.sensor_pin):
+            if not _HAL_NAME.fullmatch(sensor.sensor_pin or ""):
                 raise InvalidValueError(
                     section_name, "sensor_pin", sensor.sensor_pin,
                     "a HAL pin (rpi-monitor.cpu-temp) or signal name",
@@ -1296,6 +1318,27 @@ class MachineConfigParser:
             return None
         lines = [line.strip() for line in section[key].splitlines()]
         return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
+
+    def _parse_homing_override(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> HomingOverride:
+        """Build the machine's :class:`HomingOverride`: ``gcode`` is the
+        routine (comment lines and blanks dropped, each ``G28`` line
+        checked), ``axes`` the axis letters whose home button runs it —
+        empty here means "every axis", resolved once the axes are known."""
+        gcode = self._ngc_lines(section, "gcode")
+        if gcode is None:
+            raise MissingRequiredKeywordError(section_name, "gcode")
+        try:
+            parse_homing_routine(gcode)
+        except HomingRoutineError as exc:
+            raise InvalidValueError(section_name, "gcode", exc.line.strip(), exc.reason) from exc
+        axes_raw = (self._optional_string(section, "axes") or "").replace(",", "").replace(" ", "")
+        if axes_raw and not set(axes_raw.upper()) <= set(AXIS_LETTERS):
+            raise InvalidValueError(section_name, "axes", axes_raw, f"axis letters ({AXIS_LETTERS.lower()})")
+        return HomingOverride(gcode=gcode, axes="".join(dict.fromkeys(axes_raw.lower())))
 
     def _parse_bed_mesh(
         self,
@@ -1592,7 +1635,7 @@ class MachineConfigParser:
         for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
             MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
         for name, sensor in graph.temperature_sensors.items():
-            if not sensor.is_hal:
+            if sensor.is_board_pin:
                 MachineConfigParser._validate_pin_mcu(
                     f"temperature_sensor {name}", "sensor_pin", sensor.sensor_pin, declared
                 )
