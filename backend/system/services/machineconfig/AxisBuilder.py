@@ -63,6 +63,10 @@ FULL_STEPS_PER_REVOLUTION = 200
 #: axis letter not listed here (e.g. the extruder's synthetic "A")
 #: shares Z's first phase, as before.
 _HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 1, "Y": 2, "X": 3}
+#: An extruder's travel (`.agent/component/exturder.md` § 3): filament
+#: is continuous, there is nothing to hit.
+EXTRUDER_MIN_LIMIT = -9999.0
+EXTRUDER_MAX_LIMIT = 999999999.0
 _FIRST_HOME_SEQUENCE = 1
 
 #: How far ``HOME`` (the final resting position after homing) pulls
@@ -195,6 +199,9 @@ class AxisBuilder:
                 # `remora.joint.0.*`.
                 joint = self._make_extruder_joint(heater, self._next_joint())
                 self._axes["A"].joints.append(joint)
+                # Without this [AXIS_A] kept MAX_VELOCITY = 0 and a 0..0
+                # travel: G-code could never move the extruder.
+                self._apply_axis_envelope_from_joint(self._axes["A"], joint)
 
         ordered: list[Axis] = []
         for letter in AXIS_ORDER:
@@ -426,7 +433,19 @@ class AxisBuilder:
             microsteps=extruder.microsteps,
             rotation_distance=extruder.rotation_distance,
         )
-        return self._make_joint(stub, "A", joint_number=joint_number)
+        joint = self._make_joint(stub, "A", joint_number=joint_number)
+        # Filament is continuous and there is no endstop (exturder.md § 3):
+        # unbounded travel, and "homed" in place at once (search velocity
+        # 0) in the first phase — a soft limit of 0..0, or a switch search
+        # on a joint without a switch, would make it unusable once homed.
+        joint.min_limit = EXTRUDER_MIN_LIMIT
+        joint.max_limit = EXTRUDER_MAX_LIMIT
+        joint.home_position = 0.0
+        joint.home_offset = 0.0
+        joint.home_search_vel = 0.0
+        joint.home_latch_vel = 0.0
+        joint.home_sequence = 0
+        return joint
 
     # ----- Velocity helpers ---------------------------------------- #
 
