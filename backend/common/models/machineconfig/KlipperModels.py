@@ -365,6 +365,18 @@ class TemperatureSensorConfig:
 
 
 @dataclass(slots=True)
+class HomingOverride:
+    """``[homing_override]`` (`.agent/component/homing_override.md`): the
+    machine's homing routine. ``gcode`` runs line by line — ``G28 X``
+    homes X, a bare ``G28`` homes every joint by ``HOME_SEQUENCE``,
+    anything else is MDI. ``axes`` are the lower-case axis letters
+    whose home button runs the routine."""
+
+    gcode: str
+    axes: str = ""
+
+
+@dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
 
@@ -514,6 +526,8 @@ class MachineConfigGraph:
     probe: Probe | None = None
     # ``None`` when the profile declares no ``[bed_mesh]``.
     bed_mesh: BedMesh | None = None
+    # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
+    homing_override: HomingOverride | None = None
     output_pins: dict[str, OutputPin] = field(default_factory=dict)
     input_pins: dict[str, InputPin] = field(default_factory=dict)
     # ``[temperature_sensor NAME]`` sections, keyed by NAME.
@@ -587,6 +601,7 @@ MachineConfig = MachineConfigGraph
 
 __all__ = [
     "BedMesh",
+    "HomingOverride",
     "InputPin",
     "TemperatureSensorConfig",
     "OutputPin",

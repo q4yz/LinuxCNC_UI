@@ -88,6 +88,15 @@ class AxisService:
         ``AxisState -> joint_numbers -> stepgen channel`` mapping
         the operator-facing payload needs.
         """
+        # A [homing_override] routine replaces "home all" and the axes it
+        # lists (Klipper's semantics): it runs on a worker thread.
+        from services.HomingRoutineService import get_homing_routine_service
+
+        routine = get_homing_routine_service()
+        if routine.applies_to(axis):
+            routine.start()
+            return
+
         if axis == "all":
             self.home_all_axes()
             return

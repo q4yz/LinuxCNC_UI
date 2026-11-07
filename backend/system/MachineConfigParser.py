@@ -17,6 +17,7 @@ from models.machineconfig import (
     Fan,
     Heater,
     HeaterFan,
+    HomingOverride,
     InputPin,
     MachineConfigGraph,
     MCU,
@@ -30,6 +31,7 @@ from models.machineconfig import (
     TMC2209,
     ToolLengthSensor,
 )
+from core.homing_routine import AXIS_LETTERS, HomingRoutineError, parse_homing_routine
 from machineconfig_schema import (
     ALLOWED_CONNECTION_TYPES,
     EXTRUDER_KEYS,
@@ -754,6 +756,8 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.HOMING_OVERRIDE:
+                graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
             elif section_schema.kind is SectionKind.OUTPUT_PIN:
@@ -1314,6 +1318,27 @@ class MachineConfigParser:
             return None
         lines = [line.strip() for line in section[key].splitlines()]
         return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
+
+    def _parse_homing_override(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> HomingOverride:
+        """Build the machine's :class:`HomingOverride`: ``gcode`` is the
+        routine (comment lines and blanks dropped, each ``G28`` line
+        checked), ``axes`` the axis letters whose home button runs it —
+        empty here means "every axis", resolved once the axes are known."""
+        gcode = self._ngc_lines(section, "gcode")
+        if gcode is None:
+            raise MissingRequiredKeywordError(section_name, "gcode")
+        try:
+            parse_homing_routine(gcode)
+        except HomingRoutineError as exc:
+            raise InvalidValueError(section_name, "gcode", exc.line.strip(), exc.reason) from exc
+        axes_raw = (self._optional_string(section, "axes") or "").replace(",", "").replace(" ", "")
+        if axes_raw and not set(axes_raw.upper()) <= set(AXIS_LETTERS):
+            raise InvalidValueError(section_name, "axes", axes_raw, f"axis letters ({AXIS_LETTERS.lower()})")
+        return HomingOverride(gcode=gcode, axes="".join(dict.fromkeys(axes_raw.lower())))
 
     def _parse_bed_mesh(
         self,

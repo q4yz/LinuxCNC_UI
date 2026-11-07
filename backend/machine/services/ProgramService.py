@@ -107,6 +107,11 @@ class ProgramService:
     def start_program(self, line_number: int = 0) -> None:
         if not self._is_program_loaded():
             raise RuntimeError("No program loaded. Load a file before starting.")
+        # A machine with a homing routine runs NO_FORCE_HOMING = 1, so
+        # LinuxCNC itself would start an unhomed program.
+        from services.HomingRoutineService import get_homing_routine_service
+
+        get_homing_routine_service().require_homed()
 
         execute_sync_cmd("mode", 3, getattr(linuxcnc, "MODE_AUTO", 2))
         execute_sync_cmd("auto", 0, getattr(linuxcnc, "AUTO_RUN", 0), line_number)

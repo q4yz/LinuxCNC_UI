@@ -452,6 +452,7 @@ def generate_machine_templates(
             payload.get("tools"),
             [c.ini_line for c in input_commands],
             corexy=payload.get("kinematics") == "corexy",
+            homing_override=isinstance(payload.get("homing_override"), dict),
         ),
         encoding="utf-8",
     )

@@ -57,7 +57,8 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from MachineConfigParser import MissingEstopSectionError, derive_heater_sensor_id, split_pin
+from core.homing_routine import homed_axes, parse_homing_routine
+from MachineConfigParser import InvalidValueError, MissingEstopSectionError, derive_heater_sensor_id, split_pin
 from models.machineconfig.HardwareJsonModels import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -205,6 +206,38 @@ def _input_pin_payload(input_pin) -> dict[str, Any]:
         "rising_halpin_set": [{"output": o, "value": v} for o, v in input_pin.rising_halpin_set],
         "falling_halpin_set": [{"output": o, "value": v} for o, v in input_pin.falling_halpin_set],
     }
+
+
+def _homing_override_payload(override, axis_ids: list[str]) -> dict[str, Any] | None:
+    """The top-level ``homing_override`` object, or ``None`` without one.
+
+    Checked against the machine's axes (the extruder's ``a`` included —
+    LinuxCNC needs every joint homed): ``axes`` defaults to all of them,
+    every ``G28`` names one of them, and the routine homes every axis in
+    ``axes`` — otherwise a home button would leave the machine unhomed.
+    """
+    if override is None:
+        return None
+    known = "".join(axis_ids)
+    axes = override.axes or known
+    unknown = [a for a in axes if a not in axis_ids]
+    if unknown:
+        raise InvalidValueError(
+            "homing_override", "axes", axes, f"axes of this machine ({known}); {''.join(unknown)} is none"
+        )
+    steps = parse_homing_routine(override.gcode)
+    for step in steps:
+        if any(a.lower() not in axis_ids for a in step.axes):
+            raise InvalidValueError("homing_override", "gcode", step.line, f"a G28 of this machine's axes ({known})")
+    homed = homed_axes(steps)
+    if homed is not None:
+        skipped = [a for a in axes if a.upper() not in homed]
+        if skipped:
+            raise InvalidValueError(
+                "homing_override", "gcode", "(the routine)",
+                f"a G28 for every axis in 'axes' ({axes}) — {''.join(skipped)} is never homed",
+            )
+    return {"gcode": override.gcode, "axes": axes}
 
 
 def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
@@ -1061,6 +1094,9 @@ def build_hardware_json(
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "homing_override": _homing_override_payload(
+            graph.homing_override, [str(a["id"]) for a in axes_records]
+        ),
         "output_pins": [_output_pin_payload(p) for p in graph.output_pins.values()],
         "input_pins": [_input_pin_payload(p) for p in graph.input_pins.values()],
         "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),

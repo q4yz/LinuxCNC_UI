@@ -366,6 +366,17 @@ class BedMesh(BaseModel):
     probe_count: list[int] = Field(default_factory=lambda: [3, 3])
 
 
+class HomingOverride(BaseModel):
+    """The machine's homing routine (`.agent/component/homing_override.md`).
+    ``gcode`` is the routine (``G28 <axes>`` homes, other lines are
+    MDI), ``axes`` the axis letters whose home button runs it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gcode: str
+    axes: str = ""
+
+
 class Probe(BaseModel):
     """The machine's single touch-probe component (`.agent/component/probe.md`).
 
@@ -623,6 +634,9 @@ class HardwareJson(BaseModel):
 
     # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
     bed_mesh: "BedMesh | None" = None
+
+    # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
+    homing_override: "HomingOverride | None" = None
 
     # ``[output_pin NAME]`` / ``[input_pin NAME]``, in declaration order.
     output_pins: list[OutputPin] = Field(default_factory=list)

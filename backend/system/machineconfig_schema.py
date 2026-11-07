@@ -63,6 +63,7 @@ class SectionKind(str, Enum):
     PROBE = "probe"
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
     BED_MESH = "bed_mesh"
+    HOMING_OVERRIDE = "homing_override"
     OUTPUT_PIN = "output_pin"
     INPUT_PIN = "input_pin"
     TEMPERATURE_SENSOR = "temperature_sensor"
@@ -201,6 +202,11 @@ TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # for now: the probe grid only; the mesh itself is probed / edited at
 # runtime and applied by the Remora `compensation` HAL component.
 BED_MESH_KEYS = frozenset({"probe_count"})
+# A homing routine (Klipper's ``[homing_override]``,
+# `.agent/component/homing_override.md`): ``gcode`` lines run in order,
+# ``G28 <axes>`` among them homes; ``axes`` are the axes whose home
+# button runs it (default all).
+HOMING_OVERRIDE_KEYS = frozenset({"gcode", "axes"})
 # Generic I/O (`.agent/component/io_pins.md`), Klipper syntax. An
 # output is switched from the UI (or PWM with ``pwm: True``); an input
 # is shown in the UI and can run G-code on its edges.
@@ -340,6 +346,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.PROBE: PROBE_KEYS,
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
     SectionKind.BED_MESH: BED_MESH_KEYS,
+    SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
     SectionKind.OUTPUT_PIN: OUTPUT_PIN_KEYS,
     SectionKind.INPUT_PIN: INPUT_PIN_KEYS,
     SectionKind.TEMPERATURE_SENSOR: TEMPERATURE_SENSOR_KEYS,
@@ -442,6 +449,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "bed_mesh":
         return SectionSchema(SectionKind.BED_MESH, BED_MESH_KEYS, "bed_mesh")
+
+    if section == "homing_override":
+        return SectionSchema(SectionKind.HOMING_OVERRIDE, HOMING_OVERRIDE_KEYS, "homing_override")
 
     output_match = _OUTPUT_PIN_SECTION.fullmatch(section)
     if output_match:
@@ -552,6 +562,7 @@ __all__ = [
     "ALLOWED_CONNECTION_TYPES",
     "ALLOWED_KEYS",
     "BED_MESH_KEYS",
+    "HOMING_OVERRIDE_KEYS",
     "INPUT_PIN_KEYS",
     "OUTPUT_PIN_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",
