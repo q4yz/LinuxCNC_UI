@@ -65,6 +65,7 @@ def test_reaches_hardware_json():
         # configparser drops the inline "; lift clear" comment.
         "gcode": "G91\nG0 Z5\nG90\nG28 X\nG28 Y\nG53 G0 X100 Y100\nG28 Z",
         "axes": "xyz",
+        "home_in_place": [],
     }
 
 
@@ -119,3 +120,36 @@ def test_routine_parser():
     ]
     assert homed_axes(steps) is None
     assert homed_axes(parse_homing_routine("G28 X\nG28 Z")) == {"X", "Z"}
+
+
+EXTRUDER = """
+[extruder]
+step_pin: PE2
+dir_pin: PE3
+microsteps: 16
+rotation_distance: 33.5
+heater_pin: PA2
+sensor_type: Generic 3950
+sensor_pin: PF4
+control: watermark
+min_temp: 0
+max_temp: 250
+"""
+
+
+def test_extruder_is_homed_in_place_without_g28_a():
+    override = _payload(EXTRUDER + ROUTINE)["homing_override"]
+    # The user's routine homes X/Y/Z only; the extruder's "a" is left to
+    # the runner, and is not part of the default `axes`.
+    assert override["axes"] == "xyz"
+    assert override["home_in_place"] == ["a"]
+
+
+def test_extruder_homed_by_the_routine_is_not_repeated():
+    routine = ROUTINE + "    G28 A\n"
+    assert _payload(EXTRUDER + routine)["homing_override"]["home_in_place"] == []
+
+
+def test_bare_g28_leaves_nothing_to_home_in_place():
+    extra = EXTRUDER + "[homing_override]\ngcode:\n    G28\n"
+    assert _payload(extra)["homing_override"]["home_in_place"] == []

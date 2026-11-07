@@ -182,3 +182,17 @@ def test_home_button_runs_the_routine(machine, monkeypatch):
     AxisService().home_single_axes("all")
     AxisService().home_single_axes("z")
     assert started == [True, True]
+
+
+def test_switchless_axis_is_homed_in_place_at_the_end(machine):
+    axes = AXES + [{"id": "a", "joint_numbers": [4]}]
+    machine.stat.homed = [0] * 5
+    machine.stat.joint = [{"homing": 0} for _ in range(5)]
+    service = machine.service({"gcode": ROUTINE, "axes": "xyz", "home_in_place": ["a"]})
+    service._config.payload["axes"] = axes
+    service._config.get_axes = lambda: axes
+    _run(service)
+    homes = [c for c in machine.calls if c[0] == "home"]
+    assert homes == [("home", 0), ("home", 1), ("home", 3), ("home", 4)]
+    assert machine.stat.homed == [1] * 5
+    assert machine.events[-1][1] == "Homing routine finished."

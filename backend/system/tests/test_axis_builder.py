@@ -181,17 +181,26 @@ def test_home_backs_off_from_home_offset_toward_the_center_of_travel():
     assert x_joint.home_position == 5.0
 
 
-def test_home_backoff_is_skipped_for_a_joint_with_no_real_travel_range():
-    """The synthesised extruder joint has no switch and no meaningful
-    HOME at all (min_limit == max_limit == 0.0, both defaulted) — it
-    must not get a fabricated -5/+5 offset."""
+def test_extruder_joint_is_unbounded_and_homes_in_place():
+    """The synthesised extruder joint (`exturder.md` § 3): filament is
+    continuous (no 0..0 soft limit once homed), there is no switch
+    (search velocity 0: homed in place at once, first phase) and no
+    fabricated -5/+5 home offset. Its axis carries the joint's
+    velocity — a 0 MAX_VELOCITY made the extruder unmovable."""
+    from services.machineconfig.AxisBuilder import EXTRUDER_MAX_LIMIT, EXTRUDER_MIN_LIMIT
+
     graph = MachineConfigParser().parse_string(_CONFIG)
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
 
     by_letter = {axis.letter: axis for axis in axes}
-    a_joint = by_letter["A"].joints[0]
-    assert a_joint.min_limit == a_joint.max_limit == 0.0
+    a_axis = by_letter["A"]
+    a_joint = a_axis.joints[0]
+    assert (a_joint.min_limit, a_joint.max_limit) == (EXTRUDER_MIN_LIMIT, EXTRUDER_MAX_LIMIT)
     assert a_joint.home_position == a_joint.home_offset == 0.0
+    assert a_joint.home_search_vel == a_joint.home_latch_vel == 0.0
+    assert a_joint.home_sequence == 0
+    assert (a_axis.min_limit, a_axis.max_limit) == (EXTRUDER_MIN_LIMIT, EXTRUDER_MAX_LIMIT)
+    assert a_axis.max_velocity == a_joint.max_velocity > 0
 
 
 def test_home_sequence_is_z_then_y_then_x():

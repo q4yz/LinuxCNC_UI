@@ -119,15 +119,16 @@ class HomingRoutineService:
         with self._lock:
             if self.is_running():
                 raise ConflictError("The homing routine is already running.")
+            in_place = [str(a) for a in override.get("home_in_place") or []]
             self._worker = threading.Thread(
-                target=self._run_worker, args=(steps,), name="homing-routine", daemon=True
+                target=self._run_worker, args=(steps, in_place), name="homing-routine", daemon=True
             )
             self._worker.start()
 
-    def _run_worker(self, steps: List[HomingStep]) -> None:
+    def _run_worker(self, steps: List[HomingStep], in_place: Optional[List[str]] = None) -> None:
         console = get_console_logger()
         try:
-            reason = self._run(steps)
+            reason = self._run(steps, in_place or [])
         except Exception as exc:  # noqa: BLE001 - report, don't die silently
             logger.exception("Homing routine crashed: %s", exc)
             reason = str(exc)
@@ -136,8 +137,9 @@ class HomingRoutineService:
         else:
             console.log_event(f"Homing routine aborted: {reason}", level=LogLevel.ERROR, source="CMD")
 
-    def _run(self, steps: List[HomingStep]) -> Optional[str]:
-        """Every step in order; the reason it stopped, or ``None``."""
+    def _run(self, steps: List[HomingStep], in_place: Optional[List[str]] = None) -> Optional[str]:
+        """Every step in order, then the switch-less axes (``home_in_place``,
+        an extruder) still unhomed; the reason it stopped, or ``None``."""
         stat = get_stat_channel()  # per-thread channel (channel_stat.py)
         if stat is None:
             return "LinuxCNC is not running."
@@ -150,6 +152,14 @@ class HomingRoutineService:
                 reason = self._mdi(stat, step.line)
             if reason is not None:
                 return f"{step.line!r}: {reason}"
+        stat.poll()
+        homed = list(getattr(stat, "homed", ()) or ())
+        for letter in in_place or []:
+            joints = self._axis_joints(letter)
+            if joints and not all(j < len(homed) and homed[j] for j in joints):
+                reason = self._home(stat, HomingStep(kind="home", line=f"G28 {letter.upper()}", axes=(letter.upper(),)))
+                if reason is not None:
+                    return f"homing axis {letter.upper()} in place: {reason}"
         execute_sync_cmd("mode", 1.0, _MODE_MANUAL)
         return None
 

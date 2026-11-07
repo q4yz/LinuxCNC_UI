@@ -375,6 +375,9 @@ class HomingOverride(BaseModel):
 
     gcode: str
     axes: str = ""
+    #: Axes without a switch (an extruder) the routine does not home;
+    #: homed in place after it.
+    home_in_place: list[str] = Field(default_factory=list)
 
 
 class Probe(BaseModel):

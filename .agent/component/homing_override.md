@@ -36,17 +36,20 @@ gcode:
   it is finished. Modal state (`G91`, `#<_globals>`) carries over from
   line to line; a single-line `o<sub> call` works, O-word loops or
   branches spread over several lines do not.
-* The extruder is an axis too (`a`): LinuxCNC needs every joint homed,
-  so a machine with an extruder homes it in the routine (`G28 A`), or
-  lists only the other axes in `axes`.
+* The extruder is an axis too (`a`), without a switch
+  (`HOME_SEARCH_VEL = 0`, `exturder.md` § 3). The routine needs no
+  `G28 A`: every such axis it leaves unhomed (`home_in_place`) is homed
+  in place, without moving, after the last line.
 
 ## 2. hardware.json
 
 ```json
-"homing_override": { "gcode": "G91\nG0 Z5\nG90\nG28 X\nG28 Y\nG53 G0 X100 Y100\nG28 Z", "axes": "xyz" }
+"homing_override": { "gcode": "G91\nG0 Z5\nG90\nG28 X\nG28 Y\nG53 G0 X100 Y100\nG28 Z", "axes": "xyz", "home_in_place": ["a"] }
 ```
 
-`axes` is filled with every axis when the section names none.
+`axes` is filled with every axis that has a `[stepper_*]` when the
+section names none; `home_in_place` lists the switch-less axes (the
+extruder) the routine does not home itself.
 
 ## 3. COMPILATION
 
