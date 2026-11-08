@@ -52,6 +52,9 @@ _DEFAULT_RUN_CURRENT_A = 0.8
 #: `"Stall sensitivity"` has no schema field yet (not ingested from
 #: any `.cfg` key) — every module in the reference config uses this.
 _DEFAULT_STALL_SENSITIVITY = 0
+#: Klipper's usual value — only when neither the stepper nor the
+#: driver section says (`microsteps` is required in Klipper).
+_DEFAULT_MICROSTEPS = 16
 
 
 class RemoraDriverFirmwareMapper:
@@ -77,15 +80,23 @@ class RemoraDriverFirmwareMapper:
             if run_current_a is None:
                 run_current_a = _DEFAULT_RUN_CURRENT_A
 
+            # In Klipper `microsteps` is a key of [stepper_x], not of
+            # [tmc2209 stepper_x]: the joint carries it, and the axis
+            # SCALE is computed from the joint's value. The driver must
+            # run exactly that resolution or the axis moves the wrong
+            # distance (this used to read the driver record only and sent
+            # 16 for every driver: a Z with 32 moved half the distance).
+            microsteps = joint.get("microsteps") or driver.get("microsteps") or _DEFAULT_MICROSTEPS
+
             module = {
                 "Name": f"driver_{joint_id}",
                 "Thread": "On load",
                 "Type": "TMC2209",
                 "Comment": f"{joint_id} TMC driver",
                 "RX pin": RemoraFirmwarePinMapper.to_firmware_pin(parsed.pin_id),
-                "RSense": driver.get("sense_resistor", _DEFAULT_RSENSE),
+                "RSense": driver.get("sense_resistor") or _DEFAULT_RSENSE,
                 "Current": round(run_current_a * _AMPS_TO_MILLIAMPS),
-                "Microsteps": driver.get("microsteps", 16),
+                "Microsteps": microsteps,
                 "Stealth chop": "on" if driver.get("stealthchop_threshold") else "off",
                 "Stall sensitivity": _DEFAULT_STALL_SENSITIVITY,
             }
