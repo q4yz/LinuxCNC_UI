@@ -254,6 +254,9 @@ class TemperatureSensor(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     pin: str
     type: str | None = None
+    #: ``type: temperature_host`` only — the ``/sys/class/thermal``
+    #: zone to read (BTT CB1: 2, the CPU; zone 0 is the GPU).
+    thermal_zone: int | None = None
 
 
 class Fan(BaseModel):
@@ -361,6 +364,63 @@ class BedMesh(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     probe_count: list[int] = Field(default_factory=lambda: [3, 3])
+    # Probing (`.agent/component/bed_mesh.md` § 5). ``mesh_min`` /
+    # ``mesh_max``: the probed area, the X / Y limits when the profile
+    # names none; ``probe_min_z``: how far down a probe move searches.
+    mesh_min: list[float] | None = None
+    mesh_max: list[float] | None = None
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    probe_min_z: float = 0.0
+    zero_reference_position: list[float] | None = None
+
+
+class HomingOverride(BaseModel):
+    """The machine's homing routine (`.agent/component/homing_override.md`).
+    ``gcode`` is the routine (``G28 <axes>`` homes, other lines are
+    MDI), ``axes`` the axis letters whose home button runs it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gcode: str
+    axes: str = ""
+    #: Axes without a switch (an extruder) the routine does not home;
+    #: homed in place after it.
+    home_in_place: list[str] = Field(default_factory=list)
+
+
+class Led(BaseModel):
+    """A WS2812 / SK6812 LED chain (`.agent/component/neopixel.md`).
+    ``segments``: ``[first, count]`` per colour channel (LEDs from 1);
+    ``initial``: RED, GREEN, BLUE, WHITE (0-1) at start."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    pin: str
+    chain_count: int = Field(1, ge=1, le=64)
+    color_order: str = "GRB"
+    segments: list[list[int]] = Field(default_factory=list)
+    initial: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+
+
+class ZTilt(BaseModel):
+    """Leveling a multi-motor Z axis (`.agent/component/z_tilt.md`).
+    ``joints`` are the Z joints, one per ``z_positions`` entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    z_positions: list[list[float]]
+    points: list[list[float]]
+    joints: list[int]
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    probe_min_z: float = 0.0
+    retries: int = 0
+    retry_tolerance: float = 0.0
+    max_adjust: float = 5.0
 
 
 class Probe(BaseModel):
@@ -620,6 +680,15 @@ class HardwareJson(BaseModel):
 
     # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
     bed_mesh: "BedMesh | None" = None
+
+    # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
+    homing_override: "HomingOverride | None" = None
+
+    # ``None`` without ``[z_tilt]``. See :class:`ZTilt`.
+    z_tilt: "ZTilt | None" = None
+
+    # ``[neopixel NAME]`` chains, in declaration order. See :class:`Led`.
+    leds: list[Led] = Field(default_factory=list)
 
     # ``[output_pin NAME]`` / ``[input_pin NAME]``, in declaration order.
     output_pins: list[OutputPin] = Field(default_factory=list)

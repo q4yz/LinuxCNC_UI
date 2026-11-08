@@ -16,12 +16,13 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from core.bed_mesh_file import ACTIVE_HEADER, format_grid
 from domain_file_services import paths
 from exceptions import BadRequestError, ConflictError, NotFoundError
 from models.BedMeshModels import BedMeshDefaults, BedMeshGrid, BedMeshListResponse
 
 _NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
-_ACTIVE_HEADER = "# mesh: "
+_ACTIVE_HEADER = ACTIVE_HEADER
 #: The mesh a machine with ``[bed_mesh]`` starts with: flat, no offset.
 FLAT_MESH = "flat"
 
@@ -127,13 +128,7 @@ class BedMeshService:
 
     @staticmethod
     def _format(grid: BedMeshGrid) -> str:
-        # Row by row, X fastest — gridprobe's order; single spaces, as the
-        # component reads it with delimiter=" ".
-        return "".join(
-            f"{x:g} {y:g} {grid.z[row][col]:.4f}\n"
-            for row, y in enumerate(grid.ys)
-            for col, x in enumerate(grid.xs)
-        )
+        return format_grid(grid.xs, grid.ys, grid.z)  # core.bed_mesh_file
 
     @staticmethod
     def _parse(name: str, text: str) -> BedMeshGrid:

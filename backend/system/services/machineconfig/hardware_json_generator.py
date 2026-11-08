@@ -57,7 +57,15 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import MachineConfigGraph
-from MachineConfigParser import MissingEstopSectionError, derive_heater_sensor_id, split_pin
+from core.homing_routine import homed_axes, parse_homing_routine
+from core.z_tilt import collinear
+from MachineConfigParser import (
+    InvalidValueError,
+    MissingEstopSectionError,
+    derive_axis_letter,
+    derive_heater_sensor_id,
+    split_pin,
+)
 from models.machineconfig.HardwareJsonModels import (
     HardwareJson as _HardwareJsonModel,
     to_dict as _model_to_dict,
@@ -207,11 +215,117 @@ def _input_pin_payload(input_pin) -> dict[str, Any]:
     }
 
 
-def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
-    """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``."""
+def _homing_override_payload(
+    override, axis_ids: list[str], stepper_axes: list[str]
+) -> dict[str, Any] | None:
+    """The top-level ``homing_override`` object, or ``None`` without one.
+
+    Checked against the machine's axes: ``axes`` defaults to every axis
+    with a ``[stepper_*]``, every ``G28`` names an axis of the machine,
+    and the routine homes every axis in ``axes`` — otherwise a home
+    button would leave the machine unhomed. ``home_in_place`` are the
+    remaining axes (an extruder: no switch, ``HOME_SEARCH_VEL = 0``) the
+    routine does not home itself; the runner homes them at the end, so
+    LinuxCNC sees every joint homed without a ``G28 A`` in the routine.
+    """
+    if override is None:
+        return None
+    known = "".join(axis_ids)
+    axes = override.axes or "".join(a for a in axis_ids if a in stepper_axes)
+    unknown = [a for a in axes if a not in axis_ids]
+    if unknown:
+        raise InvalidValueError(
+            "homing_override", "axes", axes, f"axes of this machine ({known}); {''.join(unknown)} is none"
+        )
+    steps = parse_homing_routine(override.gcode)
+    for step in steps:
+        if any(a.lower() not in axis_ids for a in step.axes):
+            raise InvalidValueError("homing_override", "gcode", step.line, f"a G28 of this machine's axes ({known})")
+    homed = homed_axes(steps)
+    if homed is not None:
+        skipped = [a for a in axes if a.upper() not in homed]
+        if skipped:
+            raise InvalidValueError(
+                "homing_override", "gcode", "(the routine)",
+                f"a G28 for every axis in 'axes' ({axes}) — {''.join(skipped)} is never homed",
+            )
+    in_place = [a for a in axis_ids if a not in stepper_axes and (homed is not None and a.upper() not in homed)]
+    return {"gcode": override.gcode, "axes": axes, "home_in_place": in_place}
+
+
+def _z_tilt_payload(graph: MachineConfigGraph, axes_records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The top-level ``z_tilt`` object, or ``None`` without ``[z_tilt]``.
+
+    One pivot per Z motor (joint, in ``[stepper_z]``, ``[stepper_z1]``
+    order), a ``[probe]`` to probe with, and points that span a plane
+    when the pivots do. ``probe_min_z`` (``[stepper_z] position_min``)
+    is how far down a probe move may search.
+    """
+    z_tilt = graph.z_tilt
+    if z_tilt is None:
+        return None
+    if graph.probe is None or not graph.probe.pin:
+        raise InvalidValueError("z_tilt", "points", "(probing)", "a [probe] section with a pin to probe with")
+    z_axis = next((a for a in axes_records if a.get("id") == "z"), None)
+    joints = [int(j) for j in (z_axis or {}).get("joint_numbers") or []]
+    if len(joints) < 2:
+        raise InvalidValueError(
+            "z_tilt", "z_positions", f"{len(z_tilt.z_positions)} position(s)",
+            "a Z axis with two or more motors ([stepper_z], [stepper_z1], ...)",
+        )
+    if len(z_tilt.z_positions) != len(joints):
+        raise InvalidValueError(
+            "z_tilt", "z_positions", f"{len(z_tilt.z_positions)} position(s)",
+            f"one per Z motor ({len(joints)})",
+        )
+    if not collinear(z_tilt.z_positions) and collinear(z_tilt.points):
+        raise InvalidValueError(
+            "z_tilt", "points", "(all on one line)",
+            "at least three points not on one line — the motors span a plane",
+        )
+    stepper_z = graph.steppers.get("z")
+    probe_min_z = float(getattr(stepper_z, "position_min", None) or 0.0)
+    return {
+        "z_positions": [list(p) for p in z_tilt.z_positions],
+        "points": [list(p) for p in z_tilt.points],
+        "joints": joints,
+        "speed": z_tilt.speed,
+        "horizontal_move_z": z_tilt.horizontal_move_z,
+        "probe_speed": z_tilt.probe_speed,
+        "probe_min_z": probe_min_z,
+        "retries": z_tilt.retries,
+        "retry_tolerance": z_tilt.retry_tolerance,
+        "max_adjust": z_tilt.max_adjust,
+    }
+
+
+def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
+    """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``.
+    ``mesh_min`` / ``mesh_max`` default to the X / Y travel;
+    ``probe_min_z`` is ``[stepper_z] position_min``."""
     if bed_mesh is None:
         return None
-    return {"probe_count": list(bed_mesh.probe_count)}
+    steppers = graph.steppers if graph is not None else {}
+
+    def travel(letter: str) -> tuple[float, float]:
+        stepper = steppers.get(letter)
+        low = float(getattr(stepper, "position_min", None) or 0.0)
+        high = getattr(stepper, "position_max", None)
+        return low, float(high) if high is not None else 200.0
+
+    (x_lo, x_hi), (y_lo, y_hi) = travel("x"), travel("y")
+    mesh_min = list(bed_mesh.mesh_min) if bed_mesh.mesh_min else [x_lo, y_lo]
+    mesh_max = list(bed_mesh.mesh_max) if bed_mesh.mesh_max else [x_hi, y_hi]
+    return {
+        "probe_count": list(bed_mesh.probe_count),
+        "mesh_min": mesh_min,
+        "mesh_max": mesh_max,
+        "speed": bed_mesh.speed,
+        "horizontal_move_z": bed_mesh.horizontal_move_z,
+        "probe_speed": bed_mesh.probe_speed,
+        "probe_min_z": float(getattr(steppers.get("z"), "position_min", None) or 0.0),
+        "zero_reference_position": list(bed_mesh.zero_reference_position) if bed_mesh.zero_reference_position else None,
+    }
 
 
 def _probe_payload(probe) -> dict[str, Any] | None:
@@ -360,6 +474,28 @@ def _temperature_sensor_payload(heater_section: str, h) -> dict[str, Any]:
         "pin": h.sensor_pin,
         "type": h.sensor_type,
     }
+
+
+#: The host monitor's CPU temperature pin (Remora-m8p RPiMonitor).
+HOST_TEMP_PIN = "rpi-monitor.cpu-temp"
+
+
+def _standalone_sensor_payload(graph: MachineConfigGraph, sensor) -> dict[str, Any]:
+    """``[temperature_sensor NAME]`` -> ``temperature_sensors[]``. The
+    pin-less kinds get the pin they read: the host monitor's HAL pin, or
+    the Remora board (its MCU id) whose own temperature is read."""
+    pin = sensor.sensor_pin
+    if sensor.sensor_type == "temperature_host":
+        pin = HOST_TEMP_PIN
+    elif sensor.sensor_type == "temperature_mcu":
+        pin = next(
+            (mcu_id for mcu_id, mcu in graph.mcus.items() if getattr(mcu, "connection", None) == "remora-spi"),
+            next(iter(graph.mcus), "mcu"),
+        )
+    record: dict[str, Any] = {"id": sensor.name, "pin": pin, "type": sensor.sensor_type}
+    if sensor.thermal_zone is not None:
+        record["thermal_zone"] = sensor.thermal_zone
+    return record
 
 
 def _fan_payload(heater_section: str, h) -> dict[str, Any]:
@@ -880,9 +1016,7 @@ def build_hardware_json(
     # ``[temperature_sensor NAME]``: a reading no heater claims, shown in
     # the temperature plot (`.agent/component/temperature_sensor.md`).
     for sensor in graph.temperature_sensors.values():
-        temperature_sensor_records.append(
-            {"id": sensor.name, "pin": sensor.sensor_pin, "type": sensor.sensor_type}
-        )
+        temperature_sensor_records.append(_standalone_sensor_payload(graph, sensor))
     if graph.spindle_analog is not None:
         tool_records.append(_tool_payload_from_spindle_analog(graph.spindle_analog))
     for spindle_id, spindle in graph.spindle_digitals.items():
@@ -1040,7 +1174,21 @@ def build_hardware_json(
         "max_z_accel": _fmt_float(getattr(graph.printer, "max_z_accel", None)),
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
-        "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "bed_mesh": _bed_mesh_payload(graph.bed_mesh, graph),
+        "z_tilt": _z_tilt_payload(graph, axes_records),
+        "leds": [
+            {
+                "id": led.name, "pin": led.pin, "chain_count": led.chain_count,
+                "color_order": led.color_order, "segments": [list(s) for s in led.segments],
+                "initial": list(led.initial),
+            }
+            for led in graph.neopixels.values()
+        ],
+        "homing_override": _homing_override_payload(
+            graph.homing_override,
+            [str(a["id"]) for a in axes_records],
+            sorted({derive_axis_letter(name).lower() for name in graph.steppers}),
+        ),
         "output_pins": [_output_pin_payload(p) for p in graph.output_pins.values()],
         "input_pins": [_input_pin_payload(p) for p in graph.input_pins.values()],
         "tool_length_sensor": _tool_length_sensor_payload(graph.tool_length_sensor),

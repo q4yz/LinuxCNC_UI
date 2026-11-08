@@ -10,6 +10,13 @@
 > since `hardware_json_generator` already emits it as an ordinary
 > joint + axis. `HeaterHalMapper` now covers the thermal half too
 > ("identical to `heater.md`" holds in code, not just in the spec).
+> **Real bug, fixed:** the extruder joint now matches § 3 — unbounded
+> `MIN_LIMIT`/`MAX_LIMIT`, `HOME_SEARCH_VEL`/`HOME_LATCH_VEL = 0`
+> (homed in place, no switch search), `HOME_SEQUENCE = 0`, and
+> `[AXIS_A]` carries the joint's velocity/acceleration. It used to get
+> a 0..0 travel, a `MAX_VELOCITY = 0` axis and a switch search at
+> 10 mm/s, so it could not move once homed and "Home all" searched for
+> a switch that does not exist.
 > **Real bug, fixed:** `AxisBuilder` (the *other*, `machine.ini`-facing
 > joint-numbering pass — `hardware_json_generator`'s own was already
 > correct) numbered the extruder joint off the A axis's own local

@@ -37,7 +37,7 @@ const consoleStore = useConsoleStore()
 // The whole tree (folders + files at every depth), flat.
 const files = shallowRef<FileEntry[]>([])
 const isUploading = ref(false)
-const ACCEPTED = '.ngc,.gcode,.nc'
+const ACCEPTED = '.ngc,.gcode,.gco,.g,.nc'
 
 // ---- Folder navigation ------------------------------------------ //
 

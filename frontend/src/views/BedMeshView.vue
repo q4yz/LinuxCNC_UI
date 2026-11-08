@@ -2,7 +2,7 @@
 // Bed mesh page: saved meshes (system service) as a list, the selected
 // one as a heatmap you can edit, and the compensation switch (machine
 // backend — only while a LinuxCNC session runs). See bedMeshFacade.
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { bedMeshFacade, type BedMeshDefaults, type BedMeshGrid } from "../facades/bedMeshFacade";
 import BedMeshHeatmap from "../components/bedmesh/BedMeshHeatmap.vue";
 import { BaseButton, Icon } from "../ui";
@@ -22,6 +22,11 @@ const busy = ref(false);
 
 // null: unknown (no LinuxCNC session / machine backend down)
 const compensation = ref<boolean | null>(null);
+
+// BED_MESH_CALIBRATE: the profile to save the probed mesh as
+const probeProfile = ref("default");
+const probing = ref(false);
+let probeTimer: ReturnType<typeof setInterval> | null = null;
 
 const createOpen = ref(false);
 const newName = ref("");
@@ -127,15 +132,54 @@ async function toggleCompensation() {
   if (result !== undefined) compensation.value = result;
 }
 
+async function probe() {
+  const profile = probeProfile.value.trim() || "default";
+  const running = await run("starting the probe", () => bedMeshFacade.calibrate(profile));
+  if (!running) return;
+  probing.value = true;
+  probeTimer = setInterval(async () => {
+    let still = false;
+    try {
+      still = await bedMeshFacade.isCalibrating();
+    } catch {
+      still = false;
+    }
+    if (still) return;
+    if (probeTimer) clearInterval(probeTimer);
+    probeTimer = null;
+    probing.value = false;
+    await Promise.all([refresh(), loadCompensation()]);
+    if (names.value.includes(profile)) await select(profile);
+  }, 1000);
+}
+
 onMounted(async () => {
   await Promise.all([refresh(), loadCompensation()]);
+});
+onBeforeUnmount(() => {
+  if (probeTimer) clearInterval(probeTimer);
 });
 </script>
 
 <template>
   <header class="flex flex-wrap items-baseline justify-between gap-3">
     <h1 class="text-2xl font-bold">Bed Mesh</h1>
-    <div class="flex items-center gap-3 text-sm">
+    <div class="flex flex-wrap items-center gap-3 text-sm">
+      <input
+        v-model="probeProfile"
+        class="w-28 rounded border border-gray-600 bg-gray-800 px-2 py-1 font-mono text-sm text-gray-200"
+        placeholder="default"
+        title="Name to save the probed mesh as (PROFILE)"
+        data-testid="bed-mesh-probe-profile"
+      />
+      <BaseButton
+        variant="primary"
+        size="sm"
+        :disabled="busy || probing || compensation === null"
+        :title="compensation === null ? 'Needs a running LinuxCNC session' : 'BED_MESH_CALIBRATE: home X, Y, Z first'"
+        data-testid="bed-mesh-probe"
+        @click="probe"
+      >{{ probing ? "Probing…" : "Probe mesh" }}</BaseButton>
       <span class="text-gray-400">Compensation</span>
       <BaseButton
         :variant="compensation ? 'success' : 'secondary'"

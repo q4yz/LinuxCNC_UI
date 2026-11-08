@@ -339,18 +339,73 @@ class TemperatureSensorConfig:
     """``[temperature_sensor NAME]`` (`.agent/component/temperature_sensor.md`):
     a reading with no heater behind it, shown in the temperature plot.
 
-    ``sensor_type: hal`` makes ``sensor_pin`` a HAL name — a float pin
-    (``rpi-monitor.cpu-temp``, it has a dot) or an existing signal (no
-    dot). Any other type is a thermistor on the board pin ``sensor_pin``.
+    ``sensor_type`` decides what ``sensor_pin`` is:
+
+    * ``hal`` — a HAL name: a float pin (``mycomp.temp``, it has a dot)
+      or an existing signal (no dot);
+    * ``temperature_host`` — no pin: the host's CPU (``rpi-monitor``,
+      loaded by the generator); ``thermal_zone`` picks the zone;
+    * ``temperature_mcu`` — no pin: the Remora board's own MCU;
+    * anything else — a thermistor type, on the board pin ``sensor_pin``.
     """
 
     name: str
     sensor_type: str
-    sensor_pin: str
+    sensor_pin: str | None = None
+    thermal_zone: int | None = None
 
     @property
     def is_hal(self) -> bool:
         return self.sensor_type.strip().lower() == "hal"
+
+    @property
+    def is_board_pin(self) -> bool:
+        """A thermistor on a board pin (the only kind with an MCU pin)."""
+        return self.sensor_type.strip().lower() not in ("hal", "temperature_host", "temperature_mcu")
+
+
+@dataclass(slots=True)
+class HomingOverride:
+    """``[homing_override]`` (`.agent/component/homing_override.md`): the
+    machine's homing routine. ``gcode`` runs line by line — ``G28 X``
+    homes X, a bare ``G28`` homes every joint by ``HOME_SEQUENCE``,
+    anything else is MDI. ``axes`` are the lower-case axis letters
+    whose home button runs the routine."""
+
+    gcode: str
+    axes: str = ""
+
+
+@dataclass(slots=True)
+class Neopixel:
+    """``[neopixel NAME]`` (`.agent/component/neopixel.md`): a WS2812 /
+    SK6812 LED chain. ``segments`` are ``(first, count)`` LED groups
+    (from 1, like Klipper's ``INDEX``), each one colour; default one
+    segment, the whole chain. ``initial`` is RED, GREEN, BLUE, WHITE 0-1."""
+
+    name: str
+    pin: str
+    chain_count: int = 1
+    color_order: str = "GRB"
+    segments: list[tuple[int, int]] = field(default_factory=list)
+    initial: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+
+
+@dataclass(slots=True)
+class ZTilt:
+    """``[z_tilt]`` (`.agent/component/z_tilt.md`): level a Z axis driven
+    by several motors. ``z_positions`` are the motors' pivots (X, Y), in
+    ``[stepper_z]``, ``[stepper_z1]``, ... order; ``points`` the probe
+    positions. Speeds in mm/s, lengths in mm."""
+
+    z_positions: list[tuple[float, float]]
+    points: list[tuple[float, float]]
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    retries: int = 0
+    retry_tolerance: float = 0.0
+    max_adjust: float = 5.0
 
 
 @dataclass(slots=True)
@@ -363,6 +418,13 @@ class BedMesh:
     """
 
     probe_count: tuple[int, int] = (3, 3)
+    # Probing (BED_MESH_CALIBRATE); None: the X / Y axis limits.
+    mesh_min: tuple[float, float] | None = None
+    mesh_max: tuple[float, float] | None = None
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    zero_reference_position: tuple[float, float] | None = None
 
 
 @dataclass(slots=True)
@@ -503,6 +565,12 @@ class MachineConfigGraph:
     probe: Probe | None = None
     # ``None`` when the profile declares no ``[bed_mesh]``.
     bed_mesh: BedMesh | None = None
+    # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
+    homing_override: HomingOverride | None = None
+    # ``None`` without ``[z_tilt]``.
+    z_tilt: ZTilt | None = None
+    # ``[neopixel NAME]`` sections, keyed by NAME.
+    neopixels: dict[str, Neopixel] = field(default_factory=dict)
     output_pins: dict[str, OutputPin] = field(default_factory=dict)
     input_pins: dict[str, InputPin] = field(default_factory=dict)
     # ``[temperature_sensor NAME]`` sections, keyed by NAME.
@@ -576,6 +644,9 @@ MachineConfig = MachineConfigGraph
 
 __all__ = [
     "BedMesh",
+    "HomingOverride",
+    "ZTilt",
+    "Neopixel",
     "InputPin",
     "TemperatureSensorConfig",
     "OutputPin",

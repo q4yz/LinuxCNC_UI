@@ -70,8 +70,13 @@ def test_upload_stores_the_file_in_nc_files(client, programs, service):
     response = _upload(client)
     assert response.status_code == 201  # OctoPrint's answer, Cura checks it
     local = response.json()["files"]["local"]
-    assert local["name"] == "benchy.gcode" and local["origin"] == "local"
-    assert (programs.root / "benchy.gcode").read_bytes() == b"G28\nG1 X10\n"
+    # A slicer's .gcode is stored converted, as .ngc (core.gcode_converter).
+    assert local["name"] == "benchy.ngc" and local["origin"] == "local"
+    stored = (programs.root / "benchy.ngc").read_text().splitlines()
+    # Its G28 runs before the program (header line), not inside it.
+    assert stored[0] == "; LINUXCNC_UI_PRESTART: home"
+    assert stored[1].startswith("; G28") and stored[2] == "G1 X10" and stored[-1].startswith("M2")
+    assert not (programs.root / "benchy.gcode").exists()
     assert service.loaded == []  # no select / print: nothing loaded
 
 
@@ -79,15 +84,15 @@ def test_upload_into_a_folder_overwrites(client, programs):
     _upload(client, path="orca/")
     response = _upload(client, path="orca/")
     assert response.status_code == 201
-    assert response.json()["files"]["local"]["path"] == "orca/benchy.gcode"
-    assert (programs.root / "orca" / "benchy.gcode").is_file()
+    assert response.json()["files"]["local"]["path"] == "orca/benchy.ngc"
+    assert (programs.root / "orca" / "benchy.ngc").is_file()
 
 
 @pytest.mark.parametrize("flag", ["select", "print"])
 def test_select_and_print_only_load_the_file(client, service, flag):
     service.running = True
     body = _upload(client, **{flag: "true"}).json()
-    assert service.loaded == ["benchy.gcode"]
+    assert service.loaded == ["benchy.ngc"]
     assert body["effectiveSelect"] is True
     assert body["effectivePrint"] is False  # never started from the network
 
@@ -95,7 +100,7 @@ def test_select_and_print_only_load_the_file(client, service, flag):
 def test_upload_while_linuxcnc_is_off_is_stored_but_not_loaded(client, service, programs):
     body = _upload(client, print="true").json()
     assert body["effectiveSelect"] is False
-    assert (programs.root / "benchy.gcode").is_file()
+    assert (programs.root / "benchy.ngc").is_file()
 
 
 def test_only_gcode_is_accepted(client, programs):

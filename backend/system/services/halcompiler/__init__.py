@@ -27,22 +27,34 @@ from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
-from .components.TemperatureSensorHalMapper import TemperatureSensorWebguiMapper, unclaimed_sensors
+from .components.ZTiltHalMapper import ZTiltWebguiMapper
+from .components.LedHalMapper import LedWebguiMapper
+from .components.TemperatureSensorHalMapper import (
+    TemperatureSensorWebguiMapper,
+    hal_pin_diagnostics,
+    unclaimed_sensors,
+)
 from .renderer import render_hal
 from .MachineValidator import MachineValidator, validate_machine
 
 
-def compile_machine_hal(payload: dict[str, object]) -> str:
+def compile_machine_hal(payload: dict[str, object], user_hal: str = "") -> str:
     """Validate, then assemble and render — the one-call happy path.
 
     Raises :class:`ValueError` (with every diagnostic's text) if the
-    payload has any error-level finding; warnings do not block.
+    payload has any error-level finding, including the ``type: hal``
+    sensor pins :func:`hal_pin_diagnostics` checks against the result
+    and ``user_hal``; warnings do not block.
     """
     diagnostics = validate_machine(payload)
+    hal = ""
+    if not MachineValidator.has_errors(diagnostics):
+        hal = render_hal(assemble_machine(payload))
+        diagnostics += hal_pin_diagnostics(payload, hal, user_hal)
     if MachineValidator.has_errors(diagnostics):
         details = "\n".join(str(d) for d in diagnostics if d.is_error)
         raise ValueError(f"machine does not compile:\n{details}")
-    return render_hal(assemble_machine(payload))
+    return hal
 
 
 def render_webgui_connections(payload: dict[str, object]) -> str:
@@ -108,6 +120,12 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
+    for led in payload.get("leds") or []:
+        if isinstance(led, dict):
+            lines.extend(LedWebguiMapper.to_lines(led))
+    z_tilt = payload.get("z_tilt")
+    if isinstance(z_tilt, dict):
+        lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
     for sensor in unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:
@@ -136,6 +154,7 @@ __all__ = [
     "UnsupportedMcuError",
     "assemble_machine",
     "compile_machine_hal",
+    "hal_pin_diagnostics",
     "render_hal",
     "render_webgui_connections",
     "validate_machine",

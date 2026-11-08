@@ -35,13 +35,10 @@ from .components.ProbeHalMapper import ProbeHalMapper
 from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
+from .components.LedHalMapper import LedHalMapper
 from .components.StepperHalMapper import StepperHalMapper
-from .components.TemperatureSensorHalMapper import (
-    TemperatureSensorHalMapper,
-    component_loads,
-    remora_mcu_id,
-    unclaimed_sensors,
-)
+from .components.ZTiltHalMapper import ZTiltHalMapper
+from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper, unclaimed_sensors
 from .mcus.ParportRouterMapper import ParportRouterMapper
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
@@ -109,12 +106,17 @@ class HalAssembler:
             + self._spindle_fragments()
             + self._heater_fragments()
             + self._sensor_fragments()
+            + [LedHalMapper.to_fragment(led) for led in self._payload.get("leds") or [] if isinstance(led, dict)]
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]
             + self._bed_mesh_fragments()
             + self._io_pin_fragments()
         )
+        z_tilt = self._payload.get("z_tilt")
+        if isinstance(z_tilt, dict):
+            # After every stepper mapper: it rewrites their Z position nets.
+            component_fragments.append(ZTiltHalMapper.apply(component_fragments, z_tilt))
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
 
@@ -242,10 +244,7 @@ class HalAssembler:
     def _sensor_fragments(self) -> list[HalFragment]:
         """One fragment per temperature sensor no heater reads — a heater's
         own sensor is already wired by ``HeaterHalMapper``."""
-        sensors = unclaimed_sensors(self._payload)
-        remora_id = remora_mcu_id(self._payload)
-        fragments = [TemperatureSensorHalMapper.to_fragment(s, remora_id) for s in sensors]
-        return fragments + [HalFragment(loadusr=component_loads(sensors))]
+        return [TemperatureSensorHalMapper.to_fragment(s) for s in unclaimed_sensors(self._payload)]
 
     def _fan_fragments(self) -> list[HalFragment]:
         """One fragment per fan — always its own direct pin route.

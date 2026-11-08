@@ -41,6 +41,9 @@ class PinRole(Enum):
     #: A duty/setpoint value going out to hardware (heater PID output,
     #: a referenced fan's commanded speed) — `remora.SP.N` on class B.
     ANALOG_OUT = "analog_out"
+    #: One colour segment of a WS2812 / SK6812 chain (``PinRequest.led``):
+    #: a set point carrying 0xRRGGBB, the chain a firmware "RGB" module.
+    RGB = "rgb"
     #: A measured value coming in from hardware (a thermistor reading)
     #: — `remora.PV.N` on class B.
     ANALOG_IN = "analog_in"
@@ -94,6 +97,8 @@ class PinRequest:
     pin: ParsedPin
     owner: str
     sensor_type: str | None = None
+    #: ``PinRole.RGB`` only: ``(chain_count, color_order, first, count)``.
+    led: tuple[int, str, int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)

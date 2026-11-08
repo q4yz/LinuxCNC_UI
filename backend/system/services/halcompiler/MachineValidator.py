@@ -21,7 +21,7 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
-from .components.TemperatureSensorHalMapper import is_hal_sensor, is_mcu_temp_sensor, remora_mcu_id
+from .components.TemperatureSensorHalMapper import HOST, MCU, is_board_sensor, is_hal_sensor, sensor_kind
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
 
@@ -47,6 +47,7 @@ _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
     ("fans", "pin", False),
     ("output_pins", "pin", False),
     ("input_pins", "pin", False),
+    ("leds", "pin", False),
 )
 
 
@@ -90,7 +91,8 @@ class MachineValidator:
         self._check_can()
         self._check_references()
         self._check_io_ids()
-        self._check_mcu_temp()
+        self._check_leds()
+        self._check_standalone_sensors()
         self._check_halpin_sets()
         self._check_joints_and_axes()
         self._check_corexy()
@@ -137,8 +139,8 @@ class MachineValidator:
                 raw = record.get(field)
                 if not raw:
                     continue
-                if list_name == "temperature_sensors" and is_hal_sensor(record):
-                    continue  # a HAL name, not a board pin
+                if list_name == "temperature_sensors" and not is_board_sensor(record):
+                    continue  # a HAL name or MCU id, not a board pin
                 owner = str(record.get("id", list_name))
                 try:
                     out.append((PinStringMapper.from_string(raw), owner, field, is_joint))
@@ -331,7 +333,7 @@ class MachineValidator:
                 or (owner, field) in _CAN_NODE_PIN_FIELDS
                 or field == "heater_pin"
                 or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
-                or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins"))
+                or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins") | self._ids("leds"))
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
@@ -373,7 +375,7 @@ class MachineValidator:
         sensor without one would read nothing at all."""
         sensors_per_node: dict[str, list[str]] = {}
         for sensor in self._records("temperature_sensors"):
-            if is_hal_sensor(sensor):
+            if not is_board_sensor(sensor):
                 continue
             try:
                 pin = PinStringMapper.from_string(sensor["pin"]) if sensor.get("pin") else None
@@ -458,29 +460,84 @@ class MachineValidator:
                     node_id,
                 )
 
-    def _check_mcu_temp(self) -> None:
-        """``remora.mcu-temp`` needs a ``remora-spi`` board, and that board
-        has one MCU temperature — one sensor reads it."""
-        owners = [str(s.get("id", "?")) for s in self._records("temperature_sensors") if is_mcu_temp_sensor(s)]
-        if owners and remora_mcu_id(self._payload) is None:
-            self._error(
-                "E_MCU_TEMP_NO_REMORA",
-                "remora.mcu-temp is the Remora board's MCU temperature; this machine has no "
-                "remora-spi MCU.",
-                owners[0],
-            )
-        if len(owners) > 1:
-            self._error(
-                "E_MCU_TEMP_SHARED",
-                f"remora.mcu-temp is read by {', '.join(owners)}; declare it once.",
-                owners[1],
-            )
+    def _check_standalone_sensors(self) -> None:
+        """``temperature_mcu`` reads a ``remora-spi`` board, which has one
+        MCU temperature; ``temperature_host`` loads one ``rpi-monitor``;
+        a ``hal`` pin under ``remora.*`` is a PV slot the generator
+        hands out itself."""
+        sensors = self._records("temperature_sensors")
+        mcus = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
+        mcu_owners = [s for s in sensors if sensor_kind(s) == MCU]
+        for sensor in mcu_owners:
+            if (mcus.get(str(sensor.get("pin"))) or {}).get("connection") != "remora-spi":
+                self._error(
+                    "E_MCU_TEMP_NO_REMORA",
+                    "sensor_type: temperature_mcu reads the Remora board's MCU; this machine "
+                    "has no remora-spi MCU.",
+                    str(sensor.get("id", "?")),
+                )
+        for kind, code, what in ((MCU, "E_MCU_TEMP_SHARED", "the MCU temperature"),
+                                 (HOST, "E_HOST_TEMP_SHARED", "the host temperature")):
+            owners = [str(s.get("id", "?")) for s in sensors if sensor_kind(s) == kind]
+            if len(owners) > 1:
+                self._error(code, f"{what} is read by {', '.join(owners)}; declare it once.", owners[1])
+        for sensor in sensors:
+            pin = str(sensor.get("pin") or "")
+            if is_hal_sensor(sensor) and pin.startswith("remora."):
+                self._error(
+                    "E_HAL_PIN_GENERATED",
+                    f"sensor_pin {pin!r}: the generator hands out the remora.* pins itself (a "
+                    "PV slot goes to each thermistor in turn), so it may already be taken. Use "
+                    "sensor_type: temperature_mcu for the board's MCU, or a thermistor type with "
+                    "the board pin.",
+                    str(sensor.get("id", "?")),
+                )
+
+    def _check_leds(self) -> None:
+        """A WS2812 chain needs a Remora board or CAN node (the firmware's
+        "RGB" module): a hub drives up to 4 chains of up to 6 segments, a
+        node 2 chains with 4 segments in all."""
+        mcus = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
+        per_node: dict[str, list[tuple[str, int]]] = {}
+        hub_chains: dict[str, int] = {}
+        for led in self._records("leds"):
+            owner = str(led.get("id", "?"))
+            try:
+                pin = PinStringMapper.from_string(str(led.get("pin") or ""))
+            except ValueError:
+                continue
+            connection = (mcus.get(pin.mcu_id) or {}).get("connection")
+            segments = len(led.get("segments") or [[1, 1]])
+            if connection == "remora-can":
+                per_node.setdefault(pin.mcu_id, []).append((owner, segments))
+            elif connection == "remora-spi":
+                hub_chains[pin.mcu_id] = hub_chains.get(pin.mcu_id, 0) + 1
+                if segments > 6:
+                    self._error("E_LED_LIMIT", f"{owner}: {segments} segments; a chain has at most 6.", owner)
+            elif pin.mcu_id in mcus:
+                self._error(
+                    "E_LED_NOT_REMORA",
+                    f"{owner}: LED chains need a Remora board or CAN node; {pin.mcu_id!r} is "
+                    f"{connection!r}.",
+                    owner,
+                )
+        for mcu_id, chains in hub_chains.items():
+            if chains > 4:
+                self._error("E_LED_LIMIT", f"{mcu_id!r} drives {chains} LED chains; at most 4.", mcu_id)
+        for node, chains in per_node.items():
+            if len(chains) > 2 or sum(n for _, n in chains) > 4:
+                self._error(
+                    "E_LED_LIMIT",
+                    f"CAN node {node!r}: {len(chains)} chain(s), {sum(n for _, n in chains)} segment(s); "
+                    "a node drives at most 2 chains with 4 segments in all.",
+                    node,
+                )
 
     def _check_io_ids(self) -> None:
         """An ``[output_pin]`` / ``[input_pin]`` name is its HAL signal
         and ``webgui.<name>`` pin, so it must not repeat any other
         component id (fans, tools, sensors, the other I/O pins)."""
-        taken = self._ids("fans") | self._ids("tools") | self._ids("temperature_sensors")
+        taken = self._ids("fans") | self._ids("tools") | self._ids("temperature_sensors") | self._ids("leds")
         for record in [*self._records("output_pins"), *self._records("input_pins")]:
             pin_id = str(record.get("id", "?"))
             if pin_id in taken:
@@ -527,7 +584,7 @@ class MachineValidator:
         endstops = self._ids("endstops")
         tools = self._ids("tools")
         hal_sensors = {
-            str(s["id"]) for s in self._records("temperature_sensors") if s.get("id") and is_hal_sensor(s)
+            str(s["id"]) for s in self._records("temperature_sensors") if s.get("id") and not is_board_sensor(s)
         }
 
         for tool in self._records("tools"):
@@ -541,7 +598,7 @@ class MachineValidator:
             elif tool.get("sensor") and str(tool["sensor"]) in hal_sensors:
                 self._error(
                     "E_HEATER_HAL_SENSOR",
-                    f"sensor {tool['sensor']!r} is a HAL reading (type: hal); a heater "
+                    f"sensor {tool['sensor']!r} is not a board thermistor; a heater "
                     "reads a thermistor on a board pin only so far.",
                     owner,
                 )

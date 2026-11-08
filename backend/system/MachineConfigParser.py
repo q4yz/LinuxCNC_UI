@@ -17,6 +17,9 @@ from models.machineconfig import (
     Fan,
     Heater,
     HeaterFan,
+    HomingOverride,
+    Neopixel,
+    ZTilt,
     InputPin,
     MachineConfigGraph,
     MCU,
@@ -30,6 +33,7 @@ from models.machineconfig import (
     TMC2209,
     ToolLengthSensor,
 )
+from core.homing_routine import AXIS_LETTERS, HomingRoutineError, parse_homing_routine
 from machineconfig_schema import (
     ALLOWED_CONNECTION_TYPES,
     EXTRUDER_KEYS,
@@ -754,6 +758,13 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.NEOPIXEL:
+                led = self._parse_neopixel(section_name, section_schema.object_name, section)
+                graph.neopixels[led.name] = led
+            elif section_schema.kind is SectionKind.Z_TILT:
+                graph.z_tilt = self._parse_z_tilt(section_name, section)
+            elif section_schema.kind is SectionKind.HOMING_OVERRIDE:
+                graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
             elif section_schema.kind is SectionKind.OUTPUT_PIN:
@@ -1253,17 +1264,35 @@ class MachineConfigParser:
         name: str,
         section: configparser.SectionProxy,
     ) -> TemperatureSensorConfig:
-        """Build a :class:`TemperatureSensorConfig`. With ``sensor_type:
-        hal`` the pin is a HAL name, checked here; a board pin's MCU
-        prefix is checked with every other pin afterwards."""
+        """Build a :class:`TemperatureSensorConfig`. ``temperature_host`` /
+        ``temperature_mcu`` take no pin; with ``hal`` the pin is a HAL
+        name, checked here; a board pin's MCU prefix is checked with
+        every other pin afterwards."""
+        sensor_type = self._required_string(section_name, section, "sensor_type")
+        kind = sensor_type.strip().lower()
+        thermal_zone = self._optional_int(section_name, section, "thermal_zone")
+        if thermal_zone is not None and kind != "temperature_host":
+            raise InvalidValueError(
+                section_name, "thermal_zone", str(thermal_zone), "only with sensor_type: temperature_host"
+            )
+        if thermal_zone is not None and thermal_zone < 0:
+            raise InvalidValueError(section_name, "thermal_zone", str(thermal_zone), "a zone number, 0 or above")
+        if kind in ("temperature_host", "temperature_mcu"):
+            pin = self._optional_string(section, "sensor_pin")
+            if pin is not None:
+                raise InvalidValueError(
+                    section_name, "sensor_pin", pin,
+                    f"no sensor_pin — sensor_type: {kind} knows where it reads",
+                )
+            return TemperatureSensorConfig(name=name, sensor_type=kind, thermal_zone=thermal_zone)
         sensor = TemperatureSensorConfig(
             name=name,
-            sensor_type=self._required_string(section_name, section, "sensor_type"),
+            sensor_type=sensor_type,
             sensor_pin=self._required_string(section_name, section, "sensor_pin"),
         )
         if sensor.is_hal:
             sensor.sensor_type = "hal"
-            if not _HAL_NAME.fullmatch(sensor.sensor_pin):
+            if not _HAL_NAME.fullmatch(sensor.sensor_pin or ""):
                 raise InvalidValueError(
                     section_name, "sensor_pin", sensor.sensor_pin,
                     "a HAL pin (rpi-monitor.cpu-temp) or signal name",
@@ -1297,6 +1326,125 @@ class MachineConfigParser:
         lines = [line.strip() for line in section[key].splitlines()]
         return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
 
+    def _parse_neopixel(self, section_name: str, name: str, section: configparser.SectionProxy) -> Neopixel:
+        """Build a :class:`Neopixel` (Klipper's keys and defaults).
+
+        ``color_order``: R, G, B once each, W once for RGBW (``GRB``,
+        ``GRBW``); a Klipper per-LED list must name one order. ``segments``
+        (``1, 2-3`` or one per line): the LED groups, covering the chain
+        without overlap; default one group, the whole chain.
+        """
+        count = self._optional_int(section_name, section, "chain_count")
+        count = 1 if count is None else count
+        if not 1 <= count <= 64:
+            raise InvalidValueError(section_name, "chain_count", str(count), "1 ... 64 LEDs")
+        raw_order = (self._optional_string(section, "color_order") or "GRB").upper()
+        orders = {o.strip() for o in raw_order.split(",") if o.strip()}
+        order = orders.pop() if len(orders) == 1 else ""
+        if not order or sorted(order.replace("W", "")) != ["B", "G", "R"] or order.count("W") > 1 or len(order) not in (3, 4):
+            raise InvalidValueError(section_name, "color_order", raw_order, "one order of R, G, B (and W), e.g. GRB or GRBW")
+        segments: list[tuple[int, int]] = []
+        raw_segments = self._ngc_lines(section, "segments")
+        if raw_segments:
+            for part in raw_segments.replace("\n", ",").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    first, _, last = part.partition("-")
+                    a, b = int(first), int(last or first)
+                except ValueError:
+                    raise InvalidValueError(section_name, "segments", part, "LED numbers like 1 or 2-3") from None
+                if not 1 <= a <= b <= count:
+                    raise InvalidValueError(section_name, "segments", part, f"LEDs 1 ... {count}")
+                segments.append((a, b - a + 1))
+            covered = sorted(i for a, n in segments for i in range(a, a + n))
+            if covered != list(range(1, count + 1)):
+                raise InvalidValueError(
+                    section_name, "segments", raw_segments.replace("\n", ", "),
+                    f"groups covering LEDs 1 ... {count} once each",
+                )
+        initial = []
+        for color in ("RED", "GREEN", "BLUE", "WHITE"):
+            value = self._optional_float(section_name, section, f"initial_{color}")
+            value = 0.0 if value is None else value
+            if not 0.0 <= value <= 1.0:
+                raise InvalidValueError(section_name, f"initial_{color}", f"{value:g}", "0.0 ... 1.0")
+            initial.append(value)
+        return Neopixel(
+            name=name,
+            pin=self._required_string(section_name, section, "pin"),
+            chain_count=count,
+            color_order=order,
+            segments=sorted(segments) or [(1, count)],
+            initial=(initial[0], initial[1], initial[2], initial[3]),
+        )
+
+    def _xy_list(self, section_name: str, section: configparser.SectionProxy, key: str) -> list[tuple[float, float]]:
+        """``X, Y`` per line (Klipper's multi-line lists)."""
+        raw = self._ngc_lines(section, key)
+        if raw is None:
+            raise MissingRequiredKeywordError(section_name, key)
+        out: list[tuple[float, float]] = []
+        for line in raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            try:
+                if len(parts) != 2:
+                    raise ValueError
+                out.append((float(parts[0]), float(parts[1])))
+            except ValueError:
+                raise InvalidValueError(section_name, key, line, "'X, Y' per line") from None
+        return out
+
+    def _parse_z_tilt(self, section_name: str, section: configparser.SectionProxy) -> ZTilt:
+        """Build the machine's :class:`ZTilt`. Matching the pivots to the
+        Z motors needs the axes, so that check is the generator's."""
+        z_tilt = ZTilt(
+            z_positions=self._xy_list(section_name, section, "z_positions"),
+            points=self._xy_list(section_name, section, "points"),
+        )
+        for key, minimum in (("speed", 0.0), ("probe_speed", 0.0), ("max_adjust", 0.0)):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value <= minimum:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "a number above 0")
+                setattr(z_tilt, key, value)
+        for key in ("horizontal_move_z", "retry_tolerance"):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value < 0:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "0 or above")
+                setattr(z_tilt, key, value)
+        retries = self._optional_int(section_name, section, "retries")
+        if retries is not None:
+            if retries < 0:
+                raise InvalidValueError(section_name, "retries", str(retries), "0 or above")
+            z_tilt.retries = retries
+        if len(z_tilt.points) < 2:
+            raise InvalidValueError(section_name, "points", str(len(z_tilt.points)), "at least two probe points")
+        return z_tilt
+
+    def _parse_homing_override(
+        self,
+        section_name: str,
+        section: configparser.SectionProxy,
+    ) -> HomingOverride:
+        """Build the machine's :class:`HomingOverride`: ``gcode`` is the
+        routine (comment lines and blanks dropped, each ``G28`` line
+        checked), ``axes`` the axis letters whose home button runs it —
+        empty here means "every axis", resolved once the axes are known."""
+        gcode = self._ngc_lines(section, "gcode")
+        if gcode is None:
+            raise MissingRequiredKeywordError(section_name, "gcode")
+        try:
+            parse_homing_routine(gcode)
+        except HomingRoutineError as exc:
+            raise InvalidValueError(section_name, "gcode", exc.line.strip(), exc.reason) from exc
+        axes_raw = (self._optional_string(section, "axes") or "").replace(",", "").replace(" ", "")
+        if axes_raw and not set(axes_raw.upper()) <= set(AXIS_LETTERS):
+            raise InvalidValueError(section_name, "axes", axes_raw, f"axis letters ({AXIS_LETTERS.lower()})")
+        return HomingOverride(gcode=gcode, axes="".join(dict.fromkeys(axes_raw.lower())))
+
     def _parse_bed_mesh(
         self,
         section_name: str,
@@ -1310,7 +1458,7 @@ class MachineConfigParser:
         """
         raw = self._optional_string(section, "probe_count")
         if raw is None:
-            return BedMesh()
+            return self._bed_mesh_probing(section_name, section, BedMesh())
         parts = [p.strip() for p in raw.split(",")]
         try:
             counts = [int(p) for p in parts]
@@ -1322,7 +1470,38 @@ class MachineConfigParser:
             raise InvalidValueError(
                 section_name, "probe_count", raw, "'X, Y' (or one value), each at least 3"
             )
-        return BedMesh(probe_count=(counts[0], counts[1]))
+        return self._bed_mesh_probing(section_name, section, BedMesh(probe_count=(counts[0], counts[1])))
+
+    def _bed_mesh_probing(self, section_name: str, section: configparser.SectionProxy, mesh: BedMesh) -> BedMesh:
+        """Klipper's probing keys: ``mesh_min`` / ``mesh_max`` /
+        ``zero_reference_position`` as ``X, Y``, speeds above 0."""
+        for key in ("mesh_min", "mesh_max", "zero_reference_position"):
+            raw = self._optional_string(section, key)
+            if raw is None:
+                continue
+            parts = [p.strip() for p in raw.split(",")]
+            try:
+                if len(parts) != 2:
+                    raise ValueError
+                setattr(mesh, key, (float(parts[0]), float(parts[1])))
+            except ValueError:
+                raise InvalidValueError(section_name, key, raw, "'X, Y'") from None
+        if mesh.mesh_min and mesh.mesh_max and not (
+            mesh.mesh_min[0] < mesh.mesh_max[0] and mesh.mesh_min[1] < mesh.mesh_max[1]
+        ):
+            raise InvalidValueError(section_name, "mesh_max", str(mesh.mesh_max), "above mesh_min on X and Y")
+        for key in ("speed", "probe_speed"):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value <= 0:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "a number above 0")
+                setattr(mesh, key, value)
+        value = self._optional_float(section_name, section, "horizontal_move_z")
+        if value is not None:
+            if value < 0:
+                raise InvalidValueError(section_name, "horizontal_move_z", f"{value:g}", "0 or above")
+            mesh.horizontal_move_z = value
+        return mesh
 
     def _parse_probe(
         self,
@@ -1591,8 +1770,10 @@ class MachineConfigParser:
             )
         for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
             MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
+        for name, led in graph.neopixels.items():
+            MachineConfigParser._validate_pin_mcu(f"neopixel {name}", "pin", led.pin, declared)
         for name, sensor in graph.temperature_sensors.items():
-            if not sensor.is_hal:
+            if sensor.is_board_pin:
                 MachineConfigParser._validate_pin_mcu(
                     f"temperature_sensor {name}", "sensor_pin", sensor.sensor_pin, declared
                 )

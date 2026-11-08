@@ -47,13 +47,13 @@ _THERMISTOR_CURVES: dict[str, tuple[int, int, int]] = {
 _DIGITAL_BITS = 16
 
 
-#: ``sensor_type: hal`` pin name for a Remora board's own MCU (die)
-#: temperature. Not a driver pin: the compiler gives it a free
-#: ``remora.PV.N`` plus the firmware's "MCU Temperature" module and
-#: aliases that PV to this name.
-MCU_TEMP_PIN = "remora.mcu-temp"
-#: ``PinRequest.sensor_type`` marking that request.
-MCU_TEMP_SENSOR_TYPE = "mcu_temperature"
+#: ``PinRequest.sensor_type`` of a ``temperature_mcu`` sensor: the
+#: board's own MCU (die) temperature, on the next free ``remora.PV.N``
+#: with the firmware's "MCU Temperature" module.
+MCU_TEMP_SENSOR_TYPE = "temperature_mcu"
+#: Set points (``remora.SP.N``) per board, its CAN nodes included — the
+#: firmware's ``VARIABLES`` (configuration.h).
+REMORA_SET_POINTS = 6
 
 
 class RemoraRouterMapper:
@@ -245,6 +245,7 @@ class RemoraRouterMapper:
         digital_out_index = 0
         sp_index = 0
         pv_index = 0
+        chains: dict[str, dict[str, Any]] = {}
         for request in requests:
             if request.role in (PinRole.ENDSTOP, PinRole.DIGITAL_IN):
                 bit = next(inputs, None)
@@ -331,12 +332,30 @@ class RemoraRouterMapper:
                     )
                 )
                 sp_index += 1
+            elif request.role is PinRole.RGB and request.led is not None:
+                # One set point per segment, 0xRRGGBB; the chain is one
+                # "RGB" module (Remora-m8p modules/rgb), built below.
+                fragment.nets.append(f"net {request.signal} => remora.SP.{sp_index}")
+                chain_count, order, first, count = request.led
+                chain = chains.setdefault(request.owner, {
+                    "mcu_id": request.pin.mcu_id,
+                    "module": {
+                        "Name": f"rgb_{request.owner}",
+                        "Thread": "Servo",
+                        "Type": "RGB",
+                        "Comment": request.owner,
+                        "Pin": RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id),
+                        "Chain Count": chain_count,
+                        "Color Order": order,
+                        "Segments": [],
+                    },
+                })
+                chain["module"]["Segments"].append({"First": first, "Count": count, "SP[i]": sp_index})
+                sp_index += 1
             elif request.role is PinRole.ANALOG_IN and request.sensor_type == MCU_TEMP_SENSOR_TYPE:
                 # The board's own die temperature ("MCU Temperature"
-                # module, Remora-m8p modules/mcuTemp) on a free PV,
-                # named remora.mcu-temp so HAL never shows a bare number.
-                fragment.nets.append(f"alias pin remora.PV.{pv_index} {MCU_TEMP_PIN}")
-                fragment.nets.append(f"net {request.signal} <= {MCU_TEMP_PIN}")
+                # module, Remora-m8p modules/mcuTemp) on the next free PV.
+                fragment.nets.append(f"net {request.signal} <= remora.PV.{pv_index}")
                 fragment.firmware_modules.append(
                     FirmwareModuleRequest(
                         mcu_id=request.pin.mcu_id,
@@ -380,7 +399,16 @@ class RemoraRouterMapper:
                 # would silently misreport real temperatures. The HAL
                 # `net` line above is still emitted either way.
                 pv_index += 1
+        for chain in chains.values():
+            fragment.firmware_modules.append(
+                FirmwareModuleRequest(mcu_id=chain["mcu_id"], module=chain["module"])
+            )
+        if sp_index > REMORA_SET_POINTS:
+            raise ValueError(
+                f"{sp_index} set points (heaters, fans, PWM outputs, LED segments) on one Remora "
+                f"board, its nodes included; it has {REMORA_SET_POINTS} (firmware VARIABLES)"
+            )
         return fragment
 
 
-__all__ = ["MCU_TEMP_PIN", "MCU_TEMP_SENSOR_TYPE", "RemoraRouterMapper"]
+__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_SET_POINTS", "RemoraRouterMapper"]

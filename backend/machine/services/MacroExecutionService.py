@@ -217,6 +217,18 @@ class MacroExecutionService:
                 continue
 
             for line in split_static_block(block.content):
+                if line.strip().upper() == "Z_TILT_ADJUST":
+                    if not self._z_tilt(name, stat):
+                        return
+                    continue
+                if line.strip().upper().startswith("BED_MESH_CALIBRATE"):
+                    if not self._bed_mesh(name, line, stat):
+                        return
+                    continue
+                if line.strip().upper().startswith("SET_LED"):
+                    if not self._set_led(name, line):
+                        return
+                    continue
                 stat.poll()
                 if stat.estop:
                     console.log_event(
@@ -246,6 +258,52 @@ class MacroExecutionService:
             level=LogLevel.INFO,
             source="CMD",
         )
+
+    @staticmethod
+    def _z_tilt(name: str, stat: Any) -> bool:
+        """A ``Z_TILT_ADJUST`` line (`.agent/component/z_tilt.md`): the
+        adjust, on this worker. ``False`` (logged) stops the macro."""
+        from services.ZTiltService import ZTiltError, get_z_tilt_service
+
+        try:
+            get_z_tilt_service().run(stat)
+        except (ZTiltError, BadRequestError) as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: Z_TILT_ADJUST: {getattr(exc, 'detail', None) or exc}",
+                level=LogLevel.ERROR,
+                source="CMD",
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _bed_mesh(name: str, line: str, stat: Any) -> bool:
+        """A ``BED_MESH_CALIBRATE [PROFILE=x]`` line (`.agent/component/bed_mesh.md`)."""
+        from services.BedMeshProbeService import BedMeshError, get_bed_mesh_probe_service
+
+        try:
+            get_bed_mesh_probe_service().run_command(line, stat)
+        except (BedMeshError, BadRequestError) as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: BED_MESH_CALIBRATE: {getattr(exc, 'detail', None) or exc}",
+                level=LogLevel.ERROR, source="CMD",
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _set_led(name: str, line: str) -> bool:
+        """A ``SET_LED`` line (Klipper, `.agent/component/neopixel.md`)."""
+        from services.LedService import get_led_service
+
+        try:
+            get_led_service().run_command(line)
+        except BadRequestError as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: {exc.detail}", level=LogLevel.ERROR, source="CMD"
+            )
+            return False
+        return True
 
     @staticmethod
     def _wait_until_idle(stat: Any, serial: Optional[int]) -> Optional[str]:
