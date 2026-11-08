@@ -124,7 +124,7 @@ def upload_file(
 
     try:
         payload = file.file.read()
-        service.save_upload(safe_filename, payload)
+        safe_filename = service.save_upload(safe_filename, payload)
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PermissionError as exc:

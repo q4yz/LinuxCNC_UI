@@ -48,6 +48,8 @@ _OFFSET_AV_RATIO = 0.2
 #: ``[input_pin]`` edge subroutines, next to machine.ini (relative paths
 #: in ``SUBROUTINE_PATH`` are resolved from the INI's folder).
 SUBROUTINES_DIR = "subroutines"
+#: The machine's own helper M-codes (``marlin_mcodes``), next to the INI.
+MCODES_DIR = "mcodes"
 
 #: PrintNC-WEBGUI's known-good ``[DISPLAY]`` block (see
 #: ``machine_config/example/PrintNC-WEBGUI/Machine.ini``) — every
@@ -186,6 +188,7 @@ def render_ini_template(
     mdi_commands: List[str] | None = None,
     corexy: bool = False,
     homing_override: bool = False,
+    remaps: List[str] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -212,6 +215,9 @@ def render_ini_template(
         homing_override: The machine homes with a ``[homing_override]``
             routine — ``[TRAJ] NO_FORCE_HOMING = 1`` so the routine's
             moves run before every joint is homed.
+        remaps: ``[RS274NGC] REMAP=`` lines (Marlin heater / fan codes,
+            ``marlin_mcodes``); their subroutines live in
+            ``subroutines/``, their helper M-codes in ``mcodes/``.
     """
     tools = tools or []
     mdi_commands = mdi_commands or []
@@ -250,9 +256,10 @@ def render_ini_template(
         "",
         "[RS274NGC]",
         "PARAMETER_FILE = linuxcnc.var",
-        f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
+        f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}" + (f":{MCODES_DIR}" if remaps else ""),
         # ``o<name> call`` (macros / probing cycles) looks subroutines up here.
-        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}" + (f":{SUBROUTINES_DIR}" if mdi_commands else ""),
+        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}" + (f":{SUBROUTINES_DIR}" if mdi_commands or remaps else ""),
+        *(remaps or []),
         "",
         "[EMCMOT]",
         "EMCMOT = motmod",

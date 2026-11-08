@@ -48,7 +48,7 @@ class SlicerUploadService:
             raise UnsupportedFileError(f"{name}: only {allowed} files can be sent")
         path = "/".join(p for p in (directory.strip("/"), name) if p)
         self._programs.safe_join(path)
-        self._programs.save_upload(path, data)
+        path = self._programs.save_upload(path, data)
         logger.info("Slicer upload stored: %s (%d bytes)", path, len(data))
         return path
 
