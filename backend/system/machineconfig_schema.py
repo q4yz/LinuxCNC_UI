@@ -119,6 +119,10 @@ STEPPER_KEYS = frozenset(
         "position_min",
         "position_max",
         "homing_speed",
+        # Klipper's second, slower approach and the retract between —
+        # used by a Z homed on the probe (probe:z_virtual_endstop).
+        "second_homing_speed",
+        "homing_retract_dist",
         # Class-B (Remora) per-joint position-loop tuning — real,
         # optional `setp remora.joint.N.*` knobs the reference config
         # actually uses (`machine_config/example/ender3/ender3.hal`:

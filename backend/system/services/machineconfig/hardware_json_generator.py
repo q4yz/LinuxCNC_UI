@@ -299,25 +299,24 @@ def _z_tilt_payload(graph: MachineConfigGraph, axes_records: list[dict[str, Any]
     }
 
 
-def _probe_endstop_overrides(graph: MachineConfigGraph) -> set[str]:
-    """The probe as a Z endstop (Klipper's ``probe:z_virtual_endstop``):
-    when ``[probe] pin`` is the same physical pin as a stepper's
-    ``endstop_pin``, both share one signal — the permission
-    ``[duplicate_pin_override]`` would give, given here as the compiler
-    makes the pair itself (`.agent/component/probe.md`)."""
-    if graph.probe is None or not graph.probe.pin:
-        return set()
-    probe_mcu, probe_pin = split_pin(graph.probe.pin)
-    if probe_pin is None:
-        return set()
-    qualified = f"{probe_mcu or 'mcu'}:{probe_pin}"
-    for name, stepper in graph.steppers.items():
-        if not name.lower().startswith("z"):
-            continue  # only the Z endstop: another shared pin stays E_PIN_CONFLICT
-        mcu, pin = split_pin(stepper.endstop_pin)
-        if pin is not None and f"{mcu or 'mcu'}:{pin}" == qualified:
-            return {qualified}
-    return set()
+def _z_virtual_endstop_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    """How Z homes on the probe (``probe:z_virtual_endstop``), or ``None``:
+    a probe move down over ``distance`` at ``speed`` (``[stepper_z]
+    homing_speed``), back ``retract`` (``homing_retract_dist``), again at
+    ``second_speed`` (``second_homing_speed``) — mm, mm/s, Klipper's
+    defaults — then Z is homed where it stands (``position_endstop``)."""
+    if not graph.z_virtual_endstop:
+        return None
+    z = graph.steppers.get("z")
+    speed = float(getattr(z, "homing_speed", None) or 5.0)
+    low = float(getattr(z, "position_min", None) or 0.0)
+    high = float(getattr(z, "position_max", None) or 0.0)
+    return {
+        "speed": speed,
+        "second_speed": float(getattr(z, "second_homing_speed", None) or speed / 2.0),
+        "retract": float(getattr(z, "homing_retract_dist", None) if getattr(z, "homing_retract_dist", None) is not None else 5.0),
+        "distance": max(high - low, 0.0) + 5.0,
+    }
 
 
 def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
@@ -1197,6 +1196,7 @@ def build_hardware_json(
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh, graph),
         "z_tilt": _z_tilt_payload(graph, axes_records),
+        "z_virtual_endstop": _z_virtual_endstop_payload(graph),
         "leds": [
             {
                 "id": led.name, "pin": led.pin, "chain_count": led.chain_count,
@@ -1222,7 +1222,7 @@ def build_hardware_json(
         "fans": fan_records,
         "mcus": mcu_records,
         "duplicate_pin_overrides": sorted(
-            graph.duplicate_pin_overrides | auto_duplicate_pin_overrides | _probe_endstop_overrides(graph)
+            graph.duplicate_pin_overrides | auto_duplicate_pin_overrides
         ),
     }
 

@@ -50,6 +50,8 @@ def machine(monkeypatch):
 
     def execute_sync_cmd(name, timeout=0, *args):
         calls.append((name, *args))
+        if name == "unhome":
+            stat.homed[args[0]] = 0
         if name == "home":
             joint = args[0]
             joints = range(len(stat.homed)) if joint == -1 else [1, 2] if joint == 1 else [joint]
@@ -196,3 +198,82 @@ def test_switchless_axis_is_homed_in_place_at_the_end(machine):
     assert homes == [("home", 0), ("home", 1), ("home", 3), ("home", 4)]
     assert machine.stat.homed == [1] * 5
     assert machine.events[-1][1] == "Homing routine finished."
+
+
+# -- Z homed on the probe (probe:z_virtual_endstop) ---------------------------- #
+
+VIRTUAL = {"speed": 5.0, "second_speed": 2.5, "retract": 5.0, "distance": 255.0}
+
+
+@pytest.fixture
+def probe_machine(machine, monkeypatch):
+    import services.Probing as probing
+
+    def dispatch(line, ack_timeout=1.0):
+        machine.calls.append(("mdi", line))
+        if "G38.2" in line:
+            machine.stat.probe_tripped = True
+        return None
+
+    monkeypatch.setattr(probing, "dispatch_mdi", dispatch)
+    machine.stat.probe_tripped = False
+    machine.stat.probe_val = 0
+
+    def service(override=None):
+        s = machine.service(override)
+        s._config.payload["z_virtual_endstop"] = VIRTUAL
+        return s
+
+    machine.vservice = service
+    return machine
+
+
+def test_virtual_z_is_a_probe_move_then_homed_in_place(probe_machine):
+    _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
+    calls = [c for c in probe_machine.calls if c[0] in ("mdi", "home", "unhome")]
+    assert calls == [
+        ("unhome", 3), ("mdi", "G91"), ("mdi", "G38.2 Z-255.0000 F300.0"), ("mdi", "G0 Z5.0000"),
+        ("mdi", "G38.2 Z-10.0000 F150.0"), ("mdi", "G90"), ("home", 3),
+    ]
+    assert probe_machine.events[-1][1] == "Homing routine finished."
+
+
+def test_bare_g28_homes_z_last_on_the_probe(probe_machine):
+    _run(probe_machine.vservice({"gcode": "G28", "axes": "xyz"}))
+    homes = [c for c in probe_machine.calls if c[0] == "home"]
+    assert homes == [("home", 0), ("home", 1), ("home", 3)]  # X, Y (gantry), then Z — never home(-1)
+
+
+def test_probe_already_pressed_lifts_first(probe_machine):
+    probe_machine.stat.probe_val = 1
+    _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
+    mdi = [c[1] for c in probe_machine.calls if c[0] == "mdi"]
+    assert mdi[:3] == ["G91", "G0 Z5.0000", "G38.2 Z-255.0000 F300.0"]
+
+
+def test_probe_not_triggering_stops_homing(probe_machine, monkeypatch):
+    import services.Probing as probing
+
+    monkeypatch.setattr(probing, "dispatch_mdi", lambda line, ack_timeout=1.0: probe_machine.calls.append(("mdi", line)))
+    _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
+    assert ("home", 3) not in probe_machine.calls
+    assert ("mdi", "G90") in probe_machine.calls  # back to absolute either way
+    assert "did not trigger" in probe_machine.events[-1][1]
+
+
+def test_home_buttons_use_the_probe_without_a_routine(probe_machine, monkeypatch):
+    from services.AxisService import AxisService
+
+    service = probe_machine.vservice(None)
+    monkeypatch.setattr(module, "get_homing_routine_service", lambda: service)
+    started = []
+    monkeypatch.setattr(service, "start", lambda steps=None: started.append(steps))
+    AxisService().home_single_axes("all")
+    AxisService().home_single_axes("z")
+    assert [s[0].axes for s in started] == [(), ("Z",)]
+    assert service.handles("all") and service.handles("z") and not service.handles("x")
+
+
+def test_program_guard_with_a_virtual_z(probe_machine):
+    with pytest.raises(ConflictError):
+        probe_machine.vservice(None).require_homed()

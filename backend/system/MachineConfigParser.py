@@ -958,18 +958,31 @@ class MachineConfigParser:
 
     @staticmethod
     def _resolve_virtual_endstop(graph: MachineConfigGraph) -> None:
-        """``endstop_pin: probe:z_virtual_endstop`` (Klipper): the
-        ``[probe]`` pin is the endstop — the generator then puts both on
-        one signal (`.agent/component/probe.md`)."""
+        """Z homed on the probe (`.agent/component/probe.md`): Klipper's
+        ``endstop_pin: probe:z_virtual_endstop`` — or the ``[probe]``
+        pin itself as a Z endstop — means no Z home switch at all: a probe
+        move finds the bed and Z is homed where it stands. Wiring the
+        probe as a switch instead makes LinuxCNC abort homing ("probe
+        tripped during non-probe move")."""
+        probe_pin = split_pin(graph.probe.pin) if graph.probe is not None and graph.probe.pin else None
         for name, stepper in graph.steppers.items():
-            if (stepper.endstop_pin or "").strip().lower() != "probe:z_virtual_endstop":
+            raw = (stepper.endstop_pin or "").strip()
+            if not raw or not name.lower().startswith("z"):
+                if raw.lower() == "probe:z_virtual_endstop":
+                    raise InvalidValueError(
+                        f"stepper_{name}", "endstop_pin", raw, "probe:z_virtual_endstop on a Z stepper only"
+                    )
                 continue
-            if graph.probe is None or not graph.probe.pin:
-                raise InvalidValueError(
-                    f"stepper_{name}", "endstop_pin", stepper.endstop_pin or "",
-                    "a [probe] section with a pin (probe:z_virtual_endstop is the probe's pin)",
-                )
-            stepper.endstop_pin = graph.probe.pin
+            if raw.lower() == "probe:z_virtual_endstop":
+                if probe_pin is None:
+                    raise InvalidValueError(
+                        f"stepper_{name}", "endstop_pin", raw,
+                        "a [probe] section with a pin (probe:z_virtual_endstop is the probe)",
+                    )
+            elif probe_pin is None or split_pin(raw) != probe_pin:
+                continue
+            stepper.endstop_pin = None
+            graph.z_virtual_endstop = True
 
     @staticmethod
     def _validate_temperature_sensor_uniqueness(graph: MachineConfigGraph) -> None:
@@ -1057,6 +1070,8 @@ class MachineConfigParser:
             position_min=self._optional_float(section_name, section, "position_min"),
             position_max=self._optional_float(section_name, section, "position_max"),
             homing_speed=self._optional_float(section_name, section, "homing_speed"),
+            second_homing_speed=self._optional_float(section_name, section, "second_homing_speed"),
+            homing_retract_dist=self._optional_float(section_name, section, "homing_retract_dist"),
             deadband=self._optional_float(section_name, section, "deadband"),
             pgain=self._optional_float(section_name, section, "pgain"),
         )

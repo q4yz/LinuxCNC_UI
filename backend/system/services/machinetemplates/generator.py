@@ -493,7 +493,10 @@ def _write_machine(
             payload.get("tools"),
             [c.ini_line for c in input_commands],
             corexy=payload.get("kinematics") == "corexy",
-            homing_override=isinstance(payload.get("homing_override"), dict),
+            # NO_FORCE_HOMING: the routine, or a Z homed on the probe,
+            # moves before every joint is homed.
+            homing_override=isinstance(payload.get("homing_override"), dict)
+            or isinstance(payload.get("z_virtual_endstop"), dict),
             remaps=remaps,
         ),
         encoding="utf-8",

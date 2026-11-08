@@ -67,6 +67,11 @@ class HomingRoutineService:
         value = self._config.load_payload().get("homing_override")
         return value if isinstance(value, dict) and value.get("gcode") else None
 
+    def handles(self, axis: str) -> bool:
+        """Does homing ``axis`` go through this service — the routine, or
+        a Z that homes on the probe (``"all"`` includes Z)?"""
+        return self.applies_to(axis) or (self.virtual_z() is not None and axis.lower() in ("all", "z"))
+
     def applies_to(self, axis: str) -> bool:
         """Does homing ``axis`` (a letter, or ``"all"``) run the routine?"""
         override = self.override()
@@ -214,7 +219,29 @@ class HomingRoutineService:
             return f"LinuxCNC refused it ({exc})."
         return MacroExecutionService._wait_until_idle(stat, serial)
 
+    def virtual_z(self) -> Optional[Dict[str, Any]]:
+        """``hardware.json``'s ``z_virtual_endstop`` (Z homes on the
+        probe), or ``None``."""
+        value = self._config.load_payload().get("z_virtual_endstop")
+        return value if isinstance(value, dict) else None
+
     def _home(self, stat: Any, step: HomingStep) -> Optional[str]:
+        virtual = self.virtual_z()
+        if virtual is not None:
+            # Z homes on the probe: a probe move, never LinuxCNC's switch
+            # search. A bare G28 homes every other axis first, Z last.
+            letters = [a.upper() for a in step.axes] or [
+                str(a.get("id", "")).upper() for a in self._config.get_axes()
+                if str(a.get("id", "")).lower() != "z"
+            ] + ["Z"]
+            for letter in letters:
+                if letter == "Z":
+                    reason = self._virtual_z(stat, virtual)
+                else:
+                    reason = self._home_axes(stat, [letter])
+                if reason is not None:
+                    return reason
+            return None
         if not step.axes:
             targets = [(-1, self._all_joints())]
         else:
@@ -232,6 +259,68 @@ class HomingRoutineService:
             if reason is not None:
                 return reason
         return None
+
+    def _home_axes(self, stat: Any, letters: List[str]) -> Optional[str]:
+        for letter in letters:
+            joints = self._axis_joints(letter)
+            if not joints:
+                return f"this machine has no axis {letter}."
+            execute_sync_cmd("mode", 1.0, _MODE_MANUAL)
+            execute_sync_cmd("teleop_enable", 1.0, 0)
+            execute_sync_cmd("home", 1.0, joints[0])
+            reason = self._wait_homed(stat, joints)
+            if reason is not None:
+                return reason
+        return None
+
+    def _virtual_z(self, stat: Any, settings: Dict[str, Any]) -> Optional[str]:
+        """Klipper's ``probe:z_virtual_endstop``: unhome Z (its soft limits
+        would stop the search), ``G38.2`` down at ``speed``, back
+        ``retract``, ``G38.2`` again at ``second_speed``, then home Z where
+        it stands (``HOME_SEARCH_VEL = 0``: Z = ``position_endstop``). The
+        probe only triggers during probe moves — a probe wired as a home
+        switch makes LinuxCNC abort ("probe tripped during non-probe move")."""
+        from services.Probing import ProbeError, mdi
+
+        joints = self._axis_joints("Z")
+        if not joints:
+            return "this machine has no axis Z."
+        speed = float(settings.get("speed") or 5.0)
+        second = float(settings.get("second_speed") or speed / 2.0)
+        retract = float(settings.get("retract") if settings.get("retract") is not None else 5.0)
+        distance = float(settings.get("distance") or 100.0)
+        execute_sync_cmd("mode", 1.0, _MODE_MANUAL)
+        execute_sync_cmd("teleop_enable", 1.0, 0)
+        for joint in joints:
+            try:
+                execute_sync_cmd("unhome", 1.0, joint)
+            except Exception as exc:  # noqa: BLE001 - an unhomed joint stays unhomed
+                logger.debug("unhome joint %s: %s", joint, exc)
+        try:
+            mdi(stat, "G91")
+            stat.poll()
+            if getattr(stat, "probe_val", 0):
+                # Already pressed: G38.2 would refuse to start.
+                mdi(stat, f"G0 Z{max(retract, 1.0):.4f}")
+            approaches = ((speed, distance), (second, 2.0 * max(retract, 1.0)))
+            for index, (feed, travel) in enumerate(approaches):
+                mdi(stat, f"G38.2 Z-{travel:.4f} F{feed * 60.0:.1f}")
+                stat.poll()
+                if not getattr(stat, "probe_tripped", False):
+                    return f"the probe did not trigger within {travel:g} mm."
+                if index == 0:
+                    mdi(stat, f"G0 Z{max(retract, 1.0):.4f}")
+        except ProbeError as exc:
+            return str(exc)
+        finally:
+            try:
+                mdi(stat, "G90")
+            except ProbeError:
+                pass
+        execute_sync_cmd("mode", 1.0, _MODE_MANUAL)
+        execute_sync_cmd("teleop_enable", 1.0, 0)
+        execute_sync_cmd("home", 1.0, joints[0])
+        return self._wait_homed(stat, joints)
 
     @staticmethod
     def _wait_homed(stat: Any, joints: List[int], timeout: float = HOME_TIMEOUT_S) -> Optional[str]:
@@ -271,7 +360,7 @@ class HomingRoutineService:
         """Refuse to run a program on a machine with a homing routine
         until every joint is homed — ``NO_FORCE_HOMING = 1`` means
         LinuxCNC no longer refuses it itself."""
-        if self.override() is None:
+        if self.override() is None and self.virtual_z() is None:
             return
         stat = get_stat_channel()
         if stat is None:
