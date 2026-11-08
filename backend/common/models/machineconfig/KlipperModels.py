@@ -101,6 +101,8 @@ class Stepper:
     position_min: float | None = None
     position_max: float | None = None
     homing_speed: float | None = None
+    second_homing_speed: float | None = None
+    homing_retract_dist: float | None = None
     # Class-B (Remora) position-loop tuning: `setp remora.joint.N
     # .deadband` / `.pgain`. Real reference values, not invented —
     # `machine_config/example/ender3/ender3.hal` sets `deadband` on
@@ -569,6 +571,9 @@ class MachineConfigGraph:
     homing_override: HomingOverride | None = None
     # ``None`` without ``[z_tilt]``.
     z_tilt: ZTilt | None = None
+    # Z homes on the probe (Klipper's probe:z_virtual_endstop): a probe
+    # move finds the bed, then Z is homed where it stands.
+    z_virtual_endstop: bool = False
     # ``[neopixel NAME]`` sections, keyed by NAME.
     neopixels: dict[str, Neopixel] = field(default_factory=dict)
     output_pins: dict[str, OutputPin] = field(default_factory=dict)

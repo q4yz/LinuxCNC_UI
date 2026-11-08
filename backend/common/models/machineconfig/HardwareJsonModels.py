@@ -687,6 +687,10 @@ class HardwareJson(BaseModel):
     # ``None`` without ``[z_tilt]``. See :class:`ZTilt`.
     z_tilt: "ZTilt | None" = None
 
+    # Z homes on the probe (``probe:z_virtual_endstop``): speed,
+    # second_speed (mm/s), retract, distance (mm). ``None``: a Z switch.
+    z_virtual_endstop: "dict[str, float] | None" = None
+
     # ``[neopixel NAME]`` chains, in declaration order. See :class:`Led`.
     leds: list[Led] = Field(default_factory=list)
 

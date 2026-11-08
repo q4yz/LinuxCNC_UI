@@ -129,29 +129,26 @@ mandatory node there is no status bit unless `can_status_bit` is declared.
 1 ... 15, at most 15 per hub), `E_CAN_NODE_PIN`, `E_CAN_NODE_JOINT`; more than 16 digital
 inputs or outputs on one hub (nodes included) fails the compile.
 
-## Probe on a node (probe as Z endstop)
+## Probe on a node (Z homed on the probe)
 
-A `[probe]` pin on a node is accepted only when it is also that node's
-endstop pin — Klipper's "probe as virtual Z endstop" on a toolhead board:
+A `[probe]` pin on a node is accepted when Z homes on it — Klipper's
+"probe as virtual Z endstop" on a toolhead board (`probe.md`):
 
 ```cfg
-[duplicate_pin_override]     # (optional: added automatically for the Z endstop)
-pins: sb2209:PB6
-
 [probe]
 pin: !sb2209:PB6
 
 [stepper_z]
-endstop_pin: !sb2209:PB6     # or probe:z_virtual_endstop
+endstop_pin: probe:z_virtual_endstop     # or !sb2209:PB6
 ```
 
-One node input feeds homing and `motion.probe-input`
-(`net endstop_z_min-sw => motion.probe-input`); the node needs no input
-type of its own. Any other probe pin on a node is `E_CAN_NODE_PIN`.
+The probe pin feeds `motion.probe-input` only — no Z home switch: Z
+homes with a probe move. Any other probe pin on a node is
+`E_CAN_NODE_PIN`.
 
-Latency: the trigger reaches LinuxCNC a few ms late, exactly like the CAN
-Z endstop's during homing. The error is `probe_speed` x latency
-(2 mm/s x 3 ms = 6 um) and the same at every point, so it cancels out
-for Z tilt and the bed mesh (only the differences between points count).
-Keep `probe_speed` at 2 mm/s or below for a CAN probe (`[z_tilt]`,
-`[bed_mesh]`).
+Latency: the trigger reaches LinuxCNC a few ms late, exactly like a CAN
+endstop's. The error is `probe_speed` x latency (2 mm/s x 3 ms = 6 um)
+and the same at every point, so it cancels out for Z tilt and the bed
+mesh (only the differences between points count); for homing it is a
+constant Z offset, part of `position_endstop`. Keep `probe_speed` /
+`second_homing_speed` at 2 mm/s or below for a CAN probe.

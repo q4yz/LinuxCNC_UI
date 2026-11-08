@@ -213,8 +213,26 @@ class AxisBuilder:
             if letter not in AXIS_ORDER and axis not in ordered:
                 ordered.append(axis)
 
+        if getattr(self.graph, "z_virtual_endstop", False):
+            self._home_z_in_place(ordered)
         self._negate_gantry_home_sequences(ordered)
         return ordered
+
+    def _home_z_in_place(self, axes: list[Axis]) -> None:
+        """Z on the probe (``probe:z_virtual_endstop``): no switch search
+        — the machine backend's probe move found the bed, LinuxCNC then
+        homes Z where it stands, at ``position_endstop`` (HOME =
+        HOME_OFFSET: no move after)."""
+        stepper_z = self.graph.steppers.get("z")
+        endstop = float(getattr(stepper_z, "position_endstop", None) or 0.0)
+        for axis in axes:
+            if axis.letter.upper() != "Z":
+                continue
+            for joint in axis.joints:
+                joint.home_search_vel = 0.0
+                joint.home_latch_vel = 0.0
+                joint.home_offset = endstop
+                joint.home_position = endstop
 
     @staticmethod
     def _negate_gantry_home_sequences(axes: list[Axis]) -> None:

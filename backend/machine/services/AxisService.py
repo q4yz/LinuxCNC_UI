@@ -96,6 +96,13 @@ class AxisService:
         if routine.applies_to(axis):
             routine.start()
             return
+        if routine.handles(axis):
+            # Z homes on the probe: a probe move, not LinuxCNC's own homing.
+            from core.homing_routine import HomingStep
+
+            axes = () if axis.lower() == "all" else (axis.upper(),)
+            routine.start([HomingStep(kind="home", line=f"G28 {' '.join(axes)}".strip(), axes=axes)])
+            return
 
         if axis == "all":
             self.home_all_axes()

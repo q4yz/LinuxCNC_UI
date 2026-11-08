@@ -283,10 +283,9 @@ class MachineValidator:
         up to four PWM outputs (heaters, fans) and up to four NTC
         thermistors; anything else is ``E_CAN_NODE_PIN``.
 
-        A ``[probe]`` pin on a node is allowed only where it is also that
-        node's endstop pin (the probe as Z endstop, with the shared-pin
-        override): one signal feeds homing and ``motion.probe-input``, so
-        the node needs no input type of its own. Its trigger arrives a few
+        A ``[probe]`` pin on a node is allowed where Z homes on the probe
+        (``probe:z_virtual_endstop``: homing is a probe move) or where it
+        is also that node's endstop pin. Its trigger arrives a few
         ms late, exactly like the CAN Z endstop's during homing — an error
         of ``probe_speed`` x latency (2 mm/s x 3 ms = 6 um), the same at
         every point, so it cancels out for Z tilt and the bed mesh. Keep
@@ -347,7 +346,9 @@ class MachineValidator:
                 or field == "heater_pin"
                 or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
                 or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins") | self._ids("leds"))
-                or (owner == "probe" and field == "pin" and pin.qualified in endstop_pins)
+                or (owner == "probe" and field == "pin" and (
+                    pin.qualified in endstop_pins or isinstance(self._payload.get("z_virtual_endstop"), dict)
+                ))
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(

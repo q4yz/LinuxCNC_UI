@@ -148,28 +148,36 @@ role needed. `probe-in` is the signal name, now listed alongside
 `estop-out`/`estop-fault` in `.agent/component/README.md` § 5's
 reserved "machine core" signal-name table.
 
-## Probe as Z endstop (Klipper's `probe:z_virtual_endstop`)
-
-The probe can home Z — also on a CAN toolhead node (`mcu_can_remora.md`):
+## Z homed on the probe (Klipper's `probe:z_virtual_endstop`)
 
 ```cfg
 [probe]
 pin: !sb2209:PB6
 
 [stepper_z]
-endstop_pin: probe:z_virtual_endstop   # or the same pin again: !sb2209:PB6
+endstop_pin: probe:z_virtual_endstop   # (the probe pin itself means the same)
+position_endstop: 0                    # Z at the probe's trigger point
+homing_speed: 5                        # (Optional) first approach, mm/s
+second_homing_speed: 2.5               # (Optional) default homing_speed / 2
+homing_retract_dist: 5                 # (Optional) back off between the two, default 5
 ```
 
-`probe:z_virtual_endstop` is replaced by the `[probe]` pin. When the
-probe pin and the **Z** endstop pin are one physical pin the generator
-adds it to `duplicate_pin_overrides` itself (an explicit
-`[duplicate_pin_override] pins: sb2209:PB6` does the same), so both share
-one signal:
+The probe is **not** wired as a Z home switch: LinuxCNC aborts any
+move during which the probe input trips ("probe tripped during
+non-probe move"), its own homing included. Z homes with a probe move
+instead (`HomingRoutineService._virtual_z`, the machine backend):
 
-```hal
-net endstop_z_min-sw => joint.2.home-sw-in
-net endstop_z_min-sw => motion.probe-input
-```
+1. Z is unhomed (its soft limits would stop the search);
+2. `G91 G38.2 Z-<travel + 5>` at `homing_speed`, `G0 Z<retract>`,
+   `G38.2 Z-<2 × retract>` at `second_homing_speed`, `G90` — the probe
+   triggers during probe moves only (already pressed: lift first);
+3. LinuxCNC homes Z where it stands: the Z joints get
+   `HOME_SEARCH_VEL = HOME_LATCH_VEL = 0`, `HOME = HOME_OFFSET =
+   position_endstop`.
 
-A probe sharing any other endstop's pin still needs the explicit
-override (`E_PIN_CONFLICT` otherwise).
+`G28 Z` (in `[homing_override]`, MDI, a print's start G-code), the Home
+Z and Home All buttons do this; a bare `G28` homes the other axes first
+and Z last (X / Y must put the probe over the bed — `[homing_override]`
+for a "move to the centre" first). `NO_FORCE_HOMING = 1` (the probe move
+runs with Z unhomed); programs only start once everything is homed.
+The probe may sit on a CAN node (`mcu_can_remora.md`).

@@ -87,6 +87,15 @@ class CommandMock:
             self._state_mock.homed[joint_index] = 1
         return 1
 
+    def unhome(self, *args):
+        """Mimics ``linuxcnc.command().unhome(joint)`` (``-1``: every joint)."""
+        joint_index = int(args[-1]) if args else -1
+        if joint_index == -1:
+            self._state_mock.homed = [0] * len(self._state_mock.homed)
+        elif joint_index < len(self._state_mock.homed):
+            self._state_mock.homed[joint_index] = 0
+        return 1
+
     def teleop_enable(self, *args):
         """Mimics ``linuxcnc.command().teleop_enable``.
 
