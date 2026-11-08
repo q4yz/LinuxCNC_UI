@@ -158,3 +158,8 @@ def test_bare_g28_leaves_nothing_to_home_in_place():
 def test_z_tilt_adjust_is_a_routine_step():
     steps = parse_homing_routine("G28\nz_tilt_adjust\nG28 Z")
     assert [s.kind for s in steps] == ["home", "z_tilt", "home"]
+
+
+def test_bed_mesh_calibrate_is_a_routine_step():
+    steps = parse_homing_routine("G28\nBED_MESH_CALIBRATE PROFILE=pla\n")
+    assert [s.kind for s in steps] == ["home", "bed_mesh"]

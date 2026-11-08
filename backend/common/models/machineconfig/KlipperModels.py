@@ -418,6 +418,13 @@ class BedMesh:
     """
 
     probe_count: tuple[int, int] = (3, 3)
+    # Probing (BED_MESH_CALIBRATE); None: the X / Y axis limits.
+    mesh_min: tuple[float, float] | None = None
+    mesh_max: tuple[float, float] | None = None
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    zero_reference_position: tuple[float, float] | None = None
 
 
 @dataclass(slots=True)

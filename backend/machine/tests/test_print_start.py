@@ -16,6 +16,7 @@ class Recorder:
 @pytest.fixture
 def rig(monkeypatch, tmp_path):
     rec = Recorder()
+    events: list = []
 
     class Homing:
         def is_running(self): return False
@@ -31,13 +32,19 @@ def rig(monkeypatch, tmp_path):
 
     homing, z_tilt = Homing(), ZTilt()
     import services.HomingRoutineService as homing_module
-    import services.ZTiltService as z_module
+    import services.LevelingService as leveling
     monkeypatch.setattr(homing_module, "get_homing_routine_service", lambda: homing)
-    monkeypatch.setattr(z_module, "get_z_tilt_service", lambda: z_tilt)
+
+    def level(stat):
+        if not z_tilt.configured:
+            events.append("G29 skipped: this machine has no [z_tilt] and no [bed_mesh].")
+            return None
+        rec.calls.append("z_tilt")
+        return None
+
+    monkeypatch.setattr(leveling, "level", level)
     monkeypatch.setattr(module, "get_stat_channel", lambda: object())
     monkeypatch.setattr(module, "execute_sync_cmd", lambda name, timeout=0, *a: rec.calls.append((name, *a)))
-    events = []
-
     class Console:
         def log_event(self, message, level=None, source=None): events.append(message)
 

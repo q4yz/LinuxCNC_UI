@@ -83,7 +83,9 @@ def rig(monkeypatch):
             stat.probed_position = (position["x"], position["y"], bed(position["x"], position["y"]) - correction)
         return None
 
-    monkeypatch.setattr(module, "dispatch_mdi", dispatch_mdi)
+    import services.Probing as probing
+
+    monkeypatch.setattr(probing, "dispatch_mdi", dispatch_mdi)
     monkeypatch.setattr(module, "read_hal_pin", lambda name: pins[int(name.rsplit("-", 1)[1].split(".")[0])].value)
     monkeypatch.setattr(macro_module, "_IDLE_POLL_S", 0)
     events: list[str] = []

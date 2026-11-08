@@ -364,6 +364,16 @@ class BedMesh(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     probe_count: list[int] = Field(default_factory=lambda: [3, 3])
+    # Probing (`.agent/component/bed_mesh.md` § 5). ``mesh_min`` /
+    # ``mesh_max``: the probed area, the X / Y limits when the profile
+    # names none; ``probe_min_z``: how far down a probe move searches.
+    mesh_min: list[float] | None = None
+    mesh_max: list[float] | None = None
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    probe_min_z: float = 0.0
+    zero_reference_position: list[float] | None = None
 
 
 class HomingOverride(BaseModel):

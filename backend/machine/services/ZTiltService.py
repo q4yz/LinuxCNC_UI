@@ -27,11 +27,11 @@ from core.z_tilt import motor_adjustments
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from exceptions import BadRequestError, ConflictError
-from hardware import dispatch_mdi, get_stat_channel
+from hardware import get_stat_channel
 from hardware.Connection import MachineState, read_hal_pin
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
-from services.MacroExecutionService import MacroExecutionService
+from services.Probing import ProbeError, probe_points
 
 logger = logging.getLogger("backend.services.ZTiltService")
 
@@ -187,32 +187,17 @@ class ZTiltService:
         if missing:
             raise BadRequestError(f"Home X, Y and Z first (joint(s) {', '.join(map(str, missing))} not homed).")
 
-    def _mdi(self, stat: Any, line: str) -> None:
-        try:
-            serial = dispatch_mdi(line)
-        except Exception as exc:  # noqa: BLE001
-            raise ZTiltError(f"{line!r}: LinuxCNC refused it ({exc}).") from exc
-        reason = MacroExecutionService._wait_until_idle(stat, serial)
-        if reason is not None:
-            raise ZTiltError(f"{line!r}: {reason}")
-
     def _probe_all(self, stat: Any, settings: Dict[str, Any], points: List[tuple[float, float]]) -> List[float]:
-        safe_z = float(settings.get("horizontal_move_z") or 5.0)
-        travel = float(settings.get("speed") or 50.0) * 60.0
-        probe = float(settings.get("probe_speed") or 5.0) * 60.0
-        bottom = float(settings.get("probe_min_z") or 0.0)
-        self._mdi(stat, "G90")
-        self._mdi(stat, f"G53 G0 Z{safe_z:.4f}")
-        heights: List[float] = []
-        for x, y in points:
-            self._mdi(stat, f"G53 G1 X{x:.4f} Y{y:.4f} F{travel:.1f}")
-            self._mdi(stat, f"G53 G38.2 Z{bottom:.4f} F{probe:.1f}")
-            stat.poll()
-            if not getattr(stat, "probe_tripped", False):
-                raise ZTiltError(f"the probe did not trigger at X{x:g} Y{y:g} above Z{bottom:g}.")
-            heights.append(float(stat.probed_position[2]))
-            self._mdi(stat, f"G53 G0 Z{safe_z:.4f}")
-        return heights
+        try:
+            return probe_points(
+                stat, points,
+                safe_z=float(settings.get("horizontal_move_z") or 5.0),
+                travel_mm_s=float(settings.get("speed") or 50.0),
+                probe_mm_s=float(settings.get("probe_speed") or 5.0),
+                bottom=float(settings.get("probe_min_z") or 0.0),
+            )
+        except ProbeError as exc:
+            raise ZTiltError(str(exc)) from exc
 
     def _apply(self, targets: List[float]) -> None:
         """Write the targets and wait until the ramps reached them."""

@@ -1458,7 +1458,7 @@ class MachineConfigParser:
         """
         raw = self._optional_string(section, "probe_count")
         if raw is None:
-            return BedMesh()
+            return self._bed_mesh_probing(section_name, section, BedMesh())
         parts = [p.strip() for p in raw.split(",")]
         try:
             counts = [int(p) for p in parts]
@@ -1470,7 +1470,38 @@ class MachineConfigParser:
             raise InvalidValueError(
                 section_name, "probe_count", raw, "'X, Y' (or one value), each at least 3"
             )
-        return BedMesh(probe_count=(counts[0], counts[1]))
+        return self._bed_mesh_probing(section_name, section, BedMesh(probe_count=(counts[0], counts[1])))
+
+    def _bed_mesh_probing(self, section_name: str, section: configparser.SectionProxy, mesh: BedMesh) -> BedMesh:
+        """Klipper's probing keys: ``mesh_min`` / ``mesh_max`` /
+        ``zero_reference_position`` as ``X, Y``, speeds above 0."""
+        for key in ("mesh_min", "mesh_max", "zero_reference_position"):
+            raw = self._optional_string(section, key)
+            if raw is None:
+                continue
+            parts = [p.strip() for p in raw.split(",")]
+            try:
+                if len(parts) != 2:
+                    raise ValueError
+                setattr(mesh, key, (float(parts[0]), float(parts[1])))
+            except ValueError:
+                raise InvalidValueError(section_name, key, raw, "'X, Y'") from None
+        if mesh.mesh_min and mesh.mesh_max and not (
+            mesh.mesh_min[0] < mesh.mesh_max[0] and mesh.mesh_min[1] < mesh.mesh_max[1]
+        ):
+            raise InvalidValueError(section_name, "mesh_max", str(mesh.mesh_max), "above mesh_min on X and Y")
+        for key in ("speed", "probe_speed"):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value <= 0:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "a number above 0")
+                setattr(mesh, key, value)
+        value = self._optional_float(section_name, section, "horizontal_move_z")
+        if value is not None:
+            if value < 0:
+                raise InvalidValueError(section_name, "horizontal_move_z", f"{value:g}", "0 or above")
+            mesh.horizontal_move_z = value
+        return mesh
 
     def _parse_probe(
         self,

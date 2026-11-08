@@ -44,14 +44,16 @@ first runs, on a worker, in order:
 
 1. `home` — the `[homing_override]` routine (`homing_override.md`), or
    every joint by `HOME_SEQUENCE` without one;
-2. `level` — `Z_TILT_ADJUST` (`z_tilt.md`); skipped with a console note
-   on a machine without `[z_tilt]` (bed mesh probing is not there yet);
+2. `level` — `Z_TILT_ADJUST` (`z_tilt.md`) when the machine has
+   `[z_tilt]`, then `BED_MESH_CALIBRATE` (`bed_mesh.md` § 5) when it has
+   `[bed_mesh]`; a console note when it has neither;
 
 then starts the program (`AUTO_RUN`). The first failure stops it before
 the program runs, logged in the console. "Run from line" skips them.
 
 In MDI, `G28` / `G28 X` home (the routine when it covers the axis),
-`G29` and `Z_TILT_ADJUST` run Z tilt — the UI's meaning, not LinuxCNC's.
+`G29` levels (as above), `Z_TILT_ADJUST` / `BED_MESH_CALIBRATE` run one
+of them — the UI's meaning, not LinuxCNC's.
 
 ## 2. Start macro
 
