@@ -914,3 +914,16 @@ def test_regenerate_keeps_user_hal(isolated_roots):
     user_hal.write_text("loadusr -Wn mysensor mysensor-program\n", encoding="utf-8")
     generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
     assert user_hal.read_text(encoding="utf-8") == "loadusr -Wn mysensor mysensor-program\n"
+
+
+def test_ini_lists_shared_m_codes_and_home_positions():
+    from domain_file_services import paths
+    from services.machinetemplates.ini_template_generator import render_ini_template
+
+    axes = [_axis("X", 0), _axis("Y", 1), _axis("Z", 2)]
+    text = render_ini_template("my_machine", axes)
+    sub_path = next(l for l in text.splitlines() if l.startswith("SUBROUTINE_PATH = "))
+    assert str(paths.M_CODES_DIR).replace("\\", "/") in sub_path
+    assert "[UI_HOME]" in text
+    block = text.split("[UI_HOME]", 1)[1].split("\n\n", 1)[0]
+    assert [l.split(" = ")[0] for l in block.strip().splitlines()] == ["X", "Y", "Z"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.gcode_converter import convert, needs_conversion, ngc_name
+from core.gcode_converter import convert, needs_conversion, ngc_name, read_prestart
 
 
 def lines(text, macros=()):
@@ -46,9 +46,36 @@ def test_translated(marlin, linuxcnc):
     assert lines(marlin)[0] == linuxcnc
 
 
-@pytest.mark.parametrize("code", ["G28", "G28 X Y", "G29", "M84", "M400", "M201 X1000", "M73 P10 R2", "T0", "M900 K0"])
+@pytest.mark.parametrize("code", ["M84", "M400", "M201 X1000", "M73 P10 R2", "T0", "M900 K0"])
 def test_commented_out(code):
     assert lines(code)[0].startswith(f"; {code}")
+
+
+def test_start_gcode_g28_g29_run_before_the_program():
+    out = lines("M190 S60\nG28\nG29\nG1 Z0.3\nG1 X0 Y20 E0.5\n")
+    assert out[0] == "; LINUXCNC_UI_PRESTART: home level"
+    assert read_prestart("\n".join(out)) == ["home", "level"]
+    assert out[2].startswith("; G28") and "homing routine" in out[2]
+    assert out[3].startswith("; G29") and "Z_TILT_ADJUST" in out[3]
+
+
+def test_only_g28_lists_only_home():
+    assert lines("G28 X Y\nG1 X1 Y1 E1\n")[0] == "; LINUXCNC_UI_PRESTART: home"
+    assert read_prestart("G1 X1\n") == []
+
+
+def test_g28_after_the_first_extrusion_parks():
+    out = lines("G1 X1 Y1 E1\nG28 X\nG28 X0 Y0\nG28\nG29\n")
+    assert out[1].startswith("o<g28> call [1] [0] [0]")
+    assert out[2].startswith("o<g28> call [1] [1] [0]")
+    assert out[3].startswith("o<g28> call [1] [1] [1]")
+    assert out[4].startswith("; G29") and "not possible" in out[4]
+    assert not out[0].startswith("; LINUXCNC_UI_PRESTART")
+
+
+def test_z_only_extrusion_is_still_start_gcode():
+    # A purge "G1 E5" without X/Y travel is not the print yet.
+    assert lines("G1 E5\nG28\nG1 X1 Y1 E6\n")[0] == "; LINUXCNC_UI_PRESTART: home"
 
 
 def test_linuxcnc_mcodes_pass():
@@ -75,8 +102,8 @@ def test_program_end():
 
 
 def test_notes():
-    notes = convert("G28\nM84\n").notes
-    assert notes == ["line 1: 'G28' commented out", "line 2: M84 commented out"]
+    notes = convert("G1 X1 Y1 E1\nG29\nM84\n").notes
+    assert notes == ["line 2: 'G29' commented out", "line 3: M84 commented out"]
 
 
 def test_names():

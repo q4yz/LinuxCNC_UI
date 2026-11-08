@@ -155,10 +155,42 @@ class StateService:
         logger.info("dispatched machine mode -> %s", name)
 
     def run_mdi(self, command: str) -> None:
-        """Dispatch a single MDI command."""
+        """Dispatch a single MDI command.
+
+        ``G28`` (home, Klipper's meaning: the homing routine, or the axes
+        named), ``G29`` and ``Z_TILT_ADJUST`` (Z tilt) are the UI's own —
+        LinuxCNC's ``G28`` would move to a stored position instead."""
+        if self._ui_command(command):
+            return
         logger.info("Running MDI: %s", command)
         execute_sync_cmd("mode", 5.0, getattr(linuxcnc, "MODE_MDI", 3))
         execute_sync_cmd("mdi", 1.0, command)
+
+    @staticmethod
+    def _ui_command(command: str) -> bool:
+        from core.homing_routine import HomingRoutineError, parse_homing_routine
+        from services.HomingRoutineService import get_homing_routine_service
+        from services.MacroExecutionService import get_macro_execution_service
+        from services.ZTiltService import get_z_tilt_service
+
+        code = command.strip().upper()
+        if code in ("G29", "Z_TILT_ADJUST"):
+            busy = get_macro_execution_service().is_running() or get_homing_routine_service().is_running()
+            get_z_tilt_service().start(busy=busy)
+            return True
+        try:
+            steps = parse_homing_routine(command)
+        except HomingRoutineError:
+            return False  # "G28 X G0 Z5": LinuxCNC's own G28, let it answer
+        if len(steps) != 1 or steps[0].kind != "home":
+            return False
+        routine = get_homing_routine_service()
+        axes = [a.lower() for a in steps[0].axes]
+        if not axes and routine.override() is not None or any(routine.applies_to(a) for a in axes):
+            routine.start()
+        else:
+            routine.start(steps)
+        return True
 
     def turn_machine_on(self) -> None:
         """Powers on the machine. Fails if ESTOP is active."""

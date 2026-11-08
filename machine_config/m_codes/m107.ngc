@@ -1,0 +1,10 @@
+; m107.ngc - Marlin M107 Q<fan>: part fan off.
+; LinuxCNC REMAP (machine.ini [RS274NGC]); see .agent/component/gcode_upload.md.
+o<m107> sub
+#<fan> = 0
+o<fan_q> if [EXISTS[#<q>]]
+  #<fan> = #<q>
+o<fan_q> endif
+M182 P0 Q#<fan>
+o<m107> endsub
+M2

@@ -1,0 +1,10 @@
+; m140.ngc - Marlin M140 P<°C>: bed target.
+; LinuxCNC REMAP (machine.ini [RS274NGC]); see .agent/component/gcode_upload.md.
+o<m140> sub
+#<temp> = 0
+o<temp_p> if [EXISTS[#<p>]]
+  #<temp> = #<p>
+o<temp_p> endif
+M180 P#<temp> Q-1
+o<m140> endsub
+M2

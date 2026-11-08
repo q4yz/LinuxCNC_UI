@@ -96,13 +96,34 @@ class HomingRoutineService:
         if worker is not None:
             worker.join(timeout)
 
-    def start(self) -> None:
-        """Check the machine and start the routine on a worker thread;
-        returns at once. Progress and failures go to the console log."""
+    def routine(self) -> tuple[List[HomingStep], List[str]]:
+        """What "home the machine" runs: the ``[homing_override]`` routine
+        and its switch-less axes, or a plain ``G28`` (every joint by
+        ``HOME_SEQUENCE``) on a machine without one."""
         override = self.override()
         if override is None:
-            raise BadRequestError("This machine has no [homing_override] routine.")
+            return [HomingStep(kind="home", line="G28")], []
         steps = parse_homing_routine(str(override["gcode"]))
+        return steps, [str(a) for a in override.get("home_in_place") or []]
+
+    def run_blocking(self, stat: Any) -> Optional[str]:
+        """Home the machine on the calling (worker) thread — a print's
+        ``G28`` before it starts; the reason it stopped, or ``None``."""
+        steps, in_place = self.routine()
+        return self._run(steps, in_place)
+
+    def start(self, steps: Optional[List[HomingStep]] = None) -> None:
+        """Check the machine and start the routine (or ``steps``, e.g. an
+        MDI ``G28 X``) on a worker thread; returns at once. Progress and
+        failures go to the console log."""
+        override = self.override()
+        if steps is None:
+            if override is None:
+                raise BadRequestError("This machine has no [homing_override] routine.")
+            steps = parse_homing_routine(str(override["gcode"]))
+            in_place = [str(a) for a in override.get("home_in_place") or []]
+        else:
+            in_place = []
 
         stat = get_stat_channel()
         if stat is None:
@@ -119,7 +140,6 @@ class HomingRoutineService:
         with self._lock:
             if self.is_running():
                 raise ConflictError("The homing routine is already running.")
-            in_place = [str(a) for a in override.get("home_in_place") or []]
             self._worker = threading.Thread(
                 target=self._run_worker, args=(steps, in_place), name="homing-routine", daemon=True
             )

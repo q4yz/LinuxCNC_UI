@@ -48,8 +48,6 @@ _OFFSET_AV_RATIO = 0.2
 #: ``[input_pin]`` edge subroutines, next to machine.ini (relative paths
 #: in ``SUBROUTINE_PATH`` are resolved from the INI's folder).
 SUBROUTINES_DIR = "subroutines"
-#: The machine's own helper M-codes (``marlin_mcodes``), next to the INI.
-MCODES_DIR = "mcodes"
 
 #: PrintNC-WEBGUI's known-good ``[DISPLAY]`` block (see
 #: ``machine_config/example/PrintNC-WEBGUI/Machine.ini``) — every
@@ -181,6 +179,18 @@ def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _ui_home(axes: List[Axis]) -> List[str]:
+    """``X = <HOME>`` ... for X, Y, Z: the first joint's ``HOME`` (0 for
+    an axis the machine does not have) — read by ``g28.ngc``."""
+    by_letter = {a.letter.upper(): a for a in axes}
+    lines = []
+    for letter in "XYZ":
+        axis = by_letter.get(letter)
+        home = axis.joints[0].home_position if axis and axis.joints else 0.0
+        lines.append(f"{letter} = {_fmt(home)}")
+    return lines
+
+
 def render_ini_template(
     machine_name: str,
     axes: List[Axis],
@@ -216,8 +226,8 @@ def render_ini_template(
             routine — ``[TRAJ] NO_FORCE_HOMING = 1`` so the routine's
             moves run before every joint is homed.
         remaps: ``[RS274NGC] REMAP=`` lines (Marlin heater / fan codes,
-            ``marlin_mcodes``); their subroutines live in
-            ``subroutines/``, their helper M-codes in ``mcodes/``.
+            ``marlin_mcodes``); their subroutines and helper M-codes
+            are the shared files in ``machine_config/m_codes/``.
     """
     tools = tools or []
     mdi_commands = mdi_commands or []
@@ -256,10 +266,17 @@ def render_ini_template(
         "",
         "[RS274NGC]",
         "PARAMETER_FILE = linuxcnc.var",
-        f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}" + (f":{MCODES_DIR}" if remaps else ""),
-        # ``o<name> call`` (macros / probing cycles) looks subroutines up here.
-        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}" + (f":{SUBROUTINES_DIR}" if mdi_commands or remaps else ""),
+        f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
+        # ``o<name> call`` (macros / probing cycles) looks subroutines up
+        # here; m_codes/ holds the shared Marlin remaps and g28.ngc.
+        f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}:{_posix(paths.M_CODES_DIR)}"
+        + (f":{SUBROUTINES_DIR}" if mdi_commands else ""),
         *(remaps or []),
+        "",
+        # Home positions in machine coordinates, for m_codes/g28.ngc (a
+        # slicer's G28 inside a program: a move there, not a home).
+        "[UI_HOME]",
+        *_ui_home(axes),
         "",
         "[EMCMOT]",
         "EMCMOT = motmod",

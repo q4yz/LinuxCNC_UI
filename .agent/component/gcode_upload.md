@@ -3,9 +3,11 @@
 > **Implemented status:** converter `backend/common/core/gcode_converter.py`
 > (called by `ProgramFileService.save_upload`, so the UI's upload and
 > the OctoPrint-compatible slicer upload both convert), Marlin heater /
-> fan M-codes `backend/system/services/machinetemplates/marlin_mcodes.py`
-> (INI `REMAP`, `subroutines/`, `mcodes/`), example start macro
-> `macros/start.ngc`. Tests: `backend/common/tests/test_gcode_converter.py`,
+> fan M-codes: INI `REMAP` lines (`backend/system/services/machinetemplates/marlin_mcodes.py`)
+> plus shared static files in `machine_config/m_codes/` (`m104.ngc` …
+> `m107.ngc`, `g28.ngc`, helpers `M180`–`M182`); print start
+> `backend/machine/services/PrintStartService.py`; MDI `G28` / `G29`
+> (`StateService.run_mdi`); example start macro `macros/start.ngc`. Tests: `backend/common/tests/test_gcode_converter.py`,
 > `backend/system/tests/test_marlin_mcodes.py`, `test_octoprint.py`.
 >
 > Not yet: arc blending / `G64` tolerance and other path optimisation;
@@ -25,12 +27,30 @@ A `.gcode` / `.gco` / `.g` upload is converted and stored as `.ngc`
 | `G4 S2` / `G4 P500` (ms) | `G4 P2` / `G4 P0.5` |
 | `M117 text` | `(MSG, text)` |
 | `start 60 215`, `PRINT_START BED=60 EXTRUDER=215` | `o<start> call [60] [215]` — when `macros/start.ngc` exists, values in order; otherwise commented out |
-| `G28`, `G29`, `T0`, `M82`, `M83`, `G92 E…`, any M-code LinuxCNC does not know (`M84`, `M400`, `M201`, `M73`, …) | commented out: `; G28  ; [homing / leveling: run it before the program]` |
+| `G28` / `G29` in the start G-code (before the first extruding X/Y move) | commented out, and listed in a first line `; LINUXCNC_UI_PRESTART: home level` — run before the program (§ 1a) |
+| `G28 X` later (end G-code parking) | `o<g28> call [1] [0] [0]` — a move to the home position (`[UI_HOME]` in the INI): a program cannot home |
+| `G29` later, `T0`, `M82`, `M83`, `G92 E…`, any M-code LinuxCNC does not know (`M84`, `M400`, `M201`, `M73`, …) | commented out with the reason |
 | no `M2` / `M30` | `M2` appended |
 
 `;` comments and slicer thumbnails pass through (LinuxCNC reads `;` as a
-comment). Home the machine before running a print — a program cannot
-home in LinuxCNC.
+comment).
+
+### 1a. Before the program: the file's `G28` / `G29`
+
+LinuxCNC cannot home (MANUAL mode) or probe (MDI) inside a program
+(AUTO). "Run" on a file with a `LINUXCNC_UI_PRESTART` line therefore
+first runs, on a worker, in order:
+
+1. `home` — the `[homing_override]` routine (`homing_override.md`), or
+   every joint by `HOME_SEQUENCE` without one;
+2. `level` — `Z_TILT_ADJUST` (`z_tilt.md`); skipped with a console note
+   on a machine without `[z_tilt]` (bed mesh probing is not there yet);
+
+then starts the program (`AUTO_RUN`). The first failure stops it before
+the program runs, logged in the console. "Run from line" skips them.
+
+In MDI, `G28` / `G28 X` home (the routine when it covers the axis),
+`G29` and `Z_TILT_ADJUST` run Z tilt — the UI's meaning, not LinuxCNC's.
 
 ## 2. Start macro
 
@@ -39,14 +59,16 @@ G-code `start <bed> <hotend>` calls: `#1` bed, `#2` hotend. Any
 `macros/<name>.ngc` works the same way (`end`, `print_start`, …), and it
 can be run from the macro panel as well.
 
-## 3. Marlin M-codes (machine generation)
+## 3. Marlin M-codes
 
-A machine with a heater or a part fan gets, in `machine.ini`
-`[RS274NGC]`:
+All files are shared by every machine and live in
+`machine_config/m_codes/` — the INI puts that folder on both
+`USER_M_PATH` and `SUBROUTINE_PATH`. Only the `REMAP` lines are per
+machine: a machine with a heater or a part fan gets (in `[RS274NGC]`)
 
 ```ini
-USER_M_PATH = <repo>/machine_config/m_codes:mcodes
-SUBROUTINE_PATH = <repo>/macros:subroutines
+USER_M_PATH = <repo>/machine_config/m_codes
+SUBROUTINE_PATH = <repo>/macros:<repo>/machine_config/m_codes
 REMAP=M104 modalgroup=10 argspec=pq ngc=m104
 REMAP=M109 modalgroup=10 argspec=pq ngc=m109
 REMAP=M140 modalgroup=10 argspec=p ngc=m140
@@ -55,8 +77,13 @@ REMAP=M106 modalgroup=10 argspec=pq ngc=m106
 REMAP=M107 modalgroup=10 argspec=q ngc=m107
 ```
 
-Each `subroutines/m1xx.ngc` calls a helper user M-code in `mcodes/`
-(LinuxCNC runs it as a program and waits until it exits):
+A mill or a laser without a heater / fan gets no `REMAP`, so the codes
+stay unknown there and cannot collide with anything; `M180`–`M182` are
+plain user M-codes in the shared folder (keep your own M-codes off those
+numbers). Each `m1xx.ngc` calls a helper (LinuxCNC runs it as a program
+and waits until it exits); the one script reads the running machine's
+`hardware.json` (next to `$INI_FILE_NAME`) and acts by the name it was
+run as:
 
 | Helper | Does |
 |---|---|
@@ -66,7 +93,7 @@ Each `subroutines/m1xx.ngc` calls a helper user M-code in `mcodes/`
 
 `Q`: extruder index (0 = first), `-1` = bed; fans: index of the part
 fans in declaration order (a heater's placeholder fan, which shares its
-pin, is never one). The ids are written into the helpers at generation.
+pin, is never one).
 
 The remapped codes take `P` / `Q`, not Marlin's `S` / `T`: in LinuxCNC
 an `S` word also sets the spindle speed. Uploads are converted; in MDI
