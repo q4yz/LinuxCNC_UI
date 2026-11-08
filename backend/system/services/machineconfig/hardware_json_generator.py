@@ -299,6 +299,27 @@ def _z_tilt_payload(graph: MachineConfigGraph, axes_records: list[dict[str, Any]
     }
 
 
+def _probe_endstop_overrides(graph: MachineConfigGraph) -> set[str]:
+    """The probe as a Z endstop (Klipper's ``probe:z_virtual_endstop``):
+    when ``[probe] pin`` is the same physical pin as a stepper's
+    ``endstop_pin``, both share one signal — the permission
+    ``[duplicate_pin_override]`` would give, given here as the compiler
+    makes the pair itself (`.agent/component/probe.md`)."""
+    if graph.probe is None or not graph.probe.pin:
+        return set()
+    probe_mcu, probe_pin = split_pin(graph.probe.pin)
+    if probe_pin is None:
+        return set()
+    qualified = f"{probe_mcu or 'mcu'}:{probe_pin}"
+    for name, stepper in graph.steppers.items():
+        if not name.lower().startswith("z"):
+            continue  # only the Z endstop: another shared pin stays E_PIN_CONFLICT
+        mcu, pin = split_pin(stepper.endstop_pin)
+        if pin is not None and f"{mcu or 'mcu'}:{pin}" == qualified:
+            return {qualified}
+    return set()
+
+
 def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
     """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``.
     ``mesh_min`` / ``mesh_max`` default to the X / Y travel;
@@ -1201,7 +1222,7 @@ def build_hardware_json(
         "fans": fan_records,
         "mcus": mcu_records,
         "duplicate_pin_overrides": sorted(
-            graph.duplicate_pin_overrides | auto_duplicate_pin_overrides
+            graph.duplicate_pin_overrides | auto_duplicate_pin_overrides | _probe_endstop_overrides(graph)
         ),
     }
 

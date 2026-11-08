@@ -807,9 +807,11 @@ def test_one_pgrep_call_covers_every_session_process(monkeypatch):
     assert calls == [["pgrep", "-x", "linuxcnc|emc|milltask|linuxcncsvr"]]
 
 
-def test_a_second_transition_while_one_runs_is_a_conflict(no_processes):
+def test_a_second_transition_while_one_runs_is_a_conflict(no_processes, monkeypatch):
     """Two clicks / two browsers: the second start must not launch a
-    second session; status reports what is going on."""
+    second session; status reports what is going on. (A start waits for
+    a running stop first — briefly here — and is refused only after.)"""
+    monkeypatch.setattr(mls_module, "_START_WAITS_FOR_STOP_SECONDS", 0.1)
     service = _service()
     with service._exclusive("stopping"):
         assert service.status()["state"] == "stopping"
@@ -980,3 +982,50 @@ def test_stop_of_a_failed_start_needs_no_sigkill(monkeypatch):
 
     assert killed == [(5151, signal.SIGTERM)]
     assert result["running"] is False
+
+
+# --------------------------------------------------------------------- #
+# A failed start winding down (board report: "stopping — try again")     #
+# --------------------------------------------------------------------- #
+
+
+def test_status_is_stopped_once_the_launcher_exited(running_process):
+    """Helper processes may linger after the launcher exited; the session is over."""
+    service = _service()
+    service._process = SimpleNamespace(poll=lambda: 1)
+    status = service.status()
+    assert status["state"] == "stopped" and status["running"] is False
+    service._process = SimpleNamespace(poll=lambda: None)
+    assert service.status()["state"] == "running"
+
+
+def test_start_clears_the_leftovers_of_an_exited_launcher(running_process, monkeypatch):
+    service = _service()
+    service._process = SimpleNamespace(poll=lambda: 1)
+    stopped = []
+    monkeypatch.setattr(service, "_stop", lambda grace: stopped.append(grace))
+    # Still "running" after the clean-up: refused, but only after trying.
+    with pytest.raises(ConflictError):
+        service._start()
+    assert stopped == [mls_module._LEFTOVER_GRACE_SECONDS]
+
+
+def test_a_start_waits_for_a_running_stop(no_processes, monkeypatch):
+    import threading
+
+    service = _service()
+    service._lock.acquire()
+    service._transition = "stopping"
+    monkeypatch.setattr(mls_module, "_START_WAITS_FOR_STOP_SECONDS", 2.0)
+    threading.Timer(0.2, lambda: (setattr(service, "_transition", None), service._lock.release())).start()
+    with service._exclusive("starting"):
+        assert service._transition == "starting"
+
+
+def test_a_start_during_a_start_is_still_refused(no_processes):
+    service = _service()
+    service._lock.acquire()
+    service._transition = "starting"
+    with pytest.raises(ConflictError):
+        with service._exclusive("starting"):
+            pass

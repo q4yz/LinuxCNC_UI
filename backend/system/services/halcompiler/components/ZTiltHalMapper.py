@@ -60,8 +60,8 @@ class ZTiltHalMapper:
             ]
             fragment.setp += [
                 f"setp {ramp}.maxv {RAMP_MM_PER_S:g}",
-                f"setp {ramp}.min_ {-limit:g}",
-                f"setp {ramp}.max_ {limit:g}",
+                f"setp {ramp}.min {-limit:g}",
+                f"setp {ramp}.max {limit:g}",
             ]
             fragment.nets.append(f"net ztilt-{k}-offset {ramp}.out => {offset}.offset")
         return fragment

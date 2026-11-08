@@ -382,3 +382,13 @@ hand, or from a stale intermediate) silently mis-wires the machine:
 
 `~` (pull-down) has no `Digital Pin` equivalent on most targets →
 `E_MODIFIER_UNSUPPORTED`.
+
+### Sync fallback to 1 MHz
+
+With `SPI_freq` above 1 MHz the `remora-upload --sync` line retries once
+at 1 MHz when the first try fails (a busy board did not answer at the
+driver's clock; found on a CB1 + M8P):
+
+```hal
+loadusr -w sh -c "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt || remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
+```

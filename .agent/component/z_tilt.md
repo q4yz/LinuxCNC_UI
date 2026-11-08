@@ -62,8 +62,8 @@ addf ztilt-0.update-feedback servo-thread   # after remora.read, before motion
 addf ztilt-ramp-0 servo-thread              # after motion, before remora.write
 addf ztilt-0.update-output servo-thread
 setp ztilt-ramp-0.maxv 2
-setp ztilt-ramp-0.min_ -5
-setp ztilt-ramp-0.max_ 5
+setp ztilt-ramp-0.min -5
+setp ztilt-ramp-0.max 5
 net j2pos-cmd joint.2.motor-pos-cmd => ztilt-0.in
 net j2pos-cmd-tilt ztilt-0.out => remora.joint.2.pos-cmd
 net j2pos-fb-raw remora.joint.2.pos-fb => ztilt-0.fb-in

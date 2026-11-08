@@ -824,10 +824,9 @@ def test_generate_answers_422_with_every_diagnostic_for_an_invalid_machine(
 
 
 def test_generate_main_machine_conflict_flow(machine_app, isolated_roots, monkeypatch):
-    """The router asks ``MachineLifecycleService`` which machine is
-    currently "main" and refuses to regenerate it — a 403, not the
-    409 override-confirm flow, since there is no confirm_override
-    that makes this request succeed."""
+    """While LinuxCNC runs the main machine, regenerating it is refused —
+    a 403, not the 409 override-confirm flow, since no confirm_override
+    makes it succeed. Stopped, it regenerates like any other machine."""
     import routers.machineconfig as router_module
 
     client = TestClient(machine_app)
@@ -836,11 +835,20 @@ def test_generate_main_machine_conflict_flow(machine_app, isolated_roots, monkey
     first = client.post("/api/v1/modules/machineconfig/machines/generate", json=payload)
     assert first.status_code == 200
 
-    monkeypatch.setattr(
-        router_module,
-        "get_machine_lifecycle_service",
-        lambda: type("_Stub", (), {"default_machine": staticmethod(lambda: "my_machine")})(),
+    def lifecycle(running):
+        return lambda: type("_Stub", (), {
+            "default_machine": staticmethod(lambda: "my_machine"),
+            "is_running": staticmethod(lambda: running),
+        })()
+
+    monkeypatch.setattr(router_module, "get_machine_lifecycle_service", lifecycle(False))
+    stopped = client.post(
+        "/api/v1/modules/machineconfig/machines/generate",
+        json={**payload, "confirm_override": True},
     )
+    assert stopped.status_code == 200
+
+    monkeypatch.setattr(router_module, "get_machine_lifecycle_service", lifecycle(True))
 
     protected = client.post(
         "/api/v1/modules/machineconfig/machines/generate",
@@ -927,3 +935,28 @@ def test_ini_lists_shared_m_codes_and_home_positions():
     assert "[UI_HOME]" in text
     block = text.split("[UI_HOME]", 1)[1].split("\n\n", 1)[0]
     assert [l.split(" = ")[0] for l in block.strip().splitlines()] == ["X", "Y", "Z"]
+
+
+def test_regenerate_keeps_the_previous_configs_and_restores_on_failure(isolated_roots, monkeypatch):
+    """The old configs/ is kept as configs.previous/; a write that fails
+    halfway puts the old files back instead of leaving half a machine."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+    import services.machinetemplates.generator as generator
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", **kwargs)
+    configs = isolated_roots["machines"] / "my_machine" / "configs"
+    (configs / "machine.hal").write_text("# the working one\n", encoding="utf-8")
+
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(generator, "_write_machine", broken)
+    with pytest.raises(OSError):
+        generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
+    assert (configs / "machine.hal").read_text() == "# the working one\n"
+    assert (configs.parent / "configs.previous" / "machine.hal").read_text() == "# the working one\n"

@@ -51,6 +51,9 @@ _DIGITAL_BITS = 16
 #: board's own MCU (die) temperature, on the next free ``remora.PV.N``
 #: with the firmware's "MCU Temperature" module.
 MCU_TEMP_SENSOR_TYPE = "temperature_mcu"
+#: The SPI clock a failed ``remora-upload --sync`` is retried at (Hz):
+#: uploads to a busy board got through at 1 MHz only.
+SYNC_FALLBACK_HZ = 1_000_000
 #: Set points (``remora.SP.N``) per board, its CAN nodes included — the
 #: firmware's ``VARIABLES`` (configuration.h).
 REMORA_SET_POINTS = 6
@@ -191,11 +194,25 @@ class RemoraRouterMapper:
         with a stale pin configuration. Same device, chip select and
         clock as the driver line. ``None`` for an LPC board (no SD
         upload) or ``sync_config: false`` (firmware without it).
+
+        Above :data:`SYNC_FALLBACK_HZ` a sync that fails (a busy board
+        does not answer at the driver's clock) is tried once more at that
+        clock — through ``sh -c``, as ``loadusr`` runs one program.
         """
         params = mcu.get("parameters") or {}
         if str(params.get("chip", "stm32")).strip().lower() == _LPC_CHIP or mcu.get("sync_config") is False:
             return None
-        return " ".join(["loadusr", "-w", "remora-upload", "--sync", *RemoraRouterMapper.link_args(mcu), config_file])
+        args = RemoraRouterMapper.link_args(mcu)
+        command = " ".join(["remora-upload", "--sync", *args, config_file])
+        try:
+            fast = float(mcu.get("spi_freq") or 0) > SYNC_FALLBACK_HZ
+        except (TypeError, ValueError):
+            fast = False
+        if not fast:
+            return f"loadusr -w {command}"
+        slow_args = [a for a in RemoraRouterMapper.link_args({**mcu, "spi_freq": None})] + ["-s", str(SYNC_FALLBACK_HZ)]
+        slow = " ".join(["remora-upload", "--sync", *slow_args, config_file])
+        return f"loadusr -w sh -c \"{command} || {slow}\""
 
     @staticmethod
     def link_args(mcu: dict[str, Any]) -> list[str]:

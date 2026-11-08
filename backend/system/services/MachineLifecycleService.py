@@ -113,6 +113,11 @@ _DEFAULT_MACHINE_FILE_NAME = "default_machine.json"
 
 #: Grace period (seconds) between SIGINT and SIGTERM / SIGKILL escalation.
 _STOP_GRACE_SECONDS = 10.0
+#: A start that arrives while a stop runs waits this long for it (SIGINT
+#: grace + SIGTERM grace + SIGKILL) instead of answering 409.
+_START_WAITS_FOR_STOP_SECONDS = 2 * _STOP_GRACE_SECONDS + 5.0
+#: Grace per signal for the leftovers of a session whose launcher exited.
+_LEFTOVER_GRACE_SECONDS = 2.0
 
 
 #: One ``pgrep -x`` pattern for every session process name (``-x``
@@ -320,10 +325,23 @@ class MachineLifecycleService:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._transition: Optional[SessionState] = None
+        # The launcher (``linuxcnc -r``) this service started last: once
+        # it has exited the session is over, whatever helper processes
+        # (milltask, linuxcncsvr, a hung loadusr) are still winding down.
+        self._process: Optional["subprocess.Popen[bytes]"] = None
+
+    def _launcher_exited(self) -> bool:
+        return self._process is not None and self._process.poll() is not None
 
     @contextmanager
     def _exclusive(self, transition: SessionState) -> Iterator[None]:
-        if not self._lock.acquire(blocking=False):
+        # A start right after a stop (the UI's "stop" after a failed
+        # start) waits for the stop instead of being refused.
+        if transition == "starting" and self._transition == "stopping":
+            acquired = self._lock.acquire(timeout=_START_WAITS_FOR_STOP_SECONDS)
+        else:
+            acquired = self._lock.acquire(blocking=False)
+        if not acquired:
             raise ConflictError(
                 f"LinuxCNC is {self._transition or 'busy'} — try again when that has finished."
             )
@@ -486,9 +504,12 @@ class MachineLifecycleService:
         close_error_dialogs()
         pids = linuxcnc_pids()
         state: SessionState = self._transition or ("running" if pids else "stopped")
+        if self._launcher_exited() and state in ("running", "stopping"):
+            # The launcher is gone: the session is over (a failed start).
+            state = "stopped"
         return {
             "state": state,
-            "running": bool(pids),
+            "running": state != "stopped" and bool(pids),
             "owner": session_owner(pids),
             "running_ini": next(iter(running_inis(pids)), None),
             "pids": pids,
@@ -526,6 +547,12 @@ class MachineLifecycleService:
         """
         close_error_dialogs()
         running = linuxcnc_pids()
+        if running and self._launcher_exited():
+            # What is left of a session whose launcher already exited (a
+            # failed start winding down): clear it instead of "already running".
+            logger.info("Clearing what is left of the last session (pids %s).", running)
+            self._stop(_LEFTOVER_GRACE_SECONDS)
+            running = linuxcnc_pids()
         if running:
             if session_owner(running) == "external":
                 inis = running_inis(running)
@@ -589,6 +616,7 @@ class MachineLifecycleService:
             log_handle.close()
             raise BadRequestError(f"Cannot start LinuxCNC: {exc}") from exc
 
+        self._process = process
         logger.info(
             "Started LinuxCNC session (pid %s): %s (console log: %s)",
             process.pid,

@@ -424,3 +424,17 @@ def test_sync_can_be_turned_off_and_never_targets_an_lpc_board():
     assert RemoraRouterMapper.config_sync_line(
         {"id": "mcu", "parameters": {"chip": "lpc17xx"}}, "config_mcu.txt"
     ) is None
+
+
+def test_sync_falls_back_to_1_mhz_above_it():
+    from services.halcompiler.mcus.RemoraRouterMapper import RemoraRouterMapper
+
+    fast = {"id": "mcu", "connection": "remora-spi", "spi_freq": 4000000, "spi_cs_pin": "PC10"}
+    assert RemoraRouterMapper.config_sync_line(fast, "config_mcu.txt") == (
+        'loadusr -w sh -c "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt'
+        ' || remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"'
+    )
+    slow = {**fast, "spi_freq": 1000000}
+    assert RemoraRouterMapper.config_sync_line(slow, "config_mcu.txt") == (
+        "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
+    )

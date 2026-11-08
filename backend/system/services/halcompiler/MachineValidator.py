@@ -281,8 +281,16 @@ class MachineValidator:
         the E-stop pins — and up to two joints, each with all its pins on
         that node (``E_CAN_NODE_JOINT``), up to two TMC2209 UART drivers,
         up to four PWM outputs (heaters, fans) and up to four NTC
-        thermistors; anything else is ``E_CAN_NODE_PIN``, and
-        the few-millisecond latency rules out a touch probe.
+        thermistors; anything else is ``E_CAN_NODE_PIN``.
+
+        A ``[probe]`` pin on a node is allowed only where it is also that
+        node's endstop pin (the probe as Z endstop, with the shared-pin
+        override): one signal feeds homing and ``motion.probe-input``, so
+        the node needs no input type of its own. Its trigger arrives a few
+        ms late, exactly like the CAN Z endstop's during homing — an error
+        of ``probe_speed`` x latency (2 mm/s x 3 ms = 6 um), the same at
+        every point, so it cancels out for Z tilt and the bed mesh. Keep
+        ``probe_speed`` at 2 mm/s or below for a CAN probe.
         """
         mcus_by_id = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
         nodes = [m for m in mcus_by_id.values() if RemoraCanMapper.is_node(m)]
@@ -327,6 +335,11 @@ class MachineValidator:
         endstops = self._ids("endstops")
         sensors = self._ids("temperature_sensors")
         fans = self._ids("fans")
+        # A node endstop's pin may also be the probe's (probe as Z endstop).
+        endstop_pins = {
+            pin.qualified for pin, owner, field, _ in self._pins
+            if field == "pin" and owner in endstops and pin.mcu_id in node_ids
+        }
         for pin, owner, field, drives_joint in self._pins:
             allowed = (
                 drives_joint
@@ -334,6 +347,7 @@ class MachineValidator:
                 or field == "heater_pin"
                 or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
                 or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins") | self._ids("leds"))
+                or (owner == "probe" and field == "pin" and pin.qualified in endstop_pins)
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(

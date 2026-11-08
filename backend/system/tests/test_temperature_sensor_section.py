@@ -154,8 +154,8 @@ def test_hal_pin_of_the_host_monitor(tmp_path):
 
 
 def test_hal_pin_already_wired(tmp_path):
-    # The host sensor's own pin, a second time.
-    assert "E_HAL_PIN_IN_USE" in _errors(_payload(tmp_path, HAL_SENSOR.format(pin="rpi-monitor.cpu-temp")))
+    # The host sensor's own pin, a second time (the first hal form): a second host sensor.
+    assert "E_HOST_TEMP_SHARED" in _errors(_payload(tmp_path, HAL_SENSOR.format(pin="rpi-monitor.cpu-temp")))
     # A pin user.hal already put on a signal.
     payload = _payload(tmp_path, HAL_SENSOR.format(pin="mysensor.temp"))
     assert _errors(payload, USER_HAL + "net my-temp <= mysensor.temp\n") == {"E_HAL_PIN_IN_USE"}
@@ -252,3 +252,20 @@ def test_heater_cannot_read_a_pinless_sensor(tmp_path):
 def test_io_pin_name_conflicts_with_sensor(tmp_path):
     payload = _payload(tmp_path, "[output_pin host]\npin: PB0\n")
     assert "E_IO_ID_CONFLICT" in {d.code for d in validate_machine(payload) if d.is_error}
+
+
+@pytest.mark.parametrize(
+    ("pin", "kind"), [("rpi-monitor.cpu-temp", "temperature_host"), ("remora.mcu-temp", "temperature_mcu")]
+)
+def test_the_first_hal_form_stays_accepted(tmp_path, pin, kind):
+    src = CFG.format(extra="").replace(
+        "[temperature_sensor host]\nsensor_type: temperature_host\nthermal_zone: 2\n\n"
+        "[temperature_sensor mcu]\nsensor_type: temperature_mcu\n", ""
+    ) + f"[temperature_sensor old]\nsensor_type: hal\nsensor_pin: {pin}\n"
+    cfg = tmp_path / "machine.cfg"
+    cfg.write_text(src, encoding="utf-8")
+    from services.machineconfig.hardware_json_generator import build_hardware_json
+    payload = build_hardware_json(MachineConfigParser().parse(cfg), "sensors")
+    old = next(s for s in payload["temperature_sensors"] if s["id"] == "old")
+    assert old["type"] == kind
+    assert _errors(payload) == set()

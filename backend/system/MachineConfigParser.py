@@ -795,6 +795,7 @@ class MachineConfigParser:
         # Post-parse validation runs after the graph is fully built so
         # every stepper's pins and every heater's name are known.
         # Both validations are cheap and produce structured errors.
+        self._resolve_virtual_endstop(graph)
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
         self._validate_spindle_uniqueness(spindle_section_order)
@@ -954,6 +955,21 @@ class MachineConfigParser:
                     seen[canonical], section_name, canonical
                 )
             seen[canonical] = section_name
+
+    @staticmethod
+    def _resolve_virtual_endstop(graph: MachineConfigGraph) -> None:
+        """``endstop_pin: probe:z_virtual_endstop`` (Klipper): the
+        ``[probe]`` pin is the endstop — the generator then puts both on
+        one signal (`.agent/component/probe.md`)."""
+        for name, stepper in graph.steppers.items():
+            if (stepper.endstop_pin or "").strip().lower() != "probe:z_virtual_endstop":
+                continue
+            if graph.probe is None or not graph.probe.pin:
+                raise InvalidValueError(
+                    f"stepper_{name}", "endstop_pin", stepper.endstop_pin or "",
+                    "a [probe] section with a pin (probe:z_virtual_endstop is the probe's pin)",
+                )
+            stepper.endstop_pin = graph.probe.pin
 
     @staticmethod
     def _validate_temperature_sensor_uniqueness(graph: MachineConfigGraph) -> None:
@@ -1270,6 +1286,14 @@ class MachineConfigParser:
         every other pin afterwards."""
         sensor_type = self._required_string(section_name, section, "sensor_type")
         kind = sensor_type.strip().lower()
+        # The first form of these (sensor_type: hal with the pin) stays
+        # accepted: the same as the pin-less types that replaced it.
+        legacy = {"rpi-monitor.cpu-temp": "temperature_host", "remora.mcu-temp": "temperature_mcu"}
+        if kind == "hal" and (self._optional_string(section, "sensor_pin") or "").strip() in legacy:
+            return TemperatureSensorConfig(
+                name=name, sensor_type=legacy[(self._optional_string(section, "sensor_pin") or "").strip()],
+                thermal_zone=self._optional_int(section_name, section, "thermal_zone"),
+            )
         thermal_zone = self._optional_int(section_name, section, "thermal_zone")
         if thermal_zone is not None and kind != "temperature_host":
             raise InvalidValueError(
