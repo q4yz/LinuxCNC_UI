@@ -173,6 +173,10 @@ class StateService:
         from services.MacroExecutionService import get_macro_execution_service
         from services.ZTiltService import get_z_tilt_service
 
+        from services.LedService import get_led_service
+
+        if get_led_service().run_command(command):
+            return True
         code = command.strip().upper()
         if code in ("G29", "Z_TILT_ADJUST"):
             busy = get_macro_execution_service().is_running() or get_homing_routine_service().is_running()

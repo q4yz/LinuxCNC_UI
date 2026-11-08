@@ -47,6 +47,7 @@ _PIN_FIELDS: tuple[tuple[str, str, bool], ...] = (
     ("fans", "pin", False),
     ("output_pins", "pin", False),
     ("input_pins", "pin", False),
+    ("leds", "pin", False),
 )
 
 
@@ -90,6 +91,7 @@ class MachineValidator:
         self._check_can()
         self._check_references()
         self._check_io_ids()
+        self._check_leds()
         self._check_standalone_sensors()
         self._check_halpin_sets()
         self._check_joints_and_axes()
@@ -331,7 +333,7 @@ class MachineValidator:
                 or (owner, field) in _CAN_NODE_PIN_FIELDS
                 or field == "heater_pin"
                 or (field == "pin" and (owner in endstops or owner in sensors or owner in fans))
-                or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins"))
+                or (field == "pin" and owner in self._ids("output_pins") | self._ids("input_pins") | self._ids("leds"))
             )
             if pin.mcu_id in node_ids and not allowed:
                 self._error(
@@ -491,11 +493,51 @@ class MachineValidator:
                     str(sensor.get("id", "?")),
                 )
 
+    def _check_leds(self) -> None:
+        """A WS2812 chain needs a Remora board or CAN node (the firmware's
+        "RGB" module): a hub drives up to 4 chains of up to 6 segments, a
+        node 2 chains with 4 segments in all."""
+        mcus = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
+        per_node: dict[str, list[tuple[str, int]]] = {}
+        hub_chains: dict[str, int] = {}
+        for led in self._records("leds"):
+            owner = str(led.get("id", "?"))
+            try:
+                pin = PinStringMapper.from_string(str(led.get("pin") or ""))
+            except ValueError:
+                continue
+            connection = (mcus.get(pin.mcu_id) or {}).get("connection")
+            segments = len(led.get("segments") or [[1, 1]])
+            if connection == "remora-can":
+                per_node.setdefault(pin.mcu_id, []).append((owner, segments))
+            elif connection == "remora-spi":
+                hub_chains[pin.mcu_id] = hub_chains.get(pin.mcu_id, 0) + 1
+                if segments > 6:
+                    self._error("E_LED_LIMIT", f"{owner}: {segments} segments; a chain has at most 6.", owner)
+            elif pin.mcu_id in mcus:
+                self._error(
+                    "E_LED_NOT_REMORA",
+                    f"{owner}: LED chains need a Remora board or CAN node; {pin.mcu_id!r} is "
+                    f"{connection!r}.",
+                    owner,
+                )
+        for mcu_id, chains in hub_chains.items():
+            if chains > 4:
+                self._error("E_LED_LIMIT", f"{mcu_id!r} drives {chains} LED chains; at most 4.", mcu_id)
+        for node, chains in per_node.items():
+            if len(chains) > 2 or sum(n for _, n in chains) > 4:
+                self._error(
+                    "E_LED_LIMIT",
+                    f"CAN node {node!r}: {len(chains)} chain(s), {sum(n for _, n in chains)} segment(s); "
+                    "a node drives at most 2 chains with 4 segments in all.",
+                    node,
+                )
+
     def _check_io_ids(self) -> None:
         """An ``[output_pin]`` / ``[input_pin]`` name is its HAL signal
         and ``webgui.<name>`` pin, so it must not repeat any other
         component id (fans, tools, sensors, the other I/O pins)."""
-        taken = self._ids("fans") | self._ids("tools") | self._ids("temperature_sensors")
+        taken = self._ids("fans") | self._ids("tools") | self._ids("temperature_sensors") | self._ids("leds")
         for record in [*self._records("output_pins"), *self._records("input_pins")]:
             pin_id = str(record.get("id", "?"))
             if pin_id in taken:

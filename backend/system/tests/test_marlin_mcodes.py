@@ -39,16 +39,16 @@ def test_none_for_a_mill():
 def test_shared_files_exist():
     for name in ("m104.ngc", "m109.ngc", "m140.ngc", "m190.ngc", "m106.ngc", "m107.ngc", "g28.ngc"):
         assert (M_CODES / name).is_file(), name
-    for name in ("M180", "M181", "M182"):
+    for name in ("M180", "M181", "M182", "M183"):
         helper = M_CODES / name
         assert helper.is_file() and os.access(helper, os.X_OK), name
     assert "M181 P#<temp> Q-1" in (M_CODES / "m190.ngc").read_text()
     assert "#<_ini[UI_HOME]X>" in (M_CODES / "g28.ngc").read_text()
 
 
-def _run_helper(tmp_path, name, *args):
+def _run_helper(tmp_path, name, *args, payload=None):
     """Run a helper against a fake machine backend that records requests."""
-    payload = _payload()
+    payload = payload or _payload()
     (tmp_path / "hardware.json").write_text(json.dumps(payload))
     (tmp_path / "machine.ini").write_text("")
     script = f"""
@@ -92,3 +92,13 @@ def test_helper_drives_the_part_fan_not_the_heater_placeholder(tmp_path):
 def test_helper_unknown_heater(tmp_path):
     result, err = _run_helper(tmp_path, "M180", "200", "3")
     assert result["code"] == 1 and "no extruder 3" in err
+
+
+def test_helper_sets_an_led(tmp_path):
+    cfg = PRINTER + "\n[neopixel sb]\npin: PD3\nchain_count: 3\nsegments: 1, 2-3\n"
+    payload = build_hardware_json(MachineConfigParser().parse_string(cfg), "m")
+    (tmp_path / "hardware.json").write_text(json.dumps(payload))
+    (tmp_path / "machine.ini").write_text("")
+    result, _ = _run_helper(tmp_path, "M183", str(0xFF8000), "2", payload=payload)
+    assert result["calls"] == [["PUT", "http://127.0.0.1:8000/api/v1/leds/sb",
+                                {"red": 1.0, "green": 128 / 255, "blue": 0.0, "index": 2}]]

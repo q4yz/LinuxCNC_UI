@@ -380,6 +380,21 @@ class HomingOverride(BaseModel):
     home_in_place: list[str] = Field(default_factory=list)
 
 
+class Led(BaseModel):
+    """A WS2812 / SK6812 LED chain (`.agent/component/neopixel.md`).
+    ``segments``: ``[first, count]`` per colour channel (LEDs from 1);
+    ``initial``: RED, GREEN, BLUE, WHITE (0-1) at start."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    pin: str
+    chain_count: int = Field(1, ge=1, le=64)
+    color_order: str = "GRB"
+    segments: list[list[int]] = Field(default_factory=list)
+    initial: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
+
+
 class ZTilt(BaseModel):
     """Leveling a multi-motor Z axis (`.agent/component/z_tilt.md`).
     ``joints`` are the Z joints, one per ``z_positions`` entry."""
@@ -661,6 +676,9 @@ class HardwareJson(BaseModel):
 
     # ``None`` without ``[z_tilt]``. See :class:`ZTilt`.
     z_tilt: "ZTilt | None" = None
+
+    # ``[neopixel NAME]`` chains, in declaration order. See :class:`Led`.
+    leds: list[Led] = Field(default_factory=list)
 
     # ``[output_pin NAME]`` / ``[input_pin NAME]``, in declaration order.
     output_pins: list[OutputPin] = Field(default_factory=list)

@@ -1154,6 +1154,14 @@ def build_hardware_json(
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
         "z_tilt": _z_tilt_payload(graph, axes_records),
+        "leds": [
+            {
+                "id": led.name, "pin": led.pin, "chain_count": led.chain_count,
+                "color_order": led.color_order, "segments": [list(s) for s in led.segments],
+                "initial": list(led.initial),
+            }
+            for led in graph.neopixels.values()
+        ],
         "homing_override": _homing_override_payload(
             graph.homing_override,
             [str(a["id"]) for a in axes_records],

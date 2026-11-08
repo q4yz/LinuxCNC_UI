@@ -17,6 +17,7 @@ import ActivePrintWidget from '../components/ActivePrintWidget.vue'
 import CameraViewer from '../components/camera/CameraViewer.vue'
 import TemperaturePanel from '../components/temperature/TemperaturePanel.vue'
 import IoPanel from '../components/io/IoPanel.vue'
+import LedPanel from '../components/io/LedPanel.vue'
 import DroPanel from '../components/machine/DroPanel.vue'
 import JogControls from '../components/machine/JogControls.vue'
 import ToolPanel from '../components/tools/ToolPanel.vue'
@@ -68,6 +69,10 @@ const { markScrolling } = useDashboardScrollState()
 
         <MachineGate label="I/O">
           <IoPanel/>
+        </MachineGate>
+
+        <MachineGate label="LEDs">
+          <LedPanel/>
         </MachineGate>
 
       </div>
