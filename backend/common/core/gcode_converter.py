@@ -31,6 +31,11 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   ``PRINT_START BED=60 EXTRUDER=200`` — becomes
   ``o<start> call [60] [200]`` when ``macros/<name>.ngc`` exists
   (values in the order given); otherwise it is commented out.
+* Klipper's ``SET_LED LED=sb RED=1 INDEX=2`` and Marlin's
+  ``M150 R255 U0 B0 [W] [P<brightness>] [I<index>] [S<strip>]`` become
+  ``M183 P<0xRRGGBB> Q<chain * 100 + LED>`` (``machine_config/m_codes/M183``;
+  chain = the ``[neopixel]`` in declaration order, LED from 1, 0 = all)
+  when the machine has LEDs; a ``SET_LED`` naming no LED is commented out.
 * ``M2`` is appended when the file has no ``M2`` / ``M30``.
 
 ``;`` comments (and the slicer's thumbnail blocks) pass through:
@@ -40,7 +45,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Sequence
+
+from core.led_color import encode, parse_set_led
 
 #: Marlin codes the machine INI remaps to its own subroutines.
 REMAPPED_MCODES = frozenset({104, 109, 140, 190, 106, 107})
@@ -83,6 +90,7 @@ class _State:
     has_end: bool = False
     printing: bool = False   # an extruding move was seen: start G-code is over
     prestart: list[str] = field(default_factory=list)
+    leds: list[str] = field(default_factory=list)
 
 
 def _split_comment(line: str) -> tuple[str, str]:
@@ -101,10 +109,11 @@ def _words(code: str) -> list[tuple[str, str]]:
     return [(letter.upper(), value) for letter, value in _WORD.findall(code)]
 
 
-def convert(text: str, macro_names: Iterable[str] = ()) -> ConversionResult:
-    """Convert a whole file (see the module docstring)."""
+def convert(text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = ()) -> ConversionResult:
+    """Convert a whole file (see the module docstring). ``led_names``:
+    the machine's ``[neopixel]`` names, in declaration order."""
     macros = {name.lower() for name in macro_names}
-    state = _State()
+    state = _State(leds=[name.lower() for name in led_names])
     out: list[str] = []
     notes: list[str] = []
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -135,6 +144,9 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
     if not stripped:
         return raw, None
     upper = stripped.upper()
+
+    if upper.startswith("SET_LED"):
+        return _set_led(stripped, state, comment)
 
     # A macro call: a word that is no G-code letter+number, then values.
     macro = _MACRO_LINE.match(stripped)
@@ -185,6 +197,8 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
             return _commented(stripped, "relative E: handled by the converter", comment), None
         if m in REMAPPED_MCODES:
             return _remapped(m, words, comment), None
+        if m == 150 and state.leds:
+            return _m150(words, comment), None
         if m not in _LINUXCNC_MCODES and not 100 <= m <= 199:
             return _commented(stripped, "not a LinuxCNC M-code", comment), f"M{m} commented out"
         return raw, None
@@ -208,6 +222,34 @@ def _home_or_level(stripped: str, words: list[tuple[str, str]], state: _State, c
     axes = {c for c in stripped.upper() if c in "XYZ"} or {"X", "Y", "Z"}
     flags = " ".join(f"[{int(a in axes)}]" for a in "XYZ")
     return f"o<g28> call {flags}  ; {stripped} -> to the home position" + (f" {comment}" if comment else ""), None
+
+
+def _led_call(color: int, chain: int, index: int, comment: str) -> str:
+    return f"M183 P{color} Q{chain * 100 + index}" + (f"  {comment}" if comment else "")
+
+
+def _set_led(stripped: str, state: _State, comment: str) -> tuple[str, str | None]:
+    try:
+        command = parse_set_led(stripped)
+    except ValueError as exc:
+        return _commented(stripped, str(exc), comment), f"{stripped!r}: {exc}"
+    if command is None:
+        return _commented(stripped, "not a command", comment), None
+    if command.led not in state.leds:
+        return _commented(stripped, f"no LED '{command.led}'", comment), f"{stripped!r}: no [neopixel {command.led}]"
+    color = encode(command.red, command.green, command.blue, command.white)
+    return _led_call(color, state.leds.index(command.led), command.index or 0, comment), None
+
+
+def _m150(words: list[tuple[str, str]], comment: str) -> str:
+    """Marlin ``M150 R U B W`` (0-255), ``P`` brightness, ``I`` LED (from
+    0), ``S`` strip."""
+    values = {letter: float(v) for letter, v in words if letter != "M"}
+    scale = values.get("P", 255.0) / 255.0 / 255.0
+    color = encode(values.get("R", 0) * scale, values.get("U", 0) * scale,
+                   values.get("B", 0) * scale, values.get("W", 0) * scale)
+    index = int(values["I"]) + 1 if "I" in values and values["I"] >= 0 else 0
+    return _led_call(color, int(values.get("S", 0)), index, comment)
 
 
 def _g92(stripped: str, words: list[tuple[str, str]], state: _State, comment: str) -> tuple[str, str | None]:

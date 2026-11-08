@@ -65,6 +65,7 @@ class SectionKind(str, Enum):
     BED_MESH = "bed_mesh"
     HOMING_OVERRIDE = "homing_override"
     Z_TILT = "z_tilt"
+    NEOPIXEL = "neopixel"
     OUTPUT_PIN = "output_pin"
     INPUT_PIN = "input_pin"
     TEMPERATURE_SENSOR = "temperature_sensor"
@@ -211,6 +212,13 @@ HOMING_OVERRIDE_KEYS = frozenset({"gcode", "axes"})
 # Klipper's ``[z_tilt]`` (`.agent/component/z_tilt.md`): one pivot per Z
 # motor, the probe points, travel; ``probe_speed`` / ``max_adjust`` are
 # this compiler's own (Klipper keeps the probe speed in ``[probe]``).
+# Klipper's ``[neopixel NAME]`` (`.agent/component/neopixel.md`): a WS2812 /
+# SK6812 chain; ``segments`` (this compiler's own) groups LEDs that share
+# one colour channel — a Remora board has only 6 set points.
+NEOPIXEL_KEYS = frozenset({
+    "pin", "chain_count", "color_order", "initial_RED", "initial_GREEN",
+    "initial_BLUE", "initial_WHITE", "segments",
+})
 Z_TILT_KEYS = frozenset({
     "z_positions", "points", "speed", "horizontal_move_z", "retries",
     "retry_tolerance", "probe_speed", "max_adjust",
@@ -356,6 +364,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.BED_MESH: BED_MESH_KEYS,
     SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
     SectionKind.Z_TILT: Z_TILT_KEYS,
+    SectionKind.NEOPIXEL: NEOPIXEL_KEYS,
     SectionKind.OUTPUT_PIN: OUTPUT_PIN_KEYS,
     SectionKind.INPUT_PIN: INPUT_PIN_KEYS,
     SectionKind.TEMPERATURE_SENSOR: TEMPERATURE_SENSOR_KEYS,
@@ -413,6 +422,8 @@ _OUTPUT_PIN_SECTION = re.compile(r"^output_pin\s+(?P<name>[A-Za-z0-9_]+)$")
 _INPUT_PIN_SECTION = re.compile(r"^input_pin\s+(?P<name>[A-Za-z0-9_]+)$")
 # [temperature_sensor chamber] — always named; the name is the sensor id
 # (webgui.<name>), so it takes the hardware.json id pattern directly.
+# [neopixel sb_leds] — always named; the name is the LED id.
+_NEOPIXEL_SECTION = re.compile(r"^neopixel\s+(?P<name>[a-z][a-z0-9_]*)$")
 _TEMPERATURE_SENSOR_SECTION = re.compile(r"^temperature_sensor\s+(?P<name>[a-z][a-z0-9_]*)$")
 _SPINDLE_DIGITAL_SECTION = re.compile(
     r"^spindle(?:\s+(?P<name>[A-Za-z0-9_.-]+))?$"
@@ -472,6 +483,10 @@ def schema_for_section(section: str) -> SectionSchema | None:
     input_match = _INPUT_PIN_SECTION.fullmatch(section)
     if input_match:
         return SectionSchema(SectionKind.INPUT_PIN, INPUT_PIN_KEYS, input_match.group("name"))
+
+    neopixel_match = _NEOPIXEL_SECTION.fullmatch(section)
+    if neopixel_match:
+        return SectionSchema(SectionKind.NEOPIXEL, NEOPIXEL_KEYS, neopixel_match.group("name"))
 
     sensor_match = _TEMPERATURE_SENSOR_SECTION.fullmatch(section)
     if sensor_match:
@@ -576,6 +591,7 @@ __all__ = [
     "BED_MESH_KEYS",
     "HOMING_OVERRIDE_KEYS",
     "Z_TILT_KEYS",
+    "NEOPIXEL_KEYS",
     "INPUT_PIN_KEYS",
     "OUTPUT_PIN_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",

@@ -49,13 +49,25 @@ class ProgramFileService(FileService):
             self.write_bytes(filename, data, overwrite=True)
             return filename
         names = list(macro_names) if macro_names is not None else self._macro_names()
-        result = convert(data.decode("utf-8", errors="replace"), names)
+        result = convert(data.decode("utf-8", errors="replace"), names, self._led_names())
         stored = ngc_name(filename)
         self.write_bytes(stored, result.text.encode("utf-8"), overwrite=True)
         logger.info("Converted %s -> %s (%d note(s))", filename, stored, len(result.notes))
         for note in result.notes[:50]:
             logger.info("  %s: %s", stored, note)
         return stored
+
+    @staticmethod
+    def _led_names() -> List[str]:
+        """The active machine's ``[neopixel]`` names, in order (``M150`` /
+        ``SET_LED`` -> ``M183``); none without a machine."""
+        import json
+
+        try:
+            payload = json.loads(paths.default_machine_hardware_json().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return [str(led["id"]) for led in payload.get("leds") or [] if isinstance(led, dict) and led.get("id")]
 
     @staticmethod
     def _macro_names() -> List[str]:

@@ -18,6 +18,7 @@ from models.machineconfig import (
     Heater,
     HeaterFan,
     HomingOverride,
+    Neopixel,
     ZTilt,
     InputPin,
     MachineConfigGraph,
@@ -757,6 +758,9 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.NEOPIXEL:
+                led = self._parse_neopixel(section_name, section_schema.object_name, section)
+                graph.neopixels[led.name] = led
             elif section_schema.kind is SectionKind.Z_TILT:
                 graph.z_tilt = self._parse_z_tilt(section_name, section)
             elif section_schema.kind is SectionKind.HOMING_OVERRIDE:
@@ -1322,6 +1326,60 @@ class MachineConfigParser:
         lines = [line.strip() for line in section[key].splitlines()]
         return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
 
+    def _parse_neopixel(self, section_name: str, name: str, section: configparser.SectionProxy) -> Neopixel:
+        """Build a :class:`Neopixel` (Klipper's keys and defaults).
+
+        ``color_order``: R, G, B once each, W once for RGBW (``GRB``,
+        ``GRBW``); a Klipper per-LED list must name one order. ``segments``
+        (``1, 2-3`` or one per line): the LED groups, covering the chain
+        without overlap; default one group, the whole chain.
+        """
+        count = self._optional_int(section_name, section, "chain_count")
+        count = 1 if count is None else count
+        if not 1 <= count <= 64:
+            raise InvalidValueError(section_name, "chain_count", str(count), "1 ... 64 LEDs")
+        raw_order = (self._optional_string(section, "color_order") or "GRB").upper()
+        orders = {o.strip() for o in raw_order.split(",") if o.strip()}
+        order = orders.pop() if len(orders) == 1 else ""
+        if not order or sorted(order.replace("W", "")) != ["B", "G", "R"] or order.count("W") > 1 or len(order) not in (3, 4):
+            raise InvalidValueError(section_name, "color_order", raw_order, "one order of R, G, B (and W), e.g. GRB or GRBW")
+        segments: list[tuple[int, int]] = []
+        raw_segments = self._ngc_lines(section, "segments")
+        if raw_segments:
+            for part in raw_segments.replace("\n", ",").split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    first, _, last = part.partition("-")
+                    a, b = int(first), int(last or first)
+                except ValueError:
+                    raise InvalidValueError(section_name, "segments", part, "LED numbers like 1 or 2-3") from None
+                if not 1 <= a <= b <= count:
+                    raise InvalidValueError(section_name, "segments", part, f"LEDs 1 ... {count}")
+                segments.append((a, b - a + 1))
+            covered = sorted(i for a, n in segments for i in range(a, a + n))
+            if covered != list(range(1, count + 1)):
+                raise InvalidValueError(
+                    section_name, "segments", raw_segments.replace("\n", ", "),
+                    f"groups covering LEDs 1 ... {count} once each",
+                )
+        initial = []
+        for color in ("RED", "GREEN", "BLUE", "WHITE"):
+            value = self._optional_float(section_name, section, f"initial_{color}")
+            value = 0.0 if value is None else value
+            if not 0.0 <= value <= 1.0:
+                raise InvalidValueError(section_name, f"initial_{color}", f"{value:g}", "0.0 ... 1.0")
+            initial.append(value)
+        return Neopixel(
+            name=name,
+            pin=self._required_string(section_name, section, "pin"),
+            chain_count=count,
+            color_order=order,
+            segments=sorted(segments) or [(1, count)],
+            initial=(initial[0], initial[1], initial[2], initial[3]),
+        )
+
     def _xy_list(self, section_name: str, section: configparser.SectionProxy, key: str) -> list[tuple[float, float]]:
         """``X, Y`` per line (Klipper's multi-line lists)."""
         raw = self._ngc_lines(section, key)
@@ -1681,6 +1739,8 @@ class MachineConfigParser:
             )
         for name, io_pin in [*graph.output_pins.items(), *graph.input_pins.items()]:
             MachineConfigParser._validate_pin_mcu(name, "pin", io_pin.pin, declared)
+        for name, led in graph.neopixels.items():
+            MachineConfigParser._validate_pin_mcu(f"neopixel {name}", "pin", led.pin, declared)
         for name, sensor in graph.temperature_sensors.items():
             if sensor.is_board_pin:
                 MachineConfigParser._validate_pin_mcu(

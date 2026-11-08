@@ -221,6 +221,10 @@ class MacroExecutionService:
                     if not self._z_tilt(name, stat):
                         return
                     continue
+                if line.strip().upper().startswith("SET_LED"):
+                    if not self._set_led(name, line):
+                        return
+                    continue
                 stat.poll()
                 if stat.estop:
                     console.log_event(
@@ -264,6 +268,20 @@ class MacroExecutionService:
                 f"Macro '{name}' aborted: Z_TILT_ADJUST: {getattr(exc, 'detail', None) or exc}",
                 level=LogLevel.ERROR,
                 source="CMD",
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _set_led(name: str, line: str) -> bool:
+        """A ``SET_LED`` line (Klipper, `.agent/component/neopixel.md`)."""
+        from services.LedService import get_led_service
+
+        try:
+            get_led_service().run_command(line)
+        except BadRequestError as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: {exc.detail}", level=LogLevel.ERROR, source="CMD"
             )
             return False
         return True

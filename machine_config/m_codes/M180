@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Marlin heater / fan helper M-codes (`.agent/component/gcode_upload.md` § 3).
 
-One script, three names - the name LinuxCNC runs it as is what it does:
+One script, four names - the name LinuxCNC runs it as is what it does:
 
     M180 P<°C> Q<heater>   set a heater's target              (M104, M140)
     M181 P<°C> Q<heater>   set it and wait until it is reached (M109, M190)
     M182 P<0-255> Q<fan>   set a part fan's speed              (M106, M107)
+    M183 P<0xRRGGBB> Q<chain*100+LED>  an LED colour (SET_LED, M150;
+                           chain: the [neopixel] in order, LED from 1, 0 all)
 
 Q: extruder index (0 = the first [extruder]), -1 = the bed; for fans the
 index of the part fans in declaration order. The heaters and fans are
@@ -92,6 +94,17 @@ def main(argv):
     p = float(argv[1]) if len(argv) > 1 else 0.0
     q = int(round(float(argv[2]))) if len(argv) > 2 else 0
     payload = hardware()
+    if code == "M183":
+        leds = [l for l in payload.get("leds") or [] if isinstance(l, dict)]
+        chain, index = divmod(q, 100)
+        if not 0 <= chain < len(leds):
+            fail("this machine has no LED chain %d" % chain)
+        color = max(0, min(0xFFFFFF, int(round(p))))
+        body = {"red": (color >> 16 & 255) / 255.0, "green": (color >> 8 & 255) / 255.0, "blue": (color & 255) / 255.0}
+        if index:
+            body["index"] = index
+        request("PUT", "/api/v1/leds/" + str(leds[chain]["id"]), body)
+        return 0
     if code == "M182":
         fans = part_fans(payload)
         if not 0 <= q < len(fans):
@@ -99,7 +112,7 @@ def main(argv):
         request("PUT", "/api/v1/modules/io/" + fans[q], {"value": max(0.0, min(255.0, p)) / 255.0 * 100.0})
         return 0
     if code not in ("M180", "M181"):
-        fail("run as M180, M181 or M182")
+        fail("run as M180, M181, M182 or M183")
     tool, sensor = heater(payload, q)
     request("POST", "/api/v1/modules/tools/tools/%s/target" % tool, {"id": tool, "target": max(0.0, p)})
     if code == "M181" and p > 0 and sensor:

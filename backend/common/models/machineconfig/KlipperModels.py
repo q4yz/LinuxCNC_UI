@@ -377,6 +377,21 @@ class HomingOverride:
 
 
 @dataclass(slots=True)
+class Neopixel:
+    """``[neopixel NAME]`` (`.agent/component/neopixel.md`): a WS2812 /
+    SK6812 LED chain. ``segments`` are ``(first, count)`` LED groups
+    (from 1, like Klipper's ``INDEX``), each one colour; default one
+    segment, the whole chain. ``initial`` is RED, GREEN, BLUE, WHITE 0-1."""
+
+    name: str
+    pin: str
+    chain_count: int = 1
+    color_order: str = "GRB"
+    segments: list[tuple[int, int]] = field(default_factory=list)
+    initial: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+
+
+@dataclass(slots=True)
 class ZTilt:
     """``[z_tilt]`` (`.agent/component/z_tilt.md`): level a Z axis driven
     by several motors. ``z_positions`` are the motors' pivots (X, Y), in
@@ -547,6 +562,8 @@ class MachineConfigGraph:
     homing_override: HomingOverride | None = None
     # ``None`` without ``[z_tilt]``.
     z_tilt: ZTilt | None = None
+    # ``[neopixel NAME]`` sections, keyed by NAME.
+    neopixels: dict[str, Neopixel] = field(default_factory=dict)
     output_pins: dict[str, OutputPin] = field(default_factory=dict)
     input_pins: dict[str, InputPin] = field(default_factory=dict)
     # ``[temperature_sensor NAME]`` sections, keyed by NAME.
@@ -622,6 +639,7 @@ __all__ = [
     "BedMesh",
     "HomingOverride",
     "ZTilt",
+    "Neopixel",
     "InputPin",
     "TemperatureSensorConfig",
     "OutputPin",

@@ -30,6 +30,7 @@ A `.gcode` / `.gco` / `.g` upload is converted and stored as `.ngc`
 | `G28` / `G29` in the start G-code (before the first extruding X/Y move) | commented out, and listed in a first line `; LINUXCNC_UI_PRESTART: home level` — run before the program (§ 1a) |
 | `G28 X` later (end G-code parking) | `o<g28> call [1] [0] [0]` — a move to the home position (`[UI_HOME]` in the INI): a program cannot home |
 | `G29` later, `T0`, `M82`, `M83`, `G92 E…`, any M-code LinuxCNC does not know (`M84`, `M400`, `M201`, `M73`, …) | commented out with the reason |
+| `SET_LED LED=sb RED=1 INDEX=2`, `M150 R255 U0 B0` | `M183 P<0xRRGGBB> Q<chain×100+LED>` (`neopixel.md` § 4) |
 | no `M2` / `M30` | `M2` appended |
 
 `;` comments and slicer thumbnails pass through (LinuxCNC reads `;` as a
