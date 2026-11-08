@@ -1,14 +1,20 @@
-"""Marlin heater / fan M-codes: REMAP lines, subroutines, helper M-codes,
-written by the machine generator (`marlin_mcodes`)."""
+"""Marlin heater / fan M-codes: this machine's REMAP lines, and the
+shared files in ``machine_config/m_codes/`` they rely on."""
 from __future__ import annotations
 
-import ast
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 from MachineConfigParser import MachineConfigParser
 from services.machineconfig.hardware_json_generator import build_hardware_json
-from services.machinetemplates.marlin_mcodes import marlin_support
+from services.machinetemplates.marlin_mcodes import marlin_remaps
 
 PRINTER = open("tests/fixtures/profiles/full_klipper.cfg").read()
+M_CODES = Path(__file__).resolve().parents[3] / "machine_config" / "m_codes"
+MILL = "[mcu]\nconnection: remora-spi\n\n[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nposition_endstop: 0\nposition_max: 200\n\n[estop]\n"
 
 
 def _payload(cfg=PRINTER):
@@ -16,8 +22,7 @@ def _payload(cfg=PRINTER):
 
 
 def test_remaps_for_a_printer():
-    support = marlin_support(_payload())
-    assert support.remaps == [
+    assert marlin_remaps(_payload()) == [
         "REMAP=M104 modalgroup=10 argspec=pq ngc=m104",
         "REMAP=M109 modalgroup=10 argspec=pq ngc=m109",
         "REMAP=M140 modalgroup=10 argspec=p ngc=m140",
@@ -25,49 +30,65 @@ def test_remaps_for_a_printer():
         "REMAP=M106 modalgroup=10 argspec=pq ngc=m106",
         "REMAP=M107 modalgroup=10 argspec=q ngc=m107",
     ]
-    assert set(support.subroutines) == {"m104.ngc", "m109.ngc", "m140.ngc", "m190.ngc", "m106.ngc", "m107.ngc"}
-    assert "M181 P#<temp> Q-1" in support.subroutines["m190.ngc"]
-    assert "M180 P#<temp> Q#<heater>" in support.subroutines["m104.ngc"]
-    assert set(support.mcodes) == {"M180", "M181", "M182"}
 
 
-def test_helpers_are_python_with_the_machines_ids():
-    support = marlin_support(_payload())
-    for name, source in support.mcodes.items():
-        assert source.startswith("#!/usr/bin/env python3")
-        ast.parse(source)
-    m181 = support.mcodes["M181"]
-    assert 'EXTRUDERS = [["heater_extruder", "extruder"]]' in m181
-    assert 'BED = ["heater_bed", "bed"]' in m181
-    assert "MODE = 'wait'" in m181
-    # A heater's placeholder fan shares its pin: never an M106 target.
-    assert 'FANS = ["fan"]' in support.mcodes["M182"]
+def test_none_for_a_mill():
+    assert marlin_remaps(_payload(MILL)) == []
 
 
-def test_nothing_for_a_machine_without_heaters_or_fans():
-    cfg = "[mcu]\nconnection: remora-spi\n\n[stepper_x]\nstep_pin: PF13\ndir_pin: PF12\nposition_endstop: 0\nposition_max: 200\n\n[estop]\n"
-    support = marlin_support(_payload(cfg))
-    assert not support.enabled and support.mcodes == {}
+def test_shared_files_exist():
+    for name in ("m104.ngc", "m109.ngc", "m140.ngc", "m190.ngc", "m106.ngc", "m107.ngc", "g28.ngc"):
+        assert (M_CODES / name).is_file(), name
+    for name in ("M180", "M181", "M182"):
+        helper = M_CODES / name
+        assert helper.is_file() and os.access(helper, os.X_OK), name
+    assert "M181 P#<temp> Q-1" in (M_CODES / "m190.ngc").read_text()
+    assert "#<_ini[UI_HOME]X>" in (M_CODES / "g28.ngc").read_text()
 
 
-def test_generated_machine(tmp_path):
-    from domain_file_services import ConfigFileService, MachineFileService
-    from services.machinetemplates import generate_machine_templates
+def _run_helper(tmp_path, name, *args):
+    """Run a helper against a fake machine backend that records requests."""
+    payload = _payload()
+    (tmp_path / "hardware.json").write_text(json.dumps(payload))
+    (tmp_path / "machine.ini").write_text("")
+    script = f"""
+import json, runpy, sys, urllib.request
+calls = []
+class Resp:
+    def read(self): return b""
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+def urlopen(req, timeout=0):
+    calls.append([req.get_method(), req.full_url, json.loads(req.data)])
+    return Resp()
+urllib.request.urlopen = urlopen
+sys.argv = [{str(M_CODES / name)!r}, *{list(args)!r}]
+try:
+    runpy.run_path(sys.argv[0], run_name="__main__")
+except SystemExit as exc:
+    print(json.dumps({{"code": exc.code, "calls": calls}}))
+"""
+    env = {**os.environ, "INI_FILE_NAME": str(tmp_path / "machine.ini")}
+    out = subprocess.run([sys.executable, "-I", "-c", script], capture_output=True, text=True, env=env, cwd=tmp_path)
+    return json.loads(out.stdout.strip().splitlines()[-1]), out.stderr
 
-    profiles, machines = tmp_path / "profiles", tmp_path / "machines"
-    profiles.mkdir()
-    machines.mkdir()
-    (profiles / "printer.cfg").write_text(PRINTER, encoding="utf-8")
-    generate_machine_templates(
-        "printer.cfg",
-        config_service=ConfigFileService(root=profiles),
-        machine_service=MachineFileService(root=machines),
-    )
-    configs = machines / "printer" / "configs"
-    ini = (configs / "machine.ini").read_text()
-    assert "REMAP=M109 modalgroup=10 argspec=pq ngc=m109" in ini
-    assert any(l.startswith("USER_M_PATH = ") and l.endswith(":mcodes") for l in ini.splitlines())
-    assert any(l.startswith("SUBROUTINE_PATH = ") and l.endswith(":subroutines") for l in ini.splitlines())
-    assert (configs / "subroutines" / "m109.ngc").is_file()
-    helper = configs / "mcodes" / "M181"
-    assert helper.is_file() and helper.stat().st_mode & 0o111
+
+def test_helper_sets_a_heater_target(tmp_path):
+    result, _ = _run_helper(tmp_path, "M180", "215", "0")
+    assert result == {"code": 0, "calls": [
+        ["POST", "http://127.0.0.1:8000/api/v1/modules/tools/tools/heater_extruder/target",
+         {"id": "heater_extruder", "target": 215.0}]]}
+    result, _ = _run_helper(tmp_path, "M180", "60", "-1")
+    assert result["calls"][0][1].endswith("/tools/heater_bed/target")
+
+
+def test_helper_drives_the_part_fan_not_the_heater_placeholder(tmp_path):
+    result, _ = _run_helper(tmp_path, "M182", "255", "0")
+    assert result["calls"] == [["PUT", "http://127.0.0.1:8000/api/v1/modules/io/fan", {"value": 100.0}]]
+    result, err = _run_helper(tmp_path, "M182", "255", "1")
+    assert result["code"] == 1 and "no part fan 1" in err
+
+
+def test_helper_unknown_heater(tmp_path):
+    result, err = _run_helper(tmp_path, "M180", "200", "3")
+    assert result["code"] == 1 and "no extruder 3" in err

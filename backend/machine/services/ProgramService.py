@@ -107,6 +107,15 @@ class ProgramService:
     def start_program(self, line_number: int = 0) -> None:
         if not self._is_program_loaded():
             raise RuntimeError("No program loaded. Load a file before starting.")
+        # A converted print's G28 / G29 run first (its header line), then
+        # the program — on a worker; this returns at once.
+        from services.PrintStartService import get_print_start_service, prestart_steps
+
+        stat = get_stat_channel()
+        steps = prestart_steps(str(getattr(stat, "file", "") or "")) if stat is not None and line_number == 0 else []
+        if steps:
+            get_print_start_service().start(steps, line_number)
+            return
         # A machine with a homing routine runs NO_FORCE_HOMING = 1, so
         # LinuxCNC itself would start an unhomed program.
         from services.HomingRoutineService import get_homing_routine_service

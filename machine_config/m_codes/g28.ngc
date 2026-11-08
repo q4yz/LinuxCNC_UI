@@ -1,0 +1,23 @@
+; g28.ngc - a slicer's G28 inside a program (end G-code parking):
+;   o<g28> call [X] [Y] [Z]   1 = move that axis to its home position
+; A program cannot home in LinuxCNC; the converter turns a G28 after the
+; start G-code into this call. The positions are the INI's [UI_HOME].
+; Z goes first when its home is above it (a CNC: clear the work), last
+; when below (a printer: X/Y away from the print first).
+o<g28> sub
+#<zh> = #<_ini[UI_HOME]Z>
+o<g28_zup> if [#3 GT 0 AND #<zh> GT #<_abs_z>]
+  G53 G0 Z#<zh>
+o<g28_zup> endif
+o<g28_xy> if [#1 GT 0 AND #2 GT 0]
+  G53 G0 X#<_ini[UI_HOME]X> Y#<_ini[UI_HOME]Y>
+o<g28_xy> elseif [#1 GT 0]
+  G53 G0 X#<_ini[UI_HOME]X>
+o<g28_xy> elseif [#2 GT 0]
+  G53 G0 Y#<_ini[UI_HOME]Y>
+o<g28_xy> endif
+o<g28_zdown> if [#3 GT 0 AND #<zh> LE #<_abs_z>]
+  G53 G0 Z#<zh>
+o<g28_zdown> endif
+o<g28> endsub
+M2

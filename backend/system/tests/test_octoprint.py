@@ -73,7 +73,9 @@ def test_upload_stores_the_file_in_nc_files(client, programs, service):
     # A slicer's .gcode is stored converted, as .ngc (core.gcode_converter).
     assert local["name"] == "benchy.ngc" and local["origin"] == "local"
     stored = (programs.root / "benchy.ngc").read_text().splitlines()
-    assert stored[0].startswith("; G28") and stored[1] == "G1 X10" and stored[-1].startswith("M2")
+    # Its G28 runs before the program (header line), not inside it.
+    assert stored[0] == "; LINUXCNC_UI_PRESTART: home"
+    assert stored[1].startswith("; G28") and stored[2] == "G1 X10" and stored[-1].startswith("M2")
     assert not (programs.root / "benchy.gcode").exists()
     assert service.loaded == []  # no select / print: nothing loaded
 

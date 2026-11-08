@@ -1,0 +1,14 @@
+; m104.ngc - Marlin M104 P<°C> Q<extruder>: hotend target.
+; LinuxCNC REMAP (machine.ini [RS274NGC]); see .agent/component/gcode_upload.md.
+o<m104> sub
+#<temp> = 0
+o<temp_p> if [EXISTS[#<p>]]
+  #<temp> = #<p>
+o<temp_p> endif
+#<heater> = 0
+o<heater_q> if [EXISTS[#<q>]]
+  #<heater> = #<q>
+o<heater_q> endif
+M180 P#<temp> Q#<heater>
+o<m104> endsub
+M2

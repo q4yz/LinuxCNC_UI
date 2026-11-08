@@ -74,8 +74,8 @@ from services.BedMeshService import get_bed_mesh_service
 from services.machineconfig import AxisBuilder, AxisMappingPolicy
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
-from .ini_template_generator import MCODES_DIR, SUBROUTINES_DIR, render_ini_template
-from .marlin_mcodes import marlin_support
+from .ini_template_generator import SUBROUTINES_DIR, render_ini_template
+from .marlin_mcodes import marlin_remaps
 
 logger = logging.getLogger("backend.services.machinetemplates")
 
@@ -434,8 +434,9 @@ def generate_machine_templates(
     (configs_dir / USER_HAL).write_text(user_hal, encoding="utf-8")
     # [input_pin] edges: halui MDI commands calling generated subroutines.
     input_commands = mdi_commands(payload.get("input_pins") or [])
-    # Marlin's heater / fan M-codes (REMAP + subroutines + helper M-codes).
-    marlin = marlin_support(payload)
+    # Marlin's heater / fan M-codes: REMAP lines (the files are static,
+    # machine_config/m_codes/).
+    remaps = marlin_remaps(payload)
 
     # 1. Verbatim source copy (provenance).
     (configs_dir / "machine.cfg").write_bytes(source.read_bytes())
@@ -456,7 +457,7 @@ def generate_machine_templates(
             [c.ini_line for c in input_commands],
             corexy=payload.get("kinematics") == "corexy",
             homing_override=isinstance(payload.get("homing_override"), dict),
-            remaps=marlin.remaps,
+            remaps=remaps,
         ),
         encoding="utf-8",
     )
@@ -480,18 +481,6 @@ def generate_machine_templates(
         subroutines.mkdir(exist_ok=True)
         (subroutines / command.file_name).write_text(command.file_content, encoding="utf-8")
         sidecar_files.append(f"{configs_rel}/{SUBROUTINES_DIR}/{command.file_name}")
-
-    # 4b''. Marlin M104 / M109 / M140 / M190 / M106 / M107.
-    for name, content in marlin.subroutines.items():
-        (configs_dir / SUBROUTINES_DIR).mkdir(exist_ok=True)
-        (configs_dir / SUBROUTINES_DIR / name).write_text(content, encoding="utf-8")
-        sidecar_files.append(f"{configs_rel}/{SUBROUTINES_DIR}/{name}")
-    for name, content in marlin.mcodes.items():
-        (configs_dir / MCODES_DIR).mkdir(exist_ok=True)
-        helper = configs_dir / MCODES_DIR / name
-        helper.write_text(content, encoding="utf-8")
-        helper.chmod(0o755)  # LinuxCNC runs user M-codes as programs
-        sidecar_files.append(f"{configs_rel}/{MCODES_DIR}/{name}")
 
     # 4c. The compensation component loads the active bed mesh at start:
     # a first-time [bed_mesh] machine gets a flat one.
