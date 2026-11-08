@@ -9,6 +9,8 @@ position":
 * ``G28 X`` / ``G28 X Y`` / ``G28 X0`` — home those axes (values are
   ignored), in the order given;
 * ``G28`` alone — home every joint by the INI's ``HOME_SEQUENCE``;
+* ``Z_TILT_ADJUST`` — level the Z motors (``[z_tilt]``, the machine
+  backend's ``ZTiltService``);
 * any other line — sent to LinuxCNC as MDI, waiting until it finished.
 
 LinuxCNC itself cannot home from G-code (homing needs MANUAL mode, a
@@ -41,7 +43,7 @@ class HomingRoutineError(ValueError):
 
 @dataclass(frozen=True)
 class HomingStep:
-    """One step: ``home`` (``axes`` empty = every joint) or ``mdi``."""
+    """One step: ``home`` (``axes`` empty = every joint), ``z_tilt`` or ``mdi``."""
 
     kind: str
     line: str
@@ -64,6 +66,9 @@ def parse_homing_routine(text: str) -> list[HomingStep]:
         line = raw.strip()
         code = _COMMENT.sub("", line).strip()
         if not code:
+            continue
+        if code.upper() == "Z_TILT_ADJUST":
+            steps.append(HomingStep(kind="z_tilt", line=line))
             continue
         words = [(letter.upper(), value) for letter, value in _WORD.findall(code)]
         if not any(letter == "G" and _is_g28(value) for letter, value in words):

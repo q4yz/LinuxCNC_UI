@@ -36,6 +36,7 @@ from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
 from .components.StepperHalMapper import StepperHalMapper
+from .components.ZTiltHalMapper import ZTiltHalMapper
 from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper, unclaimed_sensors
 from .mcus.ParportRouterMapper import ParportRouterMapper
 from .mcus.RemoraCanMapper import RemoraCanMapper
@@ -110,6 +111,10 @@ class HalAssembler:
             + self._bed_mesh_fragments()
             + self._io_pin_fragments()
         )
+        z_tilt = self._payload.get("z_tilt")
+        if isinstance(z_tilt, dict):
+            # After every stepper mapper: it rewrites their Z position nets.
+            component_fragments.append(ZTiltHalMapper.apply(component_fragments, z_tilt))
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
 

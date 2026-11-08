@@ -61,6 +61,7 @@ from routers import (
     macro_start as macro_start_router,
     bed_mesh as bed_mesh_router,
     io as io_router,
+    z_tilt as z_tilt_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
@@ -80,6 +81,7 @@ from services.ToolsService import get_tools_service
 from services.ConsoleLogger import get_console_logger
 from services.BedMeshService import get_bed_mesh_service
 from services.IoService import get_io_service
+from services.ZTiltService import get_z_tilt_service
 
 
 
@@ -142,6 +144,7 @@ async def lifespan(app: FastAPI):
         program_service.preload_hal_pins()
         get_bed_mesh_service().preload_hal_pins()
         get_io_service().preload_hal_pins()
+        get_z_tilt_service().preload_hal_pins()
         HalPin.initialize_component()
         get_io_service().apply_start_values()
 
@@ -276,6 +279,7 @@ app.include_router(macro_start_router.router)
 app.include_router(mcu_router.router)
 app.include_router(bed_mesh_router.router)
 app.include_router(io_router.router)
+app.include_router(z_tilt_router.router)
 
 
 @app.get("/")
@@ -340,6 +344,7 @@ if __name__ == "__main__":
     program_service.preload_hal_pins()
     get_bed_mesh_service().preload_hal_pins()
     get_io_service().preload_hal_pins()
+    get_z_tilt_service().preload_hal_pins()
     HalPin.initialize_component()
     get_io_service().apply_start_values()
 

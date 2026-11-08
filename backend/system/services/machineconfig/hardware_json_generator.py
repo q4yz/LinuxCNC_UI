@@ -58,6 +58,7 @@ from typing import Any
 
 from models.machineconfig import MachineConfigGraph
 from core.homing_routine import homed_axes, parse_homing_routine
+from core.z_tilt import collinear
 from MachineConfigParser import (
     InvalidValueError,
     MissingEstopSectionError,
@@ -250,6 +251,52 @@ def _homing_override_payload(
             )
     in_place = [a for a in axis_ids if a not in stepper_axes and (homed is not None and a.upper() not in homed)]
     return {"gcode": override.gcode, "axes": axes, "home_in_place": in_place}
+
+
+def _z_tilt_payload(graph: MachineConfigGraph, axes_records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The top-level ``z_tilt`` object, or ``None`` without ``[z_tilt]``.
+
+    One pivot per Z motor (joint, in ``[stepper_z]``, ``[stepper_z1]``
+    order), a ``[probe]`` to probe with, and points that span a plane
+    when the pivots do. ``probe_min_z`` (``[stepper_z] position_min``)
+    is how far down a probe move may search.
+    """
+    z_tilt = graph.z_tilt
+    if z_tilt is None:
+        return None
+    if graph.probe is None or not graph.probe.pin:
+        raise InvalidValueError("z_tilt", "points", "(probing)", "a [probe] section with a pin to probe with")
+    z_axis = next((a for a in axes_records if a.get("id") == "z"), None)
+    joints = [int(j) for j in (z_axis or {}).get("joint_numbers") or []]
+    if len(joints) < 2:
+        raise InvalidValueError(
+            "z_tilt", "z_positions", f"{len(z_tilt.z_positions)} position(s)",
+            "a Z axis with two or more motors ([stepper_z], [stepper_z1], ...)",
+        )
+    if len(z_tilt.z_positions) != len(joints):
+        raise InvalidValueError(
+            "z_tilt", "z_positions", f"{len(z_tilt.z_positions)} position(s)",
+            f"one per Z motor ({len(joints)})",
+        )
+    if not collinear(z_tilt.z_positions) and collinear(z_tilt.points):
+        raise InvalidValueError(
+            "z_tilt", "points", "(all on one line)",
+            "at least three points not on one line — the motors span a plane",
+        )
+    stepper_z = graph.steppers.get("z")
+    probe_min_z = float(getattr(stepper_z, "position_min", None) or 0.0)
+    return {
+        "z_positions": [list(p) for p in z_tilt.z_positions],
+        "points": [list(p) for p in z_tilt.points],
+        "joints": joints,
+        "speed": z_tilt.speed,
+        "horizontal_move_z": z_tilt.horizontal_move_z,
+        "probe_speed": z_tilt.probe_speed,
+        "probe_min_z": probe_min_z,
+        "retries": z_tilt.retries,
+        "retry_tolerance": z_tilt.retry_tolerance,
+        "max_adjust": z_tilt.max_adjust,
+    }
 
 
 def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
@@ -1106,6 +1153,7 @@ def build_hardware_json(
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "z_tilt": _z_tilt_payload(graph, axes_records),
         "homing_override": _homing_override_payload(
             graph.homing_override,
             [str(a["id"]) for a in axes_records],

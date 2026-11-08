@@ -377,6 +377,23 @@ class HomingOverride:
 
 
 @dataclass(slots=True)
+class ZTilt:
+    """``[z_tilt]`` (`.agent/component/z_tilt.md`): level a Z axis driven
+    by several motors. ``z_positions`` are the motors' pivots (X, Y), in
+    ``[stepper_z]``, ``[stepper_z1]``, ... order; ``points`` the probe
+    positions. Speeds in mm/s, lengths in mm."""
+
+    z_positions: list[tuple[float, float]]
+    points: list[tuple[float, float]]
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    retries: int = 0
+    retry_tolerance: float = 0.0
+    max_adjust: float = 5.0
+
+
+@dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
 
@@ -528,6 +545,8 @@ class MachineConfigGraph:
     bed_mesh: BedMesh | None = None
     # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
     homing_override: HomingOverride | None = None
+    # ``None`` without ``[z_tilt]``.
+    z_tilt: ZTilt | None = None
     output_pins: dict[str, OutputPin] = field(default_factory=dict)
     input_pins: dict[str, InputPin] = field(default_factory=dict)
     # ``[temperature_sensor NAME]`` sections, keyed by NAME.
@@ -602,6 +621,7 @@ MachineConfig = MachineConfigGraph
 __all__ = [
     "BedMesh",
     "HomingOverride",
+    "ZTilt",
     "InputPin",
     "TemperatureSensorConfig",
     "OutputPin",

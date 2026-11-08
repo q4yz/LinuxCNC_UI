@@ -18,6 +18,7 @@ from models.machineconfig import (
     Heater,
     HeaterFan,
     HomingOverride,
+    ZTilt,
     InputPin,
     MachineConfigGraph,
     MCU,
@@ -756,6 +757,8 @@ class MachineConfigParser:
                 graph.estop = self._parse_estop(section_name, section)
             elif section_schema.kind is SectionKind.PROBE:
                 graph.probe = self._parse_probe(section_name, section)
+            elif section_schema.kind is SectionKind.Z_TILT:
+                graph.z_tilt = self._parse_z_tilt(section_name, section)
             elif section_schema.kind is SectionKind.HOMING_OVERRIDE:
                 graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
@@ -1318,6 +1321,50 @@ class MachineConfigParser:
             return None
         lines = [line.strip() for line in section[key].splitlines()]
         return "\n".join(line for line in lines if line and not line.startswith(("#", ";"))) or None
+
+    def _xy_list(self, section_name: str, section: configparser.SectionProxy, key: str) -> list[tuple[float, float]]:
+        """``X, Y`` per line (Klipper's multi-line lists)."""
+        raw = self._ngc_lines(section, key)
+        if raw is None:
+            raise MissingRequiredKeywordError(section_name, key)
+        out: list[tuple[float, float]] = []
+        for line in raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            try:
+                if len(parts) != 2:
+                    raise ValueError
+                out.append((float(parts[0]), float(parts[1])))
+            except ValueError:
+                raise InvalidValueError(section_name, key, line, "'X, Y' per line") from None
+        return out
+
+    def _parse_z_tilt(self, section_name: str, section: configparser.SectionProxy) -> ZTilt:
+        """Build the machine's :class:`ZTilt`. Matching the pivots to the
+        Z motors needs the axes, so that check is the generator's."""
+        z_tilt = ZTilt(
+            z_positions=self._xy_list(section_name, section, "z_positions"),
+            points=self._xy_list(section_name, section, "points"),
+        )
+        for key, minimum in (("speed", 0.0), ("probe_speed", 0.0), ("max_adjust", 0.0)):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value <= minimum:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "a number above 0")
+                setattr(z_tilt, key, value)
+        for key in ("horizontal_move_z", "retry_tolerance"):
+            value = self._optional_float(section_name, section, key)
+            if value is not None:
+                if value < 0:
+                    raise InvalidValueError(section_name, key, f"{value:g}", "0 or above")
+                setattr(z_tilt, key, value)
+        retries = self._optional_int(section_name, section, "retries")
+        if retries is not None:
+            if retries < 0:
+                raise InvalidValueError(section_name, "retries", str(retries), "0 or above")
+            z_tilt.retries = retries
+        if len(z_tilt.points) < 2:
+            raise InvalidValueError(section_name, "points", str(len(z_tilt.points)), "at least two probe points")
+        return z_tilt
 
     def _parse_homing_override(
         self,
