@@ -153,3 +153,8 @@ def test_extruder_homed_by_the_routine_is_not_repeated():
 def test_bare_g28_leaves_nothing_to_home_in_place():
     extra = EXTRUDER + "[homing_override]\ngcode:\n    G28\n"
     assert _payload(extra)["homing_override"]["home_in_place"] == []
+
+
+def test_z_tilt_adjust_is_a_routine_step():
+    steps = parse_homing_routine("G28\nz_tilt_adjust\nG28 Z")
+    assert [s.kind for s in steps] == ["home", "z_tilt", "home"]

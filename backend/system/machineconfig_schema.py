@@ -64,6 +64,7 @@ class SectionKind(str, Enum):
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
     BED_MESH = "bed_mesh"
     HOMING_OVERRIDE = "homing_override"
+    Z_TILT = "z_tilt"
     OUTPUT_PIN = "output_pin"
     INPUT_PIN = "input_pin"
     TEMPERATURE_SENSOR = "temperature_sensor"
@@ -207,6 +208,13 @@ BED_MESH_KEYS = frozenset({"probe_count"})
 # ``G28 <axes>`` among them homes; ``axes`` are the axes whose home
 # button runs it (default all).
 HOMING_OVERRIDE_KEYS = frozenset({"gcode", "axes"})
+# Klipper's ``[z_tilt]`` (`.agent/component/z_tilt.md`): one pivot per Z
+# motor, the probe points, travel; ``probe_speed`` / ``max_adjust`` are
+# this compiler's own (Klipper keeps the probe speed in ``[probe]``).
+Z_TILT_KEYS = frozenset({
+    "z_positions", "points", "speed", "horizontal_move_z", "retries",
+    "retry_tolerance", "probe_speed", "max_adjust",
+})
 # Generic I/O (`.agent/component/io_pins.md`), Klipper syntax. An
 # output is switched from the UI (or PWM with ``pwm: True``); an input
 # is shown in the UI and can run G-code on its edges.
@@ -347,6 +355,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
     SectionKind.BED_MESH: BED_MESH_KEYS,
     SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
+    SectionKind.Z_TILT: Z_TILT_KEYS,
     SectionKind.OUTPUT_PIN: OUTPUT_PIN_KEYS,
     SectionKind.INPUT_PIN: INPUT_PIN_KEYS,
     SectionKind.TEMPERATURE_SENSOR: TEMPERATURE_SENSOR_KEYS,
@@ -452,6 +461,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "homing_override":
         return SectionSchema(SectionKind.HOMING_OVERRIDE, HOMING_OVERRIDE_KEYS, "homing_override")
+
+    if section == "z_tilt":
+        return SectionSchema(SectionKind.Z_TILT, Z_TILT_KEYS, "z_tilt")
 
     output_match = _OUTPUT_PIN_SECTION.fullmatch(section)
     if output_match:
@@ -563,6 +575,7 @@ __all__ = [
     "ALLOWED_KEYS",
     "BED_MESH_KEYS",
     "HOMING_OVERRIDE_KEYS",
+    "Z_TILT_KEYS",
     "INPUT_PIN_KEYS",
     "OUTPUT_PIN_KEYS",
     "DUPLICATE_PIN_OVERRIDE_KEYS",

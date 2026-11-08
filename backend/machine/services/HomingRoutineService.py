@@ -148,6 +148,8 @@ class HomingRoutineService:
         for step in steps:
             if step.kind == "home":
                 reason = self._home(stat, step)
+            elif step.kind == "z_tilt":
+                reason = self._z_tilt(stat)
             else:
                 reason = self._mdi(stat, step.line)
             if reason is not None:
@@ -161,6 +163,16 @@ class HomingRoutineService:
                 if reason is not None:
                     return f"homing axis {letter.upper()} in place: {reason}"
         execute_sync_cmd("mode", 1.0, _MODE_MANUAL)
+        return None
+
+    @staticmethod
+    def _z_tilt(stat: Any) -> Optional[str]:
+        from services.ZTiltService import ZTiltError, get_z_tilt_service
+
+        try:
+            get_z_tilt_service().run(stat)
+        except (ZTiltError, BadRequestError) as exc:
+            return str(getattr(exc, "detail", None) or exc)
         return None
 
     def _mdi(self, stat: Any, line: str) -> Optional[str]:

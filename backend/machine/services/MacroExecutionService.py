@@ -217,6 +217,10 @@ class MacroExecutionService:
                 continue
 
             for line in split_static_block(block.content):
+                if line.strip().upper() == "Z_TILT_ADJUST":
+                    if not self._z_tilt(name, stat):
+                        return
+                    continue
                 stat.poll()
                 if stat.estop:
                     console.log_event(
@@ -246,6 +250,23 @@ class MacroExecutionService:
             level=LogLevel.INFO,
             source="CMD",
         )
+
+    @staticmethod
+    def _z_tilt(name: str, stat: Any) -> bool:
+        """A ``Z_TILT_ADJUST`` line (`.agent/component/z_tilt.md`): the
+        adjust, on this worker. ``False`` (logged) stops the macro."""
+        from services.ZTiltService import ZTiltError, get_z_tilt_service
+
+        try:
+            get_z_tilt_service().run(stat)
+        except (ZTiltError, BadRequestError) as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: Z_TILT_ADJUST: {getattr(exc, 'detail', None) or exc}",
+                level=LogLevel.ERROR,
+                source="CMD",
+            )
+            return False
+        return True
 
     @staticmethod
     def _wait_until_idle(stat: Any, serial: Optional[int]) -> Optional[str]:

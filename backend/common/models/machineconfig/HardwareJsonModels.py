@@ -380,6 +380,24 @@ class HomingOverride(BaseModel):
     home_in_place: list[str] = Field(default_factory=list)
 
 
+class ZTilt(BaseModel):
+    """Leveling a multi-motor Z axis (`.agent/component/z_tilt.md`).
+    ``joints`` are the Z joints, one per ``z_positions`` entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    z_positions: list[list[float]]
+    points: list[list[float]]
+    joints: list[int]
+    speed: float = 50.0
+    horizontal_move_z: float = 5.0
+    probe_speed: float = 5.0
+    probe_min_z: float = 0.0
+    retries: int = 0
+    retry_tolerance: float = 0.0
+    max_adjust: float = 5.0
+
+
 class Probe(BaseModel):
     """The machine's single touch-probe component (`.agent/component/probe.md`).
 
@@ -640,6 +658,9 @@ class HardwareJson(BaseModel):
 
     # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
     homing_override: "HomingOverride | None" = None
+
+    # ``None`` without ``[z_tilt]``. See :class:`ZTilt`.
+    z_tilt: "ZTilt | None" = None
 
     # ``[output_pin NAME]`` / ``[input_pin NAME]``, in declaration order.
     output_pins: list[OutputPin] = Field(default_factory=list)

@@ -32,6 +32,8 @@ gcode:
   "go to the G28 position"); values are ignored (`G28 X0` = `G28 X`).
   A bare `G28` homes every joint by the INI's `HOME_SEQUENCE`. A `G28`
   line carries nothing else. `G28.1` etc. are ordinary MDI.
+* `Z_TILT_ADJUST` levels the Z motors (`z_tilt.md`) — X, Y and Z
+  homed first, `G28 Z` again after when Z homes on the probe.
 * Every other line is sent as **MDI**, one at a time, each waiting until
   it is finished. Modal state (`G91`, `#<_globals>`) carries over from
   line to line; a single-line `o<sub> call` works, O-word loops or

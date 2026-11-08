@@ -27,6 +27,7 @@ from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
+from .components.ZTiltHalMapper import ZTiltWebguiMapper
 from .components.TemperatureSensorHalMapper import (
     TemperatureSensorWebguiMapper,
     hal_pin_diagnostics,
@@ -118,6 +119,9 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
+    z_tilt = payload.get("z_tilt")
+    if isinstance(z_tilt, dict):
+        lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
     for sensor in unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:

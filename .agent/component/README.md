@@ -30,6 +30,7 @@ capability classes, and the validation rules a compiler must enforce.
 | `bed_mesh.md` | `[bed_mesh]` | Optional. `probe_count` only; Z compensation via the Remora `compensation` component, summed with the pause lift into `axis.z.eoffset-counts`. |
 | `io_pins.md` | `[output_pin NAME]`, `[input_pin NAME]` | Optional, many. Switched / PWM outputs and inputs (edge G-code via halui MDI); UI card with fan sliders. |
 | `homing_override.md` | `[homing_override]` | Optional, one. The homing routine: `G28 <axes>` homes, other lines run as MDI (e.g. lift Z, home X/Y, home Z at the bed centre). |
+| `z_tilt.md` | `[z_tilt]` | Optional, one. Levels a multi-motor Z axis: probe points, plane fit, a HAL offset per Z motor; `Z_TILT_ADJUST` in macros / the homing routine. |
 | `corexy.md` | `[machine] kinematics: corexy` | CoreXY math in HAL (`sum2`, A = X + Y, B = X − Y) between the trivkins joints and Remora; not `corexykins`. |
 | `mcu_parallelport.md` | `[mcu]` `type: parallelport` | **Class A.** |
 | `mcu_spi_remora.md` | `[mcu]` `type: remora-spi` | **Class B.** |
