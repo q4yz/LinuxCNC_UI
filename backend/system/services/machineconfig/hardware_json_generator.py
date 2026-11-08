@@ -299,11 +299,33 @@ def _z_tilt_payload(graph: MachineConfigGraph, axes_records: list[dict[str, Any]
     }
 
 
-def _bed_mesh_payload(bed_mesh) -> dict[str, Any] | None:
-    """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``."""
+def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
+    """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``.
+    ``mesh_min`` / ``mesh_max`` default to the X / Y travel;
+    ``probe_min_z`` is ``[stepper_z] position_min``."""
     if bed_mesh is None:
         return None
-    return {"probe_count": list(bed_mesh.probe_count)}
+    steppers = graph.steppers if graph is not None else {}
+
+    def travel(letter: str) -> tuple[float, float]:
+        stepper = steppers.get(letter)
+        low = float(getattr(stepper, "position_min", None) or 0.0)
+        high = getattr(stepper, "position_max", None)
+        return low, float(high) if high is not None else 200.0
+
+    (x_lo, x_hi), (y_lo, y_hi) = travel("x"), travel("y")
+    mesh_min = list(bed_mesh.mesh_min) if bed_mesh.mesh_min else [x_lo, y_lo]
+    mesh_max = list(bed_mesh.mesh_max) if bed_mesh.mesh_max else [x_hi, y_hi]
+    return {
+        "probe_count": list(bed_mesh.probe_count),
+        "mesh_min": mesh_min,
+        "mesh_max": mesh_max,
+        "speed": bed_mesh.speed,
+        "horizontal_move_z": bed_mesh.horizontal_move_z,
+        "probe_speed": bed_mesh.probe_speed,
+        "probe_min_z": float(getattr(steppers.get("z"), "position_min", None) or 0.0),
+        "zero_reference_position": list(bed_mesh.zero_reference_position) if bed_mesh.zero_reference_position else None,
+    }
 
 
 def _probe_payload(probe) -> dict[str, Any] | None:
@@ -1152,7 +1174,7 @@ def build_hardware_json(
         "max_z_accel": _fmt_float(getattr(graph.printer, "max_z_accel", None)),
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
-        "bed_mesh": _bed_mesh_payload(graph.bed_mesh),
+        "bed_mesh": _bed_mesh_payload(graph.bed_mesh, graph),
         "z_tilt": _z_tilt_payload(graph, axes_records),
         "leds": [
             {

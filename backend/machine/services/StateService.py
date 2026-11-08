@@ -177,10 +177,22 @@ class StateService:
 
         if get_led_service().run_command(command):
             return True
+        from services import LevelingService
+        from services.BedMeshProbeService import get_bed_mesh_probe_service, parse_command
+
         code = command.strip().upper()
-        if code in ("G29", "Z_TILT_ADJUST"):
-            busy = get_macro_execution_service().is_running() or get_homing_routine_service().is_running()
+        mesh = get_bed_mesh_probe_service()
+        busy = (get_macro_execution_service().is_running() or get_homing_routine_service().is_running()
+                or get_z_tilt_service().is_running() or mesh.is_running() or LevelingService.is_running())
+        if code == "G29":
+            LevelingService.start(busy=busy)
+            return True
+        if code == "Z_TILT_ADJUST":
             get_z_tilt_service().start(busy=busy)
+            return True
+        profile = parse_command(command)
+        if profile is not None:
+            mesh.start(profile, busy=busy)
             return True
         try:
             steps = parse_homing_routine(command)

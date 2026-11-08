@@ -34,6 +34,7 @@ gcode:
   line carries nothing else. `G28.1` etc. are ordinary MDI.
 * `Z_TILT_ADJUST` levels the Z motors (`z_tilt.md`) — X, Y and Z
   homed first, `G28 Z` again after when Z homes on the probe.
+* `BED_MESH_CALIBRATE [PROFILE=x]` probes the bed mesh (`bed_mesh.md` § 5).
 * Every other line is sent as **MDI**, one at a time, each waiting until
   it is finished. Modal state (`G91`, `#<_globals>`) carries over from
   line to line; a single-line `o<sub> call` works, O-word loops or

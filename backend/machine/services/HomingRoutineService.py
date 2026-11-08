@@ -170,6 +170,8 @@ class HomingRoutineService:
                 reason = self._home(stat, step)
             elif step.kind == "z_tilt":
                 reason = self._z_tilt(stat)
+            elif step.kind == "bed_mesh":
+                reason = self._bed_mesh(stat, step.line)
             else:
                 reason = self._mdi(stat, step.line)
             if reason is not None:
@@ -192,6 +194,16 @@ class HomingRoutineService:
         try:
             get_z_tilt_service().run(stat)
         except (ZTiltError, BadRequestError) as exc:
+            return str(getattr(exc, "detail", None) or exc)
+        return None
+
+    @staticmethod
+    def _bed_mesh(stat: Any, line: str) -> Optional[str]:
+        from services.BedMeshProbeService import BedMeshError, get_bed_mesh_probe_service
+
+        try:
+            get_bed_mesh_probe_service().run_command(line, stat)
+        except (BedMeshError, BadRequestError) as exc:
             return str(getattr(exc, "detail", None) or exc)
         return None
 

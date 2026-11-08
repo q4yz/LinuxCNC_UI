@@ -47,3 +47,13 @@ test("the heatmap is a clickable canvas image with a gradient, not a cell grid",
   assert.match(heatmap, /data-testid="bed-mesh-spot"/);
   assert.match(heatmap, /emit\("update:cell", info\.point\.row, info\.point\.col, value\)/, "edit the nearest probe point");
 });
+
+test("probing a mesh: BED_MESH_CALIBRATE with a profile, polled until done", () => {
+  const facade = readFileSync(resolve(src, "facades/bedMeshFacade.ts"), "utf-8");
+  assert.match(facade, /BedmeshService\.calibrateBedMesh\(\{ profile \}\)/);
+  assert.match(facade, /BedmeshService\.getBedMeshCalibrate\(\)/);
+  const view = readFileSync(resolve(src, "views/BedMeshView.vue"), "utf-8");
+  assert.match(view, /data-testid="bed-mesh-probe"[\s\S]*?@click="probe"/);
+  assert.match(view, /bedMeshFacade\.calibrate\(profile\)/);
+  assert.match(view, /bedMeshFacade\.isCalibrating\(\)/);
+});

@@ -203,7 +203,12 @@ TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # Bed mesh / Z compensation (`.agent/component/bed_mesh.md`). Minimal
 # for now: the probe grid only; the mesh itself is probed / edited at
 # runtime and applied by the Remora `compensation` HAL component.
-BED_MESH_KEYS = frozenset({"probe_count"})
+# Klipper's probing keys (``mesh_min`` / ``mesh_max``, travel), plus this
+# compiler's own ``probe_speed`` (Klipper keeps it in ``[probe]``).
+BED_MESH_KEYS = frozenset({
+    "probe_count", "mesh_min", "mesh_max", "speed", "horizontal_move_z",
+    "probe_speed", "zero_reference_position",
+})
 # A homing routine (Klipper's ``[homing_override]``,
 # `.agent/component/homing_override.md`): ``gcode`` lines run in order,
 # ``G28 <axes>`` among them homes; ``axes`` are the axes whose home

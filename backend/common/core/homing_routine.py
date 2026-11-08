@@ -11,6 +11,8 @@ position":
 * ``G28`` alone — home every joint by the INI's ``HOME_SEQUENCE``;
 * ``Z_TILT_ADJUST`` — level the Z motors (``[z_tilt]``, the machine
   backend's ``ZTiltService``);
+* ``BED_MESH_CALIBRATE [PROFILE=x]`` — probe the bed mesh (``[bed_mesh]``,
+  ``BedMeshProbeService``);
 * any other line — sent to LinuxCNC as MDI, waiting until it finished.
 
 LinuxCNC itself cannot home from G-code (homing needs MANUAL mode, a
@@ -69,6 +71,9 @@ def parse_homing_routine(text: str) -> list[HomingStep]:
             continue
         if code.upper() == "Z_TILT_ADJUST":
             steps.append(HomingStep(kind="z_tilt", line=line))
+            continue
+        if code.upper().split()[0] == "BED_MESH_CALIBRATE":
+            steps.append(HomingStep(kind="bed_mesh", line=line))
             continue
         words = [(letter.upper(), value) for letter, value in _WORD.findall(code)]
         if not any(letter == "G" and _is_g28(value) for letter, value in words):

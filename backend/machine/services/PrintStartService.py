@@ -8,8 +8,9 @@ here, in order, on a worker thread, before the program starts:
 
 * ``home`` — the machine's ``[homing_override]`` routine, or every joint
   by ``HOME_SEQUENCE`` (``HomingRoutineService.run_blocking``);
-* ``level`` — ``Z_TILT_ADJUST`` when the machine has ``[z_tilt]``
-  (skipped with a console note otherwise);
+* ``level`` — ``Z_TILT_ADJUST`` when the machine has ``[z_tilt]``, then
+  ``BED_MESH_CALIBRATE`` when it has ``[bed_mesh]`` (``LevelingService``;
+  a console note when it has neither);
 
 then ``AUTO_RUN``. The first failure stops it before the program starts,
 logged in the console.
@@ -94,8 +95,6 @@ class PrintStartService:
     @staticmethod
     def _prepare(steps: List[str]) -> Optional[str]:
         from services.HomingRoutineService import get_homing_routine_service
-        from services.ZTiltService import ZTiltError, get_z_tilt_service
-
         console = get_console_logger()
         stat = get_stat_channel()
         if stat is None:
@@ -106,20 +105,11 @@ class PrintStartService:
             if reason is not None:
                 return f"homing: {reason}"
         if "level" in steps:
-            z_tilt = get_z_tilt_service()
-            if z_tilt.settings() is None:
-                console.log_event(
-                    "Print start: the file's G29 skipped — this machine has no [z_tilt].",
-                    level=LogLevel.WARNING, source="CMD",
-                )
-            else:
-                console.log_event("Print start: Z_TILT_ADJUST (the file's G29).", level=LogLevel.INFO, source="CMD")
-                try:
-                    z_tilt.run(stat)
-                except ZTiltError as exc:
-                    return f"Z_TILT_ADJUST: {exc}"
-                except BaseAPIException as exc:
-                    return f"Z_TILT_ADJUST: {exc.detail}"
+            from services.LevelingService import level
+
+            reason = level(stat)
+            if reason is not None:
+                return f"leveling (the file's G29): {reason}"
         return None
 
 

@@ -46,11 +46,11 @@ def _payload(tmp_path, bed_mesh="[bed_mesh]\nprobe_count: 3, 3\n"):
 
 @pytest.mark.parametrize("raw, expected", [("3, 3", [3, 3]), ("5,4", [5, 4]), ("4", [4, 4])])
 def test_probe_count_reaches_hardware_json(tmp_path, raw, expected):
-    assert _payload(tmp_path, f"[bed_mesh]\nprobe_count: {raw}\n")["bed_mesh"] == {"probe_count": expected}
+    assert _payload(tmp_path, f"[bed_mesh]\nprobe_count: {raw}\n")["bed_mesh"]["probe_count"] == expected
 
 
 def test_probe_count_defaults_to_3_by_3(tmp_path):
-    assert _payload(tmp_path, "[bed_mesh]\n")["bed_mesh"] == {"probe_count": [3, 3]}
+    assert _payload(tmp_path, "[bed_mesh]\n")["bed_mesh"]["probe_count"] == [3, 3]
 
 
 @pytest.mark.parametrize("raw", ["2, 3", "3, x", "3, 3, 3"])
@@ -150,3 +150,22 @@ def test_a_bed_mesh_machine_starts_with_a_flat_active_mesh(service, tmp_path):
     listing = service.list()
     assert (listing.names, listing.active) == (["flat"], "flat")
     assert len(service.read("flat").xs) == 3
+
+
+def test_probing_settings_reach_hardware_json(tmp_path):
+    mesh = _payload(tmp_path, "[bed_mesh]\nprobe_count: 5, 4\nmesh_min: 10, 15\nmesh_max: 190, 185\n"
+                              "speed: 120\nhorizontal_move_z: 3\nprobe_speed: 2\nzero_reference_position: 100, 100\n")["bed_mesh"]
+    assert mesh["mesh_min"] == [10.0, 15.0] and mesh["mesh_max"] == [190.0, 185.0]
+    assert (mesh["speed"], mesh["horizontal_move_z"], mesh["probe_speed"]) == (120.0, 3.0, 2.0)
+    assert mesh["zero_reference_position"] == [100.0, 100.0]
+
+
+def test_probed_area_defaults_to_the_travel(tmp_path):
+    mesh = _payload(tmp_path, "[bed_mesh]\n")["bed_mesh"]
+    assert mesh["mesh_min"][0] <= mesh["mesh_max"][0] and mesh.get("zero_reference_position") is None
+
+
+@pytest.mark.parametrize("extra", ["mesh_min: 10\n", "mesh_min: 50, 50\nmesh_max: 40, 90\n", "speed: 0\n", "horizontal_move_z: -1\n"])
+def test_bad_probing_settings(tmp_path, extra):
+    with pytest.raises(InvalidValueError):
+        _payload(tmp_path, "[bed_mesh]\n" + extra)
