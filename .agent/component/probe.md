@@ -147,3 +147,29 @@ Reuses the `DIGITAL_IN` `PinRole` `estop.md` § 5 introduced — no new
 role needed. `probe-in` is the signal name, now listed alongside
 `estop-out`/`estop-fault` in `.agent/component/README.md` § 5's
 reserved "machine core" signal-name table.
+
+## Probe as Z endstop (Klipper's `probe:z_virtual_endstop`)
+
+The probe can home Z — also on a CAN toolhead node (`mcu_can_remora.md`):
+
+```cfg
+[probe]
+pin: !sb2209:PB6
+
+[stepper_z]
+endstop_pin: probe:z_virtual_endstop   # or the same pin again: !sb2209:PB6
+```
+
+`probe:z_virtual_endstop` is replaced by the `[probe]` pin. When the
+probe pin and the **Z** endstop pin are one physical pin the generator
+adds it to `duplicate_pin_overrides` itself (an explicit
+`[duplicate_pin_override] pins: sb2209:PB6` does the same), so both share
+one signal:
+
+```hal
+net endstop_z_min-sw => joint.2.home-sw-in
+net endstop_z_min-sw => motion.probe-input
+```
+
+A probe sharing any other endstop's pin still needs the explicit
+override (`E_PIN_CONFLICT` otherwise).

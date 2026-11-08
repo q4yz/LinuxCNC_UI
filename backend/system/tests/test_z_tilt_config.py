@@ -89,7 +89,7 @@ def test_offsets_spliced_into_the_z_joints():
         assert f"net j{joint}pos-fb-raw remora.joint.{joint}.pos-fb => ztilt-{k}.fb-in" in hal
         assert f"net j{joint}pos-fb ztilt-{k}.fb-out => joint.{joint}.motor-pos-fb" in hal
         assert f"net ztilt-{k}-offset ztilt-ramp-{k}.out => ztilt-{k}.offset" in hal
-        assert f"setp ztilt-ramp-{k}.max_ 5" in hal
+        assert f"setp ztilt-ramp-{k}.max 5" in hal
     # X and Y untouched.
     assert "net j0pos-cmd joint.0.motor-pos-cmd => remora.joint.0.pos-cmd" in hal
     addf = [line.split()[1] for line in hal.splitlines() if line.startswith("addf")]

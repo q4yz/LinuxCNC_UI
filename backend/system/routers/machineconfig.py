@@ -52,7 +52,7 @@ that copied a generated machine's templates into a fixed ``active/``
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Path, Query, Request, Response, UploadFile, File
 from fastapi.responses import JSONResponse
@@ -435,6 +435,11 @@ def get_machines_tree() -> DirectoryListing:
     )
 
 
+def _running_main_machine() -> Optional[str]:
+    lifecycle = get_machine_lifecycle_service()
+    return lifecycle.default_machine() if lifecycle.is_running() else None
+
+
 @router.post(
     "/machines/generate",
     summary="Generate machine templates",
@@ -445,9 +450,9 @@ def get_machines_tree() -> DirectoryListing:
         "compiled machine.ini / machine.hal, plus one config_<mcu>.txt "
         "per Remora board. Answers 409 when the machine already exists "
         "unless confirm_override is set, in which case the whole folder "
-        "is replaced. Answers 403, regardless of confirm_override, when "
-        "the target is the currently-selected main machine — that one "
-        "has to be deleted manually first. Answers 422 (kind "
+        "is replaced (the old configs/ is kept as configs.previous/). "
+        "Answers 403, regardless of confirm_override, when the target is "
+        "the main machine while LinuxCNC runs — stop it first. Answers 422 (kind "
         "machine_invalid, with every diagnostic) when the profile does "
         "not compile into a runnable machine; nothing is written then."
     ),
@@ -462,7 +467,10 @@ def generate_machine(payload: GenerateRequest) -> GenerateResponse:
             confirm_override=payload.confirm_override,
             config_service=get_config_service(),
             machine_service=get_machine_service(),
-            protected_machine=get_machine_lifecycle_service().default_machine(),
+            # Only while LinuxCNC runs: replacing the files a running
+            # session uses is the accident to block. Stopped, the main
+            # machine regenerates like any other (409 confirm, backup).
+            protected_machine=_running_main_machine(),
         )
     except FileNotFoundError as exc:
         raise NotFoundError(str(exc)) from exc

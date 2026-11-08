@@ -274,17 +274,13 @@ class MachineExistsError(Exception):
 
 
 class MainMachineProtectedError(Exception):
-    """Raised when generate targets the currently-selected "main" machine.
+    """Raised when generate targets the main machine while LinuxCNC runs it.
 
-    ``confirm_override`` lets an operator replace any *other* existing
-    machine's whole folder — including ``webgui_connections.hal``,
-    which is no longer spared (see the module docstring). The main
-    machine is the one exception ``confirm_override`` cannot reach:
-    it's whatever :meth:`MachineLifecycleService.default_machine`
-    currently points at, i.e. the machine LinuxCNC would start next.
-    Overriding it by clicking through a generic "replace?" warning is
-    exactly the accidental-destruction case this blocks — deleting it
-    on purpose first is an unambiguous, separate action.
+    ``confirm_override`` replaces an existing machine's folder (the old
+    ``configs/`` is kept as ``configs.previous/``). The router passes the
+    main machine as protected only while a LinuxCNC session runs:
+    replacing the files a running session uses is the accident this
+    blocks. Stopped, the main machine regenerates like any other.
 
     Attributes:
         machine: The protected machine's name.
@@ -293,9 +289,8 @@ class MainMachineProtectedError(Exception):
     def __init__(self, machine: str) -> None:
         self.machine = machine
         super().__init__(
-            f"'{machine}' is the current main machine and cannot be "
-            "overridden via generate. Delete it manually first, then "
-            "regenerate."
+            f"'{machine}' is the main machine and LinuxCNC is running it. "
+            "Stop LinuxCNC, then regenerate."
         )
 
 
@@ -430,8 +425,50 @@ def generate_machine_templates(
     # replace a working machine with a broken one.
     hal_text, mcu_sidecar_files = _compile_machine(machine_name, payload, user_hal)
 
-    machine_service.clear_directory(configs_dir)
-    (configs_dir / USER_HAL).write_text(user_hal, encoding="utf-8")
+    backup = _backup(configs_dir)
+    try:
+        machine_service.clear_directory(configs_dir)
+        (configs_dir / USER_HAL).write_text(user_hal, encoding="utf-8")
+        result = _write_machine(
+            configs_dir, configs_rel, machine_name, target_folder, source, payload, axes, hal_text,
+            mcu_sidecar_files,
+        )
+    except Exception:
+        if backup is not None:
+            _restore(backup, configs_dir)
+        raise
+    return result
+
+
+def _backup(configs_dir: Path) -> Optional[Path]:
+    """The old ``configs/`` as ``configs.previous/`` (replacing an older
+    one) before a regenerate replaces it; ``None`` for a new machine."""
+    import shutil
+
+    if not configs_dir.is_dir():
+        return None
+    backup = configs_dir.with_name(configs_dir.name + ".previous")
+    if backup.exists():
+        shutil.rmtree(backup)
+    shutil.copytree(configs_dir, backup, symlinks=True)
+    return backup
+
+
+def _restore(backup: Path, configs_dir: Path) -> None:
+    """A regenerate that failed while writing: the old files back."""
+    import shutil
+
+    logger.error("Writing %s failed — restoring the previous configs from %s", configs_dir, backup)
+    if configs_dir.exists():
+        shutil.rmtree(configs_dir)
+    shutil.copytree(backup, configs_dir, symlinks=True)
+
+
+def _write_machine(
+    configs_dir: Path, configs_rel: str, machine_name: str, target_folder: str, source: Path,
+    payload: Dict[str, Any], axes: Any, hal_text: str, mcu_sidecar_files: Dict[str, str],
+) -> "GenerateResult":
+    """Every file of the machine, into the cleared ``configs_dir``."""
     # [input_pin] edges: halui MDI commands calling generated subroutines.
     input_commands = mdi_commands(payload.get("input_pins") or [])
     # Marlin's heater / fan M-codes: REMAP lines (the files are static,
