@@ -1,9 +1,12 @@
 """Probing a list of X, Y points over MDI — Z tilt (``ZTiltService``) and
 the bed mesh (``BedMeshProbeService``).
 
-Per point: ``G53 G1 X Y`` at the travel speed, ``G53 G38.2 Z<bottom>``
-at the probe speed, the height from ``stat.probed_position`` (machine
-coordinates), ``G53 G0 Z<safe>`` back up. Each line waits until it is
+Per point: ``G53 G1 X Y`` at the travel speed, a probe move down to
+machine ``Z<bottom>`` at the probe speed, the height from ``stat.probed_position`` (machine
+coordinates), ``G53 G0 Z<safe>`` back up. LinuxCNC takes ``G53`` with
+``G0``/``G1`` only ("Must use g0 or g1 with g53"), so the probe move is
+relative — ``G91 G38.2 Z-<safe - bottom>`` from machine ``Z<safe>`` —
+and independent of the work offsets. Each line waits until it is
 finished (``MacroExecutionService._wait_until_idle``).
 """
 from __future__ import annotations
@@ -38,12 +41,18 @@ def probe_points(
     progress: Optional[Callable[[int, float], None]] = None,
 ) -> List[float]:
     """The probed height at each point, in order."""
+    if safe_z <= bottom:
+        raise ProbeError(f"the travel height Z{safe_z:g} is not above the probe's lowest Z{bottom:g}.")
     mdi(stat, "G90")
     mdi(stat, f"G53 G0 Z{safe_z:.4f}")
     heights: List[float] = []
     for k, (x, y) in enumerate(points):
         mdi(stat, f"G53 G1 X{x:.4f} Y{y:.4f} F{travel_mm_s * 60.0:.1f}")
-        mdi(stat, f"G53 G38.2 Z{bottom:.4f} F{probe_mm_s * 60.0:.1f}")
+        mdi(stat, "G91")
+        try:
+            mdi(stat, f"G38.2 Z-{safe_z - bottom:.4f} F{probe_mm_s * 60.0:.1f}")
+        finally:
+            mdi(stat, "G90")
         stat.poll()
         if not getattr(stat, "probe_tripped", False):
             raise ProbeError(f"the probe did not trigger at X{x:g} Y{y:g} above Z{bottom:g}.")

@@ -94,7 +94,7 @@ velocity / acceleration budget.
 moves as Z tilt (`services/Probing.py`): X, Y and Z homed, compensation
 switched off (its offset back to 0), then per point of `probe_count` over
 `mesh_min` ... `mesh_max` — a zig-zag, row by row — `G53 G1 X Y`,
-`G53 G38.2 Z<[stepper_z] position_min>`, the height from
+`G91 G38.2` down to `[stepper_z] position_min` (relative from the travel height: LinuxCNC allows `G53` only with `G0`/`G1`), `G90`, the height from
 `stat.probed_position`, back to `horizontal_move_z`. The heights (less
 the one at `zero_reference_position`) are saved as
 `bed_meshes/<profile>.txt`, made the active mesh, and compensation is
