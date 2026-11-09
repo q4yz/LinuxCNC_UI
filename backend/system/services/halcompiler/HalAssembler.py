@@ -423,6 +423,9 @@ class HalAssembler:
                 sync = RemoraRouterMapper.config_sync_line(mcu, config_file)
                 if sync:
                     fragment.preload.append(sync)
+                    script = RemoraRouterMapper.config_sync_script(mcu, config_file)
+                    if script is not None:
+                        fragment.files[RemoraRouterMapper.sync_script_name(config_file)] = script
 
     # -- pass 2: routing --------------------------------------------------- #
 

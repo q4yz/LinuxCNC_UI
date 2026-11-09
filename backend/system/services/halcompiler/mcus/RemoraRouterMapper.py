@@ -197,22 +197,48 @@ class RemoraRouterMapper:
 
         Above :data:`SYNC_FALLBACK_HZ` a sync that fails (a busy board
         does not answer at the driver's clock) is tried once more at that
-        clock — through ``sh -c``, as ``loadusr`` runs one program.
+        clock. ``loadusr`` runs one program and halcmd hands quotes on
+        literally (``sh -c "a || b"`` looks for a program named
+        ``"a || b"``), so the retry is a small script written next to the
+        config (:meth:`config_sync_script`) and run as ``sh <script>``.
         """
         params = mcu.get("parameters") or {}
         if str(params.get("chip", "stm32")).strip().lower() == _LPC_CHIP or mcu.get("sync_config") is False:
             return None
+        script = RemoraRouterMapper.config_sync_script(mcu, config_file)
+        if script is not None:
+            return f"loadusr -w sh {RemoraRouterMapper.sync_script_name(config_file)}"
         args = RemoraRouterMapper.link_args(mcu)
-        command = " ".join(["remora-upload", "--sync", *args, config_file])
+        return f"loadusr -w {' '.join(['remora-upload', '--sync', *args, config_file])}"
+
+    @staticmethod
+    def sync_script_name(config_file: str) -> str:
+        """``config_mcu.txt`` -> ``sync_config_mcu.sh``."""
+        stem = config_file[:-4] if config_file.endswith(".txt") else config_file
+        return f"sync_{stem}.sh"
+
+    @staticmethod
+    def config_sync_script(mcu: dict[str, Any], config_file: str) -> str | None:
+        """The sync with its retry at :data:`SYNC_FALLBACK_HZ`, as a shell
+        script — ``None`` when the link already runs at or below it (one
+        plain ``remora-upload`` line, no script)."""
         try:
             fast = float(mcu.get("spi_freq") or 0) > SYNC_FALLBACK_HZ
         except (TypeError, ValueError):
             fast = False
         if not fast:
-            return f"loadusr -w {command}"
-        slow_args = [a for a in RemoraRouterMapper.link_args({**mcu, "spi_freq": None})] + ["-s", str(SYNC_FALLBACK_HZ)]
+            return None
+        command = " ".join(["remora-upload", "--sync", *RemoraRouterMapper.link_args(mcu), config_file])
+        slow_args = RemoraRouterMapper.link_args({**mcu, "spi_freq": None}) + ["-s", str(SYNC_FALLBACK_HZ)]
         slow = " ".join(["remora-upload", "--sync", *slow_args, config_file])
-        return f"loadusr -w sh -c \"{command} || {slow}\""
+        return (
+            "#!/bin/sh\n"
+            "# Generated: sync the board's config.txt; retry at a slower SPI clock\n"
+            "# when the board does not answer at the driver's.\n"
+            f"{command} && exit 0\n"
+            f"echo \"remora-upload: sync failed at the driver's clock, retrying at {SYNC_FALLBACK_HZ} Hz\" >&2\n"
+            f"exec {slow}\n"
+        )
 
     @staticmethod
     def link_args(mcu: dict[str, Any]) -> list[str]:
