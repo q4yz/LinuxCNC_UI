@@ -214,25 +214,41 @@ class AxisBuilder:
                 ordered.append(axis)
 
         if getattr(self.graph, "z_virtual_endstop", False):
-            self._home_z_in_place(ordered)
+            self._home_z_on_probe(ordered)
         self._negate_gantry_home_sequences(ordered)
         return ordered
 
-    def _home_z_in_place(self, axes: list[Axis]) -> None:
-        """Z on the probe (``probe:z_virtual_endstop``): no switch search
-        — the machine backend's probe move found the bed, LinuxCNC then
-        homes Z where it stands, at ``position_endstop`` (HOME =
-        HOME_OFFSET: no move after)."""
+    def _home_z_on_probe(self, axes: list[Axis]) -> None:
+        """Z on the probe (``probe:z_virtual_endstop``): LinuxCNC's own
+        homing with the probe as the Z home switch (``ProbeHalMapper``
+        gates ``motion.probe-input`` off while Z homes). Search towards
+        the switch at ``homing_speed``, latch from the same side at
+        ``second_homing_speed``; the switch is ``position_endstop``
+        (HOME_OFFSET), after homing Z moves ``homing_retract_dist`` away
+        from the bed (HOME) so the nozzle does not stay on it. LinuxCNC's
+        homing ignores the soft limits, a G38.2 search from an unhomed Z
+        does not."""
         stepper_z = self.graph.steppers.get("z")
         endstop = float(getattr(stepper_z, "position_endstop", None) or 0.0)
+        speed = float(getattr(stepper_z, "homing_speed", None) or 5.0)
+        second = float(getattr(stepper_z, "second_homing_speed", None) or speed / 2.0)
+        retract_raw = getattr(stepper_z, "homing_retract_dist", None)
+        retract = float(retract_raw) if retract_raw is not None else 5.0
+        low = float(getattr(stepper_z, "position_min", None) or 0.0)
+        high = float(getattr(stepper_z, "position_max", None) or 0.0)
+        # The switch is at the bed end of the travel: search towards it.
+        towards = -1.0 if high <= low or endstop <= (low + high) / 2.0 else 1.0
+        home = endstop - towards * retract
+        if high > low:
+            home = min(max(home, low), high)
         for axis in axes:
             if axis.letter.upper() != "Z":
                 continue
             for joint in axis.joints:
-                joint.home_search_vel = 0.0
-                joint.home_latch_vel = 0.0
+                joint.home_search_vel = towards * speed
+                joint.home_latch_vel = towards * second
                 joint.home_offset = endstop
-                joint.home_position = endstop
+                joint.home_position = home
 
     @staticmethod
     def _negate_gantry_home_sequences(axes: list[Axis]) -> None:

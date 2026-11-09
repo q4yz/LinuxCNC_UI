@@ -72,18 +72,25 @@ def test_z_homes_on_the_probe(z_endstop):
     assert _codes(payload) == set()
     assert payload["z_virtual_endstop"] == {"speed": 5.0, "second_speed": 2.5, "retract": 5.0, "distance": 255.0}
     hal = compile_machine_hal(payload)
-    # The probe is the probe only: no Z home switch, no shared pin.
-    assert "joint.2.home-sw-in" not in hal
-    assert any(l.endswith("motion.probe-input") for l in hal.splitlines())
+    lines = hal.splitlines()
+    # LinuxCNC's own homing: the probe is the Z home switch, and
+    # motion.probe-input is gated off while Z homes (else LinuxCNC aborts
+    # the homing move: "probe tripped during non-probe move").
+    assert "net probe-in => joint.2.home-sw-in" in lines
+    assert "net probe-z-homing joint.2.homing => probe-z-homing-not.in" in lines
+    assert "net probe-gated probe-gate.out => motion.probe-input" in lines
+    assert "net probe-in => motion.probe-input" not in lines
     assert "sb2209:PB6" not in payload["duplicate_pin_overrides"]
 
 
-def test_z_joint_homes_in_place_at_position_endstop():
-    import re
+def test_z_joint_homes_on_the_probe_switch():
+    """A search towards the bed at homing_speed, latch from the same side at
+    second_homing_speed; the switch is position_endstop, then Z lifts by
+    homing_retract_dist (HOME) so the nozzle does not stay on the bed."""
     ini = _ini()
     joint = ini.split("[JOINT_2]", 1)[1].split("\n\n", 1)[0]
-    assert re.search(r"HOME_SEARCH_VEL = 0(\.0)?\n", joint) and re.search(r"HOME_LATCH_VEL = 0(\.0)?\n", joint)
-    assert "HOME_OFFSET = 0.0" in joint and "\nHOME = 0.0" in joint
+    assert "HOME_SEARCH_VEL = -5.0" in joint and "HOME_LATCH_VEL = -2.5" in joint
+    assert "HOME_OFFSET = 0.0" in joint and "\nHOME = 5.0" in joint
 
 
 def test_klipper_speeds():

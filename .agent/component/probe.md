@@ -162,22 +162,30 @@ second_homing_speed: 2.5               # (Optional) default homing_speed / 2
 homing_retract_dist: 5                 # (Optional) back off between the two, default 5
 ```
 
-The probe is **not** wired as a Z home switch: LinuxCNC aborts any
-move during which the probe input trips ("probe tripped during
-non-probe move"), its own homing included. Z homes with a probe move
-instead (`HomingRoutineService._virtual_z`, the machine backend):
+Z homes with LinuxCNC's own homing, the probe as the Z home switch of
+every Z joint. LinuxCNC aborts any non-probe move during which
+`motion.probe-input` trips ("probe tripped during non-probe move"), its
+own homing included, so the probe reaches `motion.probe-input` through a
+gate that is closed while Z homes (`ProbeHalMapper._with_z_home`):
 
-1. Z is unhomed (its soft limits would stop the search);
-2. `G91 G38.2 Z-<travel + 5>` at `homing_speed`, `G0 Z<retract>`,
-   `G38.2 Z-<2 × retract>` at `second_homing_speed`, `G90` — the probe
-   triggers during probe moves only (already pressed: lift first);
-3. LinuxCNC homes Z where it stands: the Z joints get
-   `HOME_SEARCH_VEL = HOME_LATCH_VEL = 0`, `HOME = HOME_OFFSET =
-   position_endstop`.
+```hal
+net probe-in => joint.2.home-sw-in
+net probe-z-homing joint.2.homing => probe-z-homing-not.in
+net probe-allowed probe-z-homing-not.out => probe-gate.in1
+net probe-in => probe-gate.in0
+net probe-gated probe-gate.out => motion.probe-input
+```
+
+The Z joints (`AxisBuilder._home_z_on_probe`): `HOME_SEARCH_VEL =
+-homing_speed`, `HOME_LATCH_VEL = -second_homing_speed` (latch from the
+same side), `HOME_OFFSET = position_endstop`, `HOME = position_endstop +
+homing_retract_dist` (Z lifts off the bed after homing). A `G38.2`
+search from an unhomed Z is not used: the soft limits refuse it ("Probe
+move would exceed Z's negative limit").
 
 `G28 Z` (in `[homing_override]`, MDI, a print's start G-code), the Home
 Z and Home All buttons do this; a bare `G28` homes the other axes first
 and Z last (X / Y must put the probe over the bed — `[homing_override]`
-for a "move to the centre" first). `NO_FORCE_HOMING = 1` (the probe move
-runs with Z unhomed); programs only start once everything is homed.
+for a "move to the centre" first). `NO_FORCE_HOMING = 1` (that
+move runs with Z unhomed); programs only start once everything is homed.
 The probe may sit on a CAN node (`mcu_can_remora.md`).

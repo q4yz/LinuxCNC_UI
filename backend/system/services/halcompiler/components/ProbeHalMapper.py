@@ -43,6 +43,8 @@ PROBE_SIGNAL = "probe-in"
 TOOL_LENGTH_SENSOR_SIGNAL = "tool-length-sensor-in"
 OR_NAME = "probe-or"
 MOTION_PROBE_INPUT = "motion.probe-input"
+Z_HOMING_NOT = "probe-z-homing-not"
+PROBE_GATE = "probe-gate"
 
 
 class ProbeHalMapper:
@@ -52,7 +54,22 @@ class ProbeHalMapper:
     def to_fragment(
         probe: dict[str, Any] | None,
         tool_length_sensor: dict[str, Any] | None = None,
+        z_home_joints: list[int] | None = None,
     ) -> HalFragment:
+        """``z_home_joints`` (``probe:z_virtual_endstop``): the touch probe
+        is also the home switch of these joints, and ``motion.probe-input``
+        only sees it while none of them homes — LinuxCNC aborts a homing
+        move during which the probe input trips ("probe tripped during
+        non-probe move")::
+
+            net probe-in => joint.2.home-sw-in joint.3.home-sw-in ...
+            net probe-z-homing joint.2.homing => probe-z-homing-not.in
+            net probe-allowed probe-z-homing-not.out => probe-gate.in1
+            net probe-in => probe-gate.in0
+            net probe-gated probe-gate.out => motion.probe-input
+        """
+        if z_home_joints and (probe or {}).get("pin"):
+            return ProbeHalMapper._with_z_home(probe or {}, tool_length_sensor, list(z_home_joints))
         fragment = HalFragment()
         inputs = [
             (signal, owner, pin)
@@ -86,6 +103,47 @@ class ProbeHalMapper:
         fragment.addf.append(Addf(OR_NAME, SERVO_THREAD, order=0))
         for index, (signal, _owner, _pin) in enumerate(inputs):
             fragment.nets.append(f"net {signal} => {OR_NAME}.in{index}")
+        fragment.nets.append(f"net probe-or-out {OR_NAME}.out => {MOTION_PROBE_INPUT}")
+        return fragment
+
+    @staticmethod
+    def _with_z_home(
+        probe: dict[str, Any],
+        tool_length_sensor: dict[str, Any] | None,
+        z_home_joints: list[int],
+    ) -> HalFragment:
+        """The probe as the Z home switch, gated off ``motion.probe-input``
+        while Z homes (see :meth:`to_fragment`). A tool-length sensor still
+        ORs in after the gate — it is no home switch."""
+        fragment = HalFragment()
+        fragment.requests.append(
+            PinRequest(signal=PROBE_SIGNAL, role=PinRole.DIGITAL_IN,
+                       pin=PinStringMapper.from_string(probe["pin"]), owner="probe")
+        )
+        fragment.nets.append(
+            f"net {PROBE_SIGNAL} => " + " ".join(f"joint.{j}.home-sw-in" for j in z_home_joints)
+        )
+        # All Z joints home together (one HOME_SEQUENCE): the first one's homing pin is Z's.
+        fragment.loadrt.append(f"loadrt not names={Z_HOMING_NOT}")
+        fragment.loadrt.append(f"loadrt and2 names={PROBE_GATE}")
+        fragment.addf.append(Addf(Z_HOMING_NOT, SERVO_THREAD, order=0))
+        fragment.addf.append(Addf(PROBE_GATE, SERVO_THREAD, order=0))
+        fragment.nets.append(f"net probe-z-homing joint.{z_home_joints[0]}.homing => {Z_HOMING_NOT}.in")
+        fragment.nets.append(f"net probe-allowed {Z_HOMING_NOT}.out => {PROBE_GATE}.in1")
+        fragment.nets.append(f"net {PROBE_SIGNAL} => {PROBE_GATE}.in0")
+
+        if tool_length_sensor is None or not tool_length_sensor.get("pin"):
+            fragment.nets.append(f"net probe-gated {PROBE_GATE}.out => {MOTION_PROBE_INPUT}")
+            return fragment
+
+        fragment.requests.append(
+            PinRequest(signal=TOOL_LENGTH_SENSOR_SIGNAL, role=PinRole.DIGITAL_IN,
+                       pin=PinStringMapper.from_string(tool_length_sensor["pin"]), owner="tool_length_sensor")
+        )
+        fragment.loadrt.append(f"loadrt or2 names={OR_NAME}")
+        fragment.addf.append(Addf(OR_NAME, SERVO_THREAD, order=0))
+        fragment.nets.append(f"net probe-gated {PROBE_GATE}.out => {OR_NAME}.in0")
+        fragment.nets.append(f"net {TOOL_LENGTH_SENSOR_SIGNAL} => {OR_NAME}.in1")
         fragment.nets.append(f"net probe-or-out {OR_NAME}.out => {MOTION_PROBE_INPUT}")
         return fragment
 

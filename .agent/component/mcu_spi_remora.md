@@ -390,5 +390,16 @@ at 1 MHz when the first try fails (a busy board did not answer at the
 driver's clock; found on a CB1 + M8P):
 
 ```hal
-loadusr -w sh -c "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt || remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
+loadusr -w sh sync_config_mcu.sh
 ```
+
+with `sync_config_mcu.sh` generated next to `config_mcu.txt`:
+
+```sh
+remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt && exit 0
+exec remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt
+```
+
+No `sh -c "…"`: halcmd keeps the quote characters of a quoted `loadusr`
+argument, so sh got `"a || b"` as one program name (exit 127, LinuxCNC
+aborted).
