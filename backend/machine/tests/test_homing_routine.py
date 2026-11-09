@@ -228,13 +228,13 @@ def probe_machine(machine, monkeypatch):
     return machine
 
 
-def test_virtual_z_is_a_probe_move_then_homed_in_place(probe_machine):
+def test_virtual_z_is_linuxcncs_own_homing(probe_machine):
+    """Z homes with LinuxCNC's homing on the probe switch (gated off
+    motion.probe-input in HAL), no G38.2 search: from an unhomed Z the soft
+    limits refuse it ("Probe move would exceed Z's negative limit")."""
     _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
     calls = [c for c in probe_machine.calls if c[0] in ("mdi", "home", "unhome")]
-    assert calls == [
-        ("unhome", 3), ("mdi", "G91"), ("mdi", "G38.2 Z-255.0000 F300.0"), ("mdi", "G0 Z5.0000"),
-        ("mdi", "G38.2 Z-10.0000 F150.0"), ("mdi", "G90"), ("home", 3),
-    ]
+    assert calls == [("home", 3)]
     assert probe_machine.events[-1][1] == "Homing routine finished."
 
 
@@ -242,23 +242,6 @@ def test_bare_g28_homes_z_last_on_the_probe(probe_machine):
     _run(probe_machine.vservice({"gcode": "G28", "axes": "xyz"}))
     homes = [c for c in probe_machine.calls if c[0] == "home"]
     assert homes == [("home", 0), ("home", 1), ("home", 3)]  # X, Y (gantry), then Z — never home(-1)
-
-
-def test_probe_already_pressed_lifts_first(probe_machine):
-    probe_machine.stat.probe_val = 1
-    _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
-    mdi = [c[1] for c in probe_machine.calls if c[0] == "mdi"]
-    assert mdi[:3] == ["G91", "G0 Z5.0000", "G38.2 Z-255.0000 F300.0"]
-
-
-def test_probe_not_triggering_stops_homing(probe_machine, monkeypatch):
-    import services.Probing as probing
-
-    monkeypatch.setattr(probing, "dispatch_mdi", lambda line, ack_timeout=1.0: probe_machine.calls.append(("mdi", line)))
-    _run(probe_machine.vservice({"gcode": "G28 Z", "axes": "z"}))
-    assert ("home", 3) not in probe_machine.calls
-    assert ("mdi", "G90") in probe_machine.calls  # back to absolute either way
-    assert "did not trigger" in probe_machine.events[-1][1]
 
 
 def test_home_buttons_use_the_probe_without_a_routine(probe_machine, monkeypatch):

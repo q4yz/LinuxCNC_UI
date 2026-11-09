@@ -302,9 +302,17 @@ class HalAssembler:
         something to fall back to a default object for."""
         probe = self._payload.get("probe")
         sensor = self._payload.get("tool_length_sensor")
+        # probe:z_virtual_endstop: the probe is also the home switch of
+        # every Z joint (LinuxCNC's own homing, AxisBuilder._home_z_on_probe).
+        z_home_joints: list[int] = []
+        if isinstance(self._payload.get("z_virtual_endstop"), dict):
+            for axis in self._payload.get("axes") or []:
+                if isinstance(axis, dict) and str(axis.get("id", "")).lower() == "z":
+                    z_home_joints = [int(j) for j in axis.get("joint_numbers") or []]
         return ProbeHalMapper.to_fragment(
             probe if isinstance(probe, dict) else None,
             sensor if isinstance(sensor, dict) else None,
+            z_home_joints=z_home_joints,
         )
 
     def _driver_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
