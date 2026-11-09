@@ -1,18 +1,13 @@
 <script setup lang="ts">
-// Heated bed card — heat-only tool. Wraps the shared
-// ``HeaterControls`` block so the operator gets the same Set Temp /
-// Off affordance as every other heating tool. The bed also stays
-// on the temperature chart (the temperature module reads
-// ``temperature_sensors[]`` + ``tools[]`` independently of this
-// panel).
+// Heated bed (or any heat-only tool): the shared heater controls on
+// the tool's own ``HeaterState``.
 
+import type { HeaterState } from "../../entities/tools/Heater";
 import HeaterControls from "./HeaterControls.vue";
 
-defineProps({
-  tool: { type: Object, required: true },
-});
+defineProps<{ tool: HeaterState }>();
 </script>
 
 <template>
-  <HeaterControls :tool="tool" />
+  <HeaterControls :tool-id="tool.id" :heater="tool" />
 </template>
