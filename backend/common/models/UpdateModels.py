@@ -14,7 +14,27 @@ UpdateMode = Literal["commit", "release"]
 class SystemUpdateRequest(BaseModel):
     """Body of ``POST /system/update`` (optional — defaults to a commit update)."""
 
-    mode: UpdateMode = Field(default="commit", description="commit: build the newest commit on the board; release: install the latest prebuilt release")
+    mode: UpdateMode = Field(default="commit", description="commit: build the newest commit on the board; release: install a prebuilt release")
+    tag: Optional[str] = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$",
+        description="mode release: the release to install (any, pre-releases and older ones included); null: the latest release",
+    )
+
+
+class ReleaseInfo(BaseModel):
+    """One GitHub release (``GET /system/releases``)."""
+
+    tag: str
+    name: str
+    published_at: Optional[str] = None
+    prerelease: bool = False
+    installable: bool = Field(..., description="Has the CI's prebuilt UI attached (the release update needs it)")
+
+
+class ReleaseListResponse(BaseModel):
+    current_version: str = Field(..., description="Running version (git describe)")
+    current_tag: Optional[str] = Field(None, description="The release tag this checkout is on / based on")
+    releases: list[ReleaseInfo] = Field(default_factory=list, description="Newest first; empty when GitHub is unreachable")
 
 
 class SystemUpdateResponse(BaseModel):
@@ -44,4 +64,4 @@ class UpdateStatusResponse(BaseModel):
     log_tail: str = Field(default="", description="Last lines of update.log (failed runs only)")
 
 
-__all__ = ["SystemUpdateRequest", "SystemUpdateResponse", "UpdateMode", "UpdateState", "UpdateStatusResponse"]
+__all__ = ["ReleaseInfo", "ReleaseListResponse", "SystemUpdateRequest", "SystemUpdateResponse", "UpdateMode", "UpdateState", "UpdateStatusResponse"]

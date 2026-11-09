@@ -10,6 +10,9 @@ import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLi
 import { BaseButton, Icon } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
 import { openInEditor, EDITOR_SOURCES } from '../helpers/openInEditor'
+import { compareRelease } from './releaseOrder'
+import type { ReleaseListResponse } from '../facades/systemFacade'
+import type { ReleaseInfo } from '../../generated/api/index'
 
 const consoleStore = useConsoleStore()
 // The update itself is tracked app-wide (stores/systemUpdate.ts +
@@ -69,6 +72,38 @@ const UPDATE_CONFIRM: Record<UpdateMode, string> = {
   release:
     'Install the latest release?\n\nThe prebuilt interface is downloaded — nothing is compiled here. ' +
     'The machine stops and the connection may be lost.',
+}
+
+// Any release, pre-releases and older ones included (going back).
+const releases = ref<ReleaseListResponse | null>(null)
+const selectedTag = ref('')
+
+async function loadReleases() {
+  releases.value = await systemFacade.listReleases()
+  const list = releases.value?.releases ?? []
+  if (!selectedTag.value) selectedTag.value = list.find((r) => r.installable)?.tag ?? ''
+}
+
+function releaseLabel(release: ReleaseInfo): string {
+  const notes = [
+    release.tag === releases.value?.current_tag ? 'current' : '',
+    release.prerelease ? 'pre-release' : '',
+    release.published_at ? release.published_at.slice(0, 10) : '',
+    release.installable ? '' : 'no prebuilt UI',
+  ].filter(Boolean)
+  return notes.length ? `${release.tag} · ${notes.join(' · ')}` : release.tag
+}
+
+async function installSelected() {
+  const tag = selectedTag.value
+  if (!tag) return
+  const order = compareRelease(tag, releases.value?.current_tag)
+  const what =
+    order === -1 ? `Go back to the older release ${tag}?\n\nSettings and machines stay; a feature the older version does not know is ignored.`
+    : order === 0 ? `Reinstall ${tag}?`
+    : `Install ${tag}?`
+  if (!confirm(`${what}\n\nThe prebuilt interface is downloaded — nothing is compiled here. The machine stops and the connection may be lost.`)) return
+  await updateStore.start('release', tag)
 }
 
 const updateSystem = async (mode: UpdateMode) => {
@@ -139,6 +174,7 @@ async function stopMachine() {
 
 onMounted(() => {
   fetchVersion()
+  void loadReleases()
   void refreshMachineStatus()
 })
 </script>
@@ -179,6 +215,38 @@ onMounted(() => {
           @click="updateSystem('release')"
         >
           <Icon name="download" class="mr-2" /> Install latest release
+        </BaseButton>
+      </div>
+    </div>
+
+    <!-- Any release: newer, a pre-release, or back to an older one. -->
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-700 p-4" data-testid="update-versions">
+      <div class="flex flex-col">
+        <span class="text-gray-400 text-xs">Install a version</span>
+        <span class="text-xs text-gray-500">Pre-releases and older releases too.</span>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <select
+          v-model="selectedTag"
+          class="rounded border border-gray-600 bg-gray-800 px-2 py-1.5 font-mono text-sm text-gray-200"
+          :disabled="isUpdating || !releases?.releases?.length"
+          data-testid="update-version-select"
+        >
+          <option v-if="!releases?.releases?.length" value="">{{ releases ? 'no releases found' : 'GitHub unreachable' }}</option>
+          <option
+            v-for="release in releases?.releases ?? []"
+            :key="release.tag"
+            :value="release.tag"
+            :disabled="!release.installable"
+          >{{ releaseLabel(release) }}</option>
+        </select>
+        <BaseButton
+          variant="secondary"
+          :disabled="isUpdating || !selectedTag"
+          data-testid="update-version-install"
+          @click="installSelected"
+        >
+          <Icon name="download" class="mr-2" /> Install
         </BaseButton>
       </div>
     </div>

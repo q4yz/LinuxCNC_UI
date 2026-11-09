@@ -76,16 +76,16 @@ class UpdateService:
 
     # -- start ----------------------------------------------------------- #
 
-    def start(self, mode: UpdateMode = "commit") -> str:
+    def start(self, mode: UpdateMode = "commit", tag: Optional[str] = None) -> str:
         """Launch the update detached; returns its run id.
 
         ``commit`` builds the newest commit on the board; ``release``
         installs the latest GitHub release with its prebuilt frontend.
         """
         with self._start_lock:
-            return self._start(mode)
+            return self._start(mode, tag if mode == "release" else None)
 
-    def _start(self, mode: UpdateMode) -> str:
+    def _start(self, mode: UpdateMode, tag: Optional[str] = None) -> str:
         current = self.status()
         if current.state == "running":
             raise ConflictError(f"An update is already running (phase: {current.phase or 'starting'})")
@@ -103,14 +103,15 @@ class UpdateService:
         # sees this run (and never an older run's "done").
         self._write_status(env, "running", "starting")
         try:
-            self._launch(env, mode)
+            self._launch(env, mode, tag)
         except Exception as exc:  # noqa: BLE001
             self._write_status(env, "failed", "starting", f"Could not start the update: {exc}")
             raise UpdateLaunchError(str(exc)) from exc
-        logger.info("Update %s (%s) launched detached; output appending to %s", run_id, mode, self._log_file)
+        logger.info("Update %s (%s%s) launched detached; output appending to %s",
+                    run_id, mode, f" {tag}" if tag else "", self._log_file)
         return run_id
 
-    def _launch(self, env: dict[str, str], mode: UpdateMode) -> None:
+    def _launch(self, env: dict[str, str], mode: UpdateMode, tag: Optional[str] = None) -> None:
         """Detach ``update.sh`` from this Uvicorn process.
 
         The script stops and restarts linuxcnc-ui-system — the service
@@ -125,7 +126,7 @@ class UpdateService:
             popen_kwargs["start_new_session"] = True
         with self._log_file.open("ab") as log_file:
             subprocess.Popen(
-                ["bash", str(self._script), "--mode", mode],
+                ["bash", str(self._script), "--mode", mode, *(["--tag", tag] if tag else [])],
                 cwd=str(PROJECT_ROOT),
                 env=env,
                 stdin=subprocess.DEVNULL,

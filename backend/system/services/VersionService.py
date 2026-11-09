@@ -16,7 +16,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from domain_file_services.paths import PROJECT_ROOT
 
@@ -27,6 +27,8 @@ DEFAULT_REPO = "q4yz/LinuxCNC_UI"
 CACHE_TTL_S = 600.0
 FAILED_RETRY_S = 60.0
 TIMEOUT_S = 3.0
+#: The release asset the release update installs (scripts/fetch_release.py).
+DIST_ASSET = "linuxcnc-ui-dist.tar.gz"
 
 
 def parse_version(tag: Optional[str]) -> Optional[tuple[int, ...]]:
@@ -40,6 +42,9 @@ class VersionService:
         self._root = project_root
         self._lock = threading.Lock()
         self._latest: Optional[str] = None
+        self._releases: list[dict[str, Any]] = []
+        self._releases_at: Optional[float] = None
+        self._releases_ttl: float = CACHE_TTL_S
         # None = never checked. Not 0.0: monotonic() counts from boot, so
         # on a freshly booted machine it can still be below the TTL.
         self._checked_at: Optional[float] = None
@@ -97,6 +102,48 @@ class VersionService:
                 self._checked_at = time.monotonic()
                 self._ttl = CACHE_TTL_S if self._latest else FAILED_RETRY_S
             return self._latest
+
+    def _fetch_releases(self) -> Optional[list[dict[str, Any]]]:
+        """Every GitHub release, newest first (one page of 100 — plenty)."""
+        url = f"https://api.github.com/repos/{self.repo_slug()}/releases?per_page=100"
+        request = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "linuxcnc-ui",
+        })
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+                data = json.loads(response.read())
+        except (OSError, ValueError) as exc:
+            logger.info("Release list unavailable: %s", exc)
+            return None
+        if not isinstance(data, list):
+            return None
+        out = []
+        for item in data:
+            if not isinstance(item, dict) or item.get("draft") or not isinstance(item.get("tag_name"), str):
+                continue
+            assets = {a.get("name") for a in item.get("assets") or [] if isinstance(a, dict)}
+            out.append({
+                "tag": item["tag_name"],
+                "name": item.get("name") or item["tag_name"],
+                "published_at": item.get("published_at"),
+                "prerelease": bool(item.get("prerelease")),
+                # The release update needs the CI's prebuilt UI.
+                "installable": DIST_ASSET in assets,
+            })
+        return out
+
+    def releases(self) -> list[dict[str, Any]]:
+        """Every release (pre-releases included), cached like :meth:`latest_release`."""
+        with self._lock:
+            stale = self._releases_at is None or time.monotonic() - self._releases_at > self._releases_ttl
+            if stale:
+                fetched = self._fetch_releases()
+                self._releases_at = time.monotonic()
+                self._releases_ttl = CACHE_TTL_S if fetched is not None else FAILED_RETRY_S
+                if fetched is not None:
+                    self._releases = fetched
+            return list(self._releases)
 
     def release_available(self, latest: Optional[str]) -> bool:
         """``latest`` is newer than the release this checkout is on / based on."""

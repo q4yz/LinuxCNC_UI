@@ -93,12 +93,12 @@ test("overlay stays through the outage and an older run's status; done reloads",
 test("an update defaults to the newest commit; the release button asks for a release", async () => {
   const store = useSystemUpdateStore();
   await store.start();
-  assert.deepEqual(triggeredWith, [{ mode: "commit" }]);
+  assert.deepEqual(triggeredWith, [{ mode: "commit", tag: null }]);
 
   setActivePinia(createPinia());
   const releaseStore = useSystemUpdateStore();
   await releaseStore.start("release");
-  assert.deepEqual(triggeredWith, [{ mode: "release" }]);
+  assert.deepEqual(triggeredWith, [{ mode: "release", tag: null }]);
 
   current = { run_id: "run-new", state: "running", mode: "release", phase: "installing UI", updated_at: now() };
   await tick();
@@ -184,4 +184,10 @@ test("the update never boots temporary backends on the real ports", () => {
   // "done" only after the health check, as the very last status write.
   assert.ok(update.indexOf("status done") > update.indexOf("api/v1/system/version"));
   assert.match(update, /trap on_exit EXIT/);
+});
+
+test("a chosen release (an older one too) is sent as its tag", async () => {
+  setActivePinia(createPinia());
+  await useSystemUpdateStore().start("release", "v1.0.0");
+  assert.deepEqual(triggeredWith, [{ mode: "release", tag: "v1.0.0" }]);
 });
