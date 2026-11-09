@@ -31,7 +31,7 @@ def service(tmp_path, monkeypatch):
     script.write_text("#!/bin/bash\n", encoding="utf-8")
     svc = UpdateService(status_file=tmp_path / "update_status.json", script=script, log_file=tmp_path / "update.log")
     launched: list[dict[str, str]] = []
-    monkeypatch.setattr(svc, "_launch", lambda env, mode: launched.append({**env, "launched_mode": mode}))
+    monkeypatch.setattr(svc, "_launch", lambda env, mode, tag=None: launched.append({**env, "launched_mode": mode, "launched_tag": tag}))
     svc.launched = launched
     return svc
 
@@ -163,3 +163,13 @@ def test_endpoint_passes_the_release_mode(client, service):
 def test_endpoint_rejects_an_unknown_mode(client, service):
     assert client.post("/api/v1/system/update", json={"mode": "nightly"}).status_code == 422
     assert service.launched == []
+
+
+def test_a_release_tag_reaches_the_script(service):
+    service.start("release", "v1.1.0-rc1")
+    assert service.launched[0]["launched_tag"] == "v1.1.0-rc1"
+
+
+def test_a_tag_is_ignored_for_a_commit_update(service):
+    service.start("commit", "v1.0.0")
+    assert service.launched[0]["launched_tag"] is None

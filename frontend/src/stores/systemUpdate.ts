@@ -172,8 +172,8 @@ export const useSystemUpdateStore = defineStore("systemUpdate", () => {
   }
 
   /** Start an update (newest commit or latest release) and follow it. */
-  async function start(updateMode: UpdateKind = "commit"): Promise<CommandResult> {
-    const result = await systemFacade.triggerUpdate(updateMode);
+  async function start(updateMode: UpdateKind = "commit", tag?: string): Promise<CommandResult> {
+    const result = await systemFacade.triggerUpdate(updateMode, tag);
     if (!result.ok) {
       consoleStore.error(`Update failed to start: ${result.failureReason}`, { popup: true, title: "System update" });
       return result;

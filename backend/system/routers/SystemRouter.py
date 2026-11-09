@@ -4,7 +4,13 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from models.UpdateModels import SystemUpdateRequest, SystemUpdateResponse, UpdateStatusResponse
+from models.UpdateModels import (
+    ReleaseInfo,
+    ReleaseListResponse,
+    SystemUpdateRequest,
+    SystemUpdateResponse,
+    UpdateStatusResponse,
+)
 from services.UpdateService import UpdateLaunchError, get_update_service
 from services.VersionService import get_version_service
 
@@ -45,8 +51,8 @@ def get_version() -> VersionInfoResponse:
     description=(
         "Launch scripts/update.sh as a detached process so it survives the service restart "
         "it performs. mode=commit: git pull + UI build on the board (testing). "
-        "mode=release: check out the latest GitHub release and install its prebuilt UI "
-        "(no npm on the board). "
+        "mode=release: check out a GitHub release (tag, default the latest — pre-releases and "
+        "older ones too) and install its prebuilt UI (no npm on the board). "
         "Follow it with GET /update/status and the returned run_id. 409 while an update runs."
     ),
     operation_id="triggerSystemUpdate",
@@ -55,12 +61,32 @@ def get_version() -> VersionInfoResponse:
 )
 def trigger_update(request: Optional[SystemUpdateRequest] = None) -> SystemUpdateResponse:
     mode = request.mode if request else "commit"
-    logger.warning("System update (%s) initiated via API.", mode)
+    tag = request.tag if request else None
+    logger.warning("System update (%s%s) initiated via API.", mode, f" {tag}" if tag else "")
     try:
-        run_id = get_update_service().start(mode)
+        run_id = get_update_service().start(mode, tag)
     except UpdateLaunchError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to launch update script: {exc}") from exc
     return SystemUpdateResponse(status="update initiated; system is restarting", run_id=run_id)
+
+
+@router.get(
+    "/releases",
+    summary="List releases",
+    description=(
+        "Every GitHub release, newest first, pre-releases included — any installable one "
+        "can be installed with POST /update {mode: release, tag}, an older one too (going back)."
+    ),
+    operation_id="listReleases",
+    response_model=ReleaseListResponse,
+)
+def list_releases() -> ReleaseListResponse:
+    versions = get_version_service()
+    return ReleaseListResponse(
+        current_version=versions.describe(),
+        current_tag=versions.nearest_tag(),
+        releases=[ReleaseInfo(**r) for r in versions.releases()],
+    )
 
 
 @router.get(

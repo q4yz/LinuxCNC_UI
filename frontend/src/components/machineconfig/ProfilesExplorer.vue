@@ -6,7 +6,8 @@ import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import type { FileEntry } from "../../entities/files";
 import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
-import { ActionMenu, BaseButton, FileDropZone, Icon } from "../../ui/index.ts";
+import { ActionMenu, BaseButton, DragBin, FileDropZone, Icon } from "../../ui/index.ts";
+import { useEntryDragDrop } from "../../composables/useEntryDragDrop";
 import type { ActionMenuItem } from "../../ui/ActionMenu.vue";
 import { confirmDelete, downloadText, suggestCopyPath } from "./explorerActions";
 import BaseInput from "../../ui/BaseInput.vue";
@@ -127,6 +128,18 @@ async function moveEntry(entry: FileEntry) {
   const destination = window.prompt(`Move / rename ${entry.path} to`, entry.path)?.trim();
   if (destination && destination !== entry.path) await store.renameProfile(entry.path, destination);
 }
+// Drag & drop: onto a folder / breadcrumb moves, onto the bin deletes.
+const drag = useEntryDragDrop({
+  move: async (source, destination) => {
+    await store.renameProfile(source, destination);
+  },
+  remove: async (path) => {
+    const entry = profilesTree.value.entries.find((e) => e.path === path);
+    if (entry) await deleteEntry(entry);
+  },
+});
+const parentDirectory = computed(() => breadcrumbs.value.slice(0, -1).join("/"));
+
 async function deleteEntry(entry: FileEntry) {
   const { confirmed, recursive } = await confirmDelete(entry, profilesTree.value.entries);
   if (confirmed) await store.deleteProfile(entry.path, recursive);
@@ -160,13 +173,37 @@ async function downloadProfile(entry: FileEntry) {
     </div>
 
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
-      <BaseButton variant="ghost" size="sm" :disabled="!currentDirectory" @click="goBack" title="Back" aria-label="Back">
-        <template #icon><Icon name="chevronLeft" class="h-4 w-4" /></template>
-      </BaseButton>
-      <button type="button" class="font-mono text-blue-300 hover:text-blue-200" @click="currentDirectory = ''">profiles</button>
+      <span
+        class="rounded"
+        :class="drag.over.value === parentDirectory && drag.dragging.value && currentDirectory ? 'ring-2 ring-blue-400' : ''"
+        @dragover="currentDirectory && drag.onDragOver(parentDirectory, $event)"
+        @dragleave="drag.onDragLeave(parentDirectory)"
+        @drop="drag.onDrop(parentDirectory, $event)"
+      >
+        <BaseButton variant="ghost" size="sm" :disabled="!currentDirectory" @click="goBack" title="Back (drop here: move up)" aria-label="Back">
+          <template #icon><Icon name="chevronLeft" class="h-4 w-4" /></template>
+        </BaseButton>
+      </span>
+      <button
+        type="button"
+        class="rounded px-1 font-mono text-blue-300 hover:text-blue-200"
+        :class="drag.over.value === '' && drag.dragging.value ? 'ring-2 ring-blue-400 bg-blue-900/40' : ''"
+        @click="currentDirectory = ''"
+        @dragover="drag.onDragOver('', $event)"
+        @dragleave="drag.onDragLeave('')"
+        @drop="drag.onDrop('', $event)"
+      >profiles</button>
       <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb}-${index}`">
         <span class="text-gray-600">/</span>
-        <button type="button" class="truncate font-mono text-gray-300 hover:text-white" @click="goToCrumb(index)">{{ crumb }}</button>
+        <button
+          type="button"
+          class="truncate rounded px-1 font-mono text-gray-300 hover:text-white"
+          :class="drag.over.value === breadcrumbs.slice(0, index + 1).join('/') && drag.dragging.value ? 'ring-2 ring-blue-400 bg-blue-900/40' : ''"
+          @click="goToCrumb(index)"
+          @dragover="drag.onDragOver(breadcrumbs.slice(0, index + 1).join('/'), $event)"
+          @dragleave="drag.onDragLeave(breadcrumbs.slice(0, index + 1).join('/'))"
+          @drop="drag.onDrop(breadcrumbs.slice(0, index + 1).join('/'), $event)"
+        >{{ crumb }}</button>
       </template>
     </nav>
 
@@ -175,8 +212,16 @@ async function downloadProfile(entry: FileEntry) {
         <div
           class="flex cursor-pointer items-center gap-2 rounded border px-2 py-2 transition-colors"
           :class="selectedProfilePath === entry.path ? 'border-blue-500 bg-blue-600/30' : 'border-transparent hover:bg-gray-700/40'"
+          :data-drop-target="entry.kind === 'folder' && drag.over.value === entry.path ? '' : undefined"
+          :style="entry.kind === 'folder' && drag.over.value === entry.path ? 'outline: 2px solid rgb(96 165 250); background: rgb(30 58 138 / 0.5)' : undefined"
+          draggable="true"
           @click="navigate(entry)"
           @dblclick="editFile(entry)"
+          @dragstart="drag.onDragStart(entry.path, $event)"
+          @dragend="drag.onDragEnd"
+          @dragover="entry.kind === 'folder' && drag.onDragOver(entry.path, $event)"
+          @dragleave="drag.onDragLeave(entry.path)"
+          @drop="entry.kind === 'folder' && drag.onDrop(entry.path, $event)"
         >
           <Icon :name="entry.kind === 'folder' ? 'folder' : 'file'" class="text-gray-400" />
           <div class="min-w-0 flex-1">
@@ -258,5 +303,12 @@ async function downloadProfile(entry: FileEntry) {
       </form>
     </div>
   </BaseCard>
+  <DragBin
+    :visible="drag.dragging.value !== null"
+    :active="drag.over.value === '__bin__'"
+    @over="drag.onBinOver"
+    @leave="drag.onDragLeave('__bin__')"
+    @drop="drag.onBinDrop"
+  />
   </FileDropZone>
 </template>

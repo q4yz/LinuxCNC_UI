@@ -130,14 +130,12 @@ test("Load only works while the machine service is up", () => {
 test("file list shows an upload date and sorts newest-first", () => {
   const text = read("components/FileManager.vue");
 
-  assert.match(text, />\s*Uploaded\s*</, "table must have an Uploaded column header");
+  assert.match(text, />\s*Uploaded\b/, "table must have an Uploaded column header");
   assert.match(text, /formatDate\(file\.modified\)/, "row must render the upload date");
   assert.match(text, /sortedFiles/, "list must be sorted before rendering");
-  assert.match(
-    text,
-    /b\.modifiedMs\s*-\s*a\.modifiedMs/,
-    "sort must be newest-first by modified",
-  );
+  // Sortable by every column now; the default is still newest-first.
+  assert.match(text, /const sortKey = ref<SortKey>\('date'\)/, "default sort: the upload date");
+  assert.match(text, /const sortDir = ref<SortDir>\('desc'\)/, "default sort: newest first");
   assert.match(text, /v-for="file in sortedFiles"/, "table body must iterate the sorted list");
 });
 

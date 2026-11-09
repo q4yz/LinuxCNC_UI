@@ -123,3 +123,80 @@ def test_latest_release_is_fetched_right_after_boot(monkeypatch):
     versions = _StubVersions(latest="v1.0.0")
     assert versions.latest_release() == "v1.0.0"
     assert versions.fetches == 1
+
+
+# -- the release list (choosing a version, going back) ---------------------- #
+
+
+class _ListVersions(VersionService):
+    def __init__(self, payload):
+        super().__init__()
+        self.payload, self.fetches = payload, 0
+
+    def nearest_tag(self):
+        return "v1.1.0"
+
+    def describe(self):
+        return "v1.1.0"
+
+    def _fetch_releases(self):
+        self.fetches += 1
+        return self.payload
+
+
+def test_releases_parse_github(monkeypatch):
+    raw = [
+        {"tag_name": "v1.2.0-rc1", "name": "RC", "prerelease": True, "published_at": "2026-11-08T00:00:00Z",
+         "assets": [{"name": "linuxcnc-ui-dist.tar.gz"}]},
+        {"tag_name": "v1.1.0", "name": "", "prerelease": False, "assets": [{"name": "linuxcnc-ui-dist.tar.gz"}]},
+        {"tag_name": "v0.9.0", "assets": []},
+        {"tag_name": "draft", "draft": True, "assets": []},
+    ]
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps(raw).encode()
+
+    import services.VersionService as module
+    monkeypatch.setattr(module.urllib.request, "urlopen", lambda req, timeout=0: Resp())
+    monkeypatch.setenv("LINUXCNC_UI_REPO", "owner/repo")
+    releases = VersionService()._fetch_releases()
+    assert [r["tag"] for r in releases] == ["v1.2.0-rc1", "v1.1.0", "v0.9.0"]  # drafts left out
+    assert releases[0]["prerelease"] and releases[0]["installable"]
+    assert releases[1]["name"] == "v1.1.0"
+    assert releases[2]["installable"] is False  # no prebuilt UI attached
+
+
+def test_releases_are_cached_and_kept_when_github_fails():
+    versions = _ListVersions([{"tag": "v1.1.0", "name": "v1.1.0", "published_at": None, "prerelease": False, "installable": True}])
+    assert versions.releases() == versions.releases()
+    assert versions.fetches == 1
+    versions.payload = None
+    versions._releases_at = None  # cache expired, GitHub unreachable now
+    assert [r["tag"] for r in versions.releases()] == ["v1.1.0"]
+
+
+def test_releases_endpoint():
+    set_version_service(_ListVersions([
+        {"tag": "v1.2.0-rc1", "name": "RC", "published_at": None, "prerelease": True, "installable": True},
+        {"tag": "v1.0.0", "name": "v1.0.0", "published_at": None, "prerelease": False, "installable": True},
+    ]))
+    try:
+        app = FastAPI()
+        app.include_router(SystemRouter.router)
+        body = TestClient(app).get("/api/v1/system/releases").json()
+    finally:
+        set_version_service(None)
+    assert body["current_tag"] == "v1.1.0"
+    assert [r["tag"] for r in body["releases"]] == ["v1.2.0-rc1", "v1.0.0"]
+
+
+def test_update_request_validates_the_tag():
+    from pydantic import ValidationError
+
+    from models.UpdateModels import SystemUpdateRequest
+
+    assert SystemUpdateRequest(mode="release", tag="v1.0.0").tag == "v1.0.0"
+    with pytest.raises(ValidationError):
+        SystemUpdateRequest(mode="release", tag="v1; rm -rf /")
