@@ -87,7 +87,7 @@ net ztilt-0-target webgui.ztilt-0 => ztilt-ramp-0.in
 `GET /api/v1/ztilt/status`). X, Y and Z must be homed. Per round:
 
 1. `G90`, `G53 G0 Z<horizontal_move_z>`; per point `G53 G1 X Y F<speed>`,
-   `G53 G38.2 Z<probe_min_z> F<probe_speed>`, the height from
+   `G91 G38.2 Z-<horizontal_move_z − probe_min_z> F<probe_speed>` (relative: LinuxCNC allows `G53` only with `G0`/`G1`), `G90`, the height from
    `stat.probed_position`, back up to `horizontal_move_z`.
 2. With `retries`: done once the heights are within `retry_tolerance`;
    stops if the spread grew (the pivots do not match the motors) or

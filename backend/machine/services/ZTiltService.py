@@ -2,7 +2,7 @@
 (`.agent/component/z_tilt.md` § 4).
 
 One round: lift to ``horizontal_move_z``, probe every point
-(``G53 G38.2`` down to ``probe_min_z``, the height from
+(a probe move down to machine ``probe_min_z``, the height from
 ``stat.probed_position``), fit a plane (``core.z_tilt``), move each Z
 motor by the plane's height at its pivot minus the mean of those
 heights. The move is a per-motor HAL offset (``ZTiltHalMapper``): this
