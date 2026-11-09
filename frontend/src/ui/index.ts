@@ -25,3 +25,4 @@ export { default as MacroButton } from "./MacroButton.vue";
 export { default as MacroButtonEditor } from "./MacroButtonEditor.vue";
 export { default as FileDropZone } from "./FileDropZone.vue";
 export { default as ActionMenu } from "./ActionMenu.vue";
+export { default as DragBin } from "./DragBin.vue";

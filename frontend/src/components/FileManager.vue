@@ -17,12 +17,14 @@ import {filesFacade} from '../facades/filesFacade'
 import {progressFacade} from '../facades/progressFacade'
 import type {FileEntry} from '../entities/files'
 import {formatFileDate as formatDate, formatFileSize as formatSize} from '../helpers/fileFormat'
-import {ActionMenu, BaseButton, FileDropZone} from '../ui/index.ts'
+import {ActionMenu, BaseButton, DragBin, FileDropZone} from '../ui/index.ts'
 import type {ActionMenuItem} from '../ui/ActionMenu.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import {useLoadedProgram} from '../composables/useLoadedProgram'
 import {useDirectoryQuery} from '../composables/useDirectoryQuery'
 import {confirmDelete, downloadText, suggestCopyPath} from './machineconfig/explorerActions'
+import {sortEntries, type SortDir, type SortKey} from './machineconfig/entryDrag'
+import {useEntryDragDrop} from '../composables/useEntryDragDrop'
 import {Icon} from "../ui";
 import { useFileThumbnails } from '../composables/useFileThumbnails'
 import { useMachineOnline } from '../composables/useMachineOnline'
@@ -45,16 +47,29 @@ const currentDirectory = useDirectoryQuery('programsDir')
 const breadcrumbs = computed(() => currentDirectory.value.split('/').filter(Boolean))
 const inCurrent = (entry: FileEntry) => (entry.parent ?? '') === currentDirectory.value
 
-const folders = computed(() =>
-  files.value.filter((e) => e.isFolder && inCurrent(e)).sort((a, b) => a.name.localeCompare(b.name))
-)
+// Sorted by the clicked column (Filename / Size / Uploaded), folders
+// first; default newest upload first — ``modified`` doubles as
+// "uploaded at" (Upload creates a file, Edit moves the time forward).
+const sortKey = ref<SortKey>('date')
+const sortDir = ref<SortDir>('desc')
 
-// Newest upload first — ``modified`` doubles as "uploaded at" since
-// nc_files are write-once (Upload creates them, Edit rewrites the
-// same timestamp forward, there's no separate "created" field).
-const sortedFiles = computed(() =>
-  files.value.filter((f) => f.isFile && inCurrent(f)).sort((a, b) => b.modifiedMs - a.modifiedMs)
+function sortBy(key: SortKey) {
+  if (sortKey.value === key) sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  else {
+    sortKey.value = key
+    sortDir.value = key === 'name' ? 'asc' : 'desc'
+  }
+}
+
+function sortMark(key: SortKey): string {
+  return sortKey.value === key ? (sortDir.value === 'asc' ? '▲' : '▼') : ''
+}
+
+const sortedEntries = computed(() =>
+  sortEntries(files.value.filter(inCurrent), sortKey.value, sortDir.value, childCount)
 )
+const folders = computed(() => sortedEntries.value.filter((e) => e.isFolder))
+const sortedFiles = computed(() => sortedEntries.value.filter((e) => e.isFile))
 
 function childCount(folder: FileEntry): number {
   return files.value.filter((e) => e.parent === folder.path).length
@@ -206,6 +221,20 @@ async function afterChange(result: { ok: boolean; failureReason: string | null }
   consoleStore.success(done)
   await fetchFiles()
 }
+
+// ---- Drag & drop: onto a folder / breadcrumb moves, onto the bin deletes -- //
+
+const drag = useEntryDragDrop({
+  move: async (source, destination) => {
+    const result = await filesFacade.moveEntry(source, destination)
+    await afterChange(result, `Moved ${source} -> ${destination}`, `Failed to move ${source}`)
+  },
+  remove: async (path) => {
+    const entry = files.value.find((e) => e.path === path)
+    if (entry) await deleteEntry(entry)
+  },
+})
+const parentDirectory = computed(() => breadcrumbs.value.slice(0, -1).join('/'))
 
 async function deleteEntry(entry: FileEntry) {
   const { confirmed, recursive } = await confirmDelete(entry, files.value)
@@ -388,13 +417,38 @@ onMounted(() => {
 
     <!-- Folder path -->
     <nav class="flex min-h-11 shrink-0 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm" data-test="programs-breadcrumbs">
-      <BaseButton variant="ghost" size="sm" :disabled="!currentDirectory" title="Up one folder" aria-label="Up one folder" @click="goUp">
-        <template #icon><Icon name="chevronLeft" class="h-4 w-4" /></template>
-      </BaseButton>
-      <button type="button" class="font-mono text-blue-300 hover:text-blue-200" @click="openFolder('')">nc_files</button>
+      <span
+          class="rounded"
+          :class="drag.over.value === parentDirectory && drag.dragging.value && currentDirectory ? 'ring-2 ring-blue-400' : ''"
+          @dragover="currentDirectory && drag.onDragOver(parentDirectory, $event)"
+          @dragleave="drag.onDragLeave(parentDirectory)"
+          @drop="drag.onDrop(parentDirectory, $event)"
+      >
+        <BaseButton variant="ghost" size="sm" :disabled="!currentDirectory" title="Up one folder (drop here: move up)" aria-label="Up one folder" @click="goUp">
+          <template #icon><Icon name="chevronLeft" class="h-4 w-4" /></template>
+        </BaseButton>
+      </span>
+      <button
+          type="button"
+          class="rounded px-1 font-mono text-blue-300 hover:text-blue-200"
+          :class="drag.over.value === '' && drag.dragging.value ? 'ring-2 ring-blue-400 bg-blue-900/40' : ''"
+          data-test="programs-crumb-root"
+          @click="openFolder('')"
+          @dragover="drag.onDragOver('', $event)"
+          @dragleave="drag.onDragLeave('')"
+          @drop="drag.onDrop('', $event)"
+      >nc_files</button>
       <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb}-${index}`">
         <span class="text-gray-600">/</span>
-        <button type="button" class="truncate font-mono text-gray-300 hover:text-white" @click="goToCrumb(index)">{{ crumb }}</button>
+        <button
+            type="button"
+            class="truncate rounded px-1 font-mono text-gray-300 hover:text-white"
+            :class="drag.over.value === breadcrumbs.slice(0, index + 1).join('/') && drag.dragging.value ? 'ring-2 ring-blue-400 bg-blue-900/40' : ''"
+            @click="goToCrumb(index)"
+            @dragover="drag.onDragOver(breadcrumbs.slice(0, index + 1).join('/'), $event)"
+            @dragleave="drag.onDragLeave(breadcrumbs.slice(0, index + 1).join('/'))"
+            @drop="drag.onDrop(breadcrumbs.slice(0, index + 1).join('/'), $event)"
+        >{{ crumb }}</button>
       </template>
     </nav>
 
@@ -404,9 +458,15 @@ onMounted(() => {
         <thead class="text-xs uppercase text-gray-400 border-b border-gray-600">
         <tr>
           <th class="py-2 px-2">Preview</th>
-          <th class="py-2 px-2">Filename</th>
-          <th class="py-2 px-2">Size</th>
-          <th class="py-2 px-2">Uploaded</th>
+          <th class="py-2 px-2">
+            <button type="button" class="uppercase hover:text-gray-200" data-test="programs-sort-name" @click="sortBy('name')">Filename {{ sortMark('name') }}</button>
+          </th>
+          <th class="py-2 px-2">
+            <button type="button" class="uppercase hover:text-gray-200" data-test="programs-sort-size" @click="sortBy('size')">Size {{ sortMark('size') }}</button>
+          </th>
+          <th class="py-2 px-2">
+            <button type="button" class="uppercase hover:text-gray-200" data-test="programs-sort-date" @click="sortBy('date')">Uploaded {{ sortMark('date') }}</button>
+          </th>
           <th class="py-2 px-2 text-right">Actions</th>
         </tr>
         </thead>
@@ -415,8 +475,15 @@ onMounted(() => {
             v-for="folder in folders"
             :key="folder.path"
             class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-700/40"
+            :class="drag.over.value === folder.path ? 'bg-blue-900/50 ring-2 ring-inset ring-blue-400' : ''"
             :data-test="`folder-row-${folder.path}`"
+            draggable="true"
             @click="openFolder(folder.path)"
+            @dragstart="drag.onDragStart(folder.path, $event)"
+            @dragend="drag.onDragEnd"
+            @dragover="drag.onDragOver(folder.path, $event)"
+            @dragleave="drag.onDragLeave(folder.path)"
+            @drop="drag.onDrop(folder.path, $event)"
         >
           <td class="py-2 px-2">
             <span class="flex h-10 w-14 items-center justify-center rounded border border-gray-600 bg-gray-900 text-gray-400"><Icon name="folder" size="h-6 w-6" /></span>
@@ -444,7 +511,10 @@ onMounted(() => {
             :class="isLoaded(file.path) ? 'bg-blue-900/40 ring-1 ring-inset ring-blue-500/60' : 'hover:bg-gray-700/40'"
             :data-loaded="isLoaded(file.path) || undefined"
             :data-test="`file-row-${file.path}`"
+            draggable="true"
             @click="openPreview(file)"
+            @dragstart="drag.onDragStart(file.path, $event)"
+            @dragend="drag.onDragEnd"
         >
           <td class="py-2 px-2">
             <img
@@ -522,6 +592,14 @@ onMounted(() => {
         </div>
       </form>
     </div>
+
+    <DragBin
+        :visible="drag.dragging.value !== null"
+        :active="drag.over.value === '__bin__'"
+        @over="drag.onBinOver"
+        @leave="drag.onDragLeave('__bin__')"
+        @drop="drag.onBinDrop"
+    />
 
     <!-- Preview modal: slicer thumbnail + 3D toolpath (read-only) -->
     <Teleport to="body">
