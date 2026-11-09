@@ -58,7 +58,7 @@ const analogSpindle = computed(() => (selectedTool.value instanceof SpindleAnalo
 
 <template>
   <BaseCard title="Tools" class="min-w-[320px]">
-    <div v-if="tools.length > 0" class="space-y-4">
+    <div v-if="tools.length > 0" class="space-y-4 p-3">
       <div class="flex flex-wrap gap-2" role="tablist" data-testid="tool-tabs">
         <button
           v-for="tool in tools"
@@ -85,6 +85,6 @@ const analogSpindle = computed(() => (selectedTool.value instanceof SpindleAnalo
       <div v-else class="text-sm text-gray-400 italic">Select a tool.</div>
     </div>
 
-    <div v-else class="text-sm text-gray-400 italic">No tools configured yet.</div>
+    <div v-else class="p-3 text-sm text-gray-400 italic">No tools configured yet.</div>
   </BaseCard>
 </template>

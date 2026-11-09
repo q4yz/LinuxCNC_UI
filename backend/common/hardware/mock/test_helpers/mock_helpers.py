@@ -30,10 +30,13 @@ def reseed_from_hardware_json(path: "Path | None" = None) -> None:
     doesn't break tests that don't depend on the config.
     """
     if path is None:
-        from domain_file_services.paths import default_machine_hardware_json
+        # The default machine, as the services read it — demo heaters
+        # included when it has none (hardware.mock.demo_tools).
+        from services.HardwareConfigService import HardwareConfigService
 
-        path = default_machine_hardware_json()
-    elif path.is_dir():
+        mock_system.register_hardware(HardwareConfigService().load_payload())
+        return
+    if path.is_dir():
         path = path / "hardware.json"
 
     try:

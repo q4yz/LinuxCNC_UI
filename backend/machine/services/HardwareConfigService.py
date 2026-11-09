@@ -43,6 +43,15 @@ from domain_file_services.paths import default_machine_hardware_json  # noqa: E4
 logger = logging.getLogger(__name__)
 
 
+def _mock_mode() -> bool:
+    """No real HAL: the simulated hardware layer is running."""
+    try:
+        from hardware import HAS_HAL
+    except ImportError:  # pragma: no cover
+        return False
+    return not HAS_HAL
+
+
 class HardwareConfigService:
     """Read-only facade over the default machine's ``hardware.json``.
 
@@ -71,6 +80,17 @@ class HardwareConfigService:
         return default_machine_hardware_json(self.repo_root)
 
     def load_payload(self) -> Dict[str, Any]:
+        """The default machine's ``hardware.json`` — in mock mode with a
+        demo extruder and bed when it has no heater
+        (``hardware.mock.demo_tools``)."""
+        payload = self._load_file_payload()
+        if self.active_path is None and self.repo_root is None and _mock_mode():
+            from hardware.mock.demo_tools import with_demo_tools
+
+            return with_demo_tools(payload)
+        return payload
+
+    def _load_file_payload(self) -> Dict[str, Any]:
         """Load and parse the default machine's ``hardware.json`` safely."""
         path = self._resolve_hardware_json_path()
 
