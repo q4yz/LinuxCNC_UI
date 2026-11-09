@@ -15,14 +15,13 @@
 
 import { ref, watch } from "vue";
 
+import type { Extruder } from "../../entities/tools/Extruder";
 import { useToolStore } from "../../stores/toolsStore";
 import HeaterControls from "./HeaterControls.vue";
 import { BaseButton } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
 
-const props = defineProps({
-  tool: { type: Object, required: true },
-});
+const props = defineProps<{ tool: Extruder }>();
 
 const toolStore = useToolStore();
 
@@ -38,18 +37,8 @@ const setSpeed = ref(0);
 const distanceIndex = ref(2);
 
 function seedFromTool() {
-  const t = props.tool || {};
-  setSpeed.value =
-    typeof t.set_speed === "number" && t.set_speed > 0
-      ? t.set_speed
-      : 300;
-  distanceIndex.value =
-    typeof t.distance_index === "number"
-      ? Math.min(
-          Math.max(Number(t.distance_index) || 0, 0),
-          EXTRUDER_DISTANCE_OPTIONS.length - 1,
-        )
-      : 2;
+  setSpeed.value = 300;
+  distanceIndex.value = 2;
 }
 seedFromTool();
 watch(() => props.tool?.id, seedFromTool);
@@ -70,9 +59,9 @@ function handleExtruder(action: "extrude" | "retract") {
 
 <template>
   <div class="space-y-6">
-    <HeaterControls :tool="tool" />
+    <HeaterControls :tool-id="tool.id" :heater="tool.heater" />
 
-    <div class="flex gap-4 flex-wrap items-end">
+    <div class="border-t border-gray-700 pt-4 flex gap-4 flex-wrap items-end">
       <div class="flex-1 min-w-[140px]">
         <label class="block text-xs text-gray-400 mb-1">
           Speed (mm/min)
