@@ -38,7 +38,6 @@ serves the result verbatim.
 """
 from __future__ import annotations
 
-import fcntl
 import glob
 import logging
 import os
@@ -48,6 +47,11 @@ import struct
 import subprocess
 import sys
 from typing import Dict, List, Optional, Tuple
+
+try:  # Linux only (V4L2 ioctl); Windows has no fcntl and no /dev/video*.
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None
 
 logger = logging.getLogger("backend.services.camera_detection")
 
@@ -196,6 +200,8 @@ _CAP_DEVICE_CAPS = 0x80000000
 def _query_capabilities(path: str) -> Optional[Tuple[str, int]]:
     """``(card name, device caps)`` of one node via ``VIDIOC_QUERYCAP``,
     or ``None`` when the node cannot be asked."""
+    if fcntl is None:
+        return None
     try:
         fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     except OSError:
