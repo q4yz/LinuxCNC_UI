@@ -155,3 +155,17 @@ def test_no_pru_base_freq_no_threads_block(tmp_path):
     from services.halcompiler.HalAssembler import HalAssembler
     config = json.loads(HalAssembler(payload).assemble().files["config_mcu.txt"])
     assert "Threads" not in config
+
+
+def test_a_fast_link_syncs_through_a_generated_script(tmp_path):
+    from services.halcompiler.HalAssembler import HalAssembler
+
+    payload = _payload(tmp_path)
+    payload["mcus"][0]["spi_freq"] = 4000000
+    lines = compile_machine_hal(payload).splitlines()
+    # halcmd passes quotes on to sh literally: no `sh -c "..."` line.
+    assert "loadusr -w sh sync_config_mcu.sh" in lines
+    assert not any(line.startswith("loadusr") and '"' in line for line in lines)
+    script = HalAssembler(payload).assemble().files["sync_config_mcu.sh"]
+    assert "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt && exit 0" in script
+    assert "exec remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt" in script

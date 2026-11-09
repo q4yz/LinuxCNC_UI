@@ -411,6 +411,7 @@ def test_sync_line_uses_the_same_link_as_the_driver():
     assert RemoraRouterMapper.config_sync_line(CB1, "config_mcu.txt") == (
         "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
     )
+    assert RemoraRouterMapper.config_sync_script(CB1, "config_mcu.txt") is None
 
 
 def test_sync_line_on_a_raspberry_pi_needs_no_options():
@@ -430,11 +431,16 @@ def test_sync_falls_back_to_1_mhz_above_it():
     from services.halcompiler.mcus.RemoraRouterMapper import RemoraRouterMapper
 
     fast = {"id": "mcu", "connection": "remora-spi", "spi_freq": 4000000, "spi_cs_pin": "PC10"}
-    assert RemoraRouterMapper.config_sync_line(fast, "config_mcu.txt") == (
-        'loadusr -w sh -c "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt'
-        ' || remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"'
-    )
+    # No quotes on the HAL line: halcmd passes them on to sh literally.
+    line = RemoraRouterMapper.config_sync_line(fast, "config_mcu.txt")
+    assert line == "loadusr -w sh sync_config_mcu.sh"
+    assert '"' not in line
+    script = RemoraRouterMapper.config_sync_script(fast, "config_mcu.txt")
+    assert "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt && exit 0" in script
+    assert "exec remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt" in script
     slow = {**fast, "spi_freq": 1000000}
     assert RemoraRouterMapper.config_sync_line(slow, "config_mcu.txt") == (
         "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
     )
+    assert RemoraRouterMapper.config_sync_script(slow, "config_mcu.txt") is None
+
