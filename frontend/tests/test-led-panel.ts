@@ -20,9 +20,12 @@ test("hex <-> SET_LED channels", () => {
   assert.equal(colorToHex({ red: 2, green: -1, blue: 0 }), "#ff0000");
 });
 
-test("the facade reads and sets through the machine backend's leds module", () => {
+test("the colours come with the snapshot; only setting is its own request", () => {
   const facade = read("facades/ledsFacade.ts");
-  assert.match(facade, /LedsService\.getLeds\(\)/);
+  assert.doesNotMatch(facade, /getLeds/);
+  const panel = read("components/io/LedPanel.vue");
+  assert.match(panel, /const \{ leds \} = storeToRefs\(baseThread\)/);
+  assert.doesNotMatch(panel, /setInterval/);
   assert.match(facade, /LedsService\.setLed\(id, \{ \.\.\.color, white: 0, index: index \?\? null \}\)/);
 });
 
@@ -35,4 +38,12 @@ test("a colour picker per segment, sent with its first LED; off per chain", () =
 
 test("the card is on the dashboard behind the machine gate", () => {
   assert.match(read("views/DashboardView.vue"), /<MachineGate label="LEDs">\s*<LedPanel\/>/);
+});
+
+test("an open colour picker is not reset by the snapshot (the colour snapped back)", () => {
+  const panel = read("components/io/LedPanel.vue");
+  // the value shown is the one being picked while the picker is open
+  assert.match(panel, /:value="shown\(led\.id, seg\.first, seg\)"/);
+  assert.match(panel, /@input="onInput\(led\.id, seg\.first, \$event\)"/);
+  assert.match(panel, /return editing\.value\[key\(id, first\)\] \?\? colorToHex\(color\)/);
 });

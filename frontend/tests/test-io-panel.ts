@@ -13,9 +13,13 @@ import { fileURLToPath } from "node:url";
 const src = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const read = (rel: string) => readFileSync(resolve(src, rel), "utf-8");
 
-test("the facade reads and sets through the machine backend's io module", () => {
+test("the state comes with the snapshot; only setting is its own request", () => {
   const facade = read("facades/ioFacade.ts");
-  assert.match(facade, /ModulesIoService\.getIoState\(\)/);
+  assert.doesNotMatch(facade, /getIoState/);
+  const panel = read("components/io/IoPanel.vue");
+  assert.match(panel, /const \{ io \} = storeToRefs\(baseThread\)/);
+  assert.match(panel, /baseThread\.applyIo\(await ioFacade\.set\(id, value\)\)/);
+  assert.doesNotMatch(panel, /setInterval/);
   assert.match(facade, /ModulesIoService\.setIoValue\(id, \{ value \}\)/);
 });
 

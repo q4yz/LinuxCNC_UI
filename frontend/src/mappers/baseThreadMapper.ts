@@ -1,3 +1,5 @@
+import type { IoState, Led } from "../../generated/api";
+import { EMPTY_IO } from "../entities/baseThread/Snapshot";
 import { Snapshot } from "../entities/baseThread/Snapshot";
 import { toProgramProgress } from "./progressMapper";
 import { toReadingSet } from "./temperatureMapper";
@@ -68,6 +70,17 @@ export function toSpeedOverride(wire: unknown): SpeedOverride {
 }
 
 
+/** The snapshot's ``io`` block; missing lists become empty ones. */
+export function toIoState(wire: unknown): IoState {
+  if (!wire || typeof wire !== "object") return EMPTY_IO;
+  const w = wire as Partial<IoState>;
+  return {
+    fans: Array.isArray(w.fans) ? w.fans : [],
+    outputs: Array.isArray(w.outputs) ? w.outputs : [],
+    inputs: Array.isArray(w.inputs) ? w.inputs : [],
+  } as IoState;
+}
+
 export function toSnapshot(wire: unknown): Snapshot {
   if (!wire || typeof wire !== "object") {
     return new Snapshot();
@@ -81,6 +94,8 @@ export function toSnapshot(wire: unknown): Snapshot {
     axes: toAxesMap(w.axis),
     mcus: toMcuMap(w.mcus),
     speedOverride: toSpeedOverride(w.speed_override),
+    io: toIoState(w.io),
+    leds: Array.isArray(w.leds) ? (w.leds as Led[]) : [],
     timestamp: typeof w.timestamp === "string" ? w.timestamp : null,
   });
 }

@@ -1,8 +1,10 @@
-from typing import Union, Dict, Optional
+from typing import Union, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from models.AxisModels import AxisStateResponse, SpeedOverrideResponse
+from models.IoModels import IoState
+from models.LedModels import Led
 from models.McuModels import McuStateResponse
 from models.program.ProgramModels import ProgramProgressResponse
 from models.TemperatureStateResponse import TemperatureStateResponse
@@ -57,4 +59,12 @@ class BaseThreadSnapshotResponse(BaseModel):
             "Static MCU list from hardware.json's mcus[], keyed by MCU id. "
             "Only in the static/all tiers."
         ),
+    )
+    io: Optional[IoState] = Field(
+        default=None,
+        description="Fans, [output_pin] outputs and [input_pin] inputs. Only in the base/all tiers.",
+    )
+    leds: Optional[List[Led]] = Field(
+        default=None,
+        description="[neopixel] chains and their segment colours. Only in the base/all tiers.",
     )

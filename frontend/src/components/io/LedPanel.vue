@@ -1,39 +1,52 @@
 <script setup lang="ts">
 // LED card: a colour picker per segment of every [neopixel] chain
-// (`.agent/component/neopixel.md`), and "off" per chain. Polled, so a
-// SET_LED / M150 from G-code shows up; a colour is sent when picked.
-import { onBeforeUnmount, onMounted, ref } from "vue";
-import { colorToHex, hexToColor, ledsFacade, type Led } from "../../facades/ledsFacade";
+// (`.agent/component/neopixel.md`), and "off" per chain. The colours
+// come with the base-thread snapshot (``stores/baseThread`` ``leds``),
+// so a SET_LED / M150 from G-code shows up; a colour is sent when the
+// picker closes.
+//
+// While a picker is open its colour is kept locally: each snapshot used
+// to rewrite the input's value, so the picker snapped back to the old
+// colour and, on closing, sent that old colour again.
+import { ref } from "vue";
+import { storeToRefs } from "pinia";
+import { colorToHex, hexToColor, ledsFacade } from "../../facades/ledsFacade";
 import BaseCard from "../../ui/BaseCard.vue";
 import { describeError } from "../../core/error-format";
 import { useConsoleStore } from "../../stores/console";
-
-const POLL_MS = 1000;
+import useBaseThreadStore from "../../stores/baseThread";
 
 const consoleStore = useConsoleStore();
-const leds = ref<Led[]>([]);
-let timer: ReturnType<typeof setInterval> | null = null;
+const baseThread = useBaseThreadStore();
+const { leds } = storeToRefs(baseThread);
 
-async function poll() {
-  try {
-    leds.value = await ledsFacade.list();
-  } catch {
-    // MachineGate shows when the machine backend is down
-  }
+/** ``"<led>:<first>"`` -> the colour being picked there. */
+const editing = ref<Record<string, string>>({});
+const key = (id: string, first: number) => `${id}:${first}`;
+
+function shown(id: string, first: number, color: { red: number; green: number; blue: number }): string {
+  return editing.value[key(id, first)] ?? colorToHex(color);
+}
+
+function onInput(id: string, first: number, event: Event) {
+  editing.value = { ...editing.value, [key(id, first)]: (event.target as HTMLInputElement).value };
 }
 
 async function pick(id: string, first: number, event: Event) {
   const hex = (event.target as HTMLInputElement).value;
   try {
-    leds.value = await ledsFacade.set(id, hexToColor(hex), first);
+    baseThread.applyLeds(await ledsFacade.set(id, hexToColor(hex), first));
   } catch (err) {
     consoleStore.error(`LED ${id}: ${describeError(err)}`);
+  } finally {
+    const { [key(id, first)]: _done, ...rest } = editing.value;
+    editing.value = rest;
   }
 }
 
 async function off(id: string) {
   try {
-    leds.value = await ledsFacade.set(id, { red: 0, green: 0, blue: 0 });
+    baseThread.applyLeds(await ledsFacade.set(id, { red: 0, green: 0, blue: 0 }));
   } catch (err) {
     consoleStore.error(`LED ${id}: ${describeError(err)}`);
   }
@@ -46,14 +59,6 @@ function label(id: string): string {
 function range(first: number, count: number): string {
   return count > 1 ? `LEDs ${first}–${first + count - 1}` : `LED ${first}`;
 }
-
-onMounted(() => {
-  void poll();
-  timer = setInterval(poll, POLL_MS);
-});
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
-});
 </script>
 
 <template>
@@ -80,7 +85,8 @@ onBeforeUnmount(() => {
           >
             <input
               type="color" class="h-8 w-10 cursor-pointer rounded border border-gray-600 bg-transparent"
-              :value="colorToHex(seg)"
+              :value="shown(led.id, seg.first, seg)"
+              @input="onInput(led.id, seg.first, $event)"
               @change="pick(led.id, seg.first, $event)"
             />
             <span v-if="led.segments.length > 1">{{ range(seg.first, seg.count) }}</span>

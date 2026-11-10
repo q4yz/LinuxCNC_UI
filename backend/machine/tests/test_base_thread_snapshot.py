@@ -193,6 +193,8 @@ def test_snapshot_default_mode_returns_all_fields(
         "axis",
         "mcus",
         "speed_override",
+        "io",
+        "leds",
     }
 
 
@@ -219,6 +221,8 @@ def test_snapshot_mode_all_equivalent_to_default(
         "axis",
         "mcus",
         "speed_override",
+        "io",
+        "leds",
     }
 
 
@@ -250,3 +254,17 @@ def test_snapshot_mode_invalid_value_returns_422(
 
 
 
+
+
+def test_snapshot_carries_io_and_leds_so_the_dashboard_needs_no_own_polls(
+    tmp_data_root, clean_env, monkeypatch, tmp_path
+):
+    _point_hardware_config_at(monkeypatch, tmp_path)
+    _reset_mock_program_state()
+    _reset_line_count_cache()
+    client = TestClient(_bare_base_thread_app(tmp_data_root))
+    body = client.get("/api/v1/base-thread/snapshot?mode=base").json()
+    assert set(body["io"]) >= {"fans", "outputs", "inputs"}
+    assert isinstance(body["leds"], list)
+    static = client.get("/api/v1/base-thread/snapshot?mode=static").json()
+    assert "io" not in static and "leds" not in static

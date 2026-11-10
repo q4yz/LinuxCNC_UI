@@ -7,24 +7,11 @@ from fastapi import APIRouter, Path
 from pydantic import BaseModel, Field
 
 from core.led_color import SetLed
+from models.LedModels import Led, LedSegment
 from services.LedService import get_led_service
 
 router = APIRouter(prefix="/api/v1/leds", tags=["leds"])
 
-
-class LedSegment(BaseModel):
-    first: int = Field(..., description="First LED of the segment (from 1).")
-    count: int = Field(..., description="LEDs in the segment.")
-    red: float = Field(..., ge=0.0, le=1.0)
-    green: float = Field(..., ge=0.0, le=1.0)
-    blue: float = Field(..., ge=0.0, le=1.0)
-
-
-class Led(BaseModel):
-    id: str
-    chain_count: int
-    color_order: str
-    segments: List[LedSegment]
 
 
 class LedSetRequest(BaseModel):
@@ -51,4 +38,4 @@ def set_led(payload: LedSetRequest, led_id: str = Path(..., description="The [ne
     return [Led(**led) for led in get_led_service().set(command)]
 
 
-__all__ = ["router"]
+__all__ = ["Led", "LedSegment", "router"]
