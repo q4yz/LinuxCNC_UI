@@ -150,7 +150,7 @@ test("gcodes entries carry a category and description", () => {
   // autocomplete menu can render the description column.
   assert.match(text, /category:\s*['"]gcode['"]/);
   assert.match(text, /category:\s*['"]mcode['"]/);
-  assert.match(text, /category:\s*['"]system['"]/);
+  assert.match(text, /category:\s*['"]macro['"]/);
   assert.match(text, /description:/);
 });
 
@@ -465,4 +465,18 @@ test("console store default popup option is false (backward compatible)", () => 
     text,
     /if\s*\(\s*!\s*opts\s*\|\|\s*!\s*opts\.popup\s*\)\s*return/,
   );
+});
+
+test("suggestions offer the UI's own commands under their Klipper names", async () => {
+  const mod = await import("../src/config/gcodes");
+  const labels = (q: string) => mod.filterAutocompleteCommands(q, 20).map((m: { label: string }) => m.label);
+  assert.ok(labels("Z_TILT").includes("Z_TILT_ADJUST"));
+  assert.ok(labels("BED").includes("BED_MESH_CALIBRATE"));
+  assert.ok(labels("PROBE").includes("PROBE_ACCURACY"));
+  assert.ok(labels("G29").includes("G29"));
+  // found by their comment too
+  assert.ok(labels("repeatability").includes("PROBE_ACCURACY"));
+  // the old shortcodes went to LinuxCNC as invalid MDI
+  assert.deepEqual(labels("POWER"), []);
+  assert.ok(!labels("ESTOP").includes("ESTOP"));
 });

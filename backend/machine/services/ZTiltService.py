@@ -124,19 +124,29 @@ class ZTiltService:
         tolerance = float(settings.get("retry_tolerance") or 0.0)
         max_adjust = float(settings.get("max_adjust") or 5.0)
         previous: Optional[float] = None
+        # Each measurement and the calculated corrections go to DEBUG,
+        # one summary line to INFO when it succeeded.
+
+        def done(attempt: int, spread: float) -> List[float]:
+            offsets = self.offsets()
+            console.log_event(
+                f"{COMMAND} done after {attempt} round(s): spread {spread:.4f} mm, motor offsets "
+                + ", ".join(f"{o:+.4f}" for o in offsets) + " mm.",
+                level=LogLevel.INFO, source="CMD",
+            )
+            return offsets
 
         for attempt in range(1, retries + 2):
-            heights = self._probe_all(stat, settings, points)
+            heights = self._probe_all(stat, settings, points, attempt)
             spread = max(heights) - min(heights)
             self.last_result = {"round": attempt, "heights": heights, "spread": spread}
             console.log_event(
-                f"Z tilt round {attempt}: probed {', '.join(f'{h:.4f}' for h in heights)} "
+                f"{COMMAND} round {attempt}: heights {', '.join(f'{h:.4f}' for h in heights)} "
                 f"(spread {spread:.4f} mm).",
-                level=LogLevel.INFO, source="CMD",
+                level=LogLevel.DEBUG, source="CMD",
             )
             if retries and spread <= tolerance:
-                console.log_event(f"Z tilt adjust done: within {tolerance:g} mm.", level=LogLevel.INFO, source="CMD")
-                return self.offsets()
+                return done(attempt, spread)
             if previous is not None and spread > previous * GROWING_FACTOR + tolerance:
                 raise ZTiltError(
                     f"the spread grew from {previous:.4f} to {spread:.4f} mm — do z_positions match "
@@ -152,13 +162,14 @@ class ZTiltService:
                     f"({max_adjust:g} mm) — check the probe and z_positions."
                 )
             console.log_event(
-                "Z tilt: motor offsets " + ", ".join(f"{t:+.4f}" for t in targets) + " mm.",
-                level=LogLevel.INFO, source="CMD",
+                f"{COMMAND} round {attempt}: adjust "
+                + ", ".join(f"motor {k} {d:+.4f}" for k, d in enumerate(adjust))
+                + " mm -> offsets " + ", ".join(f"{t:+.4f}" for t in targets) + " mm.",
+                level=LogLevel.DEBUG, source="CMD",
             )
             self._apply(targets)
             previous = spread
-        console.log_event("Z tilt adjust done.", level=LogLevel.INFO, source="CMD")
-        return self.offsets()
+        return done(retries + 1, previous if previous is not None else 0.0)
 
     # -- steps ------------------------------------------------------------ #
 
@@ -187,7 +198,18 @@ class ZTiltService:
         if missing:
             raise BadRequestError(f"Home X, Y and Z first (joint(s) {', '.join(map(str, missing))} not homed).")
 
-    def _probe_all(self, stat: Any, settings: Dict[str, Any], points: List[tuple[float, float]]) -> List[float]:
+    def _probe_all(
+        self, stat: Any, settings: Dict[str, Any], points: List[tuple[float, float]], attempt: int = 1
+    ) -> List[float]:
+        console = get_console_logger()
+
+        def measured(k: int, height: float) -> None:
+            x, y = points[k]
+            console.log_event(
+                f"{COMMAND} round {attempt}: point {k + 1}/{len(points)} X{x:g} Y{y:g} -> Z {height:.4f}",
+                level=LogLevel.DEBUG, source="CMD",
+            )
+
         try:
             return probe_points(
                 stat, points,
@@ -195,6 +217,7 @@ class ZTiltService:
                 travel_mm_s=float(settings.get("speed") or 50.0),
                 probe_mm_s=float(settings.get("probe_speed") or 5.0),
                 bottom=float(settings.get("probe_min_z") or 0.0),
+                progress=measured,
             )
         except ProbeError as exc:
             raise ZTiltError(str(exc)) from exc

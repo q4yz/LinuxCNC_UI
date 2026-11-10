@@ -88,6 +88,11 @@ velocity / acceleration budget.
   (flat), delete (not the active one), activate.
 - `/api/v1/bedmesh/enable` (machine backend): `webgui.bed-mesh-enable`.
 
+
+Console: every probed point (X, Y, height), the zero reference and each
+mesh row under DEBUG; one INFO line when the mesh is saved and active
+(its range).
+
 ## 5. PROBING (`BED_MESH_CALIBRATE`)
 
 `backend/machine/services/BedMeshProbeService.py`, the same MDI probe

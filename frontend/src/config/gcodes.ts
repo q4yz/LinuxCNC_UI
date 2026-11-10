@@ -36,9 +36,8 @@ export const generateSetOffset = (axisName: string, value: number | string): str
 // Categories:
 //   * ``gcode``  — modal G-codes (motion, units, coords, cutter comp).
 //   * ``mcode``  — M-codes (spindle, coolant, tool change, program end).
-//   * ``system`` — machine state commands exposed by the
-//                  ``/api/v1/modules/machine`` router (power, estop,
-//                  home, mode).
+//   * ``macro``  — the UI's own commands (Z_TILT_ADJUST, BED_MESH_CALIBRATE,
+//                  PROBE_ACCURACY, SET_LED, G29): named like Klipper's.
 //
 // All commands are upper-cased so the autocompletion is case
 // insensitive against the user's input. ``LINUXCNC`` literals are
@@ -58,7 +57,7 @@ export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: stri
   { label: 'G19', command: 'G19',  category: 'gcode',  description: 'YZ plane select' },
   { label: 'G20', command: 'G20',  category: 'gcode',  description: 'Inch units' },
   { label: 'G21', command: 'G21',  category: 'gcode',  description: 'Millimetre units' },
-  { label: 'G28', command: 'G28',  category: 'gcode',  description: 'Return to machine home' },
+  { label: 'G28', command: 'G28',  category: 'gcode',  description: '# home: the [homing_override] routine, or every axis (Z on the probe last)' },
   { label: 'G30', command: 'G30',  category: 'gcode',  description: 'Return to predefined home' },
   { label: 'G40', command: 'G40',  category: 'gcode',  description: 'Cutter compensation off' },
   { label: 'G41', command: 'G41',  category: 'gcode',  description: 'Cutter compensation left' },
@@ -109,17 +108,23 @@ export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: stri
   { label: 'M71', command: 'M71',  category: 'mcode',  description: 'Restore state' },
   { label: 'M72', command: 'M72',  category: 'mcode',  description: 'Restore state (alternate)' },
 
-  // System commands (the same verbs the frontend issues to the
-  // ``/api/v1/modules/machine`` router). The console translates
-  // these shortcodes into HTTP calls when the user submits them.
-  { label: 'HOME',     command: 'HOME',     category: 'system', description: 'Home all axes' },
-  { label: 'HOME X',   command: 'HOME X',   category: 'system', description: 'Home X axis' },
-  { label: 'HOME Y',   command: 'HOME Y',   category: 'system', description: 'Home Y axis' },
-  { label: 'HOME Z',   command: 'HOME Z',   category: 'system', description: 'Home Z axis' },
-  { label: 'POWER ON', command: 'POWER ON', category: 'system', description: 'Turn machine on' },
-  { label: 'POWER OFF',command: 'POWER OFF',category: 'system', description: 'Turn machine off' },
-  { label: 'ESTOP',    command: 'ESTOP',    category: 'system', description: 'Engage E-Stop' },
-  { label: 'RESET',    command: 'RESET',    category: 'system', description: 'Clear E-Stop' },
+  // The UI's own commands (machine backend, sent like MDI): Klipper names
+  // where Klipper has one. The old "HOME" / "POWER ON" / "ESTOP" entries
+  // were never translated and went to LinuxCNC as (invalid) MDI.
+  { label: 'Z_TILT_ADJUST', command: 'Z_TILT_ADJUST', category: 'macro', description: '# z tilt: probe the points, level the Z motors ([z_tilt])' },
+  { label: 'BED_MESH_CALIBRATE', command: 'BED_MESH_CALIBRATE', category: 'macro', description: '# bed mesh: probe the grid, save and activate it (PROFILE=<name>)' },
+  { label: 'PROBE_ACCURACY', command: 'PROBE_ACCURACY SAMPLES=10', category: 'macro', description: '# probe repeatability: min, max, range, mean, median, std dev' },
+  { label: 'SET_LED', command: 'SET_LED LED= RED=1 GREEN=1 BLUE=1', category: 'macro', description: '# set a [neopixel] colour (0 ... 1, INDEX=<n> for one segment)' },
+  { label: 'G29', command: 'G29', category: 'macro', description: '# level: Z_TILT_ADJUST, then BED_MESH_CALIBRATE' },
+  { label: 'G28 X Y', command: 'G28 X Y', category: 'macro', description: '# home the axes named (Z on the probe last)' },
+  // Printer M-codes (REMAPs in the machine's m_codes folder).
+  { label: 'M104', command: 'M104 S200', category: 'mcode', description: '# set extruder temperature (no wait)' },
+  { label: 'M109', command: 'M109 S200', category: 'mcode', description: '# set extruder temperature and wait' },
+  { label: 'M140', command: 'M140 S60',  category: 'mcode', description: '# set bed temperature (no wait)' },
+  { label: 'M190', command: 'M190 S60',  category: 'mcode', description: '# set bed temperature and wait' },
+  { label: 'M106', command: 'M106 S255', category: 'mcode', description: '# part fan on (S0 ... 255)' },
+  { label: 'M107', command: 'M107',      category: 'mcode', description: '# part fan off' },
+  { label: 'M150', command: 'M150 R255 U255 B255', category: 'mcode', description: '# LED colour (Marlin)' },
 ];
 
 /**
