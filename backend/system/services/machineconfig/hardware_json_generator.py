@@ -355,7 +355,13 @@ def _probe_payload(probe) -> dict[str, Any] | None:
     something ``build_hardware_json`` enforces against."""
     if probe is None:
         return None
-    return {"pin": probe.pin}
+    # The offsets only when set: a bare [probe] stays the empty object.
+    return {
+        "pin": probe.pin,
+        "x_offset": probe.x_offset or None,
+        "y_offset": probe.y_offset or None,
+        "z_offset": probe.z_offset,
+    }
 
 
 def _tool_length_sensor_payload(sensor) -> dict[str, Any] | None:

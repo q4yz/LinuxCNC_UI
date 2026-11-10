@@ -18,7 +18,7 @@
 ```cfg
 [bed_mesh]
 probe_count: 3, 3      // (Optional) probe grid X, Y — or one value for both; >= 3, default 3, 3
-mesh_min: 10, 10       // (Optional) probed area X, Y (toolhead, no probe offsets); default the X / Y travel
+mesh_min: 10, 10       // (Optional) probed area X, Y where the probe touches (the nozzle goes [probe] x_offset, y_offset away); default the X / Y travel
 mesh_max: 190, 190
 speed: 50              // (Optional) XY travel between points, mm/s, default 50
 horizontal_move_z: 5   // (Optional) machine Z between points, default 5

@@ -199,7 +199,10 @@ ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
 # a machine with no touch probe simply never declares this section at
 # all (no "empty block is still valid" requirement — there's nothing
 # UI-driven to fall back to).
-PROBE_KEYS = frozenset({"pin"})
+# x_offset / y_offset / z_offset: Klipper's meaning — the probe sits
+# x_offset, y_offset from the nozzle; the nozzle is z_offset above the
+# bed when the probe triggers (`.agent/component/probe.md`).
+PROBE_KEYS = frozenset({"pin", "x_offset", "y_offset", "z_offset"})
 # The tool-length sensor (tool setter) — a second digital input that
 # is OR-ed with the probe into ``motion.probe-input``
 # (`.agent/component/probe.md` § 3). Same single optional ``pin``.

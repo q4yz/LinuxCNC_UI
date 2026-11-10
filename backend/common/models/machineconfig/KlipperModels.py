@@ -442,6 +442,13 @@ class Probe:
     """
 
     pin: str | None = None
+    #: The probe's position relative to the nozzle (mm), Klipper's
+    #: ``[probe] x_offset`` / ``y_offset``.
+    x_offset: float = 0.0
+    y_offset: float = 0.0
+    #: Nozzle height above the bed when the probe triggers (mm);
+    #: ``None`` when the ``.cfg`` does not set it.
+    z_offset: float | None = None
 
 
 @dataclass(slots=True)

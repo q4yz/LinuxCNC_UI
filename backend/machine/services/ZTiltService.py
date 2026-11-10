@@ -31,7 +31,7 @@ from hardware import get_stat_channel
 from hardware.Connection import MachineState, read_hal_pin
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
-from services.Probing import ProbeError, probe_points
+from services.Probing import ProbeError, ProbeOffsets, probe_points
 
 logger = logging.getLogger("backend.services.ZTiltService")
 
@@ -118,7 +118,10 @@ class ZTiltService:
         settings = self._require_settings()
         self._check_machine(stat, settings)
         console = get_console_logger()
-        points = [(float(x), float(y)) for x, y in settings["points"]]
+        # ``points`` are nozzle positions (Klipper); the probe measures
+        # x_offset, y_offset from there — those are fitted.
+        offsets = ProbeOffsets.from_payload(self._config.load_payload())
+        points = [(float(x) + offsets.x, float(y) + offsets.y) for x, y in settings["points"]]
         pivots = [(float(x), float(y)) for x, y in settings["z_positions"]]
         retries = int(settings.get("retries") or 0)
         tolerance = float(settings.get("retry_tolerance") or 0.0)
@@ -137,7 +140,7 @@ class ZTiltService:
             return offsets
 
         for attempt in range(1, retries + 2):
-            heights = self._probe_all(stat, settings, points, attempt)
+            heights = self._probe_all(stat, settings, points, attempt, offsets)
             spread = max(heights) - min(heights)
             self.last_result = {"round": attempt, "heights": heights, "spread": spread}
             console.log_event(
@@ -199,7 +202,8 @@ class ZTiltService:
             raise BadRequestError(f"Home X, Y and Z first (joint(s) {', '.join(map(str, missing))} not homed).")
 
     def _probe_all(
-        self, stat: Any, settings: Dict[str, Any], points: List[tuple[float, float]], attempt: int = 1
+        self, stat: Any, settings: Dict[str, Any], points: List[tuple[float, float]], attempt: int = 1,
+        offsets: ProbeOffsets = ProbeOffsets(),
     ) -> List[float]:
         console = get_console_logger()
 
@@ -218,6 +222,7 @@ class ZTiltService:
                 probe_mm_s=float(settings.get("probe_speed") or 5.0),
                 bottom=float(settings.get("probe_min_z") or 0.0),
                 progress=measured,
+                offsets=offsets,
             )
         except ProbeError as exc:
             raise ZTiltError(str(exc)) from exc

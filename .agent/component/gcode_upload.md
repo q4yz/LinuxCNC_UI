@@ -27,6 +27,7 @@ A `.gcode` / `.gco` / `.g` upload is converted and stored as `.ngc`
 | `G4 S2` / `G4 P500` (ms) | `G4 P2` / `G4 P0.5` |
 | `M117 text` | `(MSG, text)` |
 | `start 60 215`, `PRINT_START BED=60 EXTRUDER=215` | `o<start> call [60] [215]` — when `macros/start.ngc` exists, values in order; otherwise commented out |
+| A line over 256 characters (LinuxCNC's limit) | cut to its first 252 and `...` — the cut falls in a comment; a line whose code alone is that long is commented out |
 | `G28` / `G29` in the start G-code (before the first extruding X/Y move) | commented out, and listed in a first line `; LINUXCNC_UI_PRESTART: home level` — run before the program (§ 1a) |
 | `G28 X` later (end G-code parking) | `o<g28> call [1] [0] [0]` — a move to the home position (`[UI_HOME]` in the INI): a program cannot home |
 | `G29` later, `T0`, `M82`, `M83`, `G92 E…`, any M-code LinuxCNC does not know (`M84`, `M400`, `M201`, `M73`, …) | commented out with the reason |

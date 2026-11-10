@@ -33,7 +33,19 @@ section at all.
 ```cfg
 [probe]
     pin: string // (Optional) the probe switch's digital input, e.g. "!par0:15"
+    x_offset: float // (Optional) probe X minus nozzle X, mm, default 0 (Klipper's meaning)
+    y_offset: float // (Optional) probe Y minus nozzle Y, mm, default 0
+    z_offset: float // (Optional) nozzle height above the bed when the probe triggers, mm
 ```
+
+The offsets are used by every probing routine (`services/Probing.py`):
+the bed mesh's `mesh_min` / `mesh_max` are where the probe touches (the
+nozzle goes `x_offset`, `y_offset` away), Z tilt's `points` are nozzle
+positions (the fit uses where the probe touched), and a probed height
+is the nozzle's Z at the trigger minus `z_offset`. With Z homed on the
+probe, `z_offset` is Z at the trigger point (`position_endstop`; both
+set and different is an `InvalidValueError`). `PROBE_CALIBRATE` measures
+`z_offset` (below).
 
 An empty `[probe]` block (no `pin` at all) is valid but contributes
 nothing to `machine.hal` — same leniency as every other component,
@@ -52,7 +64,10 @@ block contributes nothing.
 ```json
 {
   "probe": {
-    "pin": "<parameters.pin | null>"
+    "pin": "<parameters.pin | null>",
+    "x_offset": "<float, only when not 0>",
+    "y_offset": "<float, only when not 0>",
+    "z_offset": "<float, only when set>"
   }
 }
 ```
@@ -199,3 +214,18 @@ Probes the bed at the current X, Y `SAMPLES` times with relative moves
 (`G91`, `G38.2 Z-<to the lowest Z>`, `G0 Z<retract>`, `G90`), Z homed.
 Each sample is logged under DEBUG; the result under INFO: maximum,
 minimum, range, average, median and (population) standard deviation.
+
+## PROBE_CALIBRATE
+
+Klipper's paper test for `z_offset` (MDI; `ProbeCalibrateService`), Z homed:
+
+1. `PROBE_CALIBRATE [SPEED=5]` probes at the current X, Y, lifts 5 mm,
+   moves the nozzle by `x_offset`, `y_offset` (over the spot the probe
+   touched) and lowers it back to the trigger height. Bed mesh
+   compensation is switched off for the test.
+2. Lower the nozzle until a sheet of paper just drags: the Z jog, or
+   `TESTZ Z=-0.1` (relative mm, up to ±5; `TESTZ Z=0.05` back up). Each
+   `TESTZ` logs the `z_offset` the nozzle's height gives.
+3. `ACCEPT` logs `z_offset = trigger Z - nozzle Z` under INFO, to put into
+   the `.cfg` (`[probe] z_offset`) before generating the machine again;
+   `ABORT` ends the test without a value.

@@ -983,6 +983,16 @@ class MachineConfigParser:
                 continue
             stepper.endstop_pin = None
             graph.z_virtual_endstop = True
+            # Klipper: with the probe as the Z endstop, [probe] z_offset is
+            # Z at the trigger point (position_endstop).
+            z_offset = graph.probe.z_offset if graph.probe is not None else None
+            if z_offset is not None:
+                if stepper.position_endstop is not None and float(stepper.position_endstop) != z_offset:
+                    raise InvalidValueError(
+                        f"stepper_{name}", "position_endstop", str(stepper.position_endstop),
+                        "unset: Z homes on the probe, [probe] z_offset is the trigger height",
+                    )
+                stepper.position_endstop = z_offset
 
     @staticmethod
     def _validate_temperature_sensor_uniqueness(graph: MachineConfigGraph) -> None:
@@ -1553,8 +1563,12 @@ class MachineConfigParser:
         all) is valid and produces ``Probe(pin=None)``, same leniency
         as every other component.
         """
+        z_offset = self._optional_float(section_name, section, "z_offset")
         return Probe(
             pin=self._optional_string(section, "pin"),
+            x_offset=self._optional_float(section_name, section, "x_offset") or 0.0,
+            y_offset=self._optional_float(section_name, section, "y_offset") or 0.0,
+            z_offset=z_offset,
         )
 
     def _parse_mcu(

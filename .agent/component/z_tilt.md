@@ -21,7 +21,7 @@ z_positions:         ; X, Y of each Z motor's pivot (where it lifts),
     -50, 18          ;   one per Z motor, in [stepper_z], [stepper_z1], ... order
     260, 18
     100, 250
-points:              ; X, Y of the toolhead at each probe point (no probe offsets)
+points:              ; X, Y of the nozzle at each probe point (the probe measures [probe] x_offset, y_offset from there)
     30, 5
     230, 5
     100, 200

@@ -119,3 +119,38 @@ def test_probe_on_a_node_without_homing_on_it():
 def test_probe_sharing_another_endstop_needs_the_override():
     payload = _payload(probe="PB7", z_endstop="PG10", x_endstop="PB7", extra="")
     assert "E_PIN_CONFLICT" in _codes(payload)
+
+
+def _offsets_cfg(probe_extra, z_endstop="probe:z_virtual_endstop", position_endstop="position_endstop: 0\n"):
+    src = CFG.format(probe="!sb2209:PB6", z_endstop=z_endstop, x_endstop="PG6", extra=probe_extra)
+    # stepper_z is the third stepper: drop or keep its position_endstop
+    head, z = src.split("[stepper_z]", 1)
+    return head + "[stepper_z]" + z.replace("position_endstop: 0\n", position_endstop, 1)
+
+
+def test_probe_offsets_reach_hardware_json():
+    src = _offsets_cfg("x_offset: -25\ny_offset: 12.5\nz_offset: 1.234\n", z_endstop="PG10")
+    payload = build_hardware_json(MachineConfigParser().parse_string(src), "t")
+    assert payload["probe"] == {"pin": "!sb2209:PB6", "x_offset": -25.0, "y_offset": 12.5, "z_offset": 1.234}
+
+
+def test_probe_offset_must_be_a_number():
+    with pytest.raises(InvalidValueError):
+        MachineConfigParser().parse_string(_offsets_cfg("z_offset: high\n", z_endstop="PG10"))
+
+
+def test_z_offset_is_the_trigger_height_when_z_homes_on_the_probe():
+    """Klipper: with probe:z_virtual_endstop, [probe] z_offset is Z at the
+    trigger point — HOME_OFFSET; Z lifts homing_retract_dist after homing."""
+    from services.machineconfig import AxisBuilder, AxisMappingPolicy
+    from services.machinetemplates.ini_template_generator import render_ini_template
+
+    graph = MachineConfigParser().parse_string(_offsets_cfg("z_offset: 1.5\n", position_endstop=""))
+    ini = render_ini_template("t", AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build())
+    joint = ini.split("[JOINT_2]", 1)[1].split("\n\n", 1)[0]
+    assert "HOME_OFFSET = 1.5" in joint and "\nHOME = 6.5" in joint
+
+
+def test_z_offset_and_a_different_position_endstop_conflict():
+    with pytest.raises(InvalidValueError, match="position_endstop"):
+        MachineConfigParser().parse_string(_offsets_cfg("z_offset: 1.5\n"))
