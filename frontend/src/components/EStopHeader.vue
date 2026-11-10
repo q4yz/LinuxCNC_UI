@@ -12,7 +12,7 @@
 // mirrored to the console store so the operator has a written
 // record of transitions without needing to watch the badge.
 
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../stores/machine'
 // Direct facade import for the high-resolution ``systemState``
@@ -30,7 +30,32 @@ const facade = useFacadeStore()
 // destructuring would silently lose Pinia reactivity (see
 // ``.agent/context/LESSONS_LEARNED.md`` § 2.3).
 const { isEstop } = storeToRefs(store)
-const { systemState } = storeToRefs(facade)
+const { systemState: rawState } = storeToRefs(facade)
+
+// A routine sends its MDI lines one by one, so the interpreter flips
+// Busy -> Idle -> Busy between them. Leaving Busy is shown (and logged)
+// only once it stayed idle for BUSY_HOLD_MS: one "Idle → Busy" and one
+// "Busy → Idle" per routine instead of a flood.
+const BUSY_HOLD_MS = 3000
+const systemState = ref<string>(rawState.value)
+let busyTimer: ReturnType<typeof setTimeout> | null = null
+watch(rawState, (next) => {
+  if (busyTimer) {
+    clearTimeout(busyTimer)
+    busyTimer = null
+  }
+  if (systemState.value === 'Busy' && (next === 'Idle' || next === 'Loaded')) {
+    busyTimer = setTimeout(() => {
+      busyTimer = null
+      systemState.value = rawState.value
+    }, BUSY_HOLD_MS)
+    return
+  }
+  systemState.value = next
+})
+onBeforeUnmount(() => {
+  if (busyTimer) clearTimeout(busyTimer)
+})
 
 async function pressEStop() {
   // Critical path: always engage. No state check, no toggle — the
@@ -44,13 +69,14 @@ async function pressEStop() {
 
 // Color bucket per systemState. Lifted out of the template so a
 // future state addition only needs to touch this map.
-const STATE_COLOR = {
+const STATE_COLOR: Record<string, [string, string]> = {
   Estop: ['text-red-400', 'border-red-700'],
   PowerOff: ['text-amber-300', 'border-amber-700'],
   Offline: ['text-slate-400', 'border-slate-700'],
   Updating: ['text-slate-300', 'border-slate-600'],
   Failure: ['text-red-400', 'border-red-700'],
   Running: ['text-emerald-300', 'border-emerald-700'],
+  Busy: ['text-sky-300', 'border-sky-700'],
   Paused: ['text-yellow-300', 'border-yellow-700'],
   Loaded: ['text-indigo-300', 'border-indigo-700'],
   Idle: ['text-emerald-200', 'border-emerald-700'],

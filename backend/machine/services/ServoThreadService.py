@@ -155,6 +155,13 @@ class ServoThreadService:
                         await self.broadcast(payload)
                         console_logger.log_telemetry(payload)
 
+                # 2b. The backend's own console messages (homing routine,
+                # Z tilt, bed mesh, macros, PROBE_ACCURACY) for the browser.
+                published = console_logger.drain_published()
+                if published and self.active_connections:
+                    for event in published:
+                        await self.broadcast(json.dumps({"type": "console", "data": event}))
+
                 # 3. Compute delta and broadcast state diff
                 current_dto = ServoThreadStateMapper.from_stat(stat, history)
                 diff_resp = ServoThreadStateMapper.get_diff_response(current_dto, self._last_broadcast_state)

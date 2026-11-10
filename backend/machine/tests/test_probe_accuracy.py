@@ -33,7 +33,9 @@ class Stat:
         self.estop = False
         self.task_state = MachineState.ON.value
         self.homed = [1, 1, 1]
-        self.actual_position = [0.0, 0.0, 5.0, 0.0]
+        self.position = [0.0, 0.0, 5.0, 0.0]
+        # feedback quantised to steps: a hair above the commanded position
+        self.actual_position = [0.0, 0.0, 5.00006, 0.0]
         self.probed_position = [0.0, 0.0, 0.0, 0.0]
         self.probe_tripped = False
         self.interp_state = 1
@@ -59,9 +61,11 @@ def rig(monkeypatch):
             z = next(triggers)
             stat.probed_position[2] = z
             stat.actual_position[2] = z
+            stat.position[2] = z
             stat.probe_tripped = True
         elif line.startswith("G0 Z") and relative["on"]:
             stat.actual_position[2] += float(line[4:])
+            stat.position[2] += float(line[4:])
         return None
 
     monkeypatch.setattr(probing, "dispatch_mdi", dispatch)
@@ -91,7 +95,7 @@ def test_statistics_and_log_levels(rig):
 def test_relative_probe_moves_never_g53(rig):
     module.ProbeAccuracyService(Config()).run(rig.stat, module.ProbeAccuracyRequest(samples=2, retract=2.0))
     assert rig.lines[0] == "G91" and rig.lines[-1] == "G90"
-    assert rig.lines[1] == "G38.2 Z-7.0000 F300.0"  # from Z5 down to position_min -2
+    assert rig.lines[1] == "G38.2 Z-6.9900 F300.0"  # from Z5 down to 0.01 above position_min -2
     assert "G0 Z2.0000" in rig.lines
     assert not any(l.startswith("G53") for l in rig.lines)
 
@@ -111,3 +115,11 @@ def test_needs_a_probe_and_z_homed(rig):
     rig.stat.homed = [1, 1, 0]
     with pytest.raises(BadRequestError, match="Home Z"):
         module.ProbeAccuracyService(Config()).run(rig.stat, module.ProbeAccuracyRequest())
+
+
+def test_probe_distance_never_reaches_the_limit():
+    # the feedback position put the target past the soft limit
+    # ("Probe move would exceed Z's negative limit")
+    assert probing.probe_distance(5.00006, -2.0) == 6.99
+    assert probing.probe_distance(5.0, -2.0) == 6.99
+    assert probing.probe_distance(-1.995, -2.0) == 0.0
