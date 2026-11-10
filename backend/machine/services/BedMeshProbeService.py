@@ -29,7 +29,7 @@ from hardware.Connection import MachineState, read_hal_pin
 from services.BedMeshService import get_bed_mesh_service
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
-from services.Probing import ProbeError, probe_points
+from services.Probing import ProbeError, ProbeOffsets, probe_points
 
 logger = logging.getLogger("backend.services.BedMeshProbeService")
 
@@ -166,6 +166,7 @@ class BedMeshProbeService:
                 probe_mm_s=float(settings.get("probe_speed") or 5.0),
                 bottom=float(settings.get("probe_min_z") or 0.0),
                 progress=measured,
+                offsets=ProbeOffsets.from_payload(self._config.load_payload()),
             )
         except ProbeError as exc:
             if was_on:

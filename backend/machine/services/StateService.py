@@ -159,7 +159,8 @@ class StateService:
 
         ``G28`` (home, Klipper's meaning: the homing routine, or the axes
         named), ``G29``, ``Z_TILT_ADJUST`` (Z tilt), ``BED_MESH_CALIBRATE``,
-        ``PROBE_ACCURACY`` and ``SET_LED`` are the UI's own —
+        ``PROBE_ACCURACY``, ``PROBE_CALIBRATE`` (with ``TESTZ`` / ``ACCEPT`` /
+        ``ABORT``) and ``SET_LED`` are the UI's own —
         LinuxCNC's ``G28`` would move to a stored position instead."""
         if self._ui_command(command):
             return
@@ -183,13 +184,17 @@ class StateService:
 
         from services.ProbeAccuracyService import get_probe_accuracy_service
         from services.ProbeAccuracyService import parse_command as parse_probe_accuracy
+        from services.ProbeCalibrateService import get_probe_calibrate_service
 
         code = command.strip().upper()
         mesh = get_bed_mesh_probe_service()
         accuracy = get_probe_accuracy_service()
+        calibrate = get_probe_calibrate_service()
         busy = (get_macro_execution_service().is_running() or get_homing_routine_service().is_running()
                 or get_z_tilt_service().is_running() or mesh.is_running() or LevelingService.is_running()
-                or accuracy.is_running())
+                or accuracy.is_running() or calibrate.is_running())
+        if calibrate.run_command(command, busy=busy):
+            return True
         accuracy_request = parse_probe_accuracy(command)
         if accuracy_request is not None:
             accuracy.start(accuracy_request, busy=busy)

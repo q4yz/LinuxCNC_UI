@@ -206,16 +206,16 @@ class ProbeAccuracyService:
                 return float(axis.get("position_min") or 0.0)
         return 0.0
 
-    def _check_machine(self, stat: Any) -> None:
+    def _check_machine(self, stat: Any, command: str = COMMAND) -> None:
         if not self._config.load_payload().get("probe"):
-            raise BadRequestError(f"{COMMAND} needs a [probe] section.")
+            raise BadRequestError(f"{command} needs a [probe] section.")
         if stat is None:
-            raise BadRequestError(f"Cannot run {COMMAND}: LinuxCNC is not running.")
+            raise BadRequestError(f"Cannot run {command}: LinuxCNC is not running.")
         stat.poll()
         if stat.estop:
-            raise BadRequestError(f"Cannot run {COMMAND} while the machine is in E-STOP.")
+            raise BadRequestError(f"Cannot run {command} while the machine is in E-STOP.")
         if stat.task_state != MachineState.ON.value:
-            raise BadRequestError(f"Turn the machine on before {COMMAND}.")
+            raise BadRequestError(f"Turn the machine on before {command}.")
         homed = list(getattr(stat, "homed", ()) or ())
         joints = [int(j) for a in self._config.get_axes() if str(a.get("id", "")).lower() == "z"
                   for j in a.get("joint_numbers") or []]

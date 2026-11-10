@@ -37,7 +37,7 @@ export const generateSetOffset = (axisName: string, value: number | string): str
 //   * ``gcode``  — modal G-codes (motion, units, coords, cutter comp).
 //   * ``mcode``  — M-codes (spindle, coolant, tool change, program end).
 //   * ``macro``  — the UI's own commands (Z_TILT_ADJUST, BED_MESH_CALIBRATE,
-//                  PROBE_ACCURACY, SET_LED, G29): named like Klipper's.
+//                  PROBE_ACCURACY, PROBE_CALIBRATE, SET_LED, G29): named like Klipper's.
 //
 // All commands are upper-cased so the autocompletion is case
 // insensitive against the user's input. ``LINUXCNC`` literals are
@@ -114,6 +114,10 @@ export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: stri
   { label: 'Z_TILT_ADJUST', command: 'Z_TILT_ADJUST', category: 'macro', description: '# z tilt: probe the points, level the Z motors ([z_tilt])' },
   { label: 'BED_MESH_CALIBRATE', command: 'BED_MESH_CALIBRATE', category: 'macro', description: '# bed mesh: probe the grid, save and activate it (PROFILE=<name>)' },
   { label: 'PROBE_ACCURACY', command: 'PROBE_ACCURACY SAMPLES=10', category: 'macro', description: '# probe repeatability: min, max, range, mean, median, std dev' },
+  { label: 'PROBE_CALIBRATE', command: 'PROBE_CALIBRATE', category: 'macro', description: '# paper test for [probe] z_offset: probe, nozzle over the spot, then TESTZ / ACCEPT' },
+  { label: 'TESTZ', command: 'TESTZ Z=-0.1', category: 'macro', description: '# PROBE_CALIBRATE: move the nozzle (mm, relative), logs the z_offset' },
+  { label: 'ACCEPT', command: 'ACCEPT', category: 'macro', description: '# PROBE_CALIBRATE: take the z_offset at the nozzle height (console)' },
+  { label: 'ABORT', command: 'ABORT', category: 'macro', description: '# PROBE_CALIBRATE: stop without a z_offset' },
   { label: 'SET_LED', command: 'SET_LED LED= RED=1 GREEN=1 BLUE=1', category: 'macro', description: '# set a [neopixel] colour (0 ... 1, INDEX=<n> for one segment)' },
   { label: 'G29', command: 'G29', category: 'macro', description: '# level: Z_TILT_ADJUST, then BED_MESH_CALIBRATE' },
   { label: 'G28 X Y', command: 'G28 X Y', category: 'macro', description: '# home the axes named (Z on the probe last)' },

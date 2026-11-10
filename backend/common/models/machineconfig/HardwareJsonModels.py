@@ -436,6 +436,9 @@ class Probe(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pin: str | None = None
+    x_offset: float | None = None
+    y_offset: float | None = None
+    z_offset: float | None = None
 
 
 class ToolLengthSensor(BaseModel):

@@ -37,6 +37,10 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   chain = the ``[neopixel]`` in declaration order, LED from 1, 0 = all)
   when the machine has LEDs; a ``SET_LED`` naming no LED is commented out.
 * ``M2`` is appended when the file has no ``M2`` / ``M30``.
+* A line longer than :data:`MAX_LINE` (256) characters is cut to its
+  first 252 and ``...`` (LinuxCNC refuses longer lines). The cut always
+  falls in a comment; a line whose *code* is that long is commented out
+  instead (a cut move would still run, wrong).
 
 ``;`` comments (and the slicer's thumbnail blocks) pass through:
 LinuxCNC reads ``;`` as a comment.
@@ -58,6 +62,11 @@ REMAPPED_MCODES = frozenset({104, 109, 140, 190, 106, 107})
 _LINUXCNC_MCODES = frozenset(
     {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 19, 30, 48, 49, 50, 51, 52, 53, 60, 61, 62, 63, 64, 65, 66, 67, 68}
 )
+
+#: The longest line LinuxCNC takes; a longer one is cut to
+#: :data:`CUT_AT` characters and ``...``.
+MAX_LINE = 256
+CUT_AT = 252
 
 #: The header line listing what runs before the program (``read_prestart``).
 PRESTART_MARKER = "; LINUXCNC_UI_PRESTART:"
@@ -118,6 +127,8 @@ def convert(text: str, macro_names: Iterable[str] = (), led_names: Sequence[str]
     notes: list[str] = []
     for number, raw in enumerate(text.splitlines(), start=1):
         line, note = _convert_line(raw.rstrip("\r"), state, macros)
+        line, cut_note = _limit_length(line)
+        note = note or cut_note
         out.append(line)
         if note:
             notes.append(f"line {number}: {note}")
@@ -127,6 +138,16 @@ def convert(text: str, macro_names: Iterable[str] = (), led_names: Sequence[str]
         steps = [s for s in PRESTART_STEPS if s in state.prestart]
         out.insert(0, f"{PRESTART_MARKER} {' '.join(steps)}")
     return ConversionResult(text="\n".join(out) + "\n", notes=notes)
+
+
+def _limit_length(line: str) -> tuple[str, str | None]:
+    """``line`` cut to :data:`MAX_LINE` (see the module docstring)."""
+    if len(line) <= MAX_LINE:
+        return line, None
+    code, _comment = _split_comment(line)
+    if len(code.rstrip()) <= CUT_AT:
+        return line[:CUT_AT] + "...", None
+    return "; " + line[:CUT_AT - 2] + "...", f"longer than {MAX_LINE} characters: commented out"
 
 
 def read_prestart(head: str) -> list[str]:
