@@ -225,6 +225,10 @@ class MacroExecutionService:
                     if not self._bed_mesh(name, line, stat):
                         return
                     continue
+                if line.strip().upper().startswith("PROBE_ACCURACY"):
+                    if not self._probe_accuracy(name, line, stat):
+                        return
+                    continue
                 if line.strip().upper().startswith("SET_LED"):
                     if not self._set_led(name, line):
                         return
@@ -286,6 +290,21 @@ class MacroExecutionService:
         except (BedMeshError, BadRequestError) as exc:
             get_console_logger().log_event(
                 f"Macro '{name}' aborted: BED_MESH_CALIBRATE: {getattr(exc, 'detail', None) or exc}",
+                level=LogLevel.ERROR, source="CMD",
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _probe_accuracy(name: str, line: str, stat: Any) -> bool:
+        """A ``PROBE_ACCURACY`` line: the repeatability test, on this worker."""
+        from services.ProbeAccuracyService import ProbeAccuracyError, get_probe_accuracy_service
+
+        try:
+            get_probe_accuracy_service().run_command(line, stat)
+        except (ProbeAccuracyError, BadRequestError) as exc:
+            get_console_logger().log_event(
+                f"Macro '{name}' aborted: PROBE_ACCURACY: {getattr(exc, 'detail', None) or exc}",
                 level=LogLevel.ERROR, source="CMD",
             )
             return False

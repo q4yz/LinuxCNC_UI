@@ -158,7 +158,8 @@ class StateService:
         """Dispatch a single MDI command.
 
         ``G28`` (home, Klipper's meaning: the homing routine, or the axes
-        named), ``G29`` and ``Z_TILT_ADJUST`` (Z tilt) are the UI's own —
+        named), ``G29``, ``Z_TILT_ADJUST`` (Z tilt), ``BED_MESH_CALIBRATE``,
+        ``PROBE_ACCURACY`` and ``SET_LED`` are the UI's own —
         LinuxCNC's ``G28`` would move to a stored position instead."""
         if self._ui_command(command):
             return
@@ -180,10 +181,19 @@ class StateService:
         from services import LevelingService
         from services.BedMeshProbeService import get_bed_mesh_probe_service, parse_command
 
+        from services.ProbeAccuracyService import get_probe_accuracy_service
+        from services.ProbeAccuracyService import parse_command as parse_probe_accuracy
+
         code = command.strip().upper()
         mesh = get_bed_mesh_probe_service()
+        accuracy = get_probe_accuracy_service()
         busy = (get_macro_execution_service().is_running() or get_homing_routine_service().is_running()
-                or get_z_tilt_service().is_running() or mesh.is_running() or LevelingService.is_running())
+                or get_z_tilt_service().is_running() or mesh.is_running() or LevelingService.is_running()
+                or accuracy.is_running())
+        accuracy_request = parse_probe_accuracy(command)
+        if accuracy_request is not None:
+            accuracy.start(accuracy_request, busy=busy)
+            return True
         if code == "G29":
             LevelingService.start(busy=busy)
             return True

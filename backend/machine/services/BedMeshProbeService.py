@@ -141,7 +141,14 @@ class BedMeshProbeService:
         xs, ys = grid(settings)
         order = zigzag(xs, ys)
         points = [(xs[col], ys[row]) for row, col in order]
-        console.log_event(f"{COMMAND}: probing {len(xs)} x {len(ys)} points.", level=LogLevel.INFO, source="CMD")
+        console.log_event(f"{COMMAND}: probing {len(xs)} x {len(ys)} points.", level=LogLevel.DEBUG, source="CMD")
+
+        def measured(k: int, height: float) -> None:
+            x, y = points[k]
+            console.log_event(
+                f"{COMMAND}: point {k + 1}/{len(points)} X{x:g} Y{y:g} -> Z {height:.4f}",
+                level=LogLevel.DEBUG, source="CMD",
+            )
         compensation = get_bed_mesh_service()
         was_on = compensation.is_enabled()
         compensation.set_enabled(False)
@@ -158,6 +165,7 @@ class BedMeshProbeService:
                 travel_mm_s=float(settings.get("speed") or 50.0),
                 probe_mm_s=float(settings.get("probe_speed") or 5.0),
                 bottom=float(settings.get("probe_min_z") or 0.0),
+                progress=measured,
             )
         except ProbeError as exc:
             if was_on:
@@ -170,6 +178,16 @@ class BedMeshProbeService:
         if reference:
             zero = bilinear(xs, ys, z, float(reference[0]), float(reference[1]))
             z = [[v - zero for v in row] for row in z]
+            console.log_event(
+                f"{COMMAND}: zero reference X{float(reference[0]):g} Y{float(reference[1]):g} at Z {zero:.4f}, "
+                "subtracted from every point.",
+                level=LogLevel.DEBUG, source="CMD",
+            )
+        for row_index, row in enumerate(z):
+            console.log_event(
+                f"{COMMAND}: row Y{ys[row_index]:g}: " + " ".join(f"{v:+.4f}" for v in row),
+                level=LogLevel.DEBUG, source="CMD",
+            )
         write_mesh(profile, xs, ys, z, paths.BED_MESHES_DIR, paths.ACTIVE_BED_MESH_FILE)
         compensation.set_enabled(True)  # reloads the active mesh
         flat = [v for row in z for v in row]

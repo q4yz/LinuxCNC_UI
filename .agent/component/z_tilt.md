@@ -97,7 +97,9 @@ net ztilt-0-target webgui.ztilt-0 => ztilt-ramp-0.in
    added to its offset (mean Z kept). Refused beyond `max_adjust`.
    Waits until the ramps reached the targets.
 
-Every round is logged in the console. The offsets live for the LinuxCNC
+Every probed point (X, Y, height), each round's spread and the calculated
+per-motor adjust are logged in the console under DEBUG; one INFO line
+when it succeeded (rounds, final spread, motor offsets). The offsets live for the LinuxCNC
 session; the motors keep their corrected positions physically after a
 restart. If Z homes on the probe, home Z again afterwards:
 

@@ -78,13 +78,15 @@ def rig(monkeypatch, tmp_path):
     monkeypatch.setattr(module.paths, "BED_MESHES_DIR", tmp_path / "bed_meshes")
     monkeypatch.setattr(module.paths, "ACTIVE_BED_MESH_FILE", tmp_path / "bed_mesh_active.txt")
     events = []
+    levels = []
 
     class Console:
         def log_event(self, message, level=None, source=None):
             events.append(message)
+            levels.append(str(getattr(level, "value", level)))
 
     monkeypatch.setattr(module, "get_console_logger", lambda: Console())
-    return type("R", (), {"stat": stat, "lines": lines, "comp": comp, "tmp": tmp_path, "events": events})
+    return type("R", (), {"stat": stat, "lines": lines, "comp": comp, "tmp": tmp_path, "events": events, "levels": levels})
 
 
 def test_probes_the_grid_zigzag_and_saves(rig):
@@ -163,3 +165,11 @@ def test_leveling_runs_what_the_machine_has(monkeypatch):
     monkeypatch.setattr(z, "get_z_tilt_service", lambda: Svc("z_tilt", False))
     calls.clear()
     assert leveling.level(object()) is None and calls == ["mesh"]
+
+
+def test_points_logged_under_debug_the_result_under_info(rig):
+    module.BedMeshProbeService(Config(MESH)).run(rig.stat, "pla")
+    assert rig.levels[-1] == "INFO" and "saved and active" in rig.events[-1]
+    assert set(rig.levels[:-1]) == {"DEBUG"}
+    assert sum("-> Z" in e for e in rig.events) == 6  # one per probed point
+    assert any(e.startswith("BED_MESH_CALIBRATE: row Y20:") for e in rig.events)

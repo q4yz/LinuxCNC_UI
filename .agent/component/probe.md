@@ -189,3 +189,13 @@ and Z last (X / Y must put the probe over the bed — `[homing_override]`
 for a "move to the centre" first). `NO_FORCE_HOMING = 1` (that
 move runs with Z unhomed); programs only start once everything is homed.
 The probe may sit on a CAN node (`mcu_can_remora.md`).
+
+
+## PROBE_ACCURACY
+
+`PROBE_ACCURACY [SAMPLES=10] [SAMPLE_RETRACT_DIST=2] [PROBE_SPEED=5]`
+(MDI, a macro line; `ProbeAccuracyService`): Klipper's repeatability test.
+Probes the bed at the current X, Y `SAMPLES` times with relative moves
+(`G91`, `G38.2 Z-<to the lowest Z>`, `G0 Z<retract>`, `G90`), Z homed.
+Each sample is logged under DEBUG; the result under INFO: maximum,
+minimum, range, average, median and (population) standard deviation.

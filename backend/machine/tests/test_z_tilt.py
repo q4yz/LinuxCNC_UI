@@ -89,10 +89,12 @@ def rig(monkeypatch):
     monkeypatch.setattr(module, "read_hal_pin", lambda name: pins[int(name.rsplit("-", 1)[1].split(".")[0])].value)
     monkeypatch.setattr(macro_module, "_IDLE_POLL_S", 0)
     events: list[str] = []
+    levels: list[str] = []
 
     class Console:
         def log_event(self, message, level=None, source=None):
             events.append(message)
+            levels.append(str(getattr(level, "value", level)))
 
     monkeypatch.setattr(module, "get_console_logger", lambda: Console())
 
@@ -101,14 +103,18 @@ def rig(monkeypatch):
         s._pins = pins
         return s
 
-    return type("R", (), {"stat": stat, "lines": lines, "pins": pins, "events": events,
+    return type("R", (), {"stat": stat, "lines": lines, "pins": pins, "events": events, "levels": levels,
                           "service": staticmethod(service), "sign": sign, "trigger": trigger})
 
 
 def test_levels_the_bed(rig):
     offsets = rig.service().run(rig.stat)
     # One correction levels a plane exactly; the second round confirms it.
-    assert rig.events[-1].startswith("Z tilt adjust done: within")
+    assert rig.events[-1].startswith("Z_TILT_ADJUST done after 2 round(s)")
+    # Measurements and corrections under DEBUG, the one summary under INFO.
+    assert rig.levels[-1] == "INFO" and set(rig.levels[:-1]) == {"DEBUG"}
+    assert any("point 1/" in e and "-> Z" in e for e in rig.events)
+    assert any("adjust motor 0" in e for e in rig.events)
     heights = [bed(*p) - fit_heights(PIVOTS, offsets, [p])[0] for p in POINTS]
     assert max(heights) - min(heights) < 1e-9
     assert abs(sum(offsets)) < 1e-9  # mean Z kept
