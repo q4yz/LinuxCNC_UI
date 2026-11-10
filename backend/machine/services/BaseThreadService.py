@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Union
+from typing import Dict, List, Optional, Union
 
 from core.field_masking import ResponseTier
 from mappers.BaseThreadSnapshotMapper import BaseThreadSnapshotMapper
@@ -8,6 +8,8 @@ from mappers.axis.AxisMapper import AxisMapper
 from mappers.axis.SpeedOverrideMapper import SpeedOverrideMapper
 from models.AxisModels import AxisStateResponse
 from mappers.mcu.McuMapper import McuMapper
+from models.IoModels import IoState
+from models.LedModels import Led
 from models.McuModels import McuStateResponse
 from services.McuService import get_mcu_service
 from services.AxisService import get_axis_service
@@ -61,6 +63,11 @@ class BaseThreadSnapshotService:
             else None
         )
 
+        # Fans / output / input pins and LED colours: live, so the
+        # dashboard needs no polls of its own (base / all tiers).
+        io = self._io_state() if include_progress else None
+        leds = self._led_state() if include_progress else None
+
         elapsed_ms = (time.monotonic() - started) * 1000.0
         logger.info(
             "base_thread.snapshot: assembled sensors=%d tools=%d in %.1fms",
@@ -76,6 +83,8 @@ class BaseThreadSnapshotService:
             axis=axis,
             mcus=mcus,
             speed_override=speed_override,
+            io=io,
+            leds=leds,
         )
 
         # --- WRAPPERS ---
@@ -150,6 +159,26 @@ class BaseThreadSnapshotService:
         return out
 
 
+
+    @staticmethod
+    def _io_state() -> Optional[IoState]:
+        from services.IoService import get_io_service
+
+        try:
+            return get_io_service().state()
+        except Exception as exc:  # noqa: BLE001 - one block must not cost the snapshot
+            logger.warning("base_thread.snapshot: io state failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _led_state() -> Optional[List[Led]]:
+        from services.LedService import get_led_service
+
+        try:
+            return [Led(**led) for led in get_led_service().state()]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("base_thread.snapshot: led state failed: %s", exc)
+            return None
 
     def _mcu_state(self, mode: ResponseTier) -> Dict[str, McuStateResponse]:
         out = {}

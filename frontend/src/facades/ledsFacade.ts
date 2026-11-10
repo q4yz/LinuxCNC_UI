@@ -9,8 +9,9 @@ import { colorToHex, hexToColor, type LedColor } from "../components/io/ledColor
 export type { Led, LedColor };
 export { colorToHex, hexToColor };
 
+// The colours come with the base-thread snapshot (``stores/baseThread``
+// ``leds``); only setting one is its own request.
 export const ledsFacade = {
-  list: (): Promise<Led[]> => LedsService.getLeds(),
   /** ``index``: an LED number (from 1) — sets the segment it is in; none: the whole chain. */
   set: (id: string, color: LedColor, index?: number): Promise<Led[]> =>
     LedsService.setLed(id, { ...color, white: 0, index: index ?? null }),

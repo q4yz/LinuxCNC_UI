@@ -23,6 +23,8 @@ import { useMachineOnline } from "../composables/useMachineOnline";
 
 // Entity imports for state typing and re-exporting
 import { ReadingSet } from "../entities/temperature/ReadingSet";
+import type { IoState, Led } from "../../generated/api";
+import { EMPTY_IO } from "../entities/baseThread/Snapshot";
 import { ToolList } from "../entities/tools/ToolList";
 import { ProgramProgress } from "../entities/progress/ProgramProgress";
 import { AxisState } from "../entities/axis/AxisState";
@@ -52,6 +54,9 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
   // Live feed override (100 %) + absolute speed cap, as LinuxCNC applies
   // them — refreshed by the 1 Hz poll. All-null until the first snapshot.
   const speedOverride = shallowRef<SpeedOverride>(new SpeedOverride());
+  // I/O and LED cards: part of the 1 Hz snapshot (no polls of their own).
+  const io = shallowRef<IoState>(EMPTY_IO);
+  const leds = shallowRef<Led[]>([]);
 
   // Legacy wire shape (kept for migration window)
   const sensors = ref<Record<string, any>>({});
@@ -116,6 +121,16 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
    * previous values intact so the operator keeps seeing the last
    * known state.
    */
+  /** A set's own response (``PUT /io``, ``PUT /leds``): shown at once,
+   * without waiting for the next snapshot. */
+  function applyIo(state: IoState): void {
+    io.value = state;
+  }
+
+  function applyLeds(list: Led[]): void {
+    leds.value = list;
+  }
+
   async function refresh(): Promise<void> {
     try {
       // The BaseThreadService handles all data extraction and mappers now
@@ -129,6 +144,8 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
       readings.value = snapshot.readings;
       toolList.value = snapshot.toolList;
       speedOverride.value = snapshot.speedOverride;
+      io.value = snapshot.io;
+      leds.value = snapshot.leds;
 
       timestamp.value = snapshot.timestamp;
       connectionStatus.value = "connected";
@@ -225,6 +242,8 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     axes,
     mcus,
     speedOverride,
+    io,
+    leds,
     sensors,
     tools,
     timestamp,
@@ -235,6 +254,8 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     maxAxisVelocity,
     // Actions
     refresh,
+    applyIo,
+    applyLeds,
     start,
     stop,
   };

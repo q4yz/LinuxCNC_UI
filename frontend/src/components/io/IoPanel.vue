@@ -1,33 +1,26 @@
 <script setup lang="ts">
 // I/O card: a slider per [fan] (0 ... 100 %) and per PWM [output_pin]
 // (0 ... its scale), a toggle per switched [output_pin], a lamp per
-// [input_pin]. Polled, so inputs and values set elsewhere (G-code,
-// another client) show up; a slider is only sent on release.
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ioFacade, type IoState } from "../../facades/ioFacade";
+// [input_pin]. The state comes with the base-thread snapshot
+// (``stores/baseThread`` ``io``), so inputs and values set elsewhere
+// (G-code, another client) show up; a slider is only sent on release.
+import { computed, ref } from "vue";
+import { storeToRefs } from "pinia";
+import { ioFacade } from "../../facades/ioFacade";
+import useBaseThreadStore from "../../stores/baseThread";
 import BaseCard from "../../ui/BaseCard.vue";
 import { describeError } from "../../core/error-format";
 import { useConsoleStore } from "../../stores/console";
 
-const POLL_MS = 500;
-
 const consoleStore = useConsoleStore();
-const io = ref<IoState>({ fans: [], outputs: [], inputs: [] });
+const baseThread = useBaseThreadStore();
+const { io } = storeToRefs(baseThread);
 // the slider being dragged keeps its local value until it is released
 const dragging = ref<Record<string, number>>({});
-let timer: ReturnType<typeof setInterval> | null = null;
 
 const isEmpty = computed(
   () => !io.value.fans?.length && !io.value.outputs?.length && !io.value.inputs?.length,
 );
-
-async function poll() {
-  try {
-    io.value = await ioFacade.state();
-  } catch {
-    // MachineGate shows when the machine backend is down
-  }
-}
 
 function shown(id: string, value: number): number {
   return dragging.value[id] ?? value;
@@ -39,7 +32,7 @@ function onDrag(id: string, event: Event) {
 
 async function send(id: string, value: number) {
   try {
-    io.value = await ioFacade.set(id, value);
+    baseThread.applyIo(await ioFacade.set(id, value));
   } catch (err) {
     consoleStore.error(`I/O: setting ${id} failed: ${describeError(err)}`);
   } finally {
@@ -51,14 +44,6 @@ async function send(id: string, value: number) {
 function label(id: string): string {
   return id.replace(/_/g, " ");
 }
-
-onMounted(() => {
-  void poll();
-  timer = setInterval(poll, POLL_MS);
-});
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
-});
 </script>
 
 <template>

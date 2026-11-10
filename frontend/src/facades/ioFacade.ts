@@ -7,8 +7,9 @@ import type { IoState } from "../../generated/api/index";
 
 export type { IoState };
 
+// The state comes with the base-thread snapshot (``stores/baseThread``
+// ``io``); only setting a value is its own request.
 export const ioFacade = {
-  state: (): Promise<IoState> => ModulesIoService.getIoState(),
   /** A fan in %, a PWM output in its scale units, a switched output 0 / 1. */
   set: (id: string, value: number): Promise<IoState> => ModulesIoService.setIoValue(id, { value }),
 };
