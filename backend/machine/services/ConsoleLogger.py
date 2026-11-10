@@ -36,9 +36,14 @@ import threading
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union
+from collections import deque
+from typing import Deque, Dict, List, Optional, Union
 
 logger = logging.getLogger("backend.services.console_logger")
+
+
+#: Console events kept for the browser while nobody drains them.
+OUTBOX_MAX = 500
 
 
 class LogLevel(str, Enum):
@@ -100,6 +105,10 @@ class ConsoleLogger:
         self._lock = threading.Lock()
         self._file = None  # lazily opened
         self._closed = False
+        # Events for the browser console, drained by the telemetry loop
+        # (``ServoThreadService``) and sent as ``{"type": "console"}``.
+        # Bounded: nobody connected must not grow it forever.
+        self._outbox: Deque[Dict[str, str]] = deque(maxlen=OUTBOX_MAX)
 
     # ------------------------------------------------------------------ #
     # Public surface                                                     #
@@ -120,6 +129,7 @@ class ConsoleLogger:
         message: str,
         level: Union[LogLevel, str] = LogLevel.INFO,
         source: str = "RES",
+        publish: bool = True,
     ) -> None:
         """Append a single line to the log file.
 
@@ -149,6 +159,10 @@ class ConsoleLogger:
         line = f"{timestamp} [{level.value:<5}] {source} {cleaned}\n"
 
         with self._lock:
+            if publish:
+                # The service messages (homing routine, Z tilt, bed mesh,
+                # macros, PROBE_ACCURACY) — the browser console shows them.
+                self._outbox.append({"level": level.value.lower(), "text": cleaned, "time": timestamp})
             try:
                 self._ensure_open()
                 self._file.write(line)
@@ -161,15 +175,23 @@ class ConsoleLogger:
 
     def log_command(self, command: str) -> None:
         """Convenience helper for MDI command events."""
-        self.log_event(str(command), level=LogLevel.INFO, source="CMD")
+        # the browser echoes the command itself
+        self.log_event(str(command), level=LogLevel.INFO, source="CMD", publish=False)
 
     def log_response(self, response: str, level: Union[LogLevel, str] = LogLevel.INFO) -> None:
         """Convenience helper for backend responses / status messages."""
-        self.log_event(str(response), level=level, source="RES")
+        self.log_event(str(response), level=level, source="RES", publish=False)
 
     def log_telemetry(self, payload: str) -> None:
         """Convenience helper for telemetry messages."""
-        self.log_event(str(payload), level=LogLevel.DEBUG, source="TEL")
+        self.log_event(str(payload), level=LogLevel.DEBUG, source="TEL", publish=False)
+
+    def drain_published(self) -> List[Dict[str, str]]:
+        """The events for the browser console since the last call."""
+        with self._lock:
+            events = list(self._outbox)
+            self._outbox.clear()
+        return events
 
     def close(self) -> None:
         """Flush and close the underlying file handle.

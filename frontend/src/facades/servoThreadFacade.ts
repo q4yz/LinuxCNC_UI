@@ -2,6 +2,7 @@
 import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
 import { describeError } from '../core/error-format';
+import { emitBackendConsole } from '../core/backendConsole';
 import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; // Adjust path if needed
 import {
     formatLinuxCNCError,
@@ -148,6 +149,12 @@ export class ServoThreadService {
                             envelope.data,
                             "Unknown telemetry error payload",
                         );
+                        break;
+                    case 'console':
+                        // The backend's own messages (homing routine,
+                        // Z_TILT_ADJUST, BED_MESH_CALIBRATE, PROBE_ACCURACY,
+                        // macros): measurements under debug, results info.
+                        emitBackendConsole(consoleStore, envelope.data);
                         break;
                     case 'heartbeat':
                         // Liveness-only frame (~1 Hz from the

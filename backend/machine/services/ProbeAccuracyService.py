@@ -22,7 +22,7 @@ from hardware import get_stat_channel
 from hardware.Connection import MachineState
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
-from services.Probing import ProbeError, mdi
+from services.Probing import LIMIT_MARGIN_MM, ProbeError, mdi, probe_distance
 
 logger = logging.getLogger("backend.services.ProbeAccuracyService")
 
@@ -152,8 +152,8 @@ class ProbeAccuracyService:
         console = get_console_logger()
         bottom = self._probe_bottom()
         stat.poll()
-        start_z = float(stat.actual_position[2])
-        if start_z <= bottom:
+        start_z = self._commanded_z(stat)
+        if start_z <= bottom + LIMIT_MARGIN_MM:
             raise ProbeAccuracyError(f"Z{start_z:g} is not above the lowest Z{bottom:g} — move Z up first.")
         console.log_event(
             f"{COMMAND}: {request.samples} samples at the current X Y, retract {request.retract:g} mm, "
@@ -165,7 +165,7 @@ class ProbeAccuracyService:
             mdi(stat, "G91")
             for k in range(request.samples):
                 stat.poll()
-                distance = float(stat.actual_position[2]) - bottom
+                distance = probe_distance(self._commanded_z(stat), bottom)
                 mdi(stat, f"G38.2 Z-{distance:.4f} F{request.speed * 60.0:.1f}")
                 stat.poll()
                 if not getattr(stat, "probe_tripped", False):
@@ -186,6 +186,14 @@ class ProbeAccuracyService:
         self.last_result = result
         console.log_event(result.summary(), level=LogLevel.INFO, source="CMD")
         return result
+
+    @staticmethod
+    def _commanded_z(stat: Any) -> float:
+        """Machine Z as commanded (``stat.position``): the feedback
+        (``actual_position``) is quantised to steps and put the target a
+        hair past the soft limit."""
+        position = getattr(stat, "position", None) or stat.actual_position
+        return float(position[2])
 
     def _probe_bottom(self) -> float:
         payload: Dict[str, Any] = self._config.load_payload()

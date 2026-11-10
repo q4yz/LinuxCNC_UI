@@ -97,8 +97,8 @@ def test_probes_the_grid_zigzag_and_saves(rig):
         "G53 G1 X10.0000 Y20.0000 F6000.0", "G53 G1 X60.0000 Y20.0000 F6000.0", "G53 G1 X110.0000 Y20.0000 F6000.0",
         "G53 G1 X110.0000 Y120.0000 F6000.0", "G53 G1 X60.0000 Y120.0000 F6000.0", "G53 G1 X10.0000 Y120.0000 F6000.0",
     ]
-    # Relative (G53 takes only G0/G1): from machine Z3 down to Z-1.
-    assert "G38.2 Z-4.0000 F120.0" in rig.lines
+    # Relative (G53 takes only G0/G1): from machine Z3 down to 0.01 above Z-1.
+    assert "G38.2 Z-3.9900 F120.0" in rig.lines
     assert not any(l.startswith("G53") and "G38" in l for l in rig.lines)
     saved = (rig.tmp / "bed_meshes" / "pla.txt").read_text().splitlines()
     assert saved[0] == "10 20 0.0500" and saved[5] == "110 120 0.3500"  # row by row, X fastest

@@ -126,7 +126,7 @@ def test_levels_the_bed(rig):
 def test_probe_moves(rig):
     rig.service(retries=0).run(rig.stat)
     assert rig.lines[:7] == ["G90", "G53 G0 Z5.0000", "G53 G1 X30.0000 Y5.0000 F3000.0",
-                             "G91", "G38.2 Z-5.0000 F300.0", "G90", "G53 G0 Z5.0000"]
+                             "G91", "G38.2 Z-4.9900 F300.0", "G90", "G53 G0 Z5.0000"]
     assert sum("G38.2" in line for line in rig.lines) == 3  # retries 0: one round
 
 

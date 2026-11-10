@@ -26,6 +26,13 @@ export const TASK_STATE = Object.freeze({
   ON: 4,
 });
 
+/** LinuxCNC task modes (``linuxcnc.MODE_*``). */
+export const TASK_MODE = Object.freeze({
+  MANUAL: 1,
+  AUTO: 2,
+  MDI: 3,
+});
+
 export const INTERP_STATE = Object.freeze({
   IDLE: 1,
   READING: 2,
@@ -47,6 +54,9 @@ export const SystemState = Object.freeze({
   // chance to verify the file before pressing Start.
   LOADED: "Loaded",
   RUNNING: "Running",
+  // MDI / a UI routine (homing, Z tilt, bed mesh, macros) is moving the
+  // machine — no program runs, so the program card stays as it is.
+  BUSY: "Busy",
   PAUSED: "Paused",
   FAILURE: "Failure",
 });
@@ -162,7 +172,9 @@ export const useMachineStore = defineStore("machineStore", {
           raw.interp_state === INTERP_STATE.READING ||
           raw.interp_state === INTERP_STATE.WAITING
         ) {
-          return SystemState.RUNNING;
+          // A program runs in AUTO mode only; MDI lines (sent one by
+          // one by the routines) briefly run the interpreter too.
+          return raw.task_mode === TASK_MODE.AUTO ? SystemState.RUNNING : SystemState.BUSY;
         }
         // Loaded but not yet running: the interpreter is idle
         // while a file is selected. This is the canonical LinuxCNC

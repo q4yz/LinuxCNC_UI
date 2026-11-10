@@ -11,10 +11,24 @@ finished (``MacroExecutionService._wait_until_idle``).
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, List, Optional, Sequence
 
 from hardware import dispatch_mdi
 from services.MacroExecutionService import MacroExecutionService
+
+
+#: A probe move stops this far above the lowest Z (the soft limit):
+#: LinuxCNC refuses a probe target on or past it ("Probe move would
+#: exceed Z's negative limit"), and the 4-decimal distance can round
+#: past an exact one.
+LIMIT_MARGIN_MM = 0.01
+
+
+def probe_distance(from_z: float, bottom: float) -> float:
+    """The relative ``G38.2`` distance from machine ``from_z`` down to
+    :data:`LIMIT_MARGIN_MM` above ``bottom``, rounded down (never past it)."""
+    return max(0.0, math.floor((from_z - bottom - LIMIT_MARGIN_MM) * 10_000) / 10_000)
 
 
 class ProbeError(RuntimeError):
@@ -50,7 +64,7 @@ def probe_points(
         mdi(stat, f"G53 G1 X{x:.4f} Y{y:.4f} F{travel_mm_s * 60.0:.1f}")
         mdi(stat, "G91")
         try:
-            mdi(stat, f"G38.2 Z-{safe_z - bottom:.4f} F{probe_mm_s * 60.0:.1f}")
+            mdi(stat, f"G38.2 Z-{probe_distance(safe_z, bottom):.4f} F{probe_mm_s * 60.0:.1f}")
         finally:
             mdi(stat, "G90")
         stat.poll()
