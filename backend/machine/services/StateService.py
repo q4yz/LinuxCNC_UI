@@ -161,9 +161,17 @@ class StateService:
         named), ``G29``, ``Z_TILT_ADJUST`` (Z tilt), ``BED_MESH_CALIBRATE``,
         ``PROBE_ACCURACY``, ``PROBE_CALIBRATE`` (with ``TESTZ`` / ``ACCEPT`` /
         ``ABORT``) and ``SET_LED`` are the UI's own —
-        LinuxCNC's ``G28`` would move to a stored position instead."""
+        LinuxCNC's ``G28`` would move to a stored position instead.
+        A Marlin heater / fan code is converted (``M104 S200`` ->
+        ``M104 P200``): LinuxCNC runs it as a user M-code, P / Q only."""
         if self._ui_command(command):
             return
+        from core.gcode_converter import convert_mdi
+
+        converted = convert_mdi(command)
+        if converted != command:
+            logger.info("MDI %r -> %r (Marlin M-code: P / Q)", command, converted)
+            command = converted
         logger.info("Running MDI: %s", command)
         execute_sync_cmd("mode", 5.0, getattr(linuxcnc, "MODE_MDI", 3))
         execute_sync_cmd("mdi", 1.0, command)

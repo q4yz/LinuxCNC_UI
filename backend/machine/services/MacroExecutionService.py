@@ -17,6 +17,7 @@ from typing import Any, List, Optional, Sequence
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
 from domain_file_services import get_macro_service, get_mcode_service
+from core.gcode_converter import convert_mdi
 from hardware import dispatch_mdi, get_stat_channel, linuxcnc
 from hardware.Connection import MachineMode, MachineState
 from storage.MacroStorage import VALID_KINDS, MacroKind
@@ -242,7 +243,7 @@ class MacroExecutionService:
                     )
                     return
                 try:
-                    serial = dispatch_mdi(line)
+                    serial = dispatch_mdi(convert_mdi(line))
                     static_dispatched += 1
                 except Exception as exc:  # noqa: BLE001 - keep the loop going
                     logger.warning("Macro '%s' line '%s' failed: %s", name, line, exc)

@@ -8,10 +8,15 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   converter tracks ``M82`` / ``M83`` / ``G90`` / ``G91`` / ``G92 E`` and
   writes the running total, so no ``G92`` offset is ever set. Under
   ``G91`` the A delta is written, like X/Y/Z.
-* ``M104 / M109 / M140 / M190 / M106 / M107`` keep their number (the
-  machine's INI remaps them, `ini_template_generator`), Marlin's
+* ``M104 / M109 / M140 / M190 / M106 / M107`` keep their number (user
+  M-code programs in ``machine_config/m_codes/``: LinuxCNC cannot REMAP
+  M100-M199, ``marlin_mcodes``), Marlin's
   ``S`` / ``R`` (value) and ``T`` / ``P`` (heater / fan index) become
-  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``.
+  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``. A bare ``M106``
+  (full speed) is written ``M106 P255``. An ``M106`` / ``M107`` for a
+  part fan the machine does not have (``part_fans``; the program would
+  fail there: "this machine has no part fan") is commented out.
+  :func:`convert_mdi` does the same for a line typed in MDI.
 * ``G4 S2`` -> ``G4 P2``; ``G4 P500`` (Marlin: ms) -> ``G4 P0.5``.
 * ``M117 text`` -> ``(MSG, text)``.
 * ``G28`` / ``G29`` in the start G-code (before the first extruding
@@ -102,6 +107,7 @@ class _State:
     printing: bool = False   # an extruding move was seen: start G-code is over
     prestart: list[str] = field(default_factory=list)
     leds: list[str] = field(default_factory=list)
+    part_fans: int | None = None  # None: not known, every fan line kept
 
 
 def _split_comment(line: str) -> tuple[str, str]:
@@ -120,11 +126,15 @@ def _words(code: str) -> list[tuple[str, str]]:
     return [(letter.upper(), value) for letter, value in _WORD.findall(code)]
 
 
-def convert(text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = ()) -> ConversionResult:
+def convert(
+    text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = (), part_fans: int | None = None,
+) -> ConversionResult:
     """Convert a whole file (see the module docstring). ``led_names``:
-    the machine's ``[neopixel]`` names, in declaration order."""
+    the machine's ``[neopixel]`` names, in declaration order;
+    ``part_fans``: how many part fans ``M106`` / ``M107`` can reach
+    (``None``: unknown, every fan line is kept)."""
     macros = {name.lower() for name in macro_names}
-    state = _State(leds=[name.lower() for name in led_names])
+    state = _State(leds=[name.lower() for name in led_names], part_fans=part_fans)
     out: list[str] = []
     notes: list[str] = []
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -218,6 +228,12 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
         if m == 83:
             state.e_relative = True
             return _commented(stripped, "relative E: handled by the converter", comment), None
+        if m in (106, 107) and state.part_fans is not None:
+            fan = _fan_index(words)
+            if fan is None or fan >= state.part_fans:
+                reason = ("this machine has no part fan" if state.part_fans == 0 or fan is None
+                          else f"no part fan {fan} on this machine")
+                return _commented(stripped, reason, comment), f"M{m} commented out: {reason}"
         if m in REMAPPED_MCODES:
             return _remapped(m, words, comment), None
         if m == 150 and state.leds:
@@ -297,6 +313,38 @@ def _dwell(words: list[tuple[str, str]], comment: str) -> str:
     return f"G4 P{_fmt(seconds)}" + (f"  {comment}" if comment else "")
 
 
+_MARLIN_MDI = re.compile(r"^\s*M0*(104|106|107|109|140|190)(?![0-9.])", re.IGNORECASE)
+
+
+def convert_mdi(line: str) -> str:
+    """A Marlin heater / fan code typed in MDI, ``M104 S200 T1``, as the
+    user M-code takes it, ``M104 P200 Q1``; every other line, and one
+    already in ``P`` / ``Q`` form (no ``S`` / ``R`` / ``T``), unchanged."""
+    match = _MARLIN_MDI.match(line)
+    if match is None:
+        return line
+    code, comment = _split_comment(line)
+    words = _words(code)
+    m = int(match.group(1))
+    letters = [letter for letter, _ in words]
+    # M107's only word is the fan: Marlin's P is the user M-code's Q.
+    if not any(letter in "SRT" for letter in letters) and not (m == 107 and "P" in letters):
+        return line
+    if letters.count("M") != 1:
+        return line  # another M-code on the line: leave it to LinuxCNC
+    return _remapped(m, words, comment)
+
+
+def _fan_index(words: list[tuple[str, str]]) -> int | None:
+    """Marlin's fan index (``P``, default 0); ``None`` when it is not one."""
+    raw = dict(words).get("P", "0")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return int(value) if value >= 0 and value == int(value) else None
+
+
 def _remapped(m: int, words: list[tuple[str, str]], comment: str) -> str:
     """``M104 S200 T1`` -> ``M104 P200 Q1``; fans: ``M106 S255 P1`` -> ``M106 P255 Q1``."""
     values = dict(words)
@@ -307,6 +355,8 @@ def _remapped(m: int, words: list[tuple[str, str]], comment: str) -> str:
         index = values.get("T")
         value = value if value is not None else values.get("P")
     parts = [f"M{m}"]
+    if m == 106 and value is None:
+        value = "255"  # Marlin: M106 without S is full speed
     if value is not None and m != 107:
         parts.append(f"P{value}")
     if index is not None:
@@ -340,6 +390,6 @@ def needs_conversion(filename: str) -> bool:
 
 
 __all__ = [
-    "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
+    "convert_mdi", "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
     "convert", "needs_conversion", "ngc_name", "read_prestart",
 ]

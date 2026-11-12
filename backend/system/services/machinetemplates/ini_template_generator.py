@@ -225,10 +225,15 @@ def render_ini_template(
         homing_override: The machine homes with a ``[homing_override]``
             routine — ``[TRAJ] NO_FORCE_HOMING = 1`` so the routine's
             moves run before every joint is homed.
-        remaps: ``[RS274NGC] REMAP=`` lines (Marlin heater / fan codes,
-            ``marlin_mcodes``); their subroutines and helper M-codes
-            are the shared files in ``machine_config/m_codes/``.
+        remaps: ``[RS274NGC] REMAP=`` lines. Never M100-M199: LinuxCNC
+            ignores those (user M-code programs; the Marlin codes are
+            files in ``machine_config/m_codes/``, ``marlin_mcodes``).
     """
+    from .marlin_mcodes import USER_MCODE_REMAP
+
+    ignored = [line for line in remaps or [] if USER_MCODE_REMAP.match(line)]
+    if ignored:
+        raise ValueError(f"LinuxCNC ignores a REMAP of M100-M199 (user M-codes): {ignored}")
     tools = tools or []
     mdi_commands = mdi_commands or []
     joint_count = _joint_count(axes)
@@ -268,7 +273,7 @@ def render_ini_template(
         "PARAMETER_FILE = linuxcnc.var",
         f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
         # ``o<name> call`` (macros / probing cycles) looks subroutines up
-        # here; m_codes/ holds the shared Marlin remaps and g28.ngc.
+        # here; m_codes/ holds g28.ngc (and the Marlin user M-codes).
         f"SUBROUTINE_PATH = {_posix(paths.MACROS_DIR)}:{_posix(paths.M_CODES_DIR)}"
         + (f":{SUBROUTINES_DIR}" if mdi_commands else ""),
         *(remaps or []),

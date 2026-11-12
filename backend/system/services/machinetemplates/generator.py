@@ -75,7 +75,6 @@ from services.machineconfig import AxisBuilder, AxisMappingPolicy
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 from .ini_template_generator import SUBROUTINES_DIR, render_ini_template
-from .marlin_mcodes import marlin_remaps
 
 logger = logging.getLogger("backend.services.machinetemplates")
 
@@ -471,9 +470,9 @@ def _write_machine(
     """Every file of the machine, into the cleared ``configs_dir``."""
     # [input_pin] edges: halui MDI commands calling generated subroutines.
     input_commands = mdi_commands(payload.get("input_pins") or [])
-    # Marlin's heater / fan M-codes: REMAP lines (the files are static,
-    # machine_config/m_codes/).
-    remaps = marlin_remaps(payload)
+    # Marlin's heater / fan M-codes need nothing here: they are user
+    # M-code programs in machine_config/m_codes/ (USER_M_PATH), see
+    # marlin_mcodes.
 
     # 1. Verbatim source copy (provenance).
     (configs_dir / "machine.cfg").write_bytes(source.read_bytes())
@@ -497,7 +496,6 @@ def _write_machine(
             # moves before every joint is homed.
             homing_override=isinstance(payload.get("homing_override"), dict)
             or isinstance(payload.get("z_virtual_endstop"), dict),
-            remaps=remaps,
         ),
         encoding="utf-8",
     )

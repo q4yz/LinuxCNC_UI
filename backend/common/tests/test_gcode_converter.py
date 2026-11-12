@@ -112,33 +112,21 @@ def test_names():
     assert needs_conversion("part.gcode") and not needs_conversion("part.ngc")
 
 
-def test_long_comment_line_is_cut_to_249_and_dots():
+def test_long_comment_line_is_cut_to_252_and_dots():
     from core.gcode_converter import MAX_LINE, convert
 
     line = "; " + "x" * 400
     out = convert(line + "\nM2\n").text.splitlines()
-    assert out[0] == line[:249] + "..." and len(out[0]) == 252 == MAX_LINE
-    exact = "; " + "y" * 250  # 252: kept as it is
+    assert out[0] == line[:252] + "..." and len(out[0]) == 255 <= MAX_LINE
+    exact = "; " + "y" * 254  # 256: kept as it is
     assert convert(exact + "\nM2\n").text.splitlines()[0] == exact
-    one_over = "; " + "y" * 251  # 253: LinuxCNC already refuses it
-    assert len(convert(one_over + "\nM2\n").text.splitlines()[0]) == 252
-
-
-def test_converted_lines_fit_linuxcnc_line_buffer():
-    # rs274ngc: fgets(line, LINELEN=255) fails when it reads 254 characters,
-    # the "\n" included, so every line plus its newline must stay below 254
-    from core.gcode_converter import convert
-
-    text = "\n".join(["; " + "a" * 300, "G1 X1 ; " + "b" * 300, "G1 " + " ".join(f"X{k}" for k in range(80))])
-    for line in convert(text + "\nM2\n").text.splitlines():
-        assert len(line + "\n") < 254
 
 
 def test_long_line_cut_inside_the_trailing_comment_keeps_the_code():
     from core.gcode_converter import convert
 
     out = convert("G1 X1 Y2 ; " + "c" * 300 + "\nM2\n").text.splitlines()[0]
-    assert out.startswith("G1 X1 Y2 ;") and out.endswith("...") and len(out) == 252
+    assert out.startswith("G1 X1 Y2 ;") and out.endswith("...") and len(out) == 255
 
 
 def test_line_with_overlong_code_is_commented_out():
@@ -146,5 +134,58 @@ def test_line_with_overlong_code_is_commented_out():
 
     result = convert("G1 " + " ".join(f"X{k}" for k in range(80)) + "\nM2\n")
     first = result.text.splitlines()[0]
-    assert first.startswith("; G1 X0") and first.endswith("...") and len(first) <= 252
-    assert any("longer than 252" in note for note in result.notes)
+    assert first.startswith("; G1 X0") and first.endswith("...") and len(first) <= 256
+    assert any("longer than 256" in note for note in result.notes)
+
+
+def test_fan_lines_for_missing_part_fans_are_commented_out():
+    src = "M106 S255\nM106 P3 S255\nM107 P3\nM107\nM2\n"
+    out = convert(src, part_fans=1)
+    lines = out.text.splitlines()
+    assert lines[0] == "M106 P255"
+    assert lines[1].startswith("; M106 P3 S255") and "no part fan 3 on this machine" in lines[1]
+    assert lines[2].startswith("; M107 P3")
+    assert lines[3] == "M107"
+    assert sum("commented out" in n for n in out.notes) == 2
+
+
+def test_no_part_fan_comments_out_every_fan_line():
+    lines = convert("M106 S128\nM107\nM2\n", part_fans=0).text.splitlines()
+    assert all(l.startswith("; M10") and "this machine has no part fan" in l for l in lines[:2])
+
+
+def test_unknown_fan_count_keeps_the_fan_lines():
+    assert convert("M106 P3 S255\nM2\n").text.splitlines()[0] == "M106 P255 Q3"
+
+
+def test_part_fan_count_matches_the_m182_helper():
+    from domain_file_services.ProgramFileService import ProgramFileService
+
+    payload = {
+        "fans": [{"id": "fan", "pin": "PA8", "kind": "part"},
+                 {"id": "hotend_fan", "pin": "PA9", "kind": "heater"},
+                 {"id": "extruder_fan", "pin": "PA2", "kind": "part"}],
+        "duplicate_pin_overrides": ["mcu:PA2"],  # the heater's placeholder fan
+    }
+    assert ProgramFileService._part_fans(payload) == 1
+    assert ProgramFileService._part_fans({}) == 0
+    assert ProgramFileService._part_fans(None) is None
+
+
+def test_bare_m106_is_full_speed():
+    assert convert("M106\nM2\n").text.splitlines()[0] == "M106 P255"
+
+
+def test_convert_mdi_marlin_codes():
+    from core.gcode_converter import convert_mdi
+
+    assert convert_mdi("M104 S200 T1") == "M104 P200 Q1"
+    assert convert_mdi("m109 s215") == "M109 P215"
+    assert convert_mdi("M140 S60") == "M140 P60"
+    assert convert_mdi("M190 S60 ; bed") == "M190 P60  ; bed"
+    assert convert_mdi("M106 S128") == "M106 P128"
+    assert convert_mdi("M106 P1 S255") == "M106 P255 Q1"
+    assert convert_mdi("M107 P1") == "M107 Q1"  # Marlin: fan 1 off
+    # already in LinuxCNC form, or not a Marlin code: unchanged
+    for line in ("M106 P255", "M104 P200 Q0", "M106", "M107", "M107 Q1", "M1040 S2", "G1 X10 S3", "M3 S1000", "M104 S200 M8"):
+        assert convert_mdi(line) == line

@@ -3,9 +3,10 @@
 > **Implemented status:** converter `backend/common/core/gcode_converter.py`
 > (called by `ProgramFileService.save_upload`, so the UI's upload and
 > the OctoPrint-compatible slicer upload both convert), Marlin heater /
-> fan M-codes: INI `REMAP` lines (`backend/system/services/machinetemplates/marlin_mcodes.py`)
-> plus shared static files in `machine_config/m_codes/` (`m104.ngc` …
-> `m107.ngc`, `g28.ngc`, helpers `M180`–`M182`); print start
+> fan M-codes: user M-code programs, shared static files in
+> `machine_config/m_codes/` (`M104` … `M190`, helpers `M180`–`M183`,
+> all one script; `g28.ngc`), no INI `REMAP` (`backend/system/services/machinetemplates/marlin_mcodes.py`);
+> MDI / macro lines converted by `convert_mdi`; print start
 > `backend/machine/services/PrintStartService.py`; MDI `G28` / `G29`
 > (`StateService.run_mdi`); example start macro `macros/start.ngc`. Tests: `backend/common/tests/test_gcode_converter.py`,
 > `backend/system/tests/test_marlin_mcodes.py`, `test_octoprint.py`.
@@ -65,40 +66,43 @@ can be run from the macro panel as well.
 
 ## 3. Marlin M-codes
 
-All files are shared by every machine and live in
-`machine_config/m_codes/` — the INI puts that folder on both
-`USER_M_PATH` and `SUBROUTINE_PATH`. Only the `REMAP` lines are per
-machine: a machine with a heater or a part fan gets (in `[RS274NGC]`)
+**M100–M199 cannot be remapped** in LinuxCNC (2.9): that range is for
+*user M-code programs*, an executable named exactly like the code in
+`[RS274NGC] USER_M_PATH`; a `REMAP=M104 …` line is silently ignored
+("Unknown m code used: M104"). `render_ini_template` refuses one.
+
+So every file is shared by every machine and lives in
+`machine_config/m_codes/`, nothing is generated per machine:
 
 ```ini
 USER_M_PATH = <repo>/machine_config/m_codes
 SUBROUTINE_PATH = <repo>/macros:<repo>/machine_config/m_codes
-REMAP=M104 modalgroup=10 argspec=pq ngc=m104
-REMAP=M109 modalgroup=10 argspec=pq ngc=m109
-REMAP=M140 modalgroup=10 argspec=p ngc=m140
-REMAP=M190 modalgroup=10 argspec=p ngc=m190
-REMAP=M106 modalgroup=10 argspec=pq ngc=m106
-REMAP=M107 modalgroup=10 argspec=q ngc=m107
 ```
 
-A mill or a laser without a heater / fan gets no `REMAP`, so the codes
-stay unknown there and cannot collide with anything; `M180`–`M182` are
-plain user M-codes in the shared folder (keep your own M-codes off those
-numbers). Each `m1xx.ngc` calls a helper (LinuxCNC runs it as a program
-and waits until it exits); the one script reads the running machine's
-`hardware.json` (next to `$INI_FILE_NAME`) and acts by the name it was
-run as:
+`M104`, `M106`, `M107`, `M109`, `M140`, `M190` and the helpers
+`M180`–`M183` are copies of one executable script (keep your own
+M-codes off those numbers). LinuxCNC runs it as a program with `P` and
+`Q` as its arguments (`-1` for a word not given) and waits until it
+exits; it reads the running machine's `hardware.json` (next to
+`$INI_FILE_NAME`) and acts by the name it was run as:
 
-| Helper | Does |
+| Code | Does |
 |---|---|
+| `M104 P<°C> [Q<extruder>]` / `M109 …` | `M180` / `M181` (no `Q`: extruder 0); no `P`: an error |
+| `M140 P<°C>` / `M190 P<°C>` | `M180` / `M181` with `Q-1` (the bed) |
+| `M106 [P<0-255>] [Q<fan>]` | `M182` (no `P`: 255, Marlin's full speed; no `Q`: fan 0) |
+| `M107 [Q<fan>]` | `M182 P0` |
 | `M180 P<°C> Q<heater>` | heater target through the machine backend (`POST /api/v1/modules/tools/tools/<id>/target`) |
 | `M181 P<°C> Q<heater>` | the same, then waits until `webgui.<sensor>` (`halcmd getp`) is within 2 °C below it (30 min timeout) |
 | `M182 P<0-255> Q<fan>` | a part fan in % (`PUT /api/v1/modules/io/<fan>`) |
 
 `Q`: extruder index (0 = first), `-1` = bed; fans: index of the part
 fans in declaration order (a heater's placeholder fan, which shares its
-pin, is never one).
+pin, is never one). A machine without the heater / fan named fails the
+code with "this machine has no …".
 
-The remapped codes take `P` / `Q`, not Marlin's `S` / `T`: in LinuxCNC
-an `S` word also sets the spindle speed. Uploads are converted; in MDI
-and macros write `M104 P215`, `M190 P60`, `M106 P255`.
+A user M-code takes `P` / `Q` only, not Marlin's `S` / `T` (in LinuxCNC
+an `S` word also sets the spindle speed). Uploads are converted, and so
+are MDI and macro lines (`convert_mdi`): `M104 S215 T0` -> `M104 P215 Q0`,
+`M106 S128` -> `M106 P128`, `M107 P1` -> `M107 Q1`; a line already in
+`P` / `Q` form is sent as it is.

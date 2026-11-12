@@ -1,61 +1,29 @@
 """Marlin heater / fan M-codes for LinuxCNC (`.agent/component/gcode_upload.md` § 3).
 
 LinuxCNC does not know ``M104`` (hotend), ``M109`` (hotend, wait),
-``M140`` / ``M190`` (bed), ``M106`` / ``M107`` (fan). A machine with a
-heater or a part fan gets them as INI ``REMAP`` lines; everything else is
-static and shared by every machine, in ``machine_config/m_codes/``
-(``USER_M_PATH`` and ``SUBROUTINE_PATH``):
+``M140`` / ``M190`` (bed), ``M106`` / ``M107`` (fan). It cannot REMAP
+them either: M100-M199 are reserved for *user M-code programs* — an
+executable named exactly like the code in ``[RS274NGC] USER_M_PATH``
+(``machine_config/m_codes/``); a ``REMAP=M104`` line is silently
+ignored ("Unknown m code used: M104"). So the six codes are files there,
+copies of the helper script (``M180`` ... ``M183``) that does what its
+name says, reading the running machine's ``hardware.json`` — shared by
+every machine, nothing is generated per machine. On a machine without a
+heater or fan the script fails with "this machine has no ...".
 
-* ``m104.ngc`` ... ``m107.ngc`` — the remap subroutines;
-* ``M180`` / ``M181`` / ``M182`` — helper user M-codes they call (set a
-  heater target / set and wait / set a fan), reading the running
-  machine's ``hardware.json``.
-
-Only this machine's ``REMAP`` lines differ: a machine without a heater
-or part fan (a mill, a laser without a fan) gets none, so ``M104`` /
-``M106`` stay unknown there, as before.
-
-The remapped codes take ``P`` / ``Q``: an ``S`` word would also set the
-spindle speed. Uploaded files are converted (``core.gcode_converter``:
-``M104 S200 T1`` -> ``M104 P200 Q1``); type ``P`` in MDI and macros.
+A user M-code only gets ``P`` and ``Q``: an uploaded file is converted
+(``core.gcode_converter``: ``M104 S200 T1`` -> ``M104 P200 Q1``) and so
+is a Marlin code typed in MDI (``StateService.mdi``).
 """
 from __future__ import annotations
 
-from typing import Any
+import re
 
-from mappers.machineconfig import PinStringMapper
+#: Marlin's codes, user M-code programs in ``machine_config/m_codes/``.
+MARLIN_USER_MCODES = ("M104", "M106", "M107", "M109", "M140", "M190")
 
-
-def _has_heater(payload: dict[str, Any], kind: str) -> bool:
-    return any(isinstance(t, dict) and t.get("type") == kind for t in payload.get("tools") or [])
-
-
-def _has_part_fan(payload: dict[str, Any]) -> bool:
-    """A commandable part fan. A heater's placeholder fan shares the
-    heater's own pin (``duplicate_pin_overrides``) and does not count —
-    the helper never drives it either."""
-    shared = {str(p) for p in payload.get("duplicate_pin_overrides") or []}
-    for fan in payload.get("fans") or []:
-        if not isinstance(fan, dict) or fan.get("kind", "part") != "part":
-            continue
-        try:
-            if PinStringMapper.from_string(str(fan.get("pin") or "")).qualified not in shared:
-                return True
-        except ValueError:
-            continue
-    return False
+#: A REMAP LinuxCNC ignores: M100-M199 are user M-code programs.
+USER_MCODE_REMAP = re.compile(r"^\s*REMAP\s*=\s*M1\d\d\b", re.IGNORECASE)
 
 
-def marlin_remaps(payload: dict[str, Any]) -> list[str]:
-    """``[RS274NGC] REMAP=`` lines for ``payload`` (empty: no heater, no fan)."""
-    remaps: list[str] = []
-    if _has_heater(payload, "extruder"):
-        remaps += ["REMAP=M104 modalgroup=10 argspec=pq ngc=m104", "REMAP=M109 modalgroup=10 argspec=pq ngc=m109"]
-    if _has_heater(payload, "heated_bed"):
-        remaps += ["REMAP=M140 modalgroup=10 argspec=p ngc=m140", "REMAP=M190 modalgroup=10 argspec=p ngc=m190"]
-    if _has_part_fan(payload):
-        remaps += ["REMAP=M106 modalgroup=10 argspec=pq ngc=m106", "REMAP=M107 modalgroup=10 argspec=q ngc=m107"]
-    return remaps
-
-
-__all__ = ["marlin_remaps"]
+__all__ = ["MARLIN_USER_MCODES", "USER_MCODE_REMAP"]
