@@ -10,7 +10,7 @@ from pathlib import Path
 
 from MachineConfigParser import MachineConfigParser
 from services.machineconfig.hardware_json_generator import build_hardware_json
-from services.machinetemplates.marlin_mcodes import marlin_remaps
+from services.machinetemplates.marlin_mcodes import MARLIN_USER_MCODES, USER_MCODE_REMAP
 
 PRINTER = open("tests/fixtures/profiles/full_klipper.cfg").read()
 M_CODES = Path(__file__).resolve().parents[3] / "machine_config" / "m_codes"
@@ -21,29 +21,32 @@ def _payload(cfg=PRINTER):
     return build_hardware_json(MachineConfigParser().parse_string(cfg), "m")
 
 
-def test_remaps_for_a_printer():
-    assert marlin_remaps(_payload()) == [
-        "REMAP=M104 modalgroup=10 argspec=pq ngc=m104",
-        "REMAP=M109 modalgroup=10 argspec=pq ngc=m109",
-        "REMAP=M140 modalgroup=10 argspec=p ngc=m140",
-        "REMAP=M190 modalgroup=10 argspec=p ngc=m190",
-        "REMAP=M106 modalgroup=10 argspec=pq ngc=m106",
-        "REMAP=M107 modalgroup=10 argspec=q ngc=m107",
-    ]
-
-
-def test_none_for_a_mill():
-    assert marlin_remaps(_payload(MILL)) == []
-
-
-def test_shared_files_exist():
-    for name in ("m104.ngc", "m109.ngc", "m140.ngc", "m190.ngc", "m106.ngc", "m107.ngc", "g28.ngc"):
-        assert (M_CODES / name).is_file(), name
-    for name in ("M180", "M181", "M182", "M183"):
-        helper = M_CODES / name
-        assert helper.is_file() and os.access(helper, os.X_OK), name
-    assert "M181 P#<temp> Q-1" in (M_CODES / "m190.ngc").read_text()
+def test_marlin_codes_are_executable_user_mcodes():
+    """LinuxCNC 2.9 cannot REMAP M100-M199: each Marlin code is a user
+    M-code program, a copy of the helper script."""
+    helper = (M_CODES / "M180").read_bytes()
+    for name in (*MARLIN_USER_MCODES, "M180", "M181", "M182", "M183"):
+        path = M_CODES / name
+        assert path.is_file() and os.access(path, os.X_OK), name
+        assert path.read_bytes() == helper, f"{name} is not the same script as M180"
+    for gone in ("m104.ngc", "m106.ngc", "m107.ngc", "m109.ngc", "m140.ngc", "m190.ngc"):
+        assert not (M_CODES / gone).exists(), gone
     assert "#<_ini[UI_HOME]X>" in (M_CODES / "g28.ngc").read_text()
+
+
+def test_no_ini_remap_in_the_user_mcode_range():
+    from services.machineconfig import AxisBuilder, AxisMappingPolicy
+    from services.machinetemplates.ini_template_generator import render_ini_template
+
+    axes = AxisBuilder(MachineConfigParser().parse_string(PRINTER), policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+    ini = render_ini_template("m", axes)
+    assert not [line for line in ini.splitlines() if USER_MCODE_REMAP.match(line)]
+    try:
+        render_ini_template("m", axes, remaps=["REMAP=M106 modalgroup=10 argspec=pq ngc=m106"])
+    except ValueError as exc:
+        assert "M100-M199" in str(exc)
+    else:
+        raise AssertionError("a REMAP=M106 was written")
 
 
 def _run_helper(tmp_path, name, *args, payload=None):
@@ -102,3 +105,28 @@ def test_helper_sets_an_led(tmp_path):
     result, _ = _run_helper(tmp_path, "M183", str(0xFF8000), "2", payload=payload)
     assert result["calls"] == [["PUT", "http://127.0.0.1:8000/api/v1/leds/sb",
                                 {"red": 1.0, "green": 128 / 255, "blue": 0.0, "index": 2}]]
+
+
+def test_marlin_names_map_onto_the_helper_actions(tmp_path):
+    """LinuxCNC passes -1 for a P / Q the line did not give."""
+    target = "http://127.0.0.1:8000/api/v1/modules/tools/tools/heater_{}/target"
+    fan = "http://127.0.0.1:8000/api/v1/modules/io/fan"
+    cases = [
+        ("M104", ["215", "-1"], ["POST", target.format("extruder"), {"id": "heater_extruder", "target": 215.0}]),
+        ("M104", ["215", "0"], ["POST", target.format("extruder"), {"id": "heater_extruder", "target": 215.0}]),
+        ("M140", ["60", "-1"], ["POST", target.format("bed"), {"id": "heater_bed", "target": 60.0}]),
+        ("M140", ["60", "0"], ["POST", target.format("bed"), {"id": "heater_bed", "target": 60.0}]),
+        ("M109", ["0", "-1"], ["POST", target.format("extruder"), {"id": "heater_extruder", "target": 0.0}]),
+        ("M190", ["0", "-1"], ["POST", target.format("bed"), {"id": "heater_bed", "target": 0.0}]),
+        ("M106", ["128", "-1"], ["PUT", fan, {"value": 128 / 255 * 100.0}]),
+        ("M106", ["-1", "-1"], ["PUT", fan, {"value": 100.0}]),  # Marlin: no S = full
+        ("M107", ["-1", "-1"], ["PUT", fan, {"value": 0.0}]),
+    ]
+    for name, args, call in cases:
+        result, err = _run_helper(tmp_path, name, *args)
+        assert result == {"code": 0, "calls": [call]}, (name, args, err)
+
+
+def test_marlin_heater_code_needs_a_temperature(tmp_path):
+    result, err = _run_helper(tmp_path, "M104", "-1", "-1")
+    assert result["code"] == 1 and "needs P" in err

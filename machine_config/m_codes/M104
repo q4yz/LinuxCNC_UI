@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Marlin heater / fan M-codes (`.agent/component/gcode_upload.md` § 3).
+
+One script, ten names - the name LinuxCNC runs it as is what it does.
+LinuxCNC 2.9 cannot REMAP M100-M199 (a ``REMAP=M104`` line is ignored):
+that range is for user M-code programs, an executable named like the
+code in ``[RS274NGC] USER_M_PATH``. So Marlin's own codes are this
+script too (``S`` / ``T`` are written as ``P`` / ``Q``: the converter
+and the MDI do that, a user M-code only gets P and Q):
+
+    M104 P<°C> [Q<extruder>]   hotend target                (M180)
+    M109 P<°C> [Q<extruder>]   hotend target, wait          (M181)
+    M140 P<°C>                 bed target                   (M180 Q-1)
+    M190 P<°C>                 bed target, wait             (M181 Q-1)
+    M106 [P<0-255>] [Q<fan>]   part fan, no P = full speed  (M182)
+    M107 [Q<fan>]              part fan off                 (M182 P0)
+
+and the helpers:
+
+    M180 P<°C> Q<heater>   set a heater's target              (M104, M140)
+    M181 P<°C> Q<heater>   set it and wait until it is reached (M109, M190)
+    M182 P<0-255> Q<fan>   set a part fan's speed              (M106, M107)
+    M183 P<0xRRGGBB> Q<chain*100+LED>  an LED colour (SET_LED, M150;
+                           chain: the [neopixel] in order, LED from 1, 0 all)
+
+Q: extruder index (0 = the first [extruder]), -1 = the bed; for fans the
+index of the part fans in declaration order. The heaters and fans are
+read from the running machine's hardware.json (next to its INI), so the
+same files serve every machine. LinuxCNC runs a user M-code as a program
+with P and Q as its arguments (-1 for a word not given) and waits until
+it exits.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+BACKEND = "http://127.0.0.1:8000"
+TOLERANCE_C = 2.0
+TIMEOUT_S = 1800
+
+#: Marlin's name -> (the helper action, a fixed Q or None: take Q).
+MARLIN = {
+    "M104": ("M180", None),
+    "M109": ("M181", None),
+    "M140": ("M180", -1),
+    "M190": ("M181", -1),
+    "M106": ("M182", None),
+    "M107": ("M182", None),
+}
+
+
+def fail(message):
+    print("%s: %s" % (os.path.basename(sys.argv[0]), message), file=sys.stderr)
+    sys.exit(1)
+
+
+def hardware():
+    ini = os.environ.get("INI_FILE_NAME")
+    folders = [os.path.dirname(os.path.abspath(ini))] if ini else []
+    folders.append(os.getcwd())
+    for folder in folders:
+        path = os.path.join(folder, "hardware.json")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fp:
+                return json.load(fp)
+    fail("no hardware.json next to the machine's INI")
+
+
+def heater(payload, index):
+    tools = [t for t in payload.get("tools") or [] if isinstance(t, dict)]
+    if index < 0:
+        found = [t for t in tools if t.get("type") == "heated_bed"]
+        what = "heated bed"
+        index = 0
+    else:
+        found = [t for t in tools if t.get("type") == "extruder"]
+        what = "extruder %d" % index
+    if index >= len(found):
+        fail("this machine has no " + what)
+    return str(found[index]["id"]), str(found[index].get("sensor") or "")
+
+
+def qualified(pin):
+    pin = str(pin or "").lstrip("!^~")
+    return pin if ":" in pin else "mcu:" + pin
+
+
+def part_fans(payload):
+    # A heater's placeholder fan shares the heater's pin: never a target.
+    shared = set(payload.get("duplicate_pin_overrides") or [])
+    return [str(f["id"]) for f in payload.get("fans") or []
+            if isinstance(f, dict) and f.get("id") and f.get("kind", "part") == "part"
+            and qualified(f.get("pin")) not in shared]
+
+
+def request(method, path, body):
+    req = urllib.request.Request(BACKEND + path, data=json.dumps(body).encode("utf-8"), method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read()
+    except OSError as exc:
+        fail("the machine backend did not take it (%s)" % exc)
+
+
+def actual(sensor):
+    out = subprocess.run(["halcmd", "-s", "getp", "webgui." + sensor], capture_output=True, text=True, timeout=5)
+    try:
+        return float(out.stdout.strip())
+    except ValueError:
+        fail("cannot read webgui.%s" % sensor)
+
+
+def main(argv):
+    code = os.path.basename(argv[0]).upper()
+    p = float(argv[1]) if len(argv) > 1 else 0.0
+    q = int(round(float(argv[2]))) if len(argv) > 2 else 0
+    if code in MARLIN:
+        # LinuxCNC passes -1 for a P / Q the line did not give.
+        given_p = len(argv) > 1 and p >= 0
+        action, fixed_q = MARLIN[code]
+        if fixed_q is not None:
+            q = fixed_q
+        elif q < 0:
+            q = 0  # the first extruder / part fan
+        if code == "M107":
+            p = 0.0
+        elif code == "M106" and not given_p:
+            p = 255.0  # Marlin: M106 without S is full speed
+        elif not given_p:
+            fail("%s needs P<°C> (S in Marlin)" % code)
+        code = action
+    payload = hardware()
+    if code == "M183":
+        leds = [l for l in payload.get("leds") or [] if isinstance(l, dict)]
+        chain, index = divmod(q, 100)
+        if not 0 <= chain < len(leds):
+            fail("this machine has no LED chain %d" % chain)
+        color = max(0, min(0xFFFFFF, int(round(p))))
+        body = {"red": (color >> 16 & 255) / 255.0, "green": (color >> 8 & 255) / 255.0, "blue": (color & 255) / 255.0}
+        if index:
+            body["index"] = index
+        request("PUT", "/api/v1/leds/" + str(leds[chain]["id"]), body)
+        return 0
+    if code == "M182":
+        fans = part_fans(payload)
+        if not 0 <= q < len(fans):
+            fail("this machine has no part fan %d" % q)
+        request("PUT", "/api/v1/modules/io/" + fans[q], {"value": max(0.0, min(255.0, p)) / 255.0 * 100.0})
+        return 0
+    if code not in ("M180", "M181"):
+        fail("run as M180, M181, M182 or M183")
+    tool, sensor = heater(payload, q)
+    request("POST", "/api/v1/modules/tools/tools/%s/target" % tool, {"id": tool, "target": max(0.0, p)})
+    if code == "M181" and p > 0 and sensor:
+        deadline = time.monotonic() + TIMEOUT_S
+        while actual(sensor) < p - TOLERANCE_C:  # Marlin M109 S: wait while heating
+            if time.monotonic() > deadline:
+                fail("%s did not reach %.0f C in %d s" % (tool, p, TIMEOUT_S))
+            time.sleep(1.0)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,5 +1,5 @@
 import logging
-from typing import Iterable, Optional, List
+from typing import Any, Dict, Iterable, List, Optional
 from pathlib import Path
 
 from core.gcode_converter import convert, needs_conversion, ngc_name
@@ -49,7 +49,9 @@ class ProgramFileService(FileService):
             self.write_bytes(filename, data, overwrite=True)
             return filename
         names = list(macro_names) if macro_names is not None else self._macro_names()
-        result = convert(data.decode("utf-8", errors="replace"), names, self._led_names())
+        payload = self._machine_payload()
+        result = convert(data.decode("utf-8", errors="replace"), names, self._led_names(payload),
+                         self._part_fans(payload))
         stored = ngc_name(filename)
         self.write_bytes(stored, result.text.encode("utf-8"), overwrite=True)
         logger.info("Converted %s -> %s (%d note(s))", filename, stored, len(result.notes))
@@ -58,14 +60,38 @@ class ProgramFileService(FileService):
         return stored
 
     @staticmethod
-    def _led_names() -> List[str]:
-        """The active machine's ``[neopixel]`` names, in order (``M150`` /
-        ``SET_LED`` -> ``M183``); none without a machine."""
+    def _machine_payload() -> Optional[Dict[str, Any]]:
+        """The active machine's ``hardware.json``; ``None`` without one."""
         import json
 
         try:
             payload = json.loads(paths.default_machine_hardware_json().read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _part_fans(payload: Optional[Dict[str, Any]]) -> Optional[int]:
+        """How many part fans ``M106 P<n>`` can reach — counted like
+        ``machine_config/m_codes/M182`` (a heater's placeholder fan on the
+        heater's own pin does not count); ``None`` without a machine."""
+        if payload is None:
+            return None
+
+        def qualified(pin: object) -> str:
+            text = str(pin or "").lstrip("!^~")
+            return text if ":" in text else "mcu:" + text
+
+        shared = {str(p) for p in payload.get("duplicate_pin_overrides") or []}
+        return sum(1 for f in payload.get("fans") or []
+                   if isinstance(f, dict) and f.get("id") and f.get("kind", "part") == "part"
+                   and qualified(f.get("pin")) not in shared)
+
+    @staticmethod
+    def _led_names(payload: Optional[Dict[str, Any]]) -> List[str]:
+        """The active machine's ``[neopixel]`` names, in order (``M150`` /
+        ``SET_LED`` -> ``M183``); none without a machine."""
+        if payload is None:
             return []
         return [str(led["id"]) for led in payload.get("leds") or [] if isinstance(led, dict) and led.get("id")]
 

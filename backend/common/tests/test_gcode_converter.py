@@ -136,3 +136,56 @@ def test_line_with_overlong_code_is_commented_out():
     first = result.text.splitlines()[0]
     assert first.startswith("; G1 X0") and first.endswith("...") and len(first) <= 256
     assert any("longer than 256" in note for note in result.notes)
+
+
+def test_fan_lines_for_missing_part_fans_are_commented_out():
+    src = "M106 S255\nM106 P3 S255\nM107 P3\nM107\nM2\n"
+    out = convert(src, part_fans=1)
+    lines = out.text.splitlines()
+    assert lines[0] == "M106 P255"
+    assert lines[1].startswith("; M106 P3 S255") and "no part fan 3 on this machine" in lines[1]
+    assert lines[2].startswith("; M107 P3")
+    assert lines[3] == "M107"
+    assert sum("commented out" in n for n in out.notes) == 2
+
+
+def test_no_part_fan_comments_out_every_fan_line():
+    lines = convert("M106 S128\nM107\nM2\n", part_fans=0).text.splitlines()
+    assert all(l.startswith("; M10") and "this machine has no part fan" in l for l in lines[:2])
+
+
+def test_unknown_fan_count_keeps_the_fan_lines():
+    assert convert("M106 P3 S255\nM2\n").text.splitlines()[0] == "M106 P255 Q3"
+
+
+def test_part_fan_count_matches_the_m182_helper():
+    from domain_file_services.ProgramFileService import ProgramFileService
+
+    payload = {
+        "fans": [{"id": "fan", "pin": "PA8", "kind": "part"},
+                 {"id": "hotend_fan", "pin": "PA9", "kind": "heater"},
+                 {"id": "extruder_fan", "pin": "PA2", "kind": "part"}],
+        "duplicate_pin_overrides": ["mcu:PA2"],  # the heater's placeholder fan
+    }
+    assert ProgramFileService._part_fans(payload) == 1
+    assert ProgramFileService._part_fans({}) == 0
+    assert ProgramFileService._part_fans(None) is None
+
+
+def test_bare_m106_is_full_speed():
+    assert convert("M106\nM2\n").text.splitlines()[0] == "M106 P255"
+
+
+def test_convert_mdi_marlin_codes():
+    from core.gcode_converter import convert_mdi
+
+    assert convert_mdi("M104 S200 T1") == "M104 P200 Q1"
+    assert convert_mdi("m109 s215") == "M109 P215"
+    assert convert_mdi("M140 S60") == "M140 P60"
+    assert convert_mdi("M190 S60 ; bed") == "M190 P60  ; bed"
+    assert convert_mdi("M106 S128") == "M106 P128"
+    assert convert_mdi("M106 P1 S255") == "M106 P255 Q1"
+    assert convert_mdi("M107 P1") == "M107 Q1"  # Marlin: fan 1 off
+    # already in LinuxCNC form, or not a Marlin code: unchanged
+    for line in ("M106 P255", "M104 P200 Q0", "M106", "M107", "M107 Q1", "M1040 S2", "G1 X10 S3", "M3 S1000", "M104 S200 M8"):
+        assert convert_mdi(line) == line

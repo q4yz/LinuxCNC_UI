@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
-"""Marlin heater / fan helper M-codes (`.agent/component/gcode_upload.md` § 3).
+"""Marlin heater / fan M-codes (`.agent/component/gcode_upload.md` § 3).
 
-One script, four names - the name LinuxCNC runs it as is what it does:
+One script, ten names - the name LinuxCNC runs it as is what it does.
+LinuxCNC 2.9 cannot REMAP M100-M199 (a ``REMAP=M104`` line is ignored):
+that range is for user M-code programs, an executable named like the
+code in ``[RS274NGC] USER_M_PATH``. So Marlin's own codes are this
+script too (``S`` / ``T`` are written as ``P`` / ``Q``: the converter
+and the MDI do that, a user M-code only gets P and Q):
+
+    M104 P<°C> [Q<extruder>]   hotend target                (M180)
+    M109 P<°C> [Q<extruder>]   hotend target, wait          (M181)
+    M140 P<°C>                 bed target                   (M180 Q-1)
+    M190 P<°C>                 bed target, wait             (M181 Q-1)
+    M106 [P<0-255>] [Q<fan>]   part fan, no P = full speed  (M182)
+    M107 [Q<fan>]              part fan off                 (M182 P0)
+
+and the helpers:
 
     M180 P<°C> Q<heater>   set a heater's target              (M104, M140)
     M181 P<°C> Q<heater>   set it and wait until it is reached (M109, M190)
@@ -13,7 +27,8 @@ Q: extruder index (0 = the first [extruder]), -1 = the bed; for fans the
 index of the part fans in declaration order. The heaters and fans are
 read from the running machine's hardware.json (next to its INI), so the
 same files serve every machine. LinuxCNC runs a user M-code as a program
-with P and Q as its arguments and waits until it exits.
+with P and Q as its arguments (-1 for a word not given) and waits until
+it exits.
 """
 import json
 import os
@@ -25,6 +40,16 @@ import urllib.request
 BACKEND = "http://127.0.0.1:8000"
 TOLERANCE_C = 2.0
 TIMEOUT_S = 1800
+
+#: Marlin's name -> (the helper action, a fixed Q or None: take Q).
+MARLIN = {
+    "M104": ("M180", None),
+    "M109": ("M181", None),
+    "M140": ("M180", -1),
+    "M190": ("M181", -1),
+    "M106": ("M182", None),
+    "M107": ("M182", None),
+}
 
 
 def fail(message):
@@ -93,6 +118,21 @@ def main(argv):
     code = os.path.basename(argv[0]).upper()
     p = float(argv[1]) if len(argv) > 1 else 0.0
     q = int(round(float(argv[2]))) if len(argv) > 2 else 0
+    if code in MARLIN:
+        # LinuxCNC passes -1 for a P / Q the line did not give.
+        given_p = len(argv) > 1 and p >= 0
+        action, fixed_q = MARLIN[code]
+        if fixed_q is not None:
+            q = fixed_q
+        elif q < 0:
+            q = 0  # the first extruder / part fan
+        if code == "M107":
+            p = 0.0
+        elif code == "M106" and not given_p:
+            p = 255.0  # Marlin: M106 without S is full speed
+        elif not given_p:
+            fail("%s needs P<°C> (S in Marlin)" % code)
+        code = action
     payload = hardware()
     if code == "M183":
         leds = [l for l in payload.get("leds") or [] if isinstance(l, dict)]
