@@ -170,3 +170,22 @@ def test_part_fan_count_matches_the_m182_helper():
     assert ProgramFileService._part_fans(payload) == 1
     assert ProgramFileService._part_fans({}) == 0
     assert ProgramFileService._part_fans(None) is None
+
+
+def test_bare_m106_is_full_speed():
+    assert convert("M106\nM2\n").text.splitlines()[0] == "M106 P255"
+
+
+def test_convert_mdi_marlin_codes():
+    from core.gcode_converter import convert_mdi
+
+    assert convert_mdi("M104 S200 T1") == "M104 P200 Q1"
+    assert convert_mdi("m109 s215") == "M109 P215"
+    assert convert_mdi("M140 S60") == "M140 P60"
+    assert convert_mdi("M190 S60 ; bed") == "M190 P60  ; bed"
+    assert convert_mdi("M106 S128") == "M106 P128"
+    assert convert_mdi("M106 P1 S255") == "M106 P255 Q1"
+    assert convert_mdi("M107 P1") == "M107 Q1"  # Marlin: fan 1 off
+    # already in LinuxCNC form, or not a Marlin code: unchanged
+    for line in ("M106 P255", "M104 P200 Q0", "M106", "M107", "M107 Q1", "M1040 S2", "G1 X10 S3", "M3 S1000", "M104 S200 M8"):
+        assert convert_mdi(line) == line

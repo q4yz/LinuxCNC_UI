@@ -8,13 +8,15 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   converter tracks ``M82`` / ``M83`` / ``G90`` / ``G91`` / ``G92 E`` and
   writes the running total, so no ``G92`` offset is ever set. Under
   ``G91`` the A delta is written, like X/Y/Z.
-* ``M104 / M109 / M140 / M190 / M106 / M107`` keep their number (the
-  machine's INI remaps them, `ini_template_generator`), Marlin's
+* ``M104 / M109 / M140 / M190 / M106 / M107`` keep their number (user
+  M-code programs in ``machine_config/m_codes/``: LinuxCNC cannot REMAP
+  M100-M199, ``marlin_mcodes``), Marlin's
   ``S`` / ``R`` (value) and ``T`` / ``P`` (heater / fan index) become
-  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``. An ``M106`` /
-  ``M107`` for a part fan the machine does not have (``part_fans``: the
-  machine has no ``M106`` remap at all without one, and ``M182`` fails
-  for an index past the last) is commented out.
+  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``. A bare ``M106``
+  (full speed) is written ``M106 P255``. An ``M106`` / ``M107`` for a
+  part fan the machine does not have (``part_fans``; the program would
+  fail there: "this machine has no part fan") is commented out.
+  :func:`convert_mdi` does the same for a line typed in MDI.
 * ``G4 S2`` -> ``G4 P2``; ``G4 P500`` (Marlin: ms) -> ``G4 P0.5``.
 * ``M117 text`` -> ``(MSG, text)``.
 * ``G28`` / ``G29`` in the start G-code (before the first extruding
@@ -309,6 +311,28 @@ def _dwell(words: list[tuple[str, str]], comment: str) -> str:
     return f"G4 P{_fmt(seconds)}" + (f"  {comment}" if comment else "")
 
 
+_MARLIN_MDI = re.compile(r"^\s*M0*(104|106|107|109|140|190)(?![0-9.])", re.IGNORECASE)
+
+
+def convert_mdi(line: str) -> str:
+    """A Marlin heater / fan code typed in MDI, ``M104 S200 T1``, as the
+    user M-code takes it, ``M104 P200 Q1``; every other line, and one
+    already in ``P`` / ``Q`` form (no ``S`` / ``R`` / ``T``), unchanged."""
+    match = _MARLIN_MDI.match(line)
+    if match is None:
+        return line
+    code, comment = _split_comment(line)
+    words = _words(code)
+    m = int(match.group(1))
+    letters = [letter for letter, _ in words]
+    # M107's only word is the fan: Marlin's P is the user M-code's Q.
+    if not any(letter in "SRT" for letter in letters) and not (m == 107 and "P" in letters):
+        return line
+    if letters.count("M") != 1:
+        return line  # another M-code on the line: leave it to LinuxCNC
+    return _remapped(m, words, comment)
+
+
 def _fan_index(words: list[tuple[str, str]]) -> int | None:
     """Marlin's fan index (``P``, default 0); ``None`` when it is not one."""
     raw = dict(words).get("P", "0")
@@ -329,6 +353,8 @@ def _remapped(m: int, words: list[tuple[str, str]], comment: str) -> str:
         index = values.get("T")
         value = value if value is not None else values.get("P")
     parts = [f"M{m}"]
+    if m == 106 and value is None:
+        value = "255"  # Marlin: M106 without S is full speed
     if value is not None and m != 107:
         parts.append(f"P{value}")
     if index is not None:
@@ -362,6 +388,6 @@ def needs_conversion(filename: str) -> bool:
 
 
 __all__ = [
-    "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
+    "convert_mdi", "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
     "convert", "needs_conversion", "ngc_name", "read_prestart",
 ]
