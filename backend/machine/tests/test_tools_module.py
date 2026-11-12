@@ -6,7 +6,7 @@ Covers:
   ``/api/v1/modules/tools``.
 * ``POST /spindle`` issues the right M3/M4/M5 string for each
   action and rejects unknown actions with ``400``.
-* ``POST /extruder`` issues ``G91`` → ``G1 E{dist} F{speed}`` →
+* ``POST /extruder`` issues ``G91`` → ``G1 A{dist} F{speed}`` →
   ``G90``, signs ``dist`` correctly for retract, and rejects
   unknown actions with ``400``.
 * Pydantic validators reject out-of-range speeds / distances with
@@ -197,7 +197,7 @@ def test_extruder_extrude_emits_positive_distance(tmp_data_root, clean_env, monk
     # auxiliary framing M-codes that aren't part of the response
     # payload (Issue #64 § 1 behaviour).
     assert body["status"] == "success"
-    assert body["command"] == "G1 E5.0 F300"
+    assert body["command"] == "G1 A5.0 F300"
     assert body["tool_id"] == "extruder_1"
 
 def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env, monkeypatch, tmp_path):
@@ -217,7 +217,7 @@ def test_extruder_retract_inverts_distance_sign(tmp_data_root, clean_env, monkey
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["command"] == "G1 E-2.5 F200"
+    assert body["command"] == "G1 A-2.5 F200"
 
 def test_extruder_rejects_unknown_action(tmp_data_root, clean_env, monkeypatch, tmp_path):
     app = _build_app(tmp_data_root, monkeypatch, tmp_path)

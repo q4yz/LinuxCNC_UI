@@ -11,9 +11,10 @@ export const temperatureUnit = new SelectSetting<TemperatureUnit>(
   TemperatureUnit.CELSIUS,
   [
     { value: TemperatureUnit.CELSIUS, label: "°C" },
+    { value: TemperatureUnit.FAHRENHEIT, label: "°F" },
     { value: TemperatureUnit.KELVIN, label: "K" },
   ],
-  { description: "Chart axis and control boxes. Display-only: K = °C + 273.15.", order: 0 },
+  { description: "Temperature card: chart axis, readings and target boxes. Display-only: °F = °C × 9/5 + 32, K = °C + 273.15.", order: 0 },
 );
 
 export const sensorColors = new SensorColorsSetting(

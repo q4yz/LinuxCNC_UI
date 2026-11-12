@@ -60,7 +60,9 @@ class ExtruderService:
         # applied to ``machine_service`` via the channel's MDI
         # queue; the dispatched ``G1`` is what the dashboard shows.
         machine_service.dispatch_mdi("G91")
-        mdi_command = f"G1 E{distance} F{dto.speed}"
+        # LinuxCNC has no E axis: the extruder is the A axis
+        # (AxisBuilder, the G-code converter's E -> A).
+        mdi_command = f"G1 A{distance} F{dto.speed}"
         machine_service.dispatch_mdi(mdi_command)
         machine_service.dispatch_mdi("G90")
         return mdi_command

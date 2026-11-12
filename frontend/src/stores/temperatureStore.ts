@@ -8,6 +8,7 @@ import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 import { temperatureUnit, sensorColors as sensorColorsSetting } from "../settings/definitions/temperature";
 import { useBaseThreadStore } from "./baseThread";
 import { TemperatureUnit } from "../entities";
+import { celsiusTo } from "../entities/common/Unit";
 import { HeaterReading, type ReadingSet } from "../entities/temperature";
 
 import type { CommandResult } from "../entities";
@@ -106,8 +107,7 @@ export const useTemperatureStore = defineStore(
         function displayTemp(celsius: number | null | undefined): number {
             if (!Number.isFinite(celsius)) return 0;
             const val = celsius as number;
-            const value = unit.value === TemperatureUnit.KELVIN ? val + 273.15 : val;
-            return roundTo(value, 2);
+            return roundTo(celsiusTo(val, unit.value), 2);
         }
 
         /** Persist the display unit (the setting reports failures itself). */

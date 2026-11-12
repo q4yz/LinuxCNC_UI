@@ -7,11 +7,10 @@ import { storeToRefs } from 'pinia'
 import { useTemperatureStore } from '../../stores/temperatureStore'
 import {HeaterControlRequest} from "../../entities/tools/Heater";
 import {TemperatureUnit} from "../../entities";
+import { celsiusTo, temperatureSymbol, toCelsius } from '../../entities/common/Unit'
 import { BaseButton, Icon } from '../../ui/index.ts'
 import BaseCard from '../../ui/BaseCard.vue'
 import BaseInput from '../../ui/BaseInput.vue'
-import SettingSelect from '../../settings/components/SettingSelect.vue'
-import { temperatureUnit } from '../../settings/definitions/temperature'
 import { useDashboardScrollState } from '../../composables/useDashboardScrollState'
 
 
@@ -71,16 +70,17 @@ async function postTarget(toolId: string, target: number) {
 
 const setTemp = async (name: string) => {
   const raw = inputTemps.value[name]
-  const t = parseFloat(String(raw || 0))
+  // typed in the display unit (Settings -> Temperature); the backend takes °C
+  const t = toCelsius(parseFloat(String(raw || 0)), store.unit)
   try {
-    await postTarget(name, t)
+    await postTarget(name, roundTo(t, 2))
   } catch (e) {
     console.error('Failed to set temperature', e)
   }
 }
 
 const turnOff = async (name: string) => {
-  inputTemps.value[name] = 0
+  inputTemps.value[name] = ''
   try {
     await postTarget(name, 0)
   } catch (e) {
@@ -116,19 +116,19 @@ const WINDOW_SECONDS = 30
 // that avoids allocating a fresh closure (and capturing
 // ``unitLabel``) on every single tick for no behavioural gain.
 function unitLabelFor(unit: TemperatureUnit): string {
-  return unit === TemperatureUnit.KELVIN ? 'K' : '°C'
+  return temperatureSymbol(unit)
 }
 
 function yAxisLabelFormatter(value: number | string): string {
   const num = Number(value)
   if (!Number.isFinite(num)) return ''
-  const v = store.unit === TemperatureUnit.KELVIN ? num + 273.15 : num
+  const v = celsiusTo(num, store.unit)
   return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
 }
 
 function tooltipValueFormatter(value: number | string): string {
   const num = Number(value)
-  const v = store.unit === TemperatureUnit.KELVIN ? num + 273.15 : num
+  const v = celsiusTo(num, store.unit)
   return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
 }
 
@@ -151,7 +151,7 @@ const chartOptions = computed(() => {
   Object.keys(temps).forEach((sensorName) => {
     if (visibility[sensorName] === false) return
     const color = store.colorFor(sensorName)
-    const round = (v: number) => roundTo( store.unit === TemperatureUnit.KELVIN ? v + 273.15 : v, 2)
+    const round = (v: number) => roundTo(celsiusTo(v, store.unit), 2)
 
     const actualSamples: { ts: number; val: number }[] = []
     const targetSamples: { ts: number; val: number }[] = []
@@ -261,8 +261,9 @@ const chartOptions = computed(() => {
       splitLine: { lineStyle: { color: '#374151' } },
       name: unitLabel,
       nameTextStyle: { color: '#9CA3AF' },
-      min: 0,
-      max: (value: { max: number }) => Math.max(value.max + 10, 50),
+      // the series are already in the display unit: 0 °C / 50 °C floors
+      min: (value: { min: number }) => Math.min(value.min, roundTo(celsiusTo(0, store.unit), 2)),
+      max: (value: { max: number }) => Math.max(value.max + 10, roundTo(celsiusTo(50, store.unit), 2)),
     },
     series,
   }
@@ -273,28 +274,17 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
 
 <template>
   <BaseCard title="Temperatures" icon="flame" :min-height="600">
-    <!-- Global unit toggle and Cool All -->
-    <div class="mb-3 flex items-center justify-between">
-
-      <div class="flex items-center space-x-2">
-        <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Unit</span>
-        <!-- Same editor as the Settings view: the central ``temperature.unit`` setting. -->
-        <SettingSelect :setting="temperatureUnit" />
-      </div>
-
-      <div class="flex items-center space-x-2">
-        <span class="text-xs uppercase text-gray-400 tracking-wider font-bold">Cool</span>
-        <BaseButton
-            variant="secondary"
-            size="sm"
-            title="Turn off all heaters"
-            @click="turnOffAll"
-        >
-          <Icon name="snowflake" class="mr-1" /><span>All</span>
-        </BaseButton>
-      </div>
-
-    </div>
+    <!-- The display unit is a setting (Settings -> Temperature). -->
+    <template #header-actions>
+      <BaseButton
+          variant="secondary"
+          size="sm"
+          title="Turn off all heaters"
+          @click="turnOffAll"
+      >
+        <Icon name="snowflake" class="mr-1" /><span>Cool all</span>
+      </BaseButton>
+    </template>
 
     <!-- Reading Rows -->
     <div class="flex flex-col space-y-2">
@@ -321,7 +311,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
               class="font-mono text-base sm:text-lg font-bold whitespace-nowrap min-w-[60px] sm:min-w-[80px]"
               :class="data.target !== undefined ? 'text-blue-400' : 'text-green-400'"
           >
-            {{ fmtTemp(data.actual) }}{{ unit === TemperatureUnit.KELVIN ? 'K' : '°C' }}
+            {{ fmtTemp(data.actual) }}{{ temperatureSymbol(unit) }}
           </span>
         </div>
 
@@ -335,7 +325,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
             <div class="hidden md:flex flex-col items-end justify-center mr-2">
               <span class="text-gray-500 text-[10px] uppercase tracking-wider -mb-1">Target</span>
               <span class="font-mono text-sm text-red-400 font-bold">
-                {{ fmtTemp(data.target) }}{{unit === TemperatureUnit.KELVIN ? 'K' : '°C' }}
+                {{ fmtTemp(data.target) }}{{ temperatureSymbol(unit) }}
               </span>
             </div>
 
@@ -345,6 +335,7 @@ const fmtTemp = (v: number | null | undefined) => store.displayTemp(v).toFixed(2
                   v-model="inputTemps[name]"
                   type="number"
                   class="w-20 sm:w-24 text-right text-xs font-mono"
+                  :placeholder="temperatureSymbol(unit)"
                   @keyup.enter="setTemp(String(name))"
               />
               <BaseButton
