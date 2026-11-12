@@ -37,8 +37,8 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   chain = the ``[neopixel]`` in declaration order, LED from 1, 0 = all)
   when the machine has LEDs; a ``SET_LED`` naming no LED is commented out.
 * ``M2`` is appended when the file has no ``M2`` / ``M30``.
-* A line longer than :data:`MAX_LINE` (256) characters is cut to its
-  first 252 and ``...`` (LinuxCNC refuses longer lines). The cut always
+* A line longer than :data:`MAX_LINE` (252) characters is cut to its
+  first 249 and ``...`` (LinuxCNC refuses longer lines). The cut always
   falls in a comment; a line whose *code* is that long is commented out
   instead (a cut move would still run, wrong).
 
@@ -64,9 +64,11 @@ _LINUXCNC_MCODES = frozenset(
 )
 
 #: The longest line LinuxCNC takes; a longer one is cut to
-#: :data:`CUT_AT` characters and ``...``.
-MAX_LINE = 256
-CUT_AT = 252
+#: :data:`CUT_AT` characters and ``...``. rs274ngc reads a line with
+#: ``fgets(line, LINELEN, ...)`` (``LINELEN`` = 255) and raises "Command
+#: too long" once it got 254 characters — and those include the ``\n``.
+MAX_LINE = 252
+CUT_AT = MAX_LINE - 3
 
 #: The header line listing what runs before the program (``read_prestart``).
 PRESTART_MARKER = "; LINUXCNC_UI_PRESTART:"

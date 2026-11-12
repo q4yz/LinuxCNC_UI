@@ -112,21 +112,33 @@ def test_names():
     assert needs_conversion("part.gcode") and not needs_conversion("part.ngc")
 
 
-def test_long_comment_line_is_cut_to_252_and_dots():
+def test_long_comment_line_is_cut_to_249_and_dots():
     from core.gcode_converter import MAX_LINE, convert
 
     line = "; " + "x" * 400
     out = convert(line + "\nM2\n").text.splitlines()
-    assert out[0] == line[:252] + "..." and len(out[0]) == 255 <= MAX_LINE
-    exact = "; " + "y" * 254  # 256: kept as it is
+    assert out[0] == line[:249] + "..." and len(out[0]) == 252 == MAX_LINE
+    exact = "; " + "y" * 250  # 252: kept as it is
     assert convert(exact + "\nM2\n").text.splitlines()[0] == exact
+    one_over = "; " + "y" * 251  # 253: LinuxCNC already refuses it
+    assert len(convert(one_over + "\nM2\n").text.splitlines()[0]) == 252
+
+
+def test_converted_lines_fit_linuxcnc_line_buffer():
+    # rs274ngc: fgets(line, LINELEN=255) fails when it reads 254 characters,
+    # the "\n" included, so every line plus its newline must stay below 254
+    from core.gcode_converter import convert
+
+    text = "\n".join(["; " + "a" * 300, "G1 X1 ; " + "b" * 300, "G1 " + " ".join(f"X{k}" for k in range(80))])
+    for line in convert(text + "\nM2\n").text.splitlines():
+        assert len(line + "\n") < 254
 
 
 def test_long_line_cut_inside_the_trailing_comment_keeps_the_code():
     from core.gcode_converter import convert
 
     out = convert("G1 X1 Y2 ; " + "c" * 300 + "\nM2\n").text.splitlines()[0]
-    assert out.startswith("G1 X1 Y2 ;") and out.endswith("...") and len(out) == 255
+    assert out.startswith("G1 X1 Y2 ;") and out.endswith("...") and len(out) == 252
 
 
 def test_line_with_overlong_code_is_commented_out():
@@ -134,5 +146,5 @@ def test_line_with_overlong_code_is_commented_out():
 
     result = convert("G1 " + " ".join(f"X{k}" for k in range(80)) + "\nM2\n")
     first = result.text.splitlines()[0]
-    assert first.startswith("; G1 X0") and first.endswith("...") and len(first) <= 256
-    assert any("longer than 256" in note for note in result.notes)
+    assert first.startswith("; G1 X0") and first.endswith("...") and len(first) <= 252
+    assert any("longer than 252" in note for note in result.notes)
