@@ -47,7 +47,7 @@ load-bearing, see § 2.
     pid_ki: float // (control: pid) integral gain
     pid_kd: float // (control: pid) derivative gain
     pid_on_measurement: bool // (Optional) proportional-on-measurement, default true
-    max_power: float // (Optional) 0-100 duty ceiling, default 100.0
+    max_power: float // (Optional) duty ceiling 0.0-1.0 (Klipper's meaning), default 1.0 — PID_CVMAX / the watermark gain as max_power * 100 %
     hysteresis: float // (control: watermark) degrees of dead band, default 2.0
 ```
 
@@ -150,7 +150,7 @@ PID_KD    = <parameters.pid_kd>
 PID_SPMIN = <parameters.min_temp>
 PID_SPMAX = <parameters.max_temp>
 PID_CVMIN = 0.0
-PID_CVMAX = <parameters.max_power>
+PID_CVMAX = <parameters.max_power * 100 || 100.0>
 ```
 
 `SPMAX` is the real safety bound: the PID cannot be commanded above it,
@@ -212,7 +212,7 @@ addf comp-<id> servo-thread
 addf conv-<id> servo-thread
 addf duty-<id> servo-thread
 setp comp-<id>.hyst <parameters.hysteresis>
-setp duty-<id>.gain <parameters.max_power || 100.0>
+setp duty-<id>.gain <parameters.max_power * 100 || 100.0>
 
 net <sensor.id>-PV    => comp-<id>.in0
 net <id>-SP           => comp-<id>.in1

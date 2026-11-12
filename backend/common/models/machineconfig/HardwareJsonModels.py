@@ -623,8 +623,14 @@ class Tool(BaseModel):
     pid_kp: float | None = None
     pid_ki: float | None = None
     pid_kd: float | None = None
+    # Klipper's ``max_power`` (0.0-1.0): ``PID_CVMAX`` / the watermark
+    # duty, as a percentage of it. ``None``: full power.
+    max_power: float | None = None
 
-    # ---- Extruder-only, informational ------------------------------ #
+    # ---- Extruder-only ---------------------------------------------- #
+    # Klipper's cold-extrusion guard (°C): no extruder move below it
+    # (``ColdExtrusionGuard``). ``None``: the default 170.
+    min_extrude_temp: float | None = None
     filament_diameter: float | None = None
     nozzle_diameter: float | None = None
 

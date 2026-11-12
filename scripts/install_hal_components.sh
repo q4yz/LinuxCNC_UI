@@ -38,13 +38,16 @@ USER_BIN_DIR="/usr/local/bin"
 # what machine.hal loadrt's (= the source's file name). Each source's
 # own folder is on halcompile's include path, so remora-spi.c's
 # `#include "bcm2835.c"` etc. resolve.
-# Not built: Extruder/Extruder.c (a .comp source, unfinished), Heater/
-# (empty).
+# Not built: Heater/ (empty).
 declare -A SOURCES=(
     [remora-spi]="Remora-spi/remora-spi.c"
     [remora-eth-3.0]="Remora-eth/remora-eth-3.0.c"
     [remora_lpc]="Remora/remora_lpc.c"
     [PIDcontroller]="PIDcontroller/PIDcontroller.c"
+    # The extruder's cold-extrusion guard (min_extrude_temp), generated
+    # HAL loads it for every extruder with a sensor and a joint:
+    #   loadrt extruder names=extruder-<id>
+    [extruder]="Extruder/extruder.comp"
     [nvmpg]="NVMPG/nvmpg.c"
     [PRUencoder]="PRUencoder/PRUencoder.c"
     [rpi-monitor]="RPiMonitor/rpi_monitor.py"
@@ -58,7 +61,7 @@ declare -A SOURCES=(
     #   loadusr -w remora-upload --sync [--spi-cs-pin PC10 -s 1000000] config_mcu.txt
     [remora-upload]="../Tools/remora-upload/remora-upload.c"
 )
-ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller nvmpg PRUencoder rpi-monitor remora-compensation remora-upload)
+ALL=(remora-spi remora-eth-3.0 remora_lpc PIDcontroller extruder nvmpg PRUencoder rpi-monitor remora-compensation remora-upload)
 # LinuxCNC runs as the normal user, so `loadusr remora-upload` does too:
 # it needs the spidev node and — for a GPIO chip select (BTT CB1) — the
 # gpiochip nodes. Raspberry Pi OS already has both groups; reuse them.

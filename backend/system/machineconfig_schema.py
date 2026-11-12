@@ -151,6 +151,8 @@ HEATER_KEYS = frozenset(
         "pid_Kd",
         "min_temp",
         "max_temp",
+        # Klipper's duty-cycle ceiling, 0.0-1.0 (default 1.0).
+        "max_power",
     }
 )
 EXTRUDER_KEYS = frozenset(
@@ -163,6 +165,8 @@ EXTRUDER_KEYS = frozenset(
         "rotation_distance",
         "full_steps_per_rotation",
         "gear_ratio",
+        # Klipper's cold-extrusion guard, °C (default 170).
+        "min_extrude_temp",
         "nozzle_diameter",
         "filament_diameter",
     }

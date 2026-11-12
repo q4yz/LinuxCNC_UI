@@ -161,6 +161,8 @@ class Heater:
     pid_Kd: float | None = None
     min_temp: float | None = None
     max_temp: float | None = None
+    #: Klipper's ``max_power`` (0.0-1.0): the heater's duty-cycle ceiling.
+    max_power: float | None = None
 
 
 @dataclass(slots=True)
@@ -181,6 +183,8 @@ class Extruder(Heater):
     rotation_distance: float | None = None
     full_steps_per_rotation: int | None = None
     gear_ratio: float | None = None
+    #: Klipper's cold-extrusion guard (°C); ``None``: the default 170.
+    min_extrude_temp: float | None = None
     nozzle_diameter: float | None = None
     filament_diameter: float | None = None
 
