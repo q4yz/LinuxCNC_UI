@@ -230,6 +230,7 @@ addf extruder-<id> servo-thread                 # after motion
 setp extruder-<id>.min-extrude-temp <parameters.min_extrude_temp || 170.0>
 net <sensor.id>-PV => extruder-<id>.current-temp
 net <id>-vel-cmd joint.<n>.vel-cmd => extruder-<id>.vel-cmd
+net <id>-homing joint.<n>.homing => extruder-<id>.homing   # homing: no guard
 ```
 
 webgui_connections.hal (halui pins only exist there):
@@ -237,8 +238,10 @@ webgui_connections.hal (halui pins only exist there):
 net <id>-cold-extrude extruder-<id>.cold-extrude => halui.abort
 ```
 
-`cold-extrude` is TRUE while the extruder is commanded to move (extrude
-or retract) below `min-extrude-temp`; `halui.abort` stops the program or
+`cold-extrude` is TRUE once the extruder has been commanded to move
+(extrude or retract) below `min-extrude-temp` for `min-extrude-time`
+(50 ms) — homing sets the position in place, a one-period `vel-cmd`
+spike, and the joint's own homing is ignored; `halui.abort` stops the program or
 MDI move, as Klipper refuses an "extrude below minimum temp", and the
 component prints the error once per stop. An extruder without a sensor
 or a joint gets no guard.

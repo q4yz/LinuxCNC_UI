@@ -12,9 +12,14 @@ or retract) and the hotend reads below `min-extrude-temp`:
     setp extruder-<id>.min-extrude-temp <min_extrude_temp || 170>
     net <sensor>-PV => extruder-<id>.current-temp
     net <id>-vel-cmd joint.<n>.vel-cmd => extruder-<id>.vel-cmd
+    net <id>-homing joint.<n>.homing => extruder-<id>.homing
 
     webgui_connections.hal (halui pins exist only there):
     net <id>-cold-extrude extruder-<id>.cold-extrude => halui.abort
+
+Homing sets the extruder's position in place, a one-period `vel-cmd`
+spike: the component ignores the joint while it homes and only stops a
+move that lasted `min-extrude-time` (50 ms).
 
 `halui.abort` stops the program / MDI move, as Klipper refuses an
 "extrude below minimum temp"; the component prints the error. The motor
@@ -61,6 +66,8 @@ class ExtruderGuardHalMapper:
         fragment.setp.append(f"setp {comp}.min-extrude-temp {min_temp:g}")
         fragment.nets.append(f"net {tool['sensor']}-PV => {comp}.current-temp")
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
+        # homing sets the position in place: no guard meanwhile
+        fragment.nets.append(f"net {tool_id}-homing joint.{joint_number}.homing => {comp}.homing")
         return fragment
 
     @staticmethod

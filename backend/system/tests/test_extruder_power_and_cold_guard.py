@@ -67,6 +67,8 @@ def test_cold_extrusion_guard_in_machine_hal_and_webgui():
     assert "setp extruder-heater_extruder.min-extrude-temp 190" in hal
     assert "net extruder-PV => extruder-heater_extruder.current-temp" in hal
     assert f"net heater_extruder-vel-cmd joint.{joint}.vel-cmd => extruder-heater_extruder.vel-cmd" in hal
+    # homing sets the extruder position in place (a vel-cmd spike): ignored
+    assert f"net heater_extruder-homing joint.{joint}.homing => extruder-heater_extruder.homing" in hal
     webgui = render_webgui_connections(payload).splitlines()
     assert "net heater_extruder-cold-extrude extruder-heater_extruder.cold-extrude => halui.abort" in webgui
     # the guard runs after motion in the servo thread
