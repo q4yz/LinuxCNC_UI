@@ -161,6 +161,8 @@ class AxisBuilder:
         self.graph = graph
         self.policy = policy
         self._next_joint = joint_number_allocator or self._sequential_allocator()
+        # the default numbering is canonical, see ``_number_joints_canonically``
+        self._canonical_numbers = joint_number_allocator is None
         # Cache for axis-by-letter so ``build_axis`` is idempotent
         # within one ``build`` call.
         self._axes: dict[str, Axis] = {}
@@ -217,10 +219,31 @@ class AxisBuilder:
             if letter not in AXIS_ORDER and axis not in ordered:
                 ordered.append(axis)
 
+        if self._canonical_numbers:
+            self._number_joints_canonically(ordered)
         if getattr(self.graph, "z_virtual_endstop", False):
             self._home_z_on_probe(ordered)
         self._negate_gantry_home_sequences(ordered)
         return ordered
+
+    @staticmethod
+    def _number_joints_canonically(axes: list[Axis]) -> None:
+        """Joint numbers in canonical order — every X joint, then Y, Z,
+        the extruder axis A — in declaration order within an axis: the
+        rule ``hardware_json_generator`` stamps on ``hardware.json``,
+        which the HAL (``remora.joint.N``, the CoreXY motors) uses.
+
+        The allocator numbered them in the order the ``[stepper_*]``
+        sections are written: a profile with ``[stepper_y]`` before
+        ``[stepper_x]`` got ``[JOINT_0]`` with stepper_y's SCALE,
+        limits, homing and FERROR while ``remora.joint.0`` is
+        stepper_x's motor — invisible until the two differ (CoreXY with
+        16 and 8 microsteps moved wrong)."""
+        n = 0
+        for axis in axes:
+            for joint in axis.joints:
+                joint.joint_number = n
+                n += 1
 
     def _home_z_on_probe(self, axes: list[Axis]) -> None:
         """Z on the probe (``probe:z_virtual_endstop``): LinuxCNC's own
