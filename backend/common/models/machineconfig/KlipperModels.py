@@ -103,6 +103,12 @@ class Stepper:
     homing_speed: float | None = None
     second_homing_speed: float | None = None
     homing_retract_dist: float | None = None
+    #: Klipper's ``homing_positive_dir``; ``None``: from which end of
+    #: travel ``position_endstop`` is at.
+    homing_positive_dir: bool | None = None
+    #: ``gear_ratio: 50:17`` as the product of its ratios (motor turns per
+    #: output turn); ``None``: no gearing.
+    gear_ratio: float | None = None
     # Class-B (Remora) position-loop tuning: `setp remora.joint.N
     # .deadband` / `.pgain`. Real reference values, not invented —
     # `machine_config/example/ender3/ender3.hal` sets `deadband` on
@@ -173,6 +179,8 @@ class Extruder(Heater):
     enable_pin: str | None = None
     microsteps: int | None = None
     rotation_distance: float | None = None
+    full_steps_per_rotation: int | None = None
+    gear_ratio: float | None = None
     nozzle_diameter: float | None = None
     filament_diameter: float | None = None
 

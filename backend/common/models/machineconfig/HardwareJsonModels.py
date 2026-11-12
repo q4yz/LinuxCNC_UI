@@ -186,7 +186,12 @@ class Stepper(BaseModel):
     # 0.9deg one). Carried so the SCALE formula is reproducible from
     # this file alone instead of assuming the 200-step default.
     full_steps_per_rotation: int | None = None
+    # Klipper's gear_ratio as one number (motor turns per output turn).
+    gear_ratio: float | None = None
     homing_speed: float | None = None
+    second_homing_speed: float | None = None
+    homing_retract_dist: float | None = None
+    homing_positive_dir: bool | None = None
     # Class-B (Remora) position-loop tuning — `setp remora.joint.N
     # .deadband` / `.pgain`. No class-A equivalent (no such loop to
     # tune); real values from the reference config, not invented

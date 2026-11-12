@@ -123,6 +123,10 @@ STEPPER_KEYS = frozenset(
         # used by a Z homed on the probe (probe:z_virtual_endstop).
         "second_homing_speed",
         "homing_retract_dist",
+        # Klipper's homing direction (default: from position_endstop's
+        # end of travel) and gear reduction ("50:17", "80:16, 3:1").
+        "homing_positive_dir",
+        "gear_ratio",
         # Class-B (Remora) per-joint position-loop tuning — real,
         # optional `setp remora.joint.N.*` knobs the reference config
         # actually uses (`machine_config/example/ender3/ender3.hal`:
@@ -157,6 +161,8 @@ EXTRUDER_KEYS = frozenset(
         "enable_pin",
         "microsteps",
         "rotation_distance",
+        "full_steps_per_rotation",
+        "gear_ratio",
         "nozzle_diameter",
         "filament_diameter",
     }

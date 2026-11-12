@@ -16,7 +16,17 @@ endstop_pin: string // (Optional on tandem joints) Endstop input pin
 position_min: float // (Optional) Minimum limit, default 0.0
 position_max: float // Maximum limit
 position_endstop: float // Where the endstop is physically located
+gear_ratio: string // (Optional) Klipper's "50:17" (motor turns : output turn), chained "80:16, 3:1"; rotation_distance is then per output turn
+homing_speed: float // (Optional) mm/s, HOME_SEARCH_VEL, default 10
+second_homing_speed: float // (Optional) mm/s, HOME_LATCH_VEL, default homing_speed
+homing_retract_dist: float // (Optional) mm, HOME = position_endstop backed off by this, default 5
+homing_positive_dir: bool // (Optional) home towards +; default from which end of travel position_endstop is at
 ```
+
+Every `[stepper_*]` takes all of them (X, Y, Z, gantry motors; a gantry
+motor without its own falls back to its axis's first stepper). A Z homed
+on the probe uses `homing_speed` / `second_homing_speed` /
+`homing_retract_dist` its own way (`probe.md`).
 
 ## 2. UI ABSTRACTION (hardware.json)
 
@@ -46,7 +56,7 @@ position_endstop: float // Where the endstop is physically located
         "full_steps_per_rotation": { "type": "integer", "value": "<parsed_value || 200>" }
       },
       "computed": {
-        "scale": { "type": "float", "formula": "(full_steps_per_rotation * microsteps) / rotation_distance" }
+        "scale": { "type": "float", "formula": "(full_steps_per_rotation * microsteps * gear_ratio) / rotation_distance" }
       }
     }
   ]
@@ -64,9 +74,11 @@ MIN_LIMIT = <axes.position_min>
 # Generate one for each item in the "joints" array
 [JOINT_<joints.joint_number>]
 TYPE = LINEAR
-SCALE = <joints.computed.scale>
-HOME = <parent_axis.position_endstop>
+SCALE = <microsteps * full_steps_per_rotation * gear_ratio / rotation_distance, negative for a ! dir_pin>
+HOME = <position_endstop -/+ homing_retract_dist, away from the switch>
 HOME_OFFSET = <parent_axis.position_endstop>
+HOME_SEARCH_VEL = <±homing_speed, + with homing_positive_dir>
+HOME_LATCH_VEL = <±second_homing_speed (default homing_speed), same sign>
 MIN_LIMIT = <parent_axis.position_min>
 MAX_LIMIT = <parent_axis.position_max>
 STEPGEN_MAXACCEL = 0 # Calculate based on machine defaults

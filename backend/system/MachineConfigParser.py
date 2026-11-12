@@ -1082,6 +1082,8 @@ class MachineConfigParser:
             homing_speed=self._optional_float(section_name, section, "homing_speed"),
             second_homing_speed=self._optional_float(section_name, section, "second_homing_speed"),
             homing_retract_dist=self._optional_float(section_name, section, "homing_retract_dist"),
+            homing_positive_dir=self._strict_bool(section_name, section, "homing_positive_dir"),
+            gear_ratio=self._gear_ratio(section_name, section),
             deadband=self._optional_float(section_name, section, "deadband"),
             pgain=self._optional_float(section_name, section, "pgain"),
         )
@@ -1123,6 +1125,10 @@ class MachineConfigParser:
             rotation_distance=self._optional_float(
                 section_name, section, "rotation_distance"
             ),
+            full_steps_per_rotation=self._optional_int(
+                section_name, section, "full_steps_per_rotation"
+            ),
+            gear_ratio=self._gear_ratio(section_name, section),
             nozzle_diameter=self._optional_float(
                 section_name, section, "nozzle_diameter"
             ),
@@ -1982,6 +1988,32 @@ class MachineConfigParser:
             return int(value)
         except ValueError as exc:
             raise InvalidValueError(section_name, key, value, "an integer") from exc
+
+    def _strict_bool(self, section_name: str, section: configparser.SectionProxy, key: str) -> bool | None:
+        value = self._optional_bool(section, key)
+        if value is None and self._optional_string(section, key) is not None:
+            raise InvalidValueError(section_name, key, str(section[key]), "true or false")
+        return value
+
+    def _gear_ratio(self, section_name: str, section: configparser.SectionProxy) -> float | None:
+        """Klipper's ``gear_ratio: 50:17`` (or ``80:16, 3:1``, chained) as
+        the product of the ratios — motor turns per output turn."""
+        raw = self._optional_string(section, "gear_ratio")
+        if raw is None:
+            return None
+        ratio = 1.0
+        for pair in raw.split(","):
+            parts = pair.split(":")
+            try:
+                if len(parts) != 2:
+                    raise ValueError
+                a, b = float(parts[0]), float(parts[1])
+            except ValueError as exc:
+                raise InvalidValueError(section_name, "gear_ratio", raw, "<input>:<output>, e.g. 50:17") from exc
+            if a <= 0 or b <= 0:
+                raise InvalidValueError(section_name, "gear_ratio", raw, "ratios above 0")
+            ratio *= a / b
+        return ratio
 
     @staticmethod
     def _optional_bool(
