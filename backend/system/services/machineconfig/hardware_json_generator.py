@@ -431,6 +431,8 @@ def _tool_payload_from_heater(heater_section: str, h) -> dict[str, Any]:
         "pid_kp": _fmt_float(getattr(h, "pid_Kp", None)),
         "pid_ki": _fmt_float(getattr(h, "pid_Ki", None)),
         "pid_kd": _fmt_float(getattr(h, "pid_Kd", None)),
+        "max_power": _fmt_float(getattr(h, "max_power", None)),
+        "min_extrude_temp": _fmt_float(getattr(h, "min_extrude_temp", None)),
         "filament_diameter": _fmt_float(getattr(h, "filament_diameter", None)),
         "nozzle_diameter": _fmt_float(getattr(h, "nozzle_diameter", None)),
     }

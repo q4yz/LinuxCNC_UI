@@ -26,6 +26,7 @@ from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
+from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
 from .components.ZTiltHalMapper import ZTiltWebguiMapper
 from .components.LedHalMapper import LedWebguiMapper
@@ -120,6 +121,9 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
+            # halui.abort exists only once halui runs: the guard's other half.
+            if guarded_joint(payload, tool) is not None:
+                lines.extend(ExtruderGuardHalMapper.webgui_lines(tool))
     for led in payload.get("leds") or []:
         if isinstance(led, dict):
             lines.extend(LedWebguiMapper.to_lines(led))

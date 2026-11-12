@@ -27,6 +27,7 @@ from .components.BedMeshHalMapper import BedMeshHalMapper
 from .components.CoreXyHalMapper import CoreXyHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
+from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
 from .components.IoPinHalMapper import InputPinHalMapper, OutputPinHalMapper, halpin_sets
 from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
@@ -239,6 +240,10 @@ class HalAssembler:
             sensor = self._sensors_by_id.get(tool.get("sensor"))
             fan = self._fans_by_id.get(tool.get("fan"))
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
+            # An extruder's cold-extrusion guard (min_extrude_temp).
+            joint = guarded_joint(self._payload, tool)
+            if joint is not None:
+                fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint))
         return fragments
 
     def _sensor_fragments(self) -> list[HalFragment]:

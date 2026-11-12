@@ -92,7 +92,7 @@ def test_watermark_loop_converts_the_comparator_bit_to_a_duty_float():
 
 
 def test_watermark_duty_ceiling_honours_max_power():
-    heater = dict(BED, control="watermark", max_power=80.0)
+    heater = dict(BED, control="watermark", max_power=0.8)  # Klipper: 0.0-1.0
     fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
     assert "setp duty-heater_bed.gain 80.0" in fragment.setp
 

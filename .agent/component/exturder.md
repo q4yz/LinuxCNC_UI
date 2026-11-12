@@ -26,10 +26,15 @@
 > sequence (`[JOINT_3]` after X/Y/Z claim 0/1/2). The matching
 > `[<HEATER_SECTION>]` PID block for the thermal half was also missing
 > from `machine.ini` entirely until now — see `heater.md`'s own status
-> note. **Not implemented:** the § 3 cold-extrusion guard (`wcomp`/
-> `and2` gating `enable-safe`) — an extruder's raw `j<n>enable` reaches
-> the hardware unconditionally today, so this is a real safety gap
-> versus what's documented here.
+> note. **Cold-extrusion guard:** the Remora `extruder` component
+> (Remora-m8p `LinuxCNC/Components/Extruder/extruder.comp`,
+> `ExtruderGuardHalMapper`) — not the § 3 enable gate below: a disabled
+> stepper would let LinuxCNC's commanded position run away from the real
+> one. It raises `cold-extrude` while `joint.N.vel-cmd` moves the extruder
+> below `min_extrude_temp`; `webgui_connections.hal` nets that to
+> `halui.abort`, stopping the program / MDI move like Klipper's "extrude
+> below minimum temp". `max_power` (0.0-1.0) is the heater's duty
+> ceiling (`PID_CVMAX`, the watermark `scale.gain`, in %).
 
 **Instruction:** Parse the user's `.cfg` text for blocks matching the syntax below.
 **Component ID Format:** `[extruder]` / `[extruder<index>]`, emitted as
@@ -48,7 +53,8 @@ motion joint, so it inherits the heater id rule (`heater.md` § 2).
     full_steps_per_rotation: integer // (Optional) default 200
     gear_ratio: string // (Optional) e.g. "50:17" for a geared extruder
     axis_letter: string // (Optional) LinuxCNC axis to expose it as, default "A"
-    min_extrude_temp: float // (Optional) cold-extrusion guard, default 170.0
+    min_extrude_temp: float // (Optional) cold-extrusion guard, °C, default 170.0 (the Remora extruder component)
+    max_power: float // (Optional) heater duty ceiling 0.0-1.0, default 1.0 (Klipper's meaning)
     filament_diameter: float // (Optional) mm, default 1.75, UI only
     nozzle_diameter: float // (Optional) mm, UI only
     # --- Heating (identical to [heater_*], see heater.md) ---
@@ -213,30 +219,29 @@ net j<n>enable  joint.<n>.amp-enable-out => remora.joint.<n>.enable
 # nozzle oscillates badly.
 
 # ------------------------------------------------------------------
-# COLD-EXTRUSION GUARD
+# COLD-EXTRUSION GUARD (Remora `extruder` component, ExtruderGuardHalMapper)
 # ------------------------------------------------------------------
 # Extruding below ~170 C strips the filament and jams the drive gear.
-# Gate the motor enable on the nozzle being up to temperature.
-loadrt wcomp names=wcomp-<id>-hot
-addf wcomp-<id>-hot servo-thread
-setp wcomp-<id>-hot.min <parameters.min_extrude_temp || 170.0>
-setp wcomp-<id>-hot.max <parameters.max_temp>
-net <sensor.id>-PV  => wcomp-<id>-hot.in
-net <id>-hot-enough <= wcomp-<id>-hot.out
-
-loadrt and2 names=and-<id>-extrude-ok
-addf and-<id>-extrude-ok servo-thread
-net <id>-hot-enough    => and-<id>-extrude-ok.in0
-net j<n>enable         => and-<id>-extrude-ok.in1
-net <id>-enable-safe   <= and-<id>-extrude-ok.out
+# The motor enable is NOT gated (a disabled stepper would let the
+# commanded position run away from the real one): the component watches
+# the extruder joint's commanded velocity instead and stops the move.
+loadrt extruder names=extruder-<id>
+addf extruder-<id> servo-thread                 # after motion
+setp extruder-<id>.min-extrude-temp <parameters.min_extrude_temp || 170.0>
+net <sensor.id>-PV => extruder-<id>.current-temp
+net <id>-vel-cmd joint.<n>.vel-cmd => extruder-<id>.vel-cmd
 ```
 
-If the guard is emitted, the enable that reaches the hardware must be
-`<id>-enable-safe`, not the raw `j<n>enable` — otherwise the guard is
-wired but bypassed. On class B that means feeding
-`remora.joint.<n>.enable` from the safe signal; on class A it is what
-the router binds to `enable_pin`. `E_GUARD_BYPASSED` if both exist and
-the raw one is the one connected.
+webgui_connections.hal (halui pins only exist there):
+```hal
+net <id>-cold-extrude extruder-<id>.cold-extrude => halui.abort
+```
+
+`cold-extrude` is TRUE while the extruder is commanded to move (extrude
+or retract) below `min-extrude-temp`; `halui.abort` stops the program or
+MDI move, as Klipper refuses an "extrude below minimum temp", and the
+component prints the error once per stop. An extruder without a sensor
+or a joint gets no guard.
 
 webgui_connections.hal
 ```hal

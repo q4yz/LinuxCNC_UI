@@ -174,7 +174,8 @@ def _render_heater_section(tool: Dict[str, Any]) -> List[str]:
         "PID_SPMIN = 0.0",
         f"PID_SPMAX = {_fmt(max_temp if max_temp is not None else 0.0)}",
         "PID_CVMIN = 0.0",
-        f"PID_CVMAX = {_fmt(_DEFAULT_PID_CVMAX)}",
+        # Klipper's max_power (0.0-1.0) as the PID's 0-100 % ceiling.
+        f"PID_CVMAX = {_fmt(_DEFAULT_PID_CVMAX * float(tool.get('max_power') or 1.0))}",
         "",
     ]
 

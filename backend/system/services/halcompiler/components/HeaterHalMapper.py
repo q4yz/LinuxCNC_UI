@@ -163,7 +163,8 @@ class HeaterHalMapper:
         conv = f"conv-{heater_id}"
         duty = f"duty-{heater_id}"
         hysteresis = heater.get("hysteresis", _DEFAULT_HYSTERESIS)
-        max_power = heater.get("max_power", _DEFAULT_MAX_POWER)
+        # Klipper's max_power is 0.0-1.0; the duty channel is 0-100 %.
+        max_power = _DEFAULT_MAX_POWER * float(heater.get("max_power") or 1.0)
 
         fragment.loadrt.extend(
             [

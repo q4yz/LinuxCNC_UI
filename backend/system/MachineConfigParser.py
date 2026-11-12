@@ -1129,6 +1129,7 @@ class MachineConfigParser:
                 section_name, section, "full_steps_per_rotation"
             ),
             gear_ratio=self._gear_ratio(section_name, section),
+            min_extrude_temp=self._optional_float(section_name, section, "min_extrude_temp"),
             nozzle_diameter=self._optional_float(
                 section_name, section, "nozzle_diameter"
             ),
@@ -1144,6 +1145,7 @@ class MachineConfigParser:
             pid_Kd=self._optional_float(section_name, section, "pid_Kd"),
             min_temp=self._optional_float(section_name, section, "min_temp"),
             max_temp=self._optional_float(section_name, section, "max_temp"),
+            max_power=self._max_power(section_name, section),
         )
 
     def _parse_heater(
@@ -1164,6 +1166,7 @@ class MachineConfigParser:
             pid_Kd=self._optional_float(section_name, section, "pid_Kd"),
             min_temp=self._optional_float(section_name, section, "min_temp"),
             max_temp=self._optional_float(section_name, section, "max_temp"),
+            max_power=self._max_power(section_name, section),
         )
 
     def _parse_spindle_analog(
@@ -1993,6 +1996,13 @@ class MachineConfigParser:
         value = self._optional_bool(section, key)
         if value is None and self._optional_string(section, key) is not None:
             raise InvalidValueError(section_name, key, str(section[key]), "true or false")
+        return value
+
+    def _max_power(self, section_name: str, section: configparser.SectionProxy) -> float | None:
+        """Klipper's ``max_power``: a heater's duty ceiling, 0.0 < x <= 1.0."""
+        value = self._optional_float(section_name, section, "max_power")
+        if value is not None and not 0.0 < value <= 1.0:
+            raise InvalidValueError(section_name, "max_power", str(value), "above 0.0, at most 1.0")
         return value
 
     def _gear_ratio(self, section_name: str, section: configparser.SectionProxy) -> float | None:
