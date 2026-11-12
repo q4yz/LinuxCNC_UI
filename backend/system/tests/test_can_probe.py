@@ -73,11 +73,11 @@ def test_z_homes_on_the_probe(z_endstop):
     assert payload["z_virtual_endstop"] == {"speed": 5.0, "second_speed": 2.5, "retract": 5.0, "distance": 255.0}
     hal = compile_machine_hal(payload)
     lines = hal.splitlines()
-    # LinuxCNC's own homing: the probe is the Z home switch, and
-    # motion.probe-input is gated off while Z homes (else LinuxCNC aborts
-    # the homing move: "probe tripped during non-probe move").
+    # LinuxCNC's own homing: the probe is the Z home switch (ungated), and
+    # motion.probe-input only sees it during probing moves (else LinuxCNC
+    # aborts the homing move: "probe tripped during non-probe move").
     assert "net probe-in => joint.2.home-sw-in" in lines
-    assert "net probe-z-homing joint.2.homing => probe-z-homing-not.in" in lines
+    assert "net probe-allowed probe-probing.out => probe-gate.in1" in lines
     assert "net probe-gated probe-gate.out => motion.probe-input" in lines
     assert "net probe-in => motion.probe-input" not in lines
     assert "sb2209:PB6" not in payload["duplicate_pin_overrides"]

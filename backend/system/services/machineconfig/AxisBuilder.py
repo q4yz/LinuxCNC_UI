@@ -221,7 +221,7 @@ class AxisBuilder:
     def _home_z_on_probe(self, axes: list[Axis]) -> None:
         """Z on the probe (``probe:z_virtual_endstop``): LinuxCNC's own
         homing with the probe as the Z home switch (``ProbeHalMapper``
-        gates ``motion.probe-input`` off while Z homes). Search towards
+        keeps it off ``motion.probe-input`` outside probing moves). Search towards
         the switch at ``homing_speed``, latch from the same side at
         ``second_homing_speed``; the switch is ``position_endstop``
         (HOME_OFFSET), after homing Z moves ``homing_retract_dist`` away

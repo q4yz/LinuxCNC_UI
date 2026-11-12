@@ -56,16 +56,19 @@ def test_sensor_alone_drives_motion_probe_input_directly():
 
 
 def test_probe_and_sensor_are_or_ed_into_motion_probe_input():
+    """The probe is gated to probing moves, the tool setter is not: one
+    that trips during a normal move is a crash LinuxCNC should abort."""
     fragment = ProbeHalMapper.to_fragment({"pin": "!par0:15"}, {"pin": "par0:13"})
 
-    assert fragment.loadrt == ["loadrt or2 names=probe-or"]
-    [addf] = fragment.addf
-    assert (addf.func, addf.thread, addf.order) == ("probe-or", SERVO_THREAD, 0)
-    assert fragment.nets == [
-        "net probe-in => probe-or.in0",
+    assert fragment.loadrt[-1] == "loadrt or2 names=probe-or"
+    assert all((a.thread, a.order) == (SERVO_THREAD, 0) for a in fragment.addf)
+    assert fragment.addf[-1].func == "probe-or"
+    assert fragment.nets[-3:] == [
+        "net probe-gated probe-gate.out => probe-or.in0",
         "net tool-length-sensor-in => probe-or.in1",
         "net probe-or-out probe-or.out => motion.probe-input",
     ]
+    assert "net probe-in => probe-gate.in0" in fragment.nets
     by_signal = {r.signal: r for r in fragment.requests}
     # Each switch keeps its own polarity (NC probe, NO tool setter).
     assert by_signal["probe-in"].pin.invert is True

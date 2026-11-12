@@ -230,7 +230,7 @@ class HomingRoutineService:
         if virtual is not None:
             # Z homes on the probe, last: a bare G28 homes every other axis
             # first. LinuxCNC's own homing with the probe as the Z home
-            # switch, gated off motion.probe-input while Z homes
+            # switch, kept off motion.probe-input outside probing moves
             # (ProbeHalMapper) — a G38.2 search from an unhomed Z is refused
             # by the soft limits ("Probe move would exceed Z's negative limit").
             letters = [a.upper() for a in step.axes] or [

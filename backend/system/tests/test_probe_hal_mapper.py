@@ -33,11 +33,27 @@ def test_empty_probe_block_means_an_entirely_empty_fragment():
     assert fragment.requests == []
 
 
-def test_declared_pin_wires_motion_probe_input():
+def test_declared_pin_reaches_motion_probe_input_only_while_probing():
+    """LinuxCNC aborts any non-probe move during which motion.probe-input
+    switches on — an inductive probe does at first-layer height. So the
+    probe passes only while motion.motion-type is 5 (probing, G38.x)."""
     fragment = ProbeHalMapper.to_fragment({"pin": "!par0:15"})
 
-    assert "net probe-in => motion.probe-input" in fragment.nets
-    assert fragment.loadrt == []  # motion.probe-input needs no loadrt
+    assert fragment.loadrt == [
+        "loadrt conv_s32_float names=probe-mtype",
+        "loadrt wcomp names=probe-probing",
+        "loadrt and2 names=probe-gate",
+    ]
+    assert [a.func for a in fragment.addf] == ["probe-mtype", "probe-probing", "probe-gate"]
+    assert fragment.setp == ["setp probe-probing.min 4.5", "setp probe-probing.max 5.5"]
+    assert fragment.nets == [
+        "net probe-motion-type motion.motion-type => probe-mtype.in",
+        "net probe-motion-type-f probe-mtype.out => probe-probing.in",
+        "net probe-allowed probe-probing.out => probe-gate.in1",
+        "net probe-in => probe-gate.in0",
+        "net probe-gated probe-gate.out => motion.probe-input",
+    ]
+    assert "net probe-in => motion.probe-input" not in fragment.nets
 
     [request] = fragment.requests
     assert request.signal == "probe-in"

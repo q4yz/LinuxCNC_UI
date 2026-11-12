@@ -103,23 +103,50 @@ machine.hal
 # [probe] section at all) contributes zero lines here.
 
 # --- IF parameters.pin ---
-# Grounded in the real reference machine, machine_config/example/
-# PrintNC-WEBGUI/Machine.hal (line 93). motion.probe-input is a core
-# LinuxCNC motion pin — no loadrt needed, and (unlike estop's
-# iocontrol.0 chain) no MCU-class router ever claims it for its own
-# purposes, so there is no gating to consider here.
-net probe-in => motion.probe-input
+# The probe reaches motion.probe-input only during a probing move:
+# motion.motion-type is 5 (EMC_MOTION_TYPE_PROBING) during G38.x.
+# LinuxCNC 2.9 aborts every other move during which the probe input
+# switches on ("Probe tripped during non-probe move.", control.c) —
+# program moves too. An inductive probe switches on near the bed, so
+# without the gate the first layer of every print aborts.
+loadrt conv_s32_float names=probe-mtype
+loadrt wcomp names=probe-probing
+loadrt and2 names=probe-gate
+addf probe-mtype servo-thread                 # input stage (order 0), before motion
+addf probe-probing servo-thread
+addf probe-gate servo-thread
+setp probe-probing.min 4.5
+setp probe-probing.max 5.5
+net probe-motion-type motion.motion-type => probe-mtype.in
+net probe-motion-type-f probe-mtype.out => probe-probing.in
+net probe-allowed probe-probing.out => probe-gate.in1
+net probe-in => probe-gate.in0
+net probe-gated probe-gate.out => motion.probe-input
 net probe-in <= <pin>                         # <- pin (input)
 ```
 
+Because of the gate:
+
+* `motion.probe-input` (and `#<_hal[motion.probe-input]>`) is 0 outside
+  probing moves. A macro that checks whether the probe is already
+  triggered reads the probe itself: `#<_hal[probe-gate.in0]>`.
+* LinuxCNC can no longer tell that the probe is already triggered when a
+  `G38.2` starts: the gate opens with the move, the input switches on in
+  its first cycle and the start position is taken as the contact. Start
+  probing moves above the probe's trigger height.
+* A touch probe that trips during a normal move (a crash on a mill) no
+  longer aborts it. The tool-length sensor below keeps that protection.
+
 When **both** `[probe]` and `[tool_length_sensor]` declare a pin,
-either switch must trip the single probe input, so they are OR-ed:
+either switch must trip the single probe input, so they are OR-ed —
+the gated probe and the **ungated** sensor (a tool setter that trips
+during a normal move is a crash LinuxCNC should abort):
 
 ```hal
 loadrt or2 names=probe-or
 addf probe-or servo-thread                    # input stage (order 0), before motion
-net probe-in              => probe-or.in0
-net tool-length-sensor-in => probe-or.in1
+net probe-gated probe-gate.out => probe-or.in0
+net tool-length-sensor-in      => probe-or.in1
 net probe-or-out probe-or.out => motion.probe-input
 net probe-in              <= <probe pin>              # router half
 net tool-length-sensor-in <= <tool_length_sensor pin> # router half
@@ -178,16 +205,14 @@ homing_retract_dist: 5                 # (Optional) back off between the two, de
 ```
 
 Z homes with LinuxCNC's own homing, the probe as the Z home switch of
-every Z joint. LinuxCNC aborts any non-probe move during which
-`motion.probe-input` trips ("probe tripped during non-probe move"), its
-own homing included, so the probe reaches `motion.probe-input` through a
-gate that is closed while Z homes (`ProbeHalMapper._with_z_home`):
+every Z joint, wired ungated. LinuxCNC aborts any non-probe move during
+which `motion.probe-input` trips ("probe tripped during non-probe
+move"), its own homing included — the probing-move gate of § 3 keeps
+the probe off `motion.probe-input` while Z homes:
 
 ```hal
 net probe-in => joint.2.home-sw-in
-net probe-z-homing joint.2.homing => probe-z-homing-not.in
-net probe-allowed probe-z-homing-not.out => probe-gate.in1
-net probe-in => probe-gate.in0
+net probe-in => probe-gate.in0                # § 3: open only during G38.x
 net probe-gated probe-gate.out => motion.probe-input
 ```
 

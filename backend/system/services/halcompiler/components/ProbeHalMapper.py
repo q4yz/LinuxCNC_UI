@@ -3,16 +3,36 @@
 LinuxCNC has exactly one probe input, `motion.probe-input` (a core
 motion pin — no `loadrt`). A machine can have two switches that should
 trigger it: the touch probe and the tool-length sensor (tool setter).
-Both are owned here because they share that one pin:
+Both are owned here because they share that one pin.
 
-* only one declared  -> its signal drives `motion.probe-input` directly;
-* both declared      -> an `or2` merges them, so either switch trips:
+The touch probe only reaches `motion.probe-input` during a probing move
+(G38.x, `motion.motion-type` 5 = EMC_MOTION_TYPE_PROBING). LinuxCNC
+aborts any other move during which the probe input switches on ("Probe
+tripped during non-probe move.", `control.c`) — and an inductive probe
+switches on near the bed, so the first layer of every print would abort
+it, as would homing Z on the probe (``z_virtual_endstop``)::
 
-      loadrt or2 names=probe-or
-      addf probe-or servo-thread
-      net probe-in              => probe-or.in0
-      net tool-length-sensor-in => probe-or.in1
-      net probe-or-out probe-or.out => motion.probe-input
+    loadrt conv_s32_float names=probe-mtype
+    loadrt wcomp names=probe-probing
+    loadrt and2 names=probe-gate
+    setp probe-probing.min 4.5
+    setp probe-probing.max 5.5
+    net probe-motion-type motion.motion-type => probe-mtype.in
+    net probe-motion-type-f probe-mtype.out => probe-probing.in
+    net probe-allowed probe-probing.out => probe-gate.in1
+    net probe-in => probe-gate.in0
+    net probe-gated probe-gate.out => motion.probe-input
+
+`probe-gate.in0` carries the probe's own state, for macros that check it
+(``#<_hal[probe-gate.in0]>``). The tool-length sensor stays ungated: on a
+mill, a tool setter that trips during a normal move is a crash, and
+LinuxCNC's abort is what should happen. With both declared, an `or2`
+merges the gated probe and the sensor::
+
+    loadrt or2 names=probe-or
+    net probe-gated probe-gate.out => probe-or.in0
+    net tool-length-sensor-in => probe-or.in1
+    net probe-or-out probe-or.out => motion.probe-input
 
 NC/NO is the pin's own `!` in the `.cfg`, handled per input by the MCU
 router that binds the :class:`PinRequest` (`parport…-in-not`,
@@ -43,8 +63,11 @@ PROBE_SIGNAL = "probe-in"
 TOOL_LENGTH_SENSOR_SIGNAL = "tool-length-sensor-in"
 OR_NAME = "probe-or"
 MOTION_PROBE_INPUT = "motion.probe-input"
-Z_HOMING_NOT = "probe-z-homing-not"
+MOTION_TYPE_FLOAT = "probe-mtype"
+PROBING_WINDOW = "probe-probing"
 PROBE_GATE = "probe-gate"
+#: ``motion.motion-type`` during G38.x (EMC_MOTION_TYPE_PROBING).
+MOTION_TYPE_PROBING = 5
 
 
 class ProbeHalMapper:
@@ -57,95 +80,64 @@ class ProbeHalMapper:
         z_home_joints: list[int] | None = None,
     ) -> HalFragment:
         """``z_home_joints`` (``probe:z_virtual_endstop``): the touch probe
-        is also the home switch of these joints, and ``motion.probe-input``
-        only sees it while none of them homes — LinuxCNC aborts a homing
-        move during which the probe input trips ("probe tripped during
-        non-probe move")::
+        is also the home switch of these joints — wired ungated::
 
             net probe-in => joint.2.home-sw-in joint.3.home-sw-in ...
-            net probe-z-homing joint.2.homing => probe-z-homing-not.in
-            net probe-allowed probe-z-homing-not.out => probe-gate.in1
-            net probe-in => probe-gate.in0
-            net probe-gated probe-gate.out => motion.probe-input
         """
-        if z_home_joints and (probe or {}).get("pin"):
-            return ProbeHalMapper._with_z_home(probe or {}, tool_length_sensor, list(z_home_joints))
         fragment = HalFragment()
-        inputs = [
-            (signal, owner, pin)
-            for signal, owner, record in (
-                (PROBE_SIGNAL, "probe", probe),
-                (TOOL_LENGTH_SENSOR_SIGNAL, "tool_length_sensor", tool_length_sensor),
+        probe_pin = (probe or {}).get("pin")
+        sensor_pin = (tool_length_sensor or {}).get("pin")
+        if probe_pin:
+            fragment.requests.append(
+                PinRequest(signal=PROBE_SIGNAL, role=PinRole.DIGITAL_IN,
+                           pin=PinStringMapper.from_string(probe_pin), owner="probe")
             )
-            if (pin := (record or {}).get("pin"))
-        ]
-        if not inputs:
+        if sensor_pin:
+            fragment.requests.append(
+                PinRequest(signal=TOOL_LENGTH_SENSOR_SIGNAL, role=PinRole.DIGITAL_IN,
+                           pin=PinStringMapper.from_string(sensor_pin), owner="tool_length_sensor")
+            )
+        if not probe_pin:
+            if sensor_pin:
+                fragment.nets.append(f"net {TOOL_LENGTH_SENSOR_SIGNAL} => {MOTION_PROBE_INPUT}")
             return fragment
 
-        for signal, owner, pin in inputs:
-            fragment.requests.append(
-                PinRequest(
-                    signal=signal,
-                    role=PinRole.DIGITAL_IN,
-                    pin=PinStringMapper.from_string(pin),
-                    owner=owner,
-                )
+        if z_home_joints:
+            fragment.nets.append(
+                f"net {PROBE_SIGNAL} => " + " ".join(f"joint.{j}.home-sw-in" for j in z_home_joints)
             )
-
-        if len(inputs) == 1:
-            signal = inputs[0][0]
-            fragment.nets.append(f"net {signal} => {MOTION_PROBE_INPUT}")
+        probe_out = ProbeHalMapper._gate_to_probing_moves(fragment)
+        if not sensor_pin:
+            fragment.nets.append(f"net {probe_out} {PROBE_GATE}.out => {MOTION_PROBE_INPUT}")
             return fragment
 
         # Both switches: either one trips the probe input. The OR runs
         # with the input stage (order 0) — before motion reads it.
         fragment.loadrt.append(f"loadrt or2 names={OR_NAME}")
         fragment.addf.append(Addf(OR_NAME, SERVO_THREAD, order=0))
-        for index, (signal, _owner, _pin) in enumerate(inputs):
-            fragment.nets.append(f"net {signal} => {OR_NAME}.in{index}")
+        fragment.nets.append(f"net {probe_out} {PROBE_GATE}.out => {OR_NAME}.in0")
+        fragment.nets.append(f"net {TOOL_LENGTH_SENSOR_SIGNAL} => {OR_NAME}.in1")
         fragment.nets.append(f"net probe-or-out {OR_NAME}.out => {MOTION_PROBE_INPUT}")
         return fragment
 
     @staticmethod
-    def _with_z_home(
-        probe: dict[str, Any],
-        tool_length_sensor: dict[str, Any] | None,
-        z_home_joints: list[int],
-    ) -> HalFragment:
-        """The probe as the Z home switch, gated off ``motion.probe-input``
-        while Z homes (see :meth:`to_fragment`). A tool-length sensor still
-        ORs in after the gate — it is no home switch."""
-        fragment = HalFragment()
-        fragment.requests.append(
-            PinRequest(signal=PROBE_SIGNAL, role=PinRole.DIGITAL_IN,
-                       pin=PinStringMapper.from_string(probe["pin"]), owner="probe")
-        )
-        fragment.nets.append(
-            f"net {PROBE_SIGNAL} => " + " ".join(f"joint.{j}.home-sw-in" for j in z_home_joints)
-        )
-        # All Z joints home together (one HOME_SEQUENCE): the first one's homing pin is Z's.
-        fragment.loadrt.append(f"loadrt not names={Z_HOMING_NOT}")
+    def _gate_to_probing_moves(fragment: HalFragment) -> str:
+        """Passes ``probe-in`` only while ``motion.motion-type`` is
+        :data:`MOTION_TYPE_PROBING` (see the module docstring); returns the
+        name of the gated signal."""
+        fragment.loadrt.append(f"loadrt conv_s32_float names={MOTION_TYPE_FLOAT}")
+        fragment.loadrt.append(f"loadrt wcomp names={PROBING_WINDOW}")
         fragment.loadrt.append(f"loadrt and2 names={PROBE_GATE}")
-        fragment.addf.append(Addf(Z_HOMING_NOT, SERVO_THREAD, order=0))
-        fragment.addf.append(Addf(PROBE_GATE, SERVO_THREAD, order=0))
-        fragment.nets.append(f"net probe-z-homing joint.{z_home_joints[0]}.homing => {Z_HOMING_NOT}.in")
-        fragment.nets.append(f"net probe-allowed {Z_HOMING_NOT}.out => {PROBE_GATE}.in1")
+        # In data-flow order, with the input stage (order 0).
+        for name in (MOTION_TYPE_FLOAT, PROBING_WINDOW, PROBE_GATE):
+            fragment.addf.append(Addf(name, SERVO_THREAD, order=0))
+        fragment.setp.append(f"setp {PROBING_WINDOW}.min {MOTION_TYPE_PROBING - 0.5}")
+        fragment.setp.append(f"setp {PROBING_WINDOW}.max {MOTION_TYPE_PROBING + 0.5}")
+        fragment.nets.append(f"net probe-motion-type motion.motion-type => {MOTION_TYPE_FLOAT}.in")
+        fragment.nets.append(f"net probe-motion-type-f {MOTION_TYPE_FLOAT}.out => {PROBING_WINDOW}.in")
+        fragment.nets.append(f"net probe-allowed {PROBING_WINDOW}.out => {PROBE_GATE}.in1")
         fragment.nets.append(f"net {PROBE_SIGNAL} => {PROBE_GATE}.in0")
-
-        if tool_length_sensor is None or not tool_length_sensor.get("pin"):
-            fragment.nets.append(f"net probe-gated {PROBE_GATE}.out => {MOTION_PROBE_INPUT}")
-            return fragment
-
-        fragment.requests.append(
-            PinRequest(signal=TOOL_LENGTH_SENSOR_SIGNAL, role=PinRole.DIGITAL_IN,
-                       pin=PinStringMapper.from_string(tool_length_sensor["pin"]), owner="tool_length_sensor")
-        )
-        fragment.loadrt.append(f"loadrt or2 names={OR_NAME}")
-        fragment.addf.append(Addf(OR_NAME, SERVO_THREAD, order=0))
-        fragment.nets.append(f"net probe-gated {PROBE_GATE}.out => {OR_NAME}.in0")
-        fragment.nets.append(f"net {TOOL_LENGTH_SENSOR_SIGNAL} => {OR_NAME}.in1")
-        fragment.nets.append(f"net probe-or-out {OR_NAME}.out => {MOTION_PROBE_INPUT}")
-        return fragment
+        return "probe-gated"
 
 
 __all__ = ["ProbeHalMapper"]
