@@ -11,7 +11,10 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
 * ``M104 / M109 / M140 / M190 / M106 / M107`` keep their number (the
   machine's INI remaps them, `ini_template_generator`), Marlin's
   ``S`` / ``R`` (value) and ``T`` / ``P`` (heater / fan index) become
-  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``.
+  ``P`` and ``Q``: ``M104 S200 T1`` -> ``M104 P200 Q1``. An ``M106`` /
+  ``M107`` for a part fan the machine does not have (``part_fans``: the
+  machine has no ``M106`` remap at all without one, and ``M182`` fails
+  for an index past the last) is commented out.
 * ``G4 S2`` -> ``G4 P2``; ``G4 P500`` (Marlin: ms) -> ``G4 P0.5``.
 * ``M117 text`` -> ``(MSG, text)``.
 * ``G28`` / ``G29`` in the start G-code (before the first extruding
@@ -100,6 +103,7 @@ class _State:
     printing: bool = False   # an extruding move was seen: start G-code is over
     prestart: list[str] = field(default_factory=list)
     leds: list[str] = field(default_factory=list)
+    part_fans: int | None = None  # None: not known, every fan line kept
 
 
 def _split_comment(line: str) -> tuple[str, str]:
@@ -118,11 +122,15 @@ def _words(code: str) -> list[tuple[str, str]]:
     return [(letter.upper(), value) for letter, value in _WORD.findall(code)]
 
 
-def convert(text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = ()) -> ConversionResult:
+def convert(
+    text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = (), part_fans: int | None = None,
+) -> ConversionResult:
     """Convert a whole file (see the module docstring). ``led_names``:
-    the machine's ``[neopixel]`` names, in declaration order."""
+    the machine's ``[neopixel]`` names, in declaration order;
+    ``part_fans``: how many part fans ``M106`` / ``M107`` can reach
+    (``None``: unknown, every fan line is kept)."""
     macros = {name.lower() for name in macro_names}
-    state = _State(leds=[name.lower() for name in led_names])
+    state = _State(leds=[name.lower() for name in led_names], part_fans=part_fans)
     out: list[str] = []
     notes: list[str] = []
     for number, raw in enumerate(text.splitlines(), start=1):
@@ -216,6 +224,12 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
         if m == 83:
             state.e_relative = True
             return _commented(stripped, "relative E: handled by the converter", comment), None
+        if m in (106, 107) and state.part_fans is not None:
+            fan = _fan_index(words)
+            if fan is None or fan >= state.part_fans:
+                reason = ("this machine has no part fan" if state.part_fans == 0 or fan is None
+                          else f"no part fan {fan} on this machine")
+                return _commented(stripped, reason, comment), f"M{m} commented out: {reason}"
         if m in REMAPPED_MCODES:
             return _remapped(m, words, comment), None
         if m == 150 and state.leds:
@@ -293,6 +307,16 @@ def _dwell(words: list[tuple[str, str]], comment: str) -> str:
     else:
         seconds = 0.0
     return f"G4 P{_fmt(seconds)}" + (f"  {comment}" if comment else "")
+
+
+def _fan_index(words: list[tuple[str, str]]) -> int | None:
+    """Marlin's fan index (``P``, default 0); ``None`` when it is not one."""
+    raw = dict(words).get("P", "0")
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return int(value) if value >= 0 and value == int(value) else None
 
 
 def _remapped(m: int, words: list[tuple[str, str]], comment: str) -> str:
