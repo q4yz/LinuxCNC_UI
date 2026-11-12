@@ -40,7 +40,10 @@ logger = logging.getLogger("backend.services.machineconfig.axis_builder")
 # ``rotation_distance`` from Klipper (mm / full revolution) becomes
 # LinuxCNC ``SCALE`` (steps / unit) via:
 #
-#     SCALE = (microsteps * full_steps_per_rotation) / rotation_distance
+#     SCALE = (microsteps * full_steps_per_rotation * gear_ratio) / rotation_distance
+#
+# ``gear_ratio`` (Klipper: ``50:17``, motor turns per output turn) is 1
+# without gearing; ``rotation_distance`` is then per output turn.
 FULL_STEPS_PER_REVOLUTION = 200
 
 #: ``HOME_SEQUENCE`` phase per axis letter — LinuxCNC homes phases in
@@ -109,7 +112,8 @@ def stepgen_scale(stepper: Stepper) -> float:
     if stepper.rotation_distance in (None, 0) or stepper.microsteps is None:
         return 0.0
     full_steps = getattr(stepper, "full_steps_per_rotation", None) or FULL_STEPS_PER_REVOLUTION
-    return (stepper.microsteps * full_steps) / stepper.rotation_distance
+    gear_ratio = getattr(stepper, "gear_ratio", None) or 1.0
+    return (stepper.microsteps * full_steps * gear_ratio) / stepper.rotation_distance
 
 
 # --------------------------------------------------------------------- #
@@ -337,12 +341,15 @@ class AxisBuilder:
         # time on top of an already-backed-off value.
         fallback_home = fallback.home_offset if fallback else 0.0
         fallback_search_vel = fallback.home_search_vel if fallback else 0.0
+        fallback_latch_vel = fallback.home_latch_vel if fallback else 0.0
 
         min_limit = _get_float(stepper, "position_min", fallback_min)
         max_limit = _get_float(stepper, "position_max", fallback_max)
         # Magnitude only — the direction is decided below from which end
         # of travel the switch sits at (a fallback value may already be signed).
         homing_speed = abs(_get_float(stepper, "homing_speed", fallback_search_vel))
+        # Klipper's slower second approach: LinuxCNC's latch.
+        latch_speed = abs(_get_float(stepper, "second_homing_speed", fallback_latch_vel)) or homing_speed
         position_endstop = (
             float(stepper.position_endstop)
             if stepper.position_endstop is not None
@@ -355,6 +362,21 @@ class AxisBuilder:
         default_accel = self._printer_z_accel() if letter == "Z" else self._printer_accel()
         joint_velocity = self._stepper_velocity(stepper) or default_velocity
         joint_accel = self._stepper_accel(stepper) or default_accel
+        # Towards the switch: homing_positive_dir when the .cfg says,
+        # else from which end of travel position_endstop is at; a
+        # gantry motor follows its primary joint.
+        explicit = getattr(stepper, "homing_positive_dir", None)
+        if explicit is not None:
+            positive: bool | None = bool(explicit)
+        elif fallback is not None and fallback.home_search_vel:
+            positive = fallback.home_search_vel > 0
+        else:
+            positive = None
+        retract_raw = getattr(stepper, "homing_retract_dist", None)
+        if retract_raw is None and fallback is not None:
+            retract = abs(fallback.home_offset - fallback.home_position)
+        else:
+            retract = float(retract_raw) if retract_raw is not None else _HOME_BACKOFF_MM
         return Joint(
             joint_number=joint_number,
             axis_letter=letter,
@@ -363,10 +385,12 @@ class AxisBuilder:
             max_velocity=joint_velocity,
             max_acceleration=joint_accel,
             stepgen_maxaccel=joint_accel * 1.1,
-            home_position=self._home_position_with_backoff(position_endstop, min_limit, max_limit),
+            home_position=self._home_position_with_backoff(
+                position_endstop, min_limit, max_limit, retract, positive),
             home_offset=position_endstop,
-            home_search_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
-            home_latch_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit),
+            home_search_vel=self._toward_switch(homing_speed or 10.0, position_endstop, min_limit, max_limit, positive),
+            home_latch_vel=self._toward_switch(latch_speed or homing_speed or 10.0, position_endstop, min_limit,
+                                               max_limit, positive),
             home_sequence=_HOME_SEQUENCE_BY_AXIS.get(letter, _FIRST_HOME_SEQUENCE),
             scale=stepgen_scale(stepper) * self._direction_sign(stepper),
             ferror=2.0 if letter != "Y" else 9.0,
@@ -377,17 +401,22 @@ class AxisBuilder:
         )
 
     @staticmethod
-    def _toward_switch(speed: float, position_endstop: float, min_limit: float, max_limit: float) -> float:
+    def _toward_switch(
+        speed: float, position_endstop: float, min_limit: float, max_limit: float, positive: bool | None = None,
+    ) -> float:
         """Signed ``HOME_SEARCH_VEL``/``HOME_LATCH_VEL``: LinuxCNC homes in
         the direction of the velocity's sign, so a switch at the *min* end
         of travel needs a negative velocity, one at the max end a positive
         one. Same min/max split as :meth:`_home_position_with_backoff`. A
         joint without a real travel range (extruder) keeps it positive.
         Latch uses the same sign as search: back off, then re-approach the
-        switch slowly.
+        switch slowly. ``positive`` (``homing_positive_dir``) overrides the
+        min/max split.
         """
         if max_limit <= min_limit:
             return speed
+        if positive is not None:
+            return speed if positive else -speed
         midpoint = (min_limit + max_limit) / 2
         return speed if position_endstop >= midpoint else -speed
 
@@ -410,7 +439,8 @@ class AxisBuilder:
 
     @staticmethod
     def _home_position_with_backoff(
-        position_endstop: float, min_limit: float, max_limit: float
+        position_endstop: float, min_limit: float, max_limit: float,
+        backoff: float = _HOME_BACKOFF_MM, positive: bool | None = None,
     ) -> float:
         """``HOME`` (final resting position) pulls back off ``HOME_OFFSET``
         (the switch's own coordinate) by :data:`_HOME_BACKOFF_MM`.
@@ -431,13 +461,15 @@ class AxisBuilder:
         joint with no real travel range at all (``min_limit ==
         max_limit`` — the synthesised extruder joint, which has
         neither a switch nor a meaningful `HOME`) is left alone.
+
+        ``backoff`` is ``homing_retract_dist`` (default 5 mm), ``positive``
+        ``homing_positive_dir`` (default: the min/max split).
         """
         if max_limit <= min_limit:
             return position_endstop
-        midpoint = (min_limit + max_limit) / 2
-        if position_endstop >= midpoint:
-            return position_endstop - _HOME_BACKOFF_MM
-        return position_endstop + _HOME_BACKOFF_MM
+        if positive is None:
+            positive = position_endstop >= (min_limit + max_limit) / 2
+        return position_endstop - backoff if positive else position_endstop + backoff
 
     def _apply_axis_envelope_from_joint(self, axis: Axis, joint: Joint) -> None:
         axis.max_velocity = joint.max_velocity
@@ -466,6 +498,8 @@ class AxisBuilder:
             enable_pin=extruder.enable_pin,
             microsteps=extruder.microsteps,
             rotation_distance=extruder.rotation_distance,
+            full_steps_per_rotation=getattr(extruder, "full_steps_per_rotation", None),
+            gear_ratio=getattr(extruder, "gear_ratio", None),
         )
         joint = self._make_joint(stub, "A", joint_number=joint_number)
         # Filament is continuous and there is no endstop (exturder.md § 3):

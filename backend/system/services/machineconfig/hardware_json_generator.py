@@ -630,7 +630,11 @@ def _stepper_payload(stepper_section: str, stepper) -> dict[str, Any]:
         "microsteps": stepper.microsteps,
         "rotation_distance": _fmt_float(stepper.rotation_distance),
         "full_steps_per_rotation": getattr(stepper, "full_steps_per_rotation", None),
+        "gear_ratio": _fmt_float(getattr(stepper, "gear_ratio", None)),
         "homing_speed": _fmt_float(getattr(stepper, "homing_speed", None)),
+        "second_homing_speed": _fmt_float(getattr(stepper, "second_homing_speed", None)),
+        "homing_retract_dist": _fmt_float(getattr(stepper, "homing_retract_dist", None)),
+        "homing_positive_dir": getattr(stepper, "homing_positive_dir", None),
         "deadband": _fmt_float(getattr(stepper, "deadband", None)),
         "pgain": _fmt_float(getattr(stepper, "pgain", None)),
     }
