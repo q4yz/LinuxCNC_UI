@@ -64,24 +64,31 @@ test("the pages render their layout setting; the settings page has the tab", () 
 
 const ESTOP = { top: 0, bottom: 112, left: 1800, right: 1920 }; // fixed, top-right
 
-test("a header under the E-stop box is padded to clear it", () => {
+test("a row under the E-stop box right now is padded to clear it", () => {
   const header = { top: 16, bottom: 64, left: 1200, right: 1900 };
-  assert.equal(estopOverlap(header, ESTOP, 0), 1900 - 1800 + ESTOP_GAP_PX);
+  assert.equal(estopOverlap(header, ESTOP), 1900 - 1800 + ESTOP_GAP_PX);
+  // any card scrolled up beneath it, not only the top one
+  assert.equal(estopOverlap({ top: 40, bottom: 88, left: 1200, right: 1900 }, ESTOP), 108);
+  // the first card of a single-column (narrow) layout: full width
+  assert.equal(estopOverlap({ top: 20, bottom: 80, left: 16, right: 744 }, { top: 0, bottom: 130, left: 640, right: 760 }), 744 - 640 + ESTOP_GAP_PX);
 });
 
-test("headers not under it are not: left column, lower down, or scrolled past", () => {
-  assert.equal(estopOverlap({ top: 16, bottom: 64, left: 300, right: 1100 }, ESTOP, 0), 0);
-  assert.equal(estopOverlap({ top: 400, bottom: 448, left: 1200, right: 1900 }, ESTOP, 0), 0);
-  // the top-right card scrolled under the box: still padded (checked at scroll 0)
-  assert.equal(estopOverlap({ top: -300, bottom: -252, left: 1200, right: 1900 }, ESTOP, 316), 108);
-  // a lower card scrolled up under the box: not (it is not the top card)
-  assert.equal(estopOverlap({ top: 20, bottom: 68, left: 1200, right: 1900 }, ESTOP, 600), 0);
+test("rows not under it are not: left column, below it, or scrolled out above", () => {
+  assert.equal(estopOverlap({ top: 16, bottom: 64, left: 300, right: 1100 }, ESTOP), 0);
+  assert.equal(estopOverlap({ top: 400, bottom: 448, left: 1200, right: 1900 }, ESTOP), 0);
+  assert.equal(estopOverlap({ top: -300, bottom: -252, left: 1200, right: 1900 }, ESTOP), 0);
 });
 
-test("BaseCard measures its header; the E-stop box is marked", () => {
+test("BaseCard shifts its header or a title-less card's first row, re-measured on scroll", () => {
   const card = read("ui/BaseCard.vue");
   assert.match(card, /ref="header"/);
-  assert.match(card, /:style="headerStyle"/);
-  assert.match(card, /estopOverlap\(el\.getBoundingClientRect\(\), estop, scrollTopOf\(el\)\)/);
+  assert.match(card, /ref="body"/);
+  assert.match(card, /if \(header\.value\) return header\.value;/);
+  assert.match(card, /first\.offsetHeight <= MAX_ROW_PX/);
+  assert.match(card, /estopOverlap\(row\.getBoundingClientRect\(\), estop\)/);
+  assert.match(card, /watchEstop\(measureEstop\)/);
+  const helper = read("ui/estopClearance.ts");
+  assert.match(helper, /document\.addEventListener\("scroll", scheduleEstopCheck, \{ capture: true, passive: true \}\)/);
+  assert.match(helper, /window\.addEventListener\("resize", scheduleEstopCheck\)/);
   assert.match(read("components/EStopHeader.vue"), /<div data-estop-overlay class="fixed top-0 right-0/);
 });
