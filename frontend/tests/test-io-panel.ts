@@ -35,5 +35,7 @@ test("fans and PWM outputs are sliders, switched outputs toggles, inputs lamps",
 });
 
 test("the card is on the dashboard behind the machine gate", () => {
-  assert.match(read("views/DashboardView.vue"), /<MachineGate label="I\/O">\s*<IoPanel\/>/);
+  // a page-layout panel (on the dashboard by default), behind MachineGate
+  assert.match(read("layout/PageLayout.vue"), /  io: IoPanel,/);
+  assert.match(read("layout/pagePanels.ts"), /\{ id: "io", label: "I\/O", gate: "I\/O" \}/);
 });

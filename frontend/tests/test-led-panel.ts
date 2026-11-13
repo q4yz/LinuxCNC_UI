@@ -37,7 +37,9 @@ test("a colour picker per segment, sent with its first LED; off per chain", () =
 });
 
 test("the card is on the dashboard behind the machine gate", () => {
-  assert.match(read("views/DashboardView.vue"), /<MachineGate label="LEDs">\s*<LedPanel\/>/);
+  // a page-layout panel (on the dashboard by default), behind MachineGate
+  assert.match(read("layout/PageLayout.vue"), /  leds: LedPanel,/);
+  assert.match(read("layout/pagePanels.ts"), /\{ id: "leds", label: "LEDs", gate: "LEDs" \}/);
 });
 
 test("an open colour picker is not reset by the snapshot (the colour snapped back)", () => {

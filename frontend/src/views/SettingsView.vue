@@ -21,7 +21,7 @@ import ViewerSettingsPanel from "../components/viewer/ViewerSettingsPanel.vue";
 
 const VIEWER_TAB = "3D Viewer";
 // Preferred tab order; categories not listed follow alphabetically.
-const CATEGORY_ORDER = ["Machine", "Macro Buttons", "Temperature", "Camera"];
+const CATEGORY_ORDER = ["Machine", "Page layout", "Macro Buttons", "Temperature", "Camera"];
 
 const { categories, fetched } = settingsRegistry;
 
