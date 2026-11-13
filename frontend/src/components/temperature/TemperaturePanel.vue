@@ -119,17 +119,19 @@ function unitLabelFor(unit: TemperatureUnit): string {
   return temperatureSymbol(unit)
 }
 
+// The series data is already in the display unit (``round`` in
+// chartOptions converts each sample once): the axis labels and the
+// tooltip only format it. Converting again doubled K (300 K -> 573 K).
 function yAxisLabelFormatter(value: number | string): string {
   const num = Number(value)
   if (!Number.isFinite(num)) return ''
-  const v = celsiusTo(num, store.unit)
-  return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
+  return `${roundTo(num, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
 }
 
 function tooltipValueFormatter(value: number | string): string {
   const num = Number(value)
-  const v = celsiusTo(num, store.unit)
-  return `${roundTo(v, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
+  if (!Number.isFinite(num)) return ''
+  return `${roundTo(num, 2).toFixed(2)} ${unitLabelFor(store.unit)}`
 }
 
 function xAxisLabelFormatter(value: number | string): string {
