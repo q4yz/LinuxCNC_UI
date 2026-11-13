@@ -1,37 +1,28 @@
 # LinuxCNC Web UI
 
-A web-based operator interface for [LinuxCNC](https://linuxcnc.org): DRO, jogging, homing,
-program execution, macros, heaters, probing and bed levelling in the browser — on the machine
-itself, a tablet next to it or any computer on the network. Built for 3D printers and CNC
-machines driven by [Remora](https://github.com/q4yz/Remora-m8p) boards, configured with
-Klipper-style `.cfg` files.
+The manual for the LinuxCNC Web UI: control a 3D printer or CNC machine from the browser, with
+a LinuxCNC host (BTT CB1, Raspberry Pi) and [Remora](https://github.com/q4yz/Remora-m8p)
+boards (BTT Manta M8P, Octopus, …), configured like Klipper.
 
 ![Dashboard](../images/dashboard.png)
 
-These pages are built from the `docs/` folder of the
-[LinuxCNC_UI repository](https://github.com/q4yz/LinuxCNC_UI): pick the version matching your
-installation in the version menu, and use *Edit on GitHub* to improve a page.
+New here? Read **Getting Started** from top to bottom: it goes from an empty SD card to a
+moving machine. Pick the version matching your installation in the version menu; *Edit on
+GitHub* opens the page's source.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Getting Started
 
-getting-started/introduction
+getting-started/what-it-does
 getting-started/installation
-getting-started/updating
-getting-started/first-machine
-```
-
-```{toctree}
-:maxdepth: 2
-:caption: Machine Configuration
-
-configuration/overview
-configuration/steppers
-configuration/heaters-extruder
-configuration/probe
-configuration/levelling
-configuration/fans-leds
+getting-started/install-from-repo
+getting-started/toolhead-board
+getting-started/wiring
+getting-started/config
+getting-started/config-reference
+getting-started/config-examples
+getting-started/compile
 ```
 
 ```{toctree}
@@ -41,21 +32,23 @@ configuration/fans-leds
 using/dashboard
 using/jogging
 using/console-commands
+using/probing-levelling
 using/programs
 using/hal-tools
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Hardware
+:caption: Architecture
 
-hardware/remora-components
+architecture/architecture
+architecture/remora-components
+architecture/writing-docs
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Reference
+:caption: Help
 
 reference/troubleshooting
-reference/writing-docs
 ```

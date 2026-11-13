@@ -26,7 +26,7 @@ start. In the console, `S` works (`M106 S128`); it is converted to `P`.
 ## "extrude below minimum temp"
 
 The cold-extrusion guard stopped an extruder move: heat the hotend above `min_extrude_temp`
-first ({doc}`../configuration/heaters-extruder`).
+first ({doc}`../getting-started/config-reference`).
 
 ## "Probe move would exceed Z's negative limit"
 
@@ -36,4 +36,4 @@ The probe did not trigger before Z's lower limit (`[stepper_z] position_min`). C
 ## LinuxCNC stops at a `loadrt`
 
 *cannot open shared object file* — a Remora component is missing:
-{doc}`../hardware/remora-components`.
+{doc}`../architecture/remora-components`.

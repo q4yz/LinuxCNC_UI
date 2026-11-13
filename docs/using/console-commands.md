@@ -12,9 +12,9 @@ Besides LinuxCNC's own G-code, the console takes these, named like Klipper's:
 |---------|------|
 | `G28` / `G28 X Y` | home (the homing routine, or the axes named) |
 | `G29` | `Z_TILT_ADJUST`, then `BED_MESH_CALIBRATE` |
-| `Z_TILT_ADJUST` | level the Z motors — {doc}`../configuration/levelling` |
+| `Z_TILT_ADJUST` | level the Z motors — {doc}`../using/probing-levelling` |
 | `BED_MESH_CALIBRATE [PROFILE=name]` | probe the bed mesh |
-| `PROBE_ACCURACY [SAMPLES=10] …` | probe repeatability — {doc}`../configuration/probe` |
+| `PROBE_ACCURACY [SAMPLES=10] …` | probe repeatability — {doc}`probing-levelling` |
 | `PROBE_CALIBRATE [SPEED=5]`, `TESTZ Z=<mm>`, `ACCEPT`, `ABORT` | measure `[probe] z_offset` |
 | `SET_LED LED=<name> RED= GREEN= BLUE= [INDEX=]` | an LED colour |
 
