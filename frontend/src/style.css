@@ -6,7 +6,7 @@
   }
 
   /* Dark, thin scrollbars everywhere (console, lists, pages) instead of
-   * the browser's light default: a rounded gray thumb, no track, no arrow
+   * the browser's light default: a rounded blue thumb, no track, no arrow
    * buttons. Chromium / Safari take the ::-webkit-scrollbar rules — but
    * only while scrollbar-color / scrollbar-width are NOT set (Chromium
    * 121+ then draws its own bar, arrows included), so those standard
@@ -14,10 +14,10 @@
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: #4b5563 transparent; /* gray-600 thumb */
+      scrollbar-color: #2563eb transparent; /* blue-600 thumb */
     }
     *:hover {
-      scrollbar-color: #6b7280 transparent; /* gray-500 */
+      scrollbar-color: #3b82f6 transparent; /* blue-500 */
     }
   }
   ::-webkit-scrollbar {
@@ -29,13 +29,13 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background-color: #4b5563;
+    background-color: #2563eb; /* blue-600, as the UI's buttons */
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: #6b7280;
+    background-color: #3b82f6; /* blue-500 */
   }
   ::-webkit-scrollbar-button {
     display: none;
