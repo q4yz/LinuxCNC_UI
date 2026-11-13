@@ -19,6 +19,8 @@ import { loadHalLayout } from "../../views/hal-visual-editor/loadHalData";
 import type { HalPin } from "../../views/hal-visual-editor/types";
 import HalVisualService from "../../facades/halFacade";
 import { useConsoleStore } from "../../stores/console";
+import { storeToRefs } from "pinia";
+import { useHalScopeStore } from "../../stores/halScopeStore";
 // Debug-only and canvas-heavy: its own chunk, loaded with this panel —
 // keeps the main bundle under the PWA precache limit (2 MiB).
 const HalScope = defineAsyncComponent(() => import("./scope/HalScope.vue"));
@@ -42,7 +44,9 @@ const direction = ref<Direction>("all");
 const expanded = ref(new Set<string>());
 const noSelection = new Set<string>();
 
-const scopePins = ref<string[]>([]);
+// The scope's channels live in its store (created once): they survive
+// leaving the Debug view, with the rest of the scope's settings.
+const { pins: scopePins } = storeToRefs(useHalScopeStore());
 const scopeIds = computed(() => new Set(scopePins.value));
 
 function matchesSearch(pin: HalPin, query: string): boolean {

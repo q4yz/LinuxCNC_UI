@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 import { useMachineStore } from '../../stores/machine'
 import { useConsoleStore } from '../../stores/console'
 import { useBaseThreadStore } from '../../stores/baseThread'
+import { SystemState, useMachineStore as useMachineFacade } from '../../stores/stateFacade'
 import BaseRange from "../../ui/BaseRange.vue";
 import {BaseButton} from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
@@ -15,6 +16,10 @@ const machineStore = useMachineStore()
 const consoleStore = useConsoleStore()
 const { defaultJogVelocity } = storeToRefs(machineStore)
 const { maxAxisVelocity } = storeToRefs(useBaseThreadStore())
+const { systemState } = storeToRefs(useMachineFacade())
+
+// No jogging while a program runs.
+const jogBlocked = computed(() => systemState.value === SystemState.RUNNING)
 
 // Slider top = log10(max of all axis velocity limits, mm/s) — the
 // machine's own [AXIS_*] MAX_VELOCITY, not a hard-coded speed. ``null``
@@ -148,7 +153,23 @@ const startJog = async (axis: number, direction: number) => {
   await machineStore.jogContinuous(axis, velocity)
 }
 
+// A jog button: the first press on an inactive card only highlights it
+// (focus + Active), only a press on the active card jogs. ``disabled``
+// alone is not enough: Chrome still fires pointerdown on a disabled button.
+const pressJog = (axis: number, direction: number) => {
+  if (!isActive.value) {
+    focusAndActivate()
+    return
+  }
+  if (jogBlocked.value) {
+    consoleStore.warning('Jog refused: a program is running')
+    return
+  }
+  void startJog(axis, direction)
+}
+
 const stopJog = async (axis: number) => {
+  if (!activeJogAxes.value.has(axis)) return
   activeJogAxes.value.delete(axis)
   await machineStore.jogStop(axis)
 }
@@ -198,6 +219,11 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // 4. Dispatch the Jog Command
   const binding = KEY_BINDINGS[event.code]
   if (!binding) return
+  if (jogBlocked.value) {
+    event.preventDefault()
+    consoleStore.warning('Jog refused: a program is running')
+    return
+  }
 
   event.preventDefault()
   keysHeldForJog.value.add(event.code)
@@ -218,6 +244,11 @@ const handleKeyUp = (event: KeyboardEvent) => {
 const handleWindowBlur = () => {
   deactivate()
 }
+
+// A program started while jogging: stop.
+watch(jogBlocked, (blocked) => {
+  if (blocked) void stopAllJogging()
+})
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
@@ -280,8 +311,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(1, 1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(1, 1)"
             @pointerup="stopJog(1)"
             @pointercancel="stopJog(1)"
             @contextmenu.prevent
@@ -295,8 +327,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(2, 1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(2, 1)"
             @pointerup="stopJog(2)"
             @pointercancel="stopJog(2)"
             @contextmenu.prevent
@@ -310,8 +343,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(0, -1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(0, -1)"
             @pointerup="stopJog(0)"
             @pointercancel="stopJog(0)"
             @contextmenu.prevent
@@ -334,8 +368,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(0, 1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(0, 1)"
             @pointerup="stopJog(0)"
             @pointercancel="stopJog(0)"
             @contextmenu.prevent
@@ -349,8 +384,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(1, -1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(1, -1)"
             @pointerup="stopJog(1)"
             @pointercancel="stopJog(1)"
             @contextmenu.prevent
@@ -364,8 +400,9 @@ onBeforeUnmount(() => {
             variant="secondary"
             size="lg"
             class="w-full text-lg select-none active:bg-blue-600 active:border-blue-600 active:text-white touch-none"
-            :disabled="!isActive"
-            @pointerdown.prevent="startJog(2, -1)"
+            :disabled="jogBlocked"
+            :class="isActive ? '' : 'opacity-50'"
+            @pointerdown.prevent="pressJog(2, -1)"
             @pointerup="stopJog(2)"
             @pointercancel="stopJog(2)"
             @contextmenu.prevent

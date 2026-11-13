@@ -521,7 +521,8 @@ onMounted(() => {
                 v-if="thumbnails[file.path]?.dataUrl"
                 :src="thumbnails[file.path]?.dataUrl ?? ''"
                 :alt="`Preview of ${file.name}`"
-                class="h-10 w-14 rounded border border-gray-600 object-contain bg-gray-900"
+                draggable="false"
+                class="h-10 w-14 rounded border border-gray-600 object-contain bg-gray-900 select-none"
                 :data-test="`file-thumb-${file.name}`"
             />
             <span
@@ -648,7 +649,8 @@ onMounted(() => {
                   v-if="thumbnails[previewFile.path]?.dataUrl"
                   :src="thumbnails[previewFile.path]?.dataUrl ?? ''"
                   :alt="`Slicer preview of ${previewFile.name}`"
-                  class="max-h-64 w-full rounded border border-gray-600 object-contain bg-gray-900"
+                  draggable="false"
+                  class="select-none max-h-64 w-full rounded border border-gray-600 object-contain bg-gray-900"
                   data-test="preview-thumb"
               />
               <span
