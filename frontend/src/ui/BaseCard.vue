@@ -4,7 +4,12 @@
 
 
 
-    <div v-if="title" class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between">
+    <div
+        v-if="title"
+        ref="header"
+        class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between"
+        :style="headerStyle"
+    >
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center gap-2">
         <Icon v-if="icon" :name="icon" />
         {{ title }}
@@ -35,6 +40,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import Icon from './Icon.vue';
+import { estopBox, estopOverlap, scrollTopOf } from './estopClearance';
 
 const props = withDefaults(
   defineProps<{
@@ -119,5 +125,38 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (revealTimer !== null) clearTimeout(revealTimer);
+});
+
+// The top-right card's header sits under the fixed E-stop box (page
+// scrolled to the top): its right-hand buttons move left to clear it.
+// Re-measured whenever the header's size changes (layout, a kept-alive
+// view shown again) and on window resize.
+const header = ref<HTMLElement | null>(null);
+const estopShift = ref(0);
+const HEADER_PADDING_PX = 16; // px-4
+const headerStyle = computed(() =>
+  estopShift.value > 0 ? { paddingRight: `${HEADER_PADDING_PX + estopShift.value}px` } : undefined);
+let headerObserver: ResizeObserver | null = null;
+
+function measureEstop(): void {
+  const el = header.value;
+  const estop = estopBox();
+  estopShift.value = el && estop && el.offsetParent !== null
+    ? estopOverlap(el.getBoundingClientRect(), estop, scrollTopOf(el))
+    : 0;
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined' && header.value) {
+    headerObserver = new ResizeObserver(measureEstop);
+    headerObserver.observe(header.value);
+  }
+  window.addEventListener('resize', measureEstop);
+  measureEstop();
+});
+
+onBeforeUnmount(() => {
+  headerObserver?.disconnect();
+  window.removeEventListener('resize', measureEstop);
 });
 </script>

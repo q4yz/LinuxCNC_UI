@@ -101,11 +101,12 @@ test("ToolPanel imports the per-type cards statically", () => {
   }
 });
 
-test("DashboardView unconditionally renders the ToolPanel", () => {
-  // The previous ``registry.modules.has('tools')`` gate is gone;
-  // tools is a hard dependency and the panel always renders.
+test("DashboardView shows the ToolPanel by default (a page-layout panel)", () => {
+  // The previous ``registry.modules.has('tools')`` gate is gone; the
+  // panel is part of the page layout, on the dashboard by default.
   const text = read(dashboardPath);
-  assert.match(text, /<ToolPanel\s*\/?>/);
+  assert.match(text, /<PageLayout :setting="dashboardLayout" \/>/);
   assert.doesNotMatch(text, /toolsMounted/);
   assert.doesNotMatch(text, /registry\.modules\.has\(\s*['"]tools['"]/);
+  assert.match(read(resolve(repoRoot, "frontend/src/layout/PageLayout.vue")), /  tools: ToolPanel,/);
 });

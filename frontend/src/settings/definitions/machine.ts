@@ -1,19 +1,5 @@
 // Machine-wide UI settings.
-import { NumberSetting } from "../types/NumberSetting";
 import { MacroButtonsSetting } from "../types/MacroButtonsSetting";
-
-/**
- * Speed the jog slider starts at. The slider still caps it to the
- * fastest axis's own limit (``baseThread.maxAxisVelocity``).
- */
-export const defaultJogVelocity = new NumberSetting(
-  "Machine",
-  "Default jog velocity",
-  "machine.default_jog_velocity",
-  500,
-  { min: 1, step: 1, unit: "mm/s" },
-  { description: "Starting speed of the jog slider; capped to the fastest axis limit." },
-);
 
 /**
  * One-click macro buttons next to the DRO axis rows, in the toolpath

@@ -3,4 +3,6 @@
 // only once the component that reads them happens to load.
 //
 // ``main.ts`` imports this module before mounting the app.
+import "./layout";
+
 export {};

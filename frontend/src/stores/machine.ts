@@ -5,7 +5,6 @@ import {computed, ref} from "vue";
 import {generateSetOffset} from "../config/gcodes";
 import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
-import {defaultJogVelocity as defaultJogVelocitySetting} from "../settings/definitions/machine";
 import {servoThreadService} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
@@ -23,6 +22,8 @@ const HOME_ALL: "all" = "all";
 // the backend's jog watchdog timeout (``jog_watchdog.WATCHDOG_TIMEOUT_S``,
 // 500 ms) or a held jog key stops the axis.
 const KEEPALIVE_INTERVAL_MS = 250;
+/** Jog speed the sliders start at (mm/s); capped to the fastest axis limit. */
+export const DEFAULT_JOG_VELOCITY = 500;
 
 const STORE_ID = "axis";
 
@@ -64,9 +65,10 @@ export const useMachineStore = defineStore(STORE_ID, () => {
     // Module-private state                                               //
     // ──────────────────────────────────────────────────────────────── //
 
-    // Central UI setting (``machine.default_jog_velocity``): its default
-    // until the stored value arrives — a UI preference, so that's fine.
-    const defaultJogVelocity = computed(() => defaultJogVelocitySetting.value ?? defaultJogVelocitySetting.defaultValue);
+    // The speed the jog sliders start at (mm/s), and a discrete jog's
+    // speed. Not a setting: the slider caps it to the fastest axis limit
+    // (``baseThread.maxAxisVelocity``), so it starts at the machine's own.
+    const defaultJogVelocity = computed(() => DEFAULT_JOG_VELOCITY);
 
     // ──────────────────────────────────────────────────────────────── //
     // Derived values (Using the new ServoThreadState getters!)           //

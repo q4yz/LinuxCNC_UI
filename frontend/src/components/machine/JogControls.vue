@@ -36,8 +36,8 @@ const activeJogAxes = ref(new Set<number>())
 const keysHeldForJog = ref(new Set<string>())
 
 // Slider position (log10 of mm/s). ``null`` until the backend's
-// fastest axis limit is known. Starts at the ``machine.default_jog_velocity``
-// UI setting (its default until the stored value arrives).
+// fastest axis limit is known. Starts at ``DEFAULT_JOG_VELOCITY``
+// (stores/machine), capped to the fastest axis limit.
 const sliderPos = ref<number | null>(null)
 const sliderTouched = ref(false)
 // Needs the axis limit to clamp to (a default above the fastest axis is

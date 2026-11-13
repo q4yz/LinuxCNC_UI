@@ -227,8 +227,6 @@ test("facade manual disconnect does not arm the reconnect loop", () => {
 
 test("machine-level widgets are wrapped in MachineGate", () => {
   const expectations = [
-    ["views/DashboardView.vue", ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget"]],
-    ["views/RunningView.vue", ["ActivePrintWidget", "AxisSpeedControl", "ToolPanel"]],
     ["views/DebugView.vue", ["DebugPanel"]],
     // The Settings page itself is ungated (settings live in the system
     // service); only the camera device list needs the machine backend.
@@ -247,10 +245,19 @@ test("machine-level widgets are wrapped in MachineGate", () => {
     }
   }
 
-  // Console stays ungated on the dashboard (system rows + offline
-  // explanation live there).
-  const dash = read("views/DashboardView.vue");
-  assert.match(dash, /<ConsolePanel\s*\/?>/, "ConsolePanel must stay ungated");
+  // Dashboard / Running: their panels come from the page layout
+  // (layout/PageLayout.vue): every panel but the console is rendered
+  // inside MachineGate; the console stays ungated (system rows + the
+  // offline explanation live there).
+  const layout = read("layout/PageLayout.vue");
+  assert.match(layout, /<MachineGate v-else :label="panelDef\(id\)\?\.gate \?\? id">\s*<component :is="COMPONENTS\[id\]" \/>/);
+  assert.match(layout, /<div v-if="id === 'console'" class="h-\[300px\]">\s*<ConsolePanel \/>/, "ConsolePanel must stay ungated");
+  for (const widget of ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget", "AxisSpeedControl"]) {
+    assert.match(layout, new RegExp(`: ${widget},`), `${widget} must be a page-layout panel`);
+  }
+  for (const view of ["views/DashboardView.vue", "views/RunningView.vue"]) {
+    assert.match(read(view), /<PageLayout :setting="(dashboard|running)Layout" \/>/);
+  }
 });
 
 // ------------------------------------------------------------------ //
