@@ -1,6 +1,6 @@
 import { EntityId } from "../common/EntityId";
 import { Temperature } from "../common/Temperature";
-import { TemperatureUnit } from "../common/Unit";
+import { TemperatureUnit, celsiusTo, temperatureSymbol } from "../common/Unit";
 
 export interface HeaterReadingParams {
   id: string | EntityId;
@@ -77,8 +77,8 @@ export class HeaterReading {
     if (!this.hasBounds()) {
       return "";
     }
-    const suffix = unit === TemperatureUnit.KELVIN ? "K" : "°C";
-    return `${this._min} – ${this._max} ${suffix}`;
+    const show = (c: number) => Math.round(celsiusTo(c, unit) * 100) / 100;
+    return `${show(this._min as number)} – ${show(this._max as number)} ${temperatureSymbol(unit)}`;
   }
 
   /**

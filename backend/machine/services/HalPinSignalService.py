@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import tempfile
 from typing import Any, List, Optional
 
 from dtos.pins.HalPin import HalDirection
@@ -95,6 +96,33 @@ def _mock_signals(pins: List[MachineHalPin[Any]]) -> List[MachineHalSignal[Any]]
 
 
 
+
+#: A guard for a HAL that is already dead: halcmd writing to a file never
+#: blocks, so a live one always finishes well before this.
+HALCMD_TIMEOUT_S = 10.0
+
+
+def halcmd_show(what: str, timeout_s: float = HALCMD_TIMEOUT_S) -> str:
+    """``halcmd show <what>`` (``pin`` / ``sig``) through a temporary file,
+    never a pipe.
+
+    halcmd holds the HAL mutex for the whole listing and prints while it
+    holds it. Into a pipe, a listing over the 64 KiB pipe buffer (1264
+    pins: 71,900 bytes) blocks halcmd in ``write()`` until a Python thread
+    drains the pipe — but that thread needs the GIL, and a thread in
+    ``hal.get_value()`` (the dashboard snapshot) spins on the HAL mutex
+    *holding* the GIL: halcmd, HAL and the whole backend hang ("offline").
+    A regular file never blocks, so halcmd always finishes and releases
+    the mutex. Do not kill a halcmd that hangs on a pipe: it would leave
+    the mutex locked until LinuxCNC restarts.
+    """
+    with tempfile.TemporaryFile(mode="w+") as out:
+        subprocess.run(
+            ["halcmd", "show", what], stdout=out, stderr=subprocess.DEVNULL, check=True, timeout=timeout_s,
+        )
+        out.seek(0)
+        return out.read()
+
 class HalPinSignalService:
     """Reads (once) and caches the HAL pin/signal layout for the visual editor."""
 
@@ -158,10 +186,8 @@ class HalPinSignalService:
         pins: List[MachineHalPin[Any]] = []
 
         try:
-            raw = subprocess.check_output(
-                ["halcmd", "show", "pin"], text=True, stderr=subprocess.DEVNULL
-            )
-        except (subprocess.SubprocessError, FileNotFoundError):
+            raw = halcmd_show("pin")
+        except (subprocess.SubprocessError, OSError):
             return _mock_pins()
 
         # Matches lines like:
@@ -239,10 +265,8 @@ class HalPinSignalService:
                     pins_by_key[f"{comp_name}.{pin_name}"] = p
 
         try:
-            raw = subprocess.check_output(
-                ["halcmd", "show", "sig"], text=True, stderr=subprocess.DEVNULL
-            )
-        except (subprocess.SubprocessError, FileNotFoundError):
+            raw = halcmd_show("sig")
+        except (subprocess.SubprocessError, OSError):
             return _mock_signals(pins)
 
         signals: List[MachineHalSignal[Any]] = []
