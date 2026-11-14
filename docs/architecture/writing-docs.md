@@ -27,3 +27,7 @@ every toctree) into errors, as CI and Read the Docs do.
   the repository root says how to build. Activate the versions (branches, tags) to publish.
 - **CI** builds the docs on every push and pull request (the *docs* job), so a broken page
   fails before it reaches Read the Docs.
+- **GitHub wiki** — a generated copy: every push to `main` converts `docs/` with
+  `scripts/docs_to_wiki.py` and pushes it to the wiki (the *wiki* CI job). Edit `docs/`, not
+  the wiki — the next push overwrites wiki edits. If the workflow token may not push to the
+  wiki, add a repository secret `WIKI_TOKEN` (a token that can push to the repository).
