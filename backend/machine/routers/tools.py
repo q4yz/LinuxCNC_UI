@@ -9,7 +9,7 @@ drive the machine and operator commands:
 * ``POST /spindle`` — start / reverse / stop a spindle using the
   canonical ``M3 S{speed}`` / ``M4 S{speed}`` / ``M5`` codes.
 * ``POST /extruder`` — extrude or retract material on a 3D-printer
-  extruder axis using relative (``G91``) ``G1 E{dist} F{speed}``
+  extruder axis (A) using relative (``G91``) ``G1 A{dist} F{speed}``
   moves, restoring absolute (``G90``) mode afterwards.
 
 The router acts as a strict anti-corruption layer. It validates
@@ -102,7 +102,7 @@ def control_spindle(cmd: SpindleDigitalCommand) -> ToolCommandResponse:
         "Extrude or retract material on the extruder axis. The "
         "router delegates to :class:`ToolsService.control_extruder`, "
         "which switches into relative distance mode (``G91``), "
-        "issues a single ``G1 E{dist} F{speed}`` move — the sign "
+        "issues a single ``G1 A{dist} F{speed}`` move (the extruder is the A axis) — the sign "
         "of ``dist`` is inverted for the retract direction — and "
         "restores absolute mode (``G90``) so subsequent commands "
         "behave as expected."

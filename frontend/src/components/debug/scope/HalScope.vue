@@ -8,6 +8,7 @@
 // and per channel show/hide, V/div, shift up/down, auto-scale, remove.
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 
 import { BaseButton } from "../../../ui";
 import { lowerBound } from "./ScopeBuffer";
@@ -24,42 +25,30 @@ import {
   type WindowState,
 } from "./scopeMath";
 import { useHalScopeStream } from "./useHalScopeStream";
+import { useHalScopeStore, type ScopeChannelSettings as ChannelSettings } from "../../../stores/halScopeStore";
 
 const pins = defineModel<string[]>({ required: true });
-
-interface ChannelSettings {
-  color: string;
-  visible: boolean;
-  /** Value units per division. */
-  scale: number;
-  /** Vertical shift in divisions (+ = up). */
-  offset: number;
-}
 
 const COLORS = ["#facc15", "#22d3ee", "#f472b6", "#4ade80", "#fb923c", "#a78bfa", "#f87171", "#e5e7eb"];
 const RATES = [50, 100, 200, 500, 1000];
 const TIME_PER_DIV_MIN = 0.001;
 const TIME_PER_DIV_MAX = 5;
 
-const settings = reactive<Record<string, ChannelSettings>>({});
-const rateHz = ref(200);
-const timePerDiv = ref(0.2);
-const running = ref(true);
+// Everything the operator sets lives in the store (created once): leaving
+// the Debug view keeps it. Only "Single" arming is per visit.
+const scope = useHalScopeStore();
+const { rateHz, timePerDiv, running } = storeToRefs(scope);
+const settings = scope.settings;
+const trigger = scope.trigger;
 const singleArmed = ref(false);
-const trigger = reactive<{ source: string; edge: TriggerEdge; mode: TriggerMode; level: number; position: number }>({
-  source: "",
-  edge: "rising",
-  mode: "auto",
-  level: 0.5,
-  position: 0.5,
-});
 
 const { buffer, status, error } = useHalScopeStream(pins, rateHz);
 
 // --- channels ------------------------------------------------------------ //
 
-/** Channels auto-scaled once after their first data arrived. */
-const autoScaled = new Set<string>();
+/** Channels auto-scaled once after their first data arrived (kept with
+ * the settings: a channel's V/div is not fitted again on return). */
+const autoScaled = scope.autoScaled;
 
 watch(
   pins,
@@ -72,8 +61,8 @@ watch(
       }
     });
     for (const pin of Object.keys(settings)) if (!list.includes(pin)) delete settings[pin];
+    for (const pin of [...autoScaled]) if (!list.includes(pin)) autoScaled.delete(pin);
     if (!list.includes(trigger.source)) trigger.source = list[0] ?? "";
-    autoScaled.clear();
   },
   { immediate: true },
 );

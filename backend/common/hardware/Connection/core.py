@@ -148,12 +148,19 @@ class _HalReadConnection:
     lookup, not a connection with in-flight state the way NML's
     ``command`` channel is, and it's never called from the async
     event loop — only from threadpool-dispatched sync handlers (the
-    1Hz base-thread snapshot's tools/sensors overlay). Worst case on
-    a genuine concurrent read is one stale/bad sample that
-    self-corrects on the next poll, not a freeze. Wrapping it in one
-    object now means a lock can be added here later, if real evidence
-    of contention ever shows up, without touching every ``HalPin``
-    subclass that reads a pin.
+    1Hz base-thread snapshot's tools/sensors overlay). Wrapping it in
+    one object means a lock can be added here later without touching
+    every ``HalPin`` subclass that reads a pin.
+
+    **It can freeze the whole backend.** ``hal.get_value()`` takes the
+    HAL mutex (``rtapi_mutex_get``: a spin with ``sched_yield``) and does
+    not release the GIL while it waits. So no HAL client may ever block
+    while it *holds* that mutex and waits for this process — the
+    2026-11-12 hang: ``halcmd show pin`` into a full pipe (> 64 KiB)
+    blocked in ``write()`` holding the mutex, the thread that would have
+    drained the pipe needed the GIL, and this call spun holding it. Run
+    ``halcmd show`` through a file (``HalPinSignalService.halcmd_show``),
+    never ``subprocess.PIPE``.
     """
 
     def read(self, pin_name: str) -> Optional[Any]:

@@ -6,7 +6,7 @@
 // the class is not frozen to keep the getter ergonomic, but never
 // mutate ``_celsius`` from outside.
 
-import { TemperatureUnit, isTemperatureUnit } from "./Unit";
+import { TemperatureUnit, celsiusTo, isTemperatureUnit } from "./Unit";
 
 const KELVIN_OFFSET = 273.15;
 
@@ -34,16 +34,12 @@ export class Temperature {
     if (!isTemperatureUnit(unit)) {
       return this._celsius.toFixed(2);
     }
-    const v = unit === TemperatureUnit.KELVIN ? this._celsius + KELVIN_OFFSET : this._celsius;
-    return v.toFixed(2);
+    return celsiusTo(this._celsius, unit).toFixed(2);
   }
 
   /** Plain-number representation in the active unit (no rounding). */
   toUnit(unit: TemperatureUnit | string): number {
-    if (unit === TemperatureUnit.KELVIN) {
-      return this._celsius + KELVIN_OFFSET;
-    }
-    return this._celsius;
+    return celsiusTo(this._celsius, unit);
   }
 
   /** Convenience: ``Number.isFinite`` on the underlying raw value. */

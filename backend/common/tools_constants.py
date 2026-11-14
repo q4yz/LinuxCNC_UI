@@ -22,7 +22,7 @@ M4_BACKWARD = "M4 S{speed}"
 M5_STOP = "M5"
 G91_RELATIVE = "G91"
 G90_ABSOLUTE = "G90"
-G1_EXTRUDE = "G1 E{dist} F{speed}"
+G1_EXTRUDE = "G1 A{dist} F{speed}"  # the extruder is the A axis (no E in LinuxCNC)
 
 
 # Canonical LinuxCNC HAL pin for the relative spindle-override.

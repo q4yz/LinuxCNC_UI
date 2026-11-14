@@ -210,3 +210,6 @@ img/
 /.idea/webResources.xml
 /.claude/launch.json
 /logs/ui_machine.log.1
+
+# Sphinx build output
+docs/_build/

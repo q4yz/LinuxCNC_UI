@@ -1,40 +1,14 @@
 <script setup lang="ts">
-import ToolPanel from "../components/tools/ToolPanel.vue";
-import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
-import MachineGate from "../components/machine/MachineGate.vue";
-import ActivePrintWidget from "../components/ActivePrintWidget.vue";
+// Running page: the panels and their places come from the page layout
+// setting (Settings -> Page layout -> Running).
+import PageLayout from "../layout/PageLayout.vue";
+import { runningLayout } from "../settings/definitions/layout";
 
 defineOptions({ name: 'RunningView' })
 </script>
 
 <template>
   <div class="h-full overflow-y-auto pr-2">
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-8">
-
-      <!-- Left Column: Job Status & Machine State -->
-      <div class="lg:col-span-6 xl:col-span-6 flex flex-col space-y-6">
-
-
-        <MachineGate label="Job status">
-          <ActivePrintWidget />
-        </MachineGate>
-        <MachineGate label="Axis speed">
-          <AxisSpeedControl />
-        </MachineGate>
-
-      </div>
-
-      <!-- Right Column: Toolpath & Logging -->
-      <div class="lg:col-span-5 xl:col-span-5 flex flex-col space-y-6">
-
-
-      <MachineGate label="Tools">
-        <ToolPanel />
-      </MachineGate>
-
-
-      </div>
-
-    </div>
+    <PageLayout :setting="runningLayout" />
   </div>
 </template>

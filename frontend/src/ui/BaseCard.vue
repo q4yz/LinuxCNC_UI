@@ -4,7 +4,11 @@
 
 
 
-    <div v-if="title" class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between">
+    <div
+        v-if="title"
+        ref="header"
+        class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between"
+    >
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center gap-2">
         <Icon v-if="icon" :name="icon" />
         {{ title }}
@@ -15,7 +19,7 @@
         <slot name="header-actions" />
       </div>
     </div>
-    <div class="flex-1 min-h-0">
+    <div ref="body" class="flex-1 min-h-0">
       <slot v-if="ready" />
       <div v-else class="p-4 space-y-2 animate-pulse" aria-hidden="true" data-test="basecard-skeleton">
         <div class="h-3 w-2/3 rounded bg-gray-700"></div>
@@ -35,6 +39,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import Icon from './Icon.vue';
+import { MAX_ROW_PX, applyShift, estopBox, estopOverlap, scheduleEstopCheck, watchEstop } from './estopClearance';
 
 const props = withDefaults(
   defineProps<{
@@ -119,5 +124,53 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (revealTimer !== null) clearTimeout(revealTimer);
+});
+
+// Whatever row of this card is under the fixed E-stop box right now (the
+// top-right card, a card scrolled up beneath it, the first card of a
+// single-column layout) moves its right-hand buttons left to clear it:
+// the header, or a title-less card's first row (up to MAX_ROW_PX tall).
+// Re-measured on scroll / resize (one shared listener, once per frame)
+// and when the card changes size (layout, a kept-alive view shown again).
+const header = ref<HTMLElement | null>(null);
+const body = ref<HTMLElement | null>(null);
+let shifted: HTMLElement | null = null;
+let cardObserver: ResizeObserver | null = null;
+let unwatch: (() => void) | null = null;
+
+function topRow(): HTMLElement | null {
+  if (header.value) return header.value;
+  const first = body.value?.firstElementChild as HTMLElement | null | undefined;
+  return first && first.offsetHeight > 0 && first.offsetHeight <= MAX_ROW_PX ? first : null;
+}
+
+function measureEstop(): void {
+  const row = topRow();
+  if (shifted && shifted !== row) {
+    applyShift(shifted, 0);
+    shifted = null;
+  }
+  if (!row) return;
+  const estop = estopBox();
+  // padding does not move the row's right edge: the measurement is stable
+  const shift = estop && row.offsetParent !== null ? estopOverlap(row.getBoundingClientRect(), estop) : 0;
+  applyShift(row, shift);
+  shifted = shift > 0 ? row : null;
+}
+
+onMounted(() => {
+  unwatch = watchEstop(measureEstop);
+  const root = header.value?.parentElement ?? body.value?.parentElement;
+  if (typeof ResizeObserver !== 'undefined' && root) {
+    cardObserver = new ResizeObserver(scheduleEstopCheck);
+    cardObserver.observe(root);
+  }
+  measureEstop();
+});
+
+onBeforeUnmount(() => {
+  unwatch?.();
+  cardObserver?.disconnect();
+  if (shifted) applyShift(shifted, 0);
 });
 </script>

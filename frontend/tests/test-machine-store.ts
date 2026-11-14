@@ -155,14 +155,16 @@ test("machine store does not await refreshSettings inside jogContinuous (regress
   );
 });
 
-test("machine store reads the jog velocity from the central setting, never awaiting a fetch (regression)", () => {
+test("machine store's jog velocity is a constant, never awaiting a fetch (regression)", () => {
   // Companion to the await-removal test above: a jog must never wait
   // on a settings round-trip (a quick click-and-release would let the
-  // stop overtake the jog). The central setting serves its default
-  // until the one global fetch at app start has filled it.
+  // stop overtake the jog). The "Default jog velocity" setting is gone:
+  // the sliders start at DEFAULT_JOG_VELOCITY, capped to the axis limit.
   const text = readStore();
-  assert.match(text, /from "\.\.\/settings\/definitions\/machine"/);
-  assert.match(text, /defaultJogVelocitySetting\.value/);
+  assert.match(text, /export const DEFAULT_JOG_VELOCITY = 500;/);
+  assert.match(text, /const defaultJogVelocity = computed\(\(\) => DEFAULT_JOG_VELOCITY\)/);
+  assert.doesNotMatch(text, /defaultJogVelocitySetting/);
+  assert.doesNotMatch(readFileSync(resolve(repoRoot, "frontend/src/settings/definitions/machine.ts"), "utf-8"), /default_jog_velocity|Default jog velocity/);
   assert.doesNotMatch(text, /refreshSettings|createModuleSettings|settingsLoadPromise/);
   // Keep-alive is a fixed constant, not a user setting.
   assert.match(text, /const KEEPALIVE_INTERVAL_MS = 250;/);
