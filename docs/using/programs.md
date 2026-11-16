@@ -11,8 +11,13 @@ The machine answers the OctoPrint API slicers support:
   hostname `http://<machine-ip>`, any API key.
 - **Cura** — the **OctoPrint Connection** plugin, the machine's IP, port 80, any API key.
 
-*Upload and print* only **loads** the file, and only while LinuxCNC runs: nothing is started
-from the network.
+*Upload* stores the file; *Upload and print* also loads it into LinuxCNC (while it runs).
+
+**Starting from the slicer** — switch on **Settings → Slicer → Start prints sent from the
+slicer**, and *Upload and print* starts the print like the Start button: the file's `G28` /
+`G29` (homing, levelling) run first, then the program. The machine must be on and idle; a
+machine that is off, unhomed or busy only loads the file (the console says why). Off by default:
+then nothing is ever started from the network.
 
 ## What the converter changes
 

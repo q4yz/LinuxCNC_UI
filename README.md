@@ -78,7 +78,7 @@ The machine answers the OctoPrint API that slicers already support, so G-code ca
 - **OrcaSlicer / PrusaSlicer:** Printer → *Physical printer* / *Connection* → host type **OctoPrint**, hostname `http://<machine-ip>`. The API key can be anything (it is required but not checked). *Test* should answer "connected".
 - **Cura:** install the **OctoPrint Connection** plugin from the Marketplace, then Printer → *Manage printers* → *Connect OctoPrint* → *Add* with the machine's IP, port 80, and any API key.
 
-*Upload and print* (Orca) or *print after upload* (Cura) only **loads** the file into LinuxCNC, and only while it runs. Nothing is ever started from the network; start the program at the machine.
+*Upload and print* (Orca) or *print after upload* (Cura) loads the file into LinuxCNC (while it runs). With **Settings → Slicer → Start prints sent from the slicer** switched on it also starts the print, like the Start button (the file's homing / levelling first); off by default, then nothing is ever started from the network.
 
 ## Releasing
 
