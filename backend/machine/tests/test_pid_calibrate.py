@@ -97,3 +97,12 @@ def test_parsing_and_resolving():
         svc.run_command("PID_CALIBRATE HEATER=extruder")
     with pytest.raises(BadRequestError, match="outside"):
         svc.run_command("PID_CALIBRATE HEATER=extruder TARGET=279")
+
+
+def test_estop_aborts_and_releases():
+    plant = Plant()
+    svc = Svc(plant)
+    with pytest.raises(module.PidCalibrateError, match="E-stop"):
+        svc.calibrate(HEATER, 200.0, lambda: plant.temp, lambda: plant.t, lambda s: plant.step(),
+                      lambda m, **k: None, estop=lambda: plant.t > 30)
+    assert svc.writes[-1] == ("heater_extruder-enable", False)

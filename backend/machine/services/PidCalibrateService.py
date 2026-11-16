@@ -214,7 +214,7 @@ class PidCalibrateService:
         console = get_console_logger()
         try:
             self.calibrate(heater, target, lambda: read_hal_pin(f"PID-{heater['id']}.PV"), time.monotonic,
-                           time.sleep, console.log_event)
+                           time.sleep, console.log_event, estop=_in_estop)
         except PidCalibrateError as exc:
             console.log_event(f"{COMMAND} aborted: {exc}", level=LogLevel.ERROR, source="CMD")
         except Exception as exc:  # noqa: BLE001 - a worker must not die silently
@@ -223,7 +223,8 @@ class PidCalibrateService:
 
     def calibrate(self, heater: dict[str, Any], target: float, read: Callable[[], Any],
                   clock: Callable[[], float], sleep: Callable[[float], None],
-                  log: Callable[..., None]) -> Tuple[float, float, float]:
+                  log: Callable[..., None],
+                  estop: Callable[[], bool] = lambda: False) -> Tuple[float, float, float]:
         """The relay test on the calling thread; the heater is handed back
         to its PID loop in every case."""
         from services.ConsoleLogger import LogLevel
@@ -239,6 +240,8 @@ class PidCalibrateService:
             while not tuner.done:
                 if self._stop.is_set():
                     raise PidCalibrateError("stopped")
+                if estop():
+                    raise PidCalibrateError("E-stop")
                 raw = read()
                 if raw is None:
                     raise PidCalibrateError(f"cannot read {hid}'s temperature")
@@ -262,6 +265,16 @@ class PidCalibrateService:
         log(f"{COMMAND}: {hid} pid_Kp={kp:.3f} pid_Ki={ki:.3f} pid_Kd={kd:.3f} — put these into the "
             "profile's heater section and generate the machine.", level=LogLevel.INFO, source="CMD")
         return kp, ki, kd
+
+
+def _in_estop() -> bool:
+    from hardware import get_stat_channel
+
+    stat = get_stat_channel()
+    if stat is None:
+        return True
+    stat.poll()
+    return bool(stat.estop)
 
 
 _SERVICE: Optional[PidCalibrateService] = None
