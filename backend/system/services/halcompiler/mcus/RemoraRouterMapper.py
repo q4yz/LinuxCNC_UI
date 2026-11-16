@@ -57,6 +57,8 @@ SYNC_FALLBACK_HZ = 1_000_000
 #: Set points (``remora.SP.N``) per board, its CAN nodes included — the
 #: firmware's ``VARIABLES`` (configuration.h).
 REMORA_SET_POINTS = 6
+#: Process variables (``remora.PV.N``) per board, its CAN nodes included.
+REMORA_PROCESS_VARIABLES = 6
 
 
 class RemoraRouterMapper:
@@ -395,6 +397,24 @@ class RemoraRouterMapper:
                 })
                 chain["module"]["Segments"].append({"First": first, "Count": count, "SP[i]": sp_index})
                 sp_index += 1
+            elif request.role is PinRole.ACCEL and request.accel is not None:
+                # A CAN node's ADXL345 (Remora-m8p CAN_PROTOCOL.md): the
+                # node reads it, the hub writes X / Y (mm/s²) into two PVs.
+                axes_map, rate, sck, mosi, miso = request.accel
+                accel_module: dict[str, Any] = {
+                    "Type": "ADXL345",
+                    "Comment": request.owner,
+                    "CS Pin": RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id),
+                }
+                for key, raw in (("SCK Pin", sck), ("MOSI Pin", mosi), ("MISO Pin", miso)):
+                    if raw:
+                        accel_module[key] = RemoraFirmwarePinMapper.to_firmware_pin(raw)
+                for axis in ("x", "y"):
+                    fragment.nets.append(f"net {request.signal}-{axis} <= remora.PV.{pv_index}")
+                    accel_module[f"{axis.upper()} PV[i]"] = pv_index
+                    pv_index += 1
+                accel_module.update({"Axes Map": axes_map, "Range": 16, "Rate": rate})
+                fragment.firmware_modules.append(FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=accel_module))
             elif request.role is PinRole.ANALOG_IN and request.sensor_type == MCU_TEMP_SENSOR_TYPE:
                 # The board's own die temperature ("MCU Temperature"
                 # module, Remora-m8p modules/mcuTemp) on the next free PV.
@@ -446,6 +466,11 @@ class RemoraRouterMapper:
             fragment.firmware_modules.append(
                 FirmwareModuleRequest(mcu_id=chain["mcu_id"], module=chain["module"])
             )
+        if pv_index > REMORA_PROCESS_VARIABLES:
+            raise ValueError(
+                f"{pv_index} process variables (temperatures, the MCU temperature, an accelerometer's X / Y) "
+                f"on one Remora board, its nodes included; it has {REMORA_PROCESS_VARIABLES} (firmware VARIABLES)"
+            )
         if sp_index > REMORA_SET_POINTS:
             raise ValueError(
                 f"{sp_index} set points (heaters, fans, PWM outputs, LED segments) on one Remora "
@@ -454,4 +479,4 @@ class RemoraRouterMapper:
         return fragment
 
 
-__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_SET_POINTS", "RemoraRouterMapper"]
+__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_PROCESS_VARIABLES", "REMORA_SET_POINTS", "RemoraRouterMapper"]

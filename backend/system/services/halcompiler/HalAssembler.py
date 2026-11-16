@@ -37,6 +37,7 @@ from .components.ProbeHalMapper import ProbeHalMapper
 from .components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from .components.RemoraFirmwareConfigMapper import RemoraFirmwareConfigMapper
 from .components.RemoraStepperHalMapper import RemoraStepperHalMapper
+from .components.Adxl345HalMapper import Adxl345HalMapper
 from .components.LedHalMapper import LedHalMapper
 from .components.StepperHalMapper import StepperHalMapper
 from .components.ZTiltHalMapper import ZTiltHalMapper
@@ -111,6 +112,7 @@ class HalAssembler:
             + self._heater_fragments()
             + self._sensor_fragments()
             + [LedHalMapper.to_fragment(led) for led in self._payload.get("leds") or [] if isinstance(led, dict)]
+            + [Adxl345HalMapper.to_fragment(self._payload)]
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]

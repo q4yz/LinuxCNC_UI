@@ -1,5 +1,6 @@
-"""An ADXL345 accelerometer on the host's SPI (BTT CB1, Raspberry Pi), read
-from its FIFO — for resonance tests (``ResonanceService``).
+"""An ADXL345 accelerometer for resonance tests (``ResonanceService``): on
+the host's SPI (BTT CB1, Raspberry Pi), read from its FIFO (:class:`Adxl345`),
+or on a CAN node, recorded in HAL (:class:`NodeAdxl345`).
 
 Wiring: the chip's SDO / SDA / SCL / CS to the host's MISO / MOSI / SCLK and
 a chip select of a spidev device (``[adxl345] spi_device: /dev/spidev1.1``),
@@ -7,9 +8,13 @@ VCC 3.3 V, GND. Needs the ``spidev`` Python module (``python3-spidev``).
 """
 from __future__ import annotations
 
+import queue
 import re
+import shutil
+import subprocess
+import threading
 import time
-from typing import Any, List, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 DEVID = 0x00
 BW_RATE = 0x2C
@@ -114,4 +119,113 @@ class Adxl345:
         return samples
 
 
-__all__ = ["Adxl345", "Adxl345Error", "Sample", "decode", "parse_axes_map"]
+class NodeAdxl345:
+    """The ADXL345 of a CAN node (``[adxl345] cs_pin: <node>:PB12``): the
+    node firmware reads it, the hub writes X / Y (mm/s², axes mapped) into
+    two process variables, a HAL ``sampler`` records them every servo
+    period (`Adxl345HalMapper`) and ``halsampler`` hands them over here.
+    Same interface as :class:`Adxl345`; no Z (the frame's PVs are few)."""
+
+    #: ``sampler.0.enable``, netted in webgui_connections.hal.
+    RECORD_PIN = "accel-record"
+
+    def __init__(self, config: dict[str, Any], record: Callable[[bool], None],
+                 period_s: Optional[float] = None) -> None:
+        self._config = config
+        self._record = record
+        self.period = period_s or servo_period_s()
+        self.rate = 1.0 / self.period
+        self._proc: Any = None
+        self._queue: "queue.Queue[Tuple[int, float, float]]" = queue.Queue()
+        self._reader: Optional[threading.Thread] = None
+        self._first_tag: Optional[int] = None
+        self._start = 0.0
+
+    def open(self) -> None:
+        if shutil.which("halsampler") is None:
+            raise Adxl345Error("halsampler is missing (LinuxCNC's HAL tools): the node accelerometer needs it")
+        self._record(False)
+        try:
+            self._proc = subprocess.Popen(["halsampler", "-c", "0", "-t"], stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        except OSError as exc:
+            raise Adxl345Error(f"cannot start halsampler: {exc}") from exc
+        self._reader = threading.Thread(target=self._read_lines, name="halsampler", daemon=True)
+        self._reader.start()
+        time.sleep(0.1)  # what an earlier test left in the FIFO
+        self._drain()
+        self._first_tag = None
+        self._start = time.monotonic()
+        self._record(True)
+
+    def _read_lines(self) -> None:
+        stdout = self._proc.stdout if self._proc is not None else None
+        if stdout is None:
+            return
+        for line in stdout:
+            parsed = parse_sampler_line(line)
+            if parsed is not None:
+                self._queue.put(parsed)
+
+    def _drain(self) -> List[Tuple[int, float, float]]:
+        items = []
+        while True:
+            try:
+                items.append(self._queue.get_nowait())
+            except queue.Empty:
+                return items
+
+    def close(self) -> None:
+        self._record(False)
+        if self._proc is not None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            self._proc = None
+
+    def read_fifo(self) -> List[Sample]:
+        """The samples recorded since the last call, timed by the servo
+        period from the first one (the sampler's own spacing)."""
+        samples: List[Sample] = []
+        for tag, x, y in self._drain():
+            if self._first_tag is None:
+                self._first_tag = tag
+            samples.append((self._start + (tag - self._first_tag) * self.period, x, y, 0.0))
+        return samples
+
+
+def parse_sampler_line(line: str) -> Optional[Tuple[int, float, float]]:
+    """``halsampler -t`` output: ``<sample number> <x> <y>``."""
+    parts = line.split()
+    if len(parts) < 3:
+        return None
+    try:
+        return int(parts[0]), float(parts[1]), float(parts[2])
+    except ValueError:
+        return None
+
+
+def servo_period_s() -> float:
+    """LinuxCNC's ``[EMCMOT] SERVO_PERIOD`` (ns) of the running machine,
+    1 ms when it cannot be read."""
+    try:
+        import linuxcnc
+
+        stat = linuxcnc.stat()
+        stat.poll()
+        value = linuxcnc.ini(stat.ini_filename).find("EMCMOT", "SERVO_PERIOD")
+        if value:
+            return float(value) * 1e-9
+    except Exception:  # noqa: BLE001 - no LinuxCNC: the usual period
+        pass
+    return 0.001
+
+
+def is_node(config: dict[str, Any]) -> bool:
+    return bool(config.get("cs_pin"))
+
+
+__all__ = ["Adxl345", "Adxl345Error", "NodeAdxl345", "Sample", "decode", "is_node", "parse_axes_map",
+           "parse_sampler_line", "servo_period_s"]

@@ -74,6 +74,7 @@ from services.HalScopeService import get_hal_scope_service
 from services.PrintTuningService import get_print_tuning_service
 from services.ShaperService import get_shaper_service
 from services.PidCalibrateService import get_pid_calibrate_service
+from services.ResonanceService import get_resonance_service
 from services.ServoThreadService import (
     get_servo_thread_service,
 )
@@ -155,6 +156,7 @@ async def lifespan(app: FastAPI):
         get_print_tuning_service().preload_hal_pins()
         get_shaper_service().preload_hal_pins()
         get_pid_calibrate_service().preload_hal_pins()
+        get_resonance_service().preload_hal_pins()
         HalPin.initialize_component()
         get_io_service().apply_start_values()
         get_led_service().apply_initial()

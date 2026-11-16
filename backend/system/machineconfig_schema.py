@@ -242,8 +242,11 @@ INPUT_SHAPER_KEYS = frozenset({
 # calibration print (Klipper's SET_SKEW XY=AC,BD,AD).
 SKEW_CORRECTION_KEYS = frozenset({"xy_skew_factor", "xy_ac", "xy_bd", "xy_ad"})
 # An ADXL345 on the host's SPI (BTT CB1 / Raspberry Pi) for resonance tests.
+# ``cs_pin: <node>:PB12``: the ADXL345 of a CAN node (EBB42 / SB2209), read by
+# the node firmware into hub process variables; without it the host's spidev.
 ADXL345_KEYS = frozenset({"spi_device", "spi_speed", "axes_map", "rate", "accel_per_hz", "min_freq", "max_freq",
-                          "hz_per_sec"})
+                          "hz_per_sec", "cs_pin", "spi_bus", "spi_software_sclk_pin", "spi_software_mosi_pin",
+                          "spi_software_miso_pin"})
 # Klipper's [firmware_retraction]: what a slicer's bare G10 / G11 do (the
 # G-code converter turns them into A moves; SET_RETRACTION is not supported).
 FIRMWARE_RETRACTION_KEYS = frozenset({

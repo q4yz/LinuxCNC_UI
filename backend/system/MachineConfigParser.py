@@ -502,6 +502,9 @@ def split_pin(pin: str | None) -> tuple[str | None, str | None]:
 # what make the section a heater at all.
 _HEATER_REQUIRED_KEYS = ("heater_pin", "sensor_pin", "control")
 # When control is "pid", these three are also required.
+#: ADXL345 output data rates: the node firmware's, the host driver's.
+NODE_ADXL_RATES = (100, 200, 400, 800, 1600, 3200)
+HOST_ADXL_RATES = (400, 800, 1600, 3200)
 _PID_REQUIRED_KEYS = ("pid_Kp", "pid_Ki", "pid_Kd")
 
 
@@ -810,6 +813,7 @@ class MachineConfigParser:
         # every stepper's pins and every heater's name are known.
         # Both validations are cheap and produce structured errors.
         self._resolve_tmc_virtual_endstops(graph)
+        self._validate_adxl345(graph)
         self._resolve_virtual_endstop(graph)
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
@@ -1591,7 +1595,33 @@ class MachineConfigParser:
                 setattr(adxl, key, value)
         for key in ("accel_per_hz", "min_freq", "max_freq", "hz_per_sec"):
             setattr(adxl, key, self._non_negative(section_name, section, key, getattr(adxl, key)))
+        adxl.cs_pin = self._optional_string(section, "cs_pin")
+        adxl.sclk_pin = self._optional_string(section, "spi_software_sclk_pin")
+        adxl.mosi_pin = self._optional_string(section, "spi_software_mosi_pin")
+        adxl.miso_pin = self._optional_string(section, "spi_software_miso_pin")
+        rates = NODE_ADXL_RATES if adxl.cs_pin else HOST_ADXL_RATES
+        if adxl.rate not in rates:
+            raise InvalidValueError(section_name, "rate", str(adxl.rate), ", ".join(str(r) for r in rates))
         return adxl
+
+    @staticmethod
+    def _validate_adxl345(graph: MachineConfigGraph) -> None:
+        """``cs_pin``: the accelerometer of a CAN node (Remora-m8p's node
+        ADXL345 module); its SPI pins on that node too."""
+        adxl = graph.adxl345
+        if adxl is None or not adxl.cs_pin:
+            return
+        mcu_name, _ = split_pin(adxl.cs_pin)
+        mcu = graph.mcus.get(mcu_name or "")
+        if mcu is None or mcu.connection != "remora-can":
+            raise InvalidValueError(
+                "adxl345", "cs_pin", adxl.cs_pin,
+                "a pin of a CAN node (<node>:PB12, an EBB42 / SB2209): the node firmware reads the sensor; "
+                "an ADXL345 on the host's SPI takes spi_device and no cs_pin")
+        for key, pin in (("spi_software_sclk_pin", adxl.sclk_pin), ("spi_software_mosi_pin", adxl.mosi_pin),
+                         ("spi_software_miso_pin", adxl.miso_pin)):
+            if pin and split_pin(pin)[0] not in (None, mcu_name):
+                raise InvalidValueError("adxl345", key, pin, f"a pin of {mcu_name}, as cs_pin")
 
     def _parse_float_section(self, section_name: str, section: configparser.SectionProxy, target: Any) -> Any:
         """Fill ``target``'s fields from same-named number keys; a length or

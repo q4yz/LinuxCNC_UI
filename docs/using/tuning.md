@@ -30,8 +30,9 @@ are not advanced.
 
 ## Input shaping and the resonance test
 
-An ADXL345 on the host's SPI (`[adxl345]`, `python3-spidev` installed) mounted on the
-toolhead, then:
+The accelerometer of a CAN toolhead board (EBB42, SB2209 — `[adxl345] cs_pin:
+<node>:PB12`), or an ADXL345 on the host's SPI mounted on the toolhead (`[adxl345]
+spi_device`, `python3-spidev` installed), then:
 
 ```text
 ACCELEROMETER_QUERY          # wiring check
@@ -47,6 +48,14 @@ the vibration left and its length (under *Debug*), and recommends one:
 shaper_type_x: mzv
 shaper_freq_x: 52.4
 ```
+
+On a CAN node the node reads the sensor, averages its samples per millisecond and the hub
+writes X / Y into LinuxCNC; a HAL `sampler` records them every servo period while the test
+runs and the UI reads them with `halsampler`. That gives up to 500 Hz — plenty for printer
+resonances (`max_freq` 133) — but node and LinuxCNC clocks are not synchronised, so a
+sample is now and then seen twice; the console warns when the recording lost samples. The
+node needs the Remora-m8p firmware with the ADXL345 module, and two free process variables
+on the hub (temperatures use them too).
 
 `SET_INPUT_SHAPER SHAPER_FREQ_X=<Hz> SHAPER_FREQ_Y=<Hz>` tries a frequency; a change
 applies once the axis stands still. Input shaping and the test need a Cartesian Remora

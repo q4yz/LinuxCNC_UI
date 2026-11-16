@@ -27,6 +27,7 @@ from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
+from .components.Adxl345HalMapper import Adxl345HalMapper
 from .components.HeaterHalMapper import pid_tune_webgui_lines
 from .components.JointShapeHalMapper import JointShapeHalMapper, shaped_joints
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
@@ -134,6 +135,7 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
     if isinstance(z_tilt, dict):
         lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
     lines.extend(JointShapeHalMapper.webgui_lines(shaped_joints(payload)))
+    lines.extend(Adxl345HalMapper.webgui_lines(payload))
     for sensor in unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:

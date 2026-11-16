@@ -454,6 +454,12 @@ class Adxl345:
     min_freq: float = 5.0
     max_freq: float = 133.0
     hz_per_sec: float = 1.0
+    #: On a CAN node: its chip select (``sb2209:PB12``) and, when not the
+    #: EBB42 / SB2209 defaults, the SPI pins.
+    cs_pin: str | None = None
+    sclk_pin: str | None = None
+    mosi_pin: str | None = None
+    miso_pin: str | None = None
 
 
 @dataclass(slots=True)

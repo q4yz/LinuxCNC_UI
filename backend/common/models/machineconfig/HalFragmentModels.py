@@ -47,6 +47,9 @@ class PinRole(Enum):
     #: A measured value coming in from hardware (a thermistor reading)
     #: — `remora.PV.N` on class B.
     ANALOG_IN = "analog_in"
+    #: A CAN node's ADXL345 (``PinRequest.accel``): its chip select; the
+    #: X / Y accelerations on two ``remora.PV.N`` (``<signal>-x`` / ``-y``).
+    ACCEL = "accel"
     #: A generic digital output — direction, not device (same "any
     #: I/O-capable MCU can carry one" contract as SPINDLE_OUT). Used
     #: by the E-stop component's `out_pin` (`estop.md` § 3).
@@ -99,6 +102,9 @@ class PinRequest:
     sensor_type: str | None = None
     #: ``PinRole.RGB`` only: ``(chain_count, color_order, first, count)``.
     led: tuple[int, str, int, int] | None = None
+    #: ``PinRole.ACCEL`` only: ``(axes_map, rate, sck, mosi, miso)``, the
+    #: SPI pins bare (``PB10``) or ``None`` for the node's defaults.
+    accel: tuple[str, int, str | None, str | None, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -344,6 +344,8 @@ def _adxl345_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
         "spi_device": adxl.spi_device, "spi_speed": adxl.spi_speed, "axes_map": adxl.axes_map, "rate": adxl.rate,
         "accel_per_hz": adxl.accel_per_hz, "min_freq": adxl.min_freq, "max_freq": adxl.max_freq,
         "hz_per_sec": adxl.hz_per_sec,
+        # a CAN node's accelerometer (Adxl345HalMapper); None: the host's spidev
+        "cs_pin": adxl.cs_pin, "sclk_pin": adxl.sclk_pin, "mosi_pin": adxl.mosi_pin, "miso_pin": adxl.miso_pin,
     }
 
 

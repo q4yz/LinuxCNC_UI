@@ -84,3 +84,48 @@ def test_adxl_decoding_and_axes_map():
     x, y, z = decode(raw, axes)
     lsb = 0.0039 * 9806.65
     assert x == pytest.approx(1 * lsb) and y == pytest.approx(256 * lsb) and z == pytest.approx(2 * lsb)
+
+
+def test_sampler_lines():
+    from services.Adxl345 import parse_sampler_line
+
+    assert parse_sampler_line("17 12.5 -3\n") == (17, 12.5, -3.0)
+    assert parse_sampler_line("garbage") is None and parse_sampler_line("1 x 2") is None
+
+
+def test_node_accelerometer_reads_halsampler(monkeypatch, tmp_path):
+    """A fake halsampler: 250 samples of a 40 Hz sine on X, 1 kHz."""
+    import os
+    import time as _time
+
+    from services.Adxl345 import NodeAdxl345
+
+    script = tmp_path / "halsampler"
+    # waits first: open() drops what is in the FIFO before recording starts
+    script.write_text("#!/usr/bin/env python3\nimport math, sys, time\ntime.sleep(0.5)\n"
+                      "for n in range(250):\n"
+                      "    print(n, 1000 * math.sin(2 * math.pi * 40 * n / 1000), 5.0, flush=True)\n"
+                      "import time; time.sleep(30)\n")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    record = []
+    chip = NodeAdxl345({"cs_pin": "ebb:PB12"}, record.append, period_s=0.001)
+    monkeypatch.setattr(_time, "sleep", lambda s: None)  # open() would drop the fake's samples
+    chip.open()
+    deadline = _time.monotonic() + 5
+    samples: list = []
+    while len(samples) < 250 and _time.monotonic() < deadline:
+        samples.extend(chip.read_fifo())
+    chip.close()
+    assert record == [False, True, False]  # recording only between open and close
+    assert len(samples) == 250 and chip.rate == 1000.0
+    assert samples[1][0] - samples[0][0] == pytest.approx(0.001)
+    assert samples[0][2] == 5.0 and samples[0][3] == 0.0
+
+
+def test_measure_picks_the_node_accelerometer(monkeypatch):
+    service = module.ResonanceService()
+    from services.Adxl345 import Adxl345, NodeAdxl345
+
+    assert isinstance(service.accelerometer({"cs_pin": "ebb:PB12"}), NodeAdxl345)
+    assert isinstance(service.accelerometer({"spi_device": "/dev/spidev1.1"}), Adxl345)

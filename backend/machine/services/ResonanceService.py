@@ -124,6 +124,31 @@ class ResonanceService:
         self._lock = threading.Lock()
         self.last: dict[str, Any] = {}
 
+    def preload_hal_pins(self) -> None:
+        """``webgui.accel-record`` (a CAN node's accelerometer: the HAL
+        sampler records while it is on)."""
+        from dtos.pins.HalPin import HalDataType
+        from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+        from services.Adxl345 import NodeAdxl345, is_node
+        from services.HardwareConfigService import HardwareConfigService
+
+        adxl = HardwareConfigService().load_payload().get("adxl345")
+        if isinstance(adxl, dict) and is_node(adxl):
+            self._record_pin = ReadWriteDynamicHalPin(NodeAdxl345.RECORD_PIN, HalDataType.BIT,
+                                                      "Resonance test: record the node accelerometer")
+            self._record_pin.set_value(False)
+
+    def _record(self, on: bool) -> None:
+        pin = getattr(self, "_record_pin", None)
+        if pin is not None:
+            pin.set_value(bool(on))
+
+    def accelerometer(self, config: dict[str, Any]) -> Any:
+        """The node's (``cs_pin``) or the host's ADXL345."""
+        from services.Adxl345 import Adxl345, NodeAdxl345, is_node
+
+        return NodeAdxl345(config, self._record) if is_node(config) else Adxl345(config)
+
     def is_running(self) -> bool:
         worker = self._worker
         return worker is not None and worker.is_alive()
@@ -185,13 +210,13 @@ class ResonanceService:
             raise ConflictError("A program or MDI command is running.")
 
     def _query(self, config: dict[str, Any]) -> None:
-        from services.Adxl345 import Adxl345, Adxl345Error
+        from services.Adxl345 import Adxl345Error, is_node
         from services.ConsoleLogger import LogLevel, get_console_logger
 
-        chip = Adxl345(config)
+        chip = self.accelerometer(config)
         try:
             chip.open()
-            time.sleep(0.05)
+            time.sleep(0.1)
             samples = chip.read_fifo()
         except Adxl345Error as exc:
             raise BadRequestError(f"ACCELEROMETER_QUERY: {exc}") from exc
@@ -199,9 +224,16 @@ class ResonanceService:
             chip.close()
         if not samples:
             raise BadRequestError("ACCELEROMETER_QUERY: the chip gave no samples.")
-        _, x, y, z = samples[-1]
-        get_console_logger().log_event(f"Accelerometer: x {x:.0f}, y {y:.0f}, z {z:.0f} mm/s²", level=LogLevel.INFO,
-                                       source="CMD")
+        count = len(samples)
+        x, y, z = (sum(s[k] for s in samples) / count for k in (1, 2, 3))
+        if is_node(config):
+            if x == 0.0 and y == 0.0:
+                raise BadRequestError("ACCELEROMETER_QUERY: the node sends 0 — the node is lost, its ADXL345 not "
+                                      "configured or not found (the hub's boot summary says which).")
+            text = f"Accelerometer (node): x {x:.0f}, y {y:.0f} mm/s² ({count} samples)"
+        else:
+            text = f"Accelerometer: x {x:.0f}, y {y:.0f}, z {z:.0f} mm/s²"
+        get_console_logger().log_event(text, level=LogLevel.INFO, source="CMD")
 
     def _run_worker(self, config: dict[str, Any], axes: List[str]) -> None:
         from services.ConsoleLogger import LogLevel, get_console_logger
@@ -219,7 +251,6 @@ class ResonanceService:
                 source: Optional[Callable[[], Any]] = None) -> ShaperFit:
         """Sweep ``axis``, record, fit; ``source`` (tests) replaces the
         accelerometer: a callable returning the samples since the last call."""
-        from services.Adxl345 import Adxl345
         from services.ConsoleLogger import LogLevel
         from services.ShaperService import get_shaper_service
 
@@ -230,7 +261,7 @@ class ResonanceService:
         shaper = get_shaper_service()
         chip = None
         if source is None:
-            chip = Adxl345(config)
+            chip = self.accelerometer(config)
             chip.open()
             source = chip.read_fifo
         samples: List[Any] = []
@@ -252,6 +283,8 @@ class ResonanceService:
             shaper.stop_test()
             if chip is not None:
                 chip.close()
+        if chip is not None:
+            self._warn_overruns(log)
         column = 1 if axis == "x" else 2
         if len(samples) < 2:
             raise BadRequestError("the accelerometer gave no samples")
@@ -267,6 +300,21 @@ class ResonanceService:
         self.last[axis] = {"fits": [fit.__dict__ for fit in fits], "recommended": best.__dict__,
                            "samples": len(samples), "rate": rate}
         return best
+
+
+    @staticmethod
+    def _warn_overruns(log: Callable[..., None]) -> None:
+        """The HAL sampler's FIFO ran over (samples lost): a node only."""
+        from hardware.Connection import read_hal_pin
+        from services.ConsoleLogger import LogLevel
+
+        try:
+            overruns = read_hal_pin("sampler.0.overruns")
+        except Exception:  # noqa: BLE001 - a host ADXL has no sampler
+            return
+        if overruns:
+            log(f"The accelerometer recording lost samples ({overruns} overruns): the result may be off.",
+                level=LogLevel.WARNING, source="CMD")
 
 
 _SERVICE: Optional[ResonanceService] = None

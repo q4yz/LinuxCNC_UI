@@ -375,15 +375,25 @@ component between the X / Y joints and their step generators — Cartesian Remor
 
 ### [adxl345]
 
-An ADXL345 accelerometer on the host's SPI (BTT CB1, Raspberry Pi), for `SHAPER_CALIBRATE`.
+An ADXL345 accelerometer for `SHAPER_CALIBRATE`: the one on a CAN toolhead board (EBB42,
+SB2209) — `cs_pin` on that node — or one on the host's SPI (BTT CB1, Raspberry Pi).
 
 ```ini
 [adxl345]
+#cs_pin:
+#   On a CAN node: its chip select, e.g. sb2209:PB12. The node firmware reads the sensor and
+#   the hub sends X / Y to LinuxCNC (two of the board's six process variables).
+#spi_software_sclk_pin:
+#spi_software_mosi_pin:
+#spi_software_miso_pin:
+#   On a node: other SPI pins than the EBB42 / SB2209 ones (PB10, PB11, PB2).
 #spi_device: /dev/spidev1.1
 #spi_speed: 5000000
+#   On the host (no cs_pin): the spidev device and its clock.
 #axes_map: x,y,z
 #   Machine X, Y, Z as chip axes, e.g. -y,x,z.
 #rate: 3200
+#   Hz: 100 … 3200 on a node, 400 … 3200 on the host.
 #accel_per_hz: 75
 #   The test's acceleration (mm/s²) per Hz.
 #min_freq: 5
