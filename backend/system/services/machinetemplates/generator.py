@@ -75,6 +75,7 @@ from services.machineconfig import AxisBuilder, AxisMappingPolicy
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
 from .ini_template_generator import SUBROUTINES_DIR, render_ini_template
+from .marlin_mcodes import M600_REMAP
 
 logger = logging.getLogger("backend.services.machinetemplates")
 
@@ -472,7 +473,9 @@ def _write_machine(
     input_commands = mdi_commands(payload.get("input_pins") or [])
     # Marlin's heater / fan M-codes need nothing here: they are user
     # M-code programs in machine_config/m_codes/ (USER_M_PATH), see
-    # marlin_mcodes.
+    # marlin_mcodes. M600 (> M199) is a REMAP to m_codes/m600.ngc.
+    filament_change = payload.get("filament_change")
+    remaps = [M600_REMAP] if filament_change else None
 
     # 1. Verbatim source copy (provenance).
     (configs_dir / "machine.cfg").write_bytes(source.read_bytes())
@@ -496,6 +499,8 @@ def _write_machine(
             # moves before every joint is homed.
             homing_override=isinstance(payload.get("homing_override"), dict)
             or isinstance(payload.get("z_virtual_endstop"), dict),
+            remaps=remaps,
+            filament_change=filament_change,
         ),
         encoding="utf-8",
     )

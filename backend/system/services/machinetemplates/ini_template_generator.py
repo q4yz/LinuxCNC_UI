@@ -200,6 +200,7 @@ def render_ini_template(
     corexy: bool = False,
     homing_override: bool = False,
     remaps: List[str] | None = None,
+    filament_change: Dict[str, Any] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -284,6 +285,9 @@ def render_ini_template(
         "[UI_HOME]",
         *_ui_home(axes),
         "",
+        # M600 (m_codes/m600.ngc reads these; REMAP=M600 above).
+        *(["[FILAMENT_CHANGE]", *(f"{k.upper()} = {_fmt(float(v))}" for k, v in filament_change.items()), ""]
+          if filament_change else []),
         "[EMCMOT]",
         "EMCMOT = motmod",
         "COMM_TIMEOUT = 30.0",

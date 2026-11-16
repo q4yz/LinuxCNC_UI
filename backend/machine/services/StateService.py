@@ -203,6 +203,10 @@ class StateService:
                 or accuracy.is_running() or calibrate.is_running())
         if calibrate.run_command(command, busy=busy):
             return True
+        from services.PrintTuningService import get_print_tuning_service
+
+        if get_print_tuning_service().run_command(command):
+            return True
         accuracy_request = parse_probe_accuracy(command)
         if accuracy_request is not None:
             accuracy.start(accuracy_request, busy=busy)

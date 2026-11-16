@@ -21,6 +21,16 @@ Homing sets the extruder's position in place, a one-period `vel-cmd`
 spike: the component ignores the joint while it homes and only stops a
 move that lasted `min-extrude-time` (50 ms).
 
+**Flow** (``M221``, the UI's flow %): on a Remora board the extruder
+joint's position command and feedback go through the component, which
+scales the extruder's moves by ``flow-percent`` (``webgui.flow``) —
+rebased on every change, so a new factor never jumps the position:
+
+    net j<n>pos-cmd joint.<n>.motor-pos-cmd => extruder-<id>.pos-cmd-in
+    net j<n>pos-cmd-flow extruder-<id>.pos-cmd-out => remora.joint.<n>.pos-cmd
+    net j<n>pos-fb remora.joint.<n>.pos-fb => extruder-<id>.pos-fb-in
+    net j<n>pos-fb-flow extruder-<id>.pos-fb-out => joint.<n>.motor-pos-fb
+
 `halui.abort` stops the program / MDI move, as Klipper refuses an
 "extrude below minimum temp"; the component prints the error. The motor
 enable is not gated: a disabled stepper would let LinuxCNC's commanded
@@ -54,7 +64,9 @@ def guarded_joint(payload: dict[str, Any], tool: dict[str, Any]) -> Optional[int
 
 class ExtruderGuardHalMapper:
     @staticmethod
-    def to_fragment(tool: dict[str, Any], joint_number: int) -> HalFragment:
+    def to_fragment(tool: dict[str, Any], joint_number: int, flow: bool = False) -> HalFragment:
+        """``flow``: route the joint's position through the component
+        (Remora: `RemoraStepperHalMapper` leaves those nets out)."""
         tool_id = str(tool["id"])
         comp = _component(tool_id)
         min_temp = tool.get("min_extrude_temp")
@@ -68,6 +80,14 @@ class ExtruderGuardHalMapper:
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
         # homing sets the position in place: no guard meanwhile
         fragment.nets.append(f"net {tool_id}-homing joint.{joint_number}.homing => {comp}.homing")
+        if flow:
+            n = joint_number
+            fragment.nets.extend([
+                f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => {comp}.pos-cmd-in",
+                f"net j{n}pos-cmd-flow {comp}.pos-cmd-out => remora.joint.{n}.pos-cmd",
+                f"net j{n}pos-fb remora.joint.{n}.pos-fb => {comp}.pos-fb-in",
+                f"net j{n}pos-fb-flow {comp}.pos-fb-out => joint.{n}.motor-pos-fb",
+            ])
         return fragment
 
     @staticmethod
@@ -76,6 +96,8 @@ class ExtruderGuardHalMapper:
         return [
             f"# Cold-extrusion guard: {tool_id} (machine.hal's extruder-{tool_id})",
             f"net {tool_id}-cold-extrude {_component(tool_id)}.cold-extrude => halui.abort",
+            # the flow % (M221, the UI) — scales the moves on a Remora board
+            f"net {tool_id}-flow webgui.flow => {_component(tool_id)}.flow-percent",
             "",
         ]
 

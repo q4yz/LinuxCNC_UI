@@ -11,8 +11,13 @@ The machine answers the OctoPrint API slicers support:
   hostname `http://<machine-ip>`, any API key.
 - **Cura** — the **OctoPrint Connection** plugin, the machine's IP, port 80, any API key.
 
-*Upload and print* only **loads** the file, and only while LinuxCNC runs: nothing is started
-from the network.
+*Upload* stores the file; *Upload and print* also loads it into LinuxCNC (while it runs).
+
+**Starting from the slicer** — switch on **Settings → Slicer → Start prints sent from the
+slicer**, and *Upload and print* starts the print like the Start button: the file's `G28` /
+`G29` (homing, levelling) run first, then the program. The machine must be on and idle; a
+machine that is off, unhomed or busy only loads the file (the console says why). Off by default:
+then nothing is ever started from the network.
 
 ## What the converter changes
 
@@ -31,6 +36,12 @@ A `.gcode` upload is converted for LinuxCNC and stored as `.ngc`:
 | `SET_LED …`, `M150 …` | the LED M-code |
 | an M-code LinuxCNC does not know (`M84`, `M73`, …) | commented out with the reason |
 | a line over 252 characters | cut to 249 + `...` (LinuxCNC's line limit) |
+| a bare `G10` / `G11` (firmware retraction) | the `[firmware_retraction]` move on A |
+| `M221 S95` (flow) | `M184 P95` |
+| `SET_GCODE_OFFSET Z_ADJUST=-0.02` | `M185 P-0.02 Q1` (the live Z offset) |
+| `M600` | kept: the machine's filament change |
+| labelled objects (`EXCLUDE_OBJECT_START`, `M486`, `; printing object`, `; OBJECT_ID:`, Cura's `;MESH:`) | each object's part wrapped so it can be excluded during the print |
+| `M73 P R` (progress) | kept as a comment: the card's *Slicer* progress |
 | no `M2` / `M30` | `M2` appended |
 
 Upload a file again after an update to get the current rules.

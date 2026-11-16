@@ -25,7 +25,7 @@ def test_marlin_codes_are_executable_user_mcodes():
     """LinuxCNC 2.9 cannot REMAP M100-M199: each Marlin code is a user
     M-code program, a copy of the helper script."""
     helper = (M_CODES / "M180").read_bytes()
-    for name in (*MARLIN_USER_MCODES, "M180", "M181", "M182", "M183"):
+    for name in (*MARLIN_USER_MCODES, "M180", "M181", "M182", "M183", "M184", "M185"):
         path = M_CODES / name
         assert path.is_file() and os.access(path, os.X_OK), name
         assert path.read_bytes() == helper, f"{name} is not the same script as M180"
@@ -130,3 +130,16 @@ def test_marlin_names_map_onto_the_helper_actions(tmp_path):
 def test_marlin_heater_code_needs_a_temperature(tmp_path):
     result, err = _run_helper(tmp_path, "M104", "-1", "-1")
     assert result["code"] == 1 and "needs P" in err
+
+
+def test_print_tuning_helpers(tmp_path):
+    """M184 (flow, M221) and M185 (the live Z offset, SET_GCODE_OFFSET)."""
+    url = "http://127.0.0.1:8000/api/v1/print-tuning"
+    for name, args, body in (
+        ("M184", ["95", "-1"], {"flow": 95.0}),
+        ("M185", ["0.1", "0"], {"z_offset": 0.1}),
+        ("M185", ["-0.02", "1"], {"z_adjust": -0.02}),
+        ("M185", ["0.2", "-1"], {"z_offset": 0.2}),  # no Q: set
+    ):
+        result, err = _run_helper(tmp_path, name, *args)
+        assert result == {"code": 0, "calls": [["PUT", url, body]]}, (name, args, err)

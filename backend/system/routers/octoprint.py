@@ -11,8 +11,9 @@ Only the subset the slicers use (the same Moonraker emulates):
 
 Any API key is accepted (the slicers insist on sending one) — like the
 rest of this UI, the API trusts the local network. ``select`` / ``print``
-load the file into LinuxCNC when it runs; nothing is ever started
-(``SlicerUploadService``). Lives in the always-up system service, so
+load the file into LinuxCNC when it runs; ``print`` also starts it when
+the operator allowed that (Settings -> Slicer, off by default;
+``SlicerUploadService``). Lives in the always-up system service, so
 files can be sent while the machine is off.
 """
 from __future__ import annotations
@@ -105,8 +106,8 @@ def connection() -> OctoConnection:
     summary="Upload G-code from a slicer into nc_files/",
     description=(
         "OctoPrint's upload: 'path' is a folder under nc_files/, an existing file is "
-        "overwritten. 'select' / 'print' load the file into LinuxCNC when it runs — "
-        "it is never started from the network."
+        "overwritten. 'select' / 'print' load the file into LinuxCNC when it runs; "
+        "'print' also starts it when Settings -> Slicer allows it (off by default)."
     ),
     responses={400: {"description": "Invalid file name."}, 415: {"description": "Not a G-code file."}},
 )
@@ -115,7 +116,8 @@ def upload(
     file: UploadFile = File(...),
     path: str = Form("", description="Folder under nc_files/ ('' = top level)."),
     select: bool = Form(False, description="Load the file into LinuxCNC."),
-    print_: bool = Form(False, alias="print", description="Treated as 'select': never started remotely."),
+    print_: bool = Form(False, alias="print",
+                        description="Load and start it (when allowed in Settings -> Slicer; else like 'select')."),
 ) -> OctoUploadResponse:
     service = get_slicer_upload_service()
     try:
@@ -127,7 +129,11 @@ def upload(
     finally:
         file.file.close()
 
-    loaded = service.load(stored) if (select or print_) else False
+    loaded = started = False
+    if print_ and service.start_allowed():
+        loaded, started = service.start(stored)
+    elif select or print_:
+        loaded = service.load(stored)
     base = str(request.base_url).rstrip("/")
     refs = OctoFileRefs(
         resource=f"{base}/api/files/local/{quote(stored)}",
@@ -137,6 +143,7 @@ def upload(
     return OctoUploadResponse(
         files=OctoUploadFiles(local=OctoUploadedFile(name=name, display=name, path=stored, refs=refs)),
         effectiveSelect=loaded,
+        effectivePrint=started,
     )
 
 

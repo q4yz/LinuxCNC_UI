@@ -50,8 +50,9 @@ class ProgramFileService(FileService):
             return filename
         names = list(macro_names) if macro_names is not None else self._macro_names()
         payload = self._machine_payload()
+        retraction = payload.get("firmware_retraction") if payload else None
         result = convert(data.decode("utf-8", errors="replace"), names, self._led_names(payload),
-                         self._part_fans(payload))
+                         self._part_fans(payload), retraction if isinstance(retraction, dict) else None)
         stored = ngc_name(filename)
         self.write_bytes(stored, result.text.encode("utf-8"), overwrite=True)
         logger.info("Converted %s -> %s (%d note(s))", filename, stored, len(result.notes))

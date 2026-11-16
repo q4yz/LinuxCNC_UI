@@ -16,6 +16,7 @@ class _FakeMachine(SlicerUploadService):
     def __init__(self, programs, running=False, load_ok=True):
         super().__init__(programs, machine_backend="http://machine.invalid")
         self.running, self.load_ok, self.loaded = running, load_ok, []
+        self.allow_start, self.run_ok, self.started = False, True, []
 
     def machine_running(self):
         return self.running
@@ -23,6 +24,13 @@ class _FakeMachine(SlicerUploadService):
     def load(self, path):
         self.loaded.append(path)
         return self.running and self.load_ok
+
+    def start_allowed(self):
+        return self.allow_start
+
+    def _post(self, route, body, what):  # only the run route reaches here (load is faked)
+        self.started.append(route)
+        return self.run_ok
 
 
 @pytest.fixture()
@@ -94,7 +102,58 @@ def test_select_and_print_only_load_the_file(client, service, flag):
     body = _upload(client, **{flag: "true"}).json()
     assert service.loaded == ["benchy.ngc"]
     assert body["effectiveSelect"] is True
-    assert body["effectivePrint"] is False  # never started from the network
+    assert body["effectivePrint"] is False  # starting is off by default
+    assert service.started == []
+
+
+def test_print_starts_the_file_when_allowed(client, service):
+    service.running = True
+    service.allow_start = True
+    body = _upload(client, print="true").json()
+    assert service.loaded == ["benchy.ngc"]
+    assert service.started == [slicer_module.RUN_ROUTE]  # the Start button's route
+    assert body["effectiveSelect"] is True and body["effectivePrint"] is True
+
+
+def test_select_never_starts_even_when_allowed(client, service):
+    service.running = True
+    service.allow_start = True
+    body = _upload(client, select="true").json()
+    assert body["effectiveSelect"] is True and body["effectivePrint"] is False
+    assert service.started == []
+
+
+def test_a_refused_start_still_reports_the_load(client, service):
+    service.running = True
+    service.allow_start = True
+    service.run_ok = False  # e.g. not homed, machine off, a program running
+    body = _upload(client, print="true").json()
+    assert body["effectiveSelect"] is True and body["effectivePrint"] is False
+
+
+def test_no_start_while_linuxcnc_is_off(client, service):
+    service.allow_start = True
+    body = _upload(client, print="true").json()
+    assert body["effectiveSelect"] is False and body["effectivePrint"] is False
+    assert service.started == []
+
+
+def test_start_allowed_reads_the_ui_setting(programs, monkeypatch):
+    import services.UiSettingsService as settings_module
+
+    class Settings:
+        def __init__(self, value):
+            self.value = value
+
+        def read(self, key):
+            assert key == "slicer.allow_start"
+            if self.value is None:
+                raise LookupError("not set")
+            return self.value
+
+    for value, expected in ((True, True), (False, False), ("yes", False), (None, False)):
+        monkeypatch.setattr(settings_module, "get_ui_settings_service", lambda v=value: Settings(v))
+        assert SlicerUploadService(programs).start_allowed() is expected
 
 
 def test_upload_while_linuxcnc_is_off_is_stored_but_not_loaded(client, service, programs):

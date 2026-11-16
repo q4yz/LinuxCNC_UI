@@ -319,6 +319,51 @@ def _z_virtual_endstop_payload(graph: MachineConfigGraph) -> dict[str, Any] | No
     }
 
 
+def _has_extruder(graph: MachineConfigGraph) -> bool:
+    from models.machineconfig import Extruder
+
+    return any(isinstance(h, Extruder) for h in graph.heaters.values())
+
+
+def _firmware_retraction_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    """``[firmware_retraction]`` for the G-code converter (bare G10 / G11)."""
+    retraction = graph.firmware_retraction
+    if retraction is None:
+        return None
+    return {
+        "retract_length": retraction.retract_length,
+        "retract_speed": retraction.retract_speed,
+        "unretract_extra_length": retraction.unretract_extra_length,
+        "unretract_speed": retraction.unretract_speed,
+    }
+
+
+def _filament_change_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    """What ``M600`` does (``m600.ngc`` reads it from the INI): every
+    machine with an extruder, ``[filament_change]`` or the defaults; the
+    park position defaults to the X / Y minimum."""
+    if not _has_extruder(graph):
+        return None
+    from models.machineconfig import FilamentChange
+
+    change = graph.filament_change or FilamentChange()
+
+    def low(letter: str) -> float:
+        return float(getattr(graph.steppers.get(letter), "position_min", None) or 0.0)
+
+    return {
+        "park_x": change.park_x if change.park_x is not None else low("x"),
+        "park_y": change.park_y if change.park_y is not None else low("y"),
+        "z_lift": change.z_lift,
+        "unload_length": change.unload_length,
+        "unload_speed": change.unload_speed,
+        "load_length": change.load_length,
+        "load_speed": change.load_speed,
+        "purge_length": change.purge_length,
+        "purge_speed": change.purge_speed,
+    }
+
+
 def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
     """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``.
     ``mesh_min`` / ``mesh_max`` default to the X / Y travel;
@@ -1207,6 +1252,8 @@ def build_hardware_json(
         "estop": _estop_payload(graph.estop),
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh, graph),
+        "firmware_retraction": _firmware_retraction_payload(graph),
+        "filament_change": _filament_change_payload(graph),
         "z_tilt": _z_tilt_payload(graph, axes_records),
         "z_virtual_endstop": _z_virtual_endstop_payload(graph),
         "leds": [

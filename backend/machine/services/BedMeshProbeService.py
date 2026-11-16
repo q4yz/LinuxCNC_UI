@@ -232,11 +232,14 @@ class BedMeshProbeService:
 
     @staticmethod
     def _wait_offset_zero() -> None:
-        """Compensation ramps its Z offset back to 0 after "off"."""
+        """Compensation ramps its Z offset back to 0 after "off" (the live Z
+        offset, also in axis.z.eoffset, stays)."""
+        from services.PrintTuningService import get_print_tuning_service
+
         deadline = time.monotonic() + OFFSET_SETTLE_S
         while time.monotonic() < deadline:
             value = read_hal_pin("axis.z.eoffset")
-            if value is None or abs(float(value)) < 1e-4:
+            if value is None or abs(float(value) - get_print_tuning_service().z_offset) < 1e-4:
                 return
             time.sleep(0.1)
         raise BedMeshError("compensation's Z offset did not return to 0 after switching it off.")

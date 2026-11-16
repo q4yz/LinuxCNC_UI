@@ -162,7 +162,7 @@ class OctoUploadResponse(BaseModel):
     done: bool = True
     #: Whether the file was loaded into LinuxCNC (``select`` / ``print``).
     effectiveSelect: bool = False
-    #: Always false: a network upload never starts the machine.
+    #: Whether it was started (``print`` with Settings -> Slicer allowing it).
     effectivePrint: bool = False
 
 

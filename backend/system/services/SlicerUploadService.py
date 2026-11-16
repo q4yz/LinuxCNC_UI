@@ -2,9 +2,14 @@
 
 Stores the file under ``nc_files/`` like the UI's own upload and, when
 the slicer asks for it (OctoPrint's ``select`` / ``print``), loads it
-into LinuxCNC through the machine backend. It is never started: a
-network upload must not set a machine in motion — the operator starts
-it at the machine.
+into LinuxCNC through the machine backend.
+
+``print`` (the slicer's "Upload and print") also **starts** it — only
+when the operator switched that on (UI setting ``slicer.allow_start``,
+Settings -> Slicer; off by default: a network upload then never sets the
+machine in motion). The start is the Start button's: the machine
+backend's ``program/run``, so the file's G28 / G29 run first and an
+unhomed, switched-off or busy machine refuses.
 """
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ import json
 import logging
 import urllib.request
 from functools import lru_cache
+from typing import Any, Optional
 
 from domain_file_services import ProgramFileService, get_program_service
 from services.MachineLifecycleService import linuxcnc_pids
@@ -21,7 +27,10 @@ logger = logging.getLogger("backend.system.slicer_upload")
 #: The machine backend (runs with the LinuxCNC session) and its load route.
 MACHINE_BACKEND = "http://127.0.0.1:8000"
 LOAD_ROUTE = "/api/v1/modules/program/load"
+RUN_ROUTE = "/api/v1/modules/program/run"
 LOAD_TIMEOUT_S = 10
+#: UI setting (Settings -> Slicer): the slicer's "print" starts the file.
+ALLOW_START_KEY = "slicer.allow_start"
 
 
 class UnsupportedFileError(ValueError):
@@ -58,18 +67,43 @@ class SlicerUploadService:
         if not self.machine_running():
             logger.info("Slicer asked to load %s, but LinuxCNC is not running", path)
             return False
+        if self._post(LOAD_ROUTE, {"filename": path}, f"load slicer upload {path}"):
+            logger.info("Slicer upload loaded into LinuxCNC: %s", path)
+            return True
+        return False
+
+    def start_allowed(self) -> bool:
+        """The operator let the slicer start prints (``slicer.allow_start``)."""
+        from services.UiSettingsService import get_ui_settings_service
+
+        try:
+            return get_ui_settings_service().read(ALLOW_START_KEY) is True
+        except Exception:  # noqa: BLE001 - unset (404) or unreadable: not allowed
+            return False
+
+    def start(self, path: str) -> tuple[bool, bool]:
+        """Load ``path`` and start it like the Start button; ``(loaded,
+        started)``. The machine backend refuses a start it cannot do
+        (machine off, not homed, a program or routine running)."""
+        if not self.load(path):
+            return False, False
+        if self._post(RUN_ROUTE, None, f"start slicer upload {path}"):
+            logger.info("Slicer upload started: %s", path)
+            return True, True
+        return True, False
+
+    def _post(self, route: str, body: Optional[dict[str, Any]], what: str) -> bool:
         request = urllib.request.Request(
-            self._machine_backend + LOAD_ROUTE,
-            data=json.dumps({"filename": path}).encode("utf-8"),
+            self._machine_backend + route,
+            data=json.dumps(body).encode("utf-8") if body is not None else b"",
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=LOAD_TIMEOUT_S):
-                logger.info("Slicer upload loaded into LinuxCNC: %s", path)
                 return True
         except OSError as exc:  # URLError / HTTPError (409 while a program runs, ...)
-            logger.warning("Could not load slicer upload %s: %s", path, exc)
+            logger.warning("Could not %s: %s", what, exc)
             return False
 
 
