@@ -37,7 +37,8 @@ def level(stat: Any) -> Optional[str]:
             z_tilt.run(stat)
         if mesh.settings() is not None:
             console.log_event("G29: BED_MESH_CALIBRATE.", level=LogLevel.INFO, source="CMD")
-            mesh.run(stat)
+            # [bed_mesh] adaptive: a print's own G29 probes only its area
+            mesh.run(stat, adaptive=bool((mesh.settings() or {}).get("adaptive")))
     except (ZTiltError, BedMeshError) as exc:
         return str(exc)
     except BaseAPIException as exc:

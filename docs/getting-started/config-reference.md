@@ -120,7 +120,8 @@ rotation_distance:
 #gear_ratio:
 #   e.g. 50:17 (motor turns : output turns), chained 80:16, 3:1. Only with a gearbox.
 #endstop_pin:
-#   The home switch; probe:z_virtual_endstop homes Z on the probe.
+#   The home switch; probe:z_virtual_endstop homes Z on the probe,
+#   tmc2209_stepper_x:virtual_endstop on the driver's stall output (sensorless homing).
 #position_min: 0
 position_max:
 position_endstop:
@@ -152,7 +153,15 @@ run_current:
 #microsteps:
 #interpolate:
 #sense_resistor:
+#diag_pin:
+#   Sensorless homing: the board input the driver's DIAG is wired to (on a BTT board the
+#   endstop input of that driver's DIAG jumper, e.g. ^PG6).
+#driver_SGTHRS:
+#   StallGuard threshold 0 … 255 (higher trips earlier). StallGuard needs StealthChop: the
+#   driver runs it while this is set.
 ```
+
+Sensorless homing — {doc}`../using/tuning`.
 
 ### [homing_override]
 
@@ -186,6 +195,10 @@ rotation_distance:
 #min_extrude_temp: 170
 #   No extruder move below this (the Remora "extruder" component stops it; homing is
 #   ignored). 0 switches the guard off.
+#pressure_advance: 0.0
+#   mm of filament per mm/s of extrusion speed (SET_PRESSURE_ADVANCE, M900 at runtime).
+#pressure_advance_smooth_time: 0.040
+#   Seconds the advance is smoothed over.
 heater_pin:
 sensor_type:
 sensor_pin:
@@ -322,6 +335,60 @@ points:
 #probe_speed: 5
 #zero_reference_position:
 #   X, Y where the mesh is 0; default raw heights.
+#adaptive_margin: 5
+#   BED_MESH_CALIBRATE ADAPTIVE=1 probes the loaded print's area plus this (mm).
+#adaptive: False
+#   True: a print's own G29 probes adaptively too.
+```
+
+## Motion tuning
+
+Input shaping, skew correction and the resonance test run in the Remora `jointshape`
+component between the X / Y joints and their step generators — Cartesian Remora machines
+(not CoreXY). {doc}`../using/tuning`.
+
+### [input_shaper]
+
+```ini
+[input_shaper]
+#shaper_freq_x: 0
+#shaper_freq_y: 0
+#   Hz, 0 = off (SHAPER_CALIBRATE recommends them).
+#shaper_type: mzv
+#shaper_type_x:
+#shaper_type_y:
+#   zv, mzv, zvd or ei.
+#damping_ratio_x: 0.1
+#damping_ratio_y: 0.1
+```
+
+### [skew_correction]
+
+```ini
+[skew_correction]
+#xy_skew_factor:
+#   Or the calibration print's measurements (mm):
+#xy_ac:
+#xy_bd:
+#xy_ad:
+```
+
+### [adxl345]
+
+An ADXL345 accelerometer on the host's SPI (BTT CB1, Raspberry Pi), for `SHAPER_CALIBRATE`.
+
+```ini
+[adxl345]
+#spi_device: /dev/spidev1.1
+#spi_speed: 5000000
+#axes_map: x,y,z
+#   Machine X, Y, Z as chip axes, e.g. -y,x,z.
+#rate: 3200
+#accel_per_hz: 75
+#   The test's acceleration (mm/s²) per Hz.
+#min_freq: 5
+#max_freq: 133
+#hz_per_sec: 1
 ```
 
 ## Fans, LEDs and I/O

@@ -49,8 +49,8 @@ _DEFAULT_RSENSE = 0.11
 #: trusting it on a machine you haven't tested.
 _AMPS_TO_MILLIAMPS = 1000
 _DEFAULT_RUN_CURRENT_A = 0.8
-#: `"Stall sensitivity"` has no schema field yet (not ingested from
-#: any `.cfg` key) — every module in the reference config uses this.
+#: `"Stall sensitivity"` without ``[tmc2209 …] driver_SGTHRS`` (no
+#: sensorless homing) — every module in the reference config uses this.
 _DEFAULT_STALL_SENSITIVITY = 0
 #: Klipper's usual value — only when neither the stepper nor the
 #: driver section says (`microsteps` is required in Klipper).
@@ -88,6 +88,7 @@ class RemoraDriverFirmwareMapper:
             # 16 for every driver: a Z with 32 moved half the distance).
             microsteps = joint.get("microsteps") or driver.get("microsteps") or _DEFAULT_MICROSTEPS
 
+            stall = int(driver.get("stall_sensitivity") or _DEFAULT_STALL_SENSITIVITY)
             module = {
                 "Name": f"driver_{joint_id}",
                 "Thread": "On load",
@@ -97,8 +98,10 @@ class RemoraDriverFirmwareMapper:
                 "RSense": driver.get("sense_resistor") or _DEFAULT_RSENSE,
                 "Current": round(run_current_a * _AMPS_TO_MILLIAMPS),
                 "Microsteps": microsteps,
-                "Stealth chop": "on" if driver.get("stealthchop_threshold") else "off",
-                "Stall sensitivity": _DEFAULT_STALL_SENSITIVITY,
+                # StallGuard (sensorless homing) works in StealthChop only:
+                # the firmware sets SGTHRS when both are on.
+                "Stealth chop": "on" if driver.get("stealthchop_threshold") or stall else "off",
+                "Stall sensitivity": stall,
             }
             fragment.firmware_modules.append(
                 FirmwareModuleRequest(mcu_id=parsed.mcu_id, module=module)

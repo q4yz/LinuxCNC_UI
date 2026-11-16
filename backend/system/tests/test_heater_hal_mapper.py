@@ -22,7 +22,9 @@ def test_pid_loop_matches_the_reference_machine_shape():
     assert "net heater_bed-heat-ok => PID-heater_bed.auto" in fragment.nets
     assert "net heater_bed-SP => PID-heater_bed.SP" in fragment.nets
     assert "net bed-PV => PID-heater_bed.PV" in fragment.nets
-    assert "net heater_bed-heater-SP <= PID-heater_bed.CV" in fragment.nets
+    assert "net heater_bed-pid-CV PID-heater_bed.CV => tune-heater_bed.in0" in fragment.nets
+    assert "net heater_bed-heater-SP <= tune-heater_bed.out" in fragment.nets
+    assert "net heater_bed-tune tune-ok-heater_bed.out => tune-heater_bed.sel" in fragment.nets
 
 
 def test_pid_setp_block_references_the_ini_section_by_full_tool_id():
@@ -157,3 +159,12 @@ def test_an_estop_or_a_dead_link_turns_every_heater_off():
         assert "net remora-status => heat-ok-heater_bed.in0" in fragment.nets
         assert "net user-enable-out => heat-ok-heater_bed.in1" in fragment.nets
         assert "net heater_bed-heat-ok <= heat-ok-heater_bed.out" in fragment.nets
+
+
+def test_pid_tune_webgui_lines():
+    from services.halcompiler.components.HeaterHalMapper import pid_tune_webgui_lines
+
+    lines = pid_tune_webgui_lines({"id": "heater_bed", "control": "pid"})
+    assert "net heater_bed-tune-enable webgui.tune-heater_bed-enable => tune-ok-heater_bed.in0" in lines
+    assert "net heater_bed-tune-duty webgui.tune-heater_bed-duty => tune-heater_bed.in1" in lines
+    assert pid_tune_webgui_lines({"id": "heater_bed", "control": "watermark"}) == []

@@ -215,6 +215,9 @@ class Driver(BaseModel):
     interpolate: bool | None = None
     hold_current: float | None = None
     sense_resistor: float | None = None
+    # sensorless homing: DIAG's MCU input, StallGuard threshold (SGTHRS)
+    diag_pin: str | None = None
+    stall_sensitivity: int | None = None
 
 
 class Endstop(BaseModel):
@@ -379,6 +382,9 @@ class BedMesh(BaseModel):
     probe_speed: float = 5.0
     probe_min_z: float = 0.0
     zero_reference_position: list[float] | None = None
+    # adaptive mesh (BED_MESH_CALIBRATE ADAPTIVE=1; ``adaptive``: the print's own G29)
+    adaptive_margin: float = 5.0
+    adaptive: bool = False
 
 
 class HomingOverride(BaseModel):
@@ -631,6 +637,10 @@ class Tool(BaseModel):
     # Klipper's cold-extrusion guard (°C): no extruder move below it
     # (``ColdExtrusionGuard``). ``None``: the default 170.
     min_extrude_temp: float | None = None
+    # Klipper's pressure advance (mm per mm/s) and smoothing (s); the
+    # extruder component's starting value (SET_PRESSURE_ADVANCE changes it).
+    pressure_advance: float | None = None
+    pressure_advance_smooth_time: float | None = None
     filament_diameter: float | None = None
     nozzle_diameter: float | None = None
 
@@ -697,6 +707,11 @@ class HardwareJson(BaseModel):
     # [firmware_retraction] (the G-code converter's G10 / G11) and what
     # M600 does (machine.ini [FILAMENT_CHANGE], m600.ngc): mm and mm/s.
     firmware_retraction: dict[str, float] | None = None
+    # [input_shaper] / skew / [adxl345]: the jointshape component on X / Y
+    # and the resonance test (ResonanceService).
+    input_shaper: dict[str, Any] | None = None
+    skew_correction: dict[str, float] | None = None
+    adxl345: dict[str, Any] | None = None
     filament_change: dict[str, float] | None = None
 
     # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.

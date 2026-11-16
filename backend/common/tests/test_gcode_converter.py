@@ -46,7 +46,7 @@ def test_translated(marlin, linuxcnc):
     assert lines(marlin)[0] == linuxcnc
 
 
-@pytest.mark.parametrize("code", ["M84", "M400", "M201 X1000", "M73 P10 R2", "T0", "M900 K0"])
+@pytest.mark.parametrize("code", ["M84", "M400", "M201 X1000", "M73 P10 R2", "T0"])
 def test_commented_out(code):
     assert lines(code)[0].startswith(f"; {code}")
 
@@ -276,3 +276,10 @@ def test_cura_mesh_comments_are_objects():
     assert lines.index("o<exclude_1> endif") < lines.index(";MESH:NONMESH")
     assert lines.index("o<exclude_2> endif") < lines.index(";LAYER:1")
     assert "G0 X5" in lines[lines.index(";MESH:NONMESH"):lines.index(";MESH:Body2.stl")]
+
+
+def test_pressure_advance_conversion():
+    from core.gcode_converter import convert_mdi
+    lines = convert("M900 K0.05\nM900\nSET_PRESSURE_ADVANCE ADVANCE=0.04 SMOOTH_TIME=0.04\nM2\n").text.splitlines()
+    assert lines[0] == "M186 P0.05" and lines[1].startswith("; M900") and lines[2] == "M186 P0.04"
+    assert convert_mdi("M900 K0.03") == "M186 P0.03"

@@ -37,7 +37,8 @@ export const generateSetOffset = (axisName: string, value: number | string): str
 //   * ``gcode``  — modal G-codes (motion, units, coords, cutter comp).
 //   * ``mcode``  — M-codes (spindle, coolant, tool change, program end).
 //   * ``macro``  — the UI's own commands (Z_TILT_ADJUST, BED_MESH_CALIBRATE,
-//                  PROBE_ACCURACY, PROBE_CALIBRATE, SET_LED, G29): named like Klipper's.
+//                  PROBE_ACCURACY, PROBE_CALIBRATE, SET_LED, G29, SHAPER_CALIBRATE,
+//                  PID_CALIBRATE, …): named like Klipper's.
 //
 // All commands are upper-cased so the autocompletion is case
 // insensitive against the user's input. ``LINUXCNC`` literals are
@@ -119,6 +120,15 @@ export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: stri
   { label: 'ACCEPT', command: 'ACCEPT', category: 'macro', description: '# PROBE_CALIBRATE: take the z_offset at the nozzle height (console)' },
   { label: 'ABORT', command: 'ABORT', category: 'macro', description: '# PROBE_CALIBRATE: stop without a z_offset' },
   { label: 'SET_LED', command: 'SET_LED LED= RED=1 GREEN=1 BLUE=1', category: 'macro', description: '# set a [neopixel] colour (0 ... 1, INDEX=<n> for one segment)' },
+  { label: 'BED_MESH_CALIBRATE ADAPTIVE=1', command: 'BED_MESH_CALIBRATE ADAPTIVE=1', category: 'macro', description: '# bed mesh over the loaded print\'s area only ([bed_mesh] adaptive_margin)' },
+  { label: 'SET_PRESSURE_ADVANCE', command: 'SET_PRESSURE_ADVANCE ADVANCE=0.05', category: 'macro', description: '# pressure advance (mm per mm/s), until LinuxCNC restarts' },
+  { label: 'SET_INPUT_SHAPER', command: 'SET_INPUT_SHAPER SHAPER_FREQ_X=50 SHAPER_FREQ_Y=40', category: 'macro', description: '# input shaper frequencies (Hz, 0 = off)' },
+  { label: 'SHAPER_CALIBRATE', command: 'SHAPER_CALIBRATE', category: 'macro', description: '# resonance sweep with the ADXL345, recommends a shaper per axis (AXIS=X|Y)' },
+  { label: 'TEST_RESONANCES', command: 'TEST_RESONANCES AXIS=X', category: 'macro', description: '# resonance sweep of one axis, logs the peak frequency' },
+  { label: 'ACCELEROMETER_QUERY', command: 'ACCELEROMETER_QUERY', category: 'macro', description: '# read the ADXL345 once (wiring check)' },
+  { label: 'SET_SKEW', command: 'SET_SKEW XY=140.4,141.6,99.8', category: 'macro', description: '# XY skew from the calibration print: AC,BD,AD (mm); CLEAR=1' },
+  { label: 'GET_CURRENT_SKEW', command: 'GET_CURRENT_SKEW', category: 'macro', description: '# the XY skew factor in use' },
+  { label: 'PID_CALIBRATE', command: 'PID_CALIBRATE HEATER=extruder TARGET=210', category: 'macro', description: '# relay autotune of a heater, logs pid_Kp / pid_Ki / pid_Kd' },
   { label: 'G29', command: 'G29', category: 'macro', description: '# level: Z_TILT_ADJUST, then BED_MESH_CALIBRATE' },
   { label: 'G28 X Y', command: 'G28 X Y', category: 'macro', description: '# home the axes named (Z on the probe last)' },
   // Printer M-codes (REMAPs in the machine's m_codes folder).
@@ -126,6 +136,7 @@ export const AUTOCOMPLETE_COMMANDS: ReadonlyArray<{ label: string; command: stri
   { label: 'M109', command: 'M109 S200', category: 'mcode', description: '# set extruder temperature and wait' },
   { label: 'M140', command: 'M140 S60',  category: 'mcode', description: '# set bed temperature (no wait)' },
   { label: 'M190', command: 'M190 S60',  category: 'mcode', description: '# set bed temperature and wait' },
+  { label: 'M900', command: 'M900 K0.05', category: 'mcode', description: '# pressure advance (Marlin linear advance K)' },
   { label: 'M221', command: 'M221 S100', category: 'mcode', description: '# flow in percent (the extruder\'s moves scaled)' },
   { label: 'M600', command: 'M600', category: 'mcode', description: '# filament change: park, unload, Resume, load, purge' },
   { label: 'SET_GCODE_OFFSET', command: 'SET_GCODE_OFFSET Z_ADJUST=0.01', category: 'macro', description: '# live Z offset: Z=<mm> set, Z_ADJUST=<mm> change by' },

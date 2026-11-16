@@ -18,7 +18,8 @@ class Pin:
 @pytest.fixture
 def service():
     s = module.PrintTuningService()
-    s._pins = {name: Pin() for name in ["z-offset", "flow", *[f"exclude-object-{k}" for k in range(32)]]}
+    s._pins = {name: Pin() for name in ["z-offset", "flow", "pressure-advance",
+                                        *[f"exclude-object-{k}" for k in range(32)]]}
     return s
 
 
@@ -113,3 +114,29 @@ def test_router(monkeypatch, service, tmp_path):
     body = client.put("/api/v1/print-tuning/objects/0", json={"excluded": True}).json()
     assert body["objects"][0] == {"index": 0, "name": "box", "excluded": True}
     assert client.put("/api/v1/print-tuning", json={"flow": 1}).status_code == 400
+
+
+def test_pressure_advance(service, monkeypatch):
+    class Console:
+        def log_event(self, *a, **k):
+            pass
+
+    import services.ConsoleLogger as console_module
+    monkeypatch.setattr(console_module, "get_console_logger", lambda: Console())
+    assert service.run_command("SET_PRESSURE_ADVANCE ADVANCE=0.045") and service.pressure_advance == 0.045
+    assert service._pins["pressure-advance"].value == 0.045
+    with pytest.raises(BadRequestError):
+        service.set_pressure_advance(3)
+    with pytest.raises(BadRequestError):
+        service.run_command("SET_PRESSURE_ADVANCE SMOOTH_TIME=0.04")
+
+
+def test_configured_pressure_advance(monkeypatch):
+    import services.HardwareConfigService as hw
+
+    class Config:
+        def load_payload(self):
+            return {"tools": [{"type": "heated_bed"}, {"type": "extruder", "pressure_advance": 0.06}]}
+
+    monkeypatch.setattr(hw, "HardwareConfigService", Config)
+    assert module.PrintTuningService._configured_pressure_advance() == 0.06

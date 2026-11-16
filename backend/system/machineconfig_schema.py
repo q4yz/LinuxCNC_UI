@@ -64,6 +64,9 @@ class SectionKind(str, Enum):
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
     BED_MESH = "bed_mesh"
     FIRMWARE_RETRACTION = "firmware_retraction"
+    INPUT_SHAPER = "input_shaper"
+    SKEW_CORRECTION = "skew_correction"
+    ADXL345 = "adxl345"
     FILAMENT_CHANGE = "filament_change"
     HOMING_OVERRIDE = "homing_override"
     Z_TILT = "z_tilt"
@@ -169,6 +172,9 @@ EXTRUDER_KEYS = frozenset(
         "gear_ratio",
         # Klipper's cold-extrusion guard, °C (default 170).
         "min_extrude_temp",
+        # Klipper's pressure advance (the Remora extruder component).
+        "pressure_advance",
+        "pressure_advance_smooth_time",
         "nozzle_diameter",
         "filament_diameter",
     }
@@ -199,6 +205,9 @@ TMC2209_KEYS = frozenset(
         "interpolate",
         "hold_current",
         "sense_resistor",
+        # sensorless homing: endstop_pin: tmc2209_stepper_x:virtual_endstop
+        "diag_pin",
+        "driver_SGTHRS",
     }
 )
 # The E-stop component. Both fields are pins, not protocols, like
@@ -224,6 +233,17 @@ TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # runtime and applied by the Remora `compensation` HAL component.
 # Klipper's probing keys (``mesh_min`` / ``mesh_max``, travel), plus this
 # compiler's own ``probe_speed`` (Klipper keeps it in ``[probe]``).
+# Klipper's [input_shaper] (the Remora jointshape component on X / Y).
+INPUT_SHAPER_KEYS = frozenset({
+    "shaper_freq_x", "shaper_freq_y", "shaper_type", "shaper_type_x", "shaper_type_y",
+    "damping_ratio_x", "damping_ratio_y",
+})
+# Skew correction (jointshape): the factor, or the three diagonals of the
+# calibration print (Klipper's SET_SKEW XY=AC,BD,AD).
+SKEW_CORRECTION_KEYS = frozenset({"xy_skew_factor", "xy_ac", "xy_bd", "xy_ad"})
+# An ADXL345 on the host's SPI (BTT CB1 / Raspberry Pi) for resonance tests.
+ADXL345_KEYS = frozenset({"spi_device", "spi_speed", "axes_map", "rate", "accel_per_hz", "min_freq", "max_freq",
+                          "hz_per_sec"})
 # Klipper's [firmware_retraction]: what a slicer's bare G10 / G11 do (the
 # G-code converter turns them into A moves; SET_RETRACTION is not supported).
 FIRMWARE_RETRACTION_KEYS = frozenset({
@@ -238,6 +258,9 @@ FILAMENT_CHANGE_KEYS = frozenset({
 BED_MESH_KEYS = frozenset({
     "probe_count", "mesh_min", "mesh_max", "speed", "horizontal_move_z",
     "probe_speed", "zero_reference_position",
+    # adaptive mesh: Klipper's margin around the print area; ``adaptive``
+    # (not Klipper) makes a print's own G29 probe only its area
+    "adaptive_margin", "adaptive",
 })
 # A homing routine (Klipper's ``[homing_override]``,
 # `.agent/component/homing_override.md`): ``gcode`` lines run in order,
@@ -398,6 +421,9 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
     SectionKind.BED_MESH: BED_MESH_KEYS,
     SectionKind.FIRMWARE_RETRACTION: FIRMWARE_RETRACTION_KEYS,
+    SectionKind.INPUT_SHAPER: INPUT_SHAPER_KEYS,
+    SectionKind.SKEW_CORRECTION: SKEW_CORRECTION_KEYS,
+    SectionKind.ADXL345: ADXL345_KEYS,
     SectionKind.FILAMENT_CHANGE: FILAMENT_CHANGE_KEYS,
     SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
     SectionKind.Z_TILT: Z_TILT_KEYS,
@@ -506,6 +532,15 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "bed_mesh":
         return SectionSchema(SectionKind.BED_MESH, BED_MESH_KEYS, "bed_mesh")
+
+    if section == "input_shaper":
+        return SectionSchema(SectionKind.INPUT_SHAPER, INPUT_SHAPER_KEYS, "input_shaper")
+
+    if section == "skew_correction":
+        return SectionSchema(SectionKind.SKEW_CORRECTION, SKEW_CORRECTION_KEYS, "skew_correction")
+
+    if section == "adxl345":
+        return SectionSchema(SectionKind.ADXL345, ADXL345_KEYS, "adxl345")
 
     if section == "firmware_retraction":
         return SectionSchema(SectionKind.FIRMWARE_RETRACTION, FIRMWARE_RETRACTION_KEYS, "firmware_retraction")

@@ -12,6 +12,8 @@ export const printTuningFacade = {
   adjustZ: (delta: number): Promise<PrintTuningState> => PrintTuningService.setPrintTuning({ z_adjust: delta }),
   setZ: (value: number): Promise<PrintTuningState> => PrintTuningService.setPrintTuning({ z_offset: value }),
   setFlow: (percent: number): Promise<PrintTuningState> => PrintTuningService.setPrintTuning({ flow: percent }),
+  setPressureAdvance: (k: number): Promise<PrintTuningState> =>
+    PrintTuningService.setPrintTuning({ pressure_advance: k }),
   exclude: (index: number, excluded: boolean): Promise<PrintTuningState> =>
     PrintTuningService.setObjectExcluded(index, { excluded }),
 };

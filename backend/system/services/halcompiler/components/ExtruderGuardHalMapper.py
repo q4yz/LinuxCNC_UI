@@ -76,6 +76,9 @@ class ExtruderGuardHalMapper:
         # after motion (order 1): reads this period's vel-cmd
         fragment.addf.append(Addf(comp, SERVO_THREAD, order=2))
         fragment.setp.append(f"setp {comp}.min-extrude-temp {min_temp:g}")
+        smooth = tool.get("pressure_advance_smooth_time")
+        if smooth is not None:
+            fragment.setp.append(f"setp {comp}.pa-smooth-time {float(smooth):g}")
         fragment.nets.append(f"net {tool['sensor']}-PV => {comp}.current-temp")
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
         # homing sets the position in place: no guard meanwhile
@@ -98,6 +101,8 @@ class ExtruderGuardHalMapper:
             f"net {tool_id}-cold-extrude {_component(tool_id)}.cold-extrude => halui.abort",
             # the flow % (M221, the UI) — scales the moves on a Remora board
             f"net {tool_id}-flow webgui.flow => {_component(tool_id)}.flow-percent",
+            # pressure advance (the profile's value, SET_PRESSURE_ADVANCE, M900)
+            f"net {tool_id}-pressure-advance webgui.pressure-advance => {_component(tool_id)}.pressure-advance",
             "",
         ]
 

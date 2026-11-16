@@ -11,6 +11,10 @@ flow (M221), excluding objects, and the slicer's progress / time left.
   wraps each object's moves in ``o<…> if [#<_hal[webgui.exclude-object-n]>
   GT 0]`` (``core.gcode_converter``), its header lists the objects. Takes
   effect for the moves the interpreter has not read ahead yet.
+* **Pressure advance** — ``webgui.pressure-advance`` (mm per mm/s) into
+  the ``extruder`` component; starts at the profile's ``[extruder]
+  pressure_advance``. ``SET_PRESSURE_ADVANCE ADVANCE=<k>`` (console),
+  ``M900 K<k>`` / ``M186`` in files.
 * **Progress** — the slicer's ``M73 P<%> R<min>`` lines (kept as
   comments by the converter) at or before the line that runs now.
 """
@@ -32,6 +36,7 @@ logger = logging.getLogger("backend.services.print_tuning")
 
 Z_OFFSET_LIMIT_MM = 2.0
 FLOW_MIN, FLOW_MAX = 10.0, 500.0
+PRESSURE_ADVANCE_MAX = 2.0
 _M73 = re.compile(r"^\s*;?\s*M0*73\b([^;]*)", re.IGNORECASE)
 _PARAM = re.compile(r"([A-Za-z_]+)\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+))")
 
@@ -75,6 +80,7 @@ class PrintTuningService:
     def __init__(self) -> None:
         self._z_offset = 0.0
         self._flow = 100.0
+        self._pressure_advance = 0.0
         self._excluded: set[int] = set()
         self._pins: dict[str, ReadWriteDynamicHalPin[Any]] = {}
         self._lock = threading.Lock()
@@ -90,8 +96,22 @@ class PrintTuningService:
         for k in range(MAX_OBJECTS):
             self._pins[f"exclude-object-{k}"] = ReadWriteDynamicHalPin(
                 f"exclude-object-{k}", HalDataType.BIT, f"Exclude object {k} of the loaded print")
+        self._pins["pressure-advance"] = ReadWriteDynamicHalPin(
+            "pressure-advance", HalDataType.FLOAT, "Pressure advance (mm per mm/s) for the extruder component")
+        self._pressure_advance = self._configured_pressure_advance()
         self._write("flow", self._flow)
         self._write("z-offset", self._z_offset)
+        self._write("pressure-advance", self._pressure_advance)
+
+    @staticmethod
+    def _configured_pressure_advance() -> float:
+        """The profile's ``[extruder] pressure_advance`` (0 without one)."""
+        from services.HardwareConfigService import HardwareConfigService
+
+        for tool in HardwareConfigService().load_payload().get("tools") or []:
+            if isinstance(tool, dict) and tool.get("type") == "extruder":
+                return float(tool.get("pressure_advance") or 0.0)
+        return 0.0
 
     def _write(self, pin: str, value: Any) -> None:
         handle = self._pins.get(pin)
@@ -127,11 +147,35 @@ class PrintTuningService:
         logger.info("Flow: %.1f %%", self._flow)
         return self._flow
 
+    @property
+    def pressure_advance(self) -> float:
+        return self._pressure_advance
+
+    def set_pressure_advance(self, value: float) -> float:
+        if not 0.0 <= value <= PRESSURE_ADVANCE_MAX:
+            raise BadRequestError(f"Pressure advance {value:g} is outside 0 … {PRESSURE_ADVANCE_MAX:g}.")
+        self._pressure_advance = round(float(value), 4)
+        self._write("pressure-advance", self._pressure_advance)
+        logger.info("Pressure advance: %.4f", self._pressure_advance)
+        return self._pressure_advance
+
     def run_command(self, line: str) -> bool:
-        """``SET_GCODE_OFFSET Z=<mm>`` / ``Z_ADJUST=<mm>`` typed in the
-        console: ``True`` when it was one."""
+        """``SET_GCODE_OFFSET Z=<mm>`` / ``Z_ADJUST=<mm>`` and
+        ``SET_PRESSURE_ADVANCE ADVANCE=<k>`` typed in the console: ``True``
+        when it was one."""
         text = line.split(";", 1)[0].strip()
-        if not text.upper().startswith("SET_GCODE_OFFSET"):
+        upper = text.upper()
+        if upper.startswith("SET_PRESSURE_ADVANCE"):
+            params = {k.upper(): float(v) for k, v in _PARAM.findall(text)}
+            if "ADVANCE" not in params:
+                raise BadRequestError("SET_PRESSURE_ADVANCE: ADVANCE=<k>.")
+            self.set_pressure_advance(params["ADVANCE"])
+            from services.ConsoleLogger import LogLevel, get_console_logger
+
+            get_console_logger().log_event(f"Pressure advance: {self._pressure_advance:.4f}", level=LogLevel.INFO,
+                                           source="CMD")
+            return True
+        if not upper.startswith("SET_GCODE_OFFSET"):
             return False
         params = {k.upper(): float(v) for k, v in _PARAM.findall(text)}
         if "Z_ADJUST" in params:
@@ -194,6 +238,7 @@ class PrintTuningService:
         return {
             "z_offset": self._z_offset,
             "flow": self._flow,
+            "pressure_advance": self._pressure_advance,
             "objects": [{"index": k, "name": name, "excluded": k in self._excluded} for k, name in enumerate(objects)],
             "progress": None if progress is None else {"percent": progress.percent,
                                                        "remaining_min": progress.remaining_min},

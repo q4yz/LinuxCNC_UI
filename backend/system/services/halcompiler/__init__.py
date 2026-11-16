@@ -27,6 +27,8 @@ from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
 from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
+from .components.HeaterHalMapper import pid_tune_webgui_lines
+from .components.JointShapeHalMapper import JointShapeHalMapper, shaped_joints
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
 from .components.ZTiltHalMapper import ZTiltWebguiMapper
 from .components.LedHalMapper import LedWebguiMapper
@@ -121,6 +123,7 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
+            lines.extend(pid_tune_webgui_lines(tool))
             # halui.abort exists only once halui runs: the guard's other half.
             if guarded_joint(payload, tool) is not None:
                 lines.extend(ExtruderGuardHalMapper.webgui_lines(tool))
@@ -130,6 +133,7 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
     z_tilt = payload.get("z_tilt")
     if isinstance(z_tilt, dict):
         lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
+    lines.extend(JointShapeHalMapper.webgui_lines(shaped_joints(payload)))
     for sensor in unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:

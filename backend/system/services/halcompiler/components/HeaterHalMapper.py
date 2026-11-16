@@ -127,7 +127,15 @@ class HeaterHalMapper:
         fragment.nets.append(f"net {heater_id}-SP => {pid}.SP")
         if sensor_id is not None:
             fragment.nets.append(f"net {sensor_id}-PV => {pid}.PV")
-        fragment.nets.append(f"net {heater_id}-heater-SP <= {pid}.CV")
+        # PID_CALIBRATE: `tune-<id>` hands the output to the UI's relay
+        # duty while webgui.tune-<id>-enable AND heat-ok hold (E-stop = off).
+        mux, gate = f"tune-{heater_id}", f"tune-ok-{heater_id}"
+        fragment.loadrt.extend([f"loadrt mux2 names={mux}", f"loadrt and2 names={gate}"])
+        fragment.addf.extend([Addf(gate, SERVO_THREAD, order=1), Addf(mux, SERVO_THREAD, order=1)])
+        fragment.nets.append(f"net {heater_id}-pid-CV {pid}.CV => {mux}.in0")
+        fragment.nets.append(f"net {heater_id}-heat-ok => {gate}.in1")
+        fragment.nets.append(f"net {heater_id}-tune {gate}.out => {mux}.sel")
+        fragment.nets.append(f"net {heater_id}-heater-SP <= {mux}.out")
 
         fragment.setp.extend(
             [
@@ -220,4 +228,18 @@ class HeaterHalMapper:
         )
 
 
-__all__ = ["HeaterHalMapper"]
+def pid_tune_webgui_lines(heater: dict[str, Any]) -> list[str]:
+    """``webgui_connections.hal``: the PID_CALIBRATE relay pins of a PID
+    heater (machine.hal's ``tune-<id>`` / ``tune-ok-<id>``)."""
+    if (heater.get("control") or "pid").strip().lower() != "pid":
+        return []
+    heater_id = str(heater["id"])
+    return [
+        f"# PID_CALIBRATE: {heater_id}",
+        f"net {heater_id}-tune-enable webgui.tune-{heater_id}-enable => tune-ok-{heater_id}.in0",
+        f"net {heater_id}-tune-duty webgui.tune-{heater_id}-duty => tune-{heater_id}.in1",
+        "",
+    ]
+
+
+__all__ = ["HeaterHalMapper", "pid_tune_webgui_lines"]

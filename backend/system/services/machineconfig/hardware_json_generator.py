@@ -325,6 +325,28 @@ def _has_extruder(graph: MachineConfigGraph) -> bool:
     return any(isinstance(h, Extruder) for h in graph.heaters.values())
 
 
+def _input_shaper_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    shaper = graph.input_shaper
+    if shaper is None:
+        return None
+    return {
+        "freq_x": shaper.freq_x, "freq_y": shaper.freq_y,
+        "type_x": shaper.type_x, "type_y": shaper.type_y,
+        "damping_x": shaper.damping_x, "damping_y": shaper.damping_y,
+    }
+
+
+def _adxl345_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    adxl = graph.adxl345
+    if adxl is None:
+        return None
+    return {
+        "spi_device": adxl.spi_device, "spi_speed": adxl.spi_speed, "axes_map": adxl.axes_map, "rate": adxl.rate,
+        "accel_per_hz": adxl.accel_per_hz, "min_freq": adxl.min_freq, "max_freq": adxl.max_freq,
+        "hz_per_sec": adxl.hz_per_sec,
+    }
+
+
 def _firmware_retraction_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
     """``[firmware_retraction]`` for the G-code converter (bare G10 / G11)."""
     retraction = graph.firmware_retraction
@@ -390,6 +412,8 @@ def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict
         "probe_speed": bed_mesh.probe_speed,
         "probe_min_z": float(getattr(steppers.get("z"), "position_min", None) or 0.0),
         "zero_reference_position": list(bed_mesh.zero_reference_position) if bed_mesh.zero_reference_position else None,
+        "adaptive_margin": bed_mesh.adaptive_margin,
+        "adaptive": bed_mesh.adaptive,
     }
 
 
@@ -478,6 +502,9 @@ def _tool_payload_from_heater(heater_section: str, h) -> dict[str, Any]:
         "pid_kd": _fmt_float(getattr(h, "pid_Kd", None)),
         "max_power": _fmt_float(getattr(h, "max_power", None)),
         "min_extrude_temp": _fmt_float(getattr(h, "min_extrude_temp", None)),
+        "pressure_advance": _fmt_float(getattr(h, "pressure_advance", None)) or None,
+        "pressure_advance_smooth_time": (
+            _fmt_float(getattr(h, "pressure_advance_smooth_time", None)) if getattr(h, "pressure_advance", 0) else None),
         "filament_diameter": _fmt_float(getattr(h, "filament_diameter", None)),
         "nozzle_diameter": _fmt_float(getattr(h, "nozzle_diameter", None)),
     }
@@ -720,6 +747,8 @@ def _driver_payload(driver_id: str, stepper, tmc=None) -> dict[str, Any]:
         "interpolate": getattr(tmc, "interpolate", None),
         "hold_current": _fmt_float(getattr(tmc, "hold_current", None)),
         "sense_resistor": _fmt_float(getattr(tmc, "sense_resistor", None)),
+        "diag_pin": getattr(tmc, "diag_pin", None),
+        "stall_sensitivity": getattr(tmc, "driver_sgthrs", None),
     }
 
 
@@ -1253,6 +1282,9 @@ def build_hardware_json(
         "probe": _probe_payload(graph.probe),
         "bed_mesh": _bed_mesh_payload(graph.bed_mesh, graph),
         "firmware_retraction": _firmware_retraction_payload(graph),
+        "input_shaper": _input_shaper_payload(graph),
+        "skew_correction": ({"xy_factor": graph.skew_xy_factor} if graph.skew_xy_factor is not None else None),
+        "adxl345": _adxl345_payload(graph),
         "filament_change": _filament_change_payload(graph),
         "z_tilt": _z_tilt_payload(graph, axes_records),
         "z_virtual_endstop": _z_virtual_endstop_payload(graph),

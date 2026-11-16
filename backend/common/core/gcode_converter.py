@@ -48,6 +48,8 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
 * ``M221 S<%>`` (flow) -> ``M184 P<%>``; ``SET_GCODE_OFFSET Z=`` /
   ``Z_ADJUST=`` -> ``M185 P<mm> Q0`` / ``Q1`` (the live Z offset). Both
   are user M-codes (``machine_config/m_codes``).
+* ``M900 K<k>`` / ``SET_PRESSURE_ADVANCE ADVANCE=<k>`` -> ``M186 P<k>``
+  (pressure advance, a user M-code).
 * ``M600`` (filament change) stays: the machine REMAPs it (``m600.ngc``).
 * Objects (Klipper's ``EXCLUDE_OBJECT_START NAME=`` / ``_END``, Marlin's
   ``M486 S<n>`` / ``S-1``, slicer comments ``; printing object`` /
@@ -95,6 +97,9 @@ CUT_AT = MAX_LINE - 3
 
 #: The header line listing the file's objects, index = HAL pin number.
 OBJECTS_MARKER = "; LINUXCNC_UI_OBJECTS:"
+#: The header line with the area the print extrudes in (adaptive bed mesh).
+BOUNDS_MARKER = "; LINUXCNC_UI_BOUNDS:"
+
 #: Objects that can be excluded (``webgui.exclude-object-0`` ... ``-31``).
 MAX_OBJECTS = 32
 
@@ -136,6 +141,9 @@ class _State:
     feed: float | None = None  # the file's last F (restored after a retraction)
     uses_m600: bool = False
     objects: list[str] = field(default_factory=list)
+    x: float | None = None  # the XY position (absolute moves)
+    y: float | None = None
+    bounds: list[float] | None = None  # xmin, ymin, xmax, ymax of the extruding moves
 
 
 def _split_comment(line: str) -> tuple[str, str]:
@@ -214,6 +222,7 @@ def convert(
             continue
         _track_feed(raw, state)
         line, note = _convert_line(raw, state, macros)
+        _track_position(raw, state)
         line, cut_note = _limit_length(line)
         note = note or cut_note
         out.append(line)
@@ -224,6 +233,8 @@ def convert(
         out.append("M2  ; [added: LinuxCNC needs a program end]")
     if state.objects:
         out.insert(0, f"{OBJECTS_MARKER} {json.dumps(state.objects)}")
+    if state.bounds is not None:
+        out.insert(0, f"{BOUNDS_MARKER} " + " ".join(_fmt(v) for v in state.bounds))
     if state.objects or state.uses_m600:
         out.insert(0, "G92.1  ; [added: clears an earlier print's A offset (filament change, excluded objects)]")
     if state.prestart:
@@ -311,6 +322,42 @@ def _object_marker(raw: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def read_bounds(head: str) -> tuple[float, float, float, float] | None:
+    """The area a converted file extrudes in, ``(xmin, ymin, xmax, ymax)``;
+    ``None`` for any other file."""
+    for line in head.splitlines()[:6]:
+        if line.startswith(BOUNDS_MARKER):
+            try:
+                x0, y0, x1, y1 = (float(v) for v in line[len(BOUNDS_MARKER):].split())
+            except ValueError:
+                return None
+            return x0, y0, x1, y1
+    return None
+
+
+def _grow_bounds(state: _State, x: float, y: float) -> None:
+    if state.bounds is None:
+        state.bounds = [x, y, x, y]
+    else:
+        b = state.bounds
+        b[0], b[1], b[2], b[3] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
+
+
+def _track_position(raw: str, state: _State) -> None:
+    """The XY position after an absolute G0-G3 (relative moves lose it)."""
+    code = _split_comment(raw)[0]
+    if not _is_move(code):
+        return
+    values = dict(_words(code))
+    if state.xyz_relative:
+        state.x = state.y = None
+        return
+    if "X" in values:
+        state.x = float(values["X"])
+    if "Y" in values:
+        state.y = float(values["Y"])
+
+
 def _track_feed(raw: str, state: _State) -> None:
     """Remember the file's feed rate (a G0-G3 / bare F line's F)."""
     code = _split_comment(raw)[0]
@@ -377,6 +424,11 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
         return _set_led(stripped, state, comment)
     if upper.startswith("SET_GCODE_OFFSET"):
         return _gcode_offset(stripped, comment)
+    if upper.startswith("SET_PRESSURE_ADVANCE"):
+        value = re.search(r"ADVANCE\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+))", stripped, re.IGNORECASE)
+        if value is None:
+            return _commented(stripped, "only ADVANCE=", comment), None
+        return f"M186 P{_fmt(float(value.group(1)))}" + (f"  {comment}" if comment else ""), None
 
     # A macro call: a word that is no G-code letter+number, then values.
     macro = _MACRO_LINE.match(stripped)
@@ -442,6 +494,11 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
             if percent is None:
                 return _commented(stripped, "M221 without S", comment), None
             return f"M184 P{percent}" + (f"  {comment}" if comment else ""), None
+        if m == 900:  # Marlin linear advance K: pressure advance
+            k = dict(words).get("K")
+            if k is None:
+                return _commented(stripped, "M900 without K", comment), None
+            return f"M186 P{k}" + (f"  {comment}" if comment else ""), None
         if m == 600:
             state.uses_m600 = True
             return "M600" + (f"  {comment}" if comment else ""), None
@@ -520,7 +577,7 @@ def _dwell(words: list[tuple[str, str]], comment: str) -> str:
     return f"G4 P{_fmt(seconds)}" + (f"  {comment}" if comment else "")
 
 
-_MARLIN_MDI = re.compile(r"^\s*M0*(104|106|107|109|140|190|221)(?![0-9.])", re.IGNORECASE)
+_MARLIN_MDI = re.compile(r"^\s*M0*(104|106|107|109|140|190|221|900)(?![0-9.])", re.IGNORECASE)
 
 
 def convert_mdi(line: str) -> str:
@@ -534,6 +591,9 @@ def convert_mdi(line: str) -> str:
     words = _words(code)
     m = int(match.group(1))
     letters = [letter for letter, _ in words]
+    if m == 900:  # Marlin linear advance: the pressure advance M-code
+        k = dict(words).get("K")
+        return line if k is None else f"M186 P{k}" + (f"  {comment}" if comment else "")
     # M107's only word is the fan: Marlin's P is the user M-code's Q.
     if not any(letter in "SRT" for letter in letters) and not (m == 107 and "P" in letters):
         return line
@@ -581,6 +641,11 @@ def _extrude(code: str, words: list[tuple[str, str]], state: _State, comment: st
     state.a_total += delta
     if delta > 0 and any(letter in "XY" for letter, _ in words):
         state.printing = True
+        # the area of the print: the move's start and end (absolute moves)
+        if not state.xyz_relative and state.x is not None and state.y is not None:
+            values = dict(words)
+            _grow_bounds(state, state.x, state.y)
+            _grow_bounds(state, float(values.get("X", state.x)), float(values.get("Y", state.y)))
     a = delta if state.xyz_relative else state.a_total
     converted = re.sub(r"[Ee]\s*[-+]?(?:\d+\.?\d*|\.\d+)", f"A{_fmt(a)}", code, count=1)
     return converted.rstrip() + (f"  {comment}" if comment else "")
@@ -600,6 +665,6 @@ def needs_conversion(filename: str) -> bool:
 
 
 __all__ = [
-    "convert_mdi", "read_objects", "OBJECTS_MARKER", "MAX_OBJECTS", "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
+    "convert_mdi", "read_bounds", "read_objects", "OBJECTS_MARKER", "MAX_OBJECTS", "PRESTART_MARKER", "PRESTART_STEPS", "REMAPPED_MCODES", "ConversionResult",
     "convert", "needs_conversion", "ngc_name", "read_prestart",
 ]

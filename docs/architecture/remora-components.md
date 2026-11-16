@@ -16,7 +16,8 @@ another); `scripts/update.sh` says when the fork has new commits.
 |-----------|----------|
 | `remora-spi`, `remora-eth-3.0` | the link to the Remora board |
 | `PIDcontroller` | heater PID loops |
-| `extruder` | the cold-extrusion guard (`min_extrude_temp`) |
+| `extruder` | the cold-extrusion guard (`min_extrude_temp`), flow, pressure advance |
+| `jointshape` | input shaping, skew correction, the resonance test signal (X / Y) |
 | `remora-compensation` | bed mesh Z compensation (external offsets) |
 | `rpi-monitor` | the host's CPU temperature and load |
 | `remora-upload` | puts `config_<mcu>.txt` / `firmware.bin` on the board |

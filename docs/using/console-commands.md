@@ -20,6 +20,13 @@ Besides LinuxCNC's own G-code, the console takes these, named like Klipper's:
 | `SET_GCODE_OFFSET Z=<mm>` / `Z_ADJUST=<mm>` | the live Z offset — {doc}`during-a-print` |
 | `M221 S<%>` | flow (sent as `M184 P<%>`) |
 | `M600` | filament change |
+| `BED_MESH_CALIBRATE ADAPTIVE=1` | bed mesh over the loaded print's area — {doc}`tuning` |
+| `SET_PRESSURE_ADVANCE ADVANCE=<k>`, `M900 K<k>` | pressure advance (sent as `M186 P<k>`) |
+| `SET_INPUT_SHAPER SHAPER_FREQ_X=<Hz> SHAPER_FREQ_Y=<Hz>` | input shaper frequencies |
+| `SHAPER_CALIBRATE [AXIS=X\|Y]`, `TEST_RESONANCES AXIS=X\|Y` | resonance test with the ADXL345 |
+| `ACCELEROMETER_QUERY` | one ADXL345 reading |
+| `SET_SKEW XY=<ac>,<bd>,<ad>` / `CLEAR=1`, `GET_CURRENT_SKEW` | XY skew correction |
+| `PID_CALIBRATE HEATER=<name> TARGET=<°C>` | heater PID autotune |
 
 While a routine runs, the state reads *Busy* (a program: *Running*).
 

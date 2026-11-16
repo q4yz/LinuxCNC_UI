@@ -27,6 +27,7 @@ class PrintProgress(BaseModel):
 class PrintTuningState(BaseModel):
     z_offset: float = Field(..., description="Live Z offset (mm).")
     flow: float = Field(..., description="Flow (%).")
+    pressure_advance: float = Field(0.0, description="Pressure advance (mm per mm/s).")
     objects: List[PrintObject] = Field(default_factory=list, description="The loaded program's objects.")
     progress: Optional[PrintProgress] = Field(None, description="From the slicer's M73 lines, if it wrote any.")
 
@@ -35,6 +36,7 @@ class PrintTuningUpdate(BaseModel):
     z_offset: Optional[float] = Field(None, description="Set the live Z offset (mm).")
     z_adjust: Optional[float] = Field(None, description="Change the live Z offset by this (mm).")
     flow: Optional[float] = Field(None, description="Set the flow (%), 10 … 500.")
+    pressure_advance: Optional[float] = Field(None, description="Set the pressure advance (mm per mm/s), 0 … 2.")
 
 
 class ObjectExclusion(BaseModel):
@@ -72,6 +74,8 @@ def set_tuning(payload: PrintTuningUpdate) -> PrintTuningState:
         service.adjust_z_offset(payload.z_adjust)
     if payload.flow is not None:
         service.set_flow(payload.flow)
+    if payload.pressure_advance is not None:
+        service.set_pressure_advance(payload.pressure_advance)
     return _state()
 
 

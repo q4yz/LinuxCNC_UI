@@ -207,6 +207,18 @@ class StateService:
 
         if get_print_tuning_service().run_command(command):
             return True
+        from services.ShaperService import get_shaper_service
+
+        if get_shaper_service().run_command(command):
+            return True
+        from services.ResonanceService import get_resonance_service
+
+        if get_resonance_service().run_command(command, busy=busy):
+            return True
+        from services.PidCalibrateService import get_pid_calibrate_service
+
+        if get_pid_calibrate_service().run_command(command, busy=busy):
+            return True
         accuracy_request = parse_probe_accuracy(command)
         if accuracy_request is not None:
             accuracy.start(accuracy_request, busy=busy)
@@ -219,7 +231,9 @@ class StateService:
             return True
         profile = parse_command(command)
         if profile is not None:
-            mesh.start(profile, busy=busy)
+            from services.BedMeshProbeService import parse_adaptive
+
+            mesh.start(profile, busy=busy, adaptive=parse_adaptive(command))
             return True
         try:
             steps = parse_homing_routine(command)

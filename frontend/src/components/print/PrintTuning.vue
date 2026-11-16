@@ -16,6 +16,7 @@ const Z_STEPS = [-0.05, -0.01, 0.01, 0.05];
 const consoleStore = useConsoleStore();
 const state = ref<PrintTuningState | null>(null);
 const flowInput = ref<string | number>("");
+const paInput = ref<string | number>("");
 const busy = ref(false);
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -23,6 +24,7 @@ async function refresh(): Promise<void> {
   try {
     state.value = await printTuningFacade.get();
     if (flowInput.value === "" && state.value) flowInput.value = state.value.flow;
+    if (paInput.value === "" && state.value) paInput.value = state.value.pressure_advance ?? 0;
   } catch {
     // the card shows the last state; the next poll tries again
   }
@@ -45,6 +47,11 @@ const applyFlow = () => {
   const percent = Number(flowInput.value);
   if (!Number.isFinite(percent)) return;
   void run("Flow", () => printTuningFacade.setFlow(percent));
+};
+const applyPressureAdvance = () => {
+  const k = Number(paInput.value);
+  if (!Number.isFinite(k)) return;
+  void run("Pressure advance", () => printTuningFacade.setPressureAdvance(k));
 };
 const toggleObject = (index: number, excluded: boolean) =>
   run("Exclude object", () => printTuningFacade.exclude(index, excluded));
@@ -108,6 +115,13 @@ onBeforeUnmount(() => {
       <span class="text-xs text-gray-400">%</span>
       <BaseButton size="sm" variant="primary" :disabled="busy" @click="applyFlow">Set</BaseButton>
       <span class="text-xs text-gray-500">now {{ state.flow }} %</span>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2" data-testid="print-tuning-pa">
+      <span class="w-20 text-xs uppercase tracking-wider text-gray-400">PA</span>
+      <BaseInput v-model="paInput" type="number" class="w-24 text-right text-xs font-mono" @keyup.enter="applyPressureAdvance" />
+      <BaseButton size="sm" variant="primary" :disabled="busy" @click="applyPressureAdvance">Set</BaseButton>
+      <span class="text-xs text-gray-500">now {{ state.pressure_advance ?? 0 }}</span>
     </div>
 
     <div v-if="state.objects?.length" class="space-y-1" data-testid="print-tuning-objects">

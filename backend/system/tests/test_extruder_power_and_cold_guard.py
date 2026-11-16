@@ -110,3 +110,15 @@ def test_live_z_offset_with_a_bed_mesh():
     assert "setp z-mesh-eoffset.gain1 -1" in hal
     webgui = render_webgui_connections(payload).splitlines()
     assert "net z-offset-mm webgui.z-offset => z-babystep-sum.in1 z-mesh-eoffset.in1" in webgui
+
+
+def test_pressure_advance_config_and_hal():
+    payload = _payload(_with("pressure_advance: 0.05\npressure_advance_smooth_time: 0.03\n"))
+    tool = _tool(payload, "heater_extruder")
+    assert tool["pressure_advance"] == 0.05 and tool["pressure_advance_smooth_time"] == 0.03
+    assert "setp extruder-heater_extruder.pa-smooth-time 0.03" in compile_machine_hal(payload)
+    assert ("net heater_extruder-pressure-advance webgui.pressure-advance => extruder-heater_extruder.pressure-advance"
+            in render_webgui_connections(payload).splitlines())
+    assert _tool(_payload(PRINTER), "heater_extruder").get("pressure_advance") is None
+    with pytest.raises(InvalidValueError):
+        MachineConfigParser().parse_string(_with("pressure_advance: -1\n"))

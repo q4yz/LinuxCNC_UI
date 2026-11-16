@@ -185,6 +185,9 @@ class Extruder(Heater):
     gear_ratio: float | None = None
     #: Klipper's cold-extrusion guard (°C); ``None``: the default 170.
     min_extrude_temp: float | None = None
+    #: Klipper's pressure advance (mm per mm/s) and its smoothing (s).
+    pressure_advance: float = 0.0
+    pressure_advance_smooth_time: float = 0.040
     nozzle_diameter: float | None = None
     filament_diameter: float | None = None
 
@@ -243,6 +246,10 @@ class TMC2209:
     interpolate: bool | None = None
     hold_current: float | None = None
     sense_resistor: float | None = None
+    #: Sensorless homing: the MCU input the driver's DIAG drives, and its
+    #: StallGuard threshold (0 … 255, higher = more sensitive).
+    diag_pin: str | None = None
+    driver_sgthrs: int | None = None
 
 
 @dataclass(slots=True)
@@ -423,6 +430,33 @@ class ZTilt:
 
 
 @dataclass(slots=True)
+class InputShaper:
+    """Klipper's ``[input_shaper]``: per axis a shaper type and frequency
+    (0 = off) for the Remora ``jointshape`` component."""
+
+    freq_x: float = 0.0
+    freq_y: float = 0.0
+    type_x: str = "mzv"
+    type_y: str = "mzv"
+    damping_x: float = 0.1
+    damping_y: float = 0.1
+
+
+@dataclass(slots=True)
+class Adxl345:
+    """An ADXL345 on the host's SPI (resonance tests, ``TEST_RESONANCES``)."""
+
+    spi_device: str = "/dev/spidev1.1"
+    spi_speed: int = 5_000_000
+    axes_map: str = "x,y,z"
+    rate: int = 3200
+    accel_per_hz: float = 75.0
+    min_freq: float = 5.0
+    max_freq: float = 133.0
+    hz_per_sec: float = 1.0
+
+
+@dataclass(slots=True)
 class FirmwareRetraction:
     """Klipper's ``[firmware_retraction]`` (mm, mm/s): a slicer's bare
     ``G10`` / ``G11`` become these A moves (the G-code converter)."""
@@ -466,6 +500,9 @@ class BedMesh:
     speed: float = 50.0
     horizontal_move_z: float = 5.0
     probe_speed: float = 5.0
+    #: Adaptive mesh: mm around the print's area; a print's own G29 adaptive.
+    adaptive_margin: float = 5.0
+    adaptive: bool = False
     zero_reference_position: tuple[float, float] | None = None
 
 
@@ -615,6 +652,10 @@ class MachineConfigGraph:
     # ``None`` when the profile declares no ``[bed_mesh]``.
     bed_mesh: BedMesh | None = None
     firmware_retraction: FirmwareRetraction | None = None
+    input_shaper: InputShaper | None = None
+    #: Skew correction factor (x - y * factor); None without the section.
+    skew_xy_factor: float | None = None
+    adxl345: Adxl345 | None = None
     filament_change: FilamentChange | None = None
     # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
     homing_override: HomingOverride | None = None

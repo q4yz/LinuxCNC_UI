@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from models.machineconfig import (
+    Adxl345,
     BedMesh,
     FilamentChange,
     FirmwareRetraction,
+    InputShaper,
     EndstopSwitch,
     Estop,
     Extruder,
@@ -769,6 +771,12 @@ class MachineConfigParser:
                 graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
+            elif section_schema.kind is SectionKind.INPUT_SHAPER:
+                graph.input_shaper = self._parse_input_shaper(section_name, section)
+            elif section_schema.kind is SectionKind.SKEW_CORRECTION:
+                graph.skew_xy_factor = self._parse_skew(section_name, section)
+            elif section_schema.kind is SectionKind.ADXL345:
+                graph.adxl345 = self._parse_adxl345(section_name, section)
             elif section_schema.kind is SectionKind.FIRMWARE_RETRACTION:
                 graph.firmware_retraction = self._parse_float_section(section_name, section, FirmwareRetraction())
             elif section_schema.kind is SectionKind.FILAMENT_CHANGE:
@@ -801,6 +809,7 @@ class MachineConfigParser:
         # Post-parse validation runs after the graph is fully built so
         # every stepper's pins and every heater's name are known.
         # Both validations are cheap and produce structured errors.
+        self._resolve_tmc_virtual_endstops(graph)
         self._resolve_virtual_endstop(graph)
         self._validate_heater_uniqueness(graph, heater_section_order)
         self._validate_fan_uniqueness(graph, fan_section_order)
@@ -961,6 +970,29 @@ class MachineConfigParser:
                     seen[canonical], section_name, canonical
                 )
             seen[canonical] = section_name
+
+    @staticmethod
+    def _resolve_tmc_virtual_endstops(graph: MachineConfigGraph) -> None:
+        """Sensorless homing: ``endstop_pin: tmc2209_stepper_x:virtual_endstop``
+        is the ``diag_pin`` of ``[tmc2209 stepper_x]`` — the driver raises
+        DIAG on a stall (StallGuard, ``driver_SGTHRS``), an ordinary home
+        switch input for LinuxCNC."""
+        for name, stepper in graph.steppers.items():
+            raw = (stepper.endstop_pin or "").strip()
+            match = re.fullmatch(r"tmc2209_(\S+):virtual_endstop", raw, re.IGNORECASE)
+            if not match:
+                continue
+            section = f"stepper_{name}"
+            tmc = graph.tmc2209s.get(match.group(1))
+            if tmc is None:
+                raise InvalidValueError(section, "endstop_pin", raw, f"a [tmc2209 {match.group(1)}] section")
+            if not tmc.diag_pin:
+                raise InvalidValueError(f"tmc2209 {match.group(1)}", "diag_pin", "",
+                                        "the MCU pin the driver's DIAG is wired to (sensorless homing)")
+            if not tmc.driver_sgthrs:
+                raise InvalidValueError(f"tmc2209 {match.group(1)}", "driver_SGTHRS", "",
+                                        "a StallGuard threshold 1 … 255 (sensorless homing)")
+            stepper.endstop_pin = tmc.diag_pin
 
     @staticmethod
     def _resolve_virtual_endstop(graph: MachineConfigGraph) -> None:
@@ -1136,6 +1168,8 @@ class MachineConfigParser:
             ),
             gear_ratio=self._gear_ratio(section_name, section),
             min_extrude_temp=self._optional_float(section_name, section, "min_extrude_temp"),
+            pressure_advance=self._non_negative(section_name, section, "pressure_advance", 0.0),
+            pressure_advance_smooth_time=self._non_negative(section_name, section, "pressure_advance_smooth_time", 0.040),
             nozzle_diameter=self._optional_float(
                 section_name, section, "nozzle_diameter"
             ),
@@ -1509,6 +1543,56 @@ class MachineConfigParser:
             raise InvalidValueError(section_name, "axes", axes_raw, f"axis letters ({AXIS_LETTERS.lower()})")
         return HomingOverride(gcode=gcode, axes="".join(dict.fromkeys(axes_raw.lower())))
 
+    _SHAPER_TYPES = ("zv", "mzv", "zvd", "ei")
+
+    def _parse_input_shaper(self, section_name: str, section: configparser.SectionProxy) -> InputShaper:
+        shaper = InputShaper()
+        common = (self._optional_string(section, "shaper_type") or "mzv").lower()
+        for axis in ("x", "y"):
+            kind = (self._optional_string(section, f"shaper_type_{axis}") or common).lower()
+            if kind not in self._SHAPER_TYPES:
+                raise InvalidValueError(section_name, f"shaper_type_{axis}", kind, " / ".join(self._SHAPER_TYPES))
+            setattr(shaper, f"type_{axis}", kind)
+            setattr(shaper, f"freq_{axis}", self._non_negative(section_name, section, f"shaper_freq_{axis}", 0.0))
+            damping = self._non_negative(section_name, section, f"damping_ratio_{axis}", 0.1)
+            if damping >= 1.0:
+                raise InvalidValueError(section_name, f"damping_ratio_{axis}", str(damping), "below 1")
+            setattr(shaper, f"damping_{axis}", damping)
+        return shaper
+
+    def _parse_skew(self, section_name: str, section: configparser.SectionProxy) -> float:
+        """``xy_skew_factor``, or computed from the diagonals ``xy_ac``,
+        ``xy_bd`` and the side ``xy_ad`` (Klipper's calc_skew_factor)."""
+        from core.skew import skew_factor
+
+        factor = self._optional_float(section_name, section, "xy_skew_factor")
+        lengths = [self._optional_float(section_name, section, k) for k in ("xy_ac", "xy_bd", "xy_ad")]
+        if factor is not None:
+            return factor
+        if all(v is not None for v in lengths):
+            try:
+                return skew_factor(*lengths)
+            except ValueError as exc:
+                raise InvalidValueError(section_name, "xy_ac", str(lengths[0]), str(exc)) from exc
+        if any(v is not None for v in lengths):
+            raise InvalidValueError(section_name, "xy_ad", "", "all three of xy_ac, xy_bd, xy_ad")
+        return 0.0
+
+    def _parse_adxl345(self, section_name: str, section: configparser.SectionProxy) -> Adxl345:
+        adxl = Adxl345()
+        adxl.spi_device = self._optional_string(section, "spi_device") or adxl.spi_device
+        adxl.axes_map = (self._optional_string(section, "axes_map") or adxl.axes_map).replace(" ", "").lower()
+        parts = adxl.axes_map.split(",")
+        if len(parts) != 3 or sorted(p.lstrip("-") for p in parts) != ["x", "y", "z"]:
+            raise InvalidValueError(section_name, "axes_map", adxl.axes_map, "x, y, z in some order, '-' for reversed")
+        for key in ("spi_speed", "rate"):
+            value = self._optional_int(section_name, section, key)
+            if value is not None:
+                setattr(adxl, key, value)
+        for key in ("accel_per_hz", "min_freq", "max_freq", "hz_per_sec"):
+            setattr(adxl, key, self._non_negative(section_name, section, key, getattr(adxl, key)))
+        return adxl
+
     def _parse_float_section(self, section_name: str, section: configparser.SectionProxy, target: Any) -> Any:
         """Fill ``target``'s fields from same-named number keys; a length or
         speed must not be negative."""
@@ -1568,6 +1652,8 @@ class MachineConfigParser:
             mesh.mesh_min[0] < mesh.mesh_max[0] and mesh.mesh_min[1] < mesh.mesh_max[1]
         ):
             raise InvalidValueError(section_name, "mesh_max", str(mesh.mesh_max), "above mesh_min on X and Y")
+        mesh.adaptive_margin = self._non_negative(section_name, section, "adaptive_margin", mesh.adaptive_margin)
+        mesh.adaptive = bool(self._strict_bool(section_name, section, "adaptive"))
         for key in ("speed", "probe_speed"):
             value = self._optional_float(section_name, section, key)
             if value is not None:
@@ -1945,7 +2031,15 @@ class MachineConfigParser:
             interpolate=self._optional_bool(section, "interpolate"),
             hold_current=self._optional_float(section_name, section, "hold_current"),
             sense_resistor=self._optional_float(section_name, section, "sense_resistor"),
+            diag_pin=self._optional_string(section, "diag_pin"),
+            driver_sgthrs=self._sgthrs(section_name, section),
         )
+
+    def _sgthrs(self, section_name: str, section: configparser.SectionProxy) -> int | None:
+        value = self._optional_int(section_name, section, "driver_SGTHRS")
+        if value is not None and not 0 <= value <= 255:
+            raise InvalidValueError(section_name, "driver_SGTHRS", str(value), "0 … 255")
+        return value
 
     @staticmethod
     def _optional_string(
@@ -2016,6 +2110,14 @@ class MachineConfigParser:
         value = self._optional_bool(section, key)
         if value is None and self._optional_string(section, key) is not None:
             raise InvalidValueError(section_name, key, str(section[key]), "true or false")
+        return value
+
+    def _non_negative(self, section_name: str, section: configparser.SectionProxy, key: str, default: float) -> float:
+        value = self._optional_float(section_name, section, key)
+        if value is None:
+            return default
+        if value < 0:
+            raise InvalidValueError(section_name, key, str(value), "a number not below 0")
         return value
 
     def _max_power(self, section_name: str, section: configparser.SectionProxy) -> float | None:

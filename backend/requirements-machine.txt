@@ -7,3 +7,6 @@
 # dependency shows up (e.g. a camera or telemetry library), add it
 # here rather than to requirements.txt.
 -r requirements.txt
+
+# Resonance tests (ResonanceService: the accelerometer spectrum, shaper fit).
+numpy>=1.24

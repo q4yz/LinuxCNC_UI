@@ -158,8 +158,12 @@ def test_addf_is_all_servo_thread_no_base_thread_at_all():
         "motion-controller",
         "heat-ok-heater_bed",
         "PID-heater_bed.compute",
+        "tune-ok-heater_bed",
+        "tune-heater_bed",
         "heat-ok-heater_extruder",
         "PID-heater_extruder.compute",
+        "tune-ok-heater_extruder",
+        "tune-heater_extruder",
         "remora.update-freq",
         "remora.write",
     ]

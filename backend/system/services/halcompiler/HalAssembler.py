@@ -28,6 +28,7 @@ from .components.CoreXyHalMapper import CoreXyHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
 from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
+from .components.JointShapeHalMapper import JointShapeHalMapper, shaped_joints
 from .components.IoPinHalMapper import InputPinHalMapper, OutputPinHalMapper, halpin_sets
 from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
@@ -81,6 +82,8 @@ class HalAssembler:
         }
         self._endstops_by_id = {e["id"]: e for e in payload.get("endstops", []) if e.get("id")}
         self._mcus_by_id = {m["id"]: m for m in payload.get("mcus", []) if m.get("id")}
+        # X / Y joints behind the jointshape component (input shaper, skew)
+        self._shaped: dict[int, str] = {}
         self._sensors_by_id = {
             s["id"]: s for s in payload.get("temperature_sensors", []) if s.get("id")
         }
@@ -194,6 +197,7 @@ class HalAssembler:
 
     def _component_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         mapper = _STEPPER_MAPPERS.get(capability_class, StepperHalMapper)
+        self._shaped = shaped_joints(self._payload)
         corexy = self._corexy_joints()
         fragments: list[HalFragment] = []
         for axis in self._payload.get("axes", []):
@@ -210,13 +214,15 @@ class HalAssembler:
             # per-joint ``endstop`` field); the mapper resolves each
             # joint's own reference itself instead of the whole axis
             # sharing one.
-            routed = frozenset(corexy or ()) | self._flow_joints(capability_class)
+            routed = frozenset(corexy or ()) | self._flow_joints(capability_class) | frozenset(self._shaped)
             if routed and mapper is RemoraStepperHalMapper:
                 fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id, routed))
             else:
                 fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
         if corexy:
             fragments.append(CoreXyHalMapper.to_fragment(*corexy))
+        if self._shaped:
+            fragments.append(JointShapeHalMapper.to_fragment(self._payload, self._shaped))
         return fragments
 
     def _spindle_fragments(self) -> list[HalFragment]:

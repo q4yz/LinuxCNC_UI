@@ -58,6 +58,24 @@ def parse_command(line: str) -> Optional[str]:
     return name
 
 
+def parse_adaptive(line: str) -> bool:
+    """``BED_MESH_CALIBRATE ADAPTIVE=1``: probe only the loaded print's area."""
+    match = re.search(r"\bADAPTIVE\s*=\s*(\S+)", line.split(";", 1)[0], re.IGNORECASE)
+    return match is not None and match.group(1).lower() not in ("0", "false")
+
+
+def adaptive_area(settings: Dict[str, Any], bounds: tuple[float, float, float, float]) -> Dict[str, Any]:
+    """``settings`` with mesh_min / mesh_max shrunk to the print's area plus
+    ``adaptive_margin``, inside the configured mesh; at least 1 mm wide."""
+    margin = float(settings.get("adaptive_margin") or 0.0)
+    (x0, y0), (x1, y1) = settings["mesh_min"], settings["mesh_max"]
+    lo_x = min(max(float(x0), bounds[0] - margin), float(x1) - 1.0)
+    lo_y = min(max(float(y0), bounds[1] - margin), float(y1) - 1.0)
+    hi_x = max(min(float(x1), bounds[2] + margin), lo_x + 1.0)
+    hi_y = max(min(float(y1), bounds[3] + margin), lo_y + 1.0)
+    return {**settings, "mesh_min": [lo_x, lo_y], "mesh_max": [hi_x, hi_y]}
+
+
 def grid(settings: Dict[str, Any]) -> tuple[List[float], List[float]]:
     """The mesh's X and Y coordinates."""
     (x0, y0), (x1, y1) = settings["mesh_min"], settings["mesh_max"]
@@ -110,7 +128,7 @@ class BedMeshProbeService:
         if worker is not None:
             worker.join(timeout)
 
-    def start(self, profile: str = DEFAULT_PROFILE, busy: bool = False) -> None:
+    def start(self, profile: str = DEFAULT_PROFILE, busy: bool = False, adaptive: bool = False) -> None:
         """Check and probe on a worker thread (the endpoint, MDI)."""
         settings = self._require_settings()
         self._check_machine(get_stat_channel())
@@ -119,25 +137,29 @@ class BedMeshProbeService:
         with self._lock:
             if self.is_running():
                 raise ConflictError("The bed mesh is already being probed.")
-            self._worker = threading.Thread(target=self._run_worker, args=(profile,), name="bed-mesh", daemon=True)
+            self._worker = threading.Thread(target=self._run_worker, args=(profile, adaptive), name="bed-mesh",
+                                            daemon=True)
             self._worker.start()
         del settings  # checked above, read again by run()
 
-    def _run_worker(self, profile: str) -> None:
+    def _run_worker(self, profile: str, adaptive: bool = False) -> None:
         try:
-            self.run(get_stat_channel(), profile)
+            self.run(get_stat_channel(), profile, adaptive)
         except BedMeshError as exc:
             get_console_logger().log_event(f"{COMMAND} aborted: {exc}", level=LogLevel.ERROR, source="CMD")
         except Exception as exc:  # noqa: BLE001 - report, don't die silently
             logger.exception("Bed mesh probing crashed: %s", exc)
             get_console_logger().log_event(f"{COMMAND} aborted: {exc}", level=LogLevel.ERROR, source="CMD")
 
-    def run(self, stat: Any, profile: str = DEFAULT_PROFILE) -> str:
+    def run(self, stat: Any, profile: str = DEFAULT_PROFILE, adaptive: bool = False) -> str:
         """Probe, save, activate, switch compensation on — on the calling
-        (worker) thread. Returns the mesh name; raises :class:`BedMeshError`."""
+        (worker) thread. Returns the mesh name; raises :class:`BedMeshError`.
+        ``adaptive``: only the loaded print's area (its bounds header)."""
         settings = self._require_settings()
         self._check_machine(stat)
         console = get_console_logger()
+        if adaptive:
+            settings = self._adaptive_settings(stat, settings, console)
         xs, ys = grid(settings)
         order = zigzag(xs, ys)
         points = [(xs[col], ys[row]) for row, col in order]
@@ -204,8 +226,32 @@ class BedMeshProbeService:
         profile = parse_command(line)
         if profile is None:
             return False
-        self.run(stat, profile)
+        self.run(stat, profile, parse_adaptive(line))
         return True
+
+    @staticmethod
+    def _adaptive_settings(stat: Any, settings: Dict[str, Any], console: Any) -> Dict[str, Any]:
+        """The mesh over the loaded print's area (``read_bounds``), or the
+        whole mesh when the file has none."""
+        from core.gcode_converter import read_bounds
+
+        path = str(getattr(stat, "file", "") or "")
+        bounds = None
+        if path:
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as fp:
+                    bounds = read_bounds("".join(fp.readline() for _ in range(6)))
+            except OSError:
+                bounds = None
+        if bounds is None:
+            console.log_event(f"{COMMAND} ADAPTIVE: the loaded program names no print area — the whole mesh.",
+                              level=LogLevel.INFO, source="CMD")
+            return settings
+        area = adaptive_area(settings, bounds)
+        console.log_event(
+            f"{COMMAND} ADAPTIVE: the print's area X{area['mesh_min'][0]:g}..{area['mesh_max'][0]:g} "
+            f"Y{area['mesh_min'][1]:g}..{area['mesh_max'][1]:g}.", level=LogLevel.DEBUG, source="CMD")
+        return area
 
     # -- checks ----------------------------------------------------------- #
 
