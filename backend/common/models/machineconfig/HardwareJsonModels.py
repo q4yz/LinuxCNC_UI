@@ -694,6 +694,10 @@ class HardwareJson(BaseModel):
 
     # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
     bed_mesh: "BedMesh | None" = None
+    # [firmware_retraction] (the G-code converter's G10 / G11) and what
+    # M600 does (machine.ini [FILAMENT_CHANGE], m600.ngc): mm and mm/s.
+    firmware_retraction: dict[str, float] | None = None
+    filament_change: dict[str, float] | None = None
 
     # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
     homing_override: "HomingOverride | None" = None

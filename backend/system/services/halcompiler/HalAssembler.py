@@ -184,6 +184,14 @@ class HalAssembler:
         by_id = {str(a.get("id")): a.get("joint_numbers") or [] for a in self._payload.get("axes", [])}
         return int(by_id["x"][0]), int(by_id["y"][0])
 
+    def _flow_joints(self, capability_class: CapabilityClass) -> frozenset[int]:
+        """Extruder joints whose position goes through the Remora
+        ``extruder`` component (flow %) — Remora boards only."""
+        if _STEPPER_MAPPERS.get(capability_class, StepperHalMapper) is not RemoraStepperHalMapper:
+            return frozenset()
+        joints = (guarded_joint(self._payload, t) for t in self._payload.get("tools", []) if isinstance(t, dict))
+        return frozenset(j for j in joints if j is not None)
+
     def _component_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         mapper = _STEPPER_MAPPERS.get(capability_class, StepperHalMapper)
         corexy = self._corexy_joints()
@@ -202,8 +210,9 @@ class HalAssembler:
             # per-joint ``endstop`` field); the mapper resolves each
             # joint's own reference itself instead of the whole axis
             # sharing one.
-            if corexy and mapper is RemoraStepperHalMapper:
-                fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id, frozenset(corexy)))
+            routed = frozenset(corexy or ()) | self._flow_joints(capability_class)
+            if routed and mapper is RemoraStepperHalMapper:
+                fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id, routed))
             else:
                 fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
         if corexy:
@@ -243,7 +252,8 @@ class HalAssembler:
             # An extruder's cold-extrusion guard (min_extrude_temp).
             joint = guarded_joint(self._payload, tool)
             if joint is not None:
-                fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint))
+                flow = joint in self._flow_joints(self._capability_class())
+                fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint, flow=flow))
         return fragments
 
     def _sensor_fragments(self) -> list[HalFragment]:

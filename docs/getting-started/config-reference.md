@@ -235,6 +235,40 @@ sensor_type:
 #   temperature_host: the /sys/class/thermal zone; CB1: 2 = CPU.
 ```
 
+### [firmware_retraction]
+
+What a slicer's `G10` / `G11` (*Use firmware retraction*) do; the upload turns them into these
+moves on the extruder.
+
+```ini
+[firmware_retraction]
+#retract_length: 0
+#   mm; 0: G10 / G11 are not converted (commented out).
+#retract_speed: 20
+#unretract_extra_length: 0
+#unretract_speed: 10
+```
+
+### [filament_change]
+
+What `M600` does (not Klipper's: there M600 is a macro). Every machine with an extruder gets
+M600, with these defaults.
+
+```ini
+[filament_change]
+#park_x:
+#park_y:
+#   Machine coordinates; default the X / Y minimum.
+#z_lift: 10
+#unload_length: 50
+#unload_speed: 10
+#load_length: 50
+#load_speed: 5
+#purge_length: 20
+#purge_speed: 2
+#   mm, mm/s.
+```
+
 ## Probes and levelling
 
 ### [probe]

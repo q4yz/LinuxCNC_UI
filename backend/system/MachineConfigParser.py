@@ -11,6 +11,8 @@ from typing import Any
 
 from models.machineconfig import (
     BedMesh,
+    FilamentChange,
+    FirmwareRetraction,
     EndstopSwitch,
     Estop,
     Extruder,
@@ -767,6 +769,10 @@ class MachineConfigParser:
                 graph.homing_override = self._parse_homing_override(section_name, section)
             elif section_schema.kind is SectionKind.BED_MESH:
                 graph.bed_mesh = self._parse_bed_mesh(section_name, section)
+            elif section_schema.kind is SectionKind.FIRMWARE_RETRACTION:
+                graph.firmware_retraction = self._parse_float_section(section_name, section, FirmwareRetraction())
+            elif section_schema.kind is SectionKind.FILAMENT_CHANGE:
+                graph.filament_change = self._parse_float_section(section_name, section, FilamentChange())
             elif section_schema.kind is SectionKind.OUTPUT_PIN:
                 output_pin = self._parse_output_pin(section_name, section_schema.object_name, section)
                 graph.output_pins[output_pin.name] = output_pin
@@ -1502,6 +1508,20 @@ class MachineConfigParser:
         if axes_raw and not set(axes_raw.upper()) <= set(AXIS_LETTERS):
             raise InvalidValueError(section_name, "axes", axes_raw, f"axis letters ({AXIS_LETTERS.lower()})")
         return HomingOverride(gcode=gcode, axes="".join(dict.fromkeys(axes_raw.lower())))
+
+    def _parse_float_section(self, section_name: str, section: configparser.SectionProxy, target: Any) -> Any:
+        """Fill ``target``'s fields from same-named number keys; a length or
+        speed must not be negative."""
+        import dataclasses
+
+        for f in dataclasses.fields(target):
+            value = self._optional_float(section_name, section, f.name)
+            if value is None:
+                continue
+            if value < 0 and f.name not in ("park_x", "park_y"):
+                raise InvalidValueError(section_name, f.name, str(value), "a number not below 0")
+            setattr(target, f.name, value)
+        return target
 
     def _parse_bed_mesh(
         self,

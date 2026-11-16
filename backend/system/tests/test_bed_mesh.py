@@ -85,7 +85,7 @@ def test_without_a_bed_mesh_nothing_changes(tmp_path):
     payload = _payload(tmp_path, "")
     assert "compensation" not in compile_machine_hal(payload)
     lines = render_webgui_connections(payload)
-    assert "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts" in lines
+    assert "net z-eoffset-counts z-eoffset-counts.out => axis.z.eoffset-counts" in lines
     assert "compensation" not in lines
 
 

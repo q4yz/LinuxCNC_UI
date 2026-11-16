@@ -63,6 +63,7 @@ from routers import (
     io as io_router,
     z_tilt as z_tilt_router,
     leds as leds_router,
+    print_tuning as print_tuning_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
@@ -70,6 +71,7 @@ from routers import (
     tools as tools_router,
 )
 from services.HalScopeService import get_hal_scope_service
+from services.PrintTuningService import get_print_tuning_service
 from services.ServoThreadService import (
     get_servo_thread_service,
 )
@@ -148,6 +150,7 @@ async def lifespan(app: FastAPI):
         get_io_service().preload_hal_pins()
         get_z_tilt_service().preload_hal_pins()
         get_led_service().preload_hal_pins()
+        get_print_tuning_service().preload_hal_pins()
         HalPin.initialize_component()
         get_io_service().apply_start_values()
         get_led_service().apply_initial()
@@ -285,6 +288,7 @@ app.include_router(bed_mesh_router.router)
 app.include_router(io_router.router)
 app.include_router(z_tilt_router.router)
 app.include_router(leds_router.router)
+app.include_router(print_tuning_router.router)
 
 
 @app.get("/")

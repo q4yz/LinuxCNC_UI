@@ -63,6 +63,8 @@ class SectionKind(str, Enum):
     PROBE = "probe"
     TOOL_LENGTH_SENSOR = "tool_length_sensor"
     BED_MESH = "bed_mesh"
+    FIRMWARE_RETRACTION = "firmware_retraction"
+    FILAMENT_CHANGE = "filament_change"
     HOMING_OVERRIDE = "homing_override"
     Z_TILT = "z_tilt"
     NEOPIXEL = "neopixel"
@@ -222,6 +224,17 @@ TOOL_LENGTH_SENSOR_KEYS = frozenset({"pin"})
 # runtime and applied by the Remora `compensation` HAL component.
 # Klipper's probing keys (``mesh_min`` / ``mesh_max``, travel), plus this
 # compiler's own ``probe_speed`` (Klipper keeps it in ``[probe]``).
+# Klipper's [firmware_retraction]: what a slicer's bare G10 / G11 do (the
+# G-code converter turns them into A moves; SET_RETRACTION is not supported).
+FIRMWARE_RETRACTION_KEYS = frozenset({
+    "retract_length", "retract_speed", "unretract_extra_length", "unretract_speed",
+})
+# Not Klipper (there M600 is a macro): what M600 does — park, unload, wait
+# for Resume, load, purge, return (machine_config/m_codes/m600.ngc).
+FILAMENT_CHANGE_KEYS = frozenset({
+    "park_x", "park_y", "z_lift", "unload_length", "unload_speed",
+    "load_length", "load_speed", "purge_length", "purge_speed",
+})
 BED_MESH_KEYS = frozenset({
     "probe_count", "mesh_min", "mesh_max", "speed", "horizontal_move_z",
     "probe_speed", "zero_reference_position",
@@ -384,6 +397,8 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.PROBE: PROBE_KEYS,
     SectionKind.TOOL_LENGTH_SENSOR: TOOL_LENGTH_SENSOR_KEYS,
     SectionKind.BED_MESH: BED_MESH_KEYS,
+    SectionKind.FIRMWARE_RETRACTION: FIRMWARE_RETRACTION_KEYS,
+    SectionKind.FILAMENT_CHANGE: FILAMENT_CHANGE_KEYS,
     SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
     SectionKind.Z_TILT: Z_TILT_KEYS,
     SectionKind.NEOPIXEL: NEOPIXEL_KEYS,
@@ -491,6 +506,12 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "bed_mesh":
         return SectionSchema(SectionKind.BED_MESH, BED_MESH_KEYS, "bed_mesh")
+
+    if section == "firmware_retraction":
+        return SectionSchema(SectionKind.FIRMWARE_RETRACTION, FIRMWARE_RETRACTION_KEYS, "firmware_retraction")
+
+    if section == "filament_change":
+        return SectionSchema(SectionKind.FILAMENT_CHANGE, FILAMENT_CHANGE_KEYS, "filament_change")
 
     if section == "homing_override":
         return SectionSchema(SectionKind.HOMING_OVERRIDE, HOMING_OVERRIDE_KEYS, "homing_override")

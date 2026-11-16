@@ -49,6 +49,15 @@ LinuxCNC reserves M100–M199 for user M-code programs (it cannot REMAP them): `
 one script that acts by the name it runs as, through the machine backend's REST API. User
 M-codes only receive `P` and `Q`, so uploads, macros and MDI convert Marlin's `S` / `T`.
 
+## During a print
+
+`PrintTuningService` (machine backend) owns the HAL pins `webgui.z-offset` (added to Z's
+external offset with the bed mesh), `webgui.flow` (the `extruder` component's flow stage,
+between the extruder joint and its stepgen) and `webgui.exclude-object-0…31` (read by the
+converted program: `o<…> if [#<_hal[webgui.exclude-object-n]> GT 0]`, an excluded object's
+moves skipped and A set to where they would have left it). `M184` / `M185` (flow, Z offset)
+are user M-codes calling its REST API; `M600` is a REMAP to `m600.ngc`.
+
 ## Safety in HAL
 
 - E-stop chain: the E-stop input, the CAN status bit (a lost mandatory node), the UI's E-stop.

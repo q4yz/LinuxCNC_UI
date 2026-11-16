@@ -58,19 +58,12 @@ way the old `estop-out` source did.
 
 from __future__ import annotations
 
-from .BedMeshHalMapper import COUNTS_PER_MM, LIFT_FLOAT
+from .BedMeshHalMapper import BABYSTEP_SUM, COUNTS_PER_MM, LIFT_FLOAT, MESH_EOFFSET
 
 
 class PauseInspectWebguiMapper:
     """`net`/`setp` lines wiring the Pause & Inspect safety feature."""
 
-    #: 1 count = this many machine units (mm) of Z lift. A bare
-    #: on/off toggle from Python times this scale into the actual
-    #: lift distance — tune per machine by hand-editing this line in
-    #: the generated `webgui_connections.hal`. Not preserved across a
-    #: regenerate (see module docstring), so a machine-specific tweak
-    #: here has to be re-applied after every regenerate.
-    _EOFFSET_SCALE = 1.0
 
     #: `spindle.N.inhibit` is per-spindle (real `halcmd show` output
     #: confirmed there is no global `motion.spindle-inhibit`) — see
@@ -85,25 +78,33 @@ class PauseInspectWebguiMapper:
         ``axis.z.eoffset-counts``."""
         if bed_mesh:
             return PauseInspectWebguiMapper._shared_lines()
+        # Without a bed mesh the lift and the live Z offset (webgui.z-offset,
+        # mm) share Z's external offset the same way: summed in counts
+        # of 0.001 mm (a bit -> float lift of 1 mm, the offset × 1000).
         return [
-            "# Pause & Inspect (external offsets & spindle inhibit)",
+            "# Pause & Inspect (external offsets & spindle inhibit) + the live Z offset",
             f"net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.{PauseInspectWebguiMapper._SPINDLE_INDEX}.inhibit",
             "",
             "setp axis.z.eoffset-enable 1",
-            f"setp axis.z.eoffset-scale {PauseInspectWebguiMapper._EOFFSET_SCALE}",
+            f"setp axis.z.eoffset-scale {1 / COUNTS_PER_MM}",
             # TRUE only while E-stop actually is active — see module
             # docstring for why iocontrol.0.user-enable-out (estop-out)
             # is the wrong polarity for this.
             "net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear",
             "",
-            # axis.z.eoffset-counts is s32; webgui.inspect-z-lift is
-            # bit — conv_bit_s32 is the same type-converter idiom
-            # HeaterHalMapper already uses for its own bit -> float
-            # watermark branch (see module docstring).
-            "loadrt conv_bit_s32 names=inspect-z-lift-conv",
+            "loadrt conv_bit_float names=inspect-z-lift-conv",
+            f"loadrt sum2 names={BABYSTEP_SUM}",
+            "loadrt conv_float_s32 names=z-eoffset-counts",
             "addf inspect-z-lift-conv servo-thread",
+            f"addf {BABYSTEP_SUM} servo-thread",
+            "addf z-eoffset-counts servo-thread",
+            f"setp {BABYSTEP_SUM}.gain0 {COUNTS_PER_MM}",
+            f"setp {BABYSTEP_SUM}.gain1 {COUNTS_PER_MM}",
             "net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in",
-            "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts",
+            f"net inspect-z-lift-mm inspect-z-lift-conv.out => {BABYSTEP_SUM}.in0",
+            f"net z-offset-mm webgui.z-offset => {BABYSTEP_SUM}.in1",
+            f"net z-eoffset-total {BABYSTEP_SUM}.out => z-eoffset-counts.in",
+            "net z-eoffset-counts z-eoffset-counts.out => axis.z.eoffset-counts",
             "",
         ]
 
@@ -118,6 +119,8 @@ class PauseInspectWebguiMapper:
             "net estop-is-active halui.estop.is-activated => axis.z.eoffset-clear",
             # 1 = a lift of COUNTS_PER_MM counts (1 mm), summed in machine.hal.
             f"net inspect-z-lift-bit webgui.inspect-z-lift => {LIFT_FLOAT}.in",
+            # the live Z offset (mm): into the sum, and out of what compensation sees
+            f"net z-offset-mm webgui.z-offset => {BABYSTEP_SUM}.in1 {MESH_EOFFSET}.in1",
             "",
         ]
 

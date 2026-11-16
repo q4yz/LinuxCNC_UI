@@ -59,8 +59,10 @@ class RemoraStepperHalMapper:
         endstops_by_id: dict[str, dict[str, Any]],
         corexy_joints: frozenset[int] = frozenset(),
     ) -> HalFragment:
-        """``corexy_joints``: their ``pos-cmd`` / ``pos-fb`` go through
-        `CoreXyHalMapper` instead of straight to ``remora.joint.N``."""
+        """``corexy_joints``: joints whose ``pos-cmd`` / ``pos-fb`` go through
+        another component instead of straight to ``remora.joint.N``:
+        `CoreXyHalMapper`, or the extruder's flow stage
+        (`ExtruderGuardHalMapper`)."""
         fragment = HalFragment()
         axis_endstop_id = axis.get("endstop")
         requested_endstop_ids: set[str] = set()

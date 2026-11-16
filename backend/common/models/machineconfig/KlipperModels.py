@@ -423,6 +423,34 @@ class ZTilt:
 
 
 @dataclass(slots=True)
+class FirmwareRetraction:
+    """Klipper's ``[firmware_retraction]`` (mm, mm/s): a slicer's bare
+    ``G10`` / ``G11`` become these A moves (the G-code converter)."""
+
+    retract_length: float = 0.0
+    retract_speed: float = 20.0
+    unretract_extra_length: float = 0.0
+    unretract_speed: float = 10.0
+
+
+@dataclass(slots=True)
+class FilamentChange:
+    """``[filament_change]`` (mm, mm/s): ``M600`` parks at ``park_x`` /
+    ``park_y`` (machine coordinates; None: the X / Y minimum) ``z_lift``
+    above the print, unloads, waits for Resume, loads and purges."""
+
+    park_x: float | None = None
+    park_y: float | None = None
+    z_lift: float = 10.0
+    unload_length: float = 50.0
+    unload_speed: float = 10.0
+    load_length: float = 50.0
+    load_speed: float = 5.0
+    purge_length: float = 20.0
+    purge_speed: float = 2.0
+
+
+@dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
 
@@ -586,6 +614,8 @@ class MachineConfigGraph:
     probe: Probe | None = None
     # ``None`` when the profile declares no ``[bed_mesh]``.
     bed_mesh: BedMesh | None = None
+    firmware_retraction: FirmwareRetraction | None = None
+    filament_change: FilamentChange | None = None
     # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
     homing_override: HomingOverride | None = None
     # ``None`` without ``[z_tilt]``.

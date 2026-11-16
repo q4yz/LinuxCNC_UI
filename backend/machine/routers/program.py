@@ -84,6 +84,10 @@ def load_program(payload: LoadProgramRequest):
         raise HTTPException(status_code=504, detail=str(exc))
 
     register_line_count(str(target), count_lines(str(target)))
+    # a new program: every object prints again
+    from services.PrintTuningService import get_print_tuning_service
+
+    get_print_tuning_service().reset_objects()
     return StatusResponse(status="success")
 
 

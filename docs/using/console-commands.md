@@ -17,6 +17,9 @@ Besides LinuxCNC's own G-code, the console takes these, named like Klipper's:
 | `PROBE_ACCURACY [SAMPLES=10] …` | probe repeatability — {doc}`probing-levelling` |
 | `PROBE_CALIBRATE [SPEED=5]`, `TESTZ Z=<mm>`, `ACCEPT`, `ABORT` | measure `[probe] z_offset` |
 | `SET_LED LED=<name> RED= GREEN= BLUE= [INDEX=]` | an LED colour |
+| `SET_GCODE_OFFSET Z=<mm>` / `Z_ADJUST=<mm>` | the live Z offset — {doc}`during-a-print` |
+| `M221 S<%>` | flow (sent as `M184 P<%>`) |
+| `M600` | filament change |
 
 While a routine runs, the state reads *Busy* (a program: *Running*).
 

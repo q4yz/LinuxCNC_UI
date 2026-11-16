@@ -33,6 +33,7 @@ using/dashboard
 using/jogging
 using/console-commands
 using/probing-levelling
+using/during-a-print
 using/programs
 using/hal-tools
 ```
