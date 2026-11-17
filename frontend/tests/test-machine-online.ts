@@ -253,7 +253,7 @@ test("machine-level widgets are wrapped in MachineGate", () => {
   assert.match(layout, /<MachineGate v-else :label="panelDef\(item\.panel\)\?\.gate \?\? item\.panel">\s*<component :is="COMPONENTS\[item\.panel\]" \/>/);
   assert.match(layout, /<div v-if="item\.panel === 'console'" class="h-\[300px\]">\s*<ConsolePanel \/>/, "ConsolePanel must stay ungated");
   for (const widget of ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget", "AxisSpeedControl"]) {
-    assert.match(layout, new RegExp(`: ${widget},`), `${widget} must be a page-layout panel`);
+    assert.match(read("layout/panelComponents.ts"), new RegExp(`: ${widget},`), `${widget} must be a page-layout panel`);
   }
   for (const view of ["views/DashboardView.vue", "views/RunningView.vue"]) {
     assert.match(read(view), /<PageLayout :setting="(dashboard|running)Layout" \/>/);

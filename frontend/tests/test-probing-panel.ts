@@ -23,7 +23,7 @@ test("a Dashboard panel, placeable like the others", () => {
   assert.ok(PANEL_IDS.includes("probe"));
   const twoColumns = DEFAULT_LAYOUTS.dashboard.layouts[1].columns[0].map((i: { panel: string }) => i.panel);
   assert.ok(twoColumns.includes("probe"));
-  assert.match(read("layout/PageLayout.vue"), /probe: ProbingPanel/);
+  assert.match(read("layout/panelComponents.ts"), /probe: ProbingPanel/);
   const panel = read("components/probing/ProbingPanel.vue");
   assert.match(panel, /<BaseCard title="Probing" icon="probing" data-testid="probing-panel">/);
   assert.match(panel, /data-testid="probe-mode-toggle"/);

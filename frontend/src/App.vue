@@ -26,6 +26,7 @@ import { servoThreadService } from './facades/servoThreadFacade'
 import { useMachineOnline } from './composables/useMachineOnline'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
+import FloatingPanelHost from './components/FloatingPanelHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import UpdateOverlay from './components/UpdateOverlay.vue'
 import { useSystemUpdateStore } from './stores/systemUpdate'
@@ -168,6 +169,7 @@ onUnmounted(() => {
     </Teleport>
 
     <!-- Global Overlays -->
+    <FloatingPanelHost />
     <ModalConfirmHost />
     <UpdateOverlay />
     <ToastContainer />

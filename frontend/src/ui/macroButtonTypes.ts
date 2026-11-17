@@ -13,8 +13,10 @@ export interface MacroButtonDescriptor {
   enabled?: boolean;
   name?: string;
   icon?: string;
+  /** The macro / NGC name — or, for kind ``component``, the panel id
+   * (``pagePanels.PANELS``) the button opens in a floating window. */
   macroName?: string;
-  macroKind?: "macro" | "ngc";
+  macroKind?: "macro" | "ngc" | "component";
 }
 
 /** One host-declared button position (``id`` unique per host). */

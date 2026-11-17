@@ -23,6 +23,6 @@ export const macroButtons = new MacroButtonsSetting(
   ],
   {
     description:
-      "A button next to each DRO axis row or in the bottom-left corner of the toolpath viewer / camera view runs a macro. Leave the macro empty to hide the button.",
+      "A button next to each DRO axis row or in the bottom-left corner of the toolpath viewer / camera view runs a macro / NGC program — or, kind \"UI component\", opens a panel in a window you can drag and close. Leave the macro / component empty to hide the button.",
   },
 );

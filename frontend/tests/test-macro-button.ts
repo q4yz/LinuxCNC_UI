@@ -237,26 +237,27 @@ test("MacroButtonEditor emits update:modelValue on commit", () => {
   );
 });
 
-test("MacroButtonEditor filters the macro dropdown to macro + ngc only", () => {
-  // ``mcode`` is intentionally excluded from the per-slot
-  // dropdown: an operator who needs an M-code call wraps it in
-  // a ``.macro``. The kind picker should also offer only the
-  // two supported kinds.
-  assert.match(
-    editorText,
-    /<option value="macro">macro<\/option>/,
-    "MacroButtonEditor must offer macro in the kind picker",
-  );
-  assert.match(
-    editorText,
-    /<option value="ngc">ngc<\/option>/,
-    "MacroButtonEditor must offer ngc in the kind picker",
-  );
-  assert.doesNotMatch(
-    editorText,
-    /<option value="mcode">mcode<\/option>/,
-    "MacroButtonEditor must not offer mcode (wrap in a .macro instead)",
-  );
+test("MacroButtonEditor offers macro, ngc and UI component (no mcode)", () => {
+  // ``mcode`` is intentionally excluded: an operator who needs an M-code
+  // call wraps it in a ``.macro``. "UI component" opens a panel in a window.
+  assert.match(editorText, /\{ value: "macro", label: "macro" \}/);
+  assert.match(editorText, /\{ value: "ngc", label: "ngc" \}/);
+  assert.match(editorText, /\{ value: "component", label: "UI component" \}/);
+  assert.match(editorText, /<option v-for="kind in KINDS" :key="kind\.value" :value="kind\.value">/);
+  assert.doesNotMatch(editorText, /value: "mcode"|<option value="mcode">/, "no mcode kind");
+  assert.match(editorText, /if \(row\?\.macroKind === "component"\) return componentOptions;/,
+    "kind component lists the panels");
+});
+
+test("a component button opens its panel in a floating window", () => {
+  const button = readFileSync(resolve(here, "../src/ui/MacroButton.vue"), "utf-8");
+  assert.match(button, /floating\.open\(panel, props\.descriptor\.name \|\| panelDef\(panel\)\?\.label \|\| panel\)/);
+  assert.match(button, /opensComponent\.value \? false :/, "opening a window is never blocked by the E-stop");
+  const host = readFileSync(resolve(here, "../src/components/FloatingPanelHost.vue"), "utf-8");
+  assert.match(host, /:data-testid="`floating-panel-close-\$\{win\.panel\}`"[\s\S]*@click="close\(win\.id\)"/);
+  assert.match(host, /@pointerdown="onTitleDown\(win, \$event\)"/, "dragged by the title bar");
+  assert.match(host, /<MachineGate v-else-if="PANEL_COMPONENTS\[win\.panel\]"/);
+  assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<FloatingPanelHost \/>/);
 });
 
 test("MacroButtonEditor stores the bare macro name, not the file name", () => {

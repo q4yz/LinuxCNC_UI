@@ -5,44 +5,16 @@
 // twice, one not placed is not mounted. Machine panels mount inside
 // ``MachineGate`` (only while the machine backend is reachable); the
 // console never is gated.
-import { computed, onBeforeUnmount, onMounted, ref, type Component } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import ConsolePanel from "../components/ConsolePanel.vue";
-import ActivePrintWidget from "../components/ActivePrintWidget.vue";
-import CameraViewer from "../components/camera/CameraViewer.vue";
-import TemperaturePanel from "../components/temperature/TemperaturePanel.vue";
-import IoPanel from "../components/io/IoPanel.vue";
-import LedPanel from "../components/io/LedPanel.vue";
-import DroPanel from "../components/machine/DroPanel.vue";
-import JogControls from "../components/machine/JogControls.vue";
-import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
-import ToolPanel from "../components/tools/ToolPanel.vue";
-import MacroPanel from "../components/macros/MacroPanel.vue";
-import McodePanel from "../components/macros/McodePanel.vue";
-import PowerOn from "../components/machine/PowerOn.vue";
-import ProbingPanel from "../components/probing/ProbingPanel.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
 import type { PageLayoutSetting } from "../settings/types/PageLayoutSetting";
 import { GRID, MIN_COLUMN_PX, chooseLayout, panelDef, type PageLayout } from "./pagePanels";
+import { PANEL_COMPONENTS as COMPONENTS } from "./panelComponents";
 
 const props = defineProps<{ setting: PageLayoutSetting }>();
 
-const COMPONENTS: Record<string, Component> = {
-  machine: PowerOn,
-  dro: DroPanel,
-  jog: JogControls,
-  probe: ProbingPanel,
-  tools: ToolPanel,
-  temperature: TemperaturePanel,
-  io: IoPanel,
-  leds: LedPanel,
-  job: ActivePrintWidget,
-  axis_speed: AxisSpeedControl,
-  console: ConsolePanel,
-  camera: CameraViewer,
-  macros: MacroPanel,
-  mcodes: McodePanel,
-};
 
 const value = computed<PageLayout>(() => props.setting.value ?? props.setting.defaultValue);
 

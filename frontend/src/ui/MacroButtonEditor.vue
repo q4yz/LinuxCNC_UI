@@ -37,6 +37,7 @@ import type { PropType } from "vue";
 
 import { ModulesMacrosService } from "../../generated/api";
 import type { MacroButtonDescriptor, MacroButtonSlotDef } from "./macroButtonTypes";
+import { PANELS } from "../layout/pagePanels";
 
 // One editable row. Mirrors ``emptyDescriptor`` below; ``macroKind``
 // is a closed union so the kind picker cannot produce junk state.
@@ -45,9 +46,19 @@ interface MacroButtonRow {
   enabled: boolean;
   name: string;
   icon: string;
-  macroKind: "macro" | "ngc";
+  macroKind: Kind;
   macroName: string;
 }
+
+type Kind = "macro" | "ngc" | "component";
+const KINDS: { value: Kind; label: string }[] = [
+  { value: "macro", label: "macro" },
+  { value: "ngc", label: "ngc" },
+  { value: "component", label: "UI component" },
+];
+const asKind = (raw: unknown): Kind => (raw === "ngc" || raw === "component" ? raw : "macro");
+// kind "component": any panel the pages can show, opened in a window
+const componentOptions = PANELS.map((p) => ({ value: p.id, label: p.label }));
 
 const props = defineProps({
   // Two-way bound list of descriptors. The host persists it (the
@@ -222,7 +233,7 @@ function normaliseDraft(
   }
   // Ensure every required field exists.
   return rows.map((r) => {
-    const macroKind = r.macroKind === "ngc" ? "ngc" : "macro";
+    const macroKind = asKind(r.macroKind);
     return {
       slot: r.slot,
       enabled: !!r.enabled,
@@ -286,9 +297,10 @@ function descriptorFor(slot: MacroButtonSlotDef): MacroButtonRow | undefined {
 // keep-the-label-prefix decision: the dropdown is short enough
 // that an inline ``kind`` qualifier saves the operator a second
 // read against the kind picker.
-function optionsFor(row: MacroButtonRow | null | undefined): string[] {
+function optionsFor(row: MacroButtonRow | null | undefined): { value: string; label: string }[] {
+  if (row?.macroKind === "component") return componentOptions;
   const kind = row?.macroKind === "ngc" ? "ngc" : "macro";
-  return macroOptionsByKind.value[kind];
+  return macroOptionsByKind.value[kind].map((name) => ({ value: name, label: name }));
 }
 </script>
 
@@ -308,7 +320,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
       class="overflow-hidden rounded border border-gray-700 bg-gray-900/40"
       data-test="macro-button-editor"
     >
-      <table class="min-w-full text-sm text-gray-200">
+      <table class="w-full text-sm text-gray-200">
         <thead class="bg-gray-800/80 text-left text-xs uppercase tracking-wider text-gray-400">
           <tr>
             <th class="px-3 py-2">Slot</th>
@@ -316,7 +328,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
             <th class="px-3 py-2">Name</th>
             <th class="px-3 py-2">Icon</th>
             <th class="px-3 py-2">Kind</th>
-            <th class="px-3 py-2">Macro</th>
+            <th class="px-3 py-2">Macro / component</th>
           </tr>
         </thead>
         <tbody>
@@ -350,7 +362,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
                 type="text"
                 :value="descriptorFor(slot)?.name ?? ''"
                 placeholder="Button label"
-                class="w-32 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
+                class="w-full min-w-[8rem] rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-name-${slot.id}`"
                 @change="
                   (event) => {
@@ -388,19 +400,18 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
                   (event) => {
                     const row = descriptorFor(slot);
                     if (!row) return;
-                    row.macroKind = (event.target as HTMLSelectElement).value === 'ngc' ? 'ngc' : 'macro';
+                    row.macroKind = asKind((event.target as HTMLSelectElement).value);
                     onChangeKind(row);
                   }
                 "
               >
-                <option value="macro">macro</option>
-                <option value="ngc">ngc</option>
+                <option v-for="kind in KINDS" :key="kind.value" :value="kind.value">{{ kind.label }}</option>
               </select>
             </td>
             <td class="px-3 py-2 align-top">
               <select
                 :value="descriptorFor(slot)?.macroName ?? ''"
-                class="w-40 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+                class="w-full min-w-[10rem] rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-macro-${slot.id}`"
                 @change="
                   (event) => {
@@ -413,11 +424,11 @@ function optionsFor(row: MacroButtonRow | null | undefined): string[] {
               >
                 <option value="">— none —</option>
                 <option
-                  v-for="name in optionsFor(descriptorFor(slot))"
-                  :key="name"
-                  :value="name"
+                  v-for="option in optionsFor(descriptorFor(slot))"
+                  :key="option.value"
+                  :value="option.value"
                 >
-                  {{ name }}
+                  {{ option.label }}
                 </option>
               </select>
             </td>

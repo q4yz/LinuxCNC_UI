@@ -42,6 +42,19 @@ console always shows — it explains why the machine is offline.
 Both pages stay loaded in the background: a panel placed on both — or twice on one page — runs
 that many times (for the camera, that many streams).
 
+## Custom buttons
+
+**Settings → Macro Buttons**: a button next to each DRO axis row and in the bottom-left corner of
+the toolpath viewer and the camera view. Each has a name, an icon (an icon name or any text /
+emoji) and a kind:
+
+- **macro** / **ngc** — runs that macro or NGC program (not in E-stop, not while one runs).
+- **UI component** — opens a panel (any the Dashboard can show) in a window: drag it by its
+  title bar, close it with the ×; clicking the button again brings the open window to the front.
+  A window shows the same panel as the Dashboard (a camera there and in a window streams twice).
+
+Leave the macro / component empty to hide the button.
+
 ## The E-stop
 
 The **STOP** button is always in the top-right corner, over the page. A card row that passes
