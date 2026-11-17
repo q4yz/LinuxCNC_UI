@@ -34,6 +34,7 @@ using/jogging
 using/console-commands
 using/probing-levelling
 using/during-a-print
+using/calibration
 using/tuning
 using/programs
 using/hal-tools

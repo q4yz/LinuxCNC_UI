@@ -214,6 +214,10 @@ class BedMeshProbeService:
         write_mesh(profile, xs, ys, z, paths.BED_MESHES_DIR, paths.ACTIVE_BED_MESH_FILE)
         compensation.set_enabled(True)  # reloads the active mesh
         flat = [v for row in z for v in row]
+        from services.CalibrationService import record
+
+        record("bed_mesh", f"{len(xs)} × {len(ys)}{' adaptive' if adaptive else ''}, range "
+                           f"{max(flat) - min(flat):.3f} mm ('{profile}')")
         console.log_event(
             f"{COMMAND}: mesh '{profile}' saved and active, range {min(flat):+.3f} ... {max(flat):+.3f} mm.",
             level=LogLevel.INFO, source="CMD",

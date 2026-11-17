@@ -132,6 +132,9 @@ class ZTiltService:
 
         def done(attempt: int, spread: float) -> List[float]:
             offsets = self.offsets()
+            from services.CalibrationService import record
+
+            record("z_tilt", f"spread {spread:.3f} mm after {attempt} round(s)")
             console.log_event(
                 f"{COMMAND} done after {attempt} round(s): spread {spread:.4f} mm, motor offsets "
                 + ", ".join(f"{o:+.4f}" for o in offsets) + " mm.",

@@ -213,8 +213,11 @@ class PidCalibrateService:
 
         console = get_console_logger()
         try:
-            self.calibrate(heater, target, lambda: read_hal_pin(f"PID-{heater['id']}.PV"), time.monotonic,
-                           time.sleep, console.log_event, estop=_in_estop)
+            kp, ki, kd = self.calibrate(heater, target, lambda: read_hal_pin(f"PID-{heater['id']}.PV"),
+                                        time.monotonic, time.sleep, console.log_event, estop=_in_estop)
+            from services.CalibrationService import record_pid
+
+            record_pid(str(heater["id"]), kp, ki, kd)
         except PidCalibrateError as exc:
             console.log_event(f"{COMMAND} aborted: {exc}", level=LogLevel.ERROR, source="CMD")
         except Exception as exc:  # noqa: BLE001 - a worker must not die silently
@@ -262,8 +265,8 @@ class PidCalibrateService:
         kp, ki, kd = tuner.result()
         self.last = {"heater": hid, "target": target, "kp": kp, "ki": ki, "kd": kd,
                      "duration_s": clock() - start}
-        log(f"{COMMAND}: {hid} pid_Kp={kp:.3f} pid_Ki={ki:.3f} pid_Kd={kd:.3f} — put these into the "
-            "profile's heater section and generate the machine.", level=LogLevel.INFO, source="CMD")
+        log(f"{COMMAND}: {hid} pid_Kp={kp:.3f} pid_Ki={ki:.3f} pid_Kd={kd:.3f} — saved to calibration.ini and "
+            "active now (the Calibration tab's Clear goes back to the profile's).", level=LogLevel.INFO, source="CMD")
         return kp, ki, kd
 
 

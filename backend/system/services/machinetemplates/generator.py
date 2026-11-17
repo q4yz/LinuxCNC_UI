@@ -60,6 +60,7 @@ from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
 from services.halcompiler.components.IoPinHalMapper import mdi_commands
+from services.halcompiler.components.JointShapeHalMapper import ini_shaper_types
 from services.halcompiler import (
     MachineValidator,
     UnsupportedMcuError,
@@ -501,6 +502,7 @@ def _write_machine(
             or isinstance(payload.get("z_virtual_endstop"), dict),
             remaps=remaps,
             filament_change=filament_change,
+            shaper_types=ini_shaper_types(payload),
         ),
         encoding="utf-8",
     )

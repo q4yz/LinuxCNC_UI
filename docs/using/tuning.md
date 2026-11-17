@@ -1,8 +1,9 @@
 # Tuning the printer
 
-Klipper's calibration routines, run from the console ({doc}`console-commands`). Values set
-at runtime last until LinuxCNC restarts: put the results into the profile and generate the
-machine.
+Klipper's calibration routines, run from the **Calibration** tab ({doc}`calibration`) or the
+console ({doc}`console-commands`). `PID_CALIBRATE` and `SHAPER_CALIBRATE` save their results
+to `calibration.ini`; values set by hand (`SET_INPUT_SHAPER`, `SET_SKEW`,
+`SET_PRESSURE_ADVANCE`) last until LinuxCNC restarts — put those into the profile.
 
 ## Heater PID
 
@@ -13,8 +14,8 @@ PID_CALIBRATE HEATER=heater_bed TARGET=60
 
 `HEATER` is `extruder`, `heater_bed` or a heater's id. The heater is switched fully on below
 `TARGET − 5` and off above `TARGET` (a relay) until 12 temperature peaks are recorded — some
-minutes; the console shows them under *Debug*. Then it logs `pid_Kp`, `pid_Ki`, `pid_Kd` for
-the heater's section.
+minutes; the console shows them under *Debug*. Then the gains are saved to `calibration.ini`
+and set on the running PID loop at once.
 
 The numbers are in this machine's units: the PID output is 0 … 100 %, Klipper's 0 … 255, so
 Klipper's own values are 2.55 times larger. The test stops — and the PID loop takes the
@@ -41,13 +42,9 @@ SHAPER_CALIBRATE             # both axes, or AXIS=X / AXIS=Y
 
 The axis is shaken with a sine sweep (`min_freq` … `max_freq`) through the `jointshape`
 component while the accelerometer records; the console logs per shaper its best frequency,
-the vibration left and its length (under *Debug*), and recommends one:
-
-```ini
-[input_shaper]
-shaper_type_x: mzv
-shaper_freq_x: 52.4
-```
+the vibration left and its length (under *Debug*), and the recommended one is saved to
+`calibration.ini` and switched on: its frequency at once, its type too (the type also at
+every start, through `machine.ini [INPUT_SHAPER]`).
 
 On a CAN node the node reads the sensor, averages its samples per millisecond and the hub
 writes X / Y into LinuxCNC; a HAL `sampler` records them every servo period while the test

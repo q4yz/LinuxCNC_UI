@@ -97,8 +97,13 @@ def test_testz_and_accept_give_the_z_offset(rig):
     assert "z_offset 1.7000" in rig.events[-1][1]
     assert service.accept(rig.stat) == pytest.approx(1.70)
     level, text = rig.events[-1]
-    assert level == "INFO" and "[probe] z_offset: 1.700" in text
+    assert level == "INFO" and "z_offset: 1.700" in text and "calibration.ini" in text
     assert service.session is None and service.last_z_offset == pytest.approx(1.70)
+    import services.CalibrationService as calibration
+
+    store = calibration.calibration_file()
+    assert store.number("PROBE_Z_OFFSET") == pytest.approx(1.70)
+    assert store.state("probe_z_offset")["result"] == "z_offset 1.700 mm"
 
 
 def test_accept_refuses_a_nozzle_above_the_trigger_height(rig):

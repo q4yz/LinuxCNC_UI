@@ -83,12 +83,23 @@ class HardwareConfigService:
         """The default machine's ``hardware.json`` — in mock mode with a
         demo extruder and bed when it has no heater
         (``hardware.mock.demo_tools``)."""
-        payload = self._load_file_payload()
+        payload = self._overlay_calibration(self._load_file_payload())
         if self.active_path is None and self.repo_root is None and _mock_mode():
             from hardware.mock.demo_tools import with_demo_tools
 
             return with_demo_tools(payload)
         return payload
+
+    def _overlay_calibration(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """``calibration.ini`` [CALIBRATION] (next to ``hardware.json``)
+        over the profile's values: the probe's Z offset, pressure advance,
+        the input shaper, the skew."""
+        from core.calibration_file import CalibrationFile, calibration_path, overlay_payload
+
+        if not payload:
+            return payload
+        values = CalibrationFile(calibration_path(self._resolve_hardware_json_path().parent)).values()
+        return overlay_payload(payload, values)
 
     def _load_file_payload(self) -> Dict[str, Any]:
         """Load and parse the default machine's ``hardware.json`` safely."""

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Icon } from "../ui/index.ts";
 import { useMachineOnline } from "../composables/useMachineOnline.ts";
+import { useCalibrationDue } from "../composables/useCalibrationDue.ts";
 
 const route = useRoute()
 const router = useRouter()
@@ -28,7 +29,7 @@ const builtinItems = [
   { id: 'jogging', label: 'Jogging', icon: 'jogging', order: 1, activeMachineOnly: true  },
   { id: 'running', label: 'Running', icon: 'running', order: 1, activeMachineOnly: true  },
   { id: 'probing', label: 'Probing', icon: 'probing', order: 1, activeMachineOnly: true  },
-  { id: 'bedmesh', label: 'Bed Mesh', icon: 'mesh', order: 4, activeMachineOnly: false },
+  { id: 'calibration', label: 'Calibration', icon: 'calibration', order: 4, activeMachineOnly: false },
   { id: 'programs', label: 'G-Code Files', icon: 'programs', order: 2, activeMachineOnly: false },
   { id: 'camera', label: 'Camera', icon: 'camera', order: 3 , activeMachineOnly: true },
   { id: 'settings', label: 'Settings', icon: 'settings', order: 7, activeMachineOnly: false },
@@ -41,6 +42,10 @@ const navItems = computed(() =>
 );
 
 const isCollapsed = ref(false);
+
+// reminders due on the Calibration tab
+const { due: calibrationDue, startPolling } = useCalibrationDue();
+startPolling();
 </script>
 
 <template>
@@ -82,7 +87,15 @@ const isCollapsed = ref(false);
         :title="isDisabled(item) ? 'Requires Machine to be ON' : (isCollapsed ? item.label : '')"
       >
         <!-- Render the shared Icon component -->
-        <Icon :name="item.icon" size="h-6 w-6" />
+        <span class="relative">
+          <Icon :name="item.icon" size="h-6 w-6" />
+          <span
+            v-if="item.id === 'calibration' && calibrationDue"
+            class="absolute -right-2 -top-2 rounded-full bg-amber-600 px-1 text-[10px] font-bold leading-4 text-white"
+            :title="`${calibrationDue} calibration reminder(s) due`"
+            data-testid="sidebar-calibration-due"
+          >{{ calibrationDue }}</span>
+        </span>
 
         <!-- Render the label (hidden when sidebar is collapsed) -->
         <span v-if="!isCollapsed" class="ml-3 font-medium tracking-wide whitespace-nowrap">{{ item.label }}</span>

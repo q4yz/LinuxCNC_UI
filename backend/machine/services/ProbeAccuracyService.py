@@ -184,6 +184,10 @@ class ProbeAccuracyService:
                 pass
         result = ProbeAccuracyResult(samples)
         self.last_result = result
+        from services.CalibrationService import record
+
+        record("probe_accuracy", f"range {result.range:.4f} mm, std dev {result.stddev:.4f} mm "
+                                 f"({len(result.samples)} samples)")
         console.log_event(result.summary(), level=LogLevel.INFO, source="CMD")
         return result
 

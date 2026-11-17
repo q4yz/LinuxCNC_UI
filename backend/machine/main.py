@@ -64,6 +64,7 @@ from routers import (
     z_tilt as z_tilt_router,
     leds as leds_router,
     print_tuning as print_tuning_router,
+    calibration as calibration_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
@@ -295,6 +296,7 @@ app.include_router(io_router.router)
 app.include_router(z_tilt_router.router)
 app.include_router(leds_router.router)
 app.include_router(print_tuning_router.router)
+app.include_router(calibration_router.router)
 
 
 @app.get("/")

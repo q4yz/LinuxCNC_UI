@@ -10,7 +10,7 @@ out)::
 
     loadrt jointshape names=shape-j0,shape-j1
     addf shape-j0 servo-thread
-    setp shape-j0.shaper-type 2            # zv 1, mzv 2, zvd 3, ei 4
+    setp shape-j0.shaper-type [INPUT_SHAPER]TYPE_X   # zv 1, mzv 2, zvd 3, ei 4
     setp shape-j0.damping 0.1
     net j0pos-cmd joint.0.motor-pos-cmd => shape-j0.pos-cmd-in
     net j0pos-cmd-shaped shape-j0.pos-cmd-out => remora.joint.0.pos-cmd
@@ -32,6 +32,17 @@ from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragme
 from models.machineconfig.PinModels import CapabilityClass
 
 SHAPER_TYPES = {"zv": 1, "mzv": 2, "zvd": 3, "ei": 4}
+INI_SECTION = "INPUT_SHAPER"
+
+
+def ini_shaper_types(payload: dict[str, Any]) -> dict[str, int] | None:
+    """machine.ini ``[INPUT_SHAPER] TYPE_X / TYPE_Y`` (jointshape codes) for a
+    machine with the component, else ``None``."""
+    joints = shaped_joints(payload)
+    if not joints:
+        return None
+    shaper = payload.get("input_shaper") or {}
+    return {letter: SHAPER_TYPES.get(str(shaper.get(f"type_{letter}", "mzv")), 2) for letter in ("x", "y")}
 
 
 def _component(joint: int) -> str:
@@ -71,7 +82,8 @@ class JointShapeHalMapper:
             letter = joints[n]
             comp = _component(n)
             fragment.addf.append(Addf(comp, SERVO_THREAD, order=2))
-            fragment.setp.append(f"setp {comp}.shaper-type {SHAPER_TYPES.get(str(shaper.get(f'type_{letter}', 'mzv')), 2)}")
+            # machine.ini [INPUT_SHAPER] (calibration.ini overrides it at start)
+            fragment.setp.append(f"setp {comp}.shaper-type [{INI_SECTION}]TYPE_{letter.upper()}")
             fragment.setp.append(f"setp {comp}.damping {float(shaper.get(f'damping_{letter}', 0.1)):g}")
             fragment.nets.extend([
                 f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => {comp}.pos-cmd-in",
@@ -101,4 +113,4 @@ class JointShapeHalMapper:
         return lines
 
 
-__all__ = ["JointShapeHalMapper", "SHAPER_TYPES", "shaped_joints"]
+__all__ = ["INI_SECTION", "JointShapeHalMapper", "SHAPER_TYPES", "ini_shaper_types", "shaped_joints"]

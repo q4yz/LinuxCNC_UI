@@ -201,6 +201,7 @@ def render_ini_template(
     homing_override: bool = False,
     remaps: List[str] | None = None,
     filament_change: Dict[str, Any] | None = None,
+    shaper_types: Dict[str, int] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -335,6 +336,11 @@ def render_ini_template(
         if (tool.get("control") or "pid") != "pid":
             continue
         lines.extend(_render_heater_section(tool))
+
+    if shaper_types:
+        # jointshape's shaper-type per axis (machine.hal reads it from here,
+        # so calibration.ini can override it); zv 1, mzv 2, zvd 3, ei 4
+        lines.extend(["[INPUT_SHAPER]", f"TYPE_X = {shaper_types['x']}", f"TYPE_Y = {shaper_types['y']}", ""])
 
     return "\n".join(lines).rstrip("\n") + "\n"
 

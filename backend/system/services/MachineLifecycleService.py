@@ -576,7 +576,7 @@ class MachineLifecycleService:
 
         ini = self.machine_ini(self.default_machine())
 
-        command = self._build_command(ini)
+        command = self._build_command(self._calibrated(ini))
         env = os.environ.copy()
         # LinuxCNC opens its GUI on the console display; a systemd
         # service has no DISPLAY of its own, so default to :0.
@@ -648,6 +648,26 @@ class MachineLifecycleService:
         status = self.status()
         status["started_pid"] = process.pid
         return status
+
+    @staticmethod
+    def _calibrated(ini: Path) -> Path:
+        """``machine.ini`` with ``calibration.ini``'s results merged in
+        (``machine.calibrated.ini`` next to it), or ``ini`` itself. A broken
+        calibration file never stops the machine: then the profile's values."""
+        from core.calibration_file import calibrated_ini
+
+        try:
+            payload = json.loads((ini.parent / "hardware.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        try:
+            path, keys = calibrated_ini(ini, payload if isinstance(payload, dict) else {})
+        except (OSError, ValueError, UnicodeError) as exc:
+            logger.warning("calibration.ini not applied: %s", exc)
+            return ini
+        if keys:
+            logger.info("Calibration overrides %s: %s", path.name, ", ".join(keys))
+        return path
 
     def _build_command(self, ini: Path) -> List[str]:
         """Resolve the launch command (``LINUXCNC_START_COMMAND`` override).

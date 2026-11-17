@@ -44,3 +44,14 @@ def tmp_data_root(tmp_path: Path) -> Path:
 def clean_env(monkeypatch):
     """Strip ``MODULES_ENABLED`` so tests get the default behaviour."""
     monkeypatch.delenv("MODULES_ENABLED", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _calibration_file_in_tmp(tmp_path_factory, monkeypatch):
+    """Calibration results of a test go to a temporary calibration.ini,
+    never into machine_config/."""
+    import services.CalibrationService as calibration
+    from core.calibration_file import CalibrationFile
+
+    folder = tmp_path_factory.mktemp("calibration")
+    monkeypatch.setattr(calibration, "calibration_file", lambda: CalibrationFile(folder / "calibration.ini"))

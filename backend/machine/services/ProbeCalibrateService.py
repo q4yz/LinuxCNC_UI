@@ -224,9 +224,13 @@ class ProbeCalibrateService:
                 level=LogLevel.ERROR, source="CMD",
             )
             return z_offset
+        from services.CalibrationService import record_probe_z_offset
+
+        record_probe_z_offset(z_offset)
+        homes_on_probe = isinstance(self._config.load_payload().get("z_virtual_endstop"), dict)
         console.log_event(
-            f"{COMMAND}: z_offset: {z_offset:.3f} — put it in the machine's .cfg ([probe] z_offset: {z_offset:.3f}) "
-            "and generate the machine again.",
+            f"{COMMAND}: z_offset: {z_offset:.3f} — saved to calibration.ini, used for probing now"
+            + ("; Z homing on the probe takes it at the next LinuxCNC start." if homes_on_probe else "."),
             level=LogLevel.INFO, source="CMD",
         )
         return z_offset

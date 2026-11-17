@@ -42,7 +42,15 @@ def test_jointshape_between_x_y_joints_and_their_stepgens():
     assert f"net j{x}pos-fb-shaped shape-j{x}.pos-fb-out => joint.{x}.motor-pos-fb" in hal
     assert f"net j{x}pos-cmd joint.{x}.motor-pos-cmd => remora.joint.{x}.pos-cmd" not in hal
     assert f"net j{y}pos-cmd => shape-j{x}.skew-ref" in hal
-    assert f"setp shape-j{x}.shaper-type 2" in hal and f"setp shape-j{y}.shaper-type 4" in hal
+    assert f"setp shape-j{x}.shaper-type [INPUT_SHAPER]TYPE_X" in hal
+    assert f"setp shape-j{y}.shaper-type [INPUT_SHAPER]TYPE_Y" in hal
+    from services.halcompiler.components.JointShapeHalMapper import ini_shaper_types
+    from services.machinetemplates.ini_template_generator import render_ini_template
+
+    types = ini_shaper_types(payload)
+    assert types == {"x": 2, "y": 4}
+    ini = render_ini_template("m", [], [], shaper_types=types).splitlines()
+    assert "[INPUT_SHAPER]" in ini and "TYPE_X = 2" in ini and "TYPE_Y = 4" in ini
     z = next(a["joint_numbers"][0] for a in payload["axes"] if a["id"] == "z")
     assert f"net j{z}pos-cmd joint.{z}.motor-pos-cmd => remora.joint.{z}.pos-cmd" in hal  # Z untouched
     webgui = render_webgui_connections(payload).splitlines()

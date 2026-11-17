@@ -240,8 +240,11 @@ class ResonanceService:
 
         console = get_console_logger()
         try:
+            from services.CalibrationService import record_input_shaper
+
             for axis in axes:
-                self.measure(config, axis, console.log_event)
+                best = self.measure(config, axis, console.log_event)
+                record_input_shaper(axis, best.kind, best.freq, best.vibrations)
         except Exception as exc:  # noqa: BLE001 - report, don't die silently
             logger.exception("resonance test: %s", exc)
             console.log_event(f"Resonance test aborted: {getattr(exc, 'detail', None) or exc}", level=LogLevel.ERROR,
@@ -295,8 +298,8 @@ class ResonanceService:
             log(f"  {fit.kind}: {fit.freq:.1f} Hz, vibrations left {fit.vibrations * 100:.1f} %, "
                 f"length {fit.duration_ms:.1f} ms", level=LogLevel.DEBUG, source="CMD")
         log(f"Recommended for {axis.upper()}: [input_shaper] shaper_type_{axis}: {best.kind}  "
-            f"shaper_freq_{axis}: {best.freq:.1f}  (try it now: SET_INPUT_SHAPER SHAPER_FREQ_{axis.upper()}="
-            f"{best.freq:.1f})", level=LogLevel.INFO, source="CMD")
+            f"shaper_freq_{axis}: {best.freq:.1f} — saved to calibration.ini and active.", level=LogLevel.INFO,
+            source="CMD")
         self.last[axis] = {"fits": [fit.__dict__ for fit in fits], "recommended": best.__dict__,
                            "samples": len(samples), "rate": rate}
         return best
