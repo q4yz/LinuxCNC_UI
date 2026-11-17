@@ -10,7 +10,9 @@ import services.CalibrationService as module
 from exceptions import BadRequestError, NotFoundError
 
 PAYLOAD = {
-    "axes": [{"id": "x", "position_min": 0, "position_max": 235}, {"id": "y", "position_min": 0, "position_max": 235}],
+    "axes": [{"id": "x", "position_min": 0, "position_max": 235}, {"id": "y", "position_min": 0, "position_max": 235},
+             {"id": "z", "position_max": 250, "joint_numbers": [2]}],
+    "joints": [{"id": "heater_extruder", "joint_number": 3}],
     "probe": {"pin": "PB7", "z_offset": 1.0},
     "bed_mesh": {"probe_count": [3, 3]},
     "tools": [{"id": "heater_extruder", "type": "extruder", "control": "pid", "max_temp": 280, "pid_kp": 10.0,
@@ -48,7 +50,7 @@ def test_catalog_follows_the_machine(svc):
     listing = svc.listing()
     ids = [i["id"] for i in listing["items"]]
     assert ids == ["bed_mesh", "z_tilt", "probe_accuracy", "probe_z_offset", "pid_heater_extruder", "pid_heater_bed",
-                   "input_shaper", "skew", "pressure_advance"]
+                   "input_shaper", "skew", "pressure_advance", "extruder_steps", "flow", "first_layer"]
     assert _item(listing, "bed_mesh")["available"] and not _item(listing, "z_tilt")["available"]
     assert "z_tilt" in _item(listing, "z_tilt")["reason"]
     pid = _item(listing, "pid_heater_extruder")
@@ -148,16 +150,25 @@ def guided(svc, monkeypatch):
     import services.PrintTuningService as tuning
 
     class Tuning:
+        flow = 100.0
+        z_offset = 0.0
+
         def state(self, path, line):
             return {"pressure_advance": 0.03}
 
         def set_pressure_advance(self, k):
             applied["pa"] = k
 
-    monkeypatch.setattr(tuning, "get_print_tuning_service", lambda: Tuning())
+        def set_flow(self, f):
+            applied["flow"] = f
+
+    tuning_service = Tuning()
+    monkeypatch.setattr(tuning, "get_print_tuning_service", lambda: tuning_service)
     prints = {}
     monkeypatch.setattr(module, "start_test_print", lambda name, text: prints.__setitem__(name, text) or f"test print {name}")
-    return type("G", (), {"svc": svc, "prints": prints, "applied": applied})
+    ini = {}
+    monkeypatch.setattr(module, "ini_value", lambda section, key: ini.get((section, key)))
+    return type("G", (), {"svc": svc, "prints": prints, "applied": applied, "tuning": tuning_service, "ini": ini})
 
 
 def test_skew_prints_then_takes_the_measurements(guided):
@@ -231,3 +242,51 @@ def test_start_test_print_converts_loads_and_starts(monkeypatch, tmp_path):
     stat.estop = True
     with pytest.raises(BadRequestError, match="E-stop"):
         module.start_test_print("skew_square", "G1 X1\n")
+
+
+def test_extruder_steps(guided):
+    guided.ini[("JOINT_3", "SCALE")] = 93.0
+    card = _item(guided.svc.listing(), "extruder_steps")
+    assert card["available"] and card["values"] == {"scale": 93.0, "joint": 3}
+    guided.svc.start("extruder_steps", {"hotend": 200, "length": 100, "speed": 1})
+    assert "G1 E100 F60" in guided.prints["extrude_100"]
+    result = guided.svc.submit("extruder_steps", {"mark": 120, "remaining": 23})  # 97 of 100 mm
+    assert result.startswith("SCALE 93.000 → 95.876")
+    assert module.calibration_file().load()["JOINT_3"] == {"SCALE": "95.8763"}
+    with pytest.raises(BadRequestError, match="20 %"):
+        guided.svc.submit("extruder_steps", {"mark": 120, "remaining": 60})
+    guided.svc.clear("extruder_steps")
+    assert "JOINT_3" not in module.calibration_file().load()
+
+
+def test_flow(guided):
+    guided.tuning.flow = 98.0
+    guided.svc.start("flow", {"hotend": 210, "bed": 60, "size": 30})
+    assert "flow cube 30 mm" in guided.prints["flow_cube"]
+    assert guided.svc.submit("flow", {"wall": 0.49}).startswith("flow 90 %")
+    assert guided.applied["flow"] == 90.0 and module.calibration_file().number("FLOW") == 90.0
+    with pytest.raises(BadRequestError, match="implausible"):
+        guided.svc.submit("flow", {"wall": 0.9})
+
+
+def test_first_layer_into_the_probe_z_offset(guided):
+    assert module.first_layer_target(PAYLOAD) == "probe"  # a mesh with absolute heights
+    guided.svc.start("first_layer", {"hotend": 210, "bed": 60})
+    assert guided.prints["first_layer"].count("; patch ") == 5
+    with pytest.raises(BadRequestError, match="is 0"):
+        guided.svc.submit("first_layer", {})
+    guided.tuning.z_offset = 0.05  # the nozzle had to go up
+    assert "z_offset 0.950 mm saved" in guided.svc.submit("first_layer", {})
+    assert module.calibration_file().number("PROBE_Z_OFFSET") == 0.95
+
+
+def test_first_layer_into_z_home_offset(guided, monkeypatch):
+    import services.HardwareConfigService as hw
+
+    no_probe = {k: v for k, v in PAYLOAD.items() if k != "probe"}
+    monkeypatch.setattr(hw.HardwareConfigService, "load_payload", lambda self: no_probe)
+    assert module.first_layer_target(no_probe) == "endstop"
+    guided.ini[("JOINT_2", "HOME_OFFSET")] = 0.0
+    guided.tuning.z_offset = -0.08  # the nozzle had to go down
+    assert "Z's home position saved" in guided.svc.submit("first_layer", {})
+    assert module.calibration_file().load()["JOINT_2"] == {"HOME_OFFSET": "0.08"}

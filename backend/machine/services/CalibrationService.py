@@ -29,7 +29,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from core.calibration_file import (INPUT_SHAPER_SECTION, PRESSURE_ADVANCE, PROBE_Z_OFFSET, SHAPER_FREQ, SHAPER_TYPE,
+from core.calibration_file import (FLOW, INPUT_SHAPER_SECTION, PRESSURE_ADVANCE, PROBE_Z_OFFSET, SHAPER_FREQ, SHAPER_TYPE,
                                    SKEW_XY, VALUES, CalibrationFile, calibration_path)
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
@@ -341,6 +341,14 @@ class CalibrationService:
             from services.ShaperService import get_shaper_service
 
             get_shaper_service().set_skew(_profile_skew())
+        elif item.kind == "flow":
+            store.update({VALUES: {FLOW: None}})
+            from services.PrintTuningService import get_print_tuning_service
+
+            get_print_tuning_service().set_flow(100.0)
+        elif item.kind == "extruder_steps":
+            joint = item.values.get("joint")
+            store.update({f"JOINT_{joint}": {"SCALE": None}})
         elif item.kind == "pressure_advance":
             store.update({VALUES: {PRESSURE_ADVANCE: None}})
             from services.PrintTuningService import get_print_tuning_service
@@ -506,7 +514,183 @@ def guided_calibrations(payload: Mapping[str, Any]) -> List[Calibration]:
         print_test=print_pa, submit=submit_pa, figure="pressure_advance",
         inputs=[Param("height", 10, "mm", 0, 100)],
     )
-    return [skew, pa]
+    return [skew, pa, *_more_guided(payload, heaters, store)]
+
+
+def ini_value(section: str, key: str) -> Optional[float]:
+    """A number of the INI LinuxCNC runs with (``machine.calibrated.ini``:
+    earlier calibrations included); ``None`` without LinuxCNC."""
+    try:
+        import linuxcnc
+
+        from hardware import get_stat_channel
+
+        stat = get_stat_channel()
+        if stat is None:
+            return None
+        stat.poll()
+        raw = linuxcnc.ini(stat.ini_filename).find(section, key)
+        return float(raw) if raw is not None else None
+    except Exception:  # noqa: BLE001 - no LinuxCNC / no such key
+        return None
+
+
+def _extruder(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    return next((t for t in payload.get("tools") or [] if isinstance(t, dict) and t.get("type") == "extruder"), {})
+
+
+def _extruder_joint(payload: Mapping[str, Any]) -> Optional[int]:
+    tool_id = _extruder(payload).get("id")
+    for joint in payload.get("joints") or []:
+        if isinstance(joint, dict) and joint.get("id") == tool_id and joint.get("joint_number") is not None:
+            return int(joint["joint_number"])
+    return None
+
+
+def _z_joints(payload: Mapping[str, Any]) -> List[int]:
+    for axis in payload.get("axes") or []:
+        if str(axis.get("id", "")).lower() == "z":
+            return [int(n) for n in axis.get("joint_numbers") or []]
+    return []
+
+
+def first_layer_target(payload: Mapping[str, Any]) -> str:
+    """What sets the first layer's height: ``probe`` (its z_offset — Z homes
+    on it, or the mesh holds absolute heights) or ``endstop`` (Z's switch,
+    HOME_OFFSET)."""
+    probe = isinstance(payload.get("probe"), dict) and bool(payload["probe"].get("pin"))
+    if not probe:
+        return "endstop"
+    if isinstance(payload.get("z_virtual_endstop"), dict):
+        return "probe"
+    mesh = payload.get("bed_mesh")
+    return "probe" if isinstance(mesh, dict) and not mesh.get("zero_reference_position") else "endstop"
+
+
+def _more_guided(payload: Mapping[str, Any], heaters: List[Param], store: CalibrationFile) -> List[Calibration]:
+    from core.calibration_prints import (extrude_test, first_layer_patches, first_layer_result, flow_cube,
+                                         flow_result, settings_from_payload, steps_result)
+    from services.PrintTuningService import get_print_tuning_service
+
+    extruder = _extruder(payload)
+    joint = _extruder_joint(payload)
+    tuning = get_print_tuning_service()
+
+    # -- extruder steps: [JOINT_n] SCALE --------------------------------- #
+    def print_steps(p: Mapping[str, float]) -> str:
+        text = extrude_test(settings_from_payload(payload, p["hotend"], 0), length=p["length"], speed=p["speed"])
+        scale = ini_value(f"JOINT_{joint}", "SCALE")
+        message = start_test_print("extrude_100", text)
+        store.set_state("extruder_steps", print_length=f"{p['length']:g}",
+                        print_scale="" if scale is None else f"{scale:.6f}")
+        return message
+
+    def submit_steps(m: Mapping[str, float]) -> str:
+        state = store.state("extruder_steps")
+        scale = _number(state.get("print_scale") or None, ini_value(f"JOINT_{joint}", "SCALE"))
+        if not scale:
+            raise BadRequestError("The extruder's SCALE is unknown — run the test with LinuxCNC running.")
+        requested = float(state.get("print_length") or 100.0)
+        extruded = m["mark"] - m["remaining"]
+        try:
+            new = steps_result(float(scale), requested, extruded)
+        except ValueError as exc:
+            raise BadRequestError(f"{exc} (mark {m['mark']:g} − remaining {m['remaining']:g} mm).") from exc
+        if not 0.8 <= new / float(scale) <= 1.25:
+            raise BadRequestError(f"{extruded:g} mm of {requested:g} mm is more than 20 % off — check the extruder "
+                                  "(slipping, clogged, the mark) before calibrating it.")
+        result = (f"SCALE {float(scale):.3f} → {new:.3f} steps/mm ({extruded:g} of {requested:g} mm; "
+                  f"rotation_distance × {float(scale) / new:.4f}) — from the next LinuxCNC start")
+        record("extruder_steps", result, {f"JOINT_{joint}": {"SCALE": round(new, 4)}})
+        return result
+
+    current_scale = ini_value(f"JOINT_{joint}", "SCALE") if joint is not None else None
+    steps = Calibration(
+        "extruder_steps", "extruder_steps", "", joint is not None,
+        "The profile has no [extruder] with a motor.",
+        params=[heaters[0], Param("length", 100, "mm", 20, 200), Param("speed", 1.0, "mm/s", 0.2, 5)],
+        running=_printing("extrude_100"),
+        values={"scale": current_scale, "joint": joint},
+        print_test=print_steps, submit=submit_steps, figure="extruder_steps",
+        inputs=[Param("mark", 120, "mm", 10, 400), Param("remaining", 20, "mm", 0, 400)],
+    )
+
+    # -- flow: [CALIBRATION] FLOW, the print tuning's flow at start -------- #
+    def print_flow(p: Mapping[str, float]) -> str:
+        settings = settings_from_payload(payload, p["hotend"], p["bed"])
+        text = flow_cube(settings, size=p["size"])
+        message = start_test_print("flow_cube", text)
+        store.set_state("flow", print_flow=f"{tuning.flow:g}", print_width=f"{settings.width:g}")
+        return message
+
+    def submit_flow(m: Mapping[str, float]) -> str:
+        state = store.state("flow")
+        try:
+            used, width = float(state["print_flow"]), float(state["print_width"])
+        except (KeyError, ValueError) as exc:
+            raise BadRequestError("Print the cube first: its flow / wall width are not known.") from exc
+        new = flow_result(used, width, m["wall"])
+        if not 70 <= new <= 130:
+            raise BadRequestError(f"Flow {new:g} % is implausible — measure the wall again (one wall, not two).")
+        result = f"flow {new:g} % (wall {m['wall']:g} mm, wanted {width:g} mm, printed at {used:g} %)"
+        record("flow", result, {VALUES: {FLOW: new}})
+        tuning.set_flow(new)
+        return result
+
+    flow = Calibration(
+        "flow", "flow", "", bool(extruder), "The profile has no [extruder].",
+        params=heaters + [Param("size", 30, "mm", 15, 80)],
+        running=_printing("flow_cube"),
+        values={"flow": tuning.flow},
+        print_test=print_flow, submit=submit_flow, figure="flow",
+        inputs=[Param("wall", 0.45, "mm", 0.1, 2)],
+    )
+
+    # -- first layer: the live Z offset into z_offset / HOME_OFFSET -------- #
+    target = first_layer_target(payload)
+
+    def print_first_layer(p: Mapping[str, float]) -> str:
+        text = first_layer_patches(settings_from_payload(payload, p["hotend"], p["bed"]))
+        return start_test_print("first_layer", text)
+
+    def submit_first_layer(m: Mapping[str, float]) -> str:
+        if _printing("first_layer")():
+            raise ConflictError("Save once the print has finished.")
+        live = tuning.z_offset
+        if abs(live) < 1e-4:
+            raise BadRequestError("The live Z offset is 0 — nothing to save.")
+        if target == "probe":
+            current = float((payload.get("probe") or {}).get("z_offset") or 0.0)
+            new = first_layer_result(current, live)
+            if new <= 0:
+                raise BadRequestError(f"z_offset {new:g} would put the nozzle above the probe's trigger.")
+            record("first_layer", f"live Z {live:+.3f} → z_offset {current:.3f} → {new:.3f} mm",
+                   {VALUES: {PROBE_Z_OFFSET: new}})
+            record("probe_z_offset", f"z_offset {new:.3f} mm (first layer)")
+            what = f"z_offset {new:.3f} mm"
+        else:
+            joints = _z_joints(payload)
+            values: Dict[str, Dict[str, Any]] = {}
+            for n in joints:
+                current = ini_value(f"JOINT_{n}", "HOME_OFFSET")
+                if current is None:
+                    raise BadRequestError("Z's HOME_OFFSET is unknown — save it with LinuxCNC running.")
+                values[f"JOINT_{n}"] = {"HOME_OFFSET": first_layer_result(current, live)}
+            record("first_layer", f"live Z {live:+.3f} → Z HOME_OFFSET "
+                   + ", ".join(f"{v['HOME_OFFSET']:g}" for v in values.values()), values)
+            what = "Z's home position"
+        return (f"{what} saved (live Z {live:+.3f}). The live offset stays until LinuxCNC restarts; after the "
+                "restart home again" + (" and probe the bed mesh again" if target == "probe" else "") + ".")
+
+    first = Calibration(
+        "first_layer", "first_layer", "", bool(extruder), "The profile has no [extruder].",
+        params=heaters,
+        running=_printing("first_layer"),
+        values={"live_offset": tuning.z_offset, "target": target},
+        print_test=print_first_layer, submit=submit_first_layer, figure="first_layer",
+        inputs=[],
+    )
+    return [steps, flow, first]
 
 
 _SERVICE: Optional[CalibrationService] = None

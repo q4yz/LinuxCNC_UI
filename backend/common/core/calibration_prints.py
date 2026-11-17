@@ -38,6 +38,7 @@ class PrintSettings:
     x_max: float = 200.0
     y_min: float = 0.0
     y_max: float = 200.0
+    z_max: float = 200.0
 
     @property
     def layer(self) -> float:
@@ -65,7 +66,7 @@ def settings_from_payload(payload: Mapping[str, Any], hotend: float, bed: float)
     limits = {}
     for axis in payload.get("axes") or []:
         letter = str(axis.get("id", "")).lower()
-        if letter in ("x", "y") and axis.get("position_max") is not None:
+        if letter in ("x", "y", "z") and axis.get("position_max") is not None:
             limits[letter] = (float(axis.get("position_min") or 0.0), float(axis["position_max"]))
     if "x" not in limits or "y" not in limits:
         raise ValueError("the profile has no X / Y travel (position_max)")
@@ -75,6 +76,7 @@ def settings_from_payload(payload: Mapping[str, Any], hotend: float, bed: float)
         nozzle=float(extruder.get("nozzle_diameter") or 0.4),
         filament=float(extruder.get("filament_diameter") or 1.75),
         x_min=limits["x"][0], x_max=limits["x"][1], y_min=limits["y"][0], y_max=limits["y"][1],
+        z_max=limits.get("z", (0.0, 200.0))[1],
     )
 
 
@@ -268,5 +270,103 @@ def pa_result(start: float, factor: float, height: float) -> float:
     return round(pa_value(start, factor, height), 4)
 
 
-__all__ = ["PrintSettings", "pa_result", "pa_tower", "pa_value", "settings_from_payload", "skew_result",
+# --------------------------------------------------------------------------- #
+# Extruder steps (rotation_distance)                                           #
+# --------------------------------------------------------------------------- #
+
+def extrude_test(s: PrintSettings, length: float = 100.0, speed: float = 1.0) -> str:
+    """Heat, lift the nozzle clear of the bed and extrude ``length`` mm
+    slowly (no slipping); mark the filament 120 mm above the extruder first."""
+    lift = max(5.0, min(50.0, s.z_max - 10.0))
+    return "\n".join([
+        f"; LinuxCNC_UI calibration: extrude {length:g} mm at {speed:g} mm/s",
+        "G28",
+        "G90",
+        f"G1 Z{lift:g} F600",
+        f"M109 S{s.hotend:g}",
+        "M83",
+        f"G1 E{length:g} F{speed * 60:g}",
+        "M104 S0",
+        "M2",
+    ]) + "\n"
+
+
+def steps_result(scale: float, requested: float, extruded: float) -> float:
+    """``[JOINT_n] SCALE`` (steps per mm) that feeds ``requested`` when the
+    old one fed ``extruded``."""
+    if extruded <= 0 or requested <= 0:
+        raise ValueError("the lengths must be positive")
+    return scale * requested / extruded
+
+
+# --------------------------------------------------------------------------- #
+# Flow                                                                         #
+# --------------------------------------------------------------------------- #
+
+def flow_cube(s: PrintSettings, size: float = 30.0, height: float = 10.0, speed: float = 40.0) -> str:
+    """A single-wall cube (a brim on the first layer): its wall should be
+    ``s.width`` thick."""
+    size = s.largest(size)
+    cx, cy = s.centre
+    x0, y0, x1, y1 = cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2
+    layers = max(5, round(height / s.layer))
+    out = _Writer(s)
+    out.start(f"flow cube {size:g} mm, wall {s.width:g} mm")
+    for n in range(layers):
+        out.emit(f"; layer {n + 1}/{layers}")
+        out.layer_z(s.layer * (n + 1))
+        if n == 0:
+            for k in range(4, 0, -1):
+                d = k * s.width
+                out.rectangle(x0 - d, y0 - d, x1 + d, y1 + d, FIRST_LAYER_SPEED)
+            out.rectangle(x0, y0, x1, y1, FIRST_LAYER_SPEED)
+            continue
+        if n == 1:
+            out.emit("M106 S255")
+        out.rectangle(x0, y0, x1, y1, speed)
+    out.end()
+    return "\n".join(out.lines) + "\n"
+
+
+def flow_result(flow_used: float, expected: float, measured: float) -> float:
+    """The flow (%) that gives ``expected`` where ``flow_used`` gave ``measured``."""
+    if measured <= 0:
+        raise ValueError("the wall cannot be 0 mm")
+    return round(flow_used * expected / measured, 1)
+
+
+# --------------------------------------------------------------------------- #
+# First layer                                                                  #
+# --------------------------------------------------------------------------- #
+
+def first_layer_patches(s: PrintSettings, size: float = 25.0) -> str:
+    """One layer: a square patch in the middle (tune the live Z offset on it)
+    and one near each corner (the bed mesh's / tilt's check)."""
+    size = min(float(size), (min(s.x_max - s.x_min, s.y_max - s.y_min) - 3 * BED_MARGIN) / 3)
+    cx, cy = s.centre
+    dx = (s.x_max - s.x_min) / 2 - BED_MARGIN - size / 2
+    dy = (s.y_max - s.y_min) / 2 - BED_MARGIN - size / 2
+    centres = [(cx, cy), (cx - dx, cy - dy), (cx + dx, cy - dy), (cx + dx, cy + dy), (cx - dx, cy + dy)]
+    out = _Writer(s)
+    out.start(f"first layer: {len(centres)} patches of {size:g} mm")
+    out.layer_z(s.layer)
+    for k, (px, py) in enumerate(centres):
+        out.emit(f"; patch {k + 1}/{len(centres)}" + (" (middle: tune the live Z offset here)" if k == 0 else ""))
+        x0, y0, x1, y1 = px - size / 2, py - size / 2, px + size / 2, py + size / 2
+        out.rectangle(x0, y0, x1, y1, FIRST_LAYER_SPEED)
+        w = s.width
+        out.fill(x0 + w, y0 + w, x1 - w, y1 - w, FIRST_LAYER_SPEED, along_x=True)
+    out.end()
+    return "\n".join(out.lines) + "\n"
+
+
+def first_layer_result(current: float, live_offset: float) -> float:
+    """The probe's ``z_offset`` / Z's ``HOME_OFFSET`` with the live Z
+    offset in it: the nozzle had to go ``live_offset`` up (+) — the
+    nozzle at the trigger, the switch, is that much lower."""
+    return round(current - live_offset, 4)
+
+
+__all__ = ["PrintSettings", "extrude_test", "first_layer_patches", "first_layer_result", "flow_cube", "flow_result",
+           "steps_result", "pa_result", "pa_tower", "pa_value", "settings_from_payload", "skew_result",
            "skew_square"]

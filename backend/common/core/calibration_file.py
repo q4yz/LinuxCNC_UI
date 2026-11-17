@@ -45,6 +45,7 @@ PRESSURE_ADVANCE = "PRESSURE_ADVANCE"
 SHAPER_FREQ = "SHAPER_FREQ_{axis}"      # X / Y
 SHAPER_TYPE = "SHAPER_TYPE_{axis}"      # zv, mzv, zvd, ei
 SKEW_XY = "SKEW_XY"
+FLOW = "FLOW"                           # % — the print tuning's flow at start
 #: ``[INPUT_SHAPER]`` of machine.ini: ``TYPE_X`` / ``TYPE_Y`` (jointshape codes).
 INPUT_SHAPER_SECTION = "INPUT_SHAPER"
 
@@ -261,6 +262,11 @@ def overlay_payload(payload: Dict[str, Any], values: Mapping[str, str]) -> Dict[
     z_offset = number(PROBE_Z_OFFSET)
     if z_offset is not None and isinstance(out.get("probe"), dict):
         out["probe"]["z_offset"] = z_offset
+    flow = number(FLOW)
+    if flow is not None:
+        for tool in out.get("tools") or []:
+            if isinstance(tool, dict) and tool.get("type") == "extruder":
+                tool["flow"] = flow
     advance = number(PRESSURE_ADVANCE)
     if advance is not None:
         for tool in out.get("tools") or []:
@@ -281,7 +287,7 @@ def overlay_payload(payload: Dict[str, Any], values: Mapping[str, str]) -> Dict[
 
 
 __all__ = [
-    "CALIBRATED_INI_NAME", "CalibrationFile", "FILE_NAME", "INPUT_SHAPER_SECTION", "PRESSURE_ADVANCE",
+    "CALIBRATED_INI_NAME", "CalibrationFile", "FILE_NAME", "FLOW", "INPUT_SHAPER_SECTION", "PRESSURE_ADVANCE",
     "PROBE_Z_OFFSET", "SHAPER_FREQ", "SHAPER_TYPE", "SKEW_XY", "STATE", "VALUES", "calibrated_ini",
     "calibration_path", "ini_overrides", "merge_ini", "overlay_payload",
 ]

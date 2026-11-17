@@ -19,12 +19,15 @@ The **Calibration** tab has a card for each calibration the machine can run — 
 | Input shaper | `SHAPER_CALIBRATE` | the shaper type and frequency per axis |
 | Skew | a test print, then you measure it | the XY skew factor |
 | Pressure advance | a test print, then you measure it | the pressure advance |
+| Extruder steps | extrudes 100 mm, then you measure it | the extruder's steps / mm (`[JOINT_n] SCALE`) |
+| Flow | a test print, then you measure it | the flow % the machine starts with |
+| First layer | a test print you tune with the live Z offset | the probe's `z_offset`, or Z's home position |
 
 A card the machine cannot run (no probe, no accelerometer) says what is missing.
 
-## Test prints: skew and pressure advance
+## Test prints
 
-These two cannot measure themselves. **Print test** generates a test object from the profile
+Skew, pressure advance, extruder steps, flow and first layer cannot measure themselves. **Print test** generates a test object from the profile
 (the bed's size and centre, the nozzle and filament diameter, the temperatures on the card),
 converts it like an uploaded slicer file into `nc_files/calibration/` and starts it — it heats,
 homes and prints; it asks first. Then measure the print, enter the values under *Measure the
@@ -41,6 +44,22 @@ at once.
   set again. Find the height where the corners are sharpest (lower: they bulge, higher: gaps
   or rounded corners) and enter it: K = start + factor × that height. Factor 0.005 suits a
   direct drive, 0.02 a Bowden extruder.
+- **Extruder steps** (Klipper's `rotation_distance`) — mark the filament 120 mm above the
+  extruder's inlet; the test heats, lifts the nozzle and extrudes 100 mm slowly. Measure from the
+  inlet to the mark again and enter it: the steps / mm become *SCALE × 100 / (120 − remaining)*,
+  from the next LinuxCNC start (changing it on a running machine would make the extruder jump).
+  The result also says by how much to change `rotation_distance` in the profile.
+- **Flow** — a single-wall cube with a brim. Measure the wall (one wall) with calipers above the
+  brim; the flow becomes *flow while printing × planned width / measured*. The machine starts
+  with that flow, the Job card can still change it per print. Calibrate the extruder steps
+  first.
+- **First layer** — five single-layer patches, the middle one first. While it prints, turn the
+  live Z offset with the card's buttons (+ = nozzle up) until the lines are flat and touch; the
+  corner patches show whether the bed mesh / Z tilt fits. After the print, **Save live offset**:
+  the offset goes into the probe's `z_offset` (Z homes on the probe, or the bed mesh holds
+  absolute heights) or into Z's `HOME_OFFSET` (a Z switch). It applies from the next LinuxCNC
+  start — the live offset stays until then; home (and probe the mesh) again after the
+  restart.
 **Clear** removes a card's saved values: back to the profile's.
 
 ## calibration.ini

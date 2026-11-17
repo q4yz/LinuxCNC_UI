@@ -80,7 +80,8 @@ test("guided calibrations: print a test, then measure it", () => {
   assert.match(card, /v-if="item\.guided && item\.available"[\s\S]*:data-testid="`calibration-measure-\$\{item\.id\}`"/);
   assert.match(card, /<CalibrationFigure :figure="item\.figure \?\? ''"/);
   assert.match(card, /:data-testid="`calibration-input-\$\{item\.id\}-\$\{p\.name\}`"/);
-  assert.match(card, /:disabled="busy \|\| !measuredComplete"/, "all measurements before saving");
+  assert.match(card, /:disabled="busy \|\| !measuredComplete \|\| \(item\.kind === 'first_layer' && item\.running\)"/,
+    "all measurements before saving; the first layer once printed");
   assert.match(card, /item\.guided \? "Print test" : "Start"/);
   const view = read("views/CalibrationView.vue");
   assert.match(view, /if \(item\.guided\) \{[\s\S]*useConfirm\(/, "a test print asks first");
@@ -90,4 +91,17 @@ test("guided calibrations: print a test, then measure it", () => {
   assert.match(figure, /data-testid="calibration-figure-skew"/);
   assert.match(figure, /data-testid="calibration-figure-pressure_advance"/);
   for (const kind of ["skew", "pressure_advance"]) assert.ok(CALIBRATIONS[kind]?.steps.length, kind);
+});
+
+test("extruder steps, flow and first layer cards", () => {
+  for (const kind of ["extruder_steps", "flow", "first_layer"]) {
+    assert.ok(CALIBRATIONS[kind]?.steps.length, kind);
+    assert.match(read("components/calibration/CalibrationFigure.vue"), new RegExp(`data-testid="calibration-figure-${kind}"`));
+  }
+  const card = read("components/calibration/CalibrationCard.vue");
+  assert.match(card, /v-if="item\.kind === 'first_layer'"[\s\S]*data-testid="calibration-live-z"/);
+  assert.match(card, /emit\('liveZ', dz\)/);
+  assert.match(card, /item\.inputs\?\.length \? "Calculate & save" : "Save live offset"/);
+  const view = read("views/CalibrationView.vue");
+  assert.match(view, /printTuningFacade\.setZ\(0\) : printTuningFacade\.adjustZ\(delta\)/);
 });

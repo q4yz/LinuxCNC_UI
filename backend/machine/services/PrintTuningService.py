@@ -99,6 +99,7 @@ class PrintTuningService:
         self._pins["pressure-advance"] = ReadWriteDynamicHalPin(
             "pressure-advance", HalDataType.FLOAT, "Pressure advance (mm per mm/s) for the extruder component")
         self._pressure_advance = self._configured_pressure_advance()
+        self._flow = self._configured_flow()
         self._write("flow", self._flow)
         self._write("z-offset", self._z_offset)
         self._write("pressure-advance", self._pressure_advance)
@@ -112,6 +113,16 @@ class PrintTuningService:
             if isinstance(tool, dict) and tool.get("type") == "extruder":
                 return float(tool.get("pressure_advance") or 0.0)
         return 0.0
+
+    @staticmethod
+    def _configured_flow() -> float:
+        """The calibrated flow (Calibration tab, calibration.ini), else 100 %."""
+        from services.HardwareConfigService import HardwareConfigService
+
+        for tool in HardwareConfigService().load_payload().get("tools") or []:
+            if isinstance(tool, dict) and tool.get("type") == "extruder" and tool.get("flow"):
+                return float(tool["flow"])
+        return 100.0
 
     def _write(self, pin: str, value: Any) -> None:
         handle = self._pins.get(pin)

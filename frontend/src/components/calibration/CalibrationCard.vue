@@ -18,6 +18,7 @@ const emit = defineEmits<{
   details: [];
   command: [line: string];
   submit: [values: Record<string, number>];
+  liveZ: [delta: number | null];
 }>();
 
 const text = computed(() => CALIBRATIONS[props.item.kind] ?? {
@@ -49,9 +50,14 @@ function submitMeasured() {
   emit("submit", values);
 }
 
+const liveOffset = computed(() => {
+  const v = props.item.values?.live_offset;
+  return typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(3)}` : "—";
+});
+
 const session = computed(() => props.item.kind === "probe_z_offset" && !!props.item.values?.session);
 const clearable = computed(() =>
-  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance"].includes(props.item.kind),
+  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance", "flow", "extruder_steps"].includes(props.item.kind),
 );
 const status = computed(() => {
   if (!props.item.available) return { text: "not on this machine", cls: "bg-gray-700 text-gray-400" };
@@ -72,6 +78,12 @@ const inUse = computed(() => {
       return `factor ${fmt(v.factor, 6)}`;
     case "pressure_advance":
       return `K ${fmt(v.advance, 4)}`;
+    case "extruder_steps":
+      return typeof v.scale === "number" ? `SCALE ${fmt(v.scale)} steps/mm` : "SCALE — (LinuxCNC not running)";
+    case "flow":
+      return `flow ${fmt(v.flow, 1)} %`;
+    case "first_layer":
+      return `live Z ${liveOffset.value} mm → ${v.target === "probe" ? "probe z_offset" : "Z home"}`;
     case "input_shaper":
       return `X ${v.type_x ?? "—"} ${fmt(v.freq_x, 1)} Hz, Y ${v.type_y ?? "—"} ${fmt(v.freq_y, 1)} Hz`;
     default:
@@ -252,13 +264,21 @@ function saveReminder() {
             <span class="w-6">{{ p.unit }}</span>
           </span>
         </label>
+        <div v-if="item.kind === 'first_layer'" class="space-y-1" data-testid="calibration-live-z">
+          <p class="text-xs text-gray-400">Live Z offset (+ = nozzle up): <span class="font-mono text-gray-200" data-testid="calibration-live-z-value">{{ liveOffset }} mm</span></p>
+          <div class="grid grid-cols-5 gap-1">
+            <BaseButton v-for="dz in [-0.05, -0.01, 0.01, 0.05]" :key="dz" size="sm" variant="secondary" :disabled="busy"
+                        @click="emit('liveZ', dz)">{{ dz > 0 ? "+" : "" }}{{ dz }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" :disabled="busy" title="Back to 0" @click="emit('liveZ', null)">0</BaseButton>
+          </div>
+        </div>
         <BaseButton
           variant="success"
           size="sm"
-          :disabled="busy || !measuredComplete"
+          :disabled="busy || !measuredComplete || (item.kind === 'first_layer' && item.running)"
           :data-testid="`calibration-submit-${item.id}`"
           @click="submitMeasured"
-        >Calculate &amp; save</BaseButton>
+        >{{ item.inputs?.length ? "Calculate & save" : "Save live offset" }}</BaseButton>
       </section>
     </div>
   </BaseCard>

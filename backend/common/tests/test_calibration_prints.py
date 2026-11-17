@@ -91,3 +91,36 @@ def test_pa_result():
     assert pa_result(0.0, 0.005, 12.5) == 0.0625
     with pytest.raises(ValueError):
         pa_result(0, 0.005, -1)
+
+
+def test_extrude_test():
+    from core.calibration_prints import extrude_test, steps_result
+
+    text = extrude_test(_settings(), length=100, speed=1)
+    out = convert(text).text
+    assert "G1 A100 F60" in out and "M109 P210" in out and "G1 Z50 F600" in out
+    assert steps_result(93.0, 100, 97) == pytest.approx(95.876, abs=1e-3)
+    with pytest.raises(ValueError):
+        steps_result(93.0, 100, 0)
+
+
+def test_flow_cube_single_wall():
+    from core.calibration_prints import flow_cube, flow_result
+
+    text = flow_cube(_settings(), size=30, height=6)
+    assert "flow cube 30 mm, wall 0.45 mm" in text
+    layer_lines = text.split("; layer 2/")[1]
+    assert len(re.findall(r"^G1 X", layer_lines.split("; layer 3/")[0], re.M)) == 4  # one loop
+    assert not convert(text).notes or not any("unknown" in n.lower() for n in convert(text).notes)
+    assert flow_result(100, 0.45, 0.50) == 90.0 and flow_result(95, 0.45, 0.45) == 95.0
+
+
+def test_first_layer_patches_stay_on_the_bed():
+    from core.calibration_prints import first_layer_patches, first_layer_result
+
+    text = first_layer_patches(_settings(), size=25)
+    assert text.count("; patch ") == 5 and "G1 Z0.300" in text
+    assert "G1 Z0.600" not in text  # one layer only
+    pts = _xy(text.splitlines())
+    assert min(p[0] for p in pts) >= 0 and max(p[0] for p in pts) <= 235 and max(p[1] for p in pts) <= 235
+    assert first_layer_result(1.20, 0.05) == 1.15 and first_layer_result(0.0, -0.1) == 0.1

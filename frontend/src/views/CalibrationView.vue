@@ -5,6 +5,7 @@
 // the mesh list, heatmap, editing — open in a pop-up.
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { calibrationFacade, type CalibrationItem } from "../facades/calibrationFacade";
+import { printTuningFacade } from "../facades/printTuningFacade";
 import CalibrationCard from "../components/calibration/CalibrationCard.vue";
 import BedMeshView from "./BedMeshView.vue";
 import { BaseButton, Icon } from "../ui";
@@ -95,6 +96,14 @@ async function submit(item: CalibrationItem, values: Record<string, number>) {
   consoleStore.success(`Calibration saved: ${response.result}`);
 }
 
+// first layer: the live Z offset (print tuning), + = nozzle up; null = back to 0
+async function liveZ(delta: number | null) {
+  await act("changing the live Z offset", () =>
+    delta === null ? printTuningFacade.setZ(0) : printTuningFacade.adjustZ(delta),
+  );
+  await refresh();
+}
+
 async function command(line: string) {
   await act(line, () => calibrationFacade.command(line));
   await refresh();
@@ -163,6 +172,7 @@ onBeforeUnmount(() => {
       @details="meshOpen = true"
       @command="command"
       @submit="(values) => submit(item, values)"
+      @live-z="liveZ"
     />
   </div>
 

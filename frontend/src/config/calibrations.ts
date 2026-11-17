@@ -76,6 +76,39 @@ export const CALIBRATIONS: Record<string, CalibrationText> = {
     ],
     saves: "calibration.ini: the pressure advance, active right away and at every start.",
   },
+  extruder_steps: {
+    title: "Extruder steps",
+    benefit: "The extruder feeds exactly what is asked: the base for flow and pressure advance.",
+    steps: [
+      "Mark the filament 120 mm above the extruder's inlet (a pen, a ruler).",
+      "Start heats, homes, lifts the nozzle and extrudes 100 mm slowly into the air.",
+      "Measure from the inlet to the mark again (about 20 mm when right) and enter it.",
+      "The new steps / mm apply from the next LinuxCNC start.",
+    ],
+    saves: "calibration.ini: [JOINT_n] SCALE of the extruder (at every start).",
+  },
+  flow: {
+    title: "Flow",
+    benefit: "Walls the width the slicer planned: no over-extrusion blobs, no gaps.",
+    steps: [
+      "Calibrate the extruder steps first.",
+      "Start prints a single-wall cube (a brim on the bottom layer).",
+      "Measure the wall with calipers at a few points above the brim, take the average.",
+      "Enter it — the flow is set to match.",
+    ],
+    saves: "calibration.ini: the flow %, the print tuning's flow at every start.",
+  },
+  first_layer: {
+    title: "First layer",
+    benefit: "The right squish: lines that stick and touch, without scraping the nozzle.",
+    steps: [
+      "Start prints five patches, one layer: the middle one first.",
+      "While it prints the middle patch, adjust the live Z offset with the buttons until the lines are flat and touch each other.",
+      "Check the corner patches: big differences mean the bed mesh / Z tilt needs redoing.",
+      "Once the print has finished, save: the live offset goes into the Z offset.",
+    ],
+    saves: "calibration.ini: the probe's z_offset (or Z's home position without a probe); from the next start.",
+  },
   input_shaper: {
     title: "Input shaper",
     benefit: "Less ringing / ghosting at high speed, so it can print faster.",
