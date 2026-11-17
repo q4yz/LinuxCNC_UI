@@ -21,7 +21,8 @@ test("no Probing tab: the route redirects to the dashboard, nothing in the sideb
 
 test("a Dashboard panel, placeable like the others", () => {
   assert.ok(PANEL_IDS.includes("probe"));
-  assert.ok(DEFAULT_LAYOUTS.dashboard.left.includes("probe"));
+  const twoColumns = DEFAULT_LAYOUTS.dashboard.layouts[1].columns[0].map((i: { panel: string }) => i.panel);
+  assert.ok(twoColumns.includes("probe"));
   assert.match(read("layout/PageLayout.vue"), /probe: ProbingPanel/);
   const panel = read("components/probing/ProbingPanel.vue");
   assert.match(panel, /<BaseCard title="Probing" icon="probing" data-testid="probing-panel">/);

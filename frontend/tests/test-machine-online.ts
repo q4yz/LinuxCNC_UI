@@ -250,8 +250,8 @@ test("machine-level widgets are wrapped in MachineGate", () => {
   // inside MachineGate; the console stays ungated (system rows + the
   // offline explanation live there).
   const layout = read("layout/PageLayout.vue");
-  assert.match(layout, /<MachineGate v-else :label="panelDef\(id\)\?\.gate \?\? id">\s*<component :is="COMPONENTS\[id\]" \/>/);
-  assert.match(layout, /<div v-if="id === 'console'" class="h-\[300px\]">\s*<ConsolePanel \/>/, "ConsolePanel must stay ungated");
+  assert.match(layout, /<MachineGate v-else :label="panelDef\(item\.panel\)\?\.gate \?\? item\.panel">\s*<component :is="COMPONENTS\[item\.panel\]" \/>/);
+  assert.match(layout, /<div v-if="item\.panel === 'console'" class="h-\[300px\]">\s*<ConsolePanel \/>/, "ConsolePanel must stay ungated");
   for (const widget of ["CameraViewer", "DroPanel", "JogControls", "ToolPanel", "TemperaturePanel", "PowerOn", "ActivePrintWidget", "AxisSpeedControl"]) {
     assert.match(layout, new RegExp(`: ${widget},`), `${widget} must be a page-layout panel`);
   }

@@ -12,44 +12,112 @@ const src = (p: string) => resolve(here, "../src", p);
 const read = (p: string) => readFileSync(src(p), "utf8");
 const load = (p: string) => import(pathToFileURL(src(p)).href);
 
-const { DEFAULT_LAYOUTS, PANEL_IDS, movePanel, normaliseLayout, placementOf, shiftPanel } = await load("layout/pagePanels.ts");
+const {
+  DEFAULT_LAYOUTS, PANEL_IDS, MIN_COLUMN_PX, addPanel, chooseLayout, minPageWidth, moveItem, normaliseLayout, removeItem,
+  resizeColumn, setEnabled,
+} = await load("layout/pagePanels.ts");
 const { estopOverlap, ESTOP_GAP_PX } = await load("ui/estopClearance.ts");
 
-test("defaults: what the pages showed before, every panel placed exactly once", () => {
-  assert.deepEqual(DEFAULT_LAYOUTS.dashboard.left, ["machine", "dro", "jog", "probe", "tools", "temperature", "io", "leds"]);
-  assert.deepEqual(DEFAULT_LAYOUTS.dashboard.right, ["job", "console", "camera"]);
-  assert.deepEqual(DEFAULT_LAYOUTS.running.left, ["job", "axis_speed"]);
-  assert.deepEqual(DEFAULT_LAYOUTS.running.right, ["tools"]);
+type Item = { uid: string; panel: string };
+const panels = (col: Item[]) => col.map((i) => i.panel);
+
+test("defaults: two columns as before, one column = both in a row, three columns off", () => {
+  const dash = DEFAULT_LAYOUTS.dashboard.layouts;
+  assert.deepEqual(panels(dash[1].columns[0]), ["machine", "dro", "jog", "probe", "tools", "temperature", "io", "leds"]);
+  assert.deepEqual(panels(dash[1].columns[1]), ["job", "console", "camera"]);
+  assert.deepEqual(dash[1].widths, [4, 8]);
+  assert.deepEqual(panels(dash[0].columns[0]), [...panels(dash[1].columns[0]), ...panels(dash[1].columns[1])]);
+  assert.deepEqual(dash.map((l: { enabled: boolean }) => l.enabled), [true, true, false]);
   for (const page of ["dashboard", "running"]) {
-    const all = [...DEFAULT_LAYOUTS[page].left, ...DEFAULT_LAYOUTS[page].right, ...DEFAULT_LAYOUTS[page].hidden];
-    assert.deepEqual([...all].sort(), [...PANEL_IDS].sort(), page);
+    for (const [k, layout] of DEFAULT_LAYOUTS[page].layouts.entries()) {
+      assert.equal(layout.columns.length, k + 1);
+      assert.equal(layout.widths.reduce((a: number, b: number) => a + b, 0), 12);
+    }
   }
 });
 
-test("a stored layout is cleaned and a panel it does not know is placed as by default", () => {
-  const stored = { left: ["camera", "nope", "camera"], right: ["dro"], hidden: ["camera", "jog"] };
-  const out = normaliseLayout(stored, DEFAULT_LAYOUTS.dashboard);
-  assert.deepEqual(out.left.slice(0, 1), ["camera"]);
-  assert.equal(placementOf(out, "dro"), "right");
-  assert.equal(placementOf(out, "jog"), "hidden");
-  assert.equal(placementOf(out, "temperature"), "left"); // not stored: its default column
-  const all = [...out.left, ...out.right, ...out.hidden];
-  assert.equal(new Set(all).size, all.length);
-  assert.deepEqual([...all].sort(), [...PANEL_IDS].sort());
-  for (const bad of [null, 5, "x", [], {}, { left: "dro" }]) assert.equal(normaliseLayout(bad, DEFAULT_LAYOUTS.running), undefined);
+test("an earlier stored layout (left / right / hidden) becomes the new one", () => {
+  const out = normaliseLayout({ left: ["camera", "nope", "camera"], right: ["dro"], hidden: ["jog"] },
+    DEFAULT_LAYOUTS.dashboard);
+  assert.equal(out.version, 2);
+  const [left, right] = out.layouts[1].columns.map(panels);
+  assert.equal(left[0], "camera");
+  assert.deepEqual(right.slice(0, 1), ["dro"]);
+  assert.ok(![...left, ...right].includes("jog"), "hidden stays hidden");
+  assert.ok(left.includes("temperature"), "a panel it did not know: where the default has it");
+  assert.deepEqual(panels(out.layouts[0].columns[0]), [...left, ...right]);
+  assert.equal(out.layouts[2].enabled, false);
+  for (const bad of [null, 5, "x", [], {}, { left: "dro" }, { version: 2 }]) {
+    assert.equal(normaliseLayout(bad, DEFAULT_LAYOUTS.running), undefined);
+  }
 });
 
-test("move and shift", () => {
-  const base = DEFAULT_LAYOUTS.dashboard;
-  const moved = movePanel(base, "jog", "right");
-  assert.equal(placementOf(moved, "jog"), "right");
-  assert.equal(moved.right.at(-1), "jog");
-  assert.ok(!moved.left.includes("jog"));
-  assert.equal(placementOf(base, "jog"), "left"); // untouched
-  const up = shiftPanel(base, "dro", -1);
-  assert.deepEqual(up.left.slice(0, 2), ["dro", "machine"]);
-  assert.equal(shiftPanel(base, "machine", -1), base); // already first
-  assert.equal(placementOf(movePanel(base, "camera", "hidden"), "camera"), "hidden");
+test("a stored layout is cleaned", () => {
+  const stored = {
+    version: 2,
+    layouts: [
+      { enabled: false, widths: [12], columns: [[{ uid: "a", panel: "dro" }, { uid: "a", panel: "dro" }, { uid: "b", panel: "nope" }]] },
+      { enabled: false, widths: [5, 5], columns: [[], ["camera"]] },
+      { enabled: false, widths: [3, 6, 3], columns: [[], [], []] },
+    ],
+  };
+  const out = normaliseLayout(stored, DEFAULT_LAYOUTS.dashboard);
+  const one = out.layouts[0].columns[0];
+  assert.deepEqual(panels(one), ["dro", "dro"], "the same panel twice is fine, an unknown one goes");
+  assert.notEqual(one[0].uid, one[1].uid, "a repeated id is renewed");
+  assert.deepEqual(out.layouts[1].widths, [4, 8], "widths not summing to 12: the default's");
+  assert.deepEqual(panels(out.layouts[1].columns[1]), ["camera"]);
+  assert.equal(out.layouts[0].enabled, true, "at least one layout stays on");
+});
+
+test("add (end of the first column, twice is fine), move, remove", () => {
+  let v = addPanel(DEFAULT_LAYOUTS.running, 2, "camera");
+  v = addPanel(v, 2, "camera");
+  const first = v.layouts[1].columns[0];
+  assert.deepEqual(panels(first).slice(-2), ["camera", "camera"]);
+  assert.deepEqual(panels(DEFAULT_LAYOUTS.running.layouts[1].columns[0]), ["job", "axis_speed"], "untouched");
+  const cam = first.at(-1).uid;
+  v = moveItem(v, 2, cam, 1, 0);
+  assert.equal(v.layouts[1].columns[1][0].uid, cam);
+  v = moveItem(v, 2, cam, 1, 99);
+  assert.equal(v.layouts[1].columns[1].at(-1).uid, cam, "an index past the end: last");
+  v = removeItem(v, 2, cam);
+  assert.ok(!v.layouts[1].columns.flat().some((i: Item) => i.uid === cam));
+  assert.deepEqual(panels(v.layouts[1].columns[0]), ["job", "axis_speed", "camera"]);
+  assert.equal(moveItem(v, 2, "nope", 0, 0), v);
+});
+
+test("column widths in twelfths: taken from the neighbour, at least one each", () => {
+  const v = DEFAULT_LAYOUTS.dashboard;
+  assert.deepEqual(resizeColumn(v, 2, 0, 1).layouts[1].widths, [5, 7]);
+  assert.deepEqual(resizeColumn(v, 2, 1, 1).layouts[1].widths, [3, 9], "the last column takes from its left one");
+  assert.deepEqual(resizeColumn(v, 3, 1, -2).layouts[2].widths, [3, 4, 5]);
+  let narrow = v;
+  for (let k = 0; k < 10; k++) narrow = resizeColumn(narrow, 2, 0, -1);
+  assert.deepEqual(narrow.layouts[1].widths, [1, 11]);
+  assert.equal(resizeColumn(v, 1, 0, 1), v);
+});
+
+test("layouts on / off: the last one on stays on", () => {
+  const on = (v: { layouts: { enabled: boolean }[] }) => v.layouts.map((l) => l.enabled);
+  const v = setEnabled(DEFAULT_LAYOUTS.dashboard, 1, false);
+  assert.deepEqual(on(v), [false, true, false]);
+  assert.equal(setEnabled(v, 2, false), v, "two columns is the last one on: refused");
+  assert.deepEqual(on(setEnabled(v, 3, true)), [false, true, true]);
+  assert.deepEqual(on(setEnabled(setEnabled(v, 3, true), 2, false)), [false, false, true]);
+});
+
+test("the page picks the widest enabled layout that fits, else the narrowest wraps", () => {
+  let v = setEnabled(DEFAULT_LAYOUTS.dashboard, 3, true);
+  const need2 = minPageWidth(v, 2), need3 = minPageWidth(v, 3);
+  assert.equal(need2, Math.ceil((MIN_COLUMN_PX * 12) / 4) + 24);
+  assert.equal(chooseLayout(v, need3), 3);
+  assert.equal(chooseLayout(v, need3 - 1), 2);
+  assert.equal(chooseLayout(v, need2 - 1), 1);
+  v = setEnabled(v, 1, false);
+  assert.equal(chooseLayout(v, 500), 2, "no one-column layout: two columns, which then wrap");
+  v = setEnabled(setEnabled(v, 2, false), 1, true);
+  assert.equal(chooseLayout(v, 5000), 3);
 });
 
 test("the pages render their layout setting; the settings page has the tab", () => {

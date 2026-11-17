@@ -20,6 +20,10 @@ export class PageLayoutSetting extends BaseSetting<PageLayout> {
     return SettingPageLayout;
   }
 
+  get wide(): boolean {
+    return true;
+  }
+
   get page(): PageId {
     return this.config.page as PageId;
   }

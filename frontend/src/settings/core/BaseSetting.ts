@@ -79,6 +79,11 @@ export abstract class BaseSetting<T> {
   /** Short type tag, part of the signature (``checkbox``, ``select``…). */
   abstract get type(): string;
 
+  /** The editor takes the row's full width, below the label (a big editor). */
+  get wide(): boolean {
+    return false;
+  }
+
   /** The editor component the Settings view renders (gets ``:setting``). */
   abstract get component(): Component;
 

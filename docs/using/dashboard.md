@@ -1,9 +1,24 @@
 # Dashboard and page layout
 
-The **Dashboard** and the **Running** page show panels in two columns. Which panels, in which
-column and order, is a setting: **Settings → Page layout**, one layout per page. Each panel goes
-in the left column, the right column or *Hidden*; ▲ / ▼ order it. Changes save at once and are
-shared by every browser.
+The **Dashboard** and the **Running** page show panels in columns. Which panels, in which column
+and order, is a setting: **Settings → Page layout**, per page. Changes save at once and are shared
+by every browser.
+
+- **1 column / 2 columns / 3 columns** (the tabs at the top): each page has all three layouts,
+  each switched on or off with its checkbox (the last one on stays on). The page uses the
+  widest layout that is on and still gives every column at least 420 px; the editor says from
+  which page width a layout is used. When none fits, the narrowest one that is on is used and
+  its columns wrap one below the other (switch *1 column* off to get that).
+- **Column widths** are twelfths, like a browser grid: − / + on a column takes from or gives to
+  its neighbour.
+- **The round + button** in the corner adds a panel at the end of the first column. A panel can
+  be added more than once.
+- **Drag** a panel to order it or move it to another column; drop it on the bin that appears
+  while dragging to remove it. With a mouse drag the whole card, with a finger its grip (⠿), so
+  the page still scrolls by touch.
+
+A layout saved by an earlier version becomes the two-column layout (and one column with both in
+a row); three columns starts off.
 
 | Panel | Shows |
 |-------|-------|
@@ -24,8 +39,8 @@ shared by every browser.
 Machine panels only appear while the machine backend is reachable (LinuxCNC running); the
 console always shows — it explains why the machine is offline.
 
-Both pages stay loaded in the background: a panel placed on both runs twice (for the camera,
-two streams).
+Both pages stay loaded in the background: a panel placed on both — or twice on one page — runs
+that many times (for the camera, that many streams).
 
 ## The E-stop
 
