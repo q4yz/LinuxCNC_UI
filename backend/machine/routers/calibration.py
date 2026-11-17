@@ -34,6 +34,9 @@ class CalibrationItem(BaseModel):
     due: bool = Field(False, description="The reminder date is today or past.")
     params: List[CalibrationParam] = Field(default_factory=list)
     values: Dict[str, Any] = Field(default_factory=dict, description="The values in use (calibrated or the profile's).")
+    guided: bool = Field(False, description="Start prints a test object; the result comes from measuring it.")
+    figure: str = Field("", description="The card's measuring diagram (skew, pressure_advance).")
+    inputs: List[CalibrationParam] = Field(default_factory=list, description="What to measure on the test print.")
 
 
 class CalibrationList(BaseModel):
@@ -47,6 +50,15 @@ class StartRequest(BaseModel):
 
 class StartResponse(BaseModel):
     command: str
+
+
+class ResultRequest(BaseModel):
+    values: Dict[str, float] = Field(..., description="The measurements, by input name.")
+
+
+class ResultResponse(BaseModel):
+    result: str
+    calibrations: CalibrationList
 
 
 class ReminderRequest(BaseModel):
@@ -69,6 +81,14 @@ def get_calibrations() -> CalibrationList:
                         409: {"description": "Already running."}})
 def start_calibration(calibration_id: str, payload: StartRequest) -> StartResponse:
     return StartResponse(command=get_calibration_service().start(calibration_id, payload.params))
+
+
+@router.post("/{calibration_id}/result", response_model=ResultResponse, operation_id="submitCalibrationResult",
+             summary="A guided calibration's measurements: compute, save and apply the result",
+             responses={400: {"description": "Not guided / bad measurement."}, 404: {"description": "Unknown."}})
+def submit_result(calibration_id: str, payload: ResultRequest) -> ResultResponse:
+    result = get_calibration_service().submit(calibration_id, payload.values)
+    return ResultResponse(result=result, calibrations=_list())
 
 
 @router.put("/{calibration_id}/reminder", response_model=CalibrationList, operation_id="setCalibrationReminder",

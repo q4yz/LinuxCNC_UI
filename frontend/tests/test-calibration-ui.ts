@@ -74,3 +74,20 @@ test("dates", () => {
   assert.equal(relativeDate("2026-11-16T08:00:00", now), "yesterday");
   assert.equal(relativeDate("2026-11-14T08:00:00", now), "3 days ago");
 });
+
+test("guided calibrations: print a test, then measure it", () => {
+  const card = read("components/calibration/CalibrationCard.vue");
+  assert.match(card, /v-if="item\.guided && item\.available"[\s\S]*:data-testid="`calibration-measure-\$\{item\.id\}`"/);
+  assert.match(card, /<CalibrationFigure :figure="item\.figure \?\? ''"/);
+  assert.match(card, /:data-testid="`calibration-input-\$\{item\.id\}-\$\{p\.name\}`"/);
+  assert.match(card, /:disabled="busy \|\| !measuredComplete"/, "all measurements before saving");
+  assert.match(card, /item\.guided \? "Print test" : "Start"/);
+  const view = read("views/CalibrationView.vue");
+  assert.match(view, /if \(item\.guided\) \{[\s\S]*useConfirm\(/, "a test print asks first");
+  assert.match(view, /calibrationFacade\.submit\(item\.id, values\)/);
+  assert.match(read("facades/calibrationFacade.ts"), /CalibrationService\.submitCalibrationResult\(id, \{ values \}\)/);
+  const figure = read("components/calibration/CalibrationFigure.vue");
+  assert.match(figure, /data-testid="calibration-figure-skew"/);
+  assert.match(figure, /data-testid="calibration-figure-pressure_advance"/);
+  for (const kind of ["skew", "pressure_advance"]) assert.ok(CALIBRATIONS[kind]?.steps.length, kind);
+});

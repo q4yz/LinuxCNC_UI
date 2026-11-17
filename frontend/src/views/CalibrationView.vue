@@ -12,6 +12,7 @@ import { describeError } from "../core/error-format";
 import { useConsoleStore } from "../stores/console";
 import { useCalibrationDue } from "../composables/useCalibrationDue";
 import { scheduleEstopCheck } from "../ui/estopClearance";
+import { ModalButtonStyle, useConfirm } from "../core/confirm";
 
 const consoleStore = useConsoleStore();
 const { setDue } = useCalibrationDue();
@@ -59,6 +60,16 @@ async function act<T>(what: string, call: () => Promise<T>): Promise<T | undefin
 }
 
 async function start(item: CalibrationItem, params: Record<string, number>) {
+  if (item.guided) {
+    const ok = await useConfirm({
+      title: "Print a test object",
+      question: `Heats to ${params.hotend ?? "?"} °C / ${params.bed ?? "?"} °C, homes and prints the test object. Is the bed clear and filament loaded?`,
+      confirmButtonText: "Print",
+      confirmButtonStyle: ModalButtonStyle.PRIMARY,
+      rejectButtonText: "Cancel",
+    });
+    if (!ok) return;
+  }
   const command = await act(`starting ${item.id}`, () => calibrationFacade.start(item.id, params));
   if (command) consoleStore.info(`Calibration started: ${command}`);
   await refresh();
@@ -75,6 +86,13 @@ async function clear(item: CalibrationItem) {
     apply(list);
     consoleStore.success("Calibration cleared: the profile's values from the next machine start.");
   }
+}
+
+async function submit(item: CalibrationItem, values: Record<string, number>) {
+  const response = await act("saving the result", () => calibrationFacade.submit(item.id, values));
+  if (!response) return;
+  apply(response.calibrations);
+  consoleStore.success(`Calibration saved: ${response.result}`);
 }
 
 async function command(line: string) {
@@ -144,6 +162,7 @@ onBeforeUnmount(() => {
       @clear="clear(item)"
       @details="meshOpen = true"
       @command="command"
+      @submit="(values) => submit(item, values)"
     />
   </div>
 

@@ -54,6 +54,28 @@ export const CALIBRATIONS: Record<string, CalibrationText> = {
     ],
     saves: "calibration.ini: active right away, and at every start.",
   },
+  skew: {
+    title: "Skew",
+    benefit: "Square parts: corrects X and Y not being exactly at 90° to each other.",
+    steps: [
+      "Start prints a square frame (heats, homes, then prints — a few minutes). Bed clear!",
+      "Leave it on the bed or take it off; the solid tab marks corner A (front left).",
+      "Measure the outer corners with calipers: diagonals AC and BD, the left side AD.",
+      "Enter them below and save.",
+    ],
+    saves: "calibration.ini: the skew factor, active right away and at every start.",
+  },
+  pressure_advance: {
+    title: "Pressure advance",
+    benefit: "Sharp corners and even lines at speed: the extruder runs ahead of the pressure in the nozzle.",
+    steps: [
+      "Start prints a hollow tower; its pressure advance grows with the height (start + factor per mm).",
+      "Look at the corners from the side: find the height where they are sharpest — no bulge, no gap.",
+      "Measure that height from the bed (mm) and enter it below.",
+      "Bowden: try factor 0.02; direct drive: 0.005.",
+    ],
+    saves: "calibration.ini: the pressure advance, active right away and at every start.",
+  },
   input_shaper: {
     title: "Input shaper",
     benefit: "Less ringing / ghosting at high speed, so it can print faster.",

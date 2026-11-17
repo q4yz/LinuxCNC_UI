@@ -16,6 +16,8 @@ export const calibrationFacade = {
   setReminder: (id: string, remindAt: string | null): Promise<CalibrationList> =>
     CalibrationService.setCalibrationReminder(id, { remind_at: remindAt }),
   clear: (id: string): Promise<CalibrationList> => CalibrationService.clearCalibration(id),
+  // a guided calibration's measurements -> its result (saved and applied)
+  submit: (id: string, values: Record<string, number>) => CalibrationService.submitCalibrationResult(id, { values }),
   // PROBE_CALIBRATE's TESTZ / ACCEPT / ABORT go through the console's MDI path
   command: (line: string) => machineStateFacade.sendMdi(line),
 };

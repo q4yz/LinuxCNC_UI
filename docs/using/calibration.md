@@ -17,8 +17,30 @@ The **Calibration** tab has a card for each calibration the machine can run — 
 | Probe Z offset | `PROBE_CALIBRATE`, then the paper test with the card's buttons | `[probe] z_offset` |
 | Heater PID (per heater) | `PID_CALIBRATE` | `pid_Kp` / `pid_Ki` / `pid_Kd` |
 | Input shaper | `SHAPER_CALIBRATE` | the shaper type and frequency per axis |
+| Skew | a test print, then you measure it | the XY skew factor |
+| Pressure advance | a test print, then you measure it | the pressure advance |
 
 A card the machine cannot run (no probe, no accelerometer) says what is missing.
+
+## Test prints: skew and pressure advance
+
+These two cannot measure themselves. **Print test** generates a test object from the profile
+(the bed's size and centre, the nozzle and filament diameter, the temperatures on the card),
+converts it like an uploaded slicer file into `nc_files/calibration/` and starts it — it heats,
+homes and prints; it asks first. Then measure the print, enter the values under *Measure the
+test print* (the drawing shows where) and **Calculate & save**: the result is saved and active
+at once.
+
+- **Skew** — a square frame (100 mm, smaller on a small bed). A solid tab inside the frame marks
+  corner A (front left); B, C, D follow counter-clockwise. Measure the outer corners: the
+  diagonals AC and BD and the left side AD. The square is printed with the skew factor in use;
+  the new factor is that plus what the print still shows. Needs the `jointshape` component:
+  an empty `[skew_correction]` section in the profile is enough.
+- **Pressure advance** — a hollow single-wall tower. Its pressure advance is
+  *start + factor × height*, raised every millimetre; afterwards the value before the print is
+  set again. Find the height where the corners are sharpest (lower: they bulge, higher: gaps
+  or rounded corners) and enter it: K = start + factor × that height. Factor 0.005 suits a
+  direct drive, 0.02 a Bowden extruder.
 **Clear** removes a card's saved values: back to the profile's.
 
 ## calibration.ini

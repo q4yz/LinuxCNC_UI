@@ -8,6 +8,7 @@ import type { CalibrationItem } from "../../facades/calibrationFacade";
 import { CALIBRATIONS, REMINDER_PRESETS, addDays, relativeDate } from "../../config/calibrations";
 import { BaseButton, Icon } from "../../ui";
 import BaseCard from "../../ui/BaseCard.vue";
+import CalibrationFigure from "./CalibrationFigure.vue";
 
 const props = defineProps<{ item: CalibrationItem; busy?: boolean }>();
 const emit = defineEmits<{
@@ -16,6 +17,7 @@ const emit = defineEmits<{
   clear: [];
   details: [];
   command: [line: string];
+  submit: [values: Record<string, number>];
 }>();
 
 const text = computed(() => CALIBRATIONS[props.item.kind] ?? {
@@ -36,8 +38,21 @@ watch(
   { immediate: true },
 );
 
+// guided calibrations: what was measured on the test print
+const measured = ref<Record<string, number | null>>({});
+const measuredComplete = computed(() =>
+  (props.item.inputs ?? []).every((p) => typeof measured.value[p.name] === "number" && !Number.isNaN(measured.value[p.name])),
+);
+function submitMeasured() {
+  const values: Record<string, number> = {};
+  for (const p of props.item.inputs ?? []) values[p.name] = Number(measured.value[p.name]);
+  emit("submit", values);
+}
+
 const session = computed(() => props.item.kind === "probe_z_offset" && !!props.item.values?.session);
-const clearable = computed(() => ["probe_z_offset", "pid", "input_shaper"].includes(props.item.kind));
+const clearable = computed(() =>
+  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance"].includes(props.item.kind),
+);
 const status = computed(() => {
   if (!props.item.available) return { text: "not on this machine", cls: "bg-gray-700 text-gray-400" };
   if (props.item.running || session.value) return { text: "running", cls: "bg-blue-700/60 text-blue-100" };
@@ -53,6 +68,10 @@ const inUse = computed(() => {
       return `Kp ${fmt(v.kp)}  Ki ${fmt(v.ki)}  Kd ${fmt(v.kd)}${v.calibrated ? " (calibrated)" : " (profile)"}`;
     case "probe_z_offset":
       return `z_offset ${fmt(v.z_offset)} mm`;
+    case "skew":
+      return `factor ${fmt(v.factor, 6)}`;
+    case "pressure_advance":
+      return `K ${fmt(v.advance, 4)}`;
     case "input_shaper":
       return `X ${v.type_x ?? "—"} ${fmt(v.freq_x, 1)} Hz, Y ${v.type_y ?? "—"} ${fmt(v.freq_y, 1)} Hz`;
     default:
@@ -166,6 +185,9 @@ function saveReminder() {
       </div>
 
       <div class="mt-auto space-y-2">
+        <h3 v-if="item.guided && item.params?.length" class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Test print
+        </h3>
         <label v-for="p in item.params" :key="p.name" class="flex items-center justify-between gap-2 text-xs text-gray-400">
           <span class="capitalize">{{ p.name }}</span>
           <span class="flex items-center gap-1">
@@ -188,7 +210,7 @@ function saveReminder() {
             :disabled="busy || !item.available || item.running || session"
             :data-testid="`calibration-start-${item.id}`"
             @click="emit('start', { ...params })"
-          >{{ item.running || session ? "Running…" : "Start" }}</BaseButton>
+          >{{ item.running || session ? (item.guided ? "Printing…" : "Running…") : item.guided ? "Print test" : "Start" }}</BaseButton>
           <BaseButton
             v-if="item.kind === 'bed_mesh'"
             variant="secondary"
@@ -206,6 +228,38 @@ function saveReminder() {
           >Clear</BaseButton>
         </div>
       </div>
+
+      <section
+        v-if="item.guided && item.available"
+        class="mt-1 space-y-2 rounded border border-gray-700 bg-gray-900/40 p-2"
+        :data-testid="`calibration-measure-${item.id}`"
+      >
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Measure the test print</h3>
+        <CalibrationFigure :figure="item.figure ?? ''" class="mx-auto" />
+        <label v-for="p in item.inputs" :key="p.name" class="flex items-center justify-between gap-2 text-xs text-gray-400">
+          <span class="uppercase">{{ p.name }}</span>
+          <span class="flex items-center gap-1">
+            <input
+              v-model.number="measured[p.name]"
+              type="number"
+              step="0.01"
+              :min="p.minimum ?? undefined"
+              :max="p.maximum ?? undefined"
+              :placeholder="String(p.default)"
+              class="w-24 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-right font-mono text-gray-200"
+              :data-testid="`calibration-input-${item.id}-${p.name}`"
+            />
+            <span class="w-6">{{ p.unit }}</span>
+          </span>
+        </label>
+        <BaseButton
+          variant="success"
+          size="sm"
+          :disabled="busy || !measuredComplete"
+          :data-testid="`calibration-submit-${item.id}`"
+          @click="submitMeasured"
+        >Calculate &amp; save</BaseButton>
+      </section>
     </div>
   </BaseCard>
 </template>

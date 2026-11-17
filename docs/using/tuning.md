@@ -26,8 +26,8 @@ heater back — at 25 °C over the target, when no peak comes for 10 minutes, or
 `[extruder] pressure_advance` (mm of filament per mm/s): the extruder runs ahead by
 `K × extrusion speed` while it extrudes, so the nozzle pressure follows the speed. Change it
 at runtime with `SET_PRESSURE_ADVANCE ADVANCE=<k>`, `M900 K<k>` (a slicer's), or on the Job
-card. Find it with a pressure advance test print (a tower, changing K per layer). Retracts
-are not advanced.
+card. Find it with the Calibration tab's *Pressure advance* card: it prints the tower and
+computes K from the height you measure ({doc}`calibration`). Retracts are not advanced.
 
 ## Input shaping and the resonance test
 
@@ -60,7 +60,9 @@ machine (not CoreXY).
 
 ## Skew correction
 
-Print a skew calibration square, measure the diagonals AC, BD and the side AD (mm):
+The Calibration tab's *Skew* card prints the square and takes the measurements
+({doc}`calibration`). By hand: print a skew calibration square, measure the diagonals AC, BD
+and the side AD (mm):
 
 ```text
 SET_SKEW XY=140.4,141.6,99.8
