@@ -18,6 +18,7 @@ import ToolPanel from "../components/tools/ToolPanel.vue";
 import MacroPanel from "../components/macros/MacroPanel.vue";
 import McodePanel from "../components/macros/McodePanel.vue";
 import PowerOn from "../components/machine/PowerOn.vue";
+import ProbingPanel from "../components/probing/ProbingPanel.vue";
 import MachineGate from "../components/machine/MachineGate.vue";
 import type { PageLayoutSetting } from "../settings/types/PageLayoutSetting";
 import { COLUMN_RATIO, panelDef, type PageLayout } from "./pagePanels";
@@ -28,6 +29,7 @@ const COMPONENTS: Record<string, Component> = {
   machine: PowerOn,
   dro: DroPanel,
   jog: JogControls,
+  probe: ProbingPanel,
   tools: ToolPanel,
   temperature: TemperaturePanel,
   io: IoPanel,

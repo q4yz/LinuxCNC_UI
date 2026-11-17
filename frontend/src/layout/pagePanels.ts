@@ -27,6 +27,7 @@ export const PANELS: readonly PanelDef[] = Object.freeze([
   { id: "machine", label: "Machine (power)", gate: "Machine" },
   { id: "dro", label: "DRO", gate: "DRO" },
   { id: "jog", label: "Jog controls", gate: "Jog" },
+  { id: "probe", label: "Probing", gate: "Probing" },
   { id: "tools", label: "Tools", gate: "Tools" },
   { id: "temperature", label: "Temperatures", gate: "Temperature" },
   { id: "io", label: "I/O", gate: "I/O" },
@@ -51,7 +52,7 @@ function layout(left: string[], right: string[]): PageLayout {
 
 /** What each page showed before the layout was configurable. */
 export const DEFAULT_LAYOUTS: Readonly<Record<PageId, PageLayout>> = Object.freeze({
-  dashboard: layout(["machine", "dro", "jog", "tools", "temperature", "io", "leds"], ["job", "console", "camera"]),
+  dashboard: layout(["machine", "dro", "jog", "probe", "tools", "temperature", "io", "leds"], ["job", "console", "camera"]),
   running: layout(["job", "axis_speed"], ["tools"]),
 });
 

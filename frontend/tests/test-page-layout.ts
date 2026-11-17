@@ -16,7 +16,7 @@ const { DEFAULT_LAYOUTS, PANEL_IDS, movePanel, normaliseLayout, placementOf, shi
 const { estopOverlap, ESTOP_GAP_PX } = await load("ui/estopClearance.ts");
 
 test("defaults: what the pages showed before, every panel placed exactly once", () => {
-  assert.deepEqual(DEFAULT_LAYOUTS.dashboard.left, ["machine", "dro", "jog", "tools", "temperature", "io", "leds"]);
+  assert.deepEqual(DEFAULT_LAYOUTS.dashboard.left, ["machine", "dro", "jog", "probe", "tools", "temperature", "io", "leds"]);
   assert.deepEqual(DEFAULT_LAYOUTS.dashboard.right, ["job", "console", "camera"]);
   assert.deepEqual(DEFAULT_LAYOUTS.running.left, ["job", "axis_speed"]);
   assert.deepEqual(DEFAULT_LAYOUTS.running.right, ["tools"]);

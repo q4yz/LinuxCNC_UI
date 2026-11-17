@@ -1,12 +1,8 @@
 <script setup lang="ts">
-// Probing panel.
-//
-// Split-pane architecture per the design spec:
-//   1. Configuration header — probe calibration + offsets (would be
-//      "permanent" hardware config, saved to the backend once wired).
-//   2. Cycle selector — a 3x3 grid of corner/edge probing cycles plus
-//      circle / rectangle (Inside/Outside) center-finders, with WCS
-//      target selection and live position readouts.
+// Probing panel (a Dashboard panel, Settings -> Page layout): a 3x3 grid
+// of corner / edge probing cycles plus circle / rectangle (Inside /
+// Outside) center-finders, with the target WCS. The probe's tip diameter
+// and search feed are settings (Settings -> Probing).
 //
 // Clicking a cycle opens ``ProbeParamsDialog`` for the values that
 // cycle needs (``config/probing.ts``), then switches to the target
@@ -17,8 +13,9 @@
 
 import {computed, ref, watch} from "vue";
 import {storeToRefs} from "pinia";
-import {BaseButton, Icon} from "../../ui";
-import BaseInput from "../../ui/BaseInput.vue";
+import {BaseButton} from "../../ui";
+import BaseCard from "../../ui/BaseCard.vue";
+import {probeDiameter, probingFeedrate} from "../../settings/definitions/probing";
 import ProbeParamsDialog from "./ProbeParamsDialog.vue";
 import {useMachineStore} from "../../stores/machine";
 import {useMacrosStore} from "../../stores/macrosStore";
@@ -35,19 +32,7 @@ import {
 const machineStore = useMachineStore();
 const macrosStore = useMacrosStore();
 const consoleStore = useConsoleStore();
-const {droX, droY, droZ, status} = storeToRefs(machineStore);
-
-// --- Configuration header state (would be the "permanent" /
-// hardware-config half in the design doc — local-only for now). ---
-const probeDiameter = ref(4.0);
-const probingFeedrate = ref(100.0);
-const xOffset = ref(0.0);
-const yOffset = ref(0.0);
-const zOffset = ref(0.0);
-
-function saveSettings() {
-  // no-op: persistence not wired yet.
-}
+const {status} = storeToRefs(machineStore);
 
 // --- Cycle-selector / job state (would be the "volatile" half). ---
 const probeMode = ref<ProbeMode>("inside");
@@ -85,11 +70,6 @@ function selectTargetWcs(code: WcsCode) {
   targetWcsTouched.value = true;
   targetWcs.value = code;
 }
-
-// Live position readouts (active WCS), straight from the DRO feed.
-const xPosition = computed(() => Number(droX.value) || 0);
-const yPosition = computed(() => Number(droY.value) || 0);
-const zPosition = computed(() => Number(droZ.value) || 0);
 
 // --- Cycle dialog + dispatch -------------------------------------------
 
@@ -141,7 +121,8 @@ async function runProbe(values: Record<string, number>) {
   const call = buildProbeCall(
       cycle,
       probeMode.value,
-      {probeDiameter: Number(probeDiameter.value), feedrate: Number(probingFeedrate.value)},
+      {probeDiameter: Number(probeDiameter.value ?? probeDiameter.defaultValue),
+        feedrate: Number(probingFeedrate.value ?? probingFeedrate.defaultValue)},
       values,
   );
 
@@ -280,56 +261,21 @@ const TILES: { id: string; cycle: ProbeCycle | null; title: string; testId: stri
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- ============================================================ -->
-    <!-- 1. Configuration header                                       -->
-    <!-- ============================================================ -->
-    <div class="rounded-lg bg-gray-800 border border-gray-700 p-4 space-y-4">
-      <div class="flex flex-wrap items-end gap-4">
-        <BaseButton variant="secondary" @click="toggleProbeMode" data-testid="probe-mode-toggle">
-          {{ isOutside ? "Outside" : "Inside" }}
-        </BaseButton>
-
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Probe Diameter</span>
-          <BaseInput type="number" step="0.01" min="0" v-model="probeDiameter" class="w-32"
-                     data-testid="probe-diameter"/>
-        </label>
-
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Probing Feedrate</span>
-          <BaseInput type="number" step="1" min="0" v-model="probingFeedrate" class="w-32"
-                     data-testid="probing-feedrate"/>
-        </label>
-      </div>
-
-      <div class="flex flex-wrap items-end gap-4">
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">X Offset</span>
-          <BaseInput type="number" step="0.01" v-model="xOffset" class="w-28" data-testid="x-offset"/>
-        </label>
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Y Offset</span>
-          <BaseInput type="number" step="0.01" v-model="yOffset" class="w-28" data-testid="y-offset"/>
-        </label>
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Z Offset</span>
-          <BaseInput type="number" step="0.01" v-model="zOffset" class="w-28" data-testid="z-offset"/>
-        </label>
-
-        <BaseButton variant="primary" class="ml-auto" @click="saveSettings" data-testid="probe-save-settings">
-          <template #icon>
-            <Icon name="save" size="h-4 w-4"/>
-          </template>
-          Save Settings
-        </BaseButton>
-      </div>
-    </div>
-
+  <BaseCard title="Probing" icon="probing" data-testid="probing-panel">
     <!-- ============================================================ -->
     <!-- 2. Cycle selector                                             -->
     <!-- ============================================================ -->
-    <div class="rounded-lg bg-gray-800 border border-gray-700 p-4 space-y-4">
+    <div class="p-4 space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <BaseButton variant="secondary" size="sm" @click="toggleProbeMode" data-testid="probe-mode-toggle"
+                    :title="isOutside ? 'Probing a boss / block (from outside)' : 'Probing a hole / pocket (from inside)'">
+          {{ isOutside ? "Outside" : "Inside" }}
+        </BaseButton>
+        <span class="text-xs text-gray-500" data-testid="probe-settings-summary">
+          tip {{ probeDiameter.value ?? probeDiameter.defaultValue }} mm, {{ probingFeedrate.value ?? probingFeedrate.defaultValue }} mm/min
+          (Settings → Probing)
+        </span>
+      </div>
       <!-- WCS target selection -->
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-xs font-medium text-gray-400 uppercase tracking-wider mr-2">Target WCS</span>
@@ -343,28 +289,6 @@ const TILES: { id: string; cycle: ProbeCycle | null; title: string; testId: stri
         >
           {{ code }}
         </BaseButton>
-      </div>
-
-      <!-- Job position readouts -->
-      <div class="grid grid-cols-3 gap-4 max-w-md">
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">X Position</span>
-          <div class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100" data-testid="x-position">
-            {{ xPosition.toFixed(2) }}
-          </div>
-        </label>
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Y Position</span>
-          <div class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100" data-testid="y-position">
-            {{ yPosition.toFixed(2) }}
-          </div>
-        </label>
-        <label class="text-sm text-gray-200">
-          <span class="mb-1 block text-xs font-medium text-gray-400">Z Position</span>
-          <div class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-gray-100" data-testid="z-position">
-            {{ zPosition.toFixed(2) }}
-          </div>
-        </label>
       </div>
 
       <!-- Grid + bore/boss selector -->
@@ -499,7 +423,7 @@ const TILES: { id: string; cycle: ProbeCycle | null; title: string; testId: stri
         :values="lastValues"
         @run="runProbe"
     />
-  </div>
+  </BaseCard>
 </template>
 
 <style scoped>

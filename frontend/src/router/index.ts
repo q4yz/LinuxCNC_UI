@@ -13,7 +13,6 @@ const SettingsView = () => import('../views/SettingsView.vue')
 const VisualHalEditor = () => import('../views/VisualHalEditor.vue')
 const ConfigView = () => import('../views/ConfigView.vue')
 const DebugView = () => import('../views/DebugView.vue')
-const ProbingView = () => import('../views/ProbingView.vue')
 const CalibrationView = () => import('../views/CalibrationView.vue')
 
 const BUILTIN_ROUTES = [
@@ -21,7 +20,8 @@ const BUILTIN_ROUTES = [
   {path: '/programs', name: 'programs', component: FilesView, meta: { label: 'G-Code Files' },},
   {path: '/jogging', name: 'jogging', component: JoggingView, meta: { label: 'G-Code Files' },},
   {path: '/running', name: 'running', component: RunningView, meta: { label: 'G-Code Files' },},
-  {path: '/probing', name: 'probing', component: ProbingView, meta: { label: 'Probing' },},
+  // probing is a Dashboard panel now (settings: Settings -> Probing)
+  {path: '/probing', redirect: { name: 'dashboard' }},
   {path: '/calibration', name: 'calibration', component: CalibrationView, meta: { label: 'Calibration' },},
   // the bed mesh lives on the Calibration tab now (its Details pop-up)
   {path: '/bedmesh', redirect: { name: 'calibration' }},

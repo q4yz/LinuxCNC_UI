@@ -10,6 +10,7 @@ shared by every browser.
 | Machine (power) | machine state, E-STOP, POWER, RESET MCU |
 | DRO | positions, homed state, Home all, macro buttons per axis |
 | Jog controls | jog buttons and speed — {doc}`jogging` |
+| Probing | probing cycles: edges, corners, bore / boss and pocket / block centres into a work offset; the probe's tip diameter and search feed are **Settings → Probing** |
 | Tools | extruder, spindle and heater controls |
 | Temperatures | readings, targets, chart |
 | I/O | fans, output and input pins |
