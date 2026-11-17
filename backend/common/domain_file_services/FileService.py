@@ -65,6 +65,10 @@ class FileMetadata:
     modified: Optional[str] = None
     read_only: bool = False
     has_marker: bool = False
+    #: Programs: ``"converting"`` (an upload being converted in the
+    #: background) / ``"failed"`` (its conversion failed: ``message``).
+    status: Optional[str] = None
+    message: Optional[str] = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

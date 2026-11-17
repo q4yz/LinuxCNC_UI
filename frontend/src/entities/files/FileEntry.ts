@@ -12,6 +12,9 @@ export interface FileEntryParams {
   modified?: string | null;
   readOnly?: boolean;
   hasMarker?: boolean;
+  /** Programs: still converting in the background, or the conversion failed. */
+  status?: "converting" | "failed" | null;
+  message?: string | null;
 }
 
 export class FileEntry {
@@ -23,6 +26,8 @@ export class FileEntry {
   private readonly _modified: string | null;
   private readonly _readOnly: boolean;
   private readonly _hasMarker: boolean;
+  private readonly _status: "converting" | "failed" | null;
+  private readonly _message: string | null;
 
   constructor({
                 name,
@@ -33,6 +38,8 @@ export class FileEntry {
                 modified = null,
                 readOnly = false,
                 hasMarker = false,
+                status = null,
+                message = null,
               }: FileEntryParams) {
     if (typeof name !== "string" || name.length === 0) {
       throw new Error("FileEntry: name must be a non-empty string");
@@ -46,6 +53,17 @@ export class FileEntry {
     this._modified = typeof modified === "string" && modified.length > 0 ? modified : null;
     this._readOnly = Boolean(readOnly);
     this._hasMarker = Boolean(hasMarker);
+    this._status = status === "converting" || status === "failed" ? status : null;
+    this._message = typeof message === "string" && message.length > 0 ? message : null;
+  }
+
+  /** ``converting`` / ``failed`` for an upload being converted; else ``null``. */
+  get status(): "converting" | "failed" | null {
+    return this._status;
+  }
+
+  get message(): string | null {
+    return this._message;
   }
 
   get name(): string {

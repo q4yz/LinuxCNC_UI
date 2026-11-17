@@ -68,7 +68,7 @@ test("FileManager shows thumbnails and opens the preview modal", () => {
   assert.match(text, /parseGcodeToolpath\(/, "preview parses the file with the shared parser");
   assert.match(text, /readFileContent\(/, "preview reads the file through the existing service call");
   // Row click opens the preview; action buttons must not bubble into it.
-  assert.match(text, /@click="openPreview\(file\)"/, "row click opens the preview");
+  assert.match(text, /@click="!file\.status && openPreview\(file\)"/, "row click opens the preview (once converted)");
   assert.match(text, /@click\.stop/, "action buttons stop propagation");
 });
 
@@ -79,7 +79,8 @@ test("row: Load / Unload outside, Edit / Download / Delete in the ⋮ menu, load
   // Rows are addressed by path (``project/part.ngc``) — names repeat across folders.
   assert.match(text, /data-test="`file-row-load-\$\{file\.path\}`"/, "row offers Load");
   assert.match(text, /isLoaded\(file\.path\) \? unloadFile\(file\.path\) : loadFile\(file\.path\)/);
-  assert.match(text, /:disabled="!isMachineOnline \|\| busyFile !== null"/, "Load needs the machine service");
+  assert.match(text, /:disabled="!isMachineOnline \|\| busyFile !== null \|\| file\.status !== null"/,
+    "Load needs the machine service and a converted file");
 
   // Everything else lives in the shared menu.
   assert.match(text, /<ActionMenu :items="ROW_MENU"/);

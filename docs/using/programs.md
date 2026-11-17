@@ -21,6 +21,11 @@ then nothing is ever started from the network.
 
 ## What the converter changes
 
+The conversion runs in the background: the upload returns at once and the file list shows the
+file as *converting…* until it is stored (a large print takes some seconds, more on a small host
+such as the BTT CB1); then the console reports it ready and it can be loaded. A file whose
+conversion failed is listed as *conversion failed* — the tooltip says why — for ten minutes.
+
 A `.gcode` upload is converted for LinuxCNC and stored as `.ngc`:
 
 | Slicer G-code | Becomes |

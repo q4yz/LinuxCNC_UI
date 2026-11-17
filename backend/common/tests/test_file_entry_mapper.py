@@ -5,7 +5,8 @@ from domain_file_services.FileService import FileMetadata
 from mappers.files import FileEntryMapper
 from models.FileModels import FileEntryResponse
 
-STANDARD_FIELDS = {"name", "path", "parent", "kind", "size_bytes", "modified", "read_only", "has_marker"}
+STANDARD_FIELDS = {"name", "path", "parent", "kind", "size_bytes", "modified", "read_only", "has_marker", "status",
+                   "message"}
 
 
 def test_standard_fields():
@@ -22,6 +23,8 @@ def test_metadata_maps_one_to_one():
         modified="2026-10-09T12:00:00",
         read_only=True,
         has_marker=True,
+        status="failed",
+        message="bad G-code",
     )
     assert FileEntryMapper.to_response(meta).model_dump() == {
         "name": "part.ngc",
@@ -32,6 +35,8 @@ def test_metadata_maps_one_to_one():
         "modified": "2026-10-09T12:00:00",
         "read_only": True,
         "has_marker": True,
+        "status": "failed",
+        "message": "bad G-code",
     }
 
 

@@ -54,7 +54,7 @@ THUMBNAIL_HEAD_BYTES = 512 * 1024
 class UploadFileResponse(BaseModel):
     """Response returned after a successful file upload."""
 
-    status: str = Field(..., description="Outcome summary (e.g., 'ok')")
+    status: str = Field(..., description="'ok', or 'converting' (the listing shows it until it is stored)")
     filename: str = Field(..., description="Sanitized filename that was stored on disk")
     message: str = Field(..., description="Human-readable upload confirmation")
 
@@ -124,7 +124,8 @@ def upload_file(
 
     try:
         payload = file.file.read()
-        safe_filename = service.save_upload(safe_filename, payload)
+        # converted on a thread: a big print takes a while on a small host
+        safe_filename = service.save_upload(safe_filename, payload, background=True)
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -137,10 +138,12 @@ def upload_file(
     finally:
         file.file.close()
 
+    converting = service.conversion_state(safe_filename) is not None
     return UploadFileResponse(
-        status="ok",
+        status="converting" if converting else "ok",
         filename=safe_filename,
-        message=f"Uploaded {safe_filename} successfully.",
+        message=(f"Uploaded — converting {safe_filename}." if converting
+                 else f"Uploaded {safe_filename} successfully."),
     )
 
 

@@ -8,7 +8,7 @@
 // blue ⊕ in the corner creates a folder. Routes the user to
 // ``EditorView`` on Edit so the page chrome stays visible while editing.
 
-import {ref, shallowRef, computed, onMounted, watch} from 'vue'
+import {ref, shallowRef, computed, onMounted, onBeforeUnmount, watch} from 'vue'
 
 import {useConsoleStore} from '../stores/console'
 import {openInEditor} from '../helpers/openInEditor'
@@ -109,9 +109,10 @@ const loadBlockedTitle = 'Machine service is offline — start the machine to lo
 
 const { thumbnails, ensure } = useFileThumbnails()
 
-// Only the files of the open folder need their icon.
+// Only the files of the open folder need their icon (once converted:
+// a converting upload has no file yet, and an empty icon would stick).
 watch(sortedFiles, (list) => {
-  for (const file of list) void ensure(file.path)
+  for (const file of list) if (!file.status) void ensure(file.path)
 })
 
 const previewFile = shallowRef<FileEntry | null>(null)
@@ -152,13 +153,32 @@ const describeError = (error: unknown) => describeErrorOr(error, 'Unknown error'
 
 // ---- File management: list / upload / delete / read -------------- //
 
+// Uploads convert in the background: while one does, the list refreshes
+// itself and reports when it is ready (or why it failed).
+let conversionTimer: ReturnType<typeof setTimeout> | null = null
+const CONVERSION_POLL_MS = 1500
+
 async function fetchFiles() {
+  const before = new Map(files.value.map((f) => [f.path, f.status]))
   try {
     files.value = await filesFacade.listFiles()
   } catch (error) {
     consoleStore.error(`Failed to fetch files: ${describeError(error)}`)
   }
+  for (const file of files.value) {
+    if (before.get(file.path) !== 'converting') continue
+    if (file.status === null) consoleStore.success(`Converted ${file.path} — ready to load`)
+    else if (file.status === 'failed') consoleStore.error(`Converting ${file.path} failed: ${file.message ?? 'unknown error'}`)
+  }
+  if (conversionTimer) clearTimeout(conversionTimer)
+  conversionTimer = files.value.some((f) => f.status === 'converting')
+      ? setTimeout(fetchFiles, CONVERSION_POLL_MS)
+      : null
 }
+
+onBeforeUnmount(() => {
+  if (conversionTimer) clearTimeout(conversionTimer)
+})
 
 async function readFileContent(filename: string) {
   // ``readFile`` throws on 404. Treat that as "brand-new file" so
@@ -511,8 +531,8 @@ onMounted(() => {
             :class="isLoaded(file.path) ? 'bg-blue-900/40 ring-1 ring-inset ring-blue-500/60' : 'hover:bg-gray-700/40'"
             :data-loaded="isLoaded(file.path) || undefined"
             :data-test="`file-row-${file.path}`"
-            draggable="true"
-            @click="openPreview(file)"
+            :draggable="!file.status"
+            @click="!file.status && openPreview(file)"
             @dragstart="drag.onDragStart(file.path, $event)"
             @dragend="drag.onDragEnd"
         >
@@ -538,6 +558,18 @@ onMounted(() => {
                 v-if="isLoaded(file.path)"
                 class="ml-2 rounded border border-blue-500 px-1.5 py-0.5 align-middle font-sans text-[10px] uppercase tracking-widest text-blue-200"
             >loaded</span>
+            <span
+                v-if="file.status === 'converting'"
+                class="ml-2 animate-pulse rounded border border-amber-500 px-1.5 py-0.5 align-middle font-sans text-[10px] uppercase tracking-widest text-amber-200"
+                title="Converting the slicer's G-code for LinuxCNC — it can be loaded once this is done"
+                :data-test="`file-converting-${file.path}`"
+            >converting…</span>
+            <span
+                v-else-if="file.status === 'failed'"
+                class="ml-2 rounded border border-red-500 px-1.5 py-0.5 align-middle font-sans text-[10px] uppercase tracking-widest text-red-200"
+                :title="file.message ?? 'The conversion failed'"
+                :data-test="`file-failed-${file.path}`"
+            >conversion failed</span>
           </td>
           <td class="py-2 px-2">{{ formatSize(file.sizeBytes) }}</td>
           <td class="py-2 px-2 text-gray-400">{{ formatDate(file.modified) }}</td>
@@ -546,7 +578,7 @@ onMounted(() => {
               <BaseButton
                   size="sm"
                   :variant="isLoaded(file.path) ? 'danger' : 'primary'"
-                  :disabled="!isMachineOnline || busyFile !== null"
+                  :disabled="!isMachineOnline || busyFile !== null || file.status !== null"
                   :loading="busyFile === file.path"
                   :title="isMachineOnline ? undefined : loadBlockedTitle"
                   :data-test="`file-row-load-${file.path}`"

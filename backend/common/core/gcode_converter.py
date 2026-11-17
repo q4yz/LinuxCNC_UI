@@ -159,7 +159,8 @@ def _commented(code: str, reason: str, comment: str) -> str:
 
 
 def _words(code: str) -> list[tuple[str, str]]:
-    return [(letter.upper(), value) for letter, value in _WORD.findall(code)]
+    # upper-cased once: the letters come out upper case, the numbers unchanged
+    return _WORD.findall(code.upper())
 
 
 def convert(
@@ -205,7 +206,9 @@ def convert(
 
     for number, raw in enumerate(text.splitlines(), start=1):
         raw = raw.rstrip("\r")
-        marker, object_name = _object_marker(raw)
+        # split and parsed once per line; the helpers below share it
+        code, comment = _split_comment(raw)
+        marker, object_name = _object_marker(raw, code)
         if marker in ("start", "end", "boundary"):
             close_block()
         if marker == "start" and object_name is not None:
@@ -217,12 +220,13 @@ def convert(
             if object_name in state.objects:
                 block = {"start": len(out) + 1, "index": state.objects.index(object_name)}
         if marker in ("start", "end", "define"):
-            code = _split_comment(raw)[0].strip()
-            out.append(f"; {raw.strip()}" if code else raw)
+            out.append(f"; {raw.strip()}" if code.strip() else raw)
             continue
-        _track_feed(raw, state)
-        line, note = _convert_line(raw, state, macros)
-        _track_position(raw, state)
+        words = _words(code)
+        move = bool(words) and bool(_MOVE.match(code))
+        _track_feed(words, move, state)
+        line, note = _convert_line(raw, state, macros, (code, comment, words))
+        _track_position(words, move, state)
         line, cut_note = _limit_length(line)
         note = note or cut_note
         out.append(line)
@@ -284,12 +288,14 @@ def _is_move(line: str) -> bool:
     return bool(_MOVE.match(_split_comment(line)[0]))
 
 
-def _object_marker(raw: str) -> tuple[str | None, str | None]:
+def _object_marker(raw: str, code: str | None = None) -> tuple[str | None, str | None]:
     """``("start", name)``, ``("end", None)``, ``("define", None)`` (an
     object marker line, not converted), ``("boundary", None)`` (a layer
     change / the end G-code: ends an object block, the line stays) or
-    ``(None, None)``."""
-    code = _split_comment(raw)[0].strip()
+    ``(None, None)``. ``code``: the line without its comment, if split."""
+    code = (_split_comment(raw)[0] if code is None else code).strip()
+    if code and code[0] in "Gg":
+        return None, None  # a move: the common case, no marker
     upper = code.upper()
     if upper.startswith("EXCLUDE_OBJECT_START"):
         match = _KLIPPER_NAME.search(code)
@@ -343,12 +349,11 @@ def _grow_bounds(state: _State, x: float, y: float) -> None:
         b[0], b[1], b[2], b[3] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
 
 
-def _track_position(raw: str, state: _State) -> None:
+def _track_position(words: list[tuple[str, str]], move: bool, state: _State) -> None:
     """The XY position after an absolute G0-G3 (relative moves lose it)."""
-    code = _split_comment(raw)[0]
-    if not _is_move(code):
+    if not move:
         return
-    values = dict(_words(code))
+    values = dict(words)
     if state.xyz_relative:
         state.x = state.y = None
         return
@@ -358,16 +363,16 @@ def _track_position(raw: str, state: _State) -> None:
         state.y = float(values["Y"])
 
 
-def _track_feed(raw: str, state: _State) -> None:
+def _track_feed(words: list[tuple[str, str]], move: bool, state: _State) -> None:
     """Remember the file's feed rate (a G0-G3 / bare F line's F)."""
-    code = _split_comment(raw)[0]
-    words = _words(code)
-    letters = {letter for letter, _ in words}
-    if "F" not in letters or "M" in letters:
-        return
-    if "G" in letters and not _is_move(code):
-        return
-    state.feed = float(dict(words)["F"])
+    feed = None
+    for letter, value in words:
+        if letter == "M" or (letter == "G" and not move):
+            return
+        if letter == "F":
+            feed = value
+    if feed is not None:
+        state.feed = float(feed)
 
 
 def _retraction(stripped: str, state: _State, comment: str, unretract: bool) -> tuple[str, str | None]:
@@ -413,13 +418,26 @@ def read_prestart(head: str) -> list[str]:
     return []
 
 
-def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str | None]:
-    code, comment = _split_comment(raw)
+def _convert_line(raw: str, state: _State, macros: set[str],
+                  parsed: tuple[str, str, list[tuple[str, str]]] | None = None) -> tuple[str, str | None]:
+    """``parsed``: (code, comment, words) when the caller split it already."""
+    code, comment = (parsed[0], parsed[1]) if parsed is not None else _split_comment(raw)
     stripped = code.strip()
     if not stripped:
         return raw, None
     upper = stripped.upper()
+    # A G-code word (G1 X…, the bulk of a print) is no keyword, macro or M117.
+    if not (upper[0] == "G" and _WORD.match(stripped)):
+        special = _special_line(stripped, upper, state, comment, macros)
+        if special is not None:
+            return special
+    return _convert_words(raw, code, stripped, comment, state,
+                          parsed[2] if parsed is not None else _words(stripped))
 
+
+def _special_line(stripped: str, upper: str, state: _State, comment: str,
+                  macros: set[str]) -> tuple[str, str | None] | None:
+    """Klipper keywords, a macro call, M117 — ``None`` for anything else."""
     if upper.startswith("SET_LED"):
         return _set_led(stripped, state, comment)
     if upper.startswith("SET_GCODE_OFFSET"):
@@ -443,8 +461,11 @@ def _convert_line(raw: str, state: _State, macros: set[str]) -> tuple[str, str |
     if upper.startswith("M117"):
         message = stripped[4:].strip().replace("(", "[").replace(")", "]")
         return f"(MSG, {message})" + (f"  {comment}" if comment else ""), None
+    return None
 
-    words = _words(stripped)
+
+def _convert_words(raw: str, code: str, stripped: str, comment: str, state: _State,
+                   words: list[tuple[str, str]]) -> tuple[str, str | None]:
     if not words:
         return raw, None
     letters = {letter for letter, _ in words}
@@ -634,8 +655,12 @@ def _remapped(m: int, words: list[tuple[str, str]], comment: str) -> str:
     return " ".join(parts) + (f"  {comment}" if comment else "")
 
 
+_E_WORD = re.compile(r"[Ee]\s*[-+]?(?:\d+\.?\d*|\.\d+)")
+
+
 def _extrude(code: str, words: list[tuple[str, str]], state: _State, comment: str) -> str:
-    e = float(dict(words)["E"])
+    values = dict(words)
+    e = float(values["E"])
     delta = e if state.e_relative else e - state.e_position
     state.e_position = state.e_position + delta if state.e_relative else e
     state.a_total += delta
@@ -643,11 +668,10 @@ def _extrude(code: str, words: list[tuple[str, str]], state: _State, comment: st
         state.printing = True
         # the area of the print: the move's start and end (absolute moves)
         if not state.xyz_relative and state.x is not None and state.y is not None:
-            values = dict(words)
             _grow_bounds(state, state.x, state.y)
             _grow_bounds(state, float(values.get("X", state.x)), float(values.get("Y", state.y)))
     a = delta if state.xyz_relative else state.a_total
-    converted = re.sub(r"[Ee]\s*[-+]?(?:\d+\.?\d*|\.\d+)", f"A{_fmt(a)}", code, count=1)
+    converted = _E_WORD.sub(f"A{_fmt(a)}", code, count=1)
     return converted.rstrip() + (f"  {comment}" if comment else "")
 
 
