@@ -65,11 +65,17 @@ class ProgramFileService(FileService):
         """The active machine's ``hardware.json``; ``None`` without one."""
         import json
 
+        from core.calibration_file import CalibrationFile, calibration_path, overlay_payload
+
+        path = paths.default_machine_hardware_json()
         try:
-            payload = json.loads(paths.default_machine_hardware_json().read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        return payload if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        # the calibrated retraction (Calibration tab) for G10 / G11
+        return overlay_payload(payload, CalibrationFile(calibration_path(path.parent)).values())
 
     @staticmethod
     def _part_fans(payload: Optional[Dict[str, Any]]) -> Optional[int]:

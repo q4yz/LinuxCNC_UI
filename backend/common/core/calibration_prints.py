@@ -88,6 +88,8 @@ class _Writer:
     y: Optional[float] = None
     z: float = 0.0
     retracted: bool = False
+    retract_length: float = RETRACT
+    retract_speed: float = RETRACT_SPEED
 
     def emit(self, line: str) -> None:
         self.lines.append(line)
@@ -98,7 +100,7 @@ class _Writer:
 
     def travel(self, x: float, y: float) -> None:
         if self.x is not None and math.hypot(x - self.x, y - (self.y or 0.0)) > 2.0 and not self.retracted:
-            self.emit(f"G1 E-{RETRACT:g} F{RETRACT_SPEED * 60:g}")
+            self.emit(f"G1 E-{self.retract_length:.3f} F{self.retract_speed * 60:g}")
             self.retracted = True
         self.emit(f"G0 X{x:.3f} Y{y:.3f} F{TRAVEL_SPEED * 60:g}")
         self.x, self.y = x, y
@@ -109,7 +111,7 @@ class _Writer:
 
     def extrude(self, x: float, y: float, speed: float, width: Optional[float] = None) -> None:
         if self.retracted:
-            self.emit(f"G1 E{RETRACT:g} F{RETRACT_SPEED * 60:g}")
+            self.emit(f"G1 E{self.retract_length:.3f} F{self.retract_speed * 60:g}")
             self.retracted = False
         assert self.x is not None and self.y is not None
         length = math.hypot(x - self.x, y - self.y)
@@ -167,7 +169,7 @@ class _Writer:
         self.travel(x0, y0)
         self.layer_z(s.layer)
         self.extrude(min(x0 + 80.0, s.x_max - BED_MARGIN / 2), y0, FIRST_LAYER_SPEED, width=s.width * 1.5)
-        self.emit("G1 E-0.8 F2100")
+        self.emit(f"G1 E-{self.retract_length:.3f} F{self.retract_speed * 60:g}")
         self.retracted = True
         self.layer_z(s.layer + 0.6)
 
@@ -367,6 +369,47 @@ def first_layer_result(current: float, live_offset: float) -> float:
     return round(current - live_offset, 4)
 
 
-__all__ = ["PrintSettings", "extrude_test", "first_layer_patches", "first_layer_result", "flow_cube", "flow_result",
+# --------------------------------------------------------------------------- #
+# Retraction                                                                   #
+# --------------------------------------------------------------------------- #
+
+def retraction_tower(s: PrintSettings, start: float = 0.0, factor: float = 0.05, height: float = 30.0,
+                     speed: float = 35.0, band: float = 1.0, gap: float = 40.0) -> str:
+    """Two small towers ``gap`` mm apart; every layer travels between them
+    with a retraction of ``start + factor * z`` (stepped every ``band`` mm)
+    at ``speed`` mm/s: the stringing between them stops at a height."""
+    side = 10.0
+    cx, cy = s.centre
+    gap = min(gap, s.largest(gap + side) - side)
+    towers = [(cx - gap / 2, cy), (cx + gap / 2, cy)]
+    layers = max(5, round(height / s.layer))
+    out = _Writer(s)
+    out.start(f"retraction tower: {start:g} + {factor:g} mm per mm at {speed:g} mm/s")
+    out.retract_speed = speed
+    for n in range(layers):
+        z = s.layer * (n + 1)
+        out.retract_length = max(0.0, start + factor * (int(z // band) * band)) if n else RETRACT
+        out.emit(f"; layer {n + 1}/{layers}, retraction {out.retract_length:.2f} mm")
+        if n == 1:
+            out.emit("M106 S255")
+        out.layer_z(z)
+        order = towers if n % 2 == 0 else towers[::-1]
+        for tx, ty in order:
+            x0, y0, x1, y1 = tx - side / 2, ty - side / 2, tx + side / 2, ty + side / 2
+            for k in range(3):
+                inset = s.width / 2 + k * s.width
+                out.rectangle(x0 + inset, y0 + inset, x1 - inset, y1 - inset,
+                              FIRST_LAYER_SPEED if n == 0 else 40.0)
+    out.end()
+    return "\n".join(out.lines) + "\n"
+
+
+def retraction_result(start: float, factor: float, height: float) -> float:
+    if height < 0:
+        raise ValueError("the height cannot be negative")
+    return round(start + factor * height, 2)
+
+
+__all__ = ["PrintSettings", "extrude_test", "retraction_result", "retraction_tower", "first_layer_patches", "first_layer_result", "flow_cube", "flow_result",
            "steps_result", "pa_result", "pa_tower", "pa_value", "settings_from_payload", "skew_result",
            "skew_square"]

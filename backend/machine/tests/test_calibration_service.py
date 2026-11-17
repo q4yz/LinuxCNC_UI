@@ -50,7 +50,7 @@ def test_catalog_follows_the_machine(svc):
     listing = svc.listing()
     ids = [i["id"] for i in listing["items"]]
     assert ids == ["bed_mesh", "z_tilt", "probe_accuracy", "probe_z_offset", "pid_heater_extruder", "pid_heater_bed",
-                   "input_shaper", "skew", "pressure_advance", "extruder_steps", "flow", "first_layer"]
+                   "input_shaper", "skew", "pressure_advance", "extruder_steps", "flow", "first_layer", "retraction"]
     assert _item(listing, "bed_mesh")["available"] and not _item(listing, "z_tilt")["available"]
     assert "z_tilt" in _item(listing, "z_tilt")["reason"]
     pid = _item(listing, "pid_heater_extruder")
@@ -290,3 +290,46 @@ def test_first_layer_into_z_home_offset(guided, monkeypatch):
     guided.tuning.z_offset = -0.08  # the nozzle had to go down
     assert "Z's home position saved" in guided.svc.submit("first_layer", {})
     assert module.calibration_file().load()["JOINT_2"] == {"HOME_OFFSET": "0.08"}
+
+
+def test_retraction(guided):
+    guided.svc.start("retraction", {"hotend": 210, "bed": 60, "start": 0.2, "factor": 0.1, "height": 20, "speed": 40})
+    assert "retraction tower: 0.2 + 0.1 mm per mm at 40 mm/s" in guided.prints["retraction_tower"]
+    assert guided.svc.submit("retraction", {"height": 8}).startswith("retract 1 mm at 40 mm/s")
+    values = module.calibration_file().values()
+    assert values["RETRACT_LENGTH"] == "1" and values["RETRACT_SPEED"] == "40"
+    with pytest.raises(BadRequestError, match="only 20 mm"):
+        guided.svc.submit("retraction", {"height": 30})
+    guided.svc.clear("retraction")
+    assert "RETRACT_LENGTH" not in module.calibration_file().values()
+
+
+def test_sensorless_halves_the_range(guided, monkeypatch):
+    import services.HardwareConfigService as hw
+
+    payload = {**PAYLOAD,
+               "joints": [*PAYLOAD["joints"], {"id": "stepper_x", "driver": "driver_stepper_x", "joint_number": 0}],
+               "axes": [*PAYLOAD["axes"], {"id": "x", "joint_numbers": [0]}][1:],
+               "drivers": [{"id": "driver_stepper_x", "diag_pin": "^PG6", "stall_sensitivity": 100}]}
+    payload["axes"] = [{"id": "x", "joint_numbers": [0], "position_max": 235},
+                       {"id": "y", "position_max": 235}, {"id": "z", "position_max": 250, "joint_numbers": [2]}]
+    monkeypatch.setattr(hw.HardwareConfigService, "load_payload", lambda self: payload)
+    card = _item(guided.svc.listing(), "sensorless_stepper_x")
+    assert card["label"] == "X" and card["values"]["loaded"] == 100 and card["values"]["suggestion"] == 128
+    assert guided.svc.start("sensorless_stepper_x", {}) == "G28 X"
+    # 100 stopped early: lower
+    assert guided.svc.submit("sensorless_stepper_x", {"verdict": -1}) == "X: try 50 (between 0 and 100)."
+    assert "threshold 50 saved" in guided.svc.submit("sensorless_stepper_x", {"threshold": 50})
+    assert module.calibration_file().values()["STALL_STEPPER_X"] == "50"
+    module.calibration_file().set_state("sensorless_stepper_x", loaded=50)  # the system backend at the restart
+    # 50 ground at the end: raise
+    assert guided.svc.submit("sensorless_stepper_x", {"verdict": 1}) == "X: try 75 (between 50 and 100)."
+    module.calibration_file().update({"CALIBRATION": {"STALL_STEPPER_X": 75}})
+    module.calibration_file().set_state("sensorless_stepper_x", loaded=75)
+    assert guided.svc.submit("sensorless_stepper_x", {"verdict": 0}) == "X: threshold 75 kept."
+    card = _item(guided.svc.listing(), "sensorless_stepper_x")
+    assert card["result"] == "X: threshold 75 homes cleanly" and card["values"]["low"] == 0
+    with pytest.raises(BadRequestError, match="1 … 255"):
+        guided.svc.submit("sensorless_stepper_x", {"threshold": 300})
+    guided.svc.clear("sensorless_stepper_x")
+    assert "STALL_STEPPER_X" not in module.calibration_file().values()

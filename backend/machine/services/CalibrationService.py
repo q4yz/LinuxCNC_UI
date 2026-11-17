@@ -29,7 +29,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from core.calibration_file import (FLOW, INPUT_SHAPER_SECTION, PRESSURE_ADVANCE, PROBE_Z_OFFSET, SHAPER_FREQ, SHAPER_TYPE,
+from core.calibration_file import (FLOW, INPUT_SHAPER_SECTION, PRESSURE_ADVANCE, RETRACT_LENGTH, RETRACT_SPEED, STALL, PROBE_Z_OFFSET, SHAPER_FREQ, SHAPER_TYPE,
                                    SKEW_XY, VALUES, CalibrationFile, calibration_path)
 from exceptions import BadRequestError, ConflictError, NotFoundError
 
@@ -68,6 +68,10 @@ class Calibration:
     inputs: List[Param] = field(default_factory=list)
     submit: Optional[Callable[[Mapping[str, float]], str]] = None
     figure: str = ""
+
+
+def _home_command(axis: str) -> Callable[[Mapping[str, float]], str]:
+    return lambda p: f"G28 {axis}"
 
 
 def _pid_command(heater_id: str) -> Callable[[Mapping[str, float]], str]:
@@ -300,6 +304,11 @@ class CalibrationService:
             raise BadRequestError("This calibration measures by itself — no values to enter.")
         if not item.available:
             raise BadRequestError(item.reason)
+        if not item.inputs:  # its own controls (sensorless homing): numbers as sent
+            try:
+                return item.submit({k: float(v) for k, v in measured.items()})
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError("The values must be numbers.") from exc
         values = {}
         for p in item.inputs:
             raw = measured.get(p.name)
@@ -349,6 +358,11 @@ class CalibrationService:
         elif item.kind == "extruder_steps":
             joint = item.values.get("joint")
             store.update({f"JOINT_{joint}": {"SCALE": None}})
+        elif item.kind == "retraction":
+            store.update({VALUES: {RETRACT_LENGTH: None, RETRACT_SPEED: None}})
+        elif item.kind == "sensorless":
+            store.update({VALUES: {STALL.format(joint=item.id[len("sensorless_"):].upper()): None}})
+            store.set_state(item.id, low=None, high=None, loaded=None)
         elif item.kind == "pressure_advance":
             store.update({VALUES: {PRESSURE_ADVANCE: None}})
             from services.PrintTuningService import get_print_tuning_service
@@ -690,7 +704,112 @@ def _more_guided(payload: Mapping[str, Any], heaters: List[Param], store: Calibr
         print_test=print_first_layer, submit=submit_first_layer, figure="first_layer",
         inputs=[],
     )
-    return [steps, flow, first]
+    return [steps, flow, first, _retraction(payload, heaters, store), *_sensorless(payload, store)]
+
+
+def _retraction(payload: Mapping[str, Any], heaters: List[Param], store: CalibrationFile) -> Calibration:
+    """A tower pair with a growing retraction; saved as [firmware_retraction]
+    retract_length (the G10 / G11 of files uploaded from then on)."""
+    from core.calibration_prints import retraction_result, retraction_tower, settings_from_payload
+
+    def print_retraction(p: Mapping[str, float]) -> str:
+        text = retraction_tower(settings_from_payload(payload, p["hotend"], p["bed"]), start=p["start"],
+                                factor=p["factor"], height=p["height"], speed=p["speed"])
+        message = start_test_print("retraction_tower", text)
+        store.set_state("retraction", print_start=f"{p['start']:g}", print_factor=f"{p['factor']:g}",
+                        print_height=f"{p['height']:g}", print_speed=f"{p['speed']:g}")
+        return message
+
+    def submit_retraction(m: Mapping[str, float]) -> str:
+        state = store.state("retraction")
+        try:
+            start, factor, speed = float(state["print_start"]), float(state["print_factor"]), float(state["print_speed"])
+        except (KeyError, ValueError) as exc:
+            raise BadRequestError("Print the towers first: their start / factor are not known.") from exc
+        if m["height"] > float(state.get("print_height") or 1e9) + 1:
+            raise BadRequestError(f"The towers are only {state.get('print_height')} mm tall.")
+        length = retraction_result(start, factor, m["height"])
+        result = f"retract {length:g} mm at {speed:g} mm/s (no strings from {m['height']:g} mm)"
+        record("retraction", result, {VALUES: {RETRACT_LENGTH: length, RETRACT_SPEED: speed}})
+        return (result + " — used for the G10 / G11 of files uploaded from now on (slicer: firmware retraction); "
+                "upload earlier files again.")
+
+    current = (payload.get("firmware_retraction") or {}) if isinstance(payload.get("firmware_retraction"), dict) else {}
+    return Calibration(
+        "retraction", "retraction", "", bool(_extruder(payload)), "The profile has no [extruder].",
+        params=heaters + [Param("start", 0.0, "mm", 0, 10), Param("factor", 0.05, "/mm", 0.005, 0.5),
+                          Param("height", 30, "mm", 5, 80), Param("speed", 35, "mm/s", 10, 120)],
+        running=_printing("retraction_tower"),
+        values={"length": current.get("retract_length"), "speed": current.get("retract_speed")},
+        print_test=print_retraction, submit=submit_retraction, figure="retraction",
+        inputs=[Param("height", 10, "mm", 0, 80)],
+    )
+
+
+def _sensorless(payload: Mapping[str, Any], store: CalibrationFile) -> List[Calibration]:
+    """One card per joint homed by StallGuard (``[tmc2209] diag_pin`` +
+    ``driver_SGTHRS``): try a threshold (it reaches the board at the next
+    LinuxCNC start), home, say how it went; halving the range each time."""
+    from services.HomingRoutineService import get_homing_routine_service
+
+    drivers = {d.get("id"): d for d in payload.get("drivers") or [] if isinstance(d, dict)}
+    axis_of = {int(n): str(a.get("id", "")).upper() for a in payload.get("axes") or []
+               for n in a.get("joint_numbers") or []}
+    homing = get_homing_routine_service()
+    items = []
+    for joint in payload.get("joints") or []:
+        driver = drivers.get(joint.get("driver")) if isinstance(joint, dict) else None
+        if not driver or not driver.get("diag_pin") or driver.get("stall_sensitivity") is None:
+            continue
+        joint_id = str(joint["id"]).lower()
+        cid = f"sensorless_{joint_id}"
+        axis = axis_of.get(int(joint.get("joint_number") or 0), joint_id)
+        key = STALL.format(joint=joint_id.upper())
+        profile = int(driver["stall_sensitivity"])
+
+        def submit(m: Mapping[str, float], cid: str = cid, key: str = key, profile: int = profile,
+                   axis: str = axis) -> str:
+            state = store.state(cid)
+            saved = store.values().get(key)
+            loaded = int(float(state.get("loaded") or saved or profile))
+            if "threshold" in m:
+                value = int(round(m["threshold"]))
+                if not 1 <= value <= 255:
+                    raise BadRequestError("The threshold is 1 … 255.")
+                store.update({VALUES: {key: value}})
+                return f"{axis}: threshold {value} saved — restart LinuxCNC to load it into the driver, then home {axis}."
+            verdict = int(m.get("verdict", 99))
+            if verdict not in (-1, 0, 1):
+                raise BadRequestError("verdict: -1 (stopped early), 1 (did not stop), 0 (good).")
+            if verdict == 0:
+                record(cid, f"{axis}: threshold {loaded} homes cleanly", {VALUES: {key: loaded}})
+                store.set_state(cid, low=None, high=None)
+                return f"{axis}: threshold {loaded} kept."
+            low, high = int(state.get("low") or 0), int(state.get("high") or 256)
+            if verdict < 0:
+                high = loaded   # stopped early: too sensitive
+            else:
+                low = loaded    # ground at the end: not sensitive enough
+            if high - low <= 1:
+                raise BadRequestError(f"No threshold between {low} and {high} left — check the wiring / homing speed.")
+            store.set_state(cid, low=low, high=high)
+            suggestion = (low + high) // 2
+            return f"{axis}: try {suggestion} (between {low} and {high})."
+
+        state = store.state(cid)
+        saved = store.values().get(key)
+        low, high = int(state.get("low") or 0), int(state.get("high") or 256)
+        loaded = state.get("loaded")
+        items.append(Calibration(
+            cid, "sensorless", axis, True,
+            command=_home_command(axis),
+            running=homing.is_running,
+            values={"profile": profile, "saved": int(float(saved)) if saved else None,
+                    "loaded": int(float(loaded)) if loaded else (None if saved else profile),
+                    "low": low, "high": high, "suggestion": (low + high) // 2},
+            submit=submit, figure="",
+        ))
+    return items
 
 
 _SERVICE: Optional[CalibrationService] = None

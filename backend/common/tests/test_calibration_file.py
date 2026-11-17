@@ -86,3 +86,47 @@ def test_overlay_payload():
     assert out["skew_correction"] == {"xy_factor": 0.001}
     assert payload["probe"]["z_offset"] == 1.0  # a copy
     assert "skew_correction" not in overlay_payload({}, {"SKEW_XY": "0.001"})  # no jointshape: nothing
+
+
+def test_board_config_thresholds_and_their_way_back(tmp_path):
+    import json
+
+    from core.calibration_file import calibrate_board_configs, patch_board_config
+
+    board = {"Board": "M8P", "Modules": [
+        {"Name": "driver_x", "Type": "TMC2209", "Comment": "x TMC driver", "Stall sensitivity": 100,
+         "Stealth chop": "on"},
+        {"Name": "driver_y", "Type": "TMC2209", "Comment": "y TMC driver", "Stall sensitivity": 0,
+         "Stealth chop": "off"}],
+        "CAN": {"Nodes": [{"Modules": [{"Type": "TMC2209", "Comment": "e TMC driver", "Stall sensitivity": 0}]}]}}
+    text = json.dumps(board, indent=2)
+    assert patch_board_config(text, {}) == (None, {})  # nothing to do: untouched
+    new, applied = patch_board_config(text, {"STALL_X": "80", "STALL_Y": "300", "STALL_E": "40"})
+    data = json.loads(new)
+    assert applied == {"x": 80, "y": 255, "e": 40}
+    assert data["Modules"][0]["Stall sensitivity"] == 80
+    assert data["Modules"][1] == {**board["Modules"][1], "Stall sensitivity": 255, "Stealth chop": "on"}
+    assert data["CAN"]["Nodes"][0]["Modules"][0]["Stall sensitivity"] == 40
+    assert data["Calibration"]["Generated"]["y TMC driver"] == {"Stall sensitivity": 0, "Stealth chop": "off"}
+    # again with another value: still from the generated ones
+    again, _ = patch_board_config(new, {"STALL_X": "90"})
+    assert json.loads(again)["Calibration"]["Generated"] == {"x TMC driver": {"Stall sensitivity": 100,
+                                                                              "Stealth chop": "on"}}
+    assert json.loads(again)["Modules"][1]["Stall sensitivity"] == 0  # y back to the profile's
+    # cleared: the generated file again
+    back, _ = patch_board_config(again, {})
+    assert json.loads(back) == board
+    (tmp_path / "config_mcu.txt").write_text(text)
+    assert calibrate_board_configs(tmp_path, {"STALL_X": "70"}) == {"x": 70}
+    assert json.loads((tmp_path / "config_mcu.txt").read_text())["Modules"][0]["Stall sensitivity"] == 70
+
+
+def test_retraction_overlay():
+    payload = {"tools": [{"type": "extruder"}]}
+    out = overlay_payload(payload, {"RETRACT_LENGTH": "1.4", "RETRACT_SPEED": "40"})
+    assert out["firmware_retraction"] == {"retract_length": 1.4, "retract_speed": 40.0,
+                                          "unretract_extra_length": 0.0, "unretract_speed": 10.0}
+    kept = overlay_payload({**payload, "firmware_retraction": {"retract_length": 0.5, "unretract_speed": 25}},
+                           {"RETRACT_LENGTH": "0.9"})["firmware_retraction"]
+    assert kept["retract_length"] == 0.9 and kept["unretract_speed"] == 25
+    assert "firmware_retraction" not in overlay_payload({"tools": []}, {"RETRACT_LENGTH": "1"})

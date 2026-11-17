@@ -23,6 +23,7 @@ from __future__ import annotations
 import configparser
 import copy
 import io
+import json
 import re
 import threading
 from pathlib import Path
@@ -46,6 +47,12 @@ SHAPER_FREQ = "SHAPER_FREQ_{axis}"      # X / Y
 SHAPER_TYPE = "SHAPER_TYPE_{axis}"      # zv, mzv, zvd, ei
 SKEW_XY = "SKEW_XY"
 FLOW = "FLOW"                           # % — the print tuning's flow at start
+RETRACT_LENGTH = "RETRACT_LENGTH"       # mm — [firmware_retraction] (G10 / G11 at upload)
+RETRACT_SPEED = "RETRACT_SPEED"         # mm/s
+STALL = "STALL_{joint}"                 # a TMC2209's StallGuard threshold (sensorless homing)
+#: Klipper's [firmware_retraction] defaults, for a profile without one.
+_RETRACTION_DEFAULTS = {"retract_length": 0.0, "retract_speed": 20.0, "unretract_extra_length": 0.0,
+                        "unretract_speed": 10.0}
 #: ``[INPUT_SHAPER]`` of machine.ini: ``TYPE_X`` / ``TYPE_Y`` (jointshape codes).
 INPUT_SHAPER_SECTION = "INPUT_SHAPER"
 
@@ -262,6 +269,13 @@ def overlay_payload(payload: Dict[str, Any], values: Mapping[str, str]) -> Dict[
     z_offset = number(PROBE_Z_OFFSET)
     if z_offset is not None and isinstance(out.get("probe"), dict):
         out["probe"]["z_offset"] = z_offset
+    length = number(RETRACT_LENGTH)
+    if length is not None and any(isinstance(t, dict) and t.get("type") == "extruder" for t in out.get("tools") or []):
+        retraction = {**_RETRACTION_DEFAULTS, **(out.get("firmware_retraction") or {}), "retract_length": length}
+        speed = number(RETRACT_SPEED)
+        if speed is not None:
+            retraction["retract_speed"] = speed
+        out["firmware_retraction"] = retraction
     flow = number(FLOW)
     if flow is not None:
         for tool in out.get("tools") or []:
@@ -286,8 +300,82 @@ def overlay_payload(payload: Dict[str, Any], values: Mapping[str, str]) -> Dict[
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Board configs (config_<mcu>.txt): the StallGuard thresholds (system backend)  #
+# --------------------------------------------------------------------------- #
+
+BOARD_MARK = "Calibration"
+
+
+def _tmc_modules(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    modules = [m for m in data.get("Modules") or [] if isinstance(m, dict)]
+    for node in (data.get("CAN") or {}).get("Nodes") or []:
+        modules += [m for m in node.get("Modules") or [] if isinstance(m, dict)]
+    return [m for m in modules if m.get("Type") == "TMC2209"]
+
+
+def patch_board_config(text: str, values: Mapping[str, str]) -> Tuple[Optional[str], Dict[str, int]]:
+    """A board config (JSON) with the ``STALL_<joint>`` thresholds in its
+    TMC2209 modules (``"Comment": "<joint> TMC driver"``), StealthChop on
+    (StallGuard needs it). The generated values are kept in a top-level
+    ``"Calibration"`` block (the firmware ignores it) and restored first,
+    so a cleared calibration goes back to the profile's. Returns (the new
+    text, or ``None`` when nothing changes; {joint: threshold applied})."""
+    data = json.loads(text)
+    previous = data.pop(BOARD_MARK, None)
+    modules = _tmc_modules(data)
+    by_comment = {str(m.get("Comment", "")): m for m in modules}
+    for comment, original in ((previous or {}).get("Generated") or {}).items():
+        module = by_comment.get(comment)
+        if module is not None:
+            for key, value in original.items():
+                if value is None:  # the generated module had no such key
+                    module.pop(key, None)
+                else:
+                    module[key] = value
+    wanted = {}
+    for key, raw in values.items():
+        if key.startswith("STALL_"):
+            try:
+                wanted[key[len("STALL_"):].lower()] = max(0, min(255, int(float(raw))))
+            except ValueError:
+                continue
+    generated: Dict[str, Dict[str, Any]] = {}
+    applied: Dict[str, int] = {}
+    for joint, threshold in wanted.items():
+        module = by_comment.get(f"{joint} TMC driver")
+        if module is None:
+            continue
+        generated[f"{joint} TMC driver"] = {"Stall sensitivity": module.get("Stall sensitivity"),
+                                            "Stealth chop": module.get("Stealth chop")}
+        module["Stall sensitivity"] = threshold
+        module["Stealth chop"] = "on"
+        applied[joint] = threshold
+    if generated:
+        data[BOARD_MARK] = {"Generated": generated}
+    if previous is None and not generated:
+        return None, applied
+    return json.dumps(data, indent=2) + ("\n" if text.endswith("\n") else ""), applied
+
+
+def calibrate_board_configs(config_dir: Path, values: Mapping[str, str]) -> Dict[str, int]:
+    """Every ``config_*.txt`` next to machine.ini: the thresholds in."""
+    applied: Dict[str, int] = {}
+    for path in sorted(Path(config_dir).glob("config_*.txt")):
+        try:
+            text = path.read_text(encoding="utf-8")
+            new, done = patch_board_config(text, values)
+        except (OSError, ValueError):
+            continue
+        if new is not None and new != text:
+            path.write_text(new, encoding="utf-8")
+        applied.update(done)
+    return applied
+
+
 __all__ = [
-    "CALIBRATED_INI_NAME", "CalibrationFile", "FILE_NAME", "FLOW", "INPUT_SHAPER_SECTION", "PRESSURE_ADVANCE",
+    "CALIBRATED_INI_NAME", "CalibrationFile", "FILE_NAME", "FLOW", "RETRACT_LENGTH", "RETRACT_SPEED", "STALL",
+    "calibrate_board_configs", "patch_board_config", "INPUT_SHAPER_SECTION", "PRESSURE_ADVANCE",
     "PROBE_Z_OFFSET", "SHAPER_FREQ", "SHAPER_TYPE", "SKEW_XY", "STATE", "VALUES", "calibrated_ini",
     "calibration_path", "ini_overrides", "merge_ini", "overlay_payload",
 ]

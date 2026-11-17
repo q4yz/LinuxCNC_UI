@@ -109,6 +109,28 @@ export const CALIBRATIONS: Record<string, CalibrationText> = {
     ],
     saves: "calibration.ini: the probe's z_offset (or Z's home position without a probe); from the next start.",
   },
+  retraction: {
+    title: "Retraction",
+    benefit: "No strings between parts: just enough retraction, not more (that would grind the filament).",
+    steps: [
+      "Start prints two small towers; travelling between them retracts more with every millimetre of height.",
+      "Find the height from which there are no more strings between the towers.",
+      "Measure it from the bed and enter it.",
+      "Used for G10 / G11: set the slicer to firmware retraction (and upload files again).",
+    ],
+    saves: "calibration.ini: [firmware_retraction] retract_length and speed, for files uploaded from then on.",
+  },
+  sensorless: {
+    title: "Sensorless homing",
+    benefit: "Homing without switches stops reliably at the end: no early stop, no grinding.",
+    steps: [
+      "Home the axis (Start). Keep a hand on the E-stop the first time.",
+      "Tell how it went: stopped early (before the end), ground / did not stop at the end, or good.",
+      "Save the suggested threshold and restart LinuxCNC — the driver gets it at the start — then home again.",
+      "Repeat until good: each answer halves the range.",
+    ],
+    saves: "calibration.ini: the driver's StallGuard threshold, into the board config at every start.",
+  },
   input_shaper: {
     title: "Input shaper",
     benefit: "Less ringing / ghosting at high speed, so it can print faster.",

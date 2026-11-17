@@ -77,7 +77,7 @@ test("dates", () => {
 
 test("guided calibrations: print a test, then measure it", () => {
   const card = read("components/calibration/CalibrationCard.vue");
-  assert.match(card, /v-if="item\.guided && item\.available"[\s\S]*:data-testid="`calibration-measure-\$\{item\.id\}`"/);
+  assert.match(card, /v-if="item\.guided && item\.available && item\.kind !== 'sensorless'"[\s\S]*:data-testid="`calibration-measure-\$\{item\.id\}`"/);
   assert.match(card, /<CalibrationFigure :figure="item\.figure \?\? ''"/);
   assert.match(card, /:data-testid="`calibration-input-\$\{item\.id\}-\$\{p\.name\}`"/);
   assert.match(card, /:disabled="busy \|\| !measuredComplete \|\| \(item\.kind === 'first_layer' && item\.running\)"/,
@@ -104,4 +104,17 @@ test("extruder steps, flow and first layer cards", () => {
   assert.match(card, /item\.inputs\?\.length \? "Calculate & save" : "Save live offset"/);
   const view = read("views/CalibrationView.vue");
   assert.match(view, /printTuningFacade\.setZ\(0\) : printTuningFacade\.adjustZ\(delta\)/);
+});
+
+test("retraction and sensorless homing cards", () => {
+  for (const kind of ["retraction", "sensorless"]) assert.ok(CALIBRATIONS[kind]?.steps.length, kind);
+  assert.match(read("components/calibration/CalibrationFigure.vue"), /data-testid="calibration-figure-retraction"/);
+  const card = read("components/calibration/CalibrationCard.vue");
+  assert.match(card, /v-if="item\.kind === 'sensorless' && item\.available"/);
+  for (const verdict of ["-1", "1", "0"]) assert.match(card, new RegExp(`emit\\('submit', \\{ verdict: ${verdict} \\}\\)`));
+  assert.match(card, /emit\('threshold', nextThreshold\)/);
+  assert.match(card, /`Home \$\{props\.item\.label\}`/);
+  const view = read("views/CalibrationView.vue");
+  assert.match(view, /calibrationFacade\.submit\(item\.id, \{ threshold: value \}\)[\s\S]*MachineLifecycleFacade\.stopMachine\(\)[\s\S]*MachineLifecycleFacade\.startMachine\(\)/,
+    "the threshold reaches the driver at the next LinuxCNC start");
 });

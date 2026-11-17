@@ -131,4 +131,30 @@ defineProps<{ figure: string }>();
       <text x="20" y="166" fill="#f87171">too low: rough, thin, see-through</text>
     </g>
   </svg>
+  <svg
+    v-else-if="figure === 'retraction'"
+    viewBox="0 0 200 170"
+    class="w-full max-w-[16rem] text-gray-300"
+    role="img"
+    aria-label="Retraction towers: measure the height from which there are no strings between the towers"
+    data-testid="calibration-figure-retraction"
+  >
+    <line x1="10" y1="150" x2="190" y2="150" stroke="currentColor" stroke-width="2" opacity="0.6" />
+    <rect x="40" y="20" width="24" height="130" fill="currentColor" opacity="0.7" />
+    <rect x="136" y="20" width="24" height="130" fill="currentColor" opacity="0.7" />
+    <g stroke="#f59e0b" stroke-width="1" fill="none">
+      <path d="M64 140 q36 8 72 -2" />
+      <path d="M64 128 q36 10 72 0" />
+      <path d="M64 116 q36 6 72 -1" />
+      <path d="M64 104 q36 4 72 1" />
+    </g>
+    <line x1="64" y1="88" x2="136" y2="88" stroke="#34d399" stroke-width="2" />
+    <line x1="25" y1="150" x2="25" y2="88" stroke="#34d399" stroke-width="2" />
+    <polygon points="21,96 25,88 29,96" fill="#34d399" />
+    <g font-size="10">
+      <text x="72" y="84" fill="#34d399">no strings</text>
+      <text x="82" y="164" fill="#f59e0b">strings</text>
+      <text x="2" y="80" fill="#34d399">height</text>
+    </g>
+  </svg>
 </template>

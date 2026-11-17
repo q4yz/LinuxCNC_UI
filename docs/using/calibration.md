@@ -22,6 +22,8 @@ The **Calibration** tab has a card for each calibration the machine can run — 
 | Extruder steps | extrudes 100 mm, then you measure it | the extruder's steps / mm (`[JOINT_n] SCALE`) |
 | Flow | a test print, then you measure it | the flow % the machine starts with |
 | First layer | a test print you tune with the live Z offset | the probe's `z_offset`, or Z's home position |
+| Retraction | a test print, then you measure it | `[firmware_retraction]` length and speed |
+| Sensorless homing (per axis) | homes the axis; you say how it went | the driver's StallGuard threshold |
 
 A card the machine cannot run (no probe, no accelerometer) says what is missing.
 
@@ -60,6 +62,22 @@ at once.
   absolute heights) or into Z's `HOME_OFFSET` (a Z switch). It applies from the next LinuxCNC
   start — the live offset stays until then; home (and probe the mesh) again after the
   restart.
+- **Retraction** — two small towers; every travel between them retracts *start + factor ×
+  height* (stepped every millimetre) at the card's speed. Enter the height from which no strings
+  are left: that length and speed become `[firmware_retraction]`. It is used for the `G10` /
+  `G11` of files uploaded from then on — set the slicer to *firmware retraction* and upload
+  earlier files again.
+
+## Sensorless homing
+
+A card per axis homed by StallGuard (`endstop_pin: tmc2209_stepper_x:virtual_endstop`). The
+threshold is a driver register the board sets when LinuxCNC starts, so every try is: **Home X**,
+then say how it went — *Stopped early* (too sensitive), *Ground at end* (not sensitive enough) or
+*Good*. Each answer halves the range left and suggests the next threshold; **Save & restart
+LinuxCNC** saves it and restarts LinuxCNC (switch on and home again). At every start the UI
+writes the saved thresholds into the board config (`config_<mcu>.txt`, StealthChop on), which the
+board takes over from its SD card; the generated values are kept in the file, so **Clear** goes
+back to the profile's `driver_SGTHRS`. Keep a hand on the E-stop for the first tries.
 **Clear** removes a card's saved values: back to the profile's.
 
 ## calibration.ini

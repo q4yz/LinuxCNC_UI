@@ -124,3 +124,20 @@ def test_first_layer_patches_stay_on_the_bed():
     pts = _xy(text.splitlines())
     assert min(p[0] for p in pts) >= 0 and max(p[0] for p in pts) <= 235 and max(p[1] for p in pts) <= 235
     assert first_layer_result(1.20, 0.05) == 1.15 and first_layer_result(0.0, -0.1) == 0.1
+
+
+def test_retraction_tower_grows_the_retraction():
+    from core.calibration_prints import retraction_result, retraction_tower
+
+    text = retraction_tower(_settings(), start=0.5, factor=0.1, height=6, speed=30)
+    assert re.search(r"^G1 E-[\d.]+ F1800", text, re.M), "retractions at the card's speed"
+    layers = re.findall(r"; layer \d+/\d+, retraction ([\d.]+) mm", text)
+    values = [float(v) for v in layers]
+    assert values[1] == 0.5 and values[-1] == pytest.approx(1.1)  # top layer 6.0 mm: band 6
+    assert values == sorted(values[:1]) + sorted(values[1:])
+    # every unretract matches the retract before it: no filament gained or lost
+    body = text.split("; layer 1/")[1].split("G1 E-1.6")[0]  # up to the end's final retraction
+    total = sum(float(v) for v in re.findall(r"^G1 E(-?[\d.]+) F\d+$", body, re.M))
+    assert total == pytest.approx(0.8, abs=1e-6)  # only the purge line's retraction is undone in here
+    assert not any("unknown" in n.lower() for n in convert(text).notes)
+    assert retraction_result(0.5, 0.1, 3.2) == 0.82

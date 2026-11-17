@@ -19,6 +19,7 @@ const emit = defineEmits<{
   command: [line: string];
   submit: [values: Record<string, number>];
   liveZ: [delta: number | null];
+  threshold: [value: number];
 }>();
 
 const text = computed(() => CALIBRATIONS[props.item.kind] ?? {
@@ -55,9 +56,21 @@ const liveOffset = computed(() => {
   return typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(3)}` : "—";
 });
 
+// sensorless homing: the next threshold to try (the backend's halving)
+const nextThreshold = ref<number>(Number(props.item.values?.suggestion ?? props.item.values?.loaded ?? 100));
+watch(() => props.item.values?.suggestion, (v) => { if (typeof v === "number") nextThreshold.value = v; });
+
 const session = computed(() => props.item.kind === "probe_z_offset" && !!props.item.values?.session);
+const startLabel = computed(() => {
+  const busyNow = props.item.running || session.value;
+  if (props.item.kind === "sensorless") return busyNow ? "Homing…" : `Home ${props.item.label}`;
+  if (busyNow) return props.item.guided ? "Printing…" : "Running…";
+  return props.item.guided ? "Print test" : "Start";
+});
+
 const clearable = computed(() =>
-  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance", "flow", "extruder_steps"].includes(props.item.kind),
+  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance", "flow", "extruder_steps", "retraction",
+   "sensorless"].includes(props.item.kind),
 );
 const status = computed(() => {
   if (!props.item.available) return { text: "not on this machine", cls: "bg-gray-700 text-gray-400" };
@@ -82,6 +95,10 @@ const inUse = computed(() => {
       return typeof v.scale === "number" ? `SCALE ${fmt(v.scale)} steps/mm` : "SCALE — (LinuxCNC not running)";
     case "flow":
       return `flow ${fmt(v.flow, 1)} %`;
+    case "retraction":
+      return typeof v.length === "number" ? `retract ${fmt(v.length, 2)} mm at ${fmt(v.speed, 0)} mm/s` : "no firmware retraction";
+    case "sensorless":
+      return `threshold ${v.loaded ?? "—"} in the driver${v.saved != null && v.saved !== v.loaded ? `, ${v.saved} after a restart` : ""}`;
     case "first_layer":
       return `live Z ${liveOffset.value} mm → ${v.target === "probe" ? "probe z_offset" : "Z home"}`;
     case "input_shaper":
@@ -222,7 +239,7 @@ function saveReminder() {
             :disabled="busy || !item.available || item.running || session"
             :data-testid="`calibration-start-${item.id}`"
             @click="emit('start', { ...params })"
-          >{{ item.running || session ? (item.guided ? "Printing…" : "Running…") : item.guided ? "Print test" : "Start" }}</BaseButton>
+          >{{ startLabel }}</BaseButton>
           <BaseButton
             v-if="item.kind === 'bed_mesh'"
             variant="secondary"
@@ -242,7 +259,38 @@ function saveReminder() {
       </div>
 
       <section
-        v-if="item.guided && item.available"
+        v-if="item.kind === 'sensorless' && item.available"
+        class="space-y-2 rounded border border-gray-700 bg-gray-900/40 p-2"
+        :data-testid="`calibration-sensorless-${item.id}`"
+      >
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">After homing {{ item.label }}</h3>
+        <div class="grid grid-cols-3 gap-1">
+          <BaseButton size="sm" variant="secondary" :disabled="busy || item.running" title="Too sensitive: lower"
+                      @click="emit('submit', { verdict: -1 })">Stopped early</BaseButton>
+          <BaseButton size="sm" variant="secondary" :disabled="busy || item.running" title="Not sensitive enough: raise"
+                      @click="emit('submit', { verdict: 1 })">Ground at end</BaseButton>
+          <BaseButton size="sm" variant="success" :disabled="busy || item.running" @click="emit('submit', { verdict: 0 })">Good</BaseButton>
+        </div>
+        <p class="text-xs text-gray-500">Range {{ item.values?.low }} … {{ item.values?.high }}</p>
+        <label class="flex items-center justify-between gap-2 text-xs text-gray-400">
+          <span>Next threshold</span>
+          <input
+            v-model.number="nextThreshold"
+            type="number"
+            min="1"
+            max="255"
+            class="w-20 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-right font-mono text-gray-200"
+            :data-testid="`calibration-threshold-${item.id}`"
+          />
+        </label>
+        <BaseButton size="sm" variant="primary" :disabled="busy || item.running || !(nextThreshold >= 1 && nextThreshold <= 255)"
+                    :data-testid="`calibration-threshold-save-${item.id}`" @click="emit('threshold', nextThreshold)">
+          Save &amp; restart LinuxCNC
+        </BaseButton>
+      </section>
+
+      <section
+        v-if="item.guided && item.available && item.kind !== 'sensorless'"
         class="mt-1 space-y-2 rounded border border-gray-700 bg-gray-900/40 p-2"
         :data-testid="`calibration-measure-${item.id}`"
       >

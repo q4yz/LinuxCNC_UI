@@ -6,6 +6,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { calibrationFacade, type CalibrationItem } from "../facades/calibrationFacade";
 import { printTuningFacade } from "../facades/printTuningFacade";
+import { MachineLifecycleFacade } from "../facades/machineLifecycleFacade";
 import CalibrationCard from "../components/calibration/CalibrationCard.vue";
 import BedMeshView from "./BedMeshView.vue";
 import { BaseButton, Icon } from "../ui";
@@ -93,7 +94,7 @@ async function submit(item: CalibrationItem, values: Record<string, number>) {
   const response = await act("saving the result", () => calibrationFacade.submit(item.id, values));
   if (!response) return;
   apply(response.calibrations);
-  consoleStore.success(`Calibration saved: ${response.result}`);
+  consoleStore.success(`Calibration: ${response.result}`);
 }
 
 // first layer: the live Z offset (print tuning), + = nozzle up; null = back to 0
@@ -101,6 +102,28 @@ async function liveZ(delta: number | null) {
   await act("changing the live Z offset", () =>
     delta === null ? printTuningFacade.setZ(0) : printTuningFacade.adjustZ(delta),
   );
+  await refresh();
+}
+
+// sensorless homing: save the threshold, then restart LinuxCNC so the
+// board config (synced at the start) carries it to the driver
+async function threshold(item: CalibrationItem, value: number) {
+  const ok = await useConfirm({
+    title: `Sensorless homing ${item.label}`,
+    question: `Save threshold ${value} and restart LinuxCNC now? The machine goes off; switch it on and home ${item.label} again.`,
+    confirmButtonText: "Save & restart",
+    confirmButtonStyle: ModalButtonStyle.PRIMARY,
+    rejectButtonText: "Cancel",
+  });
+  if (!ok) return;
+  const response = await act("saving the threshold", () => calibrationFacade.submit(item.id, { threshold: value }));
+  if (!response) return;
+  consoleStore.info(response.result);
+  const restarted = await act("restarting LinuxCNC", async () => {
+    await MachineLifecycleFacade.stopMachine();
+    return MachineLifecycleFacade.startMachine();
+  });
+  if (restarted) consoleStore.success(`LinuxCNC restarted with threshold ${value} — switch on and home ${item.label}.`);
   await refresh();
 }
 
@@ -173,6 +196,7 @@ onBeforeUnmount(() => {
       @command="command"
       @submit="(values) => submit(item, values)"
       @live-z="liveZ"
+      @threshold="(value) => threshold(item, value)"
     />
   </div>
 

@@ -667,7 +667,27 @@ class MachineLifecycleService:
             return ini
         if keys:
             logger.info("Calibration overrides %s: %s", path.name, ", ".join(keys))
+        MachineLifecycleService._calibrate_boards(ini.parent)
         return path
+
+    @staticmethod
+    def _calibrate_boards(config_dir: Path) -> None:
+        """The StallGuard thresholds of calibration.ini into the board
+        configs (synced to the boards' SD cards when LinuxCNC starts); the
+        values loaded are noted for the Calibration tab."""
+        from core.calibration_file import CalibrationFile, calibrate_board_configs, calibration_path
+
+        store = CalibrationFile(calibration_path(config_dir))
+        try:
+            applied = calibrate_board_configs(config_dir, store.values())
+            for joint, threshold in applied.items():
+                store.set_state(f"sensorless_{joint}", loaded=threshold)
+        except (OSError, ValueError) as exc:
+            logger.warning("Board configs not calibrated: %s", exc)
+            return
+        if applied:
+            logger.info("Calibration: StallGuard thresholds %s",
+                        ", ".join(f"{j} {v}" for j, v in sorted(applied.items())))
 
     def _build_command(self, ini: Path) -> List[str]:
         """Resolve the launch command (``LINUXCNC_START_COMMAND`` override).
