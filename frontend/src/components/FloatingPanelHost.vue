@@ -13,6 +13,7 @@ import { PANEL_COMPONENTS } from "../layout/panelComponents";
 import { panelDef } from "../layout/pagePanels";
 import { useFloatingPanels, type FloatingPanel } from "../composables/useFloatingPanels";
 import { NO_DRAG, WINDOW_CHROME, type WindowChrome } from "../composables/windowChrome";
+import { scheduleEstopCheck } from "../ui/estopClearance";
 
 const { windows, close, focus, moveTo, WIDTH } = useFloatingPanels();
 
@@ -32,6 +33,8 @@ function startDrag(win: FloatingPanel, event: PointerEvent) {
 function onMove(event: PointerEvent) {
   if (!dragging || event.pointerId !== dragging.pointerId) return;
   moveTo(dragging.id, event.clientX - dragging.dx, event.clientY - dragging.dy);
+  // a header moved under the E-stop box moves its buttons (the x) clear of it
+  scheduleEstopCheck();
 }
 
 function stop() {
@@ -76,11 +79,15 @@ const ChromeScope = {
 </script>
 
 <template>
+  <!-- One layer for every window, z-30: the windows order among themselves
+       inside it, while the sidebar (z-40), dialogs (z-50) and the E-stop
+       box (z-[100]) always stay above them. -->
+  <div class="pointer-events-none fixed inset-0 z-30" data-testid="floating-panel-layer">
   <div
       v-for="win in windows"
       :key="win.id"
-      class="fixed flex max-h-[85vh] flex-col overflow-y-auto rounded-lg"
-      :style="{ left: `${win.x}px`, top: `${win.y}px`, zIndex: 60 + win.z, width: `min(${WIDTH}px, calc(100vw - 16px))` }"
+      class="pointer-events-auto fixed flex max-h-[85vh] flex-col overflow-y-auto rounded-lg"
+      :style="{ left: `${win.x}px`, top: `${win.y}px`, zIndex: win.z, width: `min(${WIDTH}px, calc(100vw - 16px))` }"
       role="dialog"
       :aria-label="win.title"
       :data-testid="`floating-panel-${win.panel}`"
@@ -105,5 +112,6 @@ const ChromeScope = {
       </MachineGate>
       <p v-else class="bg-gray-900 p-4 text-sm text-gray-400">This component no longer exists.</p>
     </ChromeScope>
+  </div>
   </div>
 </template>

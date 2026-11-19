@@ -261,6 +261,11 @@ test("a component button opens its panel in a floating window", () => {
   assert.match(card, /v-if="title \|\| chrome"/, "a card header shows when it has a title or the window's x");
   assert.match(card, /@pointerdown="chrome\?\.startDrag\(\$event\)"/, "dragging the card header moves the window");
   assert.match(card, /<WindowCloseButton v-if="chrome" :chrome="chrome" \/>/);
+  // every window in one z-30 layer: the sidebar (z-40) and the E-stop box (z-[100]) stay above
+  assert.match(host, /class="pointer-events-none fixed inset-0 z-30" data-testid="floating-panel-layer"/);
+  assert.match(host, /zIndex: win\.z,/);
+  assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<AppSidebar class="absolute top-0 left-0 h-full z-40/);
+  assert.match(readFileSync(resolve(here, "../src/components/EStopHeader.vue"), "utf-8"), /data-estop-overlay class="fixed top-0 right-0 z-\[100\]/);
   const hook = readFileSync(resolve(here, "../src/composables/windowChrome.ts"), "utf-8");
   assert.match(hook, /provide\(WINDOW_CHROME, null\);/, "only the outermost card takes it");
   assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<FloatingPanelHost \/>/);
