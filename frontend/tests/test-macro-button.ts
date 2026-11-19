@@ -378,8 +378,10 @@ test("kind 'output': a toggle, slider or colour picker next to the name", async 
   for (const id of ["output-toggle", "output-slider", "output-color"]) {
     assert.ok(control.includes(':data-testid="`' + id + '-${descriptor.slot}`"'), id);
   }
-  assert.match(control, /<span v-if="descriptor\.name" class="whitespace-nowrap">\{\{ descriptor\.name \}\}<\/span>/,
-    "the name stays next to the control");
+  assert.match(control, /<span v-if="descriptor\.name && !compact" class="whitespace-nowrap"/,
+    "the name next to the control — hidden when the row has no room for it");
+  assert.match(control, /const overflowing = \(\) => ancestors\(\)\.some\(\(el\) => el\.scrollWidth - el\.clientWidth > 1\);/);
+  assert.match(control, /:title="target \? descriptor\.name \|\| target\.label/, "the name stays the tooltip");
   const { outputTargets, findTarget } = await import(pathToFileURL(resolve(here, "../src/ui/outputTargets.ts")).href);
   const io = { outputs: [{ id: "light", pwm: false, value: 1 }, { id: "beeper", pwm: true, scale: 0.5, value: 0 }],
                fans: [{ id: "fan", value: 40 }], inputs: [] };

@@ -58,7 +58,8 @@ emoji) and a kind:
 - **Output pin** — not a button but the output's own control next to the name and icon: a
   **toggle** for a switched `[output_pin]`, a **slider** for a PWM `[output_pin]` (0 … its
   `scale`) or a fan (%), a **colour picker** for a `[neopixel]` chain (the whole chain). It shows
-  the machine's current value, so a change from G-code or another client shows up. The list
+  the machine's current value, so a change from G-code or another client shows up. Where the row
+  has no room for the name, it is hidden (it stays the tooltip) and comes back when there is. The list
   comes from the running machine — with LinuxCNC stopped the dropdown is empty and keeps the
   current choice.
 

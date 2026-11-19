@@ -5,7 +5,7 @@
 // release, a colour when the picker closes), like the I/O and LED cards.
 // The value shown is the machine's (base-thread snapshot), so a change
 // from G-code or another client shows up.
-import { computed, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 import Icon from "./Icon.vue";
 import useBaseThreadStore from "../stores/baseThread";
@@ -66,19 +66,112 @@ async function setColor(hex: string) {
   }
 }
 
+// Not enough room in the row (it would overflow): the name goes, the icon,
+// the control and its value stay; the name comes back once the row has
+// room for it. It stays the tooltip and the control's label either way.
+// "Room" is tried, not computed: the name is shown, and hidden again before
+// the browser paints if the row (or a box around it) then overflows.
+const root = ref<HTMLElement | null>(null);
+const compact = ref(false);
+const ANCESTORS = 4; // the row may be a few boxes up (DRO: group -> row)
+let observer: ResizeObserver | null = null;
+let fitting = false;
+let again = false;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+const widths = new WeakMap<Element, number>();
+
+/** The row the control sits in: the side-by-side (flex row) boxes around
+ * it, up to the first box that stacks its children — a neighbouring row's
+ * overflow (further up) is not this one's. */
+function ancestors(): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  let el = root.value?.parentElement ?? null;
+  while (el && out.length < ANCESTORS) {
+    const style = getComputedStyle(el);
+    const row = style.display.includes("flex") && !style.flexDirection.startsWith("column");
+    if (!row) break;
+    out.push(el);
+    el = el.parentElement;
+  }
+  return out;
+}
+
+const overflowing = () => ancestors().some((el) => el.scrollWidth - el.clientWidth > 1);
+
+async function fit() {
+  if (!root.value) return;
+  if (fitting) {
+    again = true; // asked while fitting: once more right after
+    return;
+  }
+  fitting = true;
+  try {
+    // shown, measured, hidden again before the browser paints: no flicker
+    compact.value = false;
+    await nextTick();
+    compact.value = overflowing();
+  } finally {
+    fitting = false;
+    if (again) {
+      again = false;
+      void fit();
+    }
+  }
+}
+const refit = () => void fit();
+
+onMounted(() => {
+  void fit();
+  // and once the page has settled (a layout switch, fonts, the first data)
+  if (typeof requestAnimationFrame !== "undefined") requestAnimationFrame(refit);
+  settleTimer = setTimeout(refit, 500);
+  window.addEventListener("resize", refit);
+  if (typeof ResizeObserver === "undefined") return;
+  // only a change of an ancestor's WIDTH re-fits (showing / hiding the name
+  // changes heights and the control's own box, which must not loop)
+  observer = new ResizeObserver((entries) => {
+    let changed = false;
+    for (const entry of entries) {
+      const w = Math.round(entry.contentRect.width);
+      if (widths.get(entry.target) !== w) {
+        widths.set(entry.target, w);
+        changed = true;
+      }
+    }
+    if (changed) void fit();
+  });
+  // the row's width (and the box it sits in, whose width it follows)
+  const rowBoxes = ancestors();
+  const outer = rowBoxes.at(-1)?.parentElement;
+  for (const el of [...rowBoxes.slice(1), ...(outer ? [outer] : [])]) observer.observe(el);
+});
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  window.removeEventListener("resize", refit);
+  if (settleTimer) clearTimeout(settleTimer);
+});
+// the control's own content changed (its output arrived with the machine
+// state, the name / icon were edited): fit again
+watch(
+  () => [target.value?.control, target.value?.max, props.descriptor.name, props.descriptor.icon],
+  () => void fit(),
+  { flush: "post" },
+);
+
 const textSize = computed(() => (props.size === "lg" ? "text-base" : props.size === "md" ? "text-sm" : "text-xs"));
 </script>
 
 <template>
   <span
-      class="inline-flex items-center gap-2 rounded-md border border-gray-600 bg-gray-700 px-2 py-1 font-semibold text-gray-100"
+      ref="root"
+      class="inline-flex shrink-0 items-center gap-2 rounded-md border border-gray-600 bg-gray-700 px-2 py-1 font-semibold text-gray-100"
       :class="[textSize, target ? '' : 'opacity-50']"
       :title="target ? descriptor.name || target.label : `${descriptor.macroName}: not on this machine (now)`"
       :data-testid="`output-control-${descriptor.slot}`"
   >
     <Icon v-if="iconKnown" :name="descriptor.icon ?? ''" size="h-4 w-4" />
     <span v-else-if="descriptor.icon">{{ descriptor.icon }}</span>
-    <span v-if="descriptor.name" class="whitespace-nowrap">{{ descriptor.name }}</span>
+    <span v-if="descriptor.name && !compact" class="whitespace-nowrap" :data-testid="`output-label-${descriptor.slot}`">{{ descriptor.name }}</span>
 
     <template v-if="target?.control === 'toggle'">
       <button

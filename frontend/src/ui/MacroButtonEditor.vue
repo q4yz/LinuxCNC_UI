@@ -394,6 +394,16 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
                 placeholder="Button label"
                 class="w-full min-w-[8rem] rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-name-${slot.id}`"
+                @input="
+                  (event) => {
+                    // the typed text lives in the draft at once: a redraw of the
+                    // table (another row saved) must not reset the field
+                    const row = descriptorFor(slot);
+                    if (!row) return;
+                    row.name = (event.target as HTMLInputElement).value;
+                    markDirty(row.slot);
+                  }
+                "
                 @change="
                   (event) => {
                     const row = descriptorFor(slot);
@@ -411,6 +421,14 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
                 placeholder="icon name or text"
                 class="w-28 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-icon-${slot.id}`"
+                @input="
+                  (event) => {
+                    const row = descriptorFor(slot);
+                    if (!row) return;
+                    row.icon = (event.target as HTMLInputElement).value;
+                    markDirty(row.slot);
+                  }
+                "
                 @change="
                   (event) => {
                     const row = descriptorFor(slot);
