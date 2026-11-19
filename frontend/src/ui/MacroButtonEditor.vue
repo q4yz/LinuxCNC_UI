@@ -38,6 +38,8 @@ import type { PropType } from "vue";
 import { ModulesMacrosService } from "../../generated/api";
 import type { MacroButtonDescriptor, MacroButtonSlotDef } from "./macroButtonTypes";
 import { PANELS } from "../layout/pagePanels";
+import useBaseThreadStore from "../stores/baseThread";
+import { outputTargets } from "./outputTargets";
 
 // One editable row. Mirrors ``emptyDescriptor`` below; ``macroKind``
 // is a closed union so the kind picker cannot produce junk state.
@@ -50,13 +52,20 @@ interface MacroButtonRow {
   macroName: string;
 }
 
-type Kind = "macro" | "ngc" | "component";
+type Kind = "macro" | "ngc" | "component" | "output";
 const KINDS: { value: Kind; label: string }[] = [
   { value: "macro", label: "macro" },
   { value: "ngc", label: "ngc" },
   { value: "component", label: "UI component" },
+  { value: "output", label: "Output pin" },
 ];
-const asKind = (raw: unknown): Kind => (raw === "ngc" || raw === "component" ? raw : "macro");
+const asKind = (raw: unknown): Kind =>
+  (raw === "ngc" || raw === "component" || raw === "output" ? raw : "macro");
+// kind "output": the machine's outputs from its live state (the I/O and LED
+// cards' data) — empty while the machine backend is not running
+const baseThread = useBaseThreadStore();
+const outputOptions = computed(() =>
+  outputTargets(baseThread.io, baseThread.leds).map((t) => ({ value: t.value, label: t.label })));
 // kind "component": any panel the pages can show, opened in a window
 const componentOptions = PANELS.map((p) => ({ value: p.id, label: p.label }));
 
@@ -168,9 +177,15 @@ watch(
       const incoming = Array.isArray(next)
         ? next.find((n) => n.slot === row.slot)
         : null;
-      if (incoming && !dirty.value.has(row.slot)) {
-        Object.assign(row, incoming);
+      if (!incoming) continue;
+      if (dirty.value.has(row.slot)) {
+        // an edited row keeps its local value until the stored one is it:
+        // the save of an EARLIER edit can arrive after a later one (fields
+        // changed quickly) and must not put the older value back
+        if (sameRow(row, incoming)) dirty.value.delete(row.slot);
+        continue;
       }
+      Object.assign(row, incoming);
     }
     // Any slot the host newly declared should be appended.
     for (const slot of props.slots) {
@@ -251,8 +266,15 @@ function markDirty(slot: string) {
 }
 
 function commitRow(row: MacroButtonRow) {
-  dirty.value.delete(row.slot);
+  // stays dirty until the stored value comes back equal (see the watch)
+  markDirty(row.slot);
   emit("update:modelValue", draft.value.map((r) => ({ ...r })));
+}
+
+function sameRow(row: MacroButtonRow, stored: MacroButtonDescriptor): boolean {
+  return (["enabled", "name", "icon", "macroKind", "macroName"] as const).every(
+    (key) => (row[key] ?? "") === (stored[key] ?? ""),
+  );
 }
 
 function onToggleEnabled(row: MacroButtonRow) {
@@ -299,6 +321,14 @@ function descriptorFor(slot: MacroButtonSlotDef): MacroButtonRow | undefined {
 // read against the kind picker.
 function optionsFor(row: MacroButtonRow | null | undefined): { value: string; label: string }[] {
   if (row?.macroKind === "component") return componentOptions;
+  if (row?.macroKind === "output") {
+    // keep a stored target the live state does not list (machine offline)
+    const listed = outputOptions.value;
+    const stored = row.macroName;
+    return stored && !listed.some((o) => o.value === stored)
+      ? [...listed, { value: stored, label: `${stored} (not listed now)` }]
+      : listed;
+  }
   const kind = row?.macroKind === "ngc" ? "ngc" : "macro";
   return macroOptionsByKind.value[kind].map((name) => ({ value: name, label: name }));
 }
@@ -328,7 +358,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
             <th class="px-3 py-2">Name</th>
             <th class="px-3 py-2">Icon</th>
             <th class="px-3 py-2">Kind</th>
-            <th class="px-3 py-2">Macro / component</th>
+            <th class="px-3 py-2">Macro / component / output</th>
           </tr>
         </thead>
         <tbody>
@@ -422,7 +452,8 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
                   }
                 "
               >
-                <option value="">— none —</option>
+                <option value="">{{ descriptorFor(slot)?.macroKind === 'output' && !outputOptions.length
+                  ? '— no outputs (is the machine running?) —' : '— none —' }}</option>
                 <option
                   v-for="option in optionsFor(descriptorFor(slot))"
                   :key="option.value"

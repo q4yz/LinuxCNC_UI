@@ -58,6 +58,11 @@ export abstract class BaseSetting<T> {
   protected readonly config: Readonly<Record<string, unknown>>;
 
   private readonly _stored = shallowRef<T | undefined>(undefined);
+  /** The previous save of this setting: saves go out one after another, in
+   * the order they were made — parallel writes of a whole value (a list of
+   * buttons, a layout) could reach the server, and their answers the page,
+   * the other way round, and the older value would win. */
+  private _saving: Promise<unknown> = Promise.resolve();
   private readonly _loaded = ref(false);
 
   constructor(category: string, label: string, key: string, defaultValue: T, options: SettingOptions = {}) {
@@ -161,7 +166,9 @@ export abstract class BaseSetting<T> {
       reportCommandFailure(`save setting ${this.label}`, result);
       return result;
     }
-    const { result, value } = await settingsFacade.write(this.key, valid);
+    const write = this._saving.then(() => settingsFacade.write(this.key, valid));
+    this._saving = write.catch(() => undefined);
+    const { result, value } = await write;
     if (result.failed) {
       reportCommandFailure(`save setting ${this.label}`, result);
       return result;

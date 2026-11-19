@@ -26,7 +26,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -62,11 +62,13 @@ test("MacroButton hides itself when the descriptor is missing or disabled", () =
   // appear in the same computed / v-if guard so a regression
   // that flips them to "rendered" trips the test.
   assert.match(buttonText, /isVisible/, "MacroButton must compute isVisible");
+  // both renderings (the output control and the button) are gated on it
   assert.match(
     buttonText,
-    /v-if="isVisible"/,
-    "MacroButton must gate the template on isVisible",
+    /v-if="isVisible && descriptor\?\.macroKind === 'output'"/,
+    "MacroButton must gate the output control on isVisible",
   );
+  assert.match(buttonText, /v-else-if="isVisible"/, "MacroButton must gate the button on isVisible");
   assert.match(
     buttonText,
     /descriptor != null/,
@@ -365,4 +367,27 @@ test("the camera view shows the three camera macro slots bottom-left", () => {
   assert.match(text, /macroButtons\.bySlot/);
   assert.match(text, /class="absolute bottom-4 left-4[^"]*"[^>]*data-test="camera-macro-buttons"/);
   assert.match(text, /<MacroButton[\s\S]{0,80}:descriptor="buttonsBySlot\[slot\]"/);
+});
+
+
+test("kind 'output': a toggle, slider or colour picker next to the name", async () => {
+  const editor = editorText;
+  assert.match(editor, /\{ value: "output", label: "Output pin" \}/);
+  assert.match(editor, /outputTargets\(baseThread\.io, baseThread\.leds\)/, "the machine's outputs from its live state");
+  const control = readFileSync(resolve(here, "../src/ui/OutputControl.vue"), "utf-8");
+  for (const id of ["output-toggle", "output-slider", "output-color"]) {
+    assert.ok(control.includes(':data-testid="`' + id + '-${descriptor.slot}`"'), id);
+  }
+  assert.match(control, /<span v-if="descriptor\.name" class="whitespace-nowrap">\{\{ descriptor\.name \}\}<\/span>/,
+    "the name stays next to the control");
+  const { outputTargets, findTarget } = await import(pathToFileURL(resolve(here, "../src/ui/outputTargets.ts")).href);
+  const io = { outputs: [{ id: "light", pwm: false, value: 1 }, { id: "beeper", pwm: true, scale: 0.5, value: 0 }],
+               fans: [{ id: "fan", value: 40 }], inputs: [] };
+  const leds = [{ id: "sb", chain_count: 3, color_order: "GRB", segments: [] }];
+  const targets = outputTargets(io, leds);
+  assert.deepEqual(targets.map((t: { value: string; control: string }) => [t.value, t.control]),
+    [["out:light", "toggle"], ["out:beeper", "slider"], ["fan:fan", "slider"], ["led:sb", "color"]]);
+  assert.equal(findTarget("out:beeper", io, leds).max, 0.5, "a PWM pin's slider goes to its scale");
+  assert.equal(findTarget("fan:fan", io, leds).max, 100);
+  assert.equal(findTarget("out:nope", io, leds), undefined);
 });

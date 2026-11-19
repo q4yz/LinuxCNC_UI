@@ -25,6 +25,8 @@
 //     (the existing MDI block-dispatch path — parses .macro bodies
 //     into static / python blocks, fires each static line via MDI,
 //     honours the E-Stop guard).
+//   * ``macroKind === "output"`` → not a button: the output's control
+//     (``OutputControl``: toggle / slider / colour) next to the name.
 //   * ``macroKind === "component"`` → opens the panel ``macroName`` (a
 //     ``pagePanels.PANELS`` id) in a floating window (``useFloatingPanels``).
 //   * ``macroKind === "ngc"``   → ``useMacrosStore().runMacroOfKind("ngc", name)``,
@@ -65,6 +67,7 @@ import { useMachineStore } from "../stores/machine";
 import type { MacroButtonDescriptor } from "./macroButtonTypes";
 import { useFloatingPanels } from "../composables/useFloatingPanels";
 import { panelDef } from "../layout/pagePanels";
+import OutputControl from "./OutputControl.vue";
 
 const props = defineProps({
   // Resolved config row (``macroButtons.bySlot[slot]``). ``null``
@@ -85,7 +88,8 @@ const props = defineProps({
         typeof (v as MacroButtonDescriptor).macroName === "string" &&
         ((v as MacroButtonDescriptor).macroKind === MACRO_KIND.MACRO ||
           (v as MacroButtonDescriptor).macroKind === MACRO_KIND.NGC ||
-          (v as MacroButtonDescriptor).macroKind === "component")),
+          (v as MacroButtonDescriptor).macroKind === "component" ||
+          (v as MacroButtonDescriptor).macroKind === "output")),
   },
   // Visual variants — matches the ``<BaseButton>`` primitive so a
   // host can request the same look-and-feel as its sibling
@@ -195,8 +199,16 @@ async function onClick() {
 </script>
 
 <template>
+  <!-- kind "output": the output's own control (toggle / slider / colour) next to the name -->
+  <OutputControl
+    v-if="isVisible && descriptor?.macroKind === 'output'"
+    :descriptor="descriptor"
+    :icon-known="iconIsKnown"
+    :size="size"
+    :class="class"
+  />
   <BaseButton
-    v-if="isVisible"
+    v-else-if="isVisible"
     :variant="variant"
     :size="size"
     :disabled="isDisabled"
