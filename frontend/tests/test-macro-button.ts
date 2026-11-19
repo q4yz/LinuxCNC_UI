@@ -254,9 +254,15 @@ test("a component button opens its panel in a floating window", () => {
   assert.match(button, /floating\.open\(panel, props\.descriptor\.name \|\| panelDef\(panel\)\?\.label \|\| panel\)/);
   assert.match(button, /opensComponent\.value \? false :/, "opening a window is never blocked by the E-stop");
   const host = readFileSync(resolve(here, "../src/components/FloatingPanelHost.vue"), "utf-8");
-  assert.match(host, /:data-testid="`floating-panel-close-\$\{win\.panel\}`"[\s\S]*@click="close\(win\.id\)"/);
-  assert.match(host, /@pointerdown="onTitleDown\(win, \$event\)"/, "dragged by the title bar");
+  assert.match(host, /provide\(WINDOW_CHROME, props\.chrome\)/, "the window hands its x / drag to the panel");
+  assert.match(host, /<header\s+v-if="!claims\[win\.id\]"/, "its own header only while nothing took the hook");
   assert.match(host, /<MachineGate v-else-if="PANEL_COMPONENTS\[win\.panel\]"/);
+  const card = readFileSync(resolve(here, "../src/ui/BaseCard.vue"), "utf-8");
+  assert.match(card, /v-if="title \|\| chrome"/, "a card header shows when it has a title or the window's x");
+  assert.match(card, /@pointerdown="chrome\?\.startDrag\(\$event\)"/, "dragging the card header moves the window");
+  assert.match(card, /<WindowCloseButton v-if="chrome" :chrome="chrome" \/>/);
+  const hook = readFileSync(resolve(here, "../src/composables/windowChrome.ts"), "utf-8");
+  assert.match(hook, /provide\(WINDOW_CHROME, null\);/, "only the outermost card takes it");
   assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<FloatingPanelHost \/>/);
 });
 

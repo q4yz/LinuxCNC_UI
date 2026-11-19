@@ -47,10 +47,7 @@ function label(id: string): string {
 </script>
 
 <template>
-  <BaseCard data-testid="io-panel">
-    <div class="border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">I/O</h2>
-    </div>
+  <BaseCard title="I/O" data-testid="io-panel">
     <div class="space-y-4 p-4">
       <p v-if="isEmpty" class="text-center text-sm text-gray-500">
         No fans, output pins or input pins in this machine's profile.

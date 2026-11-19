@@ -62,10 +62,7 @@ function range(first: number, count: number): string {
 </script>
 
 <template>
-  <BaseCard v-if="leds.length" data-testid="led-panel">
-    <div class="border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">LEDs</h2>
-    </div>
+  <BaseCard v-if="leds.length" title="LEDs" data-testid="led-panel">
     <div class="space-y-4 p-4">
       <div v-for="led in leds" :key="led.id" class="space-y-2" :data-testid="`led-${led.id}`">
         <div class="flex items-center justify-between text-sm">

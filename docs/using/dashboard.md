@@ -49,8 +49,10 @@ the toolpath viewer and the camera view. Each has a name, an icon (an icon name 
 emoji) and a kind:
 
 - **macro** / **ngc** — runs that macro or NGC program (not in E-stop, not while one runs).
-- **UI component** — opens a panel (any the Dashboard can show) in a window: drag it by its
-  title bar, close it with the ×; clicking the button again brings the open window to the front.
+- **UI component** — opens a panel (any the Dashboard can show) in a window. The window has no
+  frame of its own: the panel's own header carries the × (close) and moves the window when
+  dragged; a panel without a header gets a slim one. Clicking the button again brings the open
+  window to the front.
   A window shows the same panel as the Dashboard (a camera there and in a window streams twice).
 
 Leave the macro / component empty to hide the button.

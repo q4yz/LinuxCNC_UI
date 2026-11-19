@@ -52,9 +52,11 @@ export function useFloatingPanels() {
     if (!win) return;
     const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
     const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-    // the title bar stays reachable: at least 80 px on screen, never above the top
-    win.x = Math.min(Math.max(x, 80 - WIDTH), vw - 80);
-    win.y = Math.min(Math.max(y, 0), vh - 40);
+    // fully on screen sideways (its × in the header's right end stays
+    // reachable); the header never above the top or below the bottom
+    const width = Math.min(WIDTH, vw - 16);
+    win.x = Math.min(Math.max(x, 0), Math.max(0, vw - width));
+    win.y = Math.min(Math.max(y, 0), vh - 48);
   }
 
   return { windows: state.windows, open, close, focus, moveTo, WIDTH };

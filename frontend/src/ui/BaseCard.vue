@@ -4,19 +4,25 @@
 
 
 
+    <!-- The header shows when it has something: a title, or — in a floating
+         window (windowChrome) — the window's × and drag. -->
     <div
-        v-if="title"
+        v-if="title || chrome"
         ref="header"
         class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex items-center justify-between"
+        :class="chrome ? 'cursor-move touch-none select-none' : ''"
+        :data-window-header="chrome ? '' : undefined"
+        @pointerdown="chrome?.startDrag($event)"
     >
       <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center gap-2">
         <Icon v-if="icon" :name="icon" />
-        {{ title }}
+        {{ title || chrome?.title }}
       </h2>
 
 
       <div class="flex items-center space-x-2">
         <slot name="header-actions" />
+        <WindowCloseButton v-if="chrome" :chrome="chrome" />
       </div>
     </div>
     <div ref="body" class="flex-1 min-h-0">
@@ -39,6 +45,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import Icon from './Icon.vue';
+import WindowCloseButton from './WindowCloseButton.vue';
+import { useWindowChrome } from '../composables/windowChrome';
 import { MAX_ROW_PX, applyShift, estopBox, estopOverlap, scheduleEstopCheck, watchEstop } from './estopClearance';
 
 const props = withDefaults(
@@ -110,6 +118,10 @@ const cardStyle = computed(() => ({
 // a collision between two cards is still strictly better than every
 // card mounting together, which is today's baseline. 15ms keeps the
 // whole dashboard settled almost immediately.
+// In a floating window the outermost card's header takes the window's ×
+// and drag (windowChrome); nested cards and cards elsewhere get null.
+const chrome = useWindowChrome();
+
 const STAGGER_MAX_MS = 15;
 const ready = ref(!props.stagger);
 let revealTimer: ReturnType<typeof setTimeout> | null = null;
