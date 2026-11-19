@@ -102,14 +102,16 @@ const _renderEpoch = ref(Date.now());
 
 <template>
   <!--
-    Fixed-position container anchored to the bottom-right. ``z-50``
-    puts the layer above the rest of the app so a deep-down
-    panel cannot accidentally cover a popup. ``pointer-events-none``
+    Fixed-position container anchored to the bottom-right. ``z-[90]``
+    puts the layer above the rest of the app (dialogs z-50, the update
+    overlay z-[60]) so a deep-down panel cannot accidentally cover a
+    popup — but below the E-stop box (z-[100]), the one thing that is
+    always on top (tests/test-z-index.ts). ``pointer-events-none``
     on the outer wrapper lets clicks pass through the empty
     regions; each toast re-enables pointer events on itself.
   -->
   <div
-    class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
+    class="fixed bottom-4 right-4 z-[90] flex flex-col gap-2 w-80 max-w-[90vw] pointer-events-none"
     data-test="toast-container"
     :data-render-epoch="_renderEpoch"
   >
