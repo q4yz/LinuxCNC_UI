@@ -50,7 +50,7 @@ from dtos.pins.HalPin import HalPin
 from exceptions import register_command_error_handler
 from hardware import HAS_HAL, get_stat_channel
 from hardware.mock.LinuxCNCMock import mock_system
-from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
+from hardware.mock.seed import reseed_from_hardware_json
 from routers import (
     BaseThreadRouter,
     ServoThreadRouter,

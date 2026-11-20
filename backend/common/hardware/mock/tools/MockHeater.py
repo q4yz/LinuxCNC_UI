@@ -1,51 +1,46 @@
-from typing import Optional, Any
+from typing import Optional
+
 from hardware.mock.tools.MockComponent import MockComponent
 
+#: Room temperature the heaters cool down to (°C).
+AMBIENT = 25.0
+
+
 class MockHeater(MockComponent):
-    def __init__(self, id: str, sensor_id: Optional[str] = None):
+    """A heater with its sensor: heats towards the target, cools to room
+    temperature.
+
+    Like the generated HAL (``heat-ok-<id>``: board link AND not in
+    E-stop), it only heats while the machine is out of E-stop, and the
+    target is capped at the configured ``max_temp`` (the PID's SPmax).
+    The reading is published on the *sensor's* pin (``webgui.<sensor>``),
+    the one ``HeaterMapper`` reads; a sensor-less heater keeps the
+    derived ``actual-temperature<suffix>`` name.
+    """
+
+    _pin_cast = float
+    HEAT_RATE = 2.0  # °C/s
+    COOL_RATE = 0.5  # °C/s
+
+    def __init__(self, id: str, sensor_id: Optional[str] = None, max_temp: Optional[float] = None):
         self.id = id
-
-        # Internal State
-        self.actual = 25.0
+        self.actual = AMBIENT
         self.target = 0.0
-
-        # Calculate the suffix exactly as the ConfigMapper expects
+        self.max_temp = max_temp
         suffix = self.id.replace("heater", "")
-        # Exact dictionary mapping of HAL pin strings to internal state
-        # attributes. The reading is published on the SENSOR's pin
-        # (``webgui.<sensor_id>``) because that is what HeaterMapper
-        # makes the heater read — a heater carries a sensor, it does
-        # not own a second copy of the reading. Sensor-less heaters
-        # keep the derived name.
         actual_pin = sensor_id if sensor_id else f"actual-temperature{suffix}"
         self._pin_map = {
             f"webgui.{actual_pin}": "actual",
             f"webgui.target-temperature{suffix}": "target",
         }
 
-    def read_pin(self, pin_name: str) -> Optional[Any]:
-        if pin_name in self._pin_map:
-            attr_name = self._pin_map[pin_name]
-            return getattr(self, attr_name)
-        return None
-
-    def set_pin(self, pin_name: str, value: Any) -> bool:
-        if pin_name in self._pin_map:
-            attr_name = self._pin_map[pin_name]
-            setattr(self, attr_name, float(value))
-            return True
-        return False
+    @property
+    def effective_target(self) -> float:
+        return self.target if self.max_temp is None else min(self.target, self.max_temp)
 
     def update(self, hal, nml, delta_time: float) -> None:
-        """Simulate active heating up and cooling down."""
-        ambient = 25.0
-
-        if self.target > self.actual:
-            # Heat up by 2 degrees per second
-            self.actual = min(self.target, self.actual + (2.0 * delta_time))
-        elif self.actual > ambient and self.target < self.actual:
-            # Cool down by 0.5 degrees per second
-            self.actual = max(ambient, self.actual - (0.5 * delta_time))
-
-    def get_legacy_state(self) -> dict[str, Any]:
-        return {"actual": self.actual, "target": self.target}
+        target = 0.0 if getattr(nml, "estop", 0) else self.effective_target
+        if target > self.actual:
+            self.actual = min(target, self.actual + self.HEAT_RATE * delta_time)
+        elif self.actual > AMBIENT:
+            self.actual = max(max(target, AMBIENT), self.actual - self.COOL_RATE * delta_time)

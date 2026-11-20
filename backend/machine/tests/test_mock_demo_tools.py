@@ -28,6 +28,7 @@ def test_the_mock_simulates_them():
 
     mock = LinuxCNCMock()
     mock.register_hardware(demo_tools.with_demo_tools({}))
+    mock.internal_state.reset_estop()  # heaters stay off in E-stop
     mock.internal_hal.set_pin("webgui.target-temperature_bed", 60.0)
     mock.internal_hal.update(delta_time=5.0)
     assert mock.internal_hal.get_pin("webgui.bed") == 35.0  # 25 °C + 2 °C/s × 5 s

@@ -112,6 +112,12 @@ Reads follow the same pattern in reverse: `HalMock.get_pin`
 iterates registered components and returns the first non-`None`
 value from `component.read_pin(...)`.
 
+**Pins no component owns** (a fan's speed, an LED colour, an
+output pin, a tuning value) go to `HalMock`'s plain store: a write
+reads back as written, as on a real HAL signal, and a pin never
+written reads as the default (`0.0`). `HalMock.pins` is a copy of
+that store; `clear_pins()` empties it.
+
 ---
 
 ## 4. Adding a new mock component
@@ -131,18 +137,18 @@ or **tool-derived** (see § 5):
    components use a literal id (e.g. `"estop"`); tool-derived
    components use the tool id from `hardware.json`.
 
-3. **Build a `_pin_map` if you own multiple pins.** Map the full
-   HAL pin name (`webgui.foo`) to the internal attribute that
-   holds its value. Look it up in `read_pin` / `set_pin` and
-   return `None` / `False` for anything outside the map.
+3. **Fill `_pin_map`.** Map each full HAL pin name (`webgui.foo`)
+   to the attribute that holds its value; the base class's
+   `read_pin` / `set_pin` use it. Set `_pin_cast = float` for
+   analog pins. Override `read_pin` / `set_pin` only for pins
+   that are not plain attributes (the E-stop's trigger).
 
 4. **Implement `update` only if you have physics.** A passive
    sensor with no ramp-up leaves `update` as a no-op. A heater
    that ramps toward its target writes to its own internal
-   attribute. Never mutate `state_machine` from inside `update`
-   unless the contract requires it (e.g. axis limits triggering
-   ESTOP, which is currently commented out — see the docstring
-   on `StateMachineMock.update`).
+   attribute. `nml` is the state machine: read it (a heater
+   stays off while `nml.estop` is set), don't mutate it from a
+   component.
 
 5. **Register.** Always-on: add a line to
    `LinuxCNCMock.__init__`. Tool-derived: extend
@@ -164,7 +170,7 @@ tools to appear before a hardware.json has been reseeded.
 | Lifetime | Where it lives | When registered | When torn down |
 |----------|---------------|-----------------|----------------|
 | **Always-on** | `backend/common/hardware/mock/MockEStopComponent.py` (and any future core safety component) | `LinuxCNCMock.__init__` | Never — exists for the process lifetime |
-| **Tool-derived** | `backend/common/hardware/mock/tools/MockHeater.py`, `MockExtruder.py`, `MockSensor.py`, `MockSpindleDigital.py` | `MockToolFactory.create(payload_record)` inside `LinuxCNCMock.register_hardware` | Cleared by `reset_simulator_state()` between tests |
+| **Tool-derived** | `backend/common/hardware/mock/tools/MockHeater.py`, `MockExtruder.py`, `MockSensor.py`, `MockSpindleDigital.py` | `MockToolFactory.create(payload_record)` inside `LinuxCNCMock.register_hardware` | Replaced by the next `register_hardware` (another machine); `reset_simulator_state()` registers an empty machine |
 
 **Always-on** components are reserved for things that are not
 operator-configurable and that a service can rely on at any tick.
@@ -175,7 +181,7 @@ must exist before any tool has been loaded.
 
 **Tool-derived** components come from `payload["tools"]` in the
 project's `hardware.json`. A typical test starts with
-`reset_simulator_state()` (clears `mock_system.internal_hal._components`),
+`reset_simulator_state()` (an empty default machine),
 then calls `reseed_from_hardware_json()` to populate the tool list
 for that test. If your component belongs to that lifecycle, route
 it through `MockToolFactory`.
@@ -187,6 +193,42 @@ placed in `tools/` is registered only after a hardware.json reseed
 component placed in `LinuxCNCMock.__init__` will be present even
 when the operator's hardware.json has no matching tool, leaking
 state across reseeds.
+
+---
+
+## 5a. The machine comes from hardware.json
+
+`LinuxCNCMock.register_hardware(payload)` (called at start by
+`hardware.mock.seed.reseed_from_hardware_json`, the payload as the
+services see it, calibration applied) shapes the whole mock after
+the machine, through `MockMachineConfig.from_payload`
+(`hardware/mock/config.py`):
+
+| From `hardware.json` | Mock behaviour |
+|---|---|
+| `axes[].id`, `joint_numbers` | `StateMachineMock.axes` (one `MockAxis` per letter, index as in `stat.position`), `stat.axis_mask`, joint jogs map to their axis |
+| `joints[]` | `stat.joints`, `stat.homed` / `stat.joint` sized to the joint count |
+| `position_min` / `position_max` | soft limits: jogs and moves stop there (no `position_min` with a `position_max`: travel from 0) |
+| `axes[].max_velocity`, `max_velocity` | jog / rapid speed cap, `stat.max_velocity` |
+| `position_endstop` | where `command.home()` puts the axis |
+| `tools[].max_temp` | a heater's target is capped there (the PID's SPmax) |
+| `tools[]`, `temperature_sensors[]` | the tool-derived components (§ 5) |
+
+No axes in the payload (no machine yet): an XYZ machine with
+unlimited travel, as before.
+
+What the state machine simulates on its 100 ms tick
+(`LinuxCNCMock.tick`, also callable from tests):
+
+* **Jogs** (continuous / increment), capped speed, stop at a limit.
+* **MDI `G0` / `G1`** with axis words, `G90` / `G91`, `F` (units/min).
+* **Homing** to `position_endstop`; `unhome`.
+* **Programs**: `program_open` counts the file's lines, `AUTO_RUN`
+  advances `current_line` / `motion_line` at 100 lines/s × feed
+  override until the end (then `INTERP_IDLE`); pause / resume /
+  abort. A program of unknown length (0 lines) runs until aborted.
+* **E-stop** stops every axis and turns the heaters off (like the
+  generated `heat-ok-<id>` gate).
 
 ---
 
@@ -227,16 +269,16 @@ preference:
 
 | Helper | Use when |
 |--------|---------|
-| `reseed_from_hardware_json(path=None)` | Test needs the full tool set from the default machine's `hardware.json` (resolved via `domain_file_services.paths.default_machine_hardware_json`, or a fixture path). Loads every tool-derived component. |
-| `seed_temperature(sensor_id, actual, target=0)` | Test needs a temperature reading on a specific sensor without waiting for the heater ramp. Registers a fresh `MockHeater` on the fly. |
-| `seed_spindle(spindle_id, actual_rpm, is_connected, error_count)` | Test needs spindle telemetry without waiting for VFD spool-up. Registers a fresh `MockSpindleDigital` on the fly. |
-| `force_hal_pin(pin_name, value)` | Test needs to drive an arbitrary HAL pin directly. Bypasses the broadcast — only useful for pins whose owners don't validate writes. |
+| `reseed_from_hardware_json(path=None)` (also `hardware.mock.seed`, which the backend uses) | Test needs the full tool set from the default machine's `hardware.json` (resolved via `domain_file_services.paths.default_machine_hardware_json`, or a fixture path). Loads every tool-derived component. |
+| `seed_temperature(sensor_id, actual, target=0)` | Test needs a temperature reading on a specific sensor without waiting for the heater ramp. Registers a `MockHeater` already at that reading. |
+| `seed_spindle(spindle_id, actual_rpm, is_connected, error_count)` | Test needs spindle telemetry without waiting for VFD spool-up. Registers a `MockSpindleDigital` already at that speed. |
+| `force_hal_pin(pin_name, value)` | Test needs to drive an arbitrary HAL pin directly. Goes through the broadcast; an unowned pin lands in the store. |
 | `set_mock_task_state(state)` | Test needs the NML state machine in a specific task_state without going through the action path. |
-| `reset_simulator_state()` | Pytest fixture that clears all registered components. Call before each test that registers its own. |
+| `reset_simulator_state()` | Back to an empty default machine (always-on components only, no stored pins). Call before each test that registers its own. |
 | `reset_program_state()` / `reset_error_history()` / `push_mock_error(...)` | Test needs the program lifecycle or error channel in a specific shape. |
 
 These helpers are **test-only**. Do not import them from feature
-code; the production runtime never needs to seed state.
+code; the backend seeds the mock through `hardware.mock.seed`.
 
 ---
 
@@ -246,17 +288,15 @@ code; the production runtime never needs to seed state.
   from feature code skips the `HalPin._comp_instance.__setitem__`
   layer and the `webgui.<name>` prefix; the pin name ends up wrong
   and the registered components see nothing.
-* **Don't write to the central pin dict directly.** `HalMock`
-  has no public `set_pin` accessors other than the broadcast;
-  the broadcast is the contract. Tests that need to seed a value
-  use `force_hal_pin` (which itself goes through the broadcast).
-* **Don't add `update`-time side effects on `state_machine`.** The
-  commented-out limit-switch code in `StateMachineMock.update`
-  shows the historical pattern and is disabled because every
-  integration test would then need to clear the limit-switch
-  pins before each assertion. If a future feature genuinely
-  needs that wiring, do it inside a dedicated `MockComponent`
-  subclass's `update` — never inside `StateMachineMock.update`.
+* **Don't write to the pin store directly** (`HalMock._pins`): a
+  write must go through `set_pin` so the owning component sees it.
+  Tests use `force_hal_pin`.
+* **Don't hard-code the machine.** Axis count, travel, speeds and
+  heater limits come from `MockMachineConfig`; a new simulated
+  behaviour that depends on the machine reads it there.
+* **Don't mutate the state machine from a component's `update`.**
+  Components read `nml` (E-stop, positions); state changes go
+  through the command channel.
 * **Don't register always-on components conditionally.** Either
   `LinuxCNCMock.__init__` registers `MockEStopComponent` or it
   doesn't — there is no `if some_feature_flag:`. Tests rely on
