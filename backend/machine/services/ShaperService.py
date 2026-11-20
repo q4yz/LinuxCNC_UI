@@ -44,6 +44,9 @@ class ShaperService:
         shaper = payload.get("input_shaper") or {}
         self.freq = {"x": float(shaper.get("freq_x") or 0.0), "y": float(shaper.get("freq_y") or 0.0)}
         self.skew = float((payload.get("skew_correction") or {}).get("xy_factor") or 0.0)
+
+    def apply_initial(self) -> None:
+        """Write the start values (after ``HalPin.initialize_component``)."""
         for axis in ("x", "y"):
             self._write(f"shaper-freq-{axis}", self.freq[axis])
         self._write("skew-xy", self.skew)

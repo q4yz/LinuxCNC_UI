@@ -128,6 +128,35 @@ program_service = get_program_lifecycle_service()
 _shutting_down = False
 
 
+def setup_hal_pins() -> None:
+    """Create every service's ``webgui.*`` pin, lock the HAL component,
+    then write the start values. Writes need the component, so a
+    service creates its pins in ``preload_hal_pins`` and writes its
+    start values in ``apply_initial`` / ``apply_start_values``."""
+    for service in (
+        tool_service,
+        sensor_service,
+        state_service,
+        fans_service,
+        mcu_service,
+        program_service,
+        get_bed_mesh_service(),
+        get_io_service(),
+        get_z_tilt_service(),
+        get_led_service(),
+        get_print_tuning_service(),
+        get_shaper_service(),
+        get_pid_calibrate_service(),
+        get_resonance_service(),
+    ):
+        service.preload_hal_pins()
+    HalPin.initialize_component()
+    get_io_service().apply_start_values()
+    for initial in (get_led_service(), get_print_tuning_service(), get_shaper_service(),
+                    get_pid_calibrate_service(), get_resonance_service()):
+        initial.apply_initial()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI Lifespan Context Manager.
@@ -144,23 +173,7 @@ async def lifespan(app: FastAPI):
     # deferred to :func:`reseed_from_hardware_json` to break the
     # hardware -> temperature -> hardware circular import.
     if not HAS_HAL:
-        tool_service.preload_hal_pins()
-        sensor_service.preload_hal_pins()
-        state_service.preload_hal_pins()
-        fans_service.preload_hal_pins()
-        mcu_service.preload_hal_pins()
-        program_service.preload_hal_pins()
-        get_bed_mesh_service().preload_hal_pins()
-        get_io_service().preload_hal_pins()
-        get_z_tilt_service().preload_hal_pins()
-        get_led_service().preload_hal_pins()
-        get_print_tuning_service().preload_hal_pins()
-        get_shaper_service().preload_hal_pins()
-        get_pid_calibrate_service().preload_hal_pins()
-        get_resonance_service().preload_hal_pins()
-        HalPin.initialize_component()
-        get_io_service().apply_start_values()
-        get_led_service().apply_initial()
+        setup_hal_pins()
 
         reseed_from_hardware_json()
         mock_system.start_simulation()
@@ -353,19 +366,7 @@ if __name__ == "__main__":
 
     logger.info("Starting LinuxCNC background tasks...")
 
-    tool_service.preload_hal_pins()
-    sensor_service.preload_hal_pins()
-    state_service.preload_hal_pins()
-    fans_service.preload_hal_pins()
-    mcu_service.preload_hal_pins()
-    program_service.preload_hal_pins()
-    get_bed_mesh_service().preload_hal_pins()
-    get_io_service().preload_hal_pins()
-    get_z_tilt_service().preload_hal_pins()
-    get_led_service().preload_hal_pins()
-    HalPin.initialize_component()
-    get_io_service().apply_start_values()
-    get_led_service().apply_initial()
+    setup_hal_pins()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")
     uvicorn.run(

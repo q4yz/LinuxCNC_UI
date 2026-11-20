@@ -39,8 +39,8 @@ class _Latch:
     """The UI's pins into a latched output (see module doc)."""
 
     def __init__(self, pin_id: str) -> None:
-        self.set = ReadWriteDynamicHalPin(f"{pin_id}-set", HalDataType.BIT, f"Output pin {pin_id}: apply")
-        self.state = ReadOnlyDynamicHalPin(f"{pin_id}-state", HalDataType.FLOAT, f"Output pin {pin_id}: value")
+        self.set: ReadWriteDynamicHalPin[bool] = ReadWriteDynamicHalPin(f"{pin_id}-set", HalDataType.BIT, f"Output pin {pin_id}: apply")
+        self.state: ReadOnlyDynamicHalPin[float] = ReadOnlyDynamicHalPin(f"{pin_id}-state", HalDataType.FLOAT, f"Output pin {pin_id}: value")
 
 
 class IoService:

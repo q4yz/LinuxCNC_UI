@@ -134,9 +134,12 @@ class ResonanceService:
 
         adxl = HardwareConfigService().load_payload().get("adxl345")
         if isinstance(adxl, dict) and is_node(adxl):
-            self._record_pin = ReadWriteDynamicHalPin(NodeAdxl345.RECORD_PIN, HalDataType.BIT,
+            self._record_pin: ReadWriteDynamicHalPin[bool] = ReadWriteDynamicHalPin(NodeAdxl345.RECORD_PIN, HalDataType.BIT,
                                                       "Resonance test: record the node accelerometer")
-            self._record_pin.set_value(False)
+
+    def apply_initial(self) -> None:
+        """Start with the node not recording (after ``initialize_component``)."""
+        self._record(False)
 
     def _record(self, on: bool) -> None:
         pin = getattr(self, "_record_pin", None)

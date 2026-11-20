@@ -100,6 +100,9 @@ class PrintTuningService:
             "pressure-advance", HalDataType.FLOAT, "Pressure advance (mm per mm/s) for the extruder component")
         self._pressure_advance = self._configured_pressure_advance()
         self._flow = self._configured_flow()
+
+    def apply_initial(self) -> None:
+        """Write the start values (after ``HalPin.initialize_component``)."""
         self._write("flow", self._flow)
         self._write("z-offset", self._z_offset)
         self._write("pressure-advance", self._pressure_advance)

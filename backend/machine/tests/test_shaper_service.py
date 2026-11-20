@@ -34,6 +34,7 @@ def service(monkeypatch):
 def test_starts_at_the_profile(service, monkeypatch):
     monkeypatch.setattr(module, "ReadWriteDynamicHalPin", lambda name, *a: service._pins[name])
     service.preload_hal_pins()
+    service.apply_initial()
     assert service._pins["shaper-freq-x"].value == 50.0 and service._pins["shaper-freq-y"].value == 40.0
     assert service._pins["skew-xy"].value == 0.001 and service._pins["resonance-amp-x"].value == 0.0
 

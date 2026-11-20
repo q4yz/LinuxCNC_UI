@@ -135,6 +135,9 @@ class PidCalibrateService:
                 f"tune-{hid}-enable", HalDataType.BIT, f"PID_CALIBRATE: {hid} on the relay")
             self._pins[f"{hid}-duty"] = ReadWriteDynamicHalPin(
                 f"tune-{hid}-duty", HalDataType.FLOAT, f"PID_CALIBRATE: {hid} duty (%)")
+
+    def apply_initial(self) -> None:
+        """Every heater off the relay (after ``HalPin.initialize_component``)."""
         for heater in self._heaters():
             self._release(str(heater["id"]))
 
