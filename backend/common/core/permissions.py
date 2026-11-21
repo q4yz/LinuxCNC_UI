@@ -54,6 +54,8 @@ class Permission(str, Enum):
     USERS_MANAGE = "users.manage"
     #: Approve or deny the assistant's actions — never the agent itself.
     AGENT_APPROVE = "agent.approve"
+    #: Chat with the in-app assistant.
+    AGENT_CHAT = "agent.chat"
 
 
 class Level(str, Enum):
@@ -70,7 +72,7 @@ _READ = {P.MACHINE_READ, P.CAMERA_VIEW, P.HAL_READ, P.FILES_READ, P.CONFIG_READ,
 _OPERATE = {
     P.MACHINE_ESTOP, P.MACHINE_POWER, P.MACHINE_MOTION, P.PROGRAM_RUN, P.MACHINE_TUNE, P.HEATERS,
     P.OUTPUTS, P.MACROS_RUN, P.CALIBRATION_RUN, P.FILES_WRITE, P.CALIBRATION_MANAGE, P.BEDMESH_MANAGE,
-    P.SETTINGS_WRITE, P.SESSION_CONTROL, P.AGENT_APPROVE,
+    P.SETTINGS_WRITE, P.SESSION_CONTROL, P.AGENT_APPROVE, P.AGENT_CHAT,
 }
 
 
@@ -238,6 +240,13 @@ SYSTEM_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("GET", "/api/v1/agent/confirmations"): P.AGENT_APPROVE,
     ("POST", "/api/v1/agent/confirmations/{confirmation_id}/approve"): P.AGENT_APPROVE,
     ("POST", "/api/v1/agent/confirmations/{confirmation_id}/deny"): P.AGENT_APPROVE,
+    # The in-app assistant (the key is write-only; changing it is a setting)
+    ("GET", "/api/v1/agent/config"): P.SETTINGS_READ,
+    ("PUT", "/api/v1/agent/config"): P.SETTINGS_WRITE,
+    ("POST", "/api/v1/agent/chat"): P.AGENT_CHAT,
+    ("GET", "/api/v1/agent/chat/{conversation_id}"): P.AGENT_CHAT,
+    ("POST", "/api/v1/agent/chat/{conversation_id}/stop"): P.AGENT_CHAT,
+    ("DELETE", "/api/v1/agent/chat/{conversation_id}"): P.AGENT_CHAT,
 }
 
 #: FastAPI's own pages: open (they describe the API, they do nothing).
@@ -280,6 +289,7 @@ _DESCRIPTIONS = {
     P.SYSTEM_UPDATE: "update the software",
     P.USERS_MANAGE: "users and roles",
     P.AGENT_APPROVE: "approve or deny the assistant's actions",
+    P.AGENT_CHAT: "chat with the in-app assistant",
 }
 
 

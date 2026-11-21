@@ -33,13 +33,15 @@ export interface AgentTransport {
    * ``onPartial`` streams the reply text so far, if the agent streams.
    */
   send(history: readonly ChatMessage[], onPartial?: (text: string) => void, signal?: AbortSignal): Promise<AgentReply>;
+  /** Forget the conversation (the panel's "clear"), if the agent keeps one. */
+  reset?(): void;
 }
 
 export const OFFLINE_REPLY =
-  "No agent is connected yet. Your message is kept here; once an assistant is set up it will be able to answer and help with the machine.";
+  "No assistant is set up yet. Add an Anthropic API key in Settings -> Assistant and I can answer and help with the machine.";
 
 export const offlineTransport: AgentTransport = {
-  name: "No agent connected",
+  name: "Not set up (Settings -> Assistant)",
   connected: false,
   async send() {
     return { text: OFFLINE_REPLY };
@@ -47,9 +49,17 @@ export const offlineTransport: AgentTransport = {
 };
 
 let transport: AgentTransport = offlineTransport;
+const listeners = new Set<(t: AgentTransport) => void>();
 
 export function setAgentTransport(next: AgentTransport | null): void {
   transport = next ?? offlineTransport;
+  listeners.forEach((listener) => listener(transport));
+}
+
+/** Called whenever the transport changes; returns the unsubscribe. */
+export function onAgentTransport(listener: (t: AgentTransport) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 export function agentTransport(): AgentTransport {

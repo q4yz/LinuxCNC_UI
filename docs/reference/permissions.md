@@ -39,6 +39,7 @@ For now every web user is **admin** (there are no logins yet).
 | `system.update` | update the software | yes | - | - | - |
 | `users.manage` | users and roles | yes | - | - | - |
 | `agent.approve` | approve or deny the assistant's actions | yes | yes | - | - |
+| `agent.chat` | chat with the in-app assistant | yes | yes | - | - |
 
 ## Routes: machine backend
 
@@ -107,6 +108,10 @@ For now every web user is **admin** (there are no logins yet).
 | GET | `/api/v1/agent/confirmations` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/approve` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/deny` | `agent.approve` | - |
+| POST | `/api/v1/agent/chat` | `agent.chat` | - |
+| DELETE | `/api/v1/agent/chat/{conversation_id}` | `agent.chat` | - |
+| GET | `/api/v1/agent/chat/{conversation_id}` | `agent.chat` | - |
+| POST | `/api/v1/agent/chat/{conversation_id}/stop` | `agent.chat` | - |
 | POST | `/api/v1/modules/bedmesh/meshes` | `bedmesh.manage` | confirm |
 | DELETE | `/api/v1/modules/bedmesh/meshes/{name}` | `bedmesh.manage` | confirm |
 | PUT | `/api/v1/modules/bedmesh/meshes/{name}` | `bedmesh.manage` | confirm |
@@ -163,9 +168,11 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/system/machine/start` | `session.control` | - |
 | POST | `/api/v1/system/machine/stop` | `session.control` | - |
 | POST | `/api/v1/system/machine/switch` | `session.control` | - |
+| GET | `/api/v1/agent/config` | `settings.read` | yes |
 | GET | `/api/v1/agent/status` | `settings.read` | yes |
 | GET | `/api/v1/settings` | `settings.read` | yes |
 | GET | `/api/v1/settings/{key}` | `settings.read` | yes |
+| PUT | `/api/v1/agent/config` | `settings.write` | - |
 | DELETE | `/api/v1/settings/{key}` | `settings.write` | - |
 | PUT | `/api/v1/settings/{key}` | `settings.write` | - |
 | GET | `/` | `system.read` | yes |

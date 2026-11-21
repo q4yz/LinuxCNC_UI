@@ -65,6 +65,7 @@ function time(iso: string): string {
 }
 
 onMounted(() => {
+  void agent.refreshTransport();
   agent.startPolling();
   clock = setInterval(() => (now.value = Date.now()), 1000);
   measureTop();

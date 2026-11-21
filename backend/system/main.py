@@ -48,6 +48,7 @@ from routers import (
     octoprint as octoprint_router,
     ui_settings as ui_settings_router,
     agent_confirmations as agent_confirmations_router,
+    agent_chat as agent_chat_router,
 )
 
 
@@ -149,6 +150,8 @@ app.include_router(SystemRouter.router)
 app.include_router(ui_settings_router.router)
 # The assistant's actions waiting for the operator (approve / deny).
 app.include_router(agent_confirmations_router.router)
+# The in-app assistant (chat + its API key / model).
+app.include_router(agent_chat_router.router)
 app.include_router(machine_lifecycle_router.router)
 
 # Program file uploads (nc_files/), and the OctoPrint-compatible API

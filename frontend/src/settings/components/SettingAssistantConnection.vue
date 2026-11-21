@@ -8,9 +8,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import { agentConfirmationsFacade, type AgentStatus } from "../../facades/agentConfirmationsFacade";
-import type { AssistantConnectionSetting } from "../types/AssistantConnectionSetting";
+import type { PanelSetting } from "../types/PanelSetting";
 
-defineProps<{ setting: AssistantConnectionSetting }>();
+defineProps<{ setting: PanelSetting }>();
 
 /** How often the status refreshes while the tab is open (ms). */
 const REFRESH_MS = 3000;

@@ -4,6 +4,23 @@ LinuxCNC UI serves an [MCP](https://modelcontextprotocol.io) server at
 `/mcp` (system service, port 8001; through nginx on the UI's own address).
 An MCP client — an AI assistant — gets the machine as tools.
 
+## The in-app assistant
+
+The assistant panel on the right of the UI answers with Claude once an
+Anthropic API key is set in **Settings → Assistant** (model and effort there
+too; Claude Opus 5.5 at medium effort by default). The key is kept on the
+machine in `backend/data/assistant.json` (owner-only, never shown again, never
+sent to a browser, not in the UI settings the agent could read);
+`ANTHROPIC_API_KEY` in the system service's environment works too. The
+machine needs internet access to reach the Anthropic API, and usage is billed
+to the key's account.
+
+The in-app assistant uses exactly the tools, role and approvals described
+below — it runs the same catalog as `/mcp`, inside the system service. Its
+actions show up as the same approval cards. Conversations live in the system
+service's memory (a restart forgets them); refusals fall back to another model
+server-side.
+
 ## Connecting
 
 **Settings → Assistant** shows this machine's MCP address, whether the server

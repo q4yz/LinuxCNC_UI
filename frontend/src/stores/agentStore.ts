@@ -3,8 +3,12 @@ import { computed, ref, watch } from "vue";
 
 import { agentConfirmationsFacade, type AgentConfirmation } from "../facades/agentConfirmationsFacade";
 import { useConsoleStore } from "./console";
+import { createBackendTransport } from "../agent/backendTransport";
+import { assistantFacade } from "../facades/assistantFacade";
 import {
   agentTransport,
+  onAgentTransport,
+  setAgentTransport,
   contextFor,
   loadHistory,
   newMessage,
@@ -35,8 +39,26 @@ export const useAgentStore = defineStore("agent", () => {
   let polling = false;
   const seen = new Set<string>();
 
-  const transportName = computed(() => agentTransport().name);
-  const connected = computed(() => agentTransport().connected);
+  // Reactive view of the (module-level) transport.
+  const transport = ref(agentTransport());
+  onAgentTransport((next) => (transport.value = next));
+  const transportName = computed(() => transport.value.name);
+  const connected = computed(() => transport.value.connected);
+
+  /** Install the in-app assistant when an API key is set (or remove it). */
+  async function refreshTransport(): Promise<void> {
+    try {
+      const config = await assistantFacade.config();
+      if (!config.configured) {
+        setAgentTransport(null);
+        return;
+      }
+      const label = config.models.find((m) => m.id === config.model)?.label.replace(/\s*\(.*\)$/, "") ?? config.model;
+      if (transport.value.name !== `Claude (${label})`) setAgentTransport(createBackendTransport(label));
+    } catch {
+      // system service unreachable: keep what we have
+    }
+  }
 
   watch(messages, (next) => saveHistory(next), { deep: true });
   watch(open, (isOpen) => {
@@ -81,6 +103,7 @@ export const useAgentStore = defineStore("agent", () => {
   function clear(): void {
     if (busy.value) stop();
     messages.value = [];
+    agentTransport().reset?.();
   }
 
   async function refreshConfirmations(): Promise<void> {
@@ -128,7 +151,7 @@ export const useAgentStore = defineStore("agent", () => {
   }
 
   return {
-    open, messages, busy, draft, unread, transportName, connected, toggle, send, stop, clear,
+    open, messages, busy, draft, unread, transportName, connected, toggle, send, stop, clear, refreshTransport,
     confirmations, pending, answering, refreshConfirmations, startPolling, stopPolling,
     approve: (id: string) => answer(id, true),
     deny: (id: string, reason = "") => answer(id, false, reason),

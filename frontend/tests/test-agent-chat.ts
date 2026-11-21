@@ -22,7 +22,7 @@ function memoryStore() {
   };
 }
 
-test("without an agent the offline transport answers", async () => {
+test("without an agent the offline transport answers (and says where to set it up)", async () => {
   chat.setAgentTransport(null);
   const transport = chat.agentTransport();
   assert.equal(transport.connected, false);
@@ -125,6 +125,7 @@ test("Settings → Assistant: connection panel and the actions switch", () => {
   const defs = readFileSync(resolve(src, "settings/definitions/assistant.ts"), "utf-8");
   assert.match(defs, /"assistant\.allow_actions",\s*true/, "on by default (each action still needs approval)");
   assert.match(readFileSync(resolve(src, "settings/definitions/index.ts"), "utf-8"), /import "\.\/assistant";/);
+  assert.match(defs, /new PanelSetting\("Assistant", "In-app assistant \(Claude\)"/);
   const panel = readFileSync(resolve(src, "settings/components/SettingAssistantConnection.vue"), "utf-8");
   assert.match(panel, /agentConfirmationsFacade\.status\(\)/, "status from the MCP server's own catalog");
   assert.match(panel, /claude mcp add --transport http linuxcnc \$\{url\.value\}/);
@@ -133,4 +134,45 @@ test("Settings → Assistant: connection panel and the actions switch", () => {
   // the backend reads the same key
   const backend = readFileSync(resolve(here, "../../backend/system/services/AgentMcpService.py"), "utf-8");
   assert.match(backend, /ALLOW_ACTIONS_KEY = "assistant\.allow_actions"/);
+});
+
+// -- the in-app assistant (Claude via the system service) ------------------ //
+
+const transportMod = await import(pathToFileURL(resolve(src, "agent/backendTransport.ts")).href);
+
+function entry(role: string, text: string, status = "") {
+  return { id: text, role, text, time: 0, tool: role === "tool" ? "t" : null, status };
+}
+
+test("a run renders tool lines, answers and the streaming part", () => {
+  const conv = {
+    id: "c", busy: true, partial: "streaming", model: "m",
+    entries: [entry("user", "old"), entry("assistant", "old answer"), entry("user", "new"),
+              entry("assistant", "Let me check."), entry("tool", "Read Machine State", "done"),
+              entry("tool", "Run MDI Command", "running")],
+  };
+  const run = transportMod.runEntries(conv);
+  assert.deepEqual(run.map((e: { text: string }) => e.text), ["Let me check.", "Read Machine State", "Run MDI Command"]);
+  assert.equal(transportMod.renderRun(run, conv.partial),
+    "Let me check.\n\n-> Read Machine State\n\n-> Run MDI Command ...\n\nstreaming");
+});
+
+test("the transport uses the generated client, keeps the conversation id, and stops on abort", () => {
+  const source = readFileSync(resolve(src, "agent/backendTransport.ts"), "utf-8");
+  assert.match(source, /assistantFacade\.send\(/);
+  assert.match(source, /errorStatus\(err\) === 404 && conversationId/, "a forgotten conversation starts a new one");
+  assert.match(source, /signal\?\.aborted && !stopping/);
+  const facade = readFileSync(resolve(src, "facades/assistantFacade.ts"), "utf-8");
+  assert.match(facade, /AssistantService\.sendAssistantMessage/);
+  assert.doesNotMatch(facade, /api_key: [^n]*\bconfig\b/, "the key is only ever sent, never read back");
+  const store = readFileSync(resolve(src, "stores/agentStore.ts"), "utf-8");
+  assert.match(store, /if \(!config\.configured\) \{\s*setAgentTransport\(null\)/);
+  assert.match(store, /agentTransport\(\)\.reset\?\.\(\)/, "clear forgets the server conversation");
+});
+
+test("the key form is write-only", () => {
+  const panel = readFileSync(resolve(src, "settings/components/SettingAssistantChat.vue"), "utf-8");
+  assert.match(panel, /type="password"/);
+  assert.match(panel, /config\.keyHint/);
+  assert.match(panel, /agent\.refreshTransport\(\)/, "saving re-installs the panel's agent");
 });

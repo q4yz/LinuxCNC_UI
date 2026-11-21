@@ -9,3 +9,6 @@
 
 # MCP server for the assistant (/mcp; services/AgentMcpService.py).
 mcp>=2.3,<3
+
+# The in-app assistant (Claude; services/AssistantChatService.py).
+anthropic>=2.12,<3
