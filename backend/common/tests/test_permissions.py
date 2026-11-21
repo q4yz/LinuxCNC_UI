@@ -149,7 +149,10 @@ def _client(role: str, monkeypatch) -> TestClient:
 
 
 def test_everyone_is_admin_for_now():
-    assert auth.current_user(None) == auth.LOCAL_ADMIN
+    from starlette.requests import HTTPConnection
+
+    anyone = HTTPConnection({"type": "http", "headers": []})
+    assert auth.current_user(anyone) == auth.LOCAL_ADMIN  # only the agent token makes the agent
 
 
 @pytest.mark.parametrize(

@@ -5,8 +5,9 @@ the route's permission in :mod:`core.permissions` and refuses the call
 (403) unless the caller's role allows it. ``CONFIRM`` is refused too
 until the operator-confirmation flow exists; no current role uses it.
 
-There are no users yet: :func:`current_user` returns the local admin
-for every request. Logins replace that function only.
+There are no logins yet: :func:`current_user` returns the local admin
+for every request, except the MCP server's calls for the agent (the
+agent token). Logins replace that function only.
 """
 from __future__ import annotations
 
@@ -27,10 +28,19 @@ class User:
 
 #: Every caller, until there are logins.
 LOCAL_ADMIN = User(name="local", role="admin")
+#: The assistant, calling through the MCP server (``core.agent_token``).
+AGENT = User(name="agent", role="agent")
 
 
 def current_user(connection: HTTPConnection) -> User:
-    """Who is calling. For now: anyone is the local admin."""
+    """Who is calling: the agent when it presents the agent token,
+    otherwise (no logins yet) the local admin."""
+    scheme, _, token = connection.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and token:
+        from core.agent_token import is_agent_token
+
+        if is_agent_token(token.strip()):
+            return AGENT
     return LOCAL_ADMIN
 
 
@@ -96,4 +106,4 @@ def annotate_openapi(app: object, routes: Mapping[tuple[str, str], Permission]) 
             route.openapi_extra = {**(route.openapi_extra or {}), **extra}
 
 
-__all__ = ["LOCAL_ADMIN", "User", "annotate_openapi", "current_user", "make_authorize", "route_key"]
+__all__ = ["AGENT", "LOCAL_ADMIN", "User", "annotate_openapi", "current_user", "make_authorize", "route_key"]

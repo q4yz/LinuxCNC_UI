@@ -147,4 +147,9 @@ def upload(
     )
 
 
+# For slicers only: not tools for the assistant.
+for _route in router.routes:
+    _route.openapi_extra = {**(getattr(_route, "openapi_extra", None) or {}), "x-mcp": False}
+
+
 __all__ = ["router"]

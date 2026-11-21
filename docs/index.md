@@ -55,4 +55,5 @@ architecture/writing-docs
 
 reference/troubleshooting
 reference/permissions
+reference/mcp
 ```

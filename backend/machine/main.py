@@ -317,7 +317,7 @@ app.include_router(print_tuning_router.router)
 app.include_router(calibration_router.router)
 
 
-@app.get("/")
+@app.get("/", openapi_extra={"x-mcp": False})  # duplicate of the health check
 def read_root():
     """Root health check endpoint."""
     return {"status": "ok", "service": "LinuxCNC UI Machine Backend"}

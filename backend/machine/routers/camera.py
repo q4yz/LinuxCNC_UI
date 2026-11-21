@@ -174,6 +174,10 @@ def list_devices() -> Dict[str, object]:
         "operator hint."
     ),
     operation_id="streamCamera",
+    # The real media type, so the schema says what the route returns
+    # (the MCP layer offers the agent JSON operations only).
+    response_class=StreamingResponse,
+    responses={200: {"description": "MJPEG stream", "content": {"multipart/x-mixed-replace": {}}}},
 )
 async def camera_stream(
     id: Optional[str] = Query(

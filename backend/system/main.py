@@ -32,6 +32,7 @@ from fastapi import Depends, FastAPI
 
 from core.auth import annotate_openapi, make_authorize
 from core.permissions import SYSTEM_ROUTES
+from services.AgentMcpService import mcp_endpoint
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.ui_log import setup_ui_logging, tag_std_streams
@@ -89,7 +90,9 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - we WANT every error here
         logger.exception("OpenAPI schema generation failed at startup")
 
-    yield
+    # The assistant's MCP server (/mcp): tools from the OpenAPI schemas.
+    async with mcp_endpoint.run():
+        yield
 
     logger.info("Shutting down system service...")
 
@@ -155,11 +158,15 @@ for _router in _MODULE_ROUTERS:
     app.include_router(_router)
 
 
-@app.get("/")
+@app.get("/", openapi_extra={"x-mcp": False})  # duplicate of the health check
 def read_root():
     """Root health check endpoint."""
     return {"status": "ok", "service": "LinuxCNC UI System Service"}
 
+
+# MCP for the assistant (not an API route: no permission of its own —
+# its calls go back through the API as the agent role).
+app.add_route("/mcp", mcp_endpoint, methods=["GET", "POST", "DELETE"])
 
 annotate_openapi(app, SYSTEM_ROUTES)
 

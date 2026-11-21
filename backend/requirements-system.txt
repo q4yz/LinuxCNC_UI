@@ -6,3 +6,6 @@
 # shows up (e.g. a compiler/template library), add it here rather
 # than to requirements.txt.
 -r requirements.txt
+
+# MCP server for the assistant (/mcp; services/AgentMcpService.py).
+mcp>=2.3,<3
