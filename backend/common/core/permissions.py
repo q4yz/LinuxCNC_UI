@@ -52,6 +52,8 @@ class Permission(str, Enum):
     CONFIG_WRITE = "config.write"  # profiles, generation, board upload, MCU reset
     SYSTEM_UPDATE = "system.update"
     USERS_MANAGE = "users.manage"
+    #: Approve or deny the assistant's actions — never the agent itself.
+    AGENT_APPROVE = "agent.approve"
 
 
 class Level(str, Enum):
@@ -68,7 +70,7 @@ _READ = {P.MACHINE_READ, P.CAMERA_VIEW, P.HAL_READ, P.FILES_READ, P.CONFIG_READ,
 _OPERATE = {
     P.MACHINE_ESTOP, P.MACHINE_POWER, P.MACHINE_MOTION, P.PROGRAM_RUN, P.MACHINE_TUNE, P.HEATERS,
     P.OUTPUTS, P.MACROS_RUN, P.CALIBRATION_RUN, P.FILES_WRITE, P.CALIBRATION_MANAGE, P.BEDMESH_MANAGE,
-    P.SETTINGS_WRITE, P.SESSION_CONTROL,
+    P.SETTINGS_WRITE, P.SESSION_CONTROL, P.AGENT_APPROVE,
 }
 
 
@@ -231,6 +233,10 @@ SYSTEM_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("PUT", "/api/v1/modules/macros/{name}"): P.MACROS_WRITE,
     ("DELETE", "/api/v1/modules/macros/{name}"): P.MACROS_WRITE,
     ("PUT", "/api/v1/modules/macros/{name}/content"): P.MACROS_WRITE,
+    # The assistant's actions waiting for the operator
+    ("GET", "/api/v1/agent/confirmations"): P.AGENT_APPROVE,
+    ("POST", "/api/v1/agent/confirmations/{confirmation_id}/approve"): P.AGENT_APPROVE,
+    ("POST", "/api/v1/agent/confirmations/{confirmation_id}/deny"): P.AGENT_APPROVE,
 }
 
 #: FastAPI's own pages: open (they describe the API, they do nothing).
@@ -272,6 +278,7 @@ _DESCRIPTIONS = {
     P.CONFIG_WRITE: "profiles, machine generation, board upload, MCU reset",
     P.SYSTEM_UPDATE: "update the software",
     P.USERS_MANAGE: "users and roles",
+    P.AGENT_APPROVE: "approve or deny the assistant's actions",
 }
 
 

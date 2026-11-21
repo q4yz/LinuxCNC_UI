@@ -2,8 +2,9 @@
 
 :func:`authorize` is an app-wide dependency of both backends: it finds
 the route's permission in :mod:`core.permissions` and refuses the call
-(403) unless the caller's role allows it. ``CONFIRM`` is refused too
-until the operator-confirmation flow exists; no current role uses it.
+(403) unless the caller's role allows it. A ``CONFIRM`` permission
+(the agent's machine actions) passes only with the operator's approval
+of that exact request (:mod:`core.agent_approval`).
 
 There are no logins yet: :func:`current_user` returns the local admin
 for every request, except the MCP server's calls for the agent (the
@@ -12,10 +13,10 @@ agent token). Logins replace that function only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping, NoReturn
+from typing import Awaitable, Callable, Mapping, NoReturn
 
 from fastapi import HTTPException, WebSocketException, status
-from starlette.requests import HTTPConnection
+from starlette.requests import HTTPConnection, Request
 
 from core.permissions import PUBLIC_PATHS, Level, Permission, level
 
@@ -55,10 +56,10 @@ def route_key(connection: HTTPConnection) -> tuple[str, str] | None:
     return method, path
 
 
-def make_authorize(routes: Mapping[tuple[str, str], Permission]) -> Callable[[HTTPConnection], User]:
+def make_authorize(routes: Mapping[tuple[str, str], Permission]) -> Callable[[HTTPConnection], Awaitable[User]]:
     """The dependency for one backend's route table."""
 
-    def authorize(connection: HTTPConnection) -> User:
+    async def authorize(connection: HTTPConnection) -> User:
         user = current_user(connection)
         key = route_key(connection)
         if key is None or key[1] in PUBLIC_PATHS:
@@ -72,14 +73,26 @@ def make_authorize(routes: Mapping[tuple[str, str], Permission]) -> Callable[[HT
         granted = level(user.role, permission)
         if granted is Level.ALLOW:
             return user
-        detail = (
-            f"'{permission.value}' needs the operator's confirmation"
-            if granted is Level.CONFIRM
-            else f"role '{user.role}' may not '{permission.value}'"
-        )
-        _refuse(connection, detail)
+        if granted is Level.CONFIRM:
+            if await _approved(connection):
+                return user
+            _refuse(connection, f"'{permission.value}' needs the operator's confirmation")
+        _refuse(connection, f"role '{user.role}' may not '{permission.value}'")
 
     return authorize
+
+
+async def _approved(connection: HTTPConnection) -> bool:
+    """The request carries the operator's approval for exactly itself
+    (:mod:`core.agent_approval`)."""
+    from core.agent_approval import HEADER, verify
+
+    header = connection.headers.get(HEADER)
+    if not header or not isinstance(connection, Request):
+        return False
+    body = await connection.body()
+    raw_path = (connection.scope.get("raw_path") or connection.scope.get("path", "").encode()).split(b"?", 1)[0]
+    return verify(header, connection.method, raw_path, connection.scope.get("query_string", b""), body)
 
 
 def _refuse(connection: HTTPConnection, detail: str) -> NoReturn:

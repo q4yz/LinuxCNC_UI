@@ -9,9 +9,13 @@ tools until it is back.
 Every call goes to the REST API with the agent token
 (:mod:`core.agent_token`), so the backend treats it as the ``agent``
 role and its permission check decides — whoever connects to ``/mcp``
-gets the agent's rights, never more. Operations the agent may only use
-after the operator confirms (``x-agent: confirm``) are not offered
-until that confirmation flow exists (:data:`OFFER_CONFIRM`).
+gets the agent's rights, never more.
+
+Operations the agent may only use after the operator confirms
+(``x-agent: confirm``) wait in :mod:`services.AgentConfirmationService`
+until the operator approves or denies them in the assistant panel; an
+approved one is sent with a signed approval of exactly that request
+(:mod:`core.agent_approval`), which the backend checks.
 
 Transport: MCP Streamable HTTP, stateless, JSON responses.
 """
@@ -30,13 +34,15 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.types import Receive, Scope, Send
 
+from core.agent_approval import HEADER as APPROVAL_HEADER, sign
 from core.agent_token import agent_token
 from core.openapi_tools import AgentTool, build_request, tools_from_openapi
+from services.AgentConfirmationService import AgentConfirmationService, Decision, get_agent_confirmation_service
 
 logger = logging.getLogger("backend.system.mcp")
 
-#: Offer the ``confirm`` operations (needs the operator-confirmation flow).
-OFFER_CONFIRM = False
+#: Offer the ``confirm`` operations (each waits for the operator).
+OFFER_CONFIRM = True
 #: How long a backend's tool list is reused before re-reading its schema (s).
 CATALOG_TTL = 5.0
 #: Longest tool result handed to the agent (characters).
@@ -52,8 +58,10 @@ INSTRUCTIONS = (
     "machine_* tools talk to the running machine (state, positions, temperatures, I/O, "
     "calibrations); system_* tools to the always-on system service (programs, profiles, "
     "macros, settings, versions). You act with the 'agent' role: you may read everything and "
-    "engage the E-stop; actions that move, heat or change the machine need the operator's "
-    "confirmation and are not available yet. Machine tools are missing while LinuxCNC is stopped."
+    "engage the E-stop; actions that move, heat or change the machine are shown to the operator "
+    "and only run once they approve (the call waits up to two minutes; a denial comes back as an "
+    "error with their reason). Say what you are about to do and why before calling such a tool. "
+    "Machine tools are missing while LinuxCNC is stopped."
 )
 
 
@@ -66,8 +74,10 @@ class ToolCatalog:
         *,
         ttl: float = CATALOG_TTL,
         offer_confirm: bool = OFFER_CONFIRM,
+        confirmations: AgentConfirmationService | None = None,
     ) -> None:
         self._clients = dict(clients)
+        self._confirmations = confirmations or get_agent_confirmation_service()
         self._ttl = ttl
         self._offer_confirm = offer_confirm
         self._cache: dict[str, tuple[float, list[AgentTool]]] = {}
@@ -102,18 +112,33 @@ class ToolCatalog:
         except ValueError as exc:
             return _error(str(exc))
         headers = {"Authorization": f"Bearer {agent_token()}"}
+        body = b""
         if request.text is not None:
             headers["Content-Type"] = "text/plain"
-        try:
-            response = await self._clients[tool.backend].request(
-                request.method,
-                request.path,
-                params=request.params,
-                json=request.json if request.text is None and request.json is not None else None,
-                content=request.text,
-                headers=headers,
-                timeout=60.0,
+            body = request.text.encode()
+        elif request.json is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(request.json).encode()
+        client = self._clients[tool.backend]
+        outgoing = client.build_request(request.method, request.path, params=request.params, content=body, headers=headers, timeout=60.0)
+        if tool.level == "confirm":
+            item = await self._confirmations.request(
+                tool=tool.name,
+                summary=tool.summary,
+                method=request.method,
+                path=outgoing.url.path,
+                arguments=dict(arguments or {}),
+                permission=tool.permission,
             )
+            if item.decision is not Decision.APPROVED:
+                why = f": {item.reason}" if item.reason else ""
+                verb = "declined" if item.decision is Decision.DENIED else "did not answer"
+                return _error(f"The operator {verb}{why}. Nothing was done.")
+            outgoing.headers[APPROVAL_HEADER] = sign(
+                request.method, outgoing.url.raw_path.split(b"?", 1)[0], outgoing.url.query, body
+            )
+        try:
+            response = await client.send(outgoing)
         except httpx.HTTPError as exc:
             return _error(f"The {tool.backend} backend did not answer: {exc}")
         logger.info("MCP agent call: %s %s -> %s", request.method, request.path, response.status_code)

@@ -38,6 +38,7 @@ For now every web user is **admin** (there are no logins yet).
 | `config.write` | profiles, machine generation, board upload, MCU reset | yes | - | - | - |
 | `system.update` | update the software | yes | - | - | - |
 | `users.manage` | users and roles | yes | - | - | - |
+| `agent.approve` | approve or deny the assistant's actions | yes | yes | - | - |
 
 ## Routes: machine backend
 
@@ -103,6 +104,9 @@ For now every web user is **admin** (there are no logins yet).
 
 | Method | Path | Permission | agent |
 |---|---|---|---|
+| GET | `/api/v1/agent/confirmations` | `agent.approve` | - |
+| POST | `/api/v1/agent/confirmations/{confirmation_id}/approve` | `agent.approve` | - |
+| POST | `/api/v1/agent/confirmations/{confirmation_id}/deny` | `agent.approve` | - |
 | POST | `/api/v1/modules/bedmesh/meshes` | `bedmesh.manage` | confirm |
 | DELETE | `/api/v1/modules/bedmesh/meshes/{name}` | `bedmesh.manage` | confirm |
 | PUT | `/api/v1/modules/bedmesh/meshes/{name}` | `bedmesh.manage` | confirm |

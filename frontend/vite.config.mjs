@@ -33,6 +33,8 @@ const DEV_PROXY = {
   '/api/v1/modules/machineconfig': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/macros': { target: SYSTEM_TARGET, changeOrigin: true },
   '/api/v1/modules/bedmesh': { target: SYSTEM_TARGET, changeOrigin: true },
+  // The assistant's actions waiting for approval.
+  '/api/v1/agent': { target: SYSTEM_TARGET, changeOrigin: true },
   // MCP server for the assistant (backend/system/services/AgentMcpService.py).
   '/mcp': { target: SYSTEM_TARGET, changeOrigin: true },
 

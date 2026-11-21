@@ -10,6 +10,8 @@ from mcp import Client
 from core import agent_token as token_module
 from core.auth import annotate_openapi, make_authorize
 from core.permissions import Permission
+from core.agent_approval import HEADER, sign
+from services.AgentConfirmationService import AgentConfirmationService, Decision
 from services.AgentMcpService import ToolCatalog, build_server
 
 ROUTES = {
@@ -59,37 +61,114 @@ def _run(fn):
     return anyio.run(fn)
 
 
+def _catalog(http, **kw):
+    return ToolCatalog({"machine": http}, ttl=0, confirmations=kw.pop("confirmations", AgentConfirmationService(timeout=5)), **kw)
+
+
 def test_tools_come_from_the_schema_and_calls_run_as_the_agent():
     app = _machine()
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://machine") as http:
-            catalog = ToolCatalog({"machine": http}, ttl=0)
-            async with Client(build_server(catalog)) as client:
+            async with Client(build_server(_catalog(http))) as client:
                 names = {t.name for t in (await client.list_tools()).tools}
-                assert names == {"machine_get_state", "machine_post_estop"}  # mdi: confirm, update: deny
+                # update: deny, never offered; mdi: confirm, offered (waits for the operator)
+                assert names == {"machine_get_state", "machine_post_estop", "machine_post_mdi"}
                 result = await client.call_tool("machine_get_state", {"verbose": True})
                 assert not result.is_error and result.structured_content == {"state": "on", "verbose": True}
                 assert not (await client.call_tool("machine_post_estop", {})).is_error
-                refused = await client.call_tool("machine_post_mdi", {})
+                refused = await client.call_tool("machine_post_update", {})
                 assert refused.is_error and "Unknown tool" in refused.content[0].text
 
     _run(go)
     assert app.state.calls == ["estop"]
 
 
-def test_the_backend_refuses_the_agent_even_if_a_tool_were_offered():
-    """Offering confirm tools does not bypass the backend's check."""
+async def _answer_when_asked(confirmations, approve, reason=""):
+    for _ in range(200):
+        pending = [c for c in confirmations.list() if c.decision is Decision.PENDING]
+        if pending:
+            return confirmations.answer(pending[0].id, approve, reason)
+        await anyio.sleep(0.01)
+    raise AssertionError("nothing was asked")
+
+
+def test_an_approved_action_runs_once():
+    app = _machine()
+    confirmations = AgentConfirmationService(timeout=5)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://machine") as http:
+            catalog = _catalog(http, confirmations=confirmations)
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_answer_when_asked, confirmations, True)
+                result = await catalog.call("machine_post_mdi", {})
+            assert not result.is_error, result.content[0].text
+            asked = confirmations.list()[0]
+            assert (asked.method, asked.path, asked.permission) == ("POST", "/api/v1/mdi", "machine.motion")
+
+    _run(go)
+    assert app.state.calls == ["mdi"]
+
+
+def test_a_denied_action_does_not_run():
+    app = _machine()
+    confirmations = AgentConfirmationService(timeout=5)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://machine") as http:
+            catalog = _catalog(http, confirmations=confirmations)
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_answer_when_asked, confirmations, False, "not now")
+                result = await catalog.call("machine_post_mdi", {})
+            assert result.is_error and "declined: not now" in result.content[0].text
+
+    _run(go)
+    assert app.state.calls == []
+
+
+def test_an_unanswered_action_expires():
     app = _machine()
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://machine") as http:
-            catalog = ToolCatalog({"machine": http}, ttl=0, offer_confirm=True)
-            result = await catalog.call("machine_post_mdi", {})
-            assert result.is_error and "403" in result.content[0].text and "confirmation" in result.content[0].text
+            result = await _catalog(http, confirmations=AgentConfirmationService(timeout=0.05)).call("machine_post_mdi", {})
+            assert result.is_error and "did not answer" in result.content[0].text
 
     _run(go)
     assert app.state.calls == []
+
+
+def test_the_backend_wants_the_approval_for_exactly_that_request():
+    app = _machine()
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://machine") as http:
+            auth = {"Authorization": "Bearer test-token"}
+            assert (await http.post("/api/v1/mdi", headers=auth)).status_code == 403  # no approval
+            good = sign("POST", b"/api/v1/mdi", b"", b"")
+            assert (await http.post("/api/v1/mdi", headers={**auth, HEADER: good})).status_code == 200
+            assert (await http.post("/api/v1/mdi", headers={**auth, HEADER: good})).status_code == 403  # used
+            other = sign("POST", b"/api/v1/estop", b"", b"")
+            assert (await http.post("/api/v1/mdi", headers={**auth, HEADER: other})).status_code == 403  # other path
+            body = sign("POST", b"/api/v1/mdi", b"", b'{"a":1}')
+            assert (await http.post("/api/v1/mdi", headers={**auth, HEADER: body}, content=b'{"a":2}')).status_code == 403
+            update = sign("POST", b"/api/v1/update", b"", b"")
+            assert (await http.post("/api/v1/update", headers={**auth, HEADER: update})).status_code == 403  # deny stays deny
+            old = sign("POST", b"/api/v1/mdi", b"", b"", now=0)
+            assert (await http.post("/api/v1/mdi", headers={**auth, HEADER: old})).status_code == 403  # expired
+
+    _run(go)
+    assert app.state.calls == ["mdi"]
+
+
+def test_the_agent_cannot_approve_itself():
+    from core.permissions import SYSTEM_ROUTES, Level, level
+
+    for key in [k for k in SYSTEM_ROUTES if k[1].startswith("/api/v1/agent/")]:
+        assert level("agent", SYSTEM_ROUTES[key]) is Level.DENY
+        assert level("operator", SYSTEM_ROUTES[key]) is Level.ALLOW
 
 
 def test_a_backend_that_is_down_has_no_tools():
@@ -115,3 +194,42 @@ def test_the_agent_token_marks_the_agent(monkeypatch):
     assert current_user(conn("Bearer test-token")) == AGENT
     assert current_user(conn("Bearer nope")) == LOCAL_ADMIN
     assert current_user(conn(None)) == LOCAL_ADMIN
+
+
+def test_the_confirmation_routes():
+    from fastapi.testclient import TestClient
+
+    from routers import agent_confirmations
+    from services import AgentConfirmationService as module
+
+    service = AgentConfirmationService(timeout=5)
+    app = FastAPI()
+    app.include_router(agent_confirmations.router)
+    original = module._service
+    module._service = service
+    try:
+        client = TestClient(app)
+
+        async def ask_and_answer():
+            async with anyio.create_task_group() as tg:
+                async def answer():
+                    for _ in range(200):
+                        items = client.get("/api/v1/agent/confirmations").json()["confirmations"]
+                        if items:
+                            assert items[0]["summary"] == "Run MDI" and items[0]["arguments"] == {"body": {"command": "G28"}}
+                            r = client.post(f"/api/v1/agent/confirmations/{items[0]['id']}/deny", json={"reason": "busy"})
+                            assert r.status_code == 200 and r.json()["decision"] == "denied"
+                            again = client.post(f"/api/v1/agent/confirmations/{items[0]['id']}/approve")
+                            assert again.status_code == 409
+                            return
+                        await anyio.sleep(0.01)
+
+                tg.start_soon(answer)
+                item = await service.request(tool="t", summary="Run MDI", method="POST", path="/x",
+                                             arguments={"body": {"command": "G28"}}, permission="machine.motion")
+                assert item.decision is Decision.DENIED and item.reason == "busy"
+
+        anyio.run(ask_and_answer)
+        assert client.post("/api/v1/agent/confirmations/nope/approve").status_code == 404
+    finally:
+        module._service = original

@@ -96,3 +96,27 @@ test("the panel is mounted in the shell, below the E-stop", () => {
   assert.match(panel, /data-testid="agent-tab"/);
   assert.match(panel, /event\.key === "Enter" && !event\.shiftKey/);
 });
+
+// -- the assistant's actions waiting for approval ------------------------- //
+
+test("confirmations map to the entity (ms times, unknown decision = expired)", async () => {
+  const src2 = resolve(here, "../src");
+  const source = readFileSync(resolve(src2, "facades/agentConfirmationsFacade.ts"), "utf-8");
+  assert.match(source, /AssistantService\.listAgentConfirmations/, "uses the generated client");
+  assert.match(source, /created: Math\.round\(wire\.created \* 1000\)/);
+  assert.match(source, /DECISIONS\.includes\(wire\.decision/);
+});
+
+test("the panel shows approval cards, a pending badge, and unfolds for a new request", () => {
+  const panel = readFileSync(resolve(src, "components/agent/AgentPanel.vue"), "utf-8");
+  assert.match(panel, /<AgentConfirmationCard/);
+  assert.match(panel, /data-testid="agent-pending-badge"/);
+  assert.match(panel, /agent\.startPolling\(\)/);
+  const store = readFileSync(resolve(src, "stores/agentStore.ts"), "utf-8");
+  assert.match(store, /if \(fresh\.length > 0\) open\.value = true/, "a new request unfolds the panel");
+  assert.match(store, /console\.info\(`Assistant: \$\{approve \? "approved" : "denied"\}/, "decisions are logged");
+  const card = readFileSync(resolve(src, "components/agent/AgentConfirmationCard.vue"), "utf-8");
+  assert.match(card, /confirmation\.method[^\n]{0,40}confirmation\.path/, "the exact request is shown");
+  assert.match(card, /data-testid="agent-approve"/);
+  assert.match(card, /data-testid="agent-deny"/);
+});

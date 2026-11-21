@@ -7,16 +7,23 @@
 // stays visible and usable. The E-stop box stays on top of it (the
 // panel's z-40 is below the E-stop's, see test-z-index.ts). The agent behind it is pluggable: see
 // ``agent/agentChat.ts`` (``AgentTransport``).
+//
+// Actions the assistant asks to run (through MCP: homing, MDI, heaters …)
+// appear as cards on top with Approve / Deny; a new one unfolds the panel.
 
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
 
 import Icon from "../../ui/Icon.vue";
+import AgentConfirmationCard from "./AgentConfirmationCard.vue";
 import { estopBox } from "../../ui/estopClearance";
 import { useAgentStore } from "../../stores/agentStore";
 
 const agent = useAgentStore();
-const { open, messages, busy, draft, unread, transportName, connected } = storeToRefs(agent);
+const { open, messages, busy, draft, unread, transportName, connected, confirmations, pending, answering } = storeToRefs(agent);
+/** Ticks every second while something waits (the cards' countdown). */
+const now = ref(Date.now());
+let clock: ReturnType<typeof setInterval> | null = null;
 
 const list = ref<HTMLElement | null>(null);
 const input = ref<HTMLTextAreaElement | null>(null);
@@ -58,11 +65,15 @@ function time(iso: string): string {
 }
 
 onMounted(() => {
+  agent.startPolling();
+  clock = setInterval(() => (now.value = Date.now()), 1000);
   measureTop();
   window.addEventListener("resize", measureTop);
   window.addEventListener("keydown", onWindowKey);
 });
 onBeforeUnmount(() => {
+  agent.stopPolling();
+  if (clock !== null) clearInterval(clock);
   window.removeEventListener("resize", measureTop);
   window.removeEventListener("keydown", onWindowKey);
 });
@@ -81,7 +92,12 @@ onBeforeUnmount(() => {
     <span class="relative">
       <Icon name="chat" size="h-5 w-5" />
       <span
-        v-if="unread > 0"
+        v-if="pending.length > 0"
+        data-testid="agent-pending-badge"
+        class="absolute -right-2 -top-2 rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-4 text-gray-900"
+      >{{ pending.length }}</span>
+      <span
+        v-else-if="unread > 0"
         class="absolute -right-2 -top-2 rounded-full bg-blue-600 px-1 text-[10px] font-bold leading-4 text-white"
       >{{ unread }}</span>
     </span>
@@ -132,6 +148,22 @@ onBeforeUnmount(() => {
           <Icon name="chevronLeft" size="h-4 w-4" class="rotate-180" />
         </button>
       </header>
+
+      <div
+        v-if="confirmations.length > 0"
+        class="max-h-[60%] shrink-0 space-y-2 overflow-y-auto border-b border-gray-700 p-3"
+        data-testid="agent-confirmations"
+      >
+        <AgentConfirmationCard
+          v-for="item in confirmations"
+          :key="item.id"
+          :confirmation="item"
+          :now="now"
+          :busy="answering.includes(item.id)"
+          @approve="agent.approve"
+          @deny="agent.deny"
+        />
+      </div>
 
       <div ref="list" class="flex-1 space-y-3 overflow-y-auto px-3 py-3" data-testid="agent-messages">
         <p v-if="messages.length === 0" class="pt-6 text-center text-sm text-gray-500">

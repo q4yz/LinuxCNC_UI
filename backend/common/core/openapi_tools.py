@@ -39,6 +39,7 @@ class AgentTool:
     name: str
     method: str
     path: str
+    summary: str
     description: str
     input_schema: dict[str, Any]
     permission: str
@@ -166,6 +167,7 @@ def _tool(
         name=tool_name(backend, method, path),
         method=method,
         path=path,
+        summary=str(operation.get("summary") or f"{method} {path}"),
         description=_description(operation, permission, level),
         input_schema=input_schema,
         permission=permission,

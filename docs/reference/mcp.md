@@ -24,9 +24,12 @@ I/O, programs, profiles, calibrations, logs) and engaging the E-stop.
 
 Operations the agent may only use after the operator confirms (`confirm`:
 homing, MDI, running programs, heaters, outputs, calibrations, file changes)
-are not offered yet; that comes with the confirmation flow. Operations
-denied to the agent (configuration, HAL editing, updates, settings, users)
-are never offered.
+are offered too, but each call **waits for you**: the assistant panel unfolds
+with a card showing what the assistant wants to do and the exact request
+(method, path, arguments). **Approve** runs it once, as shown; **Deny** (with an
+optional reason) tells the assistant no. Unanswered requests expire after two
+minutes. Every decision is written to the console. Operations denied to the
+agent (configuration, HAL editing, updates, settings, users) are never offered.
 
 Machine tools (`machine_*`) are only there while LinuxCNC runs; system tools
 (`system_*`) always are.
@@ -36,8 +39,12 @@ Machine tools (`machine_*`) are only there while LinuxCNC runs; system tools
 Every tool call goes back through the REST API carrying the agent's token
 (`backend/data/agent.token`, created on first start), so the backend gives it
 the **agent** role and its permission check refuses anything else (403) — even
-a call to an operation the MCP server would not offer. Connecting to `/mcp`
-therefore never gives more than the agent's rights.
+a call to an operation the MCP server would not offer. An approved action
+carries a signed, single-use approval of exactly that request (method, path,
+query and body); the backend refuses it for any other request, a second time,
+or after 30 s. Approving needs the `agent.approve` permission, which the agent
+role never has. Connecting to `/mcp` therefore never gives more than the
+agent's rights.
 
 ## Shaping the tools
 

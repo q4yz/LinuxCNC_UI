@@ -47,6 +47,7 @@ from routers import (
     macros as macros_router,
     octoprint as octoprint_router,
     ui_settings as ui_settings_router,
+    agent_confirmations as agent_confirmations_router,
 )
 
 
@@ -146,6 +147,8 @@ app.include_router(SystemRouter.router)
 # Central UI settings (single settings.json) — lives here so it stays
 # available while the machine backend is offline.
 app.include_router(ui_settings_router.router)
+# The assistant's actions waiting for the operator (approve / deny).
+app.include_router(agent_confirmations_router.router)
 app.include_router(machine_lifecycle_router.router)
 
 # Program file uploads (nc_files/), and the OctoPrint-compatible API
