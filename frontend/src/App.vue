@@ -33,6 +33,7 @@ import { useSystemUpdateStore } from './stores/systemUpdate'
 import EStopHeader from './components/EStopHeader.vue'
 import MachineGate from './components/machine/MachineGate.vue'
 import NgcCoordinateSystemViewer from './components/NgcCoordinateSystemViewer.vue'
+import AgentPanel from './components/agent/AgentPanel.vue'
 
 const baseThread = useBaseThreadStore()
 const { isMachineOnline, startHeartbeat, stopHeartbeat } = useMachineOnline()
@@ -170,6 +171,7 @@ onUnmounted(() => {
 
     <!-- Global Overlays -->
     <FloatingPanelHost />
+    <AgentPanel />
     <ModalConfirmHost />
     <UpdateOverlay />
     <ToastContainer />
