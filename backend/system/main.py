@@ -28,7 +28,10 @@ _COMMON_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(_COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMON_DIR))
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from core.auth import annotate_openapi, make_authorize
+from core.permissions import SYSTEM_ROUTES
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.ui_log import setup_ui_logging, tag_std_streams
@@ -111,6 +114,8 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    # Every route checks the caller's permission (core/permissions.py).
+    dependencies=[Depends(make_authorize(SYSTEM_ROUTES))],
 )
 
 # Allow CORS for local frontend development (e.g., Vite dev server on
@@ -154,6 +159,9 @@ for _router in _MODULE_ROUTERS:
 def read_root():
     """Root health check endpoint."""
     return {"status": "ok", "service": "LinuxCNC UI System Service"}
+
+
+annotate_openapi(app, SYSTEM_ROUTES)
 
 
 if __name__ == "__main__":

@@ -54,4 +54,5 @@ architecture/writing-docs
 :caption: Help
 
 reference/troubleshooting
+reference/permissions
 ```

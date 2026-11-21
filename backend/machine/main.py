@@ -40,7 +40,10 @@ _COMMON_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(_COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMON_DIR))
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from core.auth import annotate_openapi, make_authorize
+from core.permissions import MACHINE_ROUTES
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.ui_log import setup_ui_logging, tag_std_streams
@@ -266,6 +269,8 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    # Every route checks the caller's permission (core/permissions.py).
+    dependencies=[Depends(make_authorize(MACHINE_ROUTES))],
 )
 
 # Allow CORS for local frontend development (e.g., Vite dev server on
@@ -359,6 +364,9 @@ def _linuxcnc_reachable() -> bool:
     except Exception:  # noqa: BLE001 - linuxcnc.error when the task is gone
         return False
     return True
+
+
+annotate_openapi(app, MACHINE_ROUTES)
 
 
 if __name__ == "__main__":
