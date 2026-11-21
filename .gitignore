@@ -87,6 +87,8 @@ img/
 /backend/data/update_status.json
 # Branch a release update came from (scripts/update.sh).
 /backend/data/update_branch
+# The assistant's MCP credential (core/agent_token.py) — a secret.
+/backend/data/agent.token
 /machine_config/example/goal/machine.cfg
 /machine_config/example/goal/machine.hal
 /machine_config/m_codes/M101
