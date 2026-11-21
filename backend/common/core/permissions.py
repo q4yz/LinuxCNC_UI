@@ -233,7 +233,8 @@ SYSTEM_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("PUT", "/api/v1/modules/macros/{name}"): P.MACROS_WRITE,
     ("DELETE", "/api/v1/modules/macros/{name}"): P.MACROS_WRITE,
     ("PUT", "/api/v1/modules/macros/{name}/content"): P.MACROS_WRITE,
-    # The assistant's actions waiting for the operator
+    # The assistant: its MCP server, its actions waiting for the operator
+    ("GET", "/api/v1/agent/status"): P.SETTINGS_READ,
     ("GET", "/api/v1/agent/confirmations"): P.AGENT_APPROVE,
     ("POST", "/api/v1/agent/confirmations/{confirmation_id}/approve"): P.AGENT_APPROVE,
     ("POST", "/api/v1/agent/confirmations/{confirmation_id}/deny"): P.AGENT_APPROVE,

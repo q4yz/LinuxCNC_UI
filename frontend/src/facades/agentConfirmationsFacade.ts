@@ -61,8 +61,33 @@ async function decide(id: string, approve: boolean, reason = ""): Promise<Comman
   }
 }
 
+export interface AgentStatus {
+  /** The MCP server's path on this host (``/mcp``). */
+  mcpPath: string;
+  running: boolean;
+  actionsAllowed: boolean;
+  /** Tools offered now, per backend (``machine`` / ``system``). */
+  tools: Record<string, number>;
+  toolsNeedingApproval: number;
+  pending: number;
+}
+
+/** The assistant's MCP server. Throws on transport failure. */
+async function status(): Promise<AgentStatus> {
+  const wire = await AssistantService.getAgentStatus();
+  return {
+    mcpPath: wire.mcp_path,
+    running: wire.running,
+    actionsAllowed: wire.actions_allowed,
+    tools: (wire.tools ?? {}) as Record<string, number>,
+    toolsNeedingApproval: wire.tools_needing_approval ?? 0,
+    pending: wire.pending ?? 0,
+  };
+}
+
 export const agentConfirmationsFacade = Object.freeze({
   list,
+  status,
   approve: (id: string, reason = "") => decide(id, true, reason),
   deny: (id: string, reason = "") => decide(id, false, reason),
 });

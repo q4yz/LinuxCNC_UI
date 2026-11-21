@@ -1,6 +1,6 @@
-"""``/api/v1/agent/confirmations`` — the assistant's actions waiting for
-the operator (``services/AgentConfirmationService.py``). Needs
-``agent.approve``, which the agent role never has."""
+"""``/api/v1/agent`` — the assistant: its MCP server's status, and its
+actions waiting for the operator (``services/AgentConfirmationService.py``;
+answering needs ``agent.approve``, which the agent role never has)."""
 from __future__ import annotations
 
 from typing import Any
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from services.AgentConfirmationService import Confirmation, get_agent_confirmation_service
 
-router = APIRouter(prefix="/api/v1/agent/confirmations", tags=["assistant"])
+router = APIRouter(prefix="/api/v1/agent", tags=["assistant"])
 
 _ID = Path(..., description="The confirmation's id.")
 
@@ -53,8 +53,42 @@ def _response(item: Confirmation) -> AgentConfirmationResponse:
     )
 
 
+class AgentStatusResponse(BaseModel):
+    mcp_path: str = Field(..., description="Where the MCP server listens (on this host).")
+    running: bool = Field(..., description="The MCP server is up.")
+    actions_allowed: bool = Field(..., description="The assistant may ask to run actions (assistant.allow_actions).")
+    tools: dict[str, int] = Field(default_factory=dict, description="Tools offered now, per backend.")
+    tools_needing_approval: int = Field(0, description="Of those, how many wait for the operator.")
+    pending: int = Field(0, description="Actions waiting for approval now.")
+
+
 @router.get(
-    "",
+    "/status",
+    response_model=AgentStatusResponse,
+    summary="The assistant's MCP server: address and what it offers",
+    operation_id="getAgentStatus",
+)
+async def status() -> AgentStatusResponse:
+    from services.AgentMcpService import actions_allowed, mcp_endpoint
+
+    catalog = mcp_endpoint.catalog
+    tools = list((await catalog.tools()).values()) if catalog else []
+    per_backend: dict[str, int] = {}
+    for tool in tools:
+        per_backend[tool.backend] = per_backend.get(tool.backend, 0) + 1
+    pending = sum(1 for c in get_agent_confirmation_service().list() if c.decision.value == "pending")
+    return AgentStatusResponse(
+        mcp_path="/mcp",
+        running=catalog is not None,
+        actions_allowed=actions_allowed(),
+        tools=per_backend,
+        tools_needing_approval=sum(1 for t in tools if t.level == "confirm"),
+        pending=pending,
+    )
+
+
+@router.get(
+    "/confirmations",
     response_model=AgentConfirmationListResponse,
     summary="The assistant's actions waiting for approval",
     description="Pending requests, plus those decided in the last 30 s.",
@@ -75,7 +109,7 @@ def _answer(confirmation_id: str, approve: bool, body: AgentDecisionRequest | No
 
 
 @router.post(
-    "/{confirmation_id}/approve",
+    "/confirmations/{confirmation_id}/approve",
     response_model=AgentConfirmationResponse,
     summary="Approve an action of the assistant",
     description="The assistant's request runs right away, as it was shown.",
@@ -87,7 +121,7 @@ def approve(confirmation_id: str = _ID, body: AgentDecisionRequest | None = None
 
 
 @router.post(
-    "/{confirmation_id}/deny",
+    "/confirmations/{confirmation_id}/deny",
     response_model=AgentConfirmationResponse,
     summary="Deny an action of the assistant",
     description="The assistant is told the operator declined (with the reason, if any).",

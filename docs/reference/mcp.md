@@ -6,13 +6,21 @@ An MCP client — an AI assistant — gets the machine as tools.
 
 ## Connecting
 
-Streamable HTTP, no login:
+**Settings → Assistant** shows this machine's MCP address, whether the server
+is offering tools right now, and ready-to-copy setup for Claude Code, Claude
+Desktop and other clients. The address is Streamable HTTP, no login:
 
 ```
 http://<machine address>/mcp
 ```
 
-For example, with Claude Code: `claude mcp add --transport http linuxcnc http://<machine address>/mcp`.
+- Claude Code: `claude mcp add --transport http linuxcnc http://<machine address>/mcp`
+- Claude Desktop (Settings → Developer → Edit Config; needs Node.js):
+  `{"mcpServers": {"linuxcnc": {"command": "npx", "args": ["-y", "mcp-remote", "http://<machine address>/mcp", "--allow-http"]}}}`
+
+The switch **Let the assistant ask to run actions** (same tab,
+`assistant.allow_actions`, on by default) turns the action tools off: the
+assistant then only reads and can engage the E-stop.
 
 ## What the assistant can do
 

@@ -163,6 +163,7 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/system/machine/start` | `session.control` | - |
 | POST | `/api/v1/system/machine/stop` | `session.control` | - |
 | POST | `/api/v1/system/machine/switch` | `session.control` | - |
+| GET | `/api/v1/agent/status` | `settings.read` | yes |
 | GET | `/api/v1/settings` | `settings.read` | yes |
 | GET | `/api/v1/settings/{key}` | `settings.read` | yes |
 | DELETE | `/api/v1/settings/{key}` | `settings.write` | - |

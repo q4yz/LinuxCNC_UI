@@ -120,3 +120,17 @@ test("the panel shows approval cards, a pending badge, and unfolds for a new req
   assert.match(card, /data-testid="agent-approve"/);
   assert.match(card, /data-testid="agent-deny"/);
 });
+
+test("Settings → Assistant: connection panel and the actions switch", () => {
+  const defs = readFileSync(resolve(src, "settings/definitions/assistant.ts"), "utf-8");
+  assert.match(defs, /"assistant\.allow_actions",\s*true/, "on by default (each action still needs approval)");
+  assert.match(readFileSync(resolve(src, "settings/definitions/index.ts"), "utf-8"), /import "\.\/assistant";/);
+  const panel = readFileSync(resolve(src, "settings/components/SettingAssistantConnection.vue"), "utf-8");
+  assert.match(panel, /agentConfirmationsFacade\.status\(\)/, "status from the MCP server's own catalog");
+  assert.match(panel, /claude mcp add --transport http linuxcnc \$\{url\.value\}/);
+  assert.match(panel, /"mcp-remote"/);
+  assert.match(panel, /document\.execCommand\("copy"\)/, "copy works on plain http too");
+  // the backend reads the same key
+  const backend = readFileSync(resolve(here, "../../backend/system/services/AgentMcpService.py"), "utf-8");
+  assert.match(backend, /ALLOW_ACTIONS_KEY = "assistant\.allow_actions"/);
+});

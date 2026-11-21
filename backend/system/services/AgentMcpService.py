@@ -41,8 +41,19 @@ from services.AgentConfirmationService import AgentConfirmationService, Decision
 
 logger = logging.getLogger("backend.system.mcp")
 
-#: Offer the ``confirm`` operations (each waits for the operator).
-OFFER_CONFIRM = True
+#: UI setting: offer the ``confirm`` operations (each waits for the
+#: operator). Unset: on. Off: the assistant only reads and may E-stop.
+ALLOW_ACTIONS_KEY = "assistant.allow_actions"
+
+
+def actions_allowed() -> bool:
+    """The operator lets the assistant ask to run actions (``assistant.allow_actions``)."""
+    from services.UiSettingsService import get_ui_settings_service
+
+    try:
+        return get_ui_settings_service().read(ALLOW_ACTIONS_KEY) is not False
+    except Exception:  # noqa: BLE001 - unset (404) or unreadable: the default (on)
+        return True
 #: How long a backend's tool list is reused before re-reading its schema (s).
 CATALOG_TTL = 5.0
 #: Longest tool result handed to the agent (characters).
@@ -73,27 +84,31 @@ class ToolCatalog:
         clients: Mapping[str, httpx.AsyncClient],
         *,
         ttl: float = CATALOG_TTL,
-        offer_confirm: bool = OFFER_CONFIRM,
+        offer_confirm: bool | None = None,
         confirmations: AgentConfirmationService | None = None,
     ) -> None:
         self._clients = dict(clients)
         self._confirmations = confirmations or get_agent_confirmation_service()
         self._ttl = ttl
         self._offer_confirm = offer_confirm
-        self._cache: dict[str, tuple[float, list[AgentTool]]] = {}
+        self._cache: dict[tuple[str, bool], tuple[float, list[AgentTool]]] = {}
+
+    def offer_confirm(self) -> bool:
+        return self._offer_confirm if self._offer_confirm is not None else actions_allowed()
 
     async def _backend_tools(self, backend: str) -> list[AgentTool]:
-        cached = self._cache.get(backend)
+        offer = self.offer_confirm()
+        cached = self._cache.get((backend, offer))
         if cached and time.monotonic() - cached[0] < self._ttl:
             return cached[1]
         try:
             response = await self._clients[backend].get("/openapi.json", timeout=5.0)
             response.raise_for_status()
-            tools = tools_from_openapi(backend, response.json(), offer_confirm=self._offer_confirm)
+            tools = tools_from_openapi(backend, response.json(), offer_confirm=offer)
         except (httpx.HTTPError, ValueError) as exc:
             logger.info("MCP: %s backend unavailable (%s); its tools are left out", backend, exc)
             tools = []
-        self._cache[backend] = (time.monotonic(), tools)
+        self._cache[(backend, offer)] = (time.monotonic(), tools)
         return tools
 
     async def tools(self) -> dict[str, AgentTool]:
@@ -210,6 +225,8 @@ class McpEndpoint:
         self._backends = dict(backends or DEFAULT_BACKENDS)
         self._clients = clients
         self._manager: StreamableHTTPSessionManager | None = None
+        #: The running server's catalog (for ``/api/v1/agent/status``).
+        self.catalog: ToolCatalog | None = None
 
     @contextlib.asynccontextmanager
     async def run(self) -> AsyncIterator[None]:
@@ -217,13 +234,14 @@ class McpEndpoint:
             clients = self._clients or {
                 name: await stack.enter_async_context(httpx.AsyncClient(base_url=url)) for name, url in self._backends.items()
             }
-            manager = StreamableHTTPSessionManager(app=build_server(ToolCatalog(clients)), stateless=True, json_response=True)
+            catalog = ToolCatalog(clients)
+            manager = StreamableHTTPSessionManager(app=build_server(catalog), stateless=True, json_response=True)
             await stack.enter_async_context(manager.run())
-            self._manager = manager
+            self._manager, self.catalog = manager, catalog
             try:
                 yield
             finally:
-                self._manager = None
+                self._manager, self.catalog = None, None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if self._manager is None:
@@ -236,4 +254,4 @@ class McpEndpoint:
 
 mcp_endpoint = McpEndpoint()
 
-__all__ = ["DEFAULT_BACKENDS", "McpEndpoint", "OFFER_CONFIRM", "ToolCatalog", "build_server", "mcp_endpoint"]
+__all__ = ["ALLOW_ACTIONS_KEY", "DEFAULT_BACKENDS", "McpEndpoint", "ToolCatalog", "actions_allowed", "build_server", "mcp_endpoint"]

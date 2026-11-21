@@ -166,7 +166,7 @@ def test_the_backend_wants_the_approval_for_exactly_that_request():
 def test_the_agent_cannot_approve_itself():
     from core.permissions import SYSTEM_ROUTES, Level, level
 
-    for key in [k for k in SYSTEM_ROUTES if k[1].startswith("/api/v1/agent/")]:
+    for key in [k for k in SYSTEM_ROUTES if k[1].startswith("/api/v1/agent/confirmations")]:
         assert level("agent", SYSTEM_ROUTES[key]) is Level.DENY
         assert level("operator", SYSTEM_ROUTES[key]) is Level.ALLOW
 
@@ -233,3 +233,37 @@ def test_the_confirmation_routes():
         assert client.post("/api/v1/agent/confirmations/nope/approve").status_code == 404
     finally:
         module._service = original
+
+
+def test_the_operator_switch_turns_actions_off(monkeypatch):
+    from services import AgentMcpService as mcp_module
+
+    app = _machine()
+    monkeypatch.setattr(mcp_module, "actions_allowed", lambda: False)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://machine") as http:
+            catalog = ToolCatalog({"machine": http}, ttl=0, confirmations=AgentConfirmationService(timeout=5))
+            assert set(await catalog.tools()) == {"machine_get_state", "machine_post_estop"}
+            monkeypatch.setattr(mcp_module, "actions_allowed", lambda: True)
+            assert "machine_post_mdi" in await catalog.tools()
+
+    _run(go)
+
+
+def test_actions_are_allowed_unless_switched_off(monkeypatch):
+    from services import AgentMcpService as mcp_module
+    from services import UiSettingsService
+
+    class Store:
+        def __init__(self, value):
+            self.value = value
+
+        def read(self, key):
+            if self.value is KeyError:
+                raise KeyError(key)
+            return self.value
+
+    for stored, expected in ((KeyError, True), (True, True), (False, False)):
+        monkeypatch.setattr(UiSettingsService, "get_ui_settings_service", lambda s=Store(stored): s)
+        assert mcp_module.actions_allowed() is expected
