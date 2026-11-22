@@ -20,7 +20,7 @@ def _pin(comp: str, name: str, value: Any, direction: HalDirection = HalDirectio
 
 def _client(monkeypatch, reads):
     from routers import hal as hal_router
-    from services.HalPinSignalService import get_hal_pin_signal_service
+    from services.hal.HalPinSignalService import get_hal_pin_signal_service
 
     service = get_hal_pin_signal_service()
     calls = iter(reads)

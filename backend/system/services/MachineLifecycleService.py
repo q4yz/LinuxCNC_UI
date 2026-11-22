@@ -576,7 +576,7 @@ class MachineLifecycleService:
 
         ini = self.machine_ini(self.default_machine())
 
-        command = self._build_command(ini)
+        command = self._build_command(self._calibrated(ini))
         env = os.environ.copy()
         # LinuxCNC opens its GUI on the console display; a systemd
         # service has no DISPLAY of its own, so default to :0.
@@ -648,6 +648,46 @@ class MachineLifecycleService:
         status = self.status()
         status["started_pid"] = process.pid
         return status
+
+    @staticmethod
+    def _calibrated(ini: Path) -> Path:
+        """``machine.ini`` with ``calibration.ini``'s results merged in
+        (``machine.calibrated.ini`` next to it), or ``ini`` itself. A broken
+        calibration file never stops the machine: then the profile's values."""
+        from core.calibration_file import calibrated_ini
+
+        try:
+            payload = json.loads((ini.parent / "hardware.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        try:
+            path, keys = calibrated_ini(ini, payload if isinstance(payload, dict) else {})
+        except (OSError, ValueError, UnicodeError) as exc:
+            logger.warning("calibration.ini not applied: %s", exc)
+            return ini
+        if keys:
+            logger.info("Calibration overrides %s: %s", path.name, ", ".join(keys))
+        MachineLifecycleService._calibrate_boards(ini.parent)
+        return path
+
+    @staticmethod
+    def _calibrate_boards(config_dir: Path) -> None:
+        """The StallGuard thresholds of calibration.ini into the board
+        configs (synced to the boards' SD cards when LinuxCNC starts); the
+        values loaded are noted for the Calibration tab."""
+        from core.calibration_file import CalibrationFile, calibrate_board_configs, calibration_path
+
+        store = CalibrationFile(calibration_path(config_dir))
+        try:
+            applied = calibrate_board_configs(config_dir, store.values())
+            for joint, threshold in applied.items():
+                store.set_state(f"sensorless_{joint}", loaded=threshold)
+        except (OSError, ValueError) as exc:
+            logger.warning("Board configs not calibrated: %s", exc)
+            return
+        if applied:
+            logger.info("Calibration: StallGuard thresholds %s",
+                        ", ".join(f"{j} {v}" for j, v in sorted(applied.items())))
 
     def _build_command(self, ini: Path) -> List[str]:
         """Resolve the launch command (``LINUXCNC_START_COMMAND`` override).

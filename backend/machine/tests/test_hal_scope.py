@@ -9,9 +9,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import services.HalScopeService as scope_mod
+import services.hal.HalScopeService as scope_mod
 from exceptions import BadRequestError
-from services.HalScopeService import HalScopeService, ScopeSampler, scope_value
+from services.hal.HalScopeService import HalScopeService, ScopeSampler, scope_value
 
 
 def test_scope_value_plots_bits_as_0_1_and_gaps_for_unreadable():

@@ -28,7 +28,11 @@ _COMMON_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(_COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMON_DIR))
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from core.auth import annotate_openapi, make_authorize
+from core.permissions import SYSTEM_ROUTES
+from services.AgentMcpService import mcp_endpoint
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.ui_log import setup_ui_logging, tag_std_streams
@@ -43,6 +47,8 @@ from routers import (
     macros as macros_router,
     octoprint as octoprint_router,
     ui_settings as ui_settings_router,
+    agent_confirmations as agent_confirmations_router,
+    agent_chat as agent_chat_router,
 )
 
 
@@ -86,7 +92,9 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - we WANT every error here
         logger.exception("OpenAPI schema generation failed at startup")
 
-    yield
+    # The assistant's MCP server (/mcp): tools from the OpenAPI schemas.
+    async with mcp_endpoint.run():
+        yield
 
     logger.info("Shutting down system service...")
 
@@ -111,6 +119,8 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    # Every route checks the caller's permission (core/permissions.py).
+    dependencies=[Depends(make_authorize(SYSTEM_ROUTES))],
 )
 
 # Allow CORS for local frontend development (e.g., Vite dev server on
@@ -138,6 +148,10 @@ app.include_router(SystemRouter.router)
 # Central UI settings (single settings.json) — lives here so it stays
 # available while the machine backend is offline.
 app.include_router(ui_settings_router.router)
+# The assistant's actions waiting for the operator (approve / deny).
+app.include_router(agent_confirmations_router.router)
+# The in-app assistant (chat + its API key / model).
+app.include_router(agent_chat_router.router)
 app.include_router(machine_lifecycle_router.router)
 
 # Program file uploads (nc_files/), and the OctoPrint-compatible API
@@ -150,10 +164,17 @@ for _router in _MODULE_ROUTERS:
     app.include_router(_router)
 
 
-@app.get("/")
+@app.get("/", openapi_extra={"x-mcp": False})  # duplicate of the health check
 def read_root():
     """Root health check endpoint."""
     return {"status": "ok", "service": "LinuxCNC UI System Service"}
+
+
+# MCP for the assistant (not an API route: no permission of its own —
+# its calls go back through the API as the agent role).
+app.add_route("/mcp", mcp_endpoint, methods=["GET", "POST", "DELETE"])
+
+annotate_openapi(app, SYSTEM_ROUTES)
 
 
 if __name__ == "__main__":

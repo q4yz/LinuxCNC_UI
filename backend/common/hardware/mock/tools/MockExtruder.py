@@ -5,7 +5,7 @@ from hardware.mock.tools.MockHeater import MockHeater
 
 
 class MockExtruder(MockComponent):
-    def __init__(self, tool_id: str, sensor_id: Optional[str] = None):
+    def __init__(self, tool_id: str, sensor_id: Optional[str] = None, max_temp: Optional[float] = None):
         self.id = tool_id
         self.position = 0.0
         self.is_relative = False
@@ -14,7 +14,7 @@ class MockExtruder(MockComponent):
         # It perfectly reuses all the heating/cooling physics we already wrote.
         # The sensor id rides along so the hotend publishes its reading on
         # the same pin the mapper reads (see MockHeater).
-        self._heater = MockHeater(tool_id, sensor_id=sensor_id)
+        self._heater = MockHeater(tool_id, sensor_id=sensor_id, max_temp=max_temp)
 
     def read_pin(self, pin_name: str) -> Optional[Any]:
         # 1. Check if it's an extruder-specific pin
@@ -60,9 +60,3 @@ class MockExtruder(MockComponent):
                 handled = True
 
         return handled
-
-    def get_legacy_state(self) -> dict[str, Any]:
-        # Combine the states for legacy UI support
-        state = {"position": self.position}
-        state.update(self._heater.get_legacy_state())
-        return state

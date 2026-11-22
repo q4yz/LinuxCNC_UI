@@ -32,6 +32,10 @@ export class MacroButtonsSetting extends BaseSetting<MacroButtonDescriptor[]> {
     return SettingMacroButtons;
   }
 
+  get wide(): boolean {
+    return true;
+  }
+
   get slots(): MacroButtonSlotDef[] {
     return (this.config.slots as MacroButtonSlotDef[]) ?? [];
   }

@@ -59,9 +59,9 @@ function readJogControls() {
 test("servo-thread facade owns jogIntervals (the singleton service tracks per-axis timers)", () => {
   // After the servo/base + store/facade split the per-axis
   // keep-alive map (``jogIntervals``) lives inside the
-  // ``ServoThreadService`` class on the facade, not in the
+  // ``ServoThreadFacade`` class on the facade, not in the
   // machine store. The machine store delegates to
-  // ``servoThreadService.jogContinuous`` / ``jogStop`` so the
+  // ``servoThreadFacade.jogContinuous`` / ``jogStop`` so the
   // timers are cleared in one place. Pin the ownership here so a
   // future contributor does not re-introduce a parallel map in
   // ``stores/machine.ts``.
@@ -69,7 +69,7 @@ test("servo-thread facade owns jogIntervals (the singleton service tracks per-ax
   assert.match(
     text,
     /private\s+jogIntervals\s*:\s*Record<number,\s*number>\s*=\s*\{\s*\}/,
-    "ServoThreadService.jogIntervals must be a Record<number, number> initialised to {}",
+    "ServoThreadFacade.jogIntervals must be a Record<number, number> initialised to {}",
   );
   assert.match(text, /window\.clearInterval\(this\.jogIntervals\[axis\]\)/);
   assert.match(text, /delete\s+this\.jogIntervals\[axis\]/);
@@ -105,7 +105,7 @@ test("servo-thread facade builds the jog-axis payload over the WebSocket for con
 test("machine store delegates jog axis / stop to the servo-thread facade", () => {
   // The /ws/telemetry channel is bidirectional; the module store
   // routes both jog start and jog stop through the facade
-  // (``servoThreadService.jogContinuous`` / ``jogStop``) so the
+  // (``servoThreadFacade.jogContinuous`` / ``jogStop``) so the
   // legacy REST endpoints are no longer the primary path. A
   // regression that re-introduced a direct ``servo.send`` call
   // here would bypass the per-axis keep-alive timer and leave a
@@ -113,19 +113,19 @@ test("machine store delegates jog axis / stop to the servo-thread facade", () =>
   const text = readStore();
   assert.match(
     text,
-    /servoThreadService\.jogContinuous\s*\(/,
+    /servoThreadFacade\.jogContinuous\s*\(/,
     "jogContinuous must delegate to the facade (not send jog_axis directly)",
   );
   assert.match(
     text,
-    /servoThreadService\.jogStop\s*\(/,
+    /servoThreadFacade\.jogStop\s*\(/,
     "jogStop must delegate to the facade (not send jog_stop directly)",
   );
   // And the discrete ``jog`` still sends ``jog_axis`` over the
   // socket (it's a one-shot and does not need the timer path).
   assert.match(
     text,
-    /servoThreadService\.send\(\s*\{\s*type:\s*["']jog_axis["']/,
+    /servoThreadFacade\.send\(\s*\{\s*type:\s*["']jog_axis["']/,
     "jog (discrete) must send jog_axis over the WS",
   );
 });

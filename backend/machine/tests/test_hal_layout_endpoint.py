@@ -17,7 +17,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from services.HalPinSignalService import HalPinSignalService
+from services.hal.HalPinSignalService import HalPinSignalService
 
 
 def _build_router_app() -> FastAPI:
@@ -109,7 +109,7 @@ def test_layout_is_cached_after_first_read():
     required to cache the layout on the first request. A second
     read here would be a regression of that contract.
     """
-    from services.HalPinSignalService import get_hal_pin_signal_service
+    from services.hal.HalPinSignalService import get_hal_pin_signal_service
 
     service = get_hal_pin_signal_service()
     service.reset_cache()
@@ -130,7 +130,7 @@ def test_layout_is_cached_after_first_read():
 
 
 def test_reset_cache_forces_a_reread():
-    from services.HalPinSignalService import get_hal_pin_signal_service
+    from services.hal.HalPinSignalService import get_hal_pin_signal_service
 
     service = get_hal_pin_signal_service()
     service.reset_cache()

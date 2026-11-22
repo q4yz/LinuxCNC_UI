@@ -95,8 +95,8 @@ mesh row under DEBUG; one INFO line when the mesh is saved and active
 
 ## 5. PROBING (`BED_MESH_CALIBRATE`)
 
-`backend/machine/services/BedMeshProbeService.py`, the same MDI probe
-moves as Z tilt (`services/Probing.py`): X, Y and Z homed, compensation
+`backend/machine/services/motion/BedMeshProbeService.py`, the same MDI probe
+moves as Z tilt (`services/motion/Probing.py`): X, Y and Z homed, compensation
 switched off (its offset back to 0), then per point of `probe_count` over
 `mesh_min` ... `mesh_max` — a zig-zag, row by row — `G53 G1 X Y`,
 `G91 G38.2` down to `[stepper_z] position_min` (relative from the travel height: LinuxCNC allows `G53` only with `G0`/`G1`), `G90`, the height from

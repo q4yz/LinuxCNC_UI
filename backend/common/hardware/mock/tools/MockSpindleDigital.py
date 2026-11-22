@@ -41,21 +41,6 @@ class MockSpindleDigital(MockComponent):
             f"webgui.absolute-master-override-enable{suffix}": "absolute_master_override_enable",
         }
 
-    def read_pin(self, pin_name: str) -> Optional[Any]:
-        """Strictly look up the pin name in the dictionary."""
-        if pin_name in self._pin_map:
-            attr_name = self._pin_map[pin_name]
-            return getattr(self, attr_name)
-        return None
-
-    def set_pin(self, pin_name: str, value: Any) -> bool:
-        """Allow setting pins directly (e.g., if you command an override change)."""
-        if pin_name in self._pin_map:
-            attr_name = self._pin_map[pin_name]
-            setattr(self, attr_name, value)
-            return True
-        return False
-
     def execute_mdi(self, gcode: str) -> bool:
         """Parse SpindleDigital M-codes and set the internal target states."""
         cmd = gcode.upper()
@@ -112,20 +97,3 @@ class MockSpindleDigital(MockComponent):
             self.spindle_at_speed = True
         else:
             self.spindle_at_speed = False
-
-    def get_legacy_state(self) -> dict[str, Any]:
-        """Used if old UI components still query the stat channel directly."""
-        return {
-            "target_rpm": self.target_rpm,
-            "actual": self.actual_rpm,
-            "actual_rpm": self.actual_rpm,
-            "is_connected": self.is_connected,
-            "error_count": self.error_count,
-            "last_error": self.last_error,
-            "spindle_forward": self.spindle_forward,
-            "spindle_reverse": self.spindle_reverse,
-            "spindle_at_speed": self.spindle_at_speed,
-            "override": self.override,
-            "absolute_master_override": self.absolute_master_override,
-            "absolute_master_override_enable": self.absolute_master_override_enable,
-        }

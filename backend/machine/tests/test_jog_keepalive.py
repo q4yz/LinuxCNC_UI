@@ -54,7 +54,7 @@ def _ws_dispatch(msg: dict[str, Any]) -> None:
     so we drive it to completion via ``asyncio.run`` — the same
     pattern used in ``test_jog_watchdog.py``.
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     svc = ServoThreadService()
     _run(svc.dispatch_inbound(None, msg))

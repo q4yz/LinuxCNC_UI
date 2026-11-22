@@ -50,7 +50,7 @@ def test_pause_inspect_binding_rides_the_same_gate_as_estop():
     docstring), so it appears exactly when `estop` does."""
     text = render_webgui_connections({"estop": {}})
     assert "net inspect-spindle-inhibit webgui.inspect-spindle-inhibit => spindle.0.inhibit" in text
-    assert "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts" in text
+    assert "net z-eoffset-counts z-eoffset-counts.out => axis.z.eoffset-counts" in text
     assert render_webgui_connections({}) == ""
 
 

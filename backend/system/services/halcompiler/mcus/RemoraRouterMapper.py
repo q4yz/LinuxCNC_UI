@@ -15,7 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
+from models.machineconfig.HardwareJsonModels import McuInfo
 from models.machineconfig.HalFragmentModels import (
+    RouterMcu,
     SERVO_THREAD,
     Addf,
     FirmwareModuleRequest,
@@ -54,9 +56,13 @@ MCU_TEMP_SENSOR_TYPE = "temperature_mcu"
 #: The SPI clock a failed ``remora-upload --sync`` is retried at (Hz):
 #: uploads to a busy board got through at 1 MHz only.
 SYNC_FALLBACK_HZ = 1_000_000
+#: ``SPI_clk_div`` without ``spi_freq`` / ``spi_clk_div`` (bcm2835 divider).
+DEFAULT_SPI_CLK_DIV = 64
 #: Set points (``remora.SP.N``) per board, its CAN nodes included — the
 #: firmware's ``VARIABLES`` (configuration.h).
 REMORA_SET_POINTS = 6
+#: Process variables (``remora.PV.N``) per board, its CAN nodes included.
+REMORA_PROCESS_VARIABLES = 6
 
 
 class RemoraRouterMapper:
@@ -69,15 +75,13 @@ class RemoraRouterMapper:
         return _THERMISTOR_CURVES.get(str(sensor_type or "").strip().lower())
 
     @staticmethod
-    def base_fragment(mcu: dict[str, Any]) -> HalFragment:
+    def base_fragment(target: RouterMcu) -> HalFragment:
         """§ 3 — component load, E-stop/SPI chain, thread attachment,
         plus the board's own `"Reset Pin"` firmware module when
         `board_reset_pin` is declared. MCU-intrinsic, same as the SPI-enable
         chain above it — not something any routed request triggers."""
-        params = mcu.get("parameters") or {}
-        chip = str(params.get("chip", "stm32")).strip().lower()
-
-        if chip == _LPC_CHIP:
+        mcu: McuInfo = target.mcu
+        if mcu.chip == _LPC_CHIP:
             loadrt = ["loadrt remora_lpc"]
         else:
             loadrt = ["loadrt remora-spi " + " ".join(RemoraRouterMapper._driver_params(mcu))]
@@ -91,8 +95,12 @@ class RemoraRouterMapper:
             ],
             addf=[
                 Addf("remora.read", SERVO_THREAD, order=0),
-                Addf("remora.update-freq", SERVO_THREAD, order=2),
-                Addf("remora.write", SERVO_THREAD, order=2),
+                # last (tier 3): after every component that works on motion's
+                # output in tier 2 (jointshape, the extruder component, the
+                # CoreXY mixing) — tied in tier 2 they ran after the write and
+                # the board got last period's positions.
+                Addf("remora.update-freq", SERVO_THREAD, order=3),
+                Addf("remora.write", SERVO_THREAD, order=3),
             ],
         )
 
@@ -101,9 +109,9 @@ class RemoraRouterMapper:
         # contact on the motor supply) and the CAN "Status Bit" (0 while
         # a mandatory node is missing — its `.not` twin is the fault).
         faults: list[str] = []
-        if mcu.get("_estop_fault"):
+        if target.estop_fault:
             faults.append("estop-fault")
-        can_status_bit = mcu.get("_can_status_bit")
+        can_status_bit = target.can_status_bit
         if can_status_bit is not None:
             faults.append("can-fault")
         if faults:
@@ -125,7 +133,7 @@ class RemoraRouterMapper:
                 "net remora-status <= remora.SPI-status => estop-latch.0.ok-in",
             ]
             if can_status_bit is not None:
-                fragment.nets.append(f"net can-fault <= remora.input.{int(can_status_bit):02d}.not")
+                fragment.nets.append(f"net can-fault <= remora.input.{can_status_bit:02d}.not")
             if len(faults) > 1:
                 fragment.nets += [
                     "net estop-fault => estop-fault-or.in0",
@@ -136,12 +144,12 @@ class RemoraRouterMapper:
                 fragment.nets.append(f"net {faults[0]} => estop-latch.0.fault-in")
             fragment.nets.append("net estop-ext <= estop-latch.0.ok-out => iocontrol.0.emc-enable-in")
 
-        board_reset_pin = mcu.get("board_reset_pin")
+        board_reset_pin = mcu.board_reset_pin
         if board_reset_pin:
             parsed = PinStringMapper.from_string(board_reset_pin)
             fragment.firmware_modules.append(
                 FirmwareModuleRequest(
-                    mcu_id=str(mcu.get("id", "mcu")),
+                    mcu_id=mcu.id,
                     module={
                         "Name": "reset_pin",
                         "Thread": "Servo",
@@ -155,7 +163,7 @@ class RemoraRouterMapper:
         return fragment
 
     @staticmethod
-    def _driver_params(mcu: dict[str, Any]) -> list[str]:
+    def _driver_params(mcu: McuInfo) -> list[str]:
         """``loadrt remora-spi`` parameters for the declared host side.
 
         The SPI clock is ``SPI_freq`` (Hz — the generic spidev driver on
@@ -164,27 +172,26 @@ class RemoraRouterMapper:
         ``SPI_clk_div=64`` when neither is declared. ``reset_pin`` is a
         host GPIO here, not the board-side ``board_reset_pin``.
         """
-        params = mcu.get("parameters") or {}
         driver: list[str] = []
-        if mcu.get("pru_base_freq"):
-            driver.append(f"PRU_base_freq={mcu['pru_base_freq']}")
-        if mcu.get("spi_freq"):
-            driver.append(f"SPI_freq={mcu['spi_freq']}")
+        if mcu.pru_base_freq:
+            driver.append(f"PRU_base_freq={mcu.pru_base_freq}")
+        if mcu.spi_freq:
+            driver.append(f"SPI_freq={mcu.spi_freq}")
         else:
-            driver.append(f"SPI_clk_div={mcu.get('spi_clk_div') or params.get('spi_clk_div', 64)}")
-        for key, param in (
-            ("interface", "spi_dev"),
-            ("spi_cs_pin", "spi_cs_pin"),
-            ("spi_cs_chip", "spi_cs_chip"),
-            ("reset_pin", "reset_pin"),
-            ("reset_chip", "reset_chip"),
+            driver.append(f"SPI_clk_div={mcu.spi_clk_div or DEFAULT_SPI_CLK_DIV}")
+        for value, param in (
+            (mcu.interface, "spi_dev"),
+            (mcu.spi_cs_pin, "spi_cs_pin"),
+            (mcu.spi_cs_chip, "spi_cs_chip"),
+            (mcu.reset_pin, "reset_pin"),
+            (mcu.reset_chip, "reset_chip"),
         ):
-            if mcu.get(key):
-                driver.append(f"{param}={mcu[key]}")
+            if value:
+                driver.append(f"{param}={value}")
         return driver
 
     @staticmethod
-    def config_sync_line(mcu: dict[str, Any], config_file: str) -> str | None:
+    def config_sync_line(mcu: McuInfo, config_file: str) -> str | None:
         """``loadusr -w remora-upload --sync ... config_<mcu>.txt``.
 
         Runs before ``loadrt remora-spi`` (the driver then owns the SPI
@@ -202,8 +209,7 @@ class RemoraRouterMapper:
         ``"a || b"``), so the retry is a small script written next to the
         config (:meth:`config_sync_script`) and run as ``sh <script>``.
         """
-        params = mcu.get("parameters") or {}
-        if str(params.get("chip", "stm32")).strip().lower() == _LPC_CHIP or mcu.get("sync_config") is False:
+        if mcu.chip == _LPC_CHIP or mcu.sync_config is False:
             return None
         script = RemoraRouterMapper.config_sync_script(mcu, config_file)
         if script is not None:
@@ -218,18 +224,14 @@ class RemoraRouterMapper:
         return f"sync_{stem}.sh"
 
     @staticmethod
-    def config_sync_script(mcu: dict[str, Any], config_file: str) -> str | None:
+    def config_sync_script(mcu: McuInfo, config_file: str) -> str | None:
         """The sync with its retry at :data:`SYNC_FALLBACK_HZ`, as a shell
         script — ``None`` when the link already runs at or below it (one
         plain ``remora-upload`` line, no script)."""
-        try:
-            fast = float(mcu.get("spi_freq") or 0) > SYNC_FALLBACK_HZ
-        except (TypeError, ValueError):
-            fast = False
-        if not fast:
+        if (mcu.spi_freq or 0) <= SYNC_FALLBACK_HZ:
             return None
         command = " ".join(["remora-upload", "--sync", *RemoraRouterMapper.link_args(mcu), config_file])
-        slow_args = RemoraRouterMapper.link_args({**mcu, "spi_freq": None}) + ["-s", str(SYNC_FALLBACK_HZ)]
+        slow_args = RemoraRouterMapper.link_args(mcu.model_copy(update={"spi_freq": None})) + ["-s", str(SYNC_FALLBACK_HZ)]
         slow = " ".join(["remora-upload", "--sync", *slow_args, config_file])
         return (
             "#!/bin/sh\n"
@@ -241,19 +243,19 @@ class RemoraRouterMapper:
         )
 
     @staticmethod
-    def link_args(mcu: dict[str, Any]) -> list[str]:
+    def link_args(mcu: McuInfo) -> list[str]:
         """``remora-upload`` options for the link the driver line uses —
         spidev, GPIO chip select and SPI clock. Shared by the HAL sync
         line and the manual upload (``RemoraBoardUploader``)."""
         args: list[str] = []
-        if mcu.get("interface"):
-            args += ["-d", str(mcu["interface"])]
-        if mcu.get("spi_cs_pin"):
-            args += ["--spi-cs-pin", str(mcu["spi_cs_pin"])]
-        if mcu.get("spi_cs_chip"):
-            args += ["--spi-cs-chip", str(mcu["spi_cs_chip"])]
-        if mcu.get("spi_freq"):
-            args += ["-s", str(mcu["spi_freq"])]
+        if mcu.interface:
+            args += ["-d", mcu.interface]
+        if mcu.spi_cs_pin:
+            args += ["--spi-cs-pin", mcu.spi_cs_pin]
+        if mcu.spi_cs_chip:
+            args += ["--spi-cs-chip", mcu.spi_cs_chip]
+        if mcu.spi_freq:
+            args += ["-s", str(mcu.spi_freq)]
         return args
 
     @staticmethod
@@ -395,6 +397,24 @@ class RemoraRouterMapper:
                 })
                 chain["module"]["Segments"].append({"First": first, "Count": count, "SP[i]": sp_index})
                 sp_index += 1
+            elif request.role is PinRole.ACCEL and request.accel is not None:
+                # A CAN node's ADXL345 (Remora-m8p CAN_PROTOCOL.md): the
+                # node reads it, the hub writes X / Y (mm/s²) into two PVs.
+                axes_map, rate, sck, mosi, miso = request.accel
+                accel_module: dict[str, Any] = {
+                    "Type": "ADXL345",
+                    "Comment": request.owner,
+                    "CS Pin": RemoraFirmwarePinMapper.to_firmware_pin(request.pin.pin_id),
+                }
+                for key, raw in (("SCK Pin", sck), ("MOSI Pin", mosi), ("MISO Pin", miso)):
+                    if raw:
+                        accel_module[key] = RemoraFirmwarePinMapper.to_firmware_pin(raw)
+                for axis in ("x", "y"):
+                    fragment.nets.append(f"net {request.signal}-{axis} <= remora.PV.{pv_index}")
+                    accel_module[f"{axis.upper()} PV[i]"] = pv_index
+                    pv_index += 1
+                accel_module.update({"Axes Map": axes_map, "Range": 16, "Rate": rate})
+                fragment.firmware_modules.append(FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=accel_module))
             elif request.role is PinRole.ANALOG_IN and request.sensor_type == MCU_TEMP_SENSOR_TYPE:
                 # The board's own die temperature ("MCU Temperature"
                 # module, Remora-m8p modules/mcuTemp) on the next free PV.
@@ -446,6 +466,11 @@ class RemoraRouterMapper:
             fragment.firmware_modules.append(
                 FirmwareModuleRequest(mcu_id=chain["mcu_id"], module=chain["module"])
             )
+        if pv_index > REMORA_PROCESS_VARIABLES:
+            raise ValueError(
+                f"{pv_index} process variables (temperatures, the MCU temperature, an accelerometer's X / Y) "
+                f"on one Remora board, its nodes included; it has {REMORA_PROCESS_VARIABLES} (firmware VARIABLES)"
+            )
         if sp_index > REMORA_SET_POINTS:
             raise ValueError(
                 f"{sp_index} set points (heaters, fans, PWM outputs, LED segments) on one Remora "
@@ -454,4 +479,4 @@ class RemoraRouterMapper:
         return fragment
 
 
-__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_SET_POINTS", "RemoraRouterMapper"]
+__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_PROCESS_VARIABLES", "REMORA_SET_POINTS", "RemoraRouterMapper"]

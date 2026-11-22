@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-import services.HomingRoutineService as module
-import services.MacroExecutionService as macro_module
+import services.motion.HomingRoutineService as module
+import services.program.MacroExecutionService as macro_module
 from exceptions import BadRequestError, ConflictError
 from hardware.Connection import MachineState
 
@@ -175,7 +175,7 @@ def test_program_guard(machine):
 
 
 def test_home_button_runs_the_routine(machine, monkeypatch):
-    from services.AxisService import AxisService
+    from services.motion.AxisService import AxisService
 
     service = machine.service({"gcode": ROUTINE, "axes": "z"})
     monkeypatch.setattr(module, "get_homing_routine_service", lambda: service)
@@ -207,7 +207,7 @@ VIRTUAL = {"speed": 5.0, "second_speed": 2.5, "retract": 5.0, "distance": 255.0}
 
 @pytest.fixture
 def probe_machine(machine, monkeypatch):
-    import services.Probing as probing
+    import services.motion.Probing as probing
 
     def dispatch(line, ack_timeout=1.0):
         machine.calls.append(("mdi", line))
@@ -245,7 +245,7 @@ def test_bare_g28_homes_z_last_on_the_probe(probe_machine):
 
 
 def test_home_buttons_use_the_probe_without_a_routine(probe_machine, monkeypatch):
-    from services.AxisService import AxisService
+    from services.motion.AxisService import AxisService
 
     service = probe_machine.vservice(None)
     monkeypatch.setattr(module, "get_homing_routine_service", lambda: service)

@@ -33,6 +33,11 @@ class FileEntryResponse(BaseModel):
         default=False,
         description="Profiles only: the file contains the '#Start' marker",
     )
+    status: Optional[Literal["converting", "failed"]] = Field(
+        default=None,
+        description="Programs only: an upload still converting in the background, or whose conversion failed",
+    )
+    message: Optional[str] = Field(default=None, description="Why the conversion failed")
 
 
 __all__ = ["FileEntryResponse"]

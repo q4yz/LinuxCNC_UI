@@ -59,3 +59,20 @@ Motor A / B are the Remora joints numbered like the X / Y joints, so
 the step generators (`config.txt`) keep `[stepper_x]` / `[stepper_y]`'s
 pins and scales. A motor turns the wrong way: invert its `dir_pin`, as
 in Klipper.
+
+## Input shaping / skew
+
+With `[input_shaper]`, `[skew_correction]` or `[adxl345]` the `jointshape`
+instances of the X / Y joints sit before the mixing (`CoreXyHalMapper`
+`shaped=True`, `JointShapeHalMapper` `corexy=True`):
+
+```
+joint.X.motor-pos-cmd -> shape-jX -> j<X>pos-cmd-shaped -> corexy-a / -b -> remora
+remora fb -> corexy-x / -y -> j<X>pos-fb -> shape-jX -> joint.X.motor-pos-fb
+```
+
+The mixing is linear, so a stepgen error on A / B maps back to the X / Y
+error `jointshape` expects (`pos-fb-out = pos-cmd-in + pos-fb-in - pos-cmd-out`).
+Servo order: remora.read, corexy-x / -y (0), motion (1), shape-j*, corexy-a / -b
+(2), remora.write (3) — one period from joint to motor.
+

@@ -9,45 +9,11 @@ class LinuxcncModuleFacade:
         self._state = state_mock
         self._hal_mock = hal_mock
 
-        # Expose the NML constants directly on the module so things like
-        # `if stat.task_state == linuxcnc.STATE_ESTOP:` work natively!
-        self.STATE_ESTOP = state_mock.STATE_ESTOP
-        self.STATE_ESTOP_RESET = state_mock.STATE_ESTOP_RESET
-        self.STATE_OFF = state_mock.STATE_OFF
-        self.STATE_ON = state_mock.STATE_ON
-
-        self.INTERP_IDLE = state_mock.INTERP_IDLE
-        self.INTERP_READING = state_mock.INTERP_READING
-        self.INTERP_PAUSED = state_mock.INTERP_PAUSED
-        self.INTERP_WAITING = state_mock.INTERP_WAITING
-
-        # NML jog/trajectory-mode constants. The production
-        # ``hardware.connection`` module imports these via
-        # ``getattr(linuxcnc, "JOG_CONTINUOUS", 1)`` and the mock had
-        # no equivalent until now — expose every constant the
-        # ``constants_mock`` module ships so a single ``from hardware
-        # import linuxcnc`` resolves every constant the tests use.
-        for _name in (
-            "JOG_STOP",
-            "JOG_INCREMENT",
-            "JOG_CONTINUOUS",
-            "TRAJ_MODE_FREE",
-            "TRAJ_MODE_TELEOP",
-            "MODE_MANUAL",
-            "MODE_MDI",
-            "MODE_AUTO",
-            "AUTO_RUN",
-            "AUTO_PAUSE",
-            "AUTO_RESUME",
-            "AUTO_STEP",
-            "NML_ERROR",
-            "NML_TEXT",
-            "NML_DISPLAY",
-            "OPERATOR_ERROR",
-            "OPERATOR_TEXT",
-            "OPERATOR_DISPLAY",
-        ):
-            setattr(self, _name, getattr(constants_mock, _name))
+        # Every NML constant, as on the real module
+        # (``linuxcnc.STATE_ESTOP``, ``linuxcnc.JOG_CONTINUOUS``, …).
+        for name in dir(constants_mock):
+            if name.isupper():
+                setattr(self, name, getattr(constants_mock, name))
 
     def stat(self):
         """Mimics linuxcnc.stat().

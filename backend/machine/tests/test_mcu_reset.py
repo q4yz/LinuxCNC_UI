@@ -18,8 +18,8 @@ from core.field_masking import ResponseTier
 from dtos.mcu.McuDto import McuPins
 from dtos.pins.UnconnectedHalPin import UnconnectedHalPin
 from mappers.mcu.McuMapper import McuMapper
-from services import McuService as mcu_module
-from services.McuService import McuService
+from services.machine import McuService as mcu_module
+from services.machine.McuService import McuService
 
 
 # ---------------------------------------------------------------- #

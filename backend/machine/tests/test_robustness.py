@@ -12,8 +12,8 @@ from typing import List
 
 import pytest
 
-import services.ServoThreadService as servo_mod
-from services.ServoThreadService import ServoThreadService
+import services.machine.ServoThreadService as servo_mod
+from services.machine.ServoThreadService import ServoThreadService
 
 
 class _FakeSocket:

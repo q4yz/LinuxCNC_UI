@@ -3,6 +3,9 @@
 // only once the component that reads them happens to load.
 //
 // ``main.ts`` imports this module before mounting the app.
+import "./assistant";
 import "./layout";
+import "./probing";
+import "./slicer";
 
 export {};

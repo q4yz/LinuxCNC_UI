@@ -24,9 +24,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.EventBus import EventBus
-from services import StateService as state_service_module
-from services import ConsoleLogger as console_logger_module
-from services.ConsoleLogger import (
+from services.machine import StateService as state_service_module
+from services.machine import ConsoleLogger as console_logger_module
+from services.machine.ConsoleLogger import (
     ConsoleLogger,
     LogLevel,
     TYPE_TO_LEVEL,
@@ -178,7 +178,7 @@ def test_mdi_endpoint_records_hardware_error_as_error_level(
 
     # The state router calls into ``StateService.run_mdi`` which
     # dispatches via ``execute_sync_cmd`` imported in
-    # ``services.StateService``. Patching that module-global
+    # ``services.machine.StateService``. Patching that module-global
     # makes the facade raise so the route returns 400.
     monkeypatch.setattr(state_service_module, "execute_sync_cmd", fake_execute_sync_cmd)
 

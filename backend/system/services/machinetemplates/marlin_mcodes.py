@@ -22,8 +22,12 @@ import re
 #: Marlin's codes, user M-code programs in ``machine_config/m_codes/``.
 MARLIN_USER_MCODES = ("M104", "M106", "M107", "M109", "M140", "M190")
 
+#: M600 (filament change) is above M199: a real REMAP, to m600.ngc (it
+#: reads machine.ini [FILAMENT_CHANGE]).
+M600_REMAP = "REMAP=M600 modalgroup=10 ngc=m600"
+
 #: A REMAP LinuxCNC ignores: M100-M199 are user M-code programs.
 USER_MCODE_REMAP = re.compile(r"^\s*REMAP\s*=\s*M1\d\d\b", re.IGNORECASE)
 
 
-__all__ = ["MARLIN_USER_MCODES", "USER_MCODE_REMAP"]
+__all__ = ["M600_REMAP", "MARLIN_USER_MCODES", "USER_MCODE_REMAP"]

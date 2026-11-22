@@ -1,0 +1,36 @@
+; m600.ngc - M600, filament change (REMAP=M600 in machine.ini; the values
+; in [FILAMENT_CHANGE], from the profile's [filament_change]):
+;   retract, lift Z, park (machine coordinates), unload, pause until Resume,
+;   load, purge, go back, and carry on with the program's own A position.
+o<m600> sub
+M70                                  ; save G90/G91, feed, ... (M72 restores)
+#<x> = #<_x>
+#<y> = #<_y>
+#<z> = #<_z>
+#<a> = #<_a>
+#<feed> = #<_feed>
+G91
+G1 A-2 F1800                         ; retract
+G0 Z#<_ini[FILAMENT_CHANGE]Z_LIFT>
+G90
+G53 G0 X#<_ini[FILAMENT_CHANGE]PARK_X> Y#<_ini[FILAMENT_CHANGE]PARK_Y>
+G91
+G1 A[0 - #<_ini[FILAMENT_CHANGE]UNLOAD_LENGTH>] F[#<_ini[FILAMENT_CHANGE]UNLOAD_SPEED> * 60]
+G90
+(MSG, Filament change: put in the new filament, then press Resume)
+M0
+G91
+G1 A#<_ini[FILAMENT_CHANGE]LOAD_LENGTH> F[#<_ini[FILAMENT_CHANGE]LOAD_SPEED> * 60]
+G1 A#<_ini[FILAMENT_CHANGE]PURGE_LENGTH> F[#<_ini[FILAMENT_CHANGE]PURGE_SPEED> * 60]
+G1 A-2 F1800                         ; retract before the travel back
+G90
+G0 X#<x> Y#<y>
+G0 Z#<z>
+G91
+G1 A2 F1800                          ; unretract
+G90
+G92 A#<a>                            ; the program's A again: the change's filament does not count
+F#<feed>
+M72
+o<m600> endsub
+M2

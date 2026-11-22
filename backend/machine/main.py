@@ -40,7 +40,10 @@ _COMMON_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(_COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(_COMMON_DIR))
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from core.auth import annotate_openapi, make_authorize
+from core.permissions import MACHINE_ROUTES
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.ui_log import setup_ui_logging, tag_std_streams
@@ -50,7 +53,7 @@ from dtos.pins.HalPin import HalPin
 from exceptions import register_command_error_handler
 from hardware import HAS_HAL, get_stat_channel
 from hardware.mock.LinuxCNCMock import mock_system
-from hardware.mock.test_helpers.mock_helpers import reseed_from_hardware_json
+from hardware.mock.seed import reseed_from_hardware_json
 from routers import (
     BaseThreadRouter,
     ServoThreadRouter,
@@ -63,27 +66,34 @@ from routers import (
     io as io_router,
     z_tilt as z_tilt_router,
     leds as leds_router,
+    print_tuning as print_tuning_router,
+    calibration as calibration_router,
     mcu as mcu_router,
     program as program_router,
     state as state_router,
     temperature as temperature_router,
     tools as tools_router,
 )
-from services.HalScopeService import get_hal_scope_service
-from services.ServoThreadService import (
+from services.HalPinServices import hal_pin_services
+from services.hal.HalScopeService import get_hal_scope_service
+from services.program.PrintTuningService import get_print_tuning_service
+from services.calibration.ShaperService import get_shaper_service
+from services.calibration.PidCalibrateService import get_pid_calibrate_service
+from services.calibration.ResonanceService import get_resonance_service
+from services.machine.ServoThreadService import (
     get_servo_thread_service,
 )
-from services.FansService import get_fans_service
-from services.McuService import get_mcu_service
-from services.ProgramService import get_program_lifecycle_service
-from services.StateService import get_state_service
-from services.TemperatureService import get_temperature_service
-from services.ToolsService import get_tools_service
-from services.ConsoleLogger import get_console_logger
-from services.BedMeshService import get_bed_mesh_service
-from services.IoService import get_io_service
-from services.ZTiltService import get_z_tilt_service
-from services.LedService import get_led_service
+from services.io.FansService import get_fans_service
+from services.machine.McuService import get_mcu_service
+from services.program.ProgramService import get_program_lifecycle_service
+from services.machine.StateService import get_state_service
+from services.temperature.TemperatureService import get_temperature_service
+from services.tools.ToolsService import get_tools_service
+from services.machine.ConsoleLogger import get_console_logger
+from services.motion.BedMeshService import get_bed_mesh_service
+from services.io.IoService import get_io_service
+from services.motion.ZTiltService import get_z_tilt_service
+from services.io.LedService import get_led_service
 
 
 
@@ -122,6 +132,17 @@ program_service = get_program_lifecycle_service()
 _shutting_down = False
 
 
+def setup_hal_pins() -> None:
+    """Every HAL-pin service queues its pins, the ``webgui`` component is
+    locked, then each writes its start values (``services.HalPinService``)."""
+    services = hal_pin_services()
+    for service in services:
+        service.preload_hal_pins()
+    HalPin.initialize_component()
+    for service in services:
+        service.apply_initial()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI Lifespan Context Manager.
@@ -138,19 +159,7 @@ async def lifespan(app: FastAPI):
     # deferred to :func:`reseed_from_hardware_json` to break the
     # hardware -> temperature -> hardware circular import.
     if not HAS_HAL:
-        tool_service.preload_hal_pins()
-        sensor_service.preload_hal_pins()
-        state_service.preload_hal_pins()
-        fans_service.preload_hal_pins()
-        mcu_service.preload_hal_pins()
-        program_service.preload_hal_pins()
-        get_bed_mesh_service().preload_hal_pins()
-        get_io_service().preload_hal_pins()
-        get_z_tilt_service().preload_hal_pins()
-        get_led_service().preload_hal_pins()
-        HalPin.initialize_component()
-        get_io_service().apply_start_values()
-        get_led_service().apply_initial()
+        setup_hal_pins()
 
         reseed_from_hardware_json()
         mock_system.start_simulation()
@@ -215,7 +224,7 @@ async def lifespan(app: FastAPI):
 def start_watchdog_if_available() -> None:
     """Start the jog safety watchdog (fixed timeout, not a setting)."""
     try:
-        from services.jog_watchdog import start_watchdog
+        from services.motion.jog_watchdog import start_watchdog
     except ImportError:  # pragma: no cover - watchdog is optional
         return
     start_watchdog()
@@ -224,7 +233,7 @@ def start_watchdog_if_available() -> None:
 def stop_watchdog_if_running() -> None:
     """Tear the jog safety watchdog down if it is running."""
     try:
-        from services.jog_watchdog import stop_watchdog
+        from services.motion.jog_watchdog import stop_watchdog
     except ImportError:  # pragma: no cover
         return
     try:
@@ -243,6 +252,8 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    # Every route checks the caller's permission (core/permissions.py).
+    dependencies=[Depends(make_authorize(MACHINE_ROUTES))],
 )
 
 # Allow CORS for local frontend development (e.g., Vite dev server on
@@ -285,9 +296,11 @@ app.include_router(bed_mesh_router.router)
 app.include_router(io_router.router)
 app.include_router(z_tilt_router.router)
 app.include_router(leds_router.router)
+app.include_router(print_tuning_router.router)
+app.include_router(calibration_router.router)
 
 
-@app.get("/")
+@app.get("/", openapi_extra={"x-mcp": False})  # duplicate of the health check
 def read_root():
     """Root health check endpoint."""
     return {"status": "ok", "service": "LinuxCNC UI Machine Backend"}
@@ -336,24 +349,15 @@ def _linuxcnc_reachable() -> bool:
     return True
 
 
+annotate_openapi(app, MACHINE_ROUTES)
+
+
 if __name__ == "__main__":
     import uvicorn
 
     logger.info("Starting LinuxCNC background tasks...")
 
-    tool_service.preload_hal_pins()
-    sensor_service.preload_hal_pins()
-    state_service.preload_hal_pins()
-    fans_service.preload_hal_pins()
-    mcu_service.preload_hal_pins()
-    program_service.preload_hal_pins()
-    get_bed_mesh_service().preload_hal_pins()
-    get_io_service().preload_hal_pins()
-    get_z_tilt_service().preload_hal_pins()
-    get_led_service().preload_hal_pins()
-    HalPin.initialize_component()
-    get_io_service().apply_start_values()
-    get_led_service().apply_initial()
+    setup_hal_pins()
 
     _reload = os.getenv("UVICORN_RELOAD", "").lower() in ("1", "true", "yes", "on")
     uvicorn.run(

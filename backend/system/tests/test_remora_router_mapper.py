@@ -6,6 +6,22 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import PinRequest, PinRole
 from services.halcompiler.mcus.RemoraRouterMapper import RemoraRouterMapper
 
+from tests import typed_records as typed
+
+
+def _base_fragment(mcu):
+    """The router takes a typed RouterMcu; the fixtures stay readable dicts."""
+    return RemoraRouterMapper.base_fragment(typed.router_mcu(mcu, 'remora-spi'))
+
+
+def _config_sync_line(mcu, config_file):
+    return RemoraRouterMapper.config_sync_line(typed.mcu(mcu), config_file)
+
+
+def _config_sync_script(mcu, config_file):
+    return RemoraRouterMapper.config_sync_script(typed.mcu(mcu), config_file)
+
+
 
 def _request(
     signal: str,
@@ -24,22 +40,22 @@ def _request(
 
 
 def test_base_fragment_loads_the_spi_component_with_the_configured_divider():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "parameters": {"spi_clk_div": 32}})
+    fragment = _base_fragment({"id": "mcu", "spi_clk_div": 32})
     assert "loadrt remora-spi SPI_clk_div=32" in fragment.loadrt
 
 
 def test_base_fragment_falls_back_to_the_documented_default_divider():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     assert "loadrt remora-spi SPI_clk_div=64" in fragment.loadrt
 
 
 def test_lpc_chip_loads_the_lpc_component_with_no_arguments():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "parameters": {"chip": "lpc17xx"}})
+    fragment = _base_fragment({"id": "mcu", "chip": "lpc17xx"})
     assert fragment.loadrt == ["loadrt remora_lpc"]
 
 
 def test_base_fragment_wires_the_spi_estop_watchdog_chain():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     assert "net user-enable-out <= iocontrol.0.user-enable-out => remora.SPI-enable" in fragment.nets
     assert "net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset" in fragment.nets
     assert "net remora-status <= remora.SPI-status => iocontrol.0.emc-enable-in" in fragment.nets
@@ -47,18 +63,18 @@ def test_base_fragment_wires_the_spi_estop_watchdog_chain():
 
 def test_base_fragment_addf_order_sandwiches_motion_at_order_one():
     """`remora.read`(0) -> motion(1, from MotionSystemHalMapper) ->
-    `remora.update-freq`/`remora.write`(2) — matches the real
-    `ender3.hal` thread-attachment block exactly."""
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    `remora.update-freq`/`remora.write`(3, after the tier-2 components that
+    work on motion's output) — the order of the real `ender3.hal`."""
+    fragment = _base_fragment({"id": "mcu"})
     by_func = {a.func: a.order for a in fragment.addf}
     assert by_func["remora.read"] == 0
-    assert by_func["remora.update-freq"] == 2
-    assert by_func["remora.write"] == 2
+    assert by_func["remora.update-freq"] == 3
+    assert by_func["remora.write"] == 3
     assert all(a.thread == "servo-thread" for a in fragment.addf)
 
 
 def test_base_fragment_with_no_board_reset_pin_emits_no_firmware_module():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     assert fragment.firmware_modules == []
 
 
@@ -66,7 +82,7 @@ def test_base_fragment_emits_the_reset_pin_module_when_declared():
     """Module shape verified against the real, working
     `machine_config/example/ender3/config.txt` — its very first
     module, before any joint or driver."""
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "board_reset_pin": "PC15"})
+    fragment = _base_fragment({"id": "mcu", "board_reset_pin": "PC15"})
     assert len(fragment.firmware_modules) == 1
     request = fragment.firmware_modules[0]
     assert request.mcu_id == "mcu"
@@ -80,7 +96,7 @@ def test_base_fragment_emits_the_reset_pin_module_when_declared():
 
 
 def test_base_fragment_reset_pin_mcu_id_falls_back_to_the_mcu_record_id():
-    fragment = RemoraRouterMapper.base_fragment({"id": "board_a", "board_reset_pin": "PC15"})
+    fragment = _base_fragment({"id": "board_a", "board_reset_pin": "PC15"})
     assert fragment.firmware_modules[0].mcu_id == "board_a"
 
 
@@ -358,7 +374,7 @@ def test_estop_fault_on_this_board_gates_emc_enable_through_a_latch():
     """`[estop] fault_pin` read through the Remora board (e.g. a relay on
     the motor supply): enable needs the SPI link AND no fault, latched
     until the operator resets — and emc-enable-in has exactly one driver."""
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu", "_estop_fault": True})
+    fragment = _base_fragment({"id": "mcu", "_estop_fault": True})
 
     assert "loadrt estop_latch" in fragment.loadrt
     assert {a.func: a.order for a in fragment.addf}["estop-latch.0"] == 1
@@ -373,7 +389,7 @@ def test_estop_fault_on_this_board_gates_emc_enable_through_a_latch():
 
 
 def test_without_an_estop_fault_the_link_drives_emc_enable_directly():
-    fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     assert "loadrt estop_latch" not in fragment.loadrt
     assert not any("estop-latch" in net for net in fragment.nets)
 
@@ -391,14 +407,14 @@ CB1 = {
 
 
 def test_cb1_host_params_reach_the_driver_line():
-    fragment = RemoraRouterMapper.base_fragment(CB1)
+    fragment = _base_fragment(CB1)
     assert fragment.loadrt == [
         "loadrt remora-spi PRU_base_freq=40000 SPI_freq=1000000 spi_cs_pin=PC10 reset_pin=PC12"
     ]
 
 
 def test_interface_and_gpio_chips_are_passed_through():
-    fragment = RemoraRouterMapper.base_fragment(
+    fragment = _base_fragment(
         {**CB1, "interface": "/dev/spidev1.0", "spi_cs_chip": "/dev/gpiochip0", "reset_chip": "/dev/gpiochip1"}
     )
     line = fragment.loadrt[0]
@@ -408,22 +424,22 @@ def test_interface_and_gpio_chips_are_passed_through():
 
 
 def test_sync_line_uses_the_same_link_as_the_driver():
-    assert RemoraRouterMapper.config_sync_line(CB1, "config_mcu.txt") == (
+    assert _config_sync_line(CB1, "config_mcu.txt") == (
         "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
     )
-    assert RemoraRouterMapper.config_sync_script(CB1, "config_mcu.txt") is None
+    assert _config_sync_script(CB1, "config_mcu.txt") is None
 
 
 def test_sync_line_on_a_raspberry_pi_needs_no_options():
-    assert RemoraRouterMapper.config_sync_line({"id": "mcu"}, "config_mcu.txt") == (
+    assert _config_sync_line({"id": "mcu"}, "config_mcu.txt") == (
         "loadusr -w remora-upload --sync config_mcu.txt"
     )
 
 
 def test_sync_can_be_turned_off_and_never_targets_an_lpc_board():
-    assert RemoraRouterMapper.config_sync_line({**CB1, "sync_config": False}, "config_mcu.txt") is None
-    assert RemoraRouterMapper.config_sync_line(
-        {"id": "mcu", "parameters": {"chip": "lpc17xx"}}, "config_mcu.txt"
+    assert _config_sync_line({**CB1, "sync_config": False}, "config_mcu.txt") is None
+    assert _config_sync_line(
+        {"id": "mcu", "chip": "lpc17xx"}, "config_mcu.txt"
     ) is None
 
 
@@ -432,15 +448,15 @@ def test_sync_falls_back_to_1_mhz_above_it():
 
     fast = {"id": "mcu", "connection": "remora-spi", "spi_freq": 4000000, "spi_cs_pin": "PC10"}
     # No quotes on the HAL line: halcmd passes them on to sh literally.
-    line = RemoraRouterMapper.config_sync_line(fast, "config_mcu.txt")
+    line = _config_sync_line(fast, "config_mcu.txt")
     assert line == "loadusr -w sh sync_config_mcu.sh"
     assert '"' not in line
-    script = RemoraRouterMapper.config_sync_script(fast, "config_mcu.txt")
+    script = _config_sync_script(fast, "config_mcu.txt")
     assert "remora-upload --sync --spi-cs-pin PC10 -s 4000000 config_mcu.txt && exit 0" in script
     assert "exec remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt" in script
     slow = {**fast, "spi_freq": 1000000}
-    assert RemoraRouterMapper.config_sync_line(slow, "config_mcu.txt") == (
+    assert _config_sync_line(slow, "config_mcu.txt") == (
         "loadusr -w remora-upload --sync --spi-cs-pin PC10 -s 1000000 config_mcu.txt"
     )
-    assert RemoraRouterMapper.config_sync_script(slow, "config_mcu.txt") is None
+    assert _config_sync_script(slow, "config_mcu.txt") is None
 

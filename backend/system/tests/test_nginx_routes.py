@@ -102,6 +102,7 @@ def test_every_machine_backend_route_goes_to_8000(locations, api_paths):
 
 def test_websocket_and_spa_routing(locations):
     assert resolve("/ws/telemetry", locations) == MACHINE
+    assert resolve("/mcp", locations) == SYSTEM  # the assistant's MCP server
     assert resolve("/", locations) is None  # static SPA
     assert resolve("/files/anything", locations) is None
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-import services.LedService as module
+import mappers.leds.LedMapper as led_mapper_module
+import services.io.LedService as module
 from core.led_color import SetLed
 from exceptions import BadRequestError, NotFoundError
 
@@ -29,14 +30,14 @@ class Config:
 
 @pytest.fixture
 def service(monkeypatch):
-    monkeypatch.setattr(module, "ReadWriteDynamicHalPin", type("P", (), {"__class_getitem__": classmethod(lambda c, t: lambda *a: Pin())}))
+    monkeypatch.setattr(led_mapper_module, "ReadWriteDynamicHalPin", type("P", (), {"__class_getitem__": classmethod(lambda c, t: lambda *a: Pin())}))
     s = module.LedService(config=Config())
     s.preload_hal_pins()
     return s
 
 
 def _colors(service):
-    return [(seg["red"], seg["green"], seg["blue"]) for seg in service.state()[0]["segments"]]
+    return [(seg.red, seg.green, seg.blue) for seg in service.state()[0].segments]
 
 
 def test_initial(service):
@@ -49,7 +50,7 @@ def test_whole_chain_and_index(service):
     assert _colors(service) == [(1.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
     service.set(SetLed(led="sb", green=1.0, index=3))  # LED 3 is in segment 2-3
     assert _colors(service) == [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
-    assert service._pins["sb"][1].value == float(0x00FF00)
+    assert service._leds[0].pins[1].value == float(0x00FF00)
 
 
 def test_errors(service):
@@ -68,8 +69,8 @@ def test_run_command(service):
 
 
 def test_mdi_and_macro(service, monkeypatch):
-    from services.MacroExecutionService import MacroExecutionService
-    from services.StateService import StateService
+    from services.program.MacroExecutionService import MacroExecutionService
+    from services.machine.StateService import StateService
 
     monkeypatch.setattr(module, "get_led_service", lambda: service)
     assert StateService._ui_command("SET_LED LED=sb RED=1")

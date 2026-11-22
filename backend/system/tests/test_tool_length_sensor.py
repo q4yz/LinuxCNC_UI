@@ -16,6 +16,14 @@ from services.halcompiler import compile_machine_hal
 from services.halcompiler.components.ProbeHalMapper import ProbeHalMapper
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
+from tests import typed_records as typed
+
+
+def _probe_fragment(probe, tool_length_sensor=None, **kwargs):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return ProbeHalMapper.to_fragment(typed.probe(probe), typed.tool_length_sensor(tool_length_sensor), **kwargs)
+
+
 
 # -- parser / hardware.json ---------------------------------------------- #
 
@@ -44,7 +52,7 @@ def test_unknown_keyword_raises():
 
 
 def test_sensor_alone_drives_motion_probe_input_directly():
-    fragment = ProbeHalMapper.to_fragment(None, {"pin": "!par0:15"})
+    fragment = _probe_fragment(None, {"pin": "!par0:15"})
 
     assert fragment.nets == ["net tool-length-sensor-in => motion.probe-input"]
     assert fragment.loadrt == []
@@ -58,7 +66,7 @@ def test_sensor_alone_drives_motion_probe_input_directly():
 def test_probe_and_sensor_are_or_ed_into_motion_probe_input():
     """The probe is gated to probing moves, the tool setter is not: one
     that trips during a normal move is a crash LinuxCNC should abort."""
-    fragment = ProbeHalMapper.to_fragment({"pin": "!par0:15"}, {"pin": "par0:13"})
+    fragment = _probe_fragment({"pin": "!par0:15"}, {"pin": "par0:13"})
 
     assert fragment.loadrt[-1] == "loadrt or2 names=probe-or"
     assert all((a.thread, a.order) == (SERVO_THREAD, 0) for a in fragment.addf)
@@ -76,7 +84,7 @@ def test_probe_and_sensor_are_or_ed_into_motion_probe_input():
 
 
 def test_bare_sections_contribute_nothing():
-    fragment = ProbeHalMapper.to_fragment({"pin": None}, {"pin": None})
+    fragment = _probe_fragment({"pin": None}, {"pin": None})
     assert fragment.nets == [] and fragment.requests == [] and fragment.loadrt == []
 
 

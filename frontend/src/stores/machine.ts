@@ -5,7 +5,7 @@ import {computed, ref} from "vue";
 import {generateSetOffset} from "../config/gcodes";
 import {useConsoleStore} from "./console";
 import {useServoThreadStore} from "./servoThread";
-import {servoThreadService} from "../facades/servoThreadFacade";
+import {servoThreadFacade} from "../facades/servoThreadFacade";
 import {axisFacade} from "../facades/axisFacade";
 import {machineStateFacade} from "../facades/machineStateFacade";
 import {mcuFacade} from "../facades/mcuFacade";
@@ -208,7 +208,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             consoleStore.debug(`Jogging ${axisName} axis ${distance}mm`);
 
             // Dispatch discrete jog through the service
-            servoThreadService.send({
+            servoThreadFacade.send({
                 type: "jog_axis",
                 velocities: {[axis]: velocity},
                 distance,
@@ -221,7 +221,7 @@ export const useMachineStore = defineStore(STORE_ID, () => {
 
     async function jogContinuous(axis: number, velocity: number) {
         // Nothing is awaited here: the keep-alive interval is set up
-        // synchronously inside ``servoThreadService.jogContinuous`` so a
+        // synchronously inside ``servoThreadFacade.jogContinuous`` so a
         // quick click-and-release still produces a paired ``jog_axis`` +
         // ``jog_stop`` — awaiting would let ``stopJog`` overtake the jog
         // and leave the axis running on a zombie keep-alive timer.
@@ -230,12 +230,12 @@ export const useMachineStore = defineStore(STORE_ID, () => {
             ? requestedVelocity
             : defaultJogVelocity.value;
         // The service handles all the `setInterval` and logging logic!
-        servoThreadService.jogContinuous(axis, jogVelocity, KEEPALIVE_INTERVAL_MS);
+        servoThreadFacade.jogContinuous(axis, jogVelocity, KEEPALIVE_INTERVAL_MS);
     }
 
     async function jogStop(axis: number) {
         // The service handles the `clearInterval` and logging logic!
-        servoThreadService.jogStop(axis);
+        servoThreadFacade.jogStop(axis);
     }
 
     // ──────────────────────────────────────────────────────────────── //

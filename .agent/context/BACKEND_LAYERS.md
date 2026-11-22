@@ -84,14 +84,14 @@ The service owns:
 
 - The translation between operator vocabulary (`"on"`, `"mdi"`,
   `"forward"`) and linuxcnc NML integer constants
-  ([`backend/machine/services/StateService.py`](../../backend/machine/services/StateService.py)).
+  ([`backend/machine/services/machine/StateService.py`](../../backend/machine/services/machine/StateService.py)).
 - The orchestration of DTOs and HAL pins.
 - The dispatch to [`backend/common/hardware/`](../../backend/common/hardware/) —
   either `execute_sync_cmd(...)`, `execute_gcode(...)`, or
   `connection.get_machine_stat()`.
 
 ```python
-# backend/machine/services/AxisService.py (sketch)
+# backend/machine/services/motion/AxisService.py (sketch)
 def home_all_axes(self) -> None:
     """Home all axes according to the INI file's HOME_SEQUENCE."""
     execute_sync_cmd("mode", 1, getattr(linuxcnc, "MODE_MANUAL", 1))
@@ -115,7 +115,7 @@ def home_single_axes(self, axis: int) -> None:
   singleton under `uvicorn --reload` without breaking imports.
 - The service is **stateless across requests**; any per-process
   cache lives on `self` and is rebuilt by `preload_hal_pins()` at
-  boot ([`backend/machine/services/ToolsService.py`](../../backend/machine/services/ToolsService.py)).
+  boot ([`backend/machine/services/tools/ToolsService.py`](../../backend/machine/services/tools/ToolsService.py)).
 - A service in one app never imports a service from the other app.
   Only `backend/common/` is shared.
 
@@ -332,7 +332,7 @@ the service is allowed to receive.
 ### 2.4 Service — dispatch to hardware
 
 ```python
-# backend/machine/services/SpindleDigitalService.py (sketch — see file for the canonical implementation)
+# backend/machine/services/tools/SpindleDigitalService.py (sketch — see file for the canonical implementation)
 def set_spindle(self, settings: SpindleDigitalSettingsDTO) -> str:
     """Set the spindle to the requested state and return the M-code that was dispatched."""
     # 1. Switch to MDI mode so a stale MODE_AUTO does not swallow the dispatch.
@@ -384,7 +384,7 @@ HTTP POST /api/v1/modules/tools/spindle   (machine :8000)
                      │
                      ▼
 ┌─────────────────────────────────────────────────────┐
-│ backend/machine/services/SpindleDigitalService.py    │
+│ backend/machine/services/tools/SpindleDigitalService.py    │
 │   - MODE_MDI pre-switch                              │
 │   - M3 / M4 / M5 dispatch via execute_sync_cmd       │
 └────────────────────┬────────────────────────────────┘
@@ -443,7 +443,7 @@ def to_response(cls, dto: SpindleDigitalStateDTO, r: ResponseTier = ResponseTier
 Every service exports a lazy module-level singleton:
 
 ```python
-# backend/machine/services/StateService.py (sketch)
+# backend/machine/services/machine/StateService.py (sketch)
 _state_service: Optional[StateService] = None
 
 
@@ -575,7 +575,7 @@ read by `*Mapper.to_state_dto(...)` on every snapshot
 
 ### 6.3 Persistent console log
 
-[`backend/machine/services/ConsoleLogger.py`](../../backend/machine/services/ConsoleLogger.py)
+[`backend/machine/services/machine/ConsoleLogger.py`](../../backend/machine/services/machine/ConsoleLogger.py)
 mirrors every MDI dispatch and every machine error into an
 on-disk log so the in-browser console clears don't lose history.
 The state router calls `console_logger.log_command()` before the
@@ -612,7 +612,7 @@ def get_base_thread_snapshot(mode: str = Query("all", ...)) -> BaseThreadSnapsho
 ```
 
 The orchestration belongs in `BaseThreadService`
-([`backend/machine/services/BaseThreadService.py`](../../backend/machine/services/BaseThreadService.py))
+([`backend/machine/services/machine/BaseThreadService.py`](../../backend/machine/services/machine/BaseThreadService.py))
 already, so the router is just a dispatch wrapper. Refactoring it
 to use a dedicated DTO/Mapper split is **low value** because the
 snapshot is by definition a cross-domain aggregate that no module
@@ -631,7 +631,7 @@ The DTO and mapper for the servo thread state live in
 [`backend/common/dtos/ServoThreadState.py`](../../backend/common/dtos/ServoThreadState.py)
 and [`backend/common/mappers/ServoThreadStateMapper.py`](../../backend/common/mappers/ServoThreadStateMapper.py)
 respectively — the service in
-[`backend/machine/services/ServoThreadService.py`](../../backend/machine/services/ServoThreadService.py)
+[`backend/machine/services/machine/ServoThreadService.py`](../../backend/machine/services/machine/ServoThreadService.py)
 delegates to them. The router itself stays a dispatcher.
 
 ### 7.3 `FilesRouter` and `SystemRouter`
@@ -703,16 +703,16 @@ being rejected by FastAPI's validation layer as a `422` first.
 
 | Module id | App | Router | Service(s) | DTO | Mapper | Pydantic response | Storage | Classical? |
 |-----------|-----|--------|-----------|-----|--------|-------------------|---------|------------|
-| `axis` | machine | [`routers/axis.py`](../../backend/machine/routers/axis.py) | [`AxisService`](../../backend/machine/services/AxisService.py) | [`common/dtos/axis/AxisDto.py`](../../backend/common/dtos/axis/AxisDto.py) | [`common/mappers/axis/AxisMapper.py`](../../backend/common/mappers/axis/AxisMapper.py) | [`common/models/AxisModels.py`](../../backend/common/models/AxisModels.py) | n/a (HAL-driven) | Yes |
-| `machine_state` | machine | [`routers/state.py`](../../backend/machine/routers/state.py) | [`StateService`](../../backend/machine/services/StateService.py) | [`common/dtos/state/MachineStateDto.py`](../../backend/common/dtos/state/MachineStateDto.py) (enum only) | n/a — service builds the response directly | [`common/models/state/StateModels.py`](../../backend/common/models/state/StateModels.py) | n/a | Yes — no mapper needed, see § 7.5 |
-| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py) (including `ProgramProgressResponse`) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
+| `axis` | machine | [`routers/axis.py`](../../backend/machine/routers/axis.py) | [`AxisService`](../../backend/machine/services/motion/AxisService.py) | [`common/dtos/axis/AxisDto.py`](../../backend/common/dtos/axis/AxisDto.py) | [`common/mappers/axis/AxisMapper.py`](../../backend/common/mappers/axis/AxisMapper.py) | [`common/models/AxisModels.py`](../../backend/common/models/AxisModels.py) | n/a (HAL-driven) | Yes |
+| `machine_state` | machine | [`routers/state.py`](../../backend/machine/routers/state.py) | [`StateService`](../../backend/machine/services/machine/StateService.py) | [`common/dtos/state/MachineStateDto.py`](../../backend/common/dtos/state/MachineStateDto.py) (enum only) | n/a — service builds the response directly | [`common/models/state/StateModels.py`](../../backend/common/models/state/StateModels.py) | n/a | Yes — no mapper needed, see § 7.5 |
+| `program` | machine | [`routers/program.py`](../../backend/machine/routers/program.py) | [`ProgramService`](../../backend/machine/services/program/ProgramService.py), [`domain_file_services`](../../backend/common/domain_file_services/) | n/a | n/a | [`common/models/program/ProgramModels.py`](../../backend/common/models/program/ProgramModels.py) (including `ProgramProgressResponse`) | filesystem via `domain_file_services` | Yes — no DTO layer needed (text-in / status-out), see § 7.5 |
 | `temperature` | machine | [`routers/temperature.py`](../../backend/machine/routers/temperature.py) | (deprecated) | (deprecated) | (deprecated) | (deprecated) | n/a | **Deprecated** — 410 redirect to `tools` |
-| `tools` | machine | [`routers/tools.py`](../../backend/machine/routers/tools.py) | [`ToolsService`](../../backend/machine/services/ToolsService.py), [`SpindleDigitalService`](../../backend/machine/services/SpindleDigitalService.py), [`ExtruderService`](../../backend/machine/services/ExtruderService.py), [`HeaterService`](../../backend/machine/services/HeaterService.py) | [`common/dtos/tools/`](../../backend/common/dtos/tools/) | [`common/mappers/tools/`](../../backend/common/mappers/tools/) | [`common/models/tools/`](../../backend/common/models/tools/) | n/a (HAL-driven) | **Yes — canonical** |
+| `tools` | machine | [`routers/tools.py`](../../backend/machine/routers/tools.py) | [`ToolsService`](../../backend/machine/services/tools/ToolsService.py), [`SpindleDigitalService`](../../backend/machine/services/tools/SpindleDigitalService.py), [`ExtruderService`](../../backend/machine/services/tools/ExtruderService.py), [`HeaterService`](../../backend/machine/services/temperature/HeaterService.py) | [`common/dtos/tools/`](../../backend/common/dtos/tools/) | [`common/mappers/tools/`](../../backend/common/mappers/tools/) | [`common/models/tools/`](../../backend/common/models/tools/) | n/a (HAL-driven) | **Yes — canonical** |
 | `camera` | machine | [`routers/camera.py`](../../backend/machine/routers/camera.py) | [`UstreamerSupervisor`](../../backend/machine/services/camera/UstreamerSupervisor.py) | n/a | n/a | inline | central UI settings (read by key) | **Exception** — process-boundary split, not classical (§ 7.4) |
-| (telemetry) | machine | [`routers/BaseThreadRouter.py`](../../backend/machine/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/machine/services/BaseThreadService.py) | n/a | [`common/mappers/BaseThreadSnapshotMapper.py`](../../backend/common/mappers/BaseThreadSnapshotMapper.py) | [`common/models/BaseThreadStateResponse.py`](../../backend/common/models/BaseThreadStateResponse.py) | n/a | **Exception** — cross-domain aggregator (§ 7.1) |
-| (telemetry) | machine | [`routers/ServoThreadRouter.py`](../../backend/machine/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/machine/services/ServoThreadService.py) | [`common/dtos/ServoThreadState.py`](../../backend/common/dtos/ServoThreadState.py) | [`common/mappers/ServoThreadStateMapper.py`](../../backend/common/mappers/ServoThreadStateMapper.py) | [`common/models/ServoThreadStateResponse.py`](../../backend/common/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle (§ 7.2) |
+| (telemetry) | machine | [`routers/BaseThreadRouter.py`](../../backend/machine/routers/BaseThreadRouter.py) | [`BaseThreadService`](../../backend/machine/services/machine/BaseThreadService.py) | n/a | [`common/mappers/BaseThreadSnapshotMapper.py`](../../backend/common/mappers/BaseThreadSnapshotMapper.py) | [`common/models/BaseThreadStateResponse.py`](../../backend/common/models/BaseThreadStateResponse.py) | n/a | **Exception** — cross-domain aggregator (§ 7.1) |
+| (telemetry) | machine | [`routers/ServoThreadRouter.py`](../../backend/machine/routers/ServoThreadRouter.py) | [`ServoThreadService`](../../backend/machine/services/machine/ServoThreadService.py) | [`common/dtos/ServoThreadState.py`](../../backend/common/dtos/ServoThreadState.py) | [`common/mappers/ServoThreadStateMapper.py`](../../backend/common/mappers/ServoThreadStateMapper.py) | [`common/models/ServoThreadStateResponse.py`](../../backend/common/models/ServoThreadStateResponse.py) | n/a | **Exception** — WebSocket lifecycle (§ 7.2) |
 | `macros` (CRUD) | system | [`routers/macros.py`](../../backend/system/routers/macros.py) | [`MacroService`](../../backend/system/services/MacroService.py) | n/a | n/a | inline in `MacroService` | [`common/storage/MacroStorage.py`](../../backend/common/storage/MacroStorage.py), `MCodeFileService` | Yes — no DTO layer (text-in / text-out) |
-| `macros` (start) | machine | [`routers/macro_start.py`](../../backend/machine/routers/macro_start.py) | [`MacroExecutionService`](../../backend/machine/services/MacroExecutionService.py) | n/a | n/a | inline | n/a | Yes — no DTO layer |
+| `macros` (start) | machine | [`routers/macro_start.py`](../../backend/machine/routers/macro_start.py) | [`MacroExecutionService`](../../backend/machine/services/program/MacroExecutionService.py) | n/a | n/a | inline | n/a | Yes — no DTO layer |
 | `machineconfig` | system | [`routers/machineconfig.py`](../../backend/system/routers/machineconfig.py) | [`domain_file_services`](../../backend/common/domain_file_services/) (`ConfigFileService`, `MachineFileService`, `MCodeFileService`), `machinetemplates.generator` | n/a | n/a | inline | `domain_file_services` | Yes — no DTO layer (filesystem CRUD + template generation, see `ARCHITECTURE.md` § 7) |
 | (programs) | system | [`routers/FilesRouter.py`](../../backend/system/routers/FilesRouter.py) | [`ProgramFileService`](../../backend/common/domain_file_services/ProgramFileService.py) | n/a | n/a | inline | `ProgramFileService` | **Exception** — cross-cutting filesystem browsing (§ 7.3) |
 | (system) | system | [`routers/SystemRouter.py`](../../backend/system/routers/SystemRouter.py) | (inline in router) | n/a | n/a | inline | n/a | **Exception** — cross-cutting, no dedicated service (§ 7.3) |

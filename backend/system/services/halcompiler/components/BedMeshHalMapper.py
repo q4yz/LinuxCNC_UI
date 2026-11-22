@@ -11,7 +11,11 @@ Inspect lifts Z through it too, so both are summed here in machine units:
 
     compensation.counts -> s32->float ------------------> sum2.in1 (gain 1)
     webgui.inspect-z-lift -> bit->float (webgui file) --> sum2.in0 (gain 1000)
-    sum2.out -> float->s32 -> axis.z.eoffset-counts       (scale 0.001 mm)
+    sum2.out -> sum2 (+ webgui.z-offset × 1000, the live Z offset)
+             -> float->s32 -> axis.z.eoffset-counts       (scale 0.001 mm)
+
+``compensation.eoffset`` (it waits for 0 when switched off) gets the
+total minus the live Z offset, so a babystep does not keep it waiting.
 
 The webgui / halui half (positions, enable, the lift) is in
 `BedMeshWebguiMapper` / `PauseInspectWebguiMapper`: those pins only exist
@@ -33,6 +37,10 @@ LIFT_FLOAT = "z-lift-float"
 MESH_FLOAT = "bed-mesh-float"
 EOFFSET_SUM = "z-eoffset-sum"
 EOFFSET_COUNTS = "z-eoffset-counts"
+#: + the live Z offset (webgui.z-offset, mm) — PauseInspectWebguiMapper nets it.
+BABYSTEP_SUM = "z-babystep-sum"
+#: axis.z.eoffset − the live Z offset: compensation's own share.
+MESH_EOFFSET = "z-mesh-eoffset"
 
 
 class BedMeshHalMapper:
@@ -42,7 +50,9 @@ class BedMeshHalMapper:
             ("conv_bit_float", LIFT_FLOAT),
             ("conv_s32_float", MESH_FLOAT),
             ("sum2", EOFFSET_SUM),
+            ("sum2", BABYSTEP_SUM),
             ("conv_float_s32", EOFFSET_COUNTS),
+            ("sum2", MESH_EOFFSET),
         )
         return HalFragment(
             loadusr=[
@@ -54,17 +64,23 @@ class BedMeshHalMapper:
                 "setp compensation.fade-height 0",
                 f"setp {EOFFSET_SUM}.gain0 {COUNTS_PER_MM}",
                 f"setp {EOFFSET_SUM}.gain1 1",
+                f"setp {BABYSTEP_SUM}.gain0 1",
+                f"setp {BABYSTEP_SUM}.gain1 {COUNTS_PER_MM}",
+                f"setp {MESH_EOFFSET}.gain0 1",
+                f"setp {MESH_EOFFSET}.gain1 -1",
             ],
             nets=[
                 f"net bed-mesh-counts compensation.counts => {MESH_FLOAT}.in",
                 f"net bed-mesh-offset {MESH_FLOAT}.out => {EOFFSET_SUM}.in1",
                 f"net z-lift-counts {LIFT_FLOAT}.out => {EOFFSET_SUM}.in0",
-                f"net z-eoffset-total {EOFFSET_SUM}.out => {EOFFSET_COUNTS}.in",
+                f"net z-eoffset-total {EOFFSET_SUM}.out => {BABYSTEP_SUM}.in0",
+                f"net z-eoffset-with-babystep {BABYSTEP_SUM}.out => {EOFFSET_COUNTS}.in",
                 f"net z-eoffset-counts {EOFFSET_COUNTS}.out => axis.z.eoffset-counts",
-                "net bed-mesh-eoffset axis.z.eoffset => compensation.eoffset",
+                f"net bed-mesh-eoffset axis.z.eoffset => {MESH_EOFFSET}.in0",
+                f"net bed-mesh-own-eoffset {MESH_EOFFSET}.out => compensation.eoffset",
                 "net bed-mesh-limited motion.eoffset-limited => compensation.eoffset-limited",
             ],
         )
 
 
-__all__ = ["BedMeshHalMapper", "COUNTS_PER_MM", "LIFT_FLOAT"]
+__all__ = ["BABYSTEP_SUM", "BedMeshHalMapper", "COUNTS_PER_MM", "LIFT_FLOAT", "MESH_EOFFSET"]

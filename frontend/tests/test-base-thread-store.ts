@@ -192,7 +192,7 @@ test("fetchStaticAxes fetches the STATIC tier exactly once per session", () => {
   assert.match(text, /async function fetchStaticAxes\s*\(\s*\)\s*:\s*Promise<void>\s*\{/);
   assert.match(
     text,
-    /BaseThreadService\.fetchStatic\s*\(/,
+    /baseThreadFacade\.fetchStatic\s*\(/,
     "must go through the facade's dedicated static-tier method, not fetchSnapshot()",
   );
   assert.match(
@@ -227,38 +227,38 @@ test("armPoll fires the static axes fetch once, outside the recurring interval",
   );
 });
 
-test("BaseThreadService.fetchStatic requests the static tier via the generated client", () => {
+test("baseThreadFacade.fetchStatic requests the static tier via the generated client", () => {
   const facadeText = readFileSync(
     resolve(repoRoot, "frontend/src/facades/baseThreadFacade.ts"),
     "utf-8",
   );
   assert.match(
     facadeText,
-    /static async fetchStatic\s*\(\s*\)\s*:\s*Promise<Snapshot>\s*\{/,
+    /async function fetchStatic\s*\(\s*\)\s*:\s*Promise<Snapshot>\s*\{/,
   );
   assert.match(
     facadeText,
-    /ApiBaseThreadService\.getBaseThreadSnapshot\(\s*["']static["']\s*\)/,
+    /BaseThreadService\.getBaseThreadSnapshot\(\s*["']static["']\s*\)/,
     "fetchStatic must request mode=static from the generated client",
   );
 });
 
-test("store calls BaseThreadService.fetchSnapshot on refresh, which wraps the generated getBaseThreadSnapshot op", () => {
+test("store calls baseThreadFacade.fetchSnapshot on refresh, which wraps the generated getBaseThreadSnapshot op", () => {
   // The store goes through the domain facade
   // (``facades/baseThreadFacade.ts``), not the generated client
-  // directly. The facade's ``BaseThreadService.fetchSnapshot()`` is
+  // directly. The facade's ``baseThreadFacade.fetchSnapshot()`` is
   // the one place that calls the OpenAPI-generated
   // ``getBaseThreadSnapshot`` operation — pin both ends of that
   // chain so a hand-patched fallback (e.g. onto ``SystemService``,
   // which a regeneration would silently strip) can't sneak in at
   // either layer.
   const text = readStore();
-  assert.match(text, /BaseThreadService\.fetchSnapshot\s*\(/);
+  assert.match(text, /baseThreadFacade\.fetchSnapshot\s*\(/);
 
   const facadeText = readFileSync(
     resolve(repoRoot, "frontend/src/facades/baseThreadFacade.ts"),
     "utf-8",
   );
-  assert.match(facadeText, /ApiBaseThreadService\.getBaseThreadSnapshot\s*\(/);
+  assert.match(facadeText, /BaseThreadService\.getBaseThreadSnapshot\s*\(/);
   assert.doesNotMatch(facadeText, /SystemService\.getBaseThreadSnapshot\s*\(/);
 });

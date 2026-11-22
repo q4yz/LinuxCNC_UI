@@ -8,7 +8,10 @@ export const dashboardLayout = new PageLayoutSetting(
   "layout.dashboard",
   "dashboard",
   DEFAULT_LAYOUTS.dashboard,
-  { description: "The Dashboard's panels: left or right column, or hidden, top to bottom.", order: 0 },
+  {
+    description: "The Dashboard's panels in one, two or three columns — the page uses the widest layout that is on and fits its width.",
+    order: 0,
+  },
 );
 
 export const runningLayout = new PageLayoutSetting(
@@ -17,5 +20,8 @@ export const runningLayout = new PageLayoutSetting(
   "layout.running",
   "running",
   DEFAULT_LAYOUTS.running,
-  { description: "The Running page's panels: left or right column, or hidden, top to bottom.", order: 1 },
+  {
+    description: "The Running page's panels in one, two or three columns — the page uses the widest layout that is on and fits its width.",
+    order: 1,
+  },
 );

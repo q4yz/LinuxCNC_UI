@@ -1,15 +1,31 @@
 # Dashboard and page layout
 
-The **Dashboard** and the **Running** page show panels in two columns. Which panels, in which
-column and order, is a setting: **Settings → Page layout**, one layout per page. Each panel goes
-in the left column, the right column or *Hidden*; ▲ / ▼ order it. Changes save at once and are
-shared by every browser.
+The **Dashboard** and the **Running** page show panels in columns. Which panels, in which column
+and order, is a setting: **Settings → Page layout**, per page. Changes save at once and are shared
+by every browser.
+
+- **1 column / 2 columns / 3 columns** (the tabs at the top): each page has all three layouts,
+  each switched on or off with its checkbox (the last one on stays on). The page uses the
+  widest layout that is on and still gives every column at least 420 px; the editor says from
+  which page width a layout is used. When none fits, the narrowest one that is on is used and
+  its columns wrap one below the other (switch *1 column* off to get that).
+- **Column widths** are twelfths, like a browser grid: − / + on a column takes from or gives to
+  its neighbour.
+- **The round + button** in the corner adds a panel at the end of the first column. A panel can
+  be added more than once.
+- **Drag** a panel to order it or move it to another column; drop it on the bin that appears
+  while dragging to remove it. With a mouse drag the whole card, with a finger its grip (⠿), so
+  the page still scrolls by touch.
+
+A layout saved by an earlier version becomes the two-column layout (and one column with both in
+a row); three columns starts off.
 
 | Panel | Shows |
 |-------|-------|
 | Machine (power) | machine state, E-STOP, POWER, RESET MCU |
 | DRO | positions, homed state, Home all, macro buttons per axis |
 | Jog controls | jog buttons and speed — {doc}`jogging` |
+| Probing | probing cycles: edges, corners, bore / boss and pocket / block centres into a work offset; the probe's tip diameter and search feed are **Settings → Probing** |
 | Tools | extruder, spindle and heater controls |
 | Temperatures | readings, targets, chart |
 | I/O | fans, output and input pins |
@@ -23,8 +39,31 @@ shared by every browser.
 Machine panels only appear while the machine backend is reachable (LinuxCNC running); the
 console always shows — it explains why the machine is offline.
 
-Both pages stay loaded in the background: a panel placed on both runs twice (for the camera,
-two streams).
+Both pages stay loaded in the background: a panel placed on both — or twice on one page — runs
+that many times (for the camera, that many streams).
+
+## Custom buttons
+
+**Settings → Macro Buttons**: a button next to each DRO axis row and in the bottom-left corner of
+the toolpath viewer and the camera view. Each has a name, an icon (an icon name or any text /
+emoji) and a kind:
+
+- **macro** / **ngc** — runs that macro or NGC program (not in E-stop, not while one runs).
+- **UI component** — opens a panel (any the Dashboard can show) in a window. The window has no
+  frame of its own: the panel's own header carries the × (close) and moves the window when
+  dragged; a panel without a header gets a slim one. Clicking the button again brings the open
+  window to the front.
+  A window shows the same panel as the Dashboard (a camera there and in a window streams twice).
+
+- **Output pin** — not a button but the output's own control next to the name and icon: a
+  **toggle** for a switched `[output_pin]`, a **slider** for a PWM `[output_pin]` (0 … its
+  `scale`) or a fan (%), a **colour picker** for a `[neopixel]` chain (the whole chain). It shows
+  the machine's current value, so a change from G-code or another client shows up. Where the row
+  has no room for the name, it is hidden (it stays the tooltip) and comes back when there is. The list
+  comes from the running machine — with LinuxCNC stopped the dropdown is empty and keeps the
+  current choice.
+
+Leave the macro / component / output empty to hide the button.
 
 ## The E-stop
 

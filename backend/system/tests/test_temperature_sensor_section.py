@@ -17,7 +17,7 @@ from MachineConfigParser import (
 )
 from services.halcompiler import compile_machine_hal, render_webgui_connections, validate_machine
 from services.halcompiler.HalAssembler import HalAssembler
-from services.halcompiler.components.TemperatureSensorHalMapper import loaded_components
+from services.halcompiler.HalPinValidator import HalPinValidator
 
 CFG = """
 [mcu]
@@ -180,7 +180,7 @@ loadrt pid count=2  # comment
 loadusr -Wn rpi-monitor env X=1 python3 /usr/local/bin/rpi-monitor 1.0
 loadusr -W vfdmod vfd.ini
 """
-    assert loaded_components(hal) == {"remora", "heat-ok-a", "heat-ok-b", "pid", "rpi-monitor", "vfdmod"}
+    assert HalPinValidator.loaded_components(hal) == {"remora", "heat-ok-a", "heat-ok-b", "pid", "rpi-monitor", "vfdmod"}
 
 
 # -- one each, and the right board --------------------------------------------- #

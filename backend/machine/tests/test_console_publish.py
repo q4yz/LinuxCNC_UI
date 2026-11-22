@@ -4,7 +4,7 @@ the telemetry loop, which sends ``{"type": "console"}``. The MDI echo
 and telemetry stay in the file only (the browser shows those itself)."""
 from __future__ import annotations
 
-from services.ConsoleLogger import OUTBOX_MAX, ConsoleLogger, LogLevel
+from services.machine.ConsoleLogger import OUTBOX_MAX, ConsoleLogger, LogLevel
 
 
 def test_service_messages_are_published(tmp_path):

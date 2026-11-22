@@ -5,7 +5,7 @@ along its only hardware seam: list/read/write/delete/content stay in
 the system service (pure filesystem, always available), while
 ``POST /{name}/start`` — which dispatches MDI commands over the NML
 channel — lives in the machine backend's
-:class:`services.MacroExecutionService`.
+:class:`services.program.MacroExecutionService` (machine).
 """
 import logging
 import re

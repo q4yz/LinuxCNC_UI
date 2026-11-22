@@ -97,8 +97,8 @@ machine.hal
 # machine_config/example/PrintNC-WEBGUI/Machine.hal (lines 41-57).
 # Not emitted here on Remora: RemoraRouterMapper.base_fragment()
 # owns these iocontrol.0 pins for its SPI link-health chain, so when
-# the fault_pin is read through that board (HalAssembler flags
-# `_estop_fault`) it builds the latch itself, ANDing link + fault:
+# the fault_pin is read through that board (HalAssembler sets
+# `RouterMcu.estop_fault`) it builds the latch itself, ANDing link + fault:
 #   net user-request-enable <= iocontrol.0.user-request-enable => remora.SPI-reset estop-latch.0.reset
 #   net remora-status <= remora.SPI-status => estop-latch.0.ok-in
 #   net estop-fault => estop-latch.0.fault-in

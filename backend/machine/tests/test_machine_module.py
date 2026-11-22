@@ -102,9 +102,9 @@ def test_axis_watchdog_start_stop_is_idempotent(tmp_data_root, clean_env):
 
     The legacy ``PluggableModule.on_load`` / ``on_unload`` hooks
     were retired with the module-system migration; the watchdog
-    now lives directly in ``services.jog_watchdog``.
+    now lives directly in ``services.motion.jog_watchdog``.
     """
-    from services.jog_watchdog import WATCHDOG_TIMEOUT_MS, start_watchdog, stop_watchdog
+    from services.motion.jog_watchdog import WATCHDOG_TIMEOUT_MS, start_watchdog, stop_watchdog
 
     start_watchdog()
     stop_watchdog()

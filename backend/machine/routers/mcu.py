@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from models.McuModels import McuResetResponse
-from services.McuService import get_mcu_service
+from services.machine.McuService import get_mcu_service
 
 router = APIRouter(prefix="/api/v1/modules/mcu", tags=["modules:mcu"])
 

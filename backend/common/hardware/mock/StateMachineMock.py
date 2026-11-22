@@ -1,84 +1,131 @@
 import collections
 import datetime
 import logging
+import re
 import threading
-from typing import Deque, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from hardware.mock import constants_mock as C
 from hardware.mock.MockAxis import MockAxis
+from hardware.mock.config import AXIS_LETTERS, MockMachineConfig
 
 logger = logging.getLogger(__name__)
 
-class StateMachineMock:
-    """The 'Brain' of the LinuxCNC simulation.
+_NINE_ZEROS = (0.0,) * 9
+_MDI_WORD = re.compile(r"([A-Z])\s*([-+]?(?:\d+\.?\d*|\.\d+))")
 
-    Handles high-level machine states, interpreter status, and program
-    lifecycle. It does not know about physical pins, only system-wide
-    modes and statuses.
+
+class StateMachineMock:
+    """The 'Brain' of the LinuxCNC simulation: what ``linuxcnc.stat()``
+    reports. Task / interpreter state, the axes (built from the
+    machine's config, see :meth:`configure`), the program being run and
+    the error channel. It knows nothing about HAL pins.
     """
 
-    # Simulated LinuxCNC NML Constants
-    STATE_ESTOP = 1
-    STATE_ESTOP_RESET = 2
-    STATE_OFF = 3
-    STATE_ON = 4
+    STATE_ESTOP = C.STATE_ESTOP
+    STATE_ESTOP_RESET = C.STATE_ESTOP_RESET
+    STATE_OFF = C.STATE_OFF
+    STATE_ON = C.STATE_ON
+    MODE_MANUAL = C.MODE_MANUAL
+    MODE_AUTO = C.MODE_AUTO
+    MODE_MDI = C.MODE_MDI
+    INTERP_IDLE = C.INTERP_IDLE
+    INTERP_READING = C.INTERP_READING
+    INTERP_PAUSED = C.INTERP_PAUSED
+    INTERP_WAITING = C.INTERP_WAITING
+    AUTO_RUN = C.AUTO_RUN
+    AUTO_PAUSE = C.AUTO_PAUSE
+    AUTO_RESUME = C.AUTO_RESUME
 
-    INTERP_IDLE = 1
-    INTERP_READING = 2
-    INTERP_PAUSED = 3
-    INTERP_WAITING = 4
+    #: Program lines "executed" per second while a program runs.
+    LINES_PER_SECOND = 100.0
 
-    def __init__(self):
+    def __init__(self, config: Optional[MockMachineConfig] = None):
         self.lock = threading.Lock()
 
-        # NML variables read by StateService and ProgramService
         self.task_state: int = self.STATE_ESTOP
         self.task_mode: int = self.MODE_MANUAL
         self.estop: int = 1
         self.interp_state: int = self.INTERP_IDLE
+        self.motion_mode: int = C.TRAJ_MODE_TELEOP
+        self.paused: bool = False
+
         self.file: str = ""
         self.current_line: int = 0
+        self.motion_line: int = 0
+        self.read_line: int = 0
         self.total_lines: int = 0
-        self.homed: List[int] = [0, 0, 0]  # X, Y, Z flags
-        self.motion_mode: int = 3  # Default to TRAJ_MODE_TELEOP
+        self._line_progress: float = 0.0
 
-        # Explicitly initialize positions so they can be safely mutated
-        self.actual_position = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        self.position = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self.g5x_index: int = 1  # G54, as real LinuxCNC reports after boot
+        self.feedrate: float = 1.0  # feed override fraction
+        self.g5x_offset = _NINE_ZEROS
+        self.g92_offset = _NINE_ZEROS
+        self.tool_offset = _NINE_ZEROS
+        self.spindle: List[Dict[str, Any]] = [{"speed": 0.0, "direction": 0}]
 
-        # The State Machine owns the physical axes (Trajectory Planner simulation)
-        self.axes = {
-            0: MockAxis(0),  # X
-            1: MockAxis(1),  # Y
-            2: MockAxis(2)   # Z
-        }
+        # MDI modal state (G90 / G91, the last F in units/min)
+        self._mdi_relative = False
+        self._mdi_feed: Optional[float] = None
 
-        # Diagnostics
-        self.errors: List[dict] = []
+        self.errors: List[Dict[str, Any]] = []
         self._max_errors: int = 100
-        # Bounded FIFO queue that ``error_channel.poll()`` drains.
-        # ``stat.errors`` (above) is the historical buffer that
-        # ``read_error_history()`` snapshots; ``_pending_errors`` is
-        # the *channel* that fires one tuple at a time so the
-        # telemetry loop can broadcast a real-time ``{"type":"error",
-        # "data": {...}}`` envelope. Splitting the two mirrors the
-        # real-LinuxCNC NML topology where ``stat.errors`` and the
-        # error-channel queue are independent consumers of the same
-        # underlying NML error buffer.
+        # ``stat.errors`` (above) is the history the telemetry snapshot
+        # reads; ``_pending_errors`` is the error *channel* that
+        # ``error_channel.poll()`` drains one tuple at a time — two
+        # consumers, as in real NML.
         self._pending_errors: Deque[Tuple[int, str, str]] = collections.deque()
 
-        logger.debug("StateMachineMock initialized.")
-
-    def poll(self):
-        """Mock for linuxcnc.stat.poll().
-
-        The real LinuxCNC requires this to fetch the latest NML buffer.
-        In our mock, the state is always live, so this is a no-op to
-        satisfy the caller's signature.
-        """
-        pass
+        self.configure(config or MockMachineConfig.default())
 
     # -----------------------------------------------------------------------
-    # State Transitions (Triggered by HTTP Routers / Services)
+    # Machine shape (from hardware.json)
+    # -----------------------------------------------------------------------
+
+    def configure(self, config: MockMachineConfig) -> None:
+        """Rebuild the axes and per-joint state for ``config``. Positions
+        of axes that exist before and after are kept."""
+        with self.lock:
+            old = self.__dict__.get("axes", {})  # not getattr: __getattr__ answers 0
+            self.config = config
+            self.axes: Dict[int, MockAxis] = {
+                a.index: MockAxis(
+                    a.index,
+                    min_limit=a.min_limit,
+                    max_limit=a.max_limit,
+                    max_velocity=a.max_velocity,
+                    position=old[a.index].current_position if a.index in old else max(a.min_limit, min(a.max_limit, 0.0)),
+                )
+                for a in config.axes
+            }
+            self.homed: List[int] = [0] * config.joint_count
+            self.joints: int = config.joint_count
+            self.axis_mask: int = config.axis_mask
+            self.max_velocity: float = config.max_velocity
+            self.joint = [{"velocity": 0.0, "fault": 0, "homed": 0} for _ in range(config.joint_count)]
+            self.axis = [{"velocity": 0.0} for _ in range(9)]
+            self._publish_positions()
+
+    def _publish_positions(self) -> None:
+        position = [0.0] * 9
+        for index, axis in self.axes.items():
+            position[index] = axis.current_position
+            self.axis[index] = {"velocity": axis.jog_velocity if axis.moving else 0.0}
+        self.actual_position = tuple(position)
+        self.position = self.actual_position
+
+    def poll(self):
+        """``linuxcnc.stat.poll()`` — the mock's state is always live."""
+
+    def __getattr__(self, name):
+        """Any other stat field reads as 0 (as an unset NML field would)."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+        logger.debug("stat fallback for '%s' -> 0", name)
+        return 0
+
+    # -----------------------------------------------------------------------
+    # Task state
     # -----------------------------------------------------------------------
 
     def trigger_estop(self):
@@ -86,6 +133,8 @@ class StateMachineMock:
             self.estop = 1
             self.task_state = self.STATE_ESTOP
             self.interp_state = self.INTERP_IDLE
+            for axis in self.axes.values():
+                axis.jog(MockAxis.JOG_STOP, 0.0)
             logger.warning("E-STOP triggered.")
 
     def reset_estop(self):
@@ -107,144 +156,166 @@ class StateMachineMock:
             self.task_state = self.STATE_OFF
             logger.info("Machine turned OFF.")
 
-    def __getattr__(self, name):
-        """
-        Magic method: If the UI asks for a property we haven't explicitly
-        defined, it falls through to this method.
-        """
-
-        defaults = {
-            "task_mode": 1,  # linuxcnc.MODE_MANUAL
-            "task_state": 4,  # linuxcnc.STATE_ON
-            "estop": 0,  # Not in E-Stop
-            "interp_state": 1,  # linuxcnc.INTERP_IDLE
-            "g5x_index": 1,  # G54 — what real LinuxCNC reports after boot
-            "feedrate": 1.0,  # feed override fraction (1.0 = 100 %)
-            "max_velocity": 100.0,  # mock-only trajectory max velocity, mm/s
-            "g5x_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "g92_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "tool_offset": (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-            "spindle": [{"speed": 0.0, "direction": 0}],
-            "axis": [{"velocity": 0.0, "fault": 0}] * 3,
-            "joint": [{"velocity": 0.0, "fault": 0}] * 3,
-            "homed": (1, 1, 1),
-            "file": "",
-            "motion_line": 0,
-            "current_line": 0,
-            "read_line": 0,
-            "paused": False,
-        }
-
-        # If it's not in our defaults, just return 0 to be safe
-        val = defaults.get(name, 0)
-        logger.debug(f"__getattr__ fallback accessed for property: '{name}', returning: {val}")
-        return val
-
-    # -----------------------------------------------------------------------
-    # Motion & Jogging
-    # -----------------------------------------------------------------------
-
-    def jog_axis(self, command: int, joint_or_axis: int, velocity: float, distance: float = 0.0):
-        """Routes a jog command to the specific axis."""
-        with self.lock:
-            axis = self.axes.get(joint_or_axis)
-            if axis:
-                axis.jog(command, velocity, distance)
-
     def set_task_mode(self, new_mode: int):
         with self.lock:
             self.task_mode = new_mode
-            mode_names = {1: "MANUAL", 2: "AUTO", 3: "MDI"}
-            logger.info(f"Machine mode changed to: {mode_names.get(new_mode, new_mode)}")
+            logger.info("Machine mode changed to: %s", {1: "MANUAL", 2: "AUTO", 3: "MDI"}.get(new_mode, new_mode))
+
     # -----------------------------------------------------------------------
-    # Program Lifecycle
+    # Motion: jog, home, MDI moves
+    # -----------------------------------------------------------------------
+
+    def _axis_for(self, index: int, joint_flag: bool) -> Optional[MockAxis]:
+        if joint_flag:
+            cfg = self.config.axis_of_joint(index)
+            return self.axes.get(cfg.index) if cfg else None
+        return self.axes.get(index)
+
+    def jog_axis(self, command: int, joint_or_axis: int, velocity: float, distance: float = 0.0, joint_flag: bool = False):
+        with self.lock:
+            axis = self._axis_for(joint_or_axis, joint_flag)
+            if axis:
+                axis.jog(command, velocity, distance)
+
+    def home(self, joint: int = -1) -> None:
+        """Home ``joint`` (``-1``: all): its axis lands on the configured
+        home position (``position_endstop``)."""
+        with self.lock:
+            joints = range(len(self.homed)) if joint == -1 else [joint]
+            for j in joints:
+                while len(self.homed) <= j:
+                    self.homed.append(0)
+                self.homed[j] = 1
+                cfg = self.config.axis_of_joint(j)
+                if cfg and cfg.index in self.axes:
+                    self.axes[cfg.index].set_position(cfg.home)
+            self._publish_positions()
+
+    def unhome(self, joint: int = -1) -> None:
+        with self.lock:
+            if joint == -1:
+                self.homed = [0] * len(self.homed)
+            elif 0 <= joint < len(self.homed):
+                self.homed[joint] = 0
+
+    def execute_mdi(self, cmd: str) -> bool:
+        """``G0`` / ``G1`` straight moves (``G90`` / ``G91``, ``F`` in
+        units/min) — enough for the UI's MDI line, probing and the
+        calibration moves to move the DRO. Other codes are ignored."""
+        words = _MDI_WORD.findall(cmd.upper().split(";")[0])
+        handled = False
+        rapid: Optional[bool] = None
+        targets: Dict[int, float] = {}
+        with self.lock:
+            for letter, value in words:
+                number = float(value)
+                if letter == "G" and number in (90.0, 91.0):
+                    self._mdi_relative = number == 91.0
+                    handled = True
+                elif letter == "G" and number in (0.0, 1.0):
+                    rapid = number == 0.0
+                elif letter == "F":
+                    self._mdi_feed = number
+                elif letter.lower() in AXIS_LETTERS and AXIS_LETTERS.index(letter.lower()) in self.axes:
+                    targets[AXIS_LETTERS.index(letter.lower())] = number
+            if rapid is None or not targets:
+                return handled
+            for index, value in targets.items():
+                axis = self.axes[index]
+                target = axis.current_position + value if self._mdi_relative else value
+                cfg = self.config.axis(index)
+                fastest = cfg.max_velocity if cfg else self.max_velocity
+                speed = fastest if rapid or not self._mdi_feed else min(fastest, self._mdi_feed / 60.0)
+                axis.move_to(target, speed)
+        return True
+
+    # -----------------------------------------------------------------------
+    # Program lifecycle
     # -----------------------------------------------------------------------
 
     def load_file(self, filepath: str, total_lines: int = 0):
         with self.lock:
             self.file = filepath
-            self.current_line = 0
             self.total_lines = total_lines
+            self._rewind()
             self.interp_state = self.INTERP_IDLE
-            logger.info(f"Loaded file: '{filepath}' with {total_lines} lines.")
+            logger.info("Loaded file: '%s' with %s lines.", filepath, total_lines)
+
+    def _rewind(self) -> None:
+        self.current_line = self.motion_line = self.read_line = 0
+        self._line_progress = 0.0
+
+    def run_program(self, start_line: int = 0) -> None:
+        with self.lock:
+            self._rewind()
+            self.current_line = self.motion_line = self.read_line = max(0, int(start_line))
+            self._line_progress = float(self.current_line)
+            self.interp_state = self.INTERP_READING
+            self.paused = False
+
+    def pause_program(self) -> None:
+        with self.lock:
+            self.interp_state = self.INTERP_PAUSED
+            self.paused = True
+
+    def resume_program(self) -> None:
+        with self.lock:
+            self.interp_state = self.INTERP_READING
+            self.paused = False
 
     def reset_program_state(self):
+        """``abort``: the program stops; the loaded file stays loaded."""
+        with self.lock:
+            self._rewind()
+            self.interp_state = self.INTERP_IDLE
+            self.paused = False
+            for axis in self.axes.values():
+                axis.jog(MockAxis.JOG_STOP, 0.0)
+
+    def unload_program(self) -> None:
         with self.lock:
             self.file = ""
-            self.current_line = 0
             self.total_lines = 0
+            self._rewind()
             self.interp_state = self.INTERP_IDLE
-            logger.debug("Program state reset.")
+
+    def _advance_program(self, delta_time: float) -> None:
+        # A program of unknown length (0 lines) keeps "running" until
+        # aborted, as before.
+        if self.interp_state != self.INTERP_READING or self.total_lines <= 0:
+            return
+        self._line_progress = min(float(self.total_lines), self._line_progress + self.LINES_PER_SECOND * self.feedrate * delta_time)
+        self.current_line = self.motion_line = self.read_line = int(self._line_progress)
+        if self.current_line >= self.total_lines:
+            self.interp_state = self.INTERP_IDLE
+            logger.info("Program finished: '%s'", self.file)
 
     # -----------------------------------------------------------------------
-    # Error Management
+    # Error channel
     # -----------------------------------------------------------------------
 
-    def push_error(self, text: str, kind: int = 11, time: Optional[str] = None):
-        """Builds an error dictionary and pushes it into both the bounded
-        history and the pending-channel queue.
-
-        ``text`` is the operator-facing message, ``kind`` is the
-        LinuxCNC NML error class, and ``time`` is the ISO-8601 stamp
-        (auto-generated when ``None``).
-
-        The history (``self.errors``) is what
-        :func:`hardware.Connection.read_error_history` reads on every
-        telemetry tick — it powers the ``full_state`` / ``delta``
-        ``errors`` payload so the UI re-hydrates the operator console
-        after a reconnect / page reload.
-
-        The pending queue (``self._pending_errors``) is what
-        ``error_channel.poll()`` drains one tuple at a time so the
-        backend can broadcast a real-time ``{"type":"error",
-        "data": {...}}`` WS envelope. Splitting the two mirrors the
-        real-LinuxCNC NML topology where ``stat.errors`` and the
-        error-channel queue are independent consumers of the same
-        underlying NML buffer.
-
-        The bound on the pending queue is intentionally generous (4x
-        ``_max_errors``) so a burst of NML errors — for example a
-        homing sequence hitting several limit switches in a row —
-        cannot outrun the 10 Hz ``telemetry_loop`` and silently drop
-        the oldest events. Anything older than that is dropped with
-        a warning so a runaway producer cannot leak memory.
-        """
+    def push_error(self, text: str, kind: int = C.OPERATOR_ERROR, time: Optional[str] = None):
+        """Add an error to the history (``stat.errors``, re-sent in every
+        telemetry snapshot) and to the channel queue that
+        ``error_channel.poll()`` drains. The queue is bounded at 4×
+        the history so a burst cannot outrun the 10 Hz telemetry loop,
+        and a runaway producer cannot leak memory."""
         if time is None:
             time = datetime.datetime.now().isoformat()
-
-        error_dict = {
-            "kind": kind,
-            "text": text,
-            "time": time,
-        }
-
         with self.lock:
-            self.errors.append(error_dict)
+            self.errors.append({"kind": kind, "text": text, "time": time})
             if len(self.errors) > self._max_errors:
                 self.errors.pop(0)
             self._pending_errors.append((kind, text, time))
-            pending_cap = self._max_errors * 4
-            while len(self._pending_errors) > pending_cap:
+            while len(self._pending_errors) > self._max_errors * 4:
                 dropped = self._pending_errors.popleft()
-                logger.warning(
-                    "Pending error queue overflow; dropping kind=%s text=%r",
-                    dropped[0],
-                    dropped[1],
-                )
-            logger.error(f"Hardware Error [Kind {kind}]: {text}")
+                logger.warning("Pending error queue overflow; dropping kind=%s text=%r", dropped[0], dropped[1])
+            logger.error("Hardware Error [Kind %s]: %s", kind, text)
 
     def poll_pending_error(self) -> Optional[Tuple[int, str, str]]:
-        """Drain one pending error from the channel queue.
-
-        Mirrors ``linuxcnc.error_channel.poll()`` which returns one
-        ``(kind, text)`` tuple per call (the timestamp is not part
-        of the upstream wire format — the backend stamps it on
-        receipt so the UI sees the wall-clock arrival time).
-        """
+        """One ``(kind, text, time)`` from the channel queue, or ``None``."""
         with self.lock:
-            if not self._pending_errors:
-                return None
-            return self._pending_errors.popleft()
+            return self._pending_errors.popleft() if self._pending_errors else None
 
     def clear_errors(self):
         with self.lock:
@@ -253,52 +324,13 @@ class StateMachineMock:
             logger.info("Error history cleared.")
 
     # -----------------------------------------------------------------------
-    # The Heartbeat Tick
+    # The heartbeat tick
     # -----------------------------------------------------------------------
 
-    def update(self, hal_mock, delta_time: float = 0.1):
-        """Evaluates system-wide rules based on the HAL's physical state.
-
-        Called every 100ms by the main LinuxCNCMock background thread.
-        This is where the Brain checks the Muscle.
-        """
+    def update(self, hal_mock=None, delta_time: float = 0.1):
+        """One 100 ms tick: move the axes, advance a running program."""
         with self.lock:
-            # 1. Tick all axes forward in time
             for axis in self.axes.values():
                 axis.update(delta_time)
-
-            # 2. Sync the mathematical positions to the NML buffer (UI reads this)
-            self.actual_position = (
-                self.axes[0].current_position,
-                self.axes[1].current_position,
-                self.axes[2].current_position,
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-            )
-            self.position = self.actual_position
-
-            # 3. Write back to HAL so virtual pins reflect the physical state
-            # hal_mock.set_p("joint.0.motor-pos-fb", self.axes[0].current_position)
-            # hal_mock.set_p("joint.1.motor-pos-fb", self.axes[1].current_position)
-            # hal_mock.set_p("joint.2.motor-pos-fb", self.axes[2].current_position)
-            #
-            # # 4. Check limit switches
-            # # Using get_p ensures compatibility with the new HalModuleFacade
-            # if hal_mock.get_p("limit-switch-x-max") is True:
-            #     if self.estop == 0:
-            #         logger.warning("HAL trigger: limit-switch-x-max activated. Forcing E-STOP.")
-            #         self.push_error("Joint 0 on limit switch error")
-            #         self.trigger_estop()
-            #
-            # # 5. Simulate program progression if running
-            # if self.interp_state in (self.INTERP_READING, self.INTERP_WAITING):
-            #     if self.current_line < self.total_lines:
-            #         self.current_line += 1
-            #         # Avoid spamming the log on every single line increment
-            #         if self.current_line % 100 == 0:
-            #             logger.debug(f"Program progression: line {self.current_line}/{self.total_lines}")
-            #     else:
-            #         self.interp_state = self.INTERP_IDLE
-            #         logger.info(f"Program finished execution: '{self.file}'")
-
-    def execute_mdi(self, cmd: str):
-        pass
+            self._publish_positions()
+            self._advance_program(delta_time)

@@ -38,9 +38,10 @@ LinuxCNC refuses to move off it — the machine faults before homing.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
+from models.machineconfig.HardwareJsonModels import Axis, Endstop, Stepper
 from models.machineconfig.HalFragmentModels import (
     FirmwareModuleRequest,
     HalFragment,
@@ -54,45 +55,47 @@ class RemoraStepperHalMapper:
 
     @staticmethod
     def to_fragment(
-        axis: dict[str, Any],
-        joints: list[dict[str, Any]],
-        endstops_by_id: dict[str, dict[str, Any]],
+        axis: Axis,
+        joints: list[Stepper],
+        endstops_by_id: Mapping[str, Endstop],
         corexy_joints: frozenset[int] = frozenset(),
     ) -> HalFragment:
-        """``corexy_joints``: their ``pos-cmd`` / ``pos-fb`` go through
-        `CoreXyHalMapper` instead of straight to ``remora.joint.N``."""
+        """``corexy_joints``: joints whose ``pos-cmd`` / ``pos-fb`` go through
+        another component instead of straight to ``remora.joint.N``:
+        `CoreXyHalMapper`, or the extruder's flow stage
+        (`ExtruderGuardHalMapper`)."""
         fragment = HalFragment()
-        axis_endstop_id = axis.get("endstop")
+        axis_endstop_id = axis.endstop
         requested_endstop_ids: set[str] = set()
 
         for joint in joints:
-            RemoraStepperHalMapper._joint(fragment, joint, joint["joint_number"] in corexy_joints)
-            endstop_id = joint.get("endstop") or axis_endstop_id
+            RemoraStepperHalMapper._joint(fragment, joint, joint.joint_number in corexy_joints)
+            endstop_id = joint.endstop or axis_endstop_id
             endstop = endstops_by_id.get(endstop_id) if endstop_id else None
             if endstop is None:
                 continue
-            n = joint["joint_number"]
-            endstop_signal = f"{endstop['id']}-sw"
+            n = joint.joint_number
+            endstop_signal = f"{endstop.id}-sw"
             fragment.nets.append(
                 f"net {endstop_signal} => joint.{n}.home-sw-in"
             )
-            if endstop["id"] in requested_endstop_ids:
+            if endstop.id in requested_endstop_ids:
                 continue
-            requested_endstop_ids.add(endstop["id"])
+            requested_endstop_ids.add(endstop.id)
             fragment.requests.append(
                 PinRequest(
                     signal=endstop_signal,
                     role=PinRole.ENDSTOP,
-                    pin=PinStringMapper.from_string(endstop["pin"]),
-                    owner=str(endstop["id"]),
+                    pin=PinStringMapper.from_string(endstop.pin),
+                    owner=endstop.id,
                 )
             )
 
         return fragment
 
     @staticmethod
-    def _joint(fragment: HalFragment, joint: dict[str, Any], corexy: bool = False) -> None:
-        n = joint["joint_number"]
+    def _joint(fragment: HalFragment, joint: Stepper, corexy: bool = False) -> None:
+        n = joint.joint_number
 
         fragment.setp.extend(
             [
@@ -106,9 +109,9 @@ class RemoraStepperHalMapper:
         # `deadband` there is a literal; `pgain` is an ini-var
         # reference, matching every gain elsewhere in this compiler
         # (heater PID) being re-tunable without regenerating the HAL.
-        if joint.get("deadband") is not None:
-            fragment.setp.append(f"setp remora.joint.{n}.deadband {joint['deadband']}")
-        if joint.get("pgain") is not None:
+        if joint.deadband is not None:
+            fragment.setp.append(f"setp remora.joint.{n}.deadband {joint.deadband}")
+        if joint.pgain is not None:
             fragment.setp.append(f"setp remora.joint.{n}.pgain [JOINT_{n}]PGAIN")
         if not corexy:
             fragment.nets.extend(
@@ -119,10 +122,10 @@ class RemoraStepperHalMapper:
             )
         fragment.nets.append(f"net j{n}enable joint.{n}.amp-enable-out => remora.joint.{n}.enable")
 
-        step_pin = joint.get("step_pin")
+        step_pin = joint.step_pin
         if not step_pin:
             return
-        joint_id = str(joint["id"])
+        joint_id = joint.id
         parsed = PinStringMapper.from_string(step_pin)
         module: dict[str, Any] = {
             "Name": joint_id,
@@ -136,8 +139,7 @@ class RemoraStepperHalMapper:
             "Joint Number": n,
             "Step Pin": RemoraFirmwarePinMapper.to_firmware_pin(parsed.pin_id),
         }
-        for field, key in (("dir_pin", "Direction Pin"), ("enable_pin", "Enable Pin")):
-            raw = joint.get(field)
+        for raw, key in ((joint.dir_pin, "Direction Pin"), (joint.enable_pin, "Enable Pin")):
             if not raw:
                 continue
             pin = PinStringMapper.from_string(raw)

@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 from domain_file_services import paths
 from mappers.machineconfig import heater_ini_section
 
+from models.machineconfig.HardwareJsonModels import FilamentChange
 from models.machineconfig.LinuxCNCModels import Axis
 
 #: Documented defaults for PID fields no schema carries yet — see
@@ -200,6 +201,8 @@ def render_ini_template(
     corexy: bool = False,
     homing_override: bool = False,
     remaps: List[str] | None = None,
+    filament_change: FilamentChange | None = None,
+    shaper_types: Dict[str, int] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
 
@@ -220,7 +223,7 @@ def render_ini_template(
             parameter existed.
         mdi_commands: ``[HALUI] MDI_COMMAND`` lines, in
             ``halui.mdi-command-NN`` order (an ``[input_pin]``'s edges,
-            ``IoPinHalMapper.mdi_commands``); their subroutines live in
+            ``InputPinHalMapper.mdi_commands``); their subroutines live in
             the config's ``subroutines/`` folder.
         corexy: CoreXY kinematics instead of ``trivkins``.
         homing_override: The machine homes with a ``[homing_override]``
@@ -284,6 +287,9 @@ def render_ini_template(
         "[UI_HOME]",
         *_ui_home(axes),
         "",
+        # M600 (m_codes/m600.ngc reads these; REMAP=M600 above).
+        *(["[FILAMENT_CHANGE]", *(f"{k.upper()} = {_fmt(v)}" for k, v in filament_change.model_dump().items()), ""]
+          if filament_change else []),
         "[EMCMOT]",
         "EMCMOT = motmod",
         "COMM_TIMEOUT = 30.0",
@@ -331,6 +337,11 @@ def render_ini_template(
         if (tool.get("control") or "pid") != "pid":
             continue
         lines.extend(_render_heater_section(tool))
+
+    if shaper_types:
+        # jointshape's shaper-type per axis (machine.hal reads it from here,
+        # so calibration.ini can override it); zv 1, mzv 2, zvd 3, ei 4
+        lines.extend(["[INPUT_SHAPER]", f"TYPE_X = {shaper_types['x']}", f"TYPE_Y = {shaper_types['y']}", ""])
 
     return "\n".join(lines).rstrip("\n") + "\n"
 

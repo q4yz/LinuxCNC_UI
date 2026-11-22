@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from models.machineconfig.HalFragmentModels import (
+    RouterMcu,
     BASE_THREAD,
     Addf,
     HalFragment,
@@ -35,7 +36,7 @@ class ParportRouterMapper:
     """Routes :class:`PinRequest` entries whose ``pin.mcu_id`` is this MCU."""
 
     @staticmethod
-    def base_fragment(mcu: dict[str, Any]) -> HalFragment:
+    def base_fragment(target: RouterMcu) -> HalFragment:
         """§ 3 — the driver load, independent of what ends up wired to it.
 
         ``interface`` is the real ingested field (the port address —
@@ -44,7 +45,7 @@ class ParportRouterMapper:
         yet (same file's "timing keys are not ingested yet" note), so
         they stay the documented defaults until that lands.
         """
-        address = mcu.get("interface") or "0"
+        address = target.mcu.interface or "0"
         direction = "out"
         reset_time = 2500
 

@@ -1,4 +1,4 @@
-import {ToolsService} from "../facades/toolsFacade";
+import { toolsFacade } from "../facades/toolsFacade";
 import {useConsoleStore} from "./console";
 import {Extruder} from "../entities/tools";
 import {ExtruderControlRequest} from "../entities/tools/Extruder";
@@ -34,7 +34,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
     await baseThread.refresh();
   }
 
-  // --- actions (all via ToolsService) ------------------------------ //
+  // --- actions (all via toolsFacade) ------------------------------ //
 
   /**
    * Send a spindle command.
@@ -57,7 +57,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
       override,
     };
 
-    const result = await ToolsService.controlSpindle(request);
+    const result = await toolsFacade.controlSpindle(request);
 
     if (result.failed) {
       const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";
@@ -94,7 +94,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
       heaterAction,
     };
 
-    const result = await ToolsService.controlExtruder(request);
+    const result = await toolsFacade.controlExtruder(request);
 
     if (result.failed) {
       const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";
@@ -110,7 +110,7 @@ export const useToolStore = defineStore(STORE_ID, () => {
    */
   async function sendToolTarget(toolId: string, target: number) {
     const request: HeaterControlRequest = new HeaterControlRequest( {toolId, target} );
-    const result = await ToolsService.setTarget(request);
+    const result = await toolsFacade.setTarget(request);
 
     if (result.failed) {
       const status = result.statusCode != null ? ` (HTTP ${result.statusCode})` : "";

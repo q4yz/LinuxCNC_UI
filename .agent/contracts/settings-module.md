@@ -84,7 +84,7 @@ if (defaultJogVelocity.value > 100) { ... }   // reactive
 ## 5. Not settings
 
 - Safety/timing constants are **code**, not settings: the jog watchdog
-  timeout (500 ms, `machine/services/jog_watchdog.py`) and the jog
+  timeout (500 ms, `machine/services/motion/jog_watchdog.py`) and the jog
   keep-alive interval (250 ms, `stores/machine.ts`).
 - Per-browser display preferences (3D viewer grid / render quality)
   stay in `localStorage` on purpose — a weak tablet and a desktop may

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from services.remora_signal_map import (
+from services.hal.remora_signal_map import (
     get_pv_index,
     get_sp_index,
     invalidate_cache,

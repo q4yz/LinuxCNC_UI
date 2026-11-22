@@ -11,7 +11,8 @@ import type { HalLayoutResponse } from "../../generated/api/models/HalLayoutResp
 import type { HalPinStatesResponse } from "../../generated/api/models/HalPinStatesResponse";
 import type { HalPinValuesResponse } from "../../generated/api/models/HalPinValuesResponse";
 
-export class HalVisualService {
+// A plain object, not frozen: tests stub its methods.
+export const halFacade = {
     /**
      * Fetch the editor layout (IN pins, OUT pins, and — when `file` is
      * given — that file's parsed `net` signals) from
@@ -20,14 +21,14 @@ export class HalVisualService {
      * Returns `null` on any HTTP / network failure so callers can
      * render an error state rather than crashing the editor.
      */
-    static async fetchLayout(file?: string): Promise<HalLayoutResponse | null> {
+    async fetchLayout(file?: string): Promise<HalLayoutResponse | null> {
         try {
             return await HalService.getLayoutApiV1HalLayoutGet(file);
         } catch (err: unknown) {
-            console.error("[HalVisualService] Failed to fetch HAL layout", err);
+            console.error("[halFacade] Failed to fetch HAL layout", err);
             return null;
         }
-    }
+    },
 
     /**
      * Save the editor's current signal set into `file` via
@@ -36,46 +37,46 @@ export class HalVisualService {
      * left untouched. Returns the freshly re-parsed layout, or `null`
      * on failure.
      */
-    static async saveLayout(
+    async saveLayout(
         file: string,
         signals: HalFileSaveRequest["signals"],
     ): Promise<HalLayoutResponse | null> {
         try {
             return await HalService.saveLayoutApiV1HalLayoutPut(file, { signals });
         } catch (err: unknown) {
-            console.error("[HalVisualService] Failed to save HAL layout", err);
+            console.error("[halFacade] Failed to save HAL layout", err);
             return null;
         }
-    }
+    },
 
     /**
      * Every HAL pin with its current value, read fresh by the backend
      * (`GET /api/v1/hal/pins`, uncached — unlike `fetchLayout`). Used by
      * the debug view; call again to refresh. `null` on failure.
      */
-    static async fetchPinStates(): Promise<HalPinStatesResponse | null> {
+    async fetchPinStates(): Promise<HalPinStatesResponse | null> {
         try {
             return await HalService.getHalPinStates();
         } catch (err: unknown) {
-            console.error("[HalVisualService] Failed to read HAL pin states", err);
+            console.error("[halFacade] Failed to read HAL pin states", err);
             return null;
         }
-    }
+    },
 
     /**
      * Current values of the given pins (`POST /api/v1/hal/pins/values`,
      * in-process `hal.get_value` — cheap enough for the debug view's 1 Hz
      * poll of the pins on screen). `null` on failure.
      */
-    static async readPinValues(pins: string[]): Promise<HalPinValuesResponse | null> {
+    async readPinValues(pins: string[]): Promise<HalPinValuesResponse | null> {
         if (pins.length === 0) return { values: {}, read_at: new Date().toISOString() };
         try {
             return await HalService.readHalPinValues({ pins });
         } catch (err: unknown) {
-            console.error("[HalVisualService] Failed to read HAL pin values", err);
+            console.error("[halFacade] Failed to read HAL pin values", err);
             return null;
         }
-    }
-}
+    },
+};
 
-export default HalVisualService;
+export default halFacade;

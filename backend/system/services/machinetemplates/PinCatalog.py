@@ -321,11 +321,11 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
     from the machine services (``ToolsService`` / ``TemperatureService``
     / ``StateService``); those now live in the machine backend and are
     not importable from the system service. ``HardwareConfigService``
-    and the ``tools_config_mapper`` / ``temperature_config_mapper``
+    and the ``tools_config`` / ``temperature_config``
     modules moved to the machine backend too (2026-09), so this reads
     the default machine's ``hardware.json`` directly — the same
     payload, filtered with the same rules the mappers used — and maps
-    it with the same shared DTO factories as before.
+    it with the same shared mappers as before.
     """
     import json
 
@@ -334,7 +334,7 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
     from dtos.PauseInspect import PauseInspectPin
     from dtos.pins.HalPin import HalDataType
     from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-    from factories.tools.ToolHalPinFactory import ToolHalPinFactory
+    from mappers.tools.ToolPinsMapper import ToolPinsMapper
     from mappers.temperature.TemperatureSensorMapper import (
         TemperatureSensorMapper,
     )
@@ -368,7 +368,7 @@ def _build_default_containers() -> tuple[List[Any], List[Any], List[Any]]:
     all_tools = _valid_dicts("tools")
     tools = [
         pin_map
-        for pin_map in (ToolHalPinFactory.create(tool) for tool in all_tools)
+        for pin_map in (ToolPinsMapper.from_dict_to_ToolPins(tool) for tool in all_tools)
         if pin_map is not None
     ]
 
@@ -417,7 +417,7 @@ def build_pin_catalog(
     """Collect the catalog for the ``webgui`` HAL component.
 
     Containers are rebuilt from the active ``hardware.json`` via the
-    shared factories/mappers unless the ``*_containers`` overrides are
+    shared mappers unless the ``*_containers`` overrides are
     supplied (tests pass pre-built containers to avoid touching any
     config file).
     """

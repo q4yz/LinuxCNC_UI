@@ -42,12 +42,12 @@ import time
 from fastapi import APIRouter, HTTPException
 
 from domain_file_services import get_program_service
-from services.line_count_cache import (
+from services.program.line_count_cache import (
     count_lines,
     register as register_line_count,
     unregister_all as clear_line_count_cache,
 )
-from services.ProgramService import get_program_lifecycle_service
+from services.program.ProgramService import get_program_lifecycle_service
 from models.program.ProgramModels import (
     LoadProgramRequest,
     ParseResponse,
@@ -84,6 +84,10 @@ def load_program(payload: LoadProgramRequest):
         raise HTTPException(status_code=504, detail=str(exc))
 
     register_line_count(str(target), count_lines(str(target)))
+    # a new program: every object prints again
+    from services.program.PrintTuningService import get_print_tuning_service
+
+    get_print_tuning_service().reset_objects()
     return StatusResponse(status="success")
 
 

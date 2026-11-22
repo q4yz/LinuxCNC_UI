@@ -16,10 +16,18 @@ from __future__ import annotations
 from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.ProbeHalMapper import ProbeHalMapper
 
+from tests import typed_records as typed
+
+
+def _probe_fragment(probe, tool_length_sensor=None, **kwargs):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return ProbeHalMapper.to_fragment(typed.probe(probe), typed.tool_length_sensor(tool_length_sensor), **kwargs)
+
+
 
 def test_no_probe_at_all_means_an_entirely_empty_fragment():
     """The absent-[probe] case — the normal, common machine."""
-    fragment = ProbeHalMapper.to_fragment(None)
+    fragment = _probe_fragment(None)
     assert fragment.loadrt == []
     assert fragment.nets == []
     assert fragment.requests == []
@@ -28,7 +36,7 @@ def test_no_probe_at_all_means_an_entirely_empty_fragment():
 def test_empty_probe_block_means_an_entirely_empty_fragment():
     """A declared but bare [probe] (pin unset) contributes nothing —
     same as no section at all."""
-    fragment = ProbeHalMapper.to_fragment({"pin": None})
+    fragment = _probe_fragment({"pin": None})
     assert fragment.nets == []
     assert fragment.requests == []
 
@@ -37,7 +45,7 @@ def test_declared_pin_reaches_motion_probe_input_only_while_probing():
     """LinuxCNC aborts any non-probe move during which motion.probe-input
     switches on — an inductive probe does at first-layer height. So the
     probe passes only while motion.motion-type is 5 (probing, G38.x)."""
-    fragment = ProbeHalMapper.to_fragment({"pin": "!par0:15"})
+    fragment = _probe_fragment({"pin": "!par0:15"})
 
     assert fragment.loadrt == [
         "loadrt conv_s32_float names=probe-mtype",

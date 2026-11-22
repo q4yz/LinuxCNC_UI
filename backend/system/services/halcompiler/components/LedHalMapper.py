@@ -9,48 +9,41 @@ a CAN node).
 """
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Led
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
-
-
-def segment_signal(led_id: str, index: int) -> str:
-    return f"{led_id}-rgb{index}"
-
-
-def segment_pin(led_id: str, index: int) -> str:
-    """The machine backend's pin (``webgui.<this>``) for one segment."""
-    return f"led-{led_id}-{index}"
 
 
 class LedHalMapper:
     @staticmethod
-    def to_fragment(led: dict[str, Any]) -> HalFragment:
+    def segment_signal(led_id: str, index: int) -> str:
+        return f"{led_id}-rgb{index}"
+
+    @staticmethod
+    def segment_pin(led_id: str, index: int) -> str:
+        """The machine backend's pin (``webgui.<this>``) for one segment."""
+        return f"led-{led_id}-{index}"
+
+    @staticmethod
+    def segments(led: Led) -> list[list[int]]:
+        """``[first, count]`` per colour channel; no segments: the whole chain."""
+        return led.segments or [[1, led.chain_count]]
+
+    @staticmethod
+    def to_fragment(led: Led) -> HalFragment:
         fragment = HalFragment()
-        led_id = str(led["id"])
-        pin = PinStringMapper.from_string(str(led["pin"]))
-        for k, (first, count) in enumerate(led.get("segments") or [[1, int(led.get("chain_count") or 1)]]):
+        pin = PinStringMapper.from_string(led.pin)
+        for k, (first, count) in enumerate(LedHalMapper.segments(led)):
             fragment.requests.append(
                 PinRequest(
-                    signal=segment_signal(led_id, k),
+                    signal=LedHalMapper.segment_signal(led.id, k),
                     role=PinRole.RGB,
                     pin=pin,
-                    owner=led_id,
-                    led=(int(led.get("chain_count") or 1), str(led.get("color_order") or "GRB"), int(first), int(count)),
+                    owner=led.id,
+                    led=(led.chain_count, led.color_order, int(first), int(count)),
                 )
             )
         return fragment
 
 
-class LedWebguiMapper:
-    @staticmethod
-    def to_lines(led: dict[str, Any]) -> list[str]:
-        led_id = str(led["id"])
-        lines = [f"# LED: {led_id}"]
-        for k in range(len(led.get("segments") or [[1, 1]])):
-            lines.append(f"net {segment_signal(led_id, k)} <= webgui.{segment_pin(led_id, k)}")
-        return lines + [""]
-
-
-__all__ = ["LedHalMapper", "LedWebguiMapper", "segment_pin", "segment_signal"]
+__all__ = ["LedHalMapper"]

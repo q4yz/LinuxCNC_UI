@@ -38,14 +38,14 @@ def test_dto_defaults_to_error():
 
 
 def test_error_history_entries_get_their_severity_stamped():
-    from services.StateService import StateService
+    from services.machine.StateService import StateService
 
     history = [
         {"kind": linuxcnc.OPERATOR_DISPLAY, "text": "Bore Diameter is: 20.01", "time": None},
         {"kind": linuxcnc.OPERATOR_ERROR, "text": "Slow probe missed target!", "time": None},
         "bare string from real stat.errors",
     ]
-    with patch("services.StateService.read_error_history", return_value=history):
+    with patch("services.machine.StateService.read_error_history", return_value=history):
         stamped = StateService().get_error_history()
 
     assert stamped[0]["severity"] == "info"

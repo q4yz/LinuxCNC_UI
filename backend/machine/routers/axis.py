@@ -6,7 +6,7 @@ The axis module owns two kinds of endpoints:
   :class:`AxisService` facade. The endpoint always switches to
   ``MODE_MANUAL`` first so a stale ``MODE_AUTO`` does not silently
   swallow the home command. The handler is a thin wrapper around
-  :func:`get_axis_service` from :mod:`services.AxisService`; the
+  :func:`get_axis_service` from :mod:`services.motion.AxisService`; the
   axis module does not own the business logic, only the HTTP edge.
 
 * (Historically) jog REST endpoints — ``/jog``, ``/jog/keepalive``,
@@ -35,7 +35,7 @@ from models.AxisModels import (
     AxisStatusResponse,
 )
 
-from services.AxisService import get_axis_service
+from services.motion.AxisService import get_axis_service
 
 
 router = APIRouter(

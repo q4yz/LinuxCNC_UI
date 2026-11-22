@@ -18,7 +18,10 @@ The board (a Remora board on SPI, Ethernet, a CAN node, a VFD). One `[mcu]`; mor
 #   How the host reaches the board: remora-spi, remora-eth, remora-can (a CAN node behind a
 #   remora-spi hub), parallelport, vfd_rs485, ethercat, usb_arduino, dummy.
 #board:
-#   The board's name, for your information (e.g. BIGTREETECH OCTOPUS).
+#   The board's name (e.g. BIGTREETECH OCTOPUS). On remora-spi it also picks the
+#   firmware family: an LPC1768 / LPC1769 board (SKR v1.1 - v1.4, MKS SBASE / SGEN L,
+#   Smoothieboard, Re-ARM, Azteeg X5) loads remora_lpc and gets no SD-card config
+#   sync; any other name (or none) is an STM32 board.
 #interface:
 #   The transport's device: the spidev path for remora-spi, socket:// for remora-eth, a
 #   serial port for vfd_rs485.
@@ -120,7 +123,8 @@ rotation_distance:
 #gear_ratio:
 #   e.g. 50:17 (motor turns : output turns), chained 80:16, 3:1. Only with a gearbox.
 #endstop_pin:
-#   The home switch; probe:z_virtual_endstop homes Z on the probe.
+#   The home switch; probe:z_virtual_endstop homes Z on the probe,
+#   tmc2209_stepper_x:virtual_endstop on the driver's stall output (sensorless homing).
 #position_min: 0
 position_max:
 position_endstop:
@@ -152,7 +156,15 @@ run_current:
 #microsteps:
 #interpolate:
 #sense_resistor:
+#diag_pin:
+#   Sensorless homing: the board input the driver's DIAG is wired to (on a BTT board the
+#   endstop input of that driver's DIAG jumper, e.g. ^PG6).
+#driver_SGTHRS:
+#   StallGuard threshold 0 … 255 (higher trips earlier). StallGuard needs StealthChop: the
+#   driver runs it while this is set.
 ```
+
+Sensorless homing — {doc}`../using/tuning`.
 
 ### [homing_override]
 
@@ -186,6 +198,10 @@ rotation_distance:
 #min_extrude_temp: 170
 #   No extruder move below this (the Remora "extruder" component stops it; homing is
 #   ignored). 0 switches the guard off.
+#pressure_advance: 0.0
+#   mm of filament per mm/s of extrusion speed (SET_PRESSURE_ADVANCE, M900 at runtime).
+#pressure_advance_smooth_time: 0.040
+#   Seconds the advance is smoothed over.
 heater_pin:
 sensor_type:
 sensor_pin:
@@ -233,6 +249,40 @@ sensor_type:
 #sensor_pin:
 #thermal_zone:
 #   temperature_host: the /sys/class/thermal zone; CB1: 2 = CPU.
+```
+
+### [firmware_retraction]
+
+What a slicer's `G10` / `G11` (*Use firmware retraction*) do; the upload turns them into these
+moves on the extruder.
+
+```ini
+[firmware_retraction]
+#retract_length: 0
+#   mm; 0: G10 / G11 are not converted (commented out).
+#retract_speed: 20
+#unretract_extra_length: 0
+#unretract_speed: 10
+```
+
+### [filament_change]
+
+What `M600` does (not Klipper's: there M600 is a macro). Every machine with an extruder gets
+M600, with these defaults.
+
+```ini
+[filament_change]
+#park_x:
+#park_y:
+#   Machine coordinates; default the X / Y minimum.
+#z_lift: 10
+#unload_length: 50
+#unload_speed: 10
+#load_length: 50
+#load_speed: 5
+#purge_length: 20
+#purge_speed: 2
+#   mm, mm/s.
 ```
 
 ## Probes and levelling
@@ -288,6 +338,71 @@ points:
 #probe_speed: 5
 #zero_reference_position:
 #   X, Y where the mesh is 0; default raw heights.
+#adaptive_margin: 5
+#   BED_MESH_CALIBRATE ADAPTIVE=1 probes the loaded print's area plus this (mm).
+#adaptive: False
+#   True: a print's own G29 probes adaptively too.
+```
+
+## Motion tuning
+
+Input shaping, skew correction and the resonance test run in the Remora `jointshape`
+component on the X / Y joints of a Remora machine. On a Cartesian machine it sits between
+the joints and their step generators; on CoreXY before the belt mixing (A = X + Y,
+B = X - Y), so it shapes the Cartesian X and Y as Klipper does. {doc}`../using/tuning`.
+
+### [input_shaper]
+
+```ini
+[input_shaper]
+#shaper_freq_x: 0
+#shaper_freq_y: 0
+#   Hz, 0 = off (SHAPER_CALIBRATE recommends them).
+#shaper_type: mzv
+#shaper_type_x:
+#shaper_type_y:
+#   zv, mzv, zvd or ei.
+#damping_ratio_x: 0.1
+#damping_ratio_y: 0.1
+```
+
+### [skew_correction]
+
+```ini
+[skew_correction]
+#xy_skew_factor:
+#   Or the calibration print's measurements (mm):
+#xy_ac:
+#xy_bd:
+#xy_ad:
+```
+
+### [adxl345]
+
+An ADXL345 accelerometer for `SHAPER_CALIBRATE`: the one on a CAN toolhead board (EBB42,
+SB2209) — `cs_pin` on that node — or one on the host's SPI (BTT CB1, Raspberry Pi).
+
+```ini
+[adxl345]
+#cs_pin:
+#   On a CAN node: its chip select, e.g. sb2209:PB12. The node firmware reads the sensor and
+#   the hub sends X / Y to LinuxCNC (two of the board's six process variables).
+#spi_software_sclk_pin:
+#spi_software_mosi_pin:
+#spi_software_miso_pin:
+#   On a node: other SPI pins than the EBB42 / SB2209 ones (PB10, PB11, PB2).
+#spi_device: /dev/spidev1.1
+#spi_speed: 5000000
+#   On the host (no cs_pin): the spidev device and its clock.
+#axes_map: x,y,z
+#   Machine X, Y, Z as chip axes, e.g. -y,x,z.
+#rate: 3200
+#   Hz: 100 … 3200 on a node, 400 … 3200 on the host.
+#accel_per_hz: 75
+#   The test's acceleration (mm/s²) per Hz.
+#min_freq: 5
+#max_freq: 133
+#hz_per_sec: 1
 ```
 
 ## Fans, LEDs and I/O

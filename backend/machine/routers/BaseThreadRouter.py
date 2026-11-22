@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from core.field_masking import ResponseTier
 from models.BaseThreadStateResponse import BaseThreadSnapshotResponse
-from services.BaseThreadService import get_base_thread_service
+from services.machine.BaseThreadService import get_base_thread_service
 
 router = APIRouter(prefix="/api/v1/base-thread", tags=["Base Thread"])
 

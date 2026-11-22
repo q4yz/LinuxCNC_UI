@@ -92,7 +92,41 @@ async function setHomeAxis(axis: "x" | "y" | "z" | "all"): Promise<CommandResult
   );
 }
 
+/** What ``/api/v1/health`` says about the machine backend. */
+export interface MachineHealth {
+  linuxcncConnected: boolean;
+  shuttingDown: boolean;
+}
+
+/**
+ * The machine backend's reachability probe: its health, or ``null`` for
+ * any non-200 (e.g. a 502 from the proxy while it is down); throws on a
+ * timeout or network error.
+ *
+ * A raw ``fetch`` on purpose (the one in a facade): the generated
+ * ``DefaultService.health`` cannot time out or skip the HTTP cache, and a
+ * heartbeat needs both.
+ */
+async function health(timeoutMs: number): Promise<MachineHealth | null> {
+  const response = await fetch("/api/v1/health", {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) return null;
+  const body = (await response.json().catch(() => ({}))) as {
+    linuxcnc_connected?: unknown;
+    shutting_down?: unknown;
+  };
+  // An older backend without the fields is treated as connected.
+  return {
+    linuxcncConnected: body.linuxcnc_connected !== false,
+    shuttingDown: body.shutting_down === true,
+  };
+}
+
 export const machineStateFacade = Object.freeze({
+  health,
   setState,
   setMode,
   sendMdi,

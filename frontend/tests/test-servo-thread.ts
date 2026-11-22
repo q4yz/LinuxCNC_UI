@@ -3,7 +3,7 @@
 // Run with: node --test frontend/tests/test-servo-thread.ts
 //
 // The 10 Hz ``/ws/telemetry`` WebSocket transport lives on
-// ``ServoThreadService`` (``facades/servoThreadFacade.ts``), not on
+// ``ServoThreadFacade`` (``facades/servoThreadFacade.ts``), not on
 // the Pinia store — ``stores/servoThread.ts`` is a thin reactive
 // state container (``status``, ``connectionStatus``,
 // ``lastMessageAt``) with mutation actions
@@ -154,7 +154,7 @@ test("servo-thread facade replays full_state/delta error history through the con
 
 test("servo-thread facade exposes a send() method for inbound WS commands", () => {
   // The /ws/telemetry channel is bidirectional. The machine store's
-  // ``jogContinuous`` calls ``servoThreadService.send({type:
+  // ``jogContinuous`` calls ``servoThreadFacade.send({type:
   // "jog_keepalive", ...})`` every 250 ms instead of POSTing to a
   // REST keepalive endpoint — the difference between 4 RTT/s/axis
   // and zero.

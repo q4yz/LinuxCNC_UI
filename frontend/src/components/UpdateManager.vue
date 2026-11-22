@@ -6,7 +6,7 @@ import { useSystemUpdateStore } from '../stores/systemUpdate'
 import { systemFacade } from '../facades/systemFacade'
 import { CommandResult } from '../entities/common/CommandResult'
 import type { UpdateMode } from '../entities/system'
-import { MachineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
+import { machineLifecycleFacade, type MachineStatus } from '../facades/machineLifecycleFacade'
 import { BaseButton, Icon } from '../ui/index.ts'
 import BaseCard from '../ui/BaseCard.vue'
 import { openInEditor, EDITOR_SOURCES } from '../helpers/openInEditor'
@@ -116,7 +116,7 @@ const updateSystem = async (mode: UpdateMode) => {
 
 async function refreshMachineStatus() {
   try {
-    machineStatus.value = await MachineLifecycleFacade.getStatus()
+    machineStatus.value = await machineLifecycleFacade.getStatus()
   } catch {
     // Status line is informational only — absence renders the
     // "unknown" placeholder instead of an error row.
@@ -128,7 +128,7 @@ async function startDefaultMachine() {
   if (isStartingMachine.value) return
   isStartingMachine.value = true
   try {
-    const status = await MachineLifecycleFacade.startMachine()
+    const status = await machineLifecycleFacade.startMachine()
     machineStatus.value = status
     const name = status.default_machine ?? 'default machine'
     consoleStore.success(`Started ${name} (pid ${status.started_pid ?? '?'})`)
@@ -155,7 +155,7 @@ async function stopMachine() {
   if (isStoppingMachine.value) return
   isStoppingMachine.value = true
   try {
-    const status = await MachineLifecycleFacade.stopMachine()
+    const status = await machineLifecycleFacade.stopMachine()
     machineStatus.value = status
     consoleStore.info('Machine stopped')
   } catch (error) {

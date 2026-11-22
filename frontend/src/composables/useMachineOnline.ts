@@ -50,12 +50,12 @@
 
 import { computed, ref, watch } from "vue";
 
-import { SystemMachineLifecycleService } from "../../generated/api";
 import {
-  MachineLifecycleFacade,
+  machineLifecycleFacade,
   type MachineSessionState,
 } from "../facades/machineLifecycleFacade";
 import { describeErrorOr } from "../core/error-format";
+import { machineStateFacade } from "../facades/machineStateFacade";
 import { useConsoleStore } from "../stores/console";
 
 // Normal heartbeat cadence.
@@ -135,21 +135,8 @@ async function checkMachineOnline(): Promise<void> {
   if (isChecking.value) return;
   isChecking.value = true;
   try {
-    const response = await fetch("/api/v1/health", {
-      method: "GET",
-      cache: "no-store",
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    if (response.ok) {
-      const body = (await response.json().catch(() => ({}))) as {
-        linuxcnc_connected?: unknown;
-        shutting_down?: unknown;
-      };
-      // An older backend without the fields is treated as connected.
-      const health = {
-        linuxcncConnected: body.linuxcnc_connected !== false,
-        shuttingDown: body.shutting_down === true,
-      };
+    const health = await machineStateFacade.health(PROBE_TIMEOUT_MS);
+    if (health !== null) {
       lastHealth.value = health;
       if (health.linuxcncConnected && !health.shuttingDown) {
         consecutiveFailures = 0;
@@ -176,7 +163,7 @@ async function checkMachineOnline(): Promise<void> {
 async function refreshSessionState(): Promise<void> {
   now.value = Date.now();
   try {
-    const status = await MachineLifecycleFacade.getStatus();
+    const status = await machineLifecycleFacade.getStatus();
     sessionState.value = status.state ?? (status.running ? "running" : "stopped");
     sessionOwner.value = status.owner ?? null;
     runningIni.value = status.running_ini ?? null;
@@ -271,7 +258,7 @@ export function useMachineOnline() {
     armHeartbeat(WAKE_INTERVAL_MS);
 
     try {
-      await SystemMachineLifecycleService.startMachineSession();
+      await machineLifecycleFacade.startMachine();
     } catch (err: unknown) {
       const status = (err as { status?: unknown } | null)?.status;
       // 409: LinuxCNC already runs (typically started from another
@@ -283,7 +270,7 @@ export function useMachineOnline() {
         status === 409
           ? describeErrorOr(err, "LinuxCNC is already running.")
           : describeErrorOr(err, "see backend logs");
-      console.error("[useMachineOnline] startMachineSession failed:", err);
+      console.error("[useMachineOnline] startMachine failed:", err);
       useConsoleStore().error(`Failed to start the machine: ${reason}`, {
         popup: true,
         title: "Start machine",
@@ -309,7 +296,7 @@ export function useMachineOnline() {
     if (isStopping.value) return;
     isStopping.value = true;
     try {
-      await MachineLifecycleFacade.stopMachine();
+      await machineLifecycleFacade.stopMachine();
       useConsoleStore().info("LinuxCNC stopped");
     } catch (err: unknown) {
       useConsoleStore().error(

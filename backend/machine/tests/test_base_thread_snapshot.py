@@ -47,7 +47,7 @@ def _reset_mock_program_state() -> None:
 
 def _reset_line_count_cache() -> None:
     """Drop the line-count cache so each test starts from a clean slate."""
-    from services.line_count_cache import unregister_all
+    from services.program.line_count_cache import unregister_all
 
     unregister_all()
 
@@ -61,7 +61,7 @@ def _point_hardware_config_at(monkeypatch, tmp_path) -> None:
     level ``_PROJECT_ROOT``; the seam is the
     :class:`HardwareConfigService` constructor's ``repo_root`` arg.
     """
-    from services.HardwareConfigService import HardwareConfigService
+    from services.machine.HardwareConfigService import HardwareConfigService
 
     original_init = HardwareConfigService.__init__
 

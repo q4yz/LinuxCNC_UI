@@ -10,8 +10,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from exceptions import BadRequestError, NotFoundError, register_command_error_handler
-from services import IoService as io_module
-from services.IoService import IoService
+from services.io import IoService as io_module
+import mappers.io.IoMapper as io_mapper_module
+from dtos.io.IoDto import IoInputPins, IoOutputPins, IoPins
+from services.io.IoService import IoService
 
 
 class FakePin:
@@ -30,18 +32,20 @@ def service(monkeypatch):
     fan = SimpleNamespace(id="fan", speed=FakePin(0.0))
     monkeypatch.setattr(io_module, "get_fans_service", lambda: SimpleNamespace(get_halpins=lambda: [fan]))
     io = IoService()
-    io._outputs = {
-        "case_light": ({"id": "case_light", "pwm": False, "value": 1}, FakePin(False)),
-        "dimmable_light": ({"id": "dimmable_light", "pwm": True, "scale": 100, "value": 25}, FakePin(0.0)),
-    }
-    io._inputs = {"my_custom_button": FakePin(True)}
+    io._pins = IoPins(
+        outputs=(
+            IoOutputPins("case_light", FakePin(False), pwm=False, scale=1.0, start_value=1.0),
+            IoOutputPins("dimmable_light", FakePin(0.0), pwm=True, scale=100.0, start_value=25.0),
+        ),
+        inputs=(IoInputPins("my_custom_button", FakePin(True)),),
+    )
     io._preloaded = True
     return io, fan
 
 
 def test_outputs_start_at_their_profile_value(service):
     io, _fan = service
-    io.apply_start_values()
+    io.apply_initial()
     state = io.state()
     assert {o.id: o.value for o in state.outputs} == {"case_light": 1.0, "dimmable_light": 25.0}
     assert [(o.id, o.pwm, o.scale) for o in state.outputs] == [
@@ -82,12 +86,13 @@ def test_preload_creates_bit_pins_for_switches_and_float_pins_for_pwm(monkeypatc
             return FakePin()
         return make
 
-    monkeypatch.setattr(io_module, "ReadWriteDynamicHalPin", fake_pin("rw"))
-    monkeypatch.setattr(io_module, "ReadOnlyDynamicHalPin", fake_pin("ro"))
-    IoService().preload_hal_pins({
+    monkeypatch.setattr(io_mapper_module, "ReadWriteDynamicHalPin", fake_pin("rw"))
+    monkeypatch.setattr(io_mapper_module, "ReadOnlyDynamicHalPin", fake_pin("ro"))
+    monkeypatch.setattr(io_module, "HardwareConfigService", lambda: SimpleNamespace(load_payload=lambda: {
         "output_pins": [{"id": "case_light"}, {"id": "dimmable_light", "pwm": True}],
         "input_pins": [{"id": "my_custom_button"}],
-    })
+    }))
+    IoService().preload_hal_pins()
     assert created == [
         ("rw", "case_light", "BIT"), ("rw", "dimmable_light", "FLOAT"), ("ro", "my_custom_button", "BIT"),
     ]
@@ -118,17 +123,18 @@ def test_a_latched_output_is_one_event_and_reads_back_its_state(monkeypatch):
         pins[name] = FakePin(False if hal_type.name == "BIT" else 0.0)
         return pins[name]
 
-    monkeypatch.setattr(io_module, "ReadWriteDynamicHalPin", make)
-    monkeypatch.setattr(io_module, "ReadOnlyDynamicHalPin", make)
+    monkeypatch.setattr(io_mapper_module, "ReadWriteDynamicHalPin", make)
+    monkeypatch.setattr(io_mapper_module, "ReadOnlyDynamicHalPin", make)
     monkeypatch.setattr(io_module, "get_fans_service", lambda: SimpleNamespace(get_halpins=lambda: []))
     io = IoService()
-    io.preload_hal_pins({
+    monkeypatch.setattr(io_module, "HardwareConfigService", lambda: SimpleNamespace(load_payload=lambda: {
         "output_pins": [{"id": "case_light", "value": 1}],
         "input_pins": [{"id": "door", "rising_halpin_set": [{"output": "case_light", "value": 1}]}],
-    })
+    }))
+    io.preload_hal_pins()
     assert set(pins) == {"case_light", "case_light-set", "case_light-state", "door"}
 
-    io.apply_start_values()
+    io.apply_initial()
     assert (pins["case_light"].value, pins["case_light-set"].value) == (1.0, True)
     io.set_value("case_light", 0)
     assert (pins["case_light"].value, pins["case_light-set"].value) == (0.0, False)  # toggled again

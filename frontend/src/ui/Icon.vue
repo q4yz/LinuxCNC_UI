@@ -27,6 +27,16 @@ import { computed } from "vue";
 // usages are decorative next to a text label).
 const ICONS = {
   // --- Core UI Icons ---
+  chat: {
+    label: "Assistant",
+    path: "M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM2.25 12c0 4.556 4.03 8.25 9 8.25a9.764 9.764 0 0 0 2.555-.337A5.972 5.972 0 0 0 18.6 21a5.969 5.969 0 0 1-.474-2.09C20.48 17.37 21.75 14.8 21.75 12c0-4.556-4.03-8.25-9-8.25s-9.75 3.694-9.75 8.25Z",
+    stroke: true,
+  },
+  send: {
+    label: "Send",
+    path: "M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5",
+    stroke: true,
+  },
   close: {
     label: "Close",
     path: "M6 18 18 6M6 6l12 12",
@@ -208,6 +218,11 @@ const ICONS = {
   mesh: {
     label: "Bed mesh",
     path: "M4 4h16v16H4z M4 9.33h16 M4 14.67h16 M9.33 4v16 M14.67 4v16",
+    stroke: true,
+  },
+  calibration: {
+    label: "Calibration",
+    path: "M4 20h16 M6 20V10 M10 20V6 M14 20v-8 M18 20V4 M3 4l3 3 3-3",
     stroke: true,
   },
   probing: {

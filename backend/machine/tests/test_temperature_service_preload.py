@@ -19,8 +19,8 @@ under ``HalPin``'s process-wide registry.
 from __future__ import annotations
 
 from dtos.tools import ExtruderPins, HeaterPins
-import services.TemperatureService as temperature_service_mod
-import services.ToolsService as tools_service_mod
+import services.temperature.TemperatureService as temperature_service_mod
+import services.tools.ToolsService as tools_service_mod
 
 _BED_TOOL = {
     "id": "heater_dedup_test_bed",

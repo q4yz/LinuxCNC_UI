@@ -1,7 +1,7 @@
 """Tests for the hardware config loader.
 
-The loader lives in :mod:`services.HardwareConfigService` and is
-re-exported through :mod:`services.temperature_config_mapper` as
+The loader lives in :mod:`services.machine.HardwareConfigService` and is
+re-exported through :mod:`services.temperature.temperature_config` as
 :func:`get_temperature_sensors`. The helper resolves the default
 machine's ``hardware.json`` path (overridable via ``active_path``)
 and returns a list of normalised sensor dicts.
@@ -14,7 +14,7 @@ from tests._module_app_factory import build_module_app
 import json
 from pathlib import Path
 
-from services.temperature_config_mapper import get_temperature_sensors
+from services.temperature.temperature_config import get_temperature_sensors
 
 
 # ---------------------------------------------------------------------- #

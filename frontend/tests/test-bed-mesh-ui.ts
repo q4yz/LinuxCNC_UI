@@ -13,9 +13,10 @@ import { fileURLToPath } from "node:url";
 const src = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const read = (rel: string) => readFileSync(resolve(src, rel), "utf-8");
 
-test("the page is routed and in the sidebar without a running machine", () => {
-  assert.match(read("router/index.ts"), /path: '\/bedmesh', name: 'bedmesh', component: BedMeshView/);
-  assert.match(read("components/AppSidebar.vue"), /id: 'bedmesh'[^}]*activeMachineOnly: false/);
+test("the bed mesh lives on the Calibration tab (its Details pop-up), /bedmesh redirects", () => {
+  assert.match(read("router/index.ts"), /path: '\/bedmesh', redirect: \{ name: 'calibration' \}/);
+  assert.match(read("views/CalibrationView.vue"), /<BedMeshView \/>/);
+  assert.match(read("components/AppSidebar.vue"), /id: 'calibration'[^}]*activeMachineOnly: false/);
 });
 
 test("the facade splits meshes (system service) from the switch (machine backend)", () => {

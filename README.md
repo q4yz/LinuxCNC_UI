@@ -40,7 +40,9 @@ A web-based operator interface for LinuxCNC. The backend wraps the LinuxCNC Pyth
 
 ## Install
 
-Just execute `install.sh` on the LinuxCNC machine:
+**Easiest: a ready-made SD card image** for the BigTreeTech CB1 or a Raspberry Pi 3 / 4 / 400 / 5 (CM4 / CM5) with Armbian, a PREEMPT_RT kernel, LinuxCNC 2.9.4, the UI and the Remora HAL components: download it from the [latest image release](https://github.com/q4yz/LinuxCNC_UI-images/releases/latest) and flash it with balenaEtcher, Raspberry Pi Imager (*Use custom*) or Rufus (DD mode). Login `remora` / `remora`, UI at <http://remora.local>; change the passwords after the first login. The images are not yet tested on hardware. Details: [Installation](docs/getting-started/installation.md).
+
+On your own LinuxCNC system, execute `install.sh`:
 
 ```bash
 sudo ./install.sh                  # builds the checked-out commit on the board (needs ~2 GB RAM)
@@ -78,7 +80,7 @@ The machine answers the OctoPrint API that slicers already support, so G-code ca
 - **OrcaSlicer / PrusaSlicer:** Printer → *Physical printer* / *Connection* → host type **OctoPrint**, hostname `http://<machine-ip>`. The API key can be anything (it is required but not checked). *Test* should answer "connected".
 - **Cura:** install the **OctoPrint Connection** plugin from the Marketplace, then Printer → *Manage printers* → *Connect OctoPrint* → *Add* with the machine's IP, port 80, and any API key.
 
-*Upload and print* (Orca) or *print after upload* (Cura) only **loads** the file into LinuxCNC, and only while it runs. Nothing is ever started from the network; start the program at the machine.
+*Upload and print* (Orca) or *print after upload* (Cura) loads the file into LinuxCNC (while it runs). With **Settings → Slicer → Start prints sent from the slicer** switched on it also starts the print, like the Start button (the file's homing / levelling first); off by default, then nothing is ever started from the network.
 
 ## Releasing
 

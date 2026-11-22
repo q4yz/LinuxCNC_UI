@@ -108,5 +108,5 @@ test("DashboardView shows the ToolPanel by default (a page-layout panel)", () =>
   assert.match(text, /<PageLayout :setting="dashboardLayout" \/>/);
   assert.doesNotMatch(text, /toolsMounted/);
   assert.doesNotMatch(text, /registry\.modules\.has\(\s*['"]tools['"]/);
-  assert.match(read(resolve(repoRoot, "frontend/src/layout/PageLayout.vue")), /  tools: ToolPanel,/);
+  assert.match(read(resolve(repoRoot, "frontend/src/layout/panelComponents.ts")), /  tools: ToolPanel,/);
 });

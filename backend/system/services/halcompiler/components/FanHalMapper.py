@@ -25,9 +25,10 @@ exclusive control models, never both on the same fan:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Mapping
 
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Fan, TemperatureSensor, Tool
 from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
@@ -52,29 +53,27 @@ class FanHalMapper:
 
     @staticmethod
     def to_fragment(
-        fan: dict[str, Any],
-        heaters_by_id: dict[str, dict[str, Any]],
-        sensors_by_id: dict[str, dict[str, Any]],
+        fan: Fan,
+        heaters_by_id: Mapping[str, Tool],
+        sensors_by_id: Mapping[str, TemperatureSensor],
     ) -> HalFragment:
-        pin = fan.get("pin")
-        if not pin:
+        if not fan.pin:
             return HalFragment()
-
-        if fan.get("kind") == "heater":
-            return FanHalMapper._heater_fragment(fan, pin, heaters_by_id, sensors_by_id)
-        return FanHalMapper._part_fragment(fan, pin)
+        if fan.kind == "heater":
+            return FanHalMapper._heater_fragment(fan, heaters_by_id, sensors_by_id)
+        return FanHalMapper._part_fragment(fan)
 
     # -- kind: part ---------------------------------------------------- #
 
     @staticmethod
-    def _part_fragment(fan: dict[str, Any], pin: str) -> HalFragment:
-        fan_id = str(fan["id"])
+    def _part_fragment(fan: Fan) -> HalFragment:
+        fan_id = fan.id
         return HalFragment(
             requests=[
                 PinRequest(
                     signal=f"{fan_id}-SP",
                     role=PinRole.ANALOG_OUT,
-                    pin=PinStringMapper.from_string(pin),
+                    pin=PinStringMapper.from_string(fan.pin),
                     owner=fan_id,
                 )
             ]
@@ -84,14 +83,13 @@ class FanHalMapper:
 
     @staticmethod
     def _heater_fragment(
-        fan: dict[str, Any],
-        pin: str,
-        heaters_by_id: dict[str, dict[str, Any]],
-        sensors_by_id: dict[str, dict[str, Any]],
+        fan: Fan,
+        heaters_by_id: Mapping[str, Tool],
+        sensors_by_id: Mapping[str, TemperatureSensor],
     ) -> HalFragment:
-        fan_id = str(fan["id"])
-        heater = heaters_by_id.get(str(fan.get("heater") or ""))
-        sensor_id = heater.get("sensor") if heater else None
+        fan_id = fan.id
+        heater = heaters_by_id.get(fan.heater or "")
+        sensor_id = heater.sensor if heater else None
         if not sensor_id or sensor_id not in sensors_by_id:
             # Honest gap: nothing to gate the fan on. The referenced
             # heater declares no sensor (or the reference itself is
@@ -99,8 +97,8 @@ class FanHalMapper:
             # not this mapper's, which trusts a validated payload).
             return HalFragment()
 
-        heater_temp = fan.get("heater_temp", _DEFAULT_HEATER_TEMP)
-        fan_speed = fan.get("fan_speed", _DEFAULT_FAN_SPEED)
+        heater_temp = _DEFAULT_HEATER_TEMP if fan.heater_temp is None else fan.heater_temp
+        fan_speed = _DEFAULT_FAN_SPEED if fan.fan_speed is None else fan.fan_speed
         wcomp = f"wcomp-{fan_id}"
         conv = f"conv-{fan_id}"
         scale = f"scale-{fan_id}"
@@ -137,7 +135,7 @@ class FanHalMapper:
                 PinRequest(
                     signal=f"{fan_id}-SP",
                     role=PinRole.ANALOG_OUT,
-                    pin=PinStringMapper.from_string(pin),
+                    pin=PinStringMapper.from_string(fan.pin),
                     owner=fan_id,
                 )
             ],

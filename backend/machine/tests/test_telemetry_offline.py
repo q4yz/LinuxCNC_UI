@@ -41,7 +41,7 @@ from fastapi import WebSocketDisconnect
 
 import importlib
 
-state_service_mod = importlib.import_module("services.StateService")
+state_service_mod = importlib.import_module("services.machine.StateService")
 
 
 async def _drive_one_tick():
@@ -51,7 +51,7 @@ async def _drive_one_tick():
     a no-op then cancel the wrapping task after one round so the
     real test only pays for one cycle.
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
     from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
     svc = ServoThreadService()
@@ -86,7 +86,7 @@ def test_telemetry_loop_survives_one_offline_tick():
     this test pins that ``telemetry_loop`` survives when the
     underlying channel helpers report offline.
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
     from routers import ServoThreadRouter as ws_mod  # noqa: F401
 
     with patch.object(state_service_mod, "get_stat_channel", return_value=None), \

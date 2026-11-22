@@ -21,6 +21,16 @@ Homing sets the extruder's position in place, a one-period `vel-cmd`
 spike: the component ignores the joint while it homes and only stops a
 move that lasted `min-extrude-time` (50 ms).
 
+**Flow** (``M221``, the UI's flow %): on a Remora board the extruder
+joint's position command and feedback go through the component, which
+scales the extruder's moves by ``flow-percent`` (``webgui.flow``) —
+rebased on every change, so a new factor never jumps the position:
+
+    net j<n>pos-cmd joint.<n>.motor-pos-cmd => extruder-<id>.pos-cmd-in
+    net j<n>pos-cmd-flow extruder-<id>.pos-cmd-out => remora.joint.<n>.pos-cmd
+    net j<n>pos-fb remora.joint.<n>.pos-fb => extruder-<id>.pos-fb-in
+    net j<n>pos-fb-flow extruder-<id>.pos-fb-out => joint.<n>.motor-pos-fb
+
 `halui.abort` stops the program / MDI move, as Klipper refuses an
 "extrude below minimum temp"; the component prints the error. The motor
 enable is not gated: a disabled stepper would let LinuxCNC's commanded
@@ -29,55 +39,56 @@ without a motion joint gets no guard.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Iterable, Optional
 
+from models.machineconfig.HardwareJsonModels import Stepper, Tool
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment
 
 #: Klipper's default ``min_extrude_temp`` (°C).
 DEFAULT_MIN_EXTRUDE_TEMP = 170.0
 
 
-def _component(tool_id: str) -> str:
-    return f"extruder-{tool_id}"
-
-
-def guarded_joint(payload: dict[str, Any], tool: dict[str, Any]) -> Optional[int]:
-    """The extruder ``tool``'s joint number when it gets a guard (a sensor
-    and a motion joint), else ``None``."""
-    if tool.get("type") != "extruder" or not tool.get("sensor"):
-        return None
-    for joint in payload.get("joints") or []:
-        if isinstance(joint, dict) and joint.get("id") == tool.get("id") and joint.get("joint_number") is not None:
-            return int(joint["joint_number"])
-    return None
-
-
 class ExtruderGuardHalMapper:
     @staticmethod
-    def to_fragment(tool: dict[str, Any], joint_number: int) -> HalFragment:
-        tool_id = str(tool["id"])
-        comp = _component(tool_id)
-        min_temp = tool.get("min_extrude_temp")
-        min_temp = DEFAULT_MIN_EXTRUDE_TEMP if min_temp is None else float(min_temp)
+    def component(tool_id: str) -> str:
+        """The tool's ``extruder`` component instance."""
+        return f"extruder-{tool_id}"
+
+    @staticmethod
+    def guarded_joint(tool: Tool, joints: Iterable[Stepper]) -> Optional[int]:
+        """The extruder ``tool``'s joint number when it gets a guard (a sensor
+        and a motion joint), else ``None``."""
+        if tool.type != "extruder" or not tool.sensor:
+            return None
+        return next((j.joint_number for j in joints if j.id == tool.id), None)
+
+    @staticmethod
+    def to_fragment(tool: Tool, joint_number: int, flow: bool = False) -> HalFragment:
+        """``flow``: route the joint's position through the component
+        (Remora: `RemoraStepperHalMapper` leaves those nets out)."""
+        tool_id = tool.id
+        comp = ExtruderGuardHalMapper.component(tool_id)
+        min_temp = DEFAULT_MIN_EXTRUDE_TEMP if tool.min_extrude_temp is None else tool.min_extrude_temp
         fragment = HalFragment()
         fragment.loadrt.append(f"loadrt extruder names={comp}")
         # after motion (order 1): reads this period's vel-cmd
         fragment.addf.append(Addf(comp, SERVO_THREAD, order=2))
         fragment.setp.append(f"setp {comp}.min-extrude-temp {min_temp:g}")
-        fragment.nets.append(f"net {tool['sensor']}-PV => {comp}.current-temp")
+        if tool.pressure_advance_smooth_time is not None:
+            fragment.setp.append(f"setp {comp}.pa-smooth-time {tool.pressure_advance_smooth_time:g}")
+        fragment.nets.append(f"net {tool.sensor}-PV => {comp}.current-temp")
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
         # homing sets the position in place: no guard meanwhile
         fragment.nets.append(f"net {tool_id}-homing joint.{joint_number}.homing => {comp}.homing")
+        if flow:
+            n = joint_number
+            fragment.nets.extend([
+                f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => {comp}.pos-cmd-in",
+                f"net j{n}pos-cmd-flow {comp}.pos-cmd-out => remora.joint.{n}.pos-cmd",
+                f"net j{n}pos-fb remora.joint.{n}.pos-fb => {comp}.pos-fb-in",
+                f"net j{n}pos-fb-flow {comp}.pos-fb-out => joint.{n}.motor-pos-fb",
+            ])
         return fragment
 
-    @staticmethod
-    def webgui_lines(tool: dict[str, Any]) -> list[str]:
-        tool_id = str(tool["id"])
-        return [
-            f"# Cold-extrusion guard: {tool_id} (machine.hal's extruder-{tool_id})",
-            f"net {tool_id}-cold-extrude {_component(tool_id)}.cold-extrude => halui.abort",
-            "",
-        ]
 
-
-__all__ = ["DEFAULT_MIN_EXTRUDE_TEMP", "ExtruderGuardHalMapper", "guarded_joint"]
+__all__ = ["DEFAULT_MIN_EXTRUDE_TEMP", "ExtruderGuardHalMapper"]

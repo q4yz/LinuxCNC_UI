@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
-from services.ServoThreadService import get_servo_thread_service
+from services.machine.ServoThreadService import get_servo_thread_service
 
 logger = logging.getLogger("backend.routers.servo_thread")
 router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])
@@ -22,7 +22,9 @@ router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])
     response_model=WSEnvelope[ServoThreadStateResponse],
     summary="Export WebSocket Schema (Do Not Call)",
     description="This is a dummy endpoint used strictly to force the WSEnvelope schema into the OpenAPI spec for frontend code generation.",
-    include_in_schema=True
+    include_in_schema=True,
+    # Schema export only (it raises): not a tool for the agent.
+    openapi_extra={"x-mcp": False},
 )
 def _export_ws_schema():
     """Dummy endpoint to export WebSocket payload schemas."""

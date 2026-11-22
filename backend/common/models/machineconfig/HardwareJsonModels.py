@@ -215,6 +215,9 @@ class Driver(BaseModel):
     interpolate: bool | None = None
     hold_current: float | None = None
     sense_resistor: float | None = None
+    # sensorless homing: DIAG's MCU input, StallGuard threshold (SGTHRS)
+    diag_pin: str | None = None
+    stall_sensitivity: int | None = None
 
 
 class Endstop(BaseModel):
@@ -336,8 +339,8 @@ class OutputPin(BaseModel):
     pwm: bool = False
     value: float = 0.0
     shutdown_value: float = 0.0
-    cycle_time: float = 0.1
-    scale: float = 1.0
+    cycle_time: float = Field(0.1, gt=0)
+    scale: float = Field(1.0, gt=0)
 
 
 class HalpinSet(BaseModel):
@@ -379,6 +382,94 @@ class BedMesh(BaseModel):
     probe_speed: float = 5.0
     probe_min_z: float = 0.0
     zero_reference_position: list[float] | None = None
+    # adaptive mesh (BED_MESH_CALIBRATE ADAPTIVE=1; ``adaptive``: the print's own G29)
+    adaptive_margin: float = 5.0
+    adaptive: bool = False
+
+
+class InputShaper(BaseModel):
+    """``[input_shaper]``: per axis a shaper type and frequency (Hz, 0 =
+    off) and the damping ratio, for the ``jointshape`` component."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    freq_x: float = 0.0
+    freq_y: float = 0.0
+    type_x: Literal["zv", "mzv", "zvd", "ei"] = "mzv"
+    type_y: Literal["zv", "mzv", "zvd", "ei"] = "mzv"
+    damping_x: float = 0.1
+    damping_y: float = 0.1
+
+
+class SkewCorrection(BaseModel):
+    """``[skew_correction]``: the XY skew factor (``SET_SKEW``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    xy_factor: float = 0.0
+
+
+class Adxl345(BaseModel):
+    """``[adxl345]``: the accelerometer of the resonance test. Without
+    ``cs_pin`` it is on the host's SPI (``spi_device``); with one, on a
+    CAN node (``sclk_pin`` / ``mosi_pin`` / ``miso_pin``: ``None`` for the
+    EBB42 / SB2209 defaults)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spi_device: str = "/dev/spidev1.1"
+    spi_speed: int = 5_000_000
+    axes_map: str = "x,y,z"
+    rate: int = 3200
+    accel_per_hz: float = 75.0
+    min_freq: float = 5.0
+    max_freq: float = 133.0
+    hz_per_sec: float = 1.0
+    cs_pin: str | None = None
+    sclk_pin: str | None = None
+    mosi_pin: str | None = None
+    miso_pin: str | None = None
+
+
+class FirmwareRetraction(BaseModel):
+    """``[firmware_retraction]`` (mm, mm/s): a slicer's bare G10 / G11."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retract_length: float = Field(0.0, ge=0)
+    retract_speed: float = Field(20.0, gt=0)
+    unretract_extra_length: float = Field(0.0, ge=0)
+    unretract_speed: float = Field(10.0, gt=0)
+
+
+class FilamentChange(BaseModel):
+    """What ``M600`` does (mm, mm/s; ``park_x`` / ``park_y`` in machine
+    coordinates)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    park_x: float = 0.0
+    park_y: float = 0.0
+    z_lift: float = 10.0
+    unload_length: float = 50.0
+    unload_speed: float = 10.0
+    load_length: float = 50.0
+    load_speed: float = 5.0
+    purge_length: float = 20.0
+    purge_speed: float = 2.0
+
+
+class ZVirtualEndstop(BaseModel):
+    """Z homes on the probe (``probe:z_virtual_endstop``): a probe move
+    down over ``distance`` at ``speed``, back ``retract``, again at
+    ``second_speed`` (mm, mm/s)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    speed: float
+    second_speed: float
+    retract: float
+    distance: float
 
 
 class HomingOverride(BaseModel):
@@ -513,6 +604,10 @@ class McuInfo(BaseModel):
     reset_pin: str | None = None
     reset_chip: str | None = None
     sync_config: bool | None = None
+    # The board's MCU family, derived from `board` by the parser
+    # (`chip_for_board`): "lpc17xx" (SKR v1.3 / v1.4, MKS SBASE, ...) loads
+    # remora_lpc and has no SD-card config sync; None: STM32 (remora-spi).
+    chip: Literal["stm32", "lpc17xx"] | None = None
     # CAN — a remora-spi hub's `can_bitrate` / `can_status_bit`, a
     # remora-can node's `canbus_uuid` / `can_node` / `can_hub` /
     # `mandatory`; present only when declared.
@@ -631,6 +726,10 @@ class Tool(BaseModel):
     # Klipper's cold-extrusion guard (°C): no extruder move below it
     # (``ColdExtrusionGuard``). ``None``: the default 170.
     min_extrude_temp: float | None = None
+    # Klipper's pressure advance (mm per mm/s) and smoothing (s); the
+    # extruder component's starting value (SET_PRESSURE_ADVANCE changes it).
+    pressure_advance: float | None = None
+    pressure_advance_smooth_time: float | None = None
     filament_diameter: float | None = None
     nozzle_diameter: float | None = None
 
@@ -694,6 +793,15 @@ class HardwareJson(BaseModel):
 
     # ``None`` for a machine without ``[bed_mesh]``. See :class:`BedMesh`.
     bed_mesh: "BedMesh | None" = None
+    # [firmware_retraction] (the G-code converter's G10 / G11) and what
+    # M600 does (machine.ini [FILAMENT_CHANGE], m600.ngc): mm and mm/s.
+    firmware_retraction: "FirmwareRetraction | None" = None
+    # [input_shaper] / skew / [adxl345]: the jointshape component on X / Y
+    # and the resonance test (ResonanceService).
+    input_shaper: "InputShaper | None" = None
+    skew_correction: "SkewCorrection | None" = None
+    adxl345: "Adxl345 | None" = None
+    filament_change: "FilamentChange | None" = None
 
     # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
     homing_override: "HomingOverride | None" = None
@@ -703,7 +811,7 @@ class HardwareJson(BaseModel):
 
     # Z homes on the probe (``probe:z_virtual_endstop``): speed,
     # second_speed (mm/s), retract, distance (mm). ``None``: a Z switch.
-    z_virtual_endstop: "dict[str, float] | None" = None
+    z_virtual_endstop: "ZVirtualEndstop | None" = None
 
     # ``[neopixel NAME]`` chains, in declaration order. See :class:`Led`.
     leds: list[Led] = Field(default_factory=list)
@@ -936,7 +1044,13 @@ HardwareJson.model_rebuild(force=True)
 
 
 __all__ = [
+    "Adxl345",
     "Axis",
+    "FilamentChange",
+    "FirmwareRetraction",
+    "InputShaper",
+    "SkewCorrection",
+    "ZVirtualEndstop",
     "Driver",
     "Endstop",
     "Estop",

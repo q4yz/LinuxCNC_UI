@@ -27,7 +27,7 @@ import { BaseButton, Drawer, Icon } from "../ui/index.ts";
 import MachineGate from "../components/machine/MachineGate.vue";
 import { useMachineOnline } from "../composables/useMachineOnline";
 import { useToast } from "../core/toast";
-import HalVisualService from "../facades/halFacade";
+import { halFacade } from "../facades/halFacade";
 import { closeToPrevious } from "../helpers/closeToPrevious";
 import { BLOCK_DEFINITIONS, BLOCK_MENU } from "./hal-visual-editor/blockDefinitions";
 import { nodeHeight, portAnchor, NODE_WIDTH } from "./hal-visual-editor/layout";
@@ -121,7 +121,7 @@ async function saveEditor(): Promise<void> {
     // what reaches the file.
     const autoNamed = canvas.autoNameUnnamedSignals();
 
-    const result = await HalVisualService.saveLayout(file.value, canvas.serializeSignals());
+    const result = await halFacade.saveLayout(file.value, canvas.serializeSignals());
     if (!result) {
       consoleStore.error(`Failed to save '${file.value}'.`, { popup: true });
       return;
@@ -852,7 +852,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             enter-from-class="opacity-0 translate-y-2"
             leave-to-class="opacity-0 translate-y-2"
           >
-            <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 overflow-hidden w-48" data-test="hal-block-menu">
+            <div v-if="menuOpen" class="rounded-lg border border-gray-600 bg-gray-800 overflow-hidden w-48" data-test="hal-block-menu">
               <button
                 v-for="kind in BLOCK_MENU"
                 :key="kind"

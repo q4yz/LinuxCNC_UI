@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useServoThreadStore } from '../stores/servoThread'
+import BaseCard from '../ui/BaseCard.vue'
 
 // The raw telemetry payload lives in ``useServoThreadStore`` after
 // the servo/base-thread split — ``stores/machine.ts`` no longer
@@ -64,15 +65,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-    <!-- Header -->
-    <div class="bg-gray-700/50 px-4 py-2 border-b border-gray-600 flex justify-between items-center">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm">Raw Machine State (3s Snapshot)</h2>
-    </div>
-    
-    <!-- Code Area -->
+  <BaseCard title="Raw Machine State (3s Snapshot)" class="overflow-hidden">
     <div class="p-4 bg-gray-900 overflow-x-auto">
       <pre class="text-xs text-green-400 font-mono"><code>{{ formatState(throttledState) }}</code></pre>
     </div>
-  </div>
+  </BaseCard>
 </template>

@@ -20,6 +20,8 @@ export function toFileEntry(wire: FileEntryResponse | null | undefined): FileEnt
     modified: wire.modified ?? null,
     readOnly: wire.read_only,
     hasMarker: wire.has_marker,
+    status: wire.status ?? null,
+    message: wire.message ?? null,
   });
 }
 

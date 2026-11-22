@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from exceptions import BadRequestError, NotFoundError
+from models.machineconfig.HardwareJsonModels import McuInfo
+from models.machineconfig.HardwareRecords import HardwareRecords
 from services.halcompiler.mcus.RemoraRouterMapper import RemoraRouterMapper
 
 #: firmware.bin is ~100 kB in 44-byte frames — about a minute at 1 MHz.
@@ -62,7 +64,7 @@ class RemoraBoardUploader:
         return output
 
     @staticmethod
-    def _board(file: Path) -> dict[str, Any]:
+    def _board(file: Path) -> McuInfo:
         """The remora-spi MCU ``file`` belongs to, from ``hardware.json`` next to it."""
         try:
             hardware = json.loads((file.parent / "hardware.json").read_text(encoding="utf-8"))
@@ -70,13 +72,10 @@ class RemoraBoardUploader:
             raise BadRequestError(
                 f"No readable hardware.json next to {file.name} — regenerate the machine"
             ) from exc
-        boards = [
-            mcu for mcu in hardware.get("mcus") or []
-            if isinstance(mcu, dict) and mcu.get("connection") == "remora-spi"
-        ]
+        boards = [mcu for mcu in HardwareRecords.mcus(hardware) if mcu.connection == "remora-spi"]
         match = _CONFIG_FILE.match(file.name)
         if match:
-            board = next((mcu for mcu in boards if mcu.get("id") == match.group("mcu")), None)
+            board = next((mcu for mcu in boards if mcu.id == match.group("mcu")), None)
             if board is None:
                 raise BadRequestError(f"{file.name}: no remora-spi MCU '{match.group('mcu')}' in hardware.json")
             return board

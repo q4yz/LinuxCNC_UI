@@ -1,197 +1,51 @@
+// Tools facade: spindle / extruder commands and heater targets
+// (``/api/v1/modules/tools``). Every call resolves to a ``CommandResult``
+// (failures included) so the store reports them uniformly. The tool list
+// comes with the base-thread snapshot.
+
 import { ModulesToolsService } from "../../generated/api/services/ModulesToolsService";
-import { BaseThreadService } from "../../generated/api/services/BaseThreadService";
-import { CommandResult } from "../entities/common/CommandResult";
-import { ToolList } from "../entities/tools/ToolList";
-import {
-  toSpindleCommand,
-  toExtruderCommand,
-  toHeaterCommand,
-  toToolList,
-  type AnyToolWire,
-} from "../mappers/toolsMapper";
-import { describeError, errorStatus } from "../core/error-format";
-import {
-  SpindleDigitalControlRequest,
-  type SpindleDigitalAction,
-} from "../entities/tools/SpindleDigital";
-import { HeaterControlRequest } from "../entities/tools/Heater";
-import {
-  ExtruderControlRequest,
-  type ExtruderAction,
-  type HeaterAction,
-} from "../entities/tools/Extruder";
 import type { ToolCommandResponse } from "../../generated/api/models/ToolCommandResponse";
-import type { HeaterCommandStateResponse } from "../../generated/api/models/HeaterCommandStateResponse";
+import { CommandResult } from "../entities/common/CommandResult";
+import { describeError, errorStatus } from "../core/error-format";
+import { SpindleDigitalControlRequest } from "../entities/tools/SpindleDigital";
+import { HeaterControlRequest } from "../entities/tools/Heater";
+import { ExtruderControlRequest } from "../entities/tools/Extruder";
+import { toSpindleCommand, toExtruderCommand, toHeaterCommand } from "../mappers/toolsMapper";
 
-export class ToolsService {
-  // --- Reads -------------------------------------------------------------
+function fromToolCommand(response: ToolCommandResponse, fallbackId: string): CommandResult {
+  return CommandResult.success({ commandId: response.tool_id ?? fallbackId, message: response.command ?? "" });
+}
 
-  /**
-   * Pure mapper — wraps `toToolList` so the facade owns the
-   * wire-shape → entity translation. The base-thread polling loop
-   * calls this on every tick; the mapper is idempotent and cheap.
-   *
-   * The base-thread snapshot endpoint returns a record keyed by tool
-   * id, while older call sites pass a bare array. Accept either.
-   */
-  static mapToolsWire(
-    wires:
-      | AnyToolWire[]
-      | Array<Record<string, any>>
-      | Record<string, AnyToolWire>
-      | Record<string, any>
-      | null
-      | undefined,
-  ): ToolList {
-    if (Array.isArray(wires)) return toToolList(wires as AnyToolWire[]);
-    return toToolList(wires as Record<string, AnyToolWire>);
-  }
+function failure(err: unknown, toolId: string): CommandResult {
+  return CommandResult.failure(describeError(err), { commandId: toolId, statusCode: errorStatus(err) });
+}
 
-  /**
-   * Pull a fresh tool list straight from the snapshot endpoint.
-   * Used by `toolStore.refreshToolsList` for post-deploy refreshes.
-   */
-  static async fetchTools(): Promise<ToolList> {
-    const snapshot = await BaseThreadService.getBaseThreadSnapshot();
-    const tools = snapshot && Array.isArray(snapshot.tools)
-      ? (snapshot.tools as AnyToolWire[])
-      : ([] as AnyToolWire[]);
-    return this.mapToolsWire(tools);
-  }
-
-  // --- Writes ------------------------------------------------------------
-
-  /**
-   * Dispatch a spindle control command.
-   */
-  static async controlSpindle(request: SpindleDigitalControlRequest): Promise<CommandResult> {
-    const cmd = toSpindleCommand(request);
-    try {
-      const response = await ModulesToolsService.controlSpindle(cmd);
-      return ToolsService.fromToolCommandResponse(response, request.toolId);
-    } catch (err: unknown) {
-      return CommandResult.failure(describeError(err), {
-        commandId: request.toolId,
-        statusCode: errorStatus(err),
-      });
-    }
-  }
-
-  /**
-   * Dispatch an extruder control command.
-   */
-  static async controlExtruder(request: ExtruderControlRequest): Promise<CommandResult> {
-    const cmd = toExtruderCommand(request);
-    try {
-      const response = await ModulesToolsService.controlExtruder(cmd);
-      return ToolsService.fromToolCommandResponse(response, request.toolId);
-    } catch (err: unknown) {
-      return CommandResult.failure(describeError(err), {
-        commandId: request.toolId,
-        statusCode: errorStatus(err),
-      });
-    }
-  }
-
-  /**
-   * Set a heater's target temperature.
-   */
-  static async setTarget(request: HeaterControlRequest): Promise<CommandResult> {
-    const cmd = toHeaterCommand(request);
-    try {
-      const response = await ModulesToolsService.setToolTarget(request.toolId, cmd);
-      return ToolsService.fromHeaterCommandResponse(response, request.toolId);
-    } catch (err: unknown) {
-      return CommandResult.failure(describeError(err), {
-        commandId: request.toolId,
-        statusCode: errorStatus(err),
-      });
-    }
-  }
-
-  /**
-   * Success-path constructor for spindle / extruder commands.
-   * Centralises the wire-field → ``CommandResult`` translation so
-   * every call site uses the same defensive defaults and the typed
-   * generated response shape (no more ``(response as any)`` casts).
-   */
-  private static fromToolCommandResponse(
-    response: ToolCommandResponse,
-    fallbackCommandId: string,
-  ): CommandResult {
-    return CommandResult.success({
-      commandId: response.tool_id ?? fallbackCommandId,
-      message: response.command ?? "",
-    });
-  }
-
-  /**
-   * Success-path constructor for heater target commands.
-   */
-  private static fromHeaterCommandResponse(
-    response: HeaterCommandStateResponse,
-    fallbackCommandId: string,
-  ): CommandResult {
-    return CommandResult.success({
-      commandId: response.id ?? fallbackCommandId,
-      message: response.command ?? "",
-    });
+async function controlSpindle(request: SpindleDigitalControlRequest): Promise<CommandResult> {
+  try {
+    return fromToolCommand(await ModulesToolsService.controlSpindle(toSpindleCommand(request)), request.toolId);
+  } catch (err: unknown) {
+    return failure(err, request.toolId);
   }
 }
 
-/**
- * Legacy positional-API wrapper.
- *
- * `toolStore.ts` (and other pre-OOP call sites) still calls the
- * facade with positional arguments. `ToolsService` takes request
- * objects now, so this wrapper adapts the old call sites to the
- * new static API without duplicating dispatch logic.
- */
-export const toolsFacade = {
-  async controlSpindle(
-    toolId: string,
-    action: SpindleDigitalAction,
-    speed: number,
-    masterOverride: number = 0,
-    masterOverrideEnable: boolean = false,
-    override: number = 1.0,
-  ): Promise<CommandResult> {
-    return ToolsService.controlSpindle(
-      new SpindleDigitalControlRequest({
-        toolId,
-        action,
-        speed,
-        masterOverride,
-        masterOverrideEnable,
-        override,
-      }),
-    );
-  },
+async function controlExtruder(request: ExtruderControlRequest): Promise<CommandResult> {
+  try {
+    return fromToolCommand(await ModulesToolsService.controlExtruder(toExtruderCommand(request)), request.toolId);
+  } catch (err: unknown) {
+    return failure(err, request.toolId);
+  }
+}
 
-  async controlExtruder(
-    toolId: string,
-    action: ExtruderAction,
-    distance: number,
-    speed: number,
-    heaterTarget?: number,
-    heaterAction: HeaterAction = "noop",
-  ): Promise<CommandResult> {
-    return ToolsService.controlExtruder(
-      new ExtruderControlRequest({
-        toolId,
-        action,
-        distance,
-        speed,
-        heater:
-          heaterTarget !== undefined
-            ? { id: toolId, target: heaterTarget }
-            : null,
-        heaterAction,
-      }),
-    );
-  },
+/** A heater's target temperature. */
+async function setTarget(request: HeaterControlRequest): Promise<CommandResult> {
+  try {
+    const response = await ModulesToolsService.setToolTarget(request.toolId, toHeaterCommand(request));
+    return CommandResult.success({ commandId: response.id ?? request.toolId, message: response.command ?? "" });
+  } catch (err: unknown) {
+    return failure(err, request.toolId);
+  }
+}
 
-  async setTarget(toolId: string, target: number): Promise<CommandResult> {
-    return ToolsService.setTarget(new HeaterControlRequest({ toolId, target }));
-  },
-};
+export const toolsFacade = Object.freeze({ controlSpindle, controlExtruder, setTarget });
+
+export default toolsFacade;

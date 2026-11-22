@@ -1,4 +1,7 @@
 import logging
+from pathlib import Path
+
+from hardware.mock import constants_mock
 
 logger = logging.getLogger(__name__)
 
@@ -32,68 +35,28 @@ class CommandMock:
         self._state_mock.reset_program_state()
 
     def auto(self, *args):
-        """Mimics ``linuxcnc.command().auto`` (AUTO_RUN / AUTO_PAUSE / AUTO_RESUME).
-
-        The LinuxCNC API takes ``(auto_code, line_number)``. The mock
-        flips ``interp_state`` to ``INTERP_READING`` when ``AUTO_RUN``
-        is dispatched so the dashboard's "Running" badge lights up;
-        ``AUTO_PAUSE`` and ``AUTO_RESUME`` mirror the same fields.
-        """
-        # ``args`` is ``(auto_code, line_number)``. ``getattr`` is
-        # defensive — the constants may not be on the facade in
-        # older test stubs.
-        auto_code = args[0] if args else 0
-        state_mock = self._state_mock
-        auto_run = getattr(state_mock, "AUTO_RUN", 0)
-        auto_pause = getattr(state_mock, "AUTO_PAUSE", 1)
-        auto_resume = getattr(state_mock, "AUTO_RESUME", 2)
-        reading = getattr(state_mock, "INTERP_READING", 2)
-        paused = getattr(state_mock, "INTERP_PAUSED", 3)
-
-        if auto_code == auto_run:
-            with state_mock.lock:
-                state_mock.interp_state = reading
-        elif auto_code == auto_pause:
-            with state_mock.lock:
-                state_mock.interp_state = paused
-        elif auto_code == auto_resume:
-            with state_mock.lock:
-                state_mock.interp_state = reading
+        """``command.auto(AUTO_RUN, line)`` / ``AUTO_PAUSE`` / ``AUTO_RESUME``:
+        the loaded program runs (its lines advance on the tick), pauses
+        or resumes."""
+        auto_code = args[0] if args else constants_mock.AUTO_RUN
+        if auto_code == constants_mock.AUTO_RUN:
+            self._state_mock.run_program(int(args[1]) if len(args) > 1 else 0)
+        elif auto_code == constants_mock.AUTO_PAUSE:
+            self._state_mock.pause_program()
+        elif auto_code == constants_mock.AUTO_RESUME:
+            self._state_mock.resume_program()
         return 1
 
     def home(self, *args):
-        """Mimics ``linuxcnc.command().home``.
-
-        The real API takes ``(joint_mask, joint_index)`` for
-        single-axis homing or ``(joint_mask, -1)`` for homing all
-        axes; we accept whatever the caller passes and flip the
-        corresponding ``homed`` flags on the state mock.
-
-        The mock does NOT enforce the E-STOP semantics real LinuxCNC
-        applies — homing during E-STOP is intentionally allowed so
-        the integration tests don't have to clear E-STOP before
-        every ``POST /home`` request. Real operators clear E-STOP
-        via the dashboard UI before pressing Home.
-        """
-        if len(args) >= 2:
-            joint_index = int(args[1])
-        else:
-            joint_index = -1
-        if joint_index == -1:
-            self._state_mock.homed = [1, 1, 1]
-        else:
-            while len(self._state_mock.homed) < joint_index + 1:
-                self._state_mock.homed.append(0)
-            self._state_mock.homed[joint_index] = 1
+        """``command.home(joint)`` (``-1``: all). The axis lands on its
+        configured home position. E-stop is not enforced, so tests can
+        home without clearing it first."""
+        self._state_mock.home(int(args[-1]) if args else -1)
         return 1
 
     def unhome(self, *args):
-        """Mimics ``linuxcnc.command().unhome(joint)`` (``-1``: every joint)."""
-        joint_index = int(args[-1]) if args else -1
-        if joint_index == -1:
-            self._state_mock.homed = [0] * len(self._state_mock.homed)
-        elif joint_index < len(self._state_mock.homed):
-            self._state_mock.homed[joint_index] = 0
+        """``command.unhome(joint)`` (``-1``: every joint)."""
+        self._state_mock.unhome(int(args[-1]) if args else -1)
         return 1
 
     def teleop_enable(self, *args):
@@ -121,7 +84,7 @@ class CommandMock:
         )
 
         # Route the command directly to the Trajectory Planner (The Brain)
-        self._state_mock.jog_axis(command, joint_or_axis, velocity, distance)
+        self._state_mock.jog_axis(command, joint_or_axis, velocity, distance, joint_flag=bool(joint_flag))
 
         return 1
 
@@ -130,9 +93,6 @@ class CommandMock:
 
         Changes the machine's task mode (MANUAL, AUTO, MDI).
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         # Safely extract the integer mode, even if `execute_sync_cmd`
         # accidentally passes a timeout float as the first argument!
         target_mode = 1
@@ -156,21 +116,8 @@ class CommandMock:
         return 1
 
     def setp(self, *args):
-        """Mimics setting a hardware/HAL pin value via the command channel.
-
-        Typically receives: (pin_name, value)
-        """
-
-
-        logger.info(f"Mock setp called with args: {args}")
-
+        """``command``-channel pin write: ``(pin_name, value)``."""
         self._hal_mock.set_pin(args[0], args[1])
-
-        # In the future, if you want your mock UI to actually react to this
-        # (like updating a simulated heater target temperature), you could
-        # route this to your HAL mock here!
-        # Example: self._state.hal_mock.set_p(args[0], args[1])
-
         return 1
 
     def mdi(self, string: str):
@@ -182,17 +129,16 @@ class CommandMock:
         logger.debug("Mock mdi called with string: %s", string)
 
 
-        success = self._hal_mock.execute_mdi(string) or self._state_mock.execute_mdi(string)
-
-        if not success:
-            pass
-            #raise ValueError("Mock mdi failed")
-
+        # Every taker sees the line: the extruder takes its E word,
+        # the state machine the axis words.
+        self._hal_mock.execute_mdi(string)
+        self._state_mock.execute_mdi(string)
         return "success"
 
     def program_open(self, string: str):
-        """Mimics linuxcnc.command().program_open()"""
-        self._state_mock.load_file(string)
+        """``command.program_open(path)``: the length comes from the file,
+        so a run advances through its real line count."""
+        self._state_mock.load_file(string, _line_count(string))
         return 1
 
     def feedrate(self, *args):
@@ -213,6 +159,10 @@ class CommandMock:
                 self._state_mock.max_velocity = float(args[0])
         return 1
 
-    # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!
 
-    # Add other command methods (like `mode()`, `task_plan_execute()`) here as your app needs them!
+def _line_count(path: str) -> int:
+    try:
+        with open(Path(path), "rb") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0

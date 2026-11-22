@@ -13,7 +13,7 @@ import { HeaterReading, type ReadingSet } from "../entities/temperature";
 
 import type { CommandResult } from "../entities";
 import {HeaterControlRequest} from "../entities/tools/Heater";
-import TemperatureService from "../facades/temperatureFacade";
+import { temperatureFacade } from "../facades/temperatureFacade";
 
 const TEMPERATURE_ID = "temperature";
 
@@ -174,7 +174,7 @@ export const useTemperatureStore = defineStore(
          * Set the target temperature for a heater using the HeaterControlRequest DTO.
          */
         async function setTarget(request: HeaterControlRequest): Promise<CommandResult> {
-            return await TemperatureService.setTarget(request);
+            return await temperatureFacade.setTarget(request);
         }
 
         async function refreshSensors() {

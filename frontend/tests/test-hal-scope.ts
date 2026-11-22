@@ -15,7 +15,8 @@ const { ScopeBuffer, lowerBound } = await load("components/debug/scope/ScopeBuff
 const { findTrigger, placeWindow, niceStep, stepScale, autoScale, formatTime } = await load(
   "components/debug/scope/scopeMath.ts",
 );
-const { scopeSocketUrl } = await load("components/debug/scope/useHalScopeStream.ts");
+const { halScopeFacade } = await load("facades/halScopeFacade.ts");
+const scopeSocketUrl = halScopeFacade.socketUrl;
 
 /** n samples at `rate` Hz of fn(t), starting at t0. */
 function frame(pins: string[], fns: ((t: number) => number | null)[], t0: number, n: number, rate = 100) {

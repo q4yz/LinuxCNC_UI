@@ -1,6 +1,8 @@
 """Marlin / slicer G-code -> LinuxCNC NGC (`core.gcode_converter`)."""
 from __future__ import annotations
 
+from models.machineconfig.HardwareJsonModels import FirmwareRetraction
+
 import pytest
 
 from core.gcode_converter import convert, needs_conversion, ngc_name, read_prestart
@@ -46,7 +48,7 @@ def test_translated(marlin, linuxcnc):
     assert lines(marlin)[0] == linuxcnc
 
 
-@pytest.mark.parametrize("code", ["M84", "M400", "M201 X1000", "M73 P10 R2", "T0", "M900 K0"])
+@pytest.mark.parametrize("code", ["M84", "M400", "M201 X1000", "M73 P10 R2", "T0"])
 def test_commented_out(code):
     assert lines(code)[0].startswith(f"; {code}")
 
@@ -201,3 +203,85 @@ def test_convert_mdi_marlin_codes():
     # already in LinuxCNC form, or not a Marlin code: unchanged
     for line in ("M106 P255", "M104 P200 Q0", "M106", "M107", "M107 Q1", "M1040 S2", "G1 X10 S3", "M3 S1000", "M104 S200 M8"):
         assert convert_mdi(line) == line
+
+
+RETRACTION = FirmwareRetraction(retract_length=0.8, retract_speed=35, unretract_extra_length=0.1, unretract_speed=30)
+
+
+def test_firmware_retraction_becomes_an_a_move_and_keeps_the_feed():
+    lines = convert("M83\nG1 X1 E2 F1500\nG10\nG10\nG1 X5\nG11\nG1 X6 E1\nM2\n", retraction=RETRACTION).text.splitlines()
+    assert lines[2] == "G1 A1.2 F2100  ; [G10: firmware retraction]"
+    assert lines[3] == "F1500  ; [the file's feed rate again]"
+    assert lines[4].startswith("; G10") and "already retracted" in lines[4]
+    assert lines[6] == "G1 A2.1 F1800  ; [G11: firmware retraction]"
+    assert lines[8] == "G1 X6 A3.1"  # A continues after the retraction's extra length
+
+
+def test_firmware_retraction_without_config_and_g10_offsets_untouched():
+    out = convert("G10\nG10 L20 P1 X0\nM2\n")
+    lines = out.text.splitlines()
+    assert lines[0].startswith("; G10") and "no [firmware_retraction]" in lines[0]
+    assert lines[1] == "G10 L20 P1 X0"
+    assert any("firmware_retraction" in n for n in out.notes)
+
+
+def test_flow_offset_and_filament_change():
+    lines = convert("M221 S95\nM221\nSET_GCODE_OFFSET Z=0.1\nSET_GCODE_OFFSET Z_ADJUST=-0.02 MOVE=1\nM600 B3\nM2\n").text.splitlines()
+    assert lines[0] == "G92.1  ; [added: clears an earlier print's A offset (filament change, excluded objects)]"
+    assert lines[1:4] == ["M184 P95", lines[2], "M185 P0.1 Q0"] and lines[2].startswith("; M221")
+    assert lines[4] == "M185 P-0.02 Q1"
+    assert lines[5] == "M600"
+    from core.gcode_converter import convert_mdi
+    assert convert_mdi("M221 S90") == "M184 P90"
+
+
+def test_objects_are_wrapped_for_exclusion():
+    from core.gcode_converter import read_objects
+    src = ("M83\nG1 X0 F3000\n; printing object box.stl id:0 copy 0\nG1 X1 E1 F1200\nM106 S100\n"
+           "; stop printing object box.stl id:0 copy 0\nM486 S1\nG1 X2 E1\nM486 S-1\n"
+           "EXCLUDE_OBJECT_START NAME=cyl\nG1 X3 E1\n;LAYER_CHANGE\nG1 Z0.4\nM2\n")
+    text = convert(src).text
+    lines = text.splitlines()
+    assert read_objects(text) == ["box.stl", "1", "cyl"]
+    assert lines[0].startswith("G92.1")
+    start = lines.index("o<exclude_1> if [#<_hal[webgui.exclude-object-0]> GT 0]  ; [object 'box.stl' excluded]")
+    skip = lines[start + 1:lines.index("o<exclude_1> else")]
+    assert skip == ["M106 P100", "G92 A1  ; [excluded object: A as if it had been printed]",
+                    "F1200  ; [excluded object: its last feed rate]"]
+    assert lines.index("o<exclude_1> endif") > lines.index("G1 X1 A1 F1200")
+    assert "; M486 S1" in lines and "o<exclude_2> if [#<_hal[webgui.exclude-object-1]> GT 0]  ; [object '1' excluded]" in lines
+    # an object block ends at a layer change even without an end marker
+    assert lines.index("o<exclude_3> endif") < lines.index(";LAYER_CHANGE")
+    assert not any("exclude" in l for l in lines[lines.index(";LAYER_CHANGE"):])
+
+
+def test_object_without_moves_is_not_wrapped_and_plain_files_unchanged():
+    assert "o<exclude" not in convert("; OBJECT_ID: 5\nM106 S10\nM2\n").text
+    plain = convert("G1 X1 E1\nM2\n").text.splitlines()
+    assert plain[0] == "G1 X1 A1"  # no header, no G92.1
+
+
+def test_too_many_objects():
+    from core.gcode_converter import MAX_OBJECTS, read_objects
+    src = "".join(f"M486 S{k}\nG1 X{k} E1\n" for k in range(MAX_OBJECTS + 2)) + "M2\n"
+    out = convert(src)
+    assert len(read_objects(out.text)) == MAX_OBJECTS
+    assert any("cannot be excluded" in n for n in out.notes)
+
+
+def test_cura_mesh_comments_are_objects():
+    from core.gcode_converter import read_objects
+    src = ";LAYER:0\n;MESH:Body1.stl\nG1 X1 E1\n;MESH:NONMESH\nG0 X5\n;MESH:Body2.stl\nG1 X2 E1\n;LAYER:1\nM2\n"
+    text = convert(src).text
+    lines = text.splitlines()
+    assert read_objects(text) == ["Body1.stl", "Body2.stl"]
+    assert lines.index("o<exclude_1> endif") < lines.index(";MESH:NONMESH")
+    assert lines.index("o<exclude_2> endif") < lines.index(";LAYER:1")
+    assert "G0 X5" in lines[lines.index(";MESH:NONMESH"):lines.index(";MESH:Body2.stl")]
+
+
+def test_pressure_advance_conversion():
+    from core.gcode_converter import convert_mdi
+    lines = convert("M900 K0.05\nM900\nSET_PRESSURE_ADVANCE ADVANCE=0.04 SMOOTH_TIME=0.04\nM2\n").text.splitlines()
+    assert lines[0] == "M186 P0.05" and lines[1].startswith("; M900") and lines[2] == "M186 P0.04"
+    assert convert_mdi("M900 K0.03") == "M186 P0.03"

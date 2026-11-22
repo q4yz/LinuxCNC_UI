@@ -7,9 +7,9 @@ import re
 
 import pytest
 
-import services.BedMeshProbeService as module
-import services.MacroExecutionService as macro_module
-import services.Probing as probing
+import services.motion.BedMeshProbeService as module
+import services.program.MacroExecutionService as macro_module
+import services.motion.Probing as probing
 from exceptions import BadRequestError
 from hardware.Connection import MachineState
 
@@ -143,7 +143,7 @@ def test_bilinear():
 
 
 def test_leveling_runs_what_the_machine_has(monkeypatch):
-    import services.LevelingService as leveling
+    import services.motion.LevelingService as leveling
 
     calls = []
 
@@ -154,10 +154,10 @@ def test_leveling_runs_what_the_machine_has(monkeypatch):
         def settings(self):
             return {} if self.configured else None
 
-        def run(self, stat, *a):
+        def run(self, stat, *a, **k):
             calls.append(self.name)
 
-    import services.ZTiltService as z
+    import services.motion.ZTiltService as z
     monkeypatch.setattr(z, "get_z_tilt_service", lambda: Svc("z_tilt", True))
     monkeypatch.setattr(module, "get_bed_mesh_probe_service", lambda: Svc("mesh", True))
     monkeypatch.setattr(leveling, "get_console_logger", lambda: type("C", (), {"log_event": lambda *a, **k: None})())
@@ -173,3 +173,30 @@ def test_points_logged_under_debug_the_result_under_info(rig):
     assert set(rig.levels[:-1]) == {"DEBUG"}
     assert sum("-> Z" in e for e in rig.events) == 6  # one per probed point
     assert any(e.startswith("BED_MESH_CALIBRATE: row Y20:") for e in rig.events)
+
+
+def test_adaptive_parsing_and_area():
+    assert module.parse_adaptive("BED_MESH_CALIBRATE ADAPTIVE=1")
+    assert not module.parse_adaptive("BED_MESH_CALIBRATE ADAPTIVE=0")
+    assert not module.parse_adaptive("BED_MESH_CALIBRATE ; ADAPTIVE=1")
+    area = module.adaptive_area(dict(MESH, adaptive_margin=5), (40.0, 50.0, 60.0, 200.0))
+    assert area["mesh_min"] == [35.0, 45.0] and area["mesh_max"] == [65.0, 120.0]  # clamped to the mesh
+    assert area["probe_count"] == MESH["probe_count"]
+
+
+def test_adaptive_probes_only_the_print_area(rig):
+    from core.gcode_converter import BOUNDS_MARKER
+
+    program = rig.tmp / "part.ngc"
+    program.write_text(f"{BOUNDS_MARKER} 40 50 60 70\nG1 X40 Y50\n")
+    rig.stat.file = str(program)
+    module.BedMeshProbeService(Config(dict(MESH, adaptive_margin=5))).run(rig.stat, adaptive=True)
+    probes = [l for l in rig.lines if l.startswith("G53 G1")]
+    assert probes[0] == "G53 G1 X35.0000 Y45.0000 F6000.0" and probes[-1] == "G53 G1 X35.0000 Y75.0000 F6000.0"
+
+
+def test_adaptive_without_bounds_probes_the_whole_mesh(rig):
+    rig.stat.file = ""
+    module.BedMeshProbeService(Config(MESH)).run(rig.stat, adaptive=True)
+    assert [l for l in rig.lines if l.startswith("G53 G1")][0] == "G53 G1 X10.0000 Y20.0000 F6000.0"
+    assert any("whole mesh" in e for e in rig.events)

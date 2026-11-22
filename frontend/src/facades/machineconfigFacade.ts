@@ -356,8 +356,19 @@ async function uploadToBoard(path: string): Promise<CommandResult> {
   }
 }
 
+/** One M-code program's text (``machine_config/m_codes/<name>``). */
+async function readMCode(name: string): Promise<string> {
+  return (await ModulesMachineconfigService.readMCode(name))?.content ?? "";
+}
+
+async function writeMCode(name: string, content: string): Promise<CommandResult> {
+  return _commandResultFrom(ModulesMachineconfigService.writeMCode(name, { content }), `mcode:${name}`);
+}
+
 export const machineconfigFacade = Object.freeze({
   listProfiles,
+  readMCode,
+  writeMCode,
   readProfile,
   writeProfile,
   createFolder,

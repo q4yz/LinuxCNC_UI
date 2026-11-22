@@ -1,7 +1,8 @@
 # Component: I/O pins (`[output_pin NAME]`, `[input_pin NAME]`) and fan control
 
-> **Implemented status:** Klipper's syntax. Code: `IoPinHalMapper`,
-> `IoPinWebguiMapper` (HAL), `IoService` + `/api/v1/modules/io` (machine
+> **Implemented status:** Klipper's syntax. Code: `OutputPinHalMapper` /
+> `OutputLatchHalMapper` / `InputPinHalMapper`, `OutputPinWebguiMapper` /
+> `InputPinWebguiMapper` (HAL), `IoService` + `/api/v1/modules/io` (machine
 > backend), the dashboard's I/O card (`IoPanel.vue`). Fans reuse
 > `FansService`'s `webgui.<id>` pin. Tests: `test_io_pins.py`,
 > `test_io_service.py`, `test-io-panel.ts`.
@@ -108,7 +109,7 @@ net my_button-released my_button-released.out => halui.mdi-command-01  # falling
 ```
 
 machine.ini: `[HALUI] MDI_COMMAND = o<my_button_rising> call` per edge
-(that order is the `mdi-command-NN` numbering, `mdi_commands()`), and
+(that order is the `mdi-command-NN` numbering, `InputPinHalMapper.mdi_commands()`), and
 `SUBROUTINE_PATH` gains `:subroutines` — `configs/subroutines/
 <id>_<edge>.ngc` hold the G-code. halui runs an MDI command only while
 the machine is on and no program runs.

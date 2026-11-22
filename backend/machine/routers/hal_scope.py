@@ -28,7 +28,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from exceptions import BadRequestError
 from models.HalModels import HalPinValuesRequest, HalPinValuesResponse
-from services.HalScopeService import ScopeSampler, get_hal_scope_service
+from services.hal.HalScopeService import ScopeSampler, get_hal_scope_service
 
 logger = logging.getLogger("backend.routers.hal_scope")
 

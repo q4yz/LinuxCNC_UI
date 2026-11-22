@@ -7,8 +7,9 @@ from fastapi import APIRouter, Path
 from pydantic import BaseModel, Field
 
 from core.led_color import SetLed
+from mappers.leds.LedMapper import LedMapper
 from models.LedModels import Led, LedSegment
-from services.LedService import get_led_service
+from services.io.LedService import get_led_service
 
 router = APIRouter(prefix="/api/v1/leds", tags=["leds"])
 
@@ -26,7 +27,7 @@ class LedSetRequest(BaseModel):
 
 @router.get("", response_model=List[Led], operation_id="getLeds", summary="LED chains and their colours")
 def get_leds() -> List[Led]:
-    return [Led(**led) for led in get_led_service().state()]
+    return [LedMapper.to_response(led) for led in get_led_service().state()]
 
 
 @router.put("/{led_id}", response_model=List[Led], operation_id="setLed",
@@ -35,7 +36,7 @@ def get_leds() -> List[Led]:
 def set_led(payload: LedSetRequest, led_id: str = Path(..., description="The [neopixel] name.")) -> List[Led]:
     command = SetLed(led=led_id, red=payload.red, green=payload.green, blue=payload.blue,
                      white=payload.white, index=payload.index)
-    return [Led(**led) for led in get_led_service().set(command)]
+    return [LedMapper.to_response(led) for led in get_led_service().set(command)]
 
 
 __all__ = ["Led", "LedSegment", "router"]

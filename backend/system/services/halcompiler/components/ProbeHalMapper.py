@@ -48,9 +48,8 @@ Verified against the real reference machine,
 
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Probe, ToolLengthSensor
 from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
@@ -75,8 +74,8 @@ class ProbeHalMapper:
 
     @staticmethod
     def to_fragment(
-        probe: dict[str, Any] | None,
-        tool_length_sensor: dict[str, Any] | None = None,
+        probe: Probe | None,
+        tool_length_sensor: ToolLengthSensor | None = None,
         z_home_joints: list[int] | None = None,
     ) -> HalFragment:
         """``z_home_joints`` (``probe:z_virtual_endstop``): the touch probe
@@ -85,8 +84,8 @@ class ProbeHalMapper:
             net probe-in => joint.2.home-sw-in joint.3.home-sw-in ...
         """
         fragment = HalFragment()
-        probe_pin = (probe or {}).get("pin")
-        sensor_pin = (tool_length_sensor or {}).get("pin")
+        probe_pin = probe.pin if probe is not None else None
+        sensor_pin = tool_length_sensor.pin if tool_length_sensor is not None else None
         if probe_pin:
             fragment.requests.append(
                 PinRequest(signal=PROBE_SIGNAL, role=PinRole.DIGITAL_IN,

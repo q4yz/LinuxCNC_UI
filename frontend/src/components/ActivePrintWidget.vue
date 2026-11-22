@@ -30,6 +30,7 @@ import {reportCommandFailure, describeErrorOr} from "../core/error-format";
 import {FileEntry} from "../entities/files";
 import {BaseButton, Icon} from "../ui/index.ts";
 import BaseCard from "../ui/BaseCard.vue";
+import PrintTuning from "./print/PrintTuning.vue";
 
 
 const facade = useMachineStore();
@@ -444,6 +445,9 @@ async function stopPrint() {
           Stop / Cancel
         </BaseButton>
       </div>
+
+      <!-- Live Z offset, flow, objects, the slicer's time left -->
+      <PrintTuning />
 
       <!-- Pause & Inspect — only offered once a Pause is already
            active (see pauseInspectAction's guard); Resume above

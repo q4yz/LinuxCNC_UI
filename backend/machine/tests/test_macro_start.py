@@ -30,7 +30,7 @@ class _Setup:
     """Common patch scaffolding for the start-endpoint tests."""
 
     def __init__(self, tmp_data_root, monkeypatch, root_name="macros_for_exec"):
-        import services.MacroExecutionService as exec_module
+        import services.program.MacroExecutionService as exec_module
 
         self.exec_module = exec_module
 

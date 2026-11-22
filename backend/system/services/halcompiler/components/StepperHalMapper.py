@@ -33,9 +33,10 @@ route.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Mapping
 
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Axis, Endstop, Stepper
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
 
 #: LinuxCNC `stepgen` defaults PrintNC-WEBGUI's Machine.hal uses for
@@ -52,45 +53,45 @@ class StepperHalMapper:
 
     @staticmethod
     def to_fragment(
-        axis: dict[str, Any],
-        joints: list[dict[str, Any]],
-        endstops_by_id: dict[str, dict[str, Any]],
+        axis: Axis,
+        joints: list[Stepper],
+        endstops_by_id: Mapping[str, Endstop],
     ) -> HalFragment:
         fragment = HalFragment()
-        axis_id = str(axis["id"])
-        axis_endstop_id = axis.get("endstop")
+        axis_id = axis.id
+        axis_endstop_id = axis.endstop
         requested_endstop_ids: set[str] = set()
 
         for index, joint in enumerate(joints, start=1):
             StepperHalMapper._joint(fragment, axis_id, joint, index)
             # This joint's own switch first; a joint with none of its
             # own (the common case) shares the axis's.
-            endstop_id = joint.get("endstop") or axis_endstop_id
+            endstop_id = joint.endstop or axis_endstop_id
             endstop = endstops_by_id.get(endstop_id) if endstop_id else None
             if endstop is None:
                 continue
-            endstop_signal = f"{endstop['id']}-sw"
+            endstop_signal = f"{endstop.id}-sw"
             fragment.nets.append(
-                f"net {endstop_signal} => joint.{joint['joint_number']}.home-sw-in"
+                f"net {endstop_signal} => joint.{joint.joint_number}.home-sw-in"
             )
-            if endstop["id"] in requested_endstop_ids:
+            if endstop.id in requested_endstop_ids:
                 continue
-            requested_endstop_ids.add(endstop["id"])
+            requested_endstop_ids.add(endstop.id)
             fragment.requests.append(
                 PinRequest(
                     signal=endstop_signal,
                     role=PinRole.ENDSTOP,
-                    pin=PinStringMapper.from_string(endstop["pin"]),
-                    owner=str(endstop["id"]),
+                    pin=PinStringMapper.from_string(endstop.pin),
+                    owner=endstop.id,
                 )
             )
 
         return fragment
 
     @staticmethod
-    def _joint(fragment: HalFragment, axis_id: str, joint: dict[str, Any], index: int) -> None:
-        n = joint["joint_number"]
-        joint_id = str(joint["id"])
+    def _joint(fragment: HalFragment, axis_id: str, joint: Stepper, index: int) -> None:
+        n = joint.joint_number
+        joint_id = joint.id
         # A dual-motor (gantry) axis has more than one joint sharing
         # one `axis_id` — the first joint keeps the plain `<axis>pos-
         # cmd`/`<axis>pos-fb` names, but every joint after it must get
@@ -118,8 +119,8 @@ class StepperHalMapper:
             ]
         )
 
-        StepperHalMapper._pin_export(fragment, joint, "step_pin", PinRole.STEP, joint_id, n)
-        StepperHalMapper._pin_export(fragment, joint, "dir_pin", PinRole.DIR, joint_id, n)
+        StepperHalMapper._pin_export(fragment, joint.step_pin, PinRole.STEP, joint_id, n)
+        StepperHalMapper._pin_export(fragment, joint.dir_pin, PinRole.DIR, joint_id, n)
 
         # This net is what actually turns the stepgen on — without it,
         # `stepgen.N.enable` is never driven, the stepgen never runs,
@@ -137,7 +138,7 @@ class StepperHalMapper:
             f"net {joint_id}-enable joint.{n}.amp-enable-out => stepgen.{n}.enable"
         )
 
-        enable_pin = joint.get("enable_pin")
+        enable_pin = joint.enable_pin
         if enable_pin:
             fragment.requests.append(
                 PinRequest(
@@ -151,13 +152,11 @@ class StepperHalMapper:
     @staticmethod
     def _pin_export(
         fragment: HalFragment,
-        joint: dict[str, Any],
-        field: str,
+        raw: str | None,
         role: PinRole,
         joint_id: str,
         joint_number: int,
     ) -> None:
-        raw = joint.get(field)
         if not raw:
             return
         stepgen_pin = "step" if role is PinRole.STEP else "dir"

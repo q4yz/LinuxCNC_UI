@@ -38,7 +38,7 @@ test("a colour picker per segment, sent with its first LED; off per chain", () =
 
 test("the card is on the dashboard behind the machine gate", () => {
   // a page-layout panel (on the dashboard by default), behind MachineGate
-  assert.match(read("layout/PageLayout.vue"), /  leds: LedPanel,/);
+  assert.match(read("layout/panelComponents.ts"), /  leds: LedPanel,/);
   assert.match(read("layout/pagePanels.ts"), /\{ id: "leds", label: "LEDs", gate: "LEDs" \}/);
 });
 

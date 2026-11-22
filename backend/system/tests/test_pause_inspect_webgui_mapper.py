@@ -38,7 +38,7 @@ def test_binds_spindle_inhibit_into_the_per_spindle_pin():
 def test_enables_the_z_eoffset_stage_with_a_configurable_scale():
     lines = PauseInspectWebguiMapper.to_lines()
     assert "setp axis.z.eoffset-enable 1" in lines
-    assert "setp axis.z.eoffset-scale 1.0" in lines
+    assert "setp axis.z.eoffset-scale 0.001" in lines  # counts of 0.001 mm (lift + live Z offset)
 
 
 def test_eoffset_clears_only_while_estop_is_actually_active():
@@ -53,16 +53,21 @@ def test_eoffset_clears_only_while_estop_is_actually_active():
     assert not any("estop-out" in line for line in lines)
 
 
-def test_z_lift_is_converted_from_bit_to_s32_before_eoffset_counts():
+def test_z_lift_and_live_z_offset_are_summed_before_eoffset_counts():
     """`axis.z.eoffset-counts` is a HAL `s32` pin — linking the `bit`
     `webgui.inspect-z-lift` straight into it is a load-time type
-    mismatch. `conv_bit_s32` bridges it, same idiom `HeaterHalMapper`
-    uses for its own bit -> float branch."""
+    mismatch. The lift (bit -> float, 1 mm) and the live Z offset
+    (`webgui.z-offset`, mm) are summed in counts of 0.001 mm, then
+    float -> s32."""
     lines = PauseInspectWebguiMapper.to_lines()
-    assert "loadrt conv_bit_s32 names=inspect-z-lift-conv" in lines
+    assert "loadrt conv_bit_float names=inspect-z-lift-conv" in lines
     assert "addf inspect-z-lift-conv servo-thread" in lines
     assert "net inspect-z-lift-bit webgui.inspect-z-lift => inspect-z-lift-conv.in" in lines
-    assert "net inspect-z-lift-s32 inspect-z-lift-conv.out => axis.z.eoffset-counts" in lines
+    assert "net inspect-z-lift-mm inspect-z-lift-conv.out => z-babystep-sum.in0" in lines
+    assert "net z-offset-mm webgui.z-offset => z-babystep-sum.in1" in lines
+    assert "setp z-babystep-sum.gain0 1000" in lines and "setp z-babystep-sum.gain1 1000" in lines
+    assert "net z-eoffset-total z-babystep-sum.out => z-eoffset-counts.in" in lines
+    assert "net z-eoffset-counts z-eoffset-counts.out => axis.z.eoffset-counts" in lines
     assert not any(
         "webgui.inspect-z-lift => axis.z.eoffset-counts" in line for line in lines
     ), "webgui.inspect-z-lift (bit) must never net straight onto eoffset-counts (s32)"

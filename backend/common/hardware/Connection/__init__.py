@@ -60,7 +60,7 @@ from .errors import (
     CommandTimeoutError,
     LinuxCNCUnavailableError,
 )
-from ..DeviceConfigMapper import DeviceConfigMapper
+from ..DeviceConfigReader import DeviceConfigReader
 
 
 def is_linuxcnc_connected() -> bool:
@@ -86,7 +86,7 @@ __all__ = [
     "read_error_history",
     "message_severity",
     "read_hal_pin",
-    "DeviceConfigMapper",
+    "DeviceConfigReader",
     "MachineState",
     "MachineMode",
     "RcsStatus",

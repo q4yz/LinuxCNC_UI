@@ -25,6 +25,10 @@
 //     (the existing MDI block-dispatch path — parses .macro bodies
 //     into static / python blocks, fires each static line via MDI,
 //     honours the E-Stop guard).
+//   * ``macroKind === "output"`` → not a button: the output's control
+//     (``OutputControl``: toggle / slider / colour) next to the name.
+//   * ``macroKind === "component"`` → opens the panel ``macroName`` (a
+//     ``pagePanels.PANELS`` id) in a floating window (``useFloatingPanels``).
 //   * ``macroKind === "ngc"``   → ``useMacrosStore().runMacroOfKind("ngc", name)``,
 //     which routes through the generated client's ``startMacro`` so
 //     the backend's ``POST /api/v1/modules/macros/{name}/start?kind=ngc``
@@ -61,6 +65,9 @@ import Icon from "./Icon.vue";
 import { useMacrosStore, MACRO_KIND } from "../stores/macrosStore";
 import { useMachineStore } from "../stores/machine";
 import type { MacroButtonDescriptor } from "./macroButtonTypes";
+import { useFloatingPanels } from "../composables/useFloatingPanels";
+import { panelDef } from "../layout/pagePanels";
+import OutputControl from "./OutputControl.vue";
 
 const props = defineProps({
   // Resolved config row (``macroButtons.bySlot[slot]``). ``null``
@@ -80,7 +87,9 @@ const props = defineProps({
         typeof (v as MacroButtonDescriptor).icon === "string" &&
         typeof (v as MacroButtonDescriptor).macroName === "string" &&
         ((v as MacroButtonDescriptor).macroKind === MACRO_KIND.MACRO ||
-          (v as MacroButtonDescriptor).macroKind === MACRO_KIND.NGC)),
+          (v as MacroButtonDescriptor).macroKind === MACRO_KIND.NGC ||
+          (v as MacroButtonDescriptor).macroKind === "component" ||
+          (v as MacroButtonDescriptor).macroKind === "output")),
   },
   // Visual variants — matches the ``<BaseButton>`` primitive so a
   // host can request the same look-and-feel as its sibling
@@ -121,12 +130,17 @@ const isVisible = computed(
     (props.descriptor.macroName ?? "").length > 0,
 );
 
+// kind "component": opens a panel in a floating window — harmless, so
+// never blocked by the E-stop or a running macro
+const opensComponent = computed(() => props.descriptor?.macroKind === "component");
+
 const isDisabled = computed(
   () =>
     !isVisible.value ||
+    (opensComponent.value ? false :
     isRunning.value ||
     macrosStore.isBusy ||
-    machineStore.isEstopActive,
+    machineStore.isEstopActive),
 );
 
 // ``Icon`` knows the same set as ``<Icon name="...">``; a miss
@@ -162,9 +176,16 @@ const resolvedTitle = computed(() => {
   return "";
 });
 
+const floating = useFloatingPanels();
+
 async function onClick() {
   if (!props.descriptor) return;
   if (isDisabled.value) return;
+  if (opensComponent.value) {
+    const panel = props.descriptor.macroName ?? "";
+    floating.open(panel, props.descriptor.name || panelDef(panel)?.label || panel);
+    return;
+  }
   isRunning.value = true;
   try {
     await macrosStore.runMacroOfKind(
@@ -178,8 +199,16 @@ async function onClick() {
 </script>
 
 <template>
+  <!-- kind "output": the output's own control (toggle / slider / colour) next to the name -->
+  <OutputControl
+    v-if="isVisible && descriptor?.macroKind === 'output'"
+    :descriptor="descriptor"
+    :icon-known="iconIsKnown"
+    :size="size"
+    :class="class"
+  />
   <BaseButton
-    v-if="isVisible"
+    v-else-if="isVisible"
     :variant="variant"
     :size="size"
     :disabled="isDisabled"

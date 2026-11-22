@@ -21,9 +21,11 @@ The paper test, as in Klipper:
    height. Bed mesh compensation is switched off for the test.
 2. Lower the nozzle until a sheet of paper just drags: the Z jog buttons, or `TESTZ Z=-0.1`
    (`TESTZ Z=0.05` back up). Each `TESTZ` logs the `z_offset` that height gives.
-3. `ACCEPT` logs `z_offset: 1.234`; `ABORT` stops without a value.
-4. Put the value into `[probe] z_offset`, generate the machine again
-   ({doc}`../getting-started/compile`) and restart LinuxCNC.
+3. `ACCEPT` saves the `z_offset` to `calibration.ini` ({doc}`calibration`): probing uses it at
+   once; when Z homes on the probe, Z homing takes it at the next LinuxCNC start. `ABORT`
+   stops without a value.
+
+The **Calibration** tab's *Probe Z offset* card does the same with buttons.
 
 ## Z_TILT_ADJUST
 
@@ -37,8 +39,8 @@ go to the console under *Debug*, one summary under *Info*.
 BED_MESH_CALIBRATE [PROFILE=name]
 ```
 
-Probes the `[bed_mesh]` grid, saves the mesh and switches Z compensation on. The **Bed Mesh**
-page shows it as a heat map.
+Probes the `[bed_mesh]` grid, saves the mesh and switches Z compensation on. The **Calibration**
+tab's *Bed mesh* card starts it; its *Details* show the meshes as heat maps.
 
 `G29` runs `Z_TILT_ADJUST`, then `BED_MESH_CALIBRATE`. A program's start G-code `G29` runs the
 same before the program.

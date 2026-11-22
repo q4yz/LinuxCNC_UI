@@ -6,6 +6,14 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import PinRequest, PinRole
 from services.halcompiler.mcus.ParportRouterMapper import ParportRouterMapper
 
+from tests import typed_records as typed
+
+
+def _base_fragment(mcu):
+    """The router takes a typed RouterMcu; the fixtures stay readable dicts."""
+    return ParportRouterMapper.base_fragment(typed.router_mcu(mcu, 'parallelport'))
+
+
 
 def _request(signal: str, role: PinRole, pin_string: str, owner: str = "x") -> PinRequest:
     return PinRequest(signal=signal, role=role, pin=PinStringMapper.from_string(pin_string), owner=owner)
@@ -13,14 +21,14 @@ def _request(signal: str, role: PinRole, pin_string: str, owner: str = "x") -> P
 
 def test_base_fragment_uses_the_declared_interface():
     mcu = {"id": "mcu", "interface": "0x378"}
-    fragment = ParportRouterMapper.base_fragment(mcu)
+    fragment = _base_fragment(mcu)
 
     assert 'loadrt hal_parport cfg="0x378 out"' in fragment.loadrt
     assert "setp parport.0.reset-time 2500" in fragment.setp
 
 
 def test_base_fragment_falls_back_to_documented_defaults():
-    fragment = ParportRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     assert 'loadrt hal_parport cfg="0 out"' in fragment.loadrt
     assert "setp parport.0.reset-time 2500" in fragment.setp
 
@@ -29,12 +37,12 @@ def test_base_fragment_ignores_the_dead_parameters_shape():
     """No real `.cfg` ever populates `mcus[].parameters` — reading it
     would silently ignore a declared `interface` instead of using it."""
     mcu = {"id": "mcu", "interface": "0x378", "parameters": {"address": "9"}}
-    fragment = ParportRouterMapper.base_fragment(mcu)
+    fragment = _base_fragment(mcu)
     assert 'loadrt hal_parport cfg="0x378 out"' in fragment.loadrt
 
 
 def test_base_fragment_addf_order_is_read_write_reset():
-    fragment = ParportRouterMapper.base_fragment({"id": "mcu"})
+    fragment = _base_fragment({"id": "mcu"})
     order = [a.func for a in sorted(fragment.addf, key=lambda a: a.order)]
     assert order == ["parport.0.read", "parport.0.write", "parport.0.reset"]
 

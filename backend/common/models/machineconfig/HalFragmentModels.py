@@ -11,6 +11,7 @@ assembly and ordering are the assembler's job
 
 from __future__ import annotations
 
+from typing import Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -47,6 +48,9 @@ class PinRole(Enum):
     #: A measured value coming in from hardware (a thermistor reading)
     #: — `remora.PV.N` on class B.
     ANALOG_IN = "analog_in"
+    #: A CAN node's ADXL345 (``PinRequest.accel``): its chip select; the
+    #: X / Y accelerations on two ``remora.PV.N`` (``<signal>-x`` / ``-y``).
+    ACCEL = "accel"
     #: A generic digital output — direction, not device (same "any
     #: I/O-capable MCU can carry one" contract as SPINDLE_OUT). Used
     #: by the E-stop component's `out_pin` (`estop.md` § 3).
@@ -66,7 +70,8 @@ class Addf:
 
     ``order`` is the tie-break within one thread, per the role tiers
     README § 4 documents (base: read=0, make-pulses=1, write=2,
-    reset=3; servo: read=0, motion=1, write=2) — never a raw line
+    reset=3; servo: read=0, motion=1, processing motion's output=2,
+    write=3) — never a raw line
     index, since two mappers contributing to the same thread don't
     know about each other's position.
     """
@@ -99,6 +104,9 @@ class PinRequest:
     sensor_type: str | None = None
     #: ``PinRole.RGB`` only: ``(chain_count, color_order, first, count)``.
     led: tuple[int, str, int, int] | None = None
+    #: ``PinRole.ACCEL`` only: ``(axes_map, rate, sck, mosi, miso)``, the
+    #: SPI pins bare (``PB10``) or ``None`` for the node's defaults.
+    accel: tuple[str, int, str | None, str | None, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +122,23 @@ class FirmwareModuleRequest:
 
     mcu_id: str
     module: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RouterMcu:
+    """One MCU as its router's ``base_fragment`` sees it: the record plus
+    what the assembler knows from the rest of the machine (a bare MCU
+    record has no notion of which spindle rides it or which E-stop input
+    it reads)."""
+
+    mcu: Any  # HardwareJsonModels.McuInfo (kept untyped: no import cycle)
+    #: A CAN hub: the input bit that is 1 while every mandatory node runs.
+    can_status_bit: int | None = None
+    #: The ``[estop] fault_pin`` is read through this MCU.
+    estop_fault: bool = False
+    #: The spindle routed to this MCU (a VFD): its RPM range.
+    spindle_min_rpm: float | None = None
+    spindle_max_rpm: float | None = None
 
 
 @dataclass

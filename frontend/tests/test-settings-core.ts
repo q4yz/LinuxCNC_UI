@@ -176,3 +176,36 @@ test("value still works when the instance is reached through a reactive containe
   assert.equal(box.list[0].value, true);
   assert.equal(viaReactive.s.value, true);
 });
+
+// --- saves of one setting go out in order ---------------------------------
+
+test("quick saves of one setting reach the server in order, the last value wins", async () => {
+  const s = new TextSetting("Machine", "Order", "machine.order", "");
+  const original = SettingsService.writeSetting;
+  const arrived: string[] = [];
+  // the first write's answer is slow: without ordering the second would
+  // reach the server first and the first, older value would win
+  SettingsService.writeSetting = async (key: string, body: { value: unknown }) => {
+    arrived.push(String(body.value));
+    await new Promise((r) => setTimeout(r, body.value === "first" ? 40 : 1));
+    stored[key] = body.value;
+    return { key, value: body.value };
+  };
+  try {
+    const a = s.save("first");
+    const b = s.save("second");
+    await Promise.all([a, b]);
+    assert.deepEqual(arrived, ["first", "second"]);
+    assert.equal(stored["machine.order"], "second");
+    assert.equal(s.value, "second");
+    // a failed save does not block the next one
+    failWrites = true;
+    SettingsService.writeSetting = original;
+    await s.save("third");
+    failWrites = false;
+    await s.save("fourth");
+    assert.equal(s.value, "fourth");
+  } finally {
+    SettingsService.writeSetting = original;
+  }
+});

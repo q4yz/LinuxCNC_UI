@@ -22,6 +22,8 @@ class FileEntryMapper:
             modified=entry.modified,
             read_only=entry.read_only,
             has_marker=entry.has_marker,
+            status=entry.status,
+            message=entry.message,
         )
 
     @classmethod

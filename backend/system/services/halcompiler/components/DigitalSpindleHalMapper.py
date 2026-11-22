@@ -17,9 +17,9 @@ its own MCU and is never dispatched through
 
 from __future__ import annotations
 
-from typing import Any
 
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Tool
 from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
@@ -46,15 +46,15 @@ _HEALTH_PINS: tuple[tuple[str, str], ...] = (
 class _SpindleContext:
     """Encapsulates state for a single spindle mapping pass to eliminate parameter bloat."""
 
-    def __init__(self, spindle: dict[str, Any]) -> None:
+    def __init__(self, spindle: Tool) -> None:
         self.spindle = spindle
         self.fragment = HalFragment()
-        self.spindle_id = str(spindle["id"])
-        self.n = int(spindle.get("spindle_number") or 0)
+        self.spindle_id = spindle.id
+        self.n = spindle.spindle_number or 0
 
     def request(self, field: str, signal: str, role: PinRole) -> None:
         """Helper to conditionally append a PinRequest if the field exists."""
-        raw = self.spindle.get(field)
+        raw: str | None = getattr(self.spindle, field)
         if raw:
             self.fragment.requests.append(
                 PinRequest(
@@ -82,7 +82,7 @@ class _SpindleContext:
         signals this method declares; the selection logic itself lives
         here, once, centralized — see `.agent/component/digital_spindle.md`.
         """
-        rpm_scale = self.spindle.get("rpm_scale")
+        rpm_scale = self.spindle.rpm_scale
         scaled = rpm_scale is not None and rpm_scale != 1.0
 
         if not scaled:
@@ -125,16 +125,16 @@ class _SpindleContext:
         self.fragment.nets.append(f"net spindle-forward spindle.{self.n}.forward")
         self.request("run_pin", "spindle-forward", PinRole.SPINDLE_OUT)
 
-        if self.spindle.get("reverse_pin"):
+        if self.spindle.reverse_pin:
             self.fragment.nets.append(f"net spindle-reverse spindle.{self.n}.reverse")
             self.request("reverse_pin", "spindle-reverse", PinRole.SPINDLE_OUT)
 
     def build_feedback_and_at_speed(self) -> None:
-        has_speed_fb = bool(self.spindle.get("speed_fb_pin"))
-        has_at_speed = bool(self.spindle.get("at_speed_pin"))
+        has_speed_fb = bool(self.spindle.speed_fb_pin)
+        has_at_speed = bool(self.spindle.at_speed_pin)
 
         if has_speed_fb:
-            rpm_scale = self.spindle.get("rpm_scale")
+            rpm_scale = self.spindle.rpm_scale
             gain = (1.0 / rpm_scale) if rpm_scale not in (None, 0) else 1.0
             fb_raw_signal = f"{self.spindle_id}-speed-fb-raw"
 
@@ -150,7 +150,7 @@ class _SpindleContext:
             self.fragment.nets.append(f"net spindle-at-speed => spindle.{self.n}.at-speed")
             self.request("at_speed_pin", "spindle-at-speed", PinRole.SPINDLE_IN)
         elif has_speed_fb:
-            min_rpm = self.spindle.get("min_rpm") or 0
+            min_rpm = self.spindle.min_rpm or 0
             near = f"near-{self.spindle_id}-at-speed"
 
             self.fragment.loadrt.append(f"loadrt near names={near}")
@@ -175,7 +175,7 @@ class _SpindleContext:
 
     def build_health(self) -> None:
         for field, suffix in _HEALTH_PINS:
-            if self.spindle.get(field):
+            if getattr(self.spindle, field):
                 self.request(field, f"{self.spindle_id}-{suffix}", PinRole.SPINDLE_IN)
 
 
@@ -183,7 +183,7 @@ class DigitalSpindleHalMapper:
     """Speed command, run/reverse, feedback/at-speed, health — one spindle."""
 
     @staticmethod
-    def to_fragment(spindle: dict[str, Any]) -> HalFragment:
+    def to_fragment(spindle: Tool) -> HalFragment:
         ctx = _SpindleContext(spindle)
 
         ctx.build_speed_command()

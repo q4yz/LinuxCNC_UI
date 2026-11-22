@@ -8,7 +8,7 @@ from models.LedModels import Led
 from models.McuModels import McuStateResponse
 from models.program.ProgramModels import ProgramProgressResponse
 from models.TemperatureStateResponse import TemperatureStateResponse
-from factories.tools.ToolResponseFactory import ToolStateResponseModel
+from mappers.tools.ToolResponseMapper import ToolStateResponseModel
 from models.tools.HeaterModels import HeaterStateResponse
 
 

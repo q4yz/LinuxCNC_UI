@@ -26,7 +26,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -62,11 +62,13 @@ test("MacroButton hides itself when the descriptor is missing or disabled", () =
   // appear in the same computed / v-if guard so a regression
   // that flips them to "rendered" trips the test.
   assert.match(buttonText, /isVisible/, "MacroButton must compute isVisible");
+  // both renderings (the output control and the button) are gated on it
   assert.match(
     buttonText,
-    /v-if="isVisible"/,
-    "MacroButton must gate the template on isVisible",
+    /v-if="isVisible && descriptor\?\.macroKind === 'output'"/,
+    "MacroButton must gate the output control on isVisible",
   );
+  assert.match(buttonText, /v-else-if="isVisible"/, "MacroButton must gate the button on isVisible");
   assert.match(
     buttonText,
     /descriptor != null/,
@@ -237,26 +239,38 @@ test("MacroButtonEditor emits update:modelValue on commit", () => {
   );
 });
 
-test("MacroButtonEditor filters the macro dropdown to macro + ngc only", () => {
-  // ``mcode`` is intentionally excluded from the per-slot
-  // dropdown: an operator who needs an M-code call wraps it in
-  // a ``.macro``. The kind picker should also offer only the
-  // two supported kinds.
-  assert.match(
-    editorText,
-    /<option value="macro">macro<\/option>/,
-    "MacroButtonEditor must offer macro in the kind picker",
-  );
-  assert.match(
-    editorText,
-    /<option value="ngc">ngc<\/option>/,
-    "MacroButtonEditor must offer ngc in the kind picker",
-  );
-  assert.doesNotMatch(
-    editorText,
-    /<option value="mcode">mcode<\/option>/,
-    "MacroButtonEditor must not offer mcode (wrap in a .macro instead)",
-  );
+test("MacroButtonEditor offers macro, ngc and UI component (no mcode)", () => {
+  // ``mcode`` is intentionally excluded: an operator who needs an M-code
+  // call wraps it in a ``.macro``. "UI component" opens a panel in a window.
+  assert.match(editorText, /\{ value: "macro", label: "macro" \}/);
+  assert.match(editorText, /\{ value: "ngc", label: "ngc" \}/);
+  assert.match(editorText, /\{ value: "component", label: "UI component" \}/);
+  assert.match(editorText, /<option v-for="kind in KINDS" :key="kind\.value" :value="kind\.value">/);
+  assert.doesNotMatch(editorText, /value: "mcode"|<option value="mcode">/, "no mcode kind");
+  assert.match(editorText, /if \(row\?\.macroKind === "component"\) return componentOptions;/,
+    "kind component lists the panels");
+});
+
+test("a component button opens its panel in a floating window", () => {
+  const button = readFileSync(resolve(here, "../src/ui/MacroButton.vue"), "utf-8");
+  assert.match(button, /floating\.open\(panel, props\.descriptor\.name \|\| panelDef\(panel\)\?\.label \|\| panel\)/);
+  assert.match(button, /opensComponent\.value \? false :/, "opening a window is never blocked by the E-stop");
+  const host = readFileSync(resolve(here, "../src/components/FloatingPanelHost.vue"), "utf-8");
+  assert.match(host, /provide\(WINDOW_CHROME, props\.chrome\)/, "the window hands its x / drag to the panel");
+  assert.match(host, /<header\s+v-if="!claims\[win\.id\]"/, "its own header only while nothing took the hook");
+  assert.match(host, /<MachineGate v-else-if="PANEL_COMPONENTS\[win\.panel\]"/);
+  const card = readFileSync(resolve(here, "../src/ui/BaseCard.vue"), "utf-8");
+  assert.match(card, /v-if="title \|\| chrome"/, "a card header shows when it has a title or the window's x");
+  assert.match(card, /@pointerdown="chrome\?\.startDrag\(\$event\)"/, "dragging the card header moves the window");
+  assert.match(card, /<WindowCloseButton v-if="chrome" :chrome="chrome" \/>/);
+  // every window in one z-30 layer: the sidebar (z-40) and the E-stop box (z-[100]) stay above
+  assert.match(host, /class="pointer-events-none fixed inset-0 z-30" data-testid="floating-panel-layer"/);
+  assert.match(host, /zIndex: win\.z,/);
+  assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<AppSidebar class="absolute top-0 left-0 h-full z-40/);
+  assert.match(readFileSync(resolve(here, "../src/components/EStopHeader.vue"), "utf-8"), /data-estop-overlay class="fixed top-0 right-0 z-\[100\]/);
+  const hook = readFileSync(resolve(here, "../src/composables/windowChrome.ts"), "utf-8");
+  assert.match(hook, /provide\(WINDOW_CHROME, null\);/, "only the outermost card takes it");
+  assert.match(readFileSync(resolve(here, "../src/App.vue"), "utf-8"), /<FloatingPanelHost \/>/);
 });
 
 test("MacroButtonEditor stores the bare macro name, not the file name", () => {
@@ -267,19 +281,18 @@ test("MacroButtonEditor stores the bare macro name, not the file name", () => {
   assert.match(editorText, /stripExtension\(r\.macroName, macroKind\)/, "old rows with an extension are cleaned up");
 });
 
-test("MacroButtonEditor fetches macro options via the generated client", () => {
+test("MacroButtonEditor fetches macro options via the macros facade", () => {
   // Regression guard for the "dropdown does nothing" bug: the
   // editor used to source options from the macros Pinia store,
   // which is only populated when the macros module has booted.
   // Settings tabs that mount before ``useMacrosStore()`` ran
-  // ended up with an empty dropdown. The fix is to call the
-  // generated OpenAPI client directly via
-  // ``ModulesMacrosService.listMacros`` so the editor no longer
-  // depends on the macros module's lifecycle.
+  // ended up with an empty dropdown. The fix is to list them through
+  // ``macrosFacade.list`` (no store) so the editor no longer depends on
+  // the macros module's lifecycle.
   assert.match(
     editorText,
-    /import\s*\{[^}]*\bModulesMacrosService\b[^}]*\}\s*from\s*["'][^"']*generated\/api["']/,
-    "MacroButtonEditor must import ModulesMacrosService from the generated client",
+    /import\s*\{[^}]*\bmacrosFacade\b[^}]*\}\s*from\s*["'][^"']*facades\/macrosFacade["']/,
+    "MacroButtonEditor must import macrosFacade",
   );
   // The two calls — ``macro`` for the .macro dropdown and
   // ``ngc`` for the .ngc dropdown — must both be present. ``mcode``
@@ -287,17 +300,17 @@ test("MacroButtonEditor fetches macro options via the generated client", () => {
   // .macro files instead).
   assert.match(
     editorText,
-    /listMacros\(\s*["']macro["']\s*\)/,
-    "MacroButtonEditor must call listMacros('macro')",
+    /macrosFacade\.list\(\s*["']macro["']\s*\)/,
+    "MacroButtonEditor must list the 'macro' kind",
   );
   assert.match(
     editorText,
-    /listMacros\(\s*["']ngc["']\s*\)/,
-    "MacroButtonEditor must call listMacros('ngc')",
+    /macrosFacade\.list\(\s*["']ngc["']\s*\)/,
+    "MacroButtonEditor must list the 'ngc' kind",
   );
   assert.doesNotMatch(
     editorText,
-    /listMacros\(\s*["']mcode["']\s*\)/,
+    /\.list\(\s*["']mcode["']\s*\)/,
     "MacroButtonEditor must not request the mcode list",
   );
   // And the editor must NOT depend on the macros Pinia store.
@@ -353,4 +366,29 @@ test("the camera view shows the three camera macro slots bottom-left", () => {
   assert.match(text, /macroButtons\.bySlot/);
   assert.match(text, /class="absolute bottom-4 left-4[^"]*"[^>]*data-test="camera-macro-buttons"/);
   assert.match(text, /<MacroButton[\s\S]{0,80}:descriptor="buttonsBySlot\[slot\]"/);
+});
+
+
+test("kind 'output': a toggle, slider or colour picker next to the name", async () => {
+  const editor = editorText;
+  assert.match(editor, /\{ value: "output", label: "Output pin" \}/);
+  assert.match(editor, /outputTargets\(baseThread\.io, baseThread\.leds\)/, "the machine's outputs from its live state");
+  const control = readFileSync(resolve(here, "../src/ui/OutputControl.vue"), "utf-8");
+  for (const id of ["output-toggle", "output-slider", "output-color"]) {
+    assert.ok(control.includes(':data-testid="`' + id + '-${descriptor.slot}`"'), id);
+  }
+  assert.match(control, /<span v-if="descriptor\.name && !compact" class="whitespace-nowrap"/,
+    "the name next to the control — hidden when the row has no room for it");
+  assert.match(control, /const overflowing = \(\) => ancestors\(\)\.some\(\(el\) => el\.scrollWidth - el\.clientWidth > 1\);/);
+  assert.match(control, /:title="target \? descriptor\.name \|\| target\.label/, "the name stays the tooltip");
+  const { outputTargets, findTarget } = await import(pathToFileURL(resolve(here, "../src/ui/outputTargets.ts")).href);
+  const io = { outputs: [{ id: "light", pwm: false, value: 1 }, { id: "beeper", pwm: true, scale: 0.5, value: 0 }],
+               fans: [{ id: "fan", value: 40 }], inputs: [] };
+  const leds = [{ id: "sb", chain_count: 3, color_order: "GRB", segments: [] }];
+  const targets = outputTargets(io, leds);
+  assert.deepEqual(targets.map((t: { value: string; control: string }) => [t.value, t.control]),
+    [["out:light", "toggle"], ["out:beeper", "slider"], ["fan:fan", "slider"], ["led:sb", "color"]]);
+  assert.equal(findTarget("out:beeper", io, leds).max, 0.5, "a PWM pin's slider goes to its scale");
+  assert.equal(findTarget("fan:fan", io, leds).max, 100);
+  assert.equal(findTarget("out:nope", io, leds), undefined);
 });

@@ -83,7 +83,7 @@ test("loadHalData adapts the real backend resources for a specific file", () => 
   const text = readEditor("loadHalData.ts");
   assert.match(
     text,
-    /HalVisualService\.fetchLayout\(file\)/,
+    /halFacade\.fetchLayout\(file\)/,
     "loader must pass the target file through to the facade",
   );
   assert.match(text, /full_name/, "adapter maps HalPinResource.full_name");
@@ -230,7 +230,7 @@ test("VisualHalEditor offers Save / Save & Close / Close, mirroring EditorView",
   assert.match(text, />Close</, "Close button must exist");
   assert.match(text, /@click="confirmClose"/, "Close must go through the unsaved-changes confirm");
 
-  assert.match(text, /HalVisualService\.saveLayout\(/, "saveEditor must call the facade's saveLayout");
+  assert.match(text, /halFacade\.saveLayout\(/, "saveEditor must call the facade's saveLayout");
   assert.match(
     text,
     /useUnsavedChangesGuard\(\(\) => canvas\.dirty\.value\)/,
@@ -263,7 +263,7 @@ test("(skipped without generated client) behavioural: placeholder pins are folda
 
   const facadeUrl = pathToFileURL(resolve(src, "facades/halFacade.ts")).href;
   const facadeModule = await import(facadeUrl);
-  const HalVisualService = facadeModule.default;
+  const halFacade = facadeModule.default;
 
   const knownSourcePin = {
     id: "motion.spindle-on",
@@ -288,8 +288,8 @@ test("(skipped without generated client) behavioural: placeholder pins are folda
     description: "Not present in current HAL introspection.",
   };
 
-  const originalFetchLayout = HalVisualService.fetchLayout;
-  HalVisualService.fetchLayout = async () => ({
+  const originalFetchLayout = halFacade.fetchLayout;
+  halFacade.fetchLayout = async () => ({
     in_pins: [],
     out_pins: [knownSourcePin],
     signals: [
@@ -316,7 +316,7 @@ test("(skipped without generated client) behavioural: placeholder pins are folda
       "the placeholder pin (only referenced by the signal) must also be folded into the flat pin list",
     );
   } finally {
-    HalVisualService.fetchLayout = originalFetchLayout;
+    halFacade.fetchLayout = originalFetchLayout;
   }
 });
 

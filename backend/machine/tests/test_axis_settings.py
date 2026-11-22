@@ -15,7 +15,7 @@ def test_axis_settings_endpoint_dispatches_to_facade(tmp_data_root, clean_env):
     app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    with patch("services.AxisService.AxisService.update_settings") as mock_update:
+    with patch("services.motion.AxisService.AxisService.update_settings") as mock_update:
         resp = client.post(
             "/api/v1/modules/axis/settings",
             json={"multiplier": 1.25, "absolute_speed_limit": 3000},
@@ -50,7 +50,7 @@ def test_axis_settings_has_no_hard_coded_speed_ceiling(tmp_data_root, clean_env)
     app, _ = _axis_app(tmp_data_root, clean_env)
     client = TestClient(app)
 
-    with patch("services.AxisService.AxisService.update_settings") as mock_update:
+    with patch("services.motion.AxisService.AxisService.update_settings") as mock_update:
         resp = client.post(
             "/api/v1/modules/axis/settings",
             json={"multiplier": 1.0, "absolute_speed_limit": 9000},
@@ -77,9 +77,9 @@ def test_axis_settings_endpoint_requires_fields(tmp_data_root, clean_env):
 
 
 def test_axis_service_update_settings_dispatches(tmp_data_root, clean_env):
-    from services.AxisService import AxisService
+    from services.motion.AxisService import AxisService
 
-    with patch("services.AxisService.execute_sync_cmd") as mock_exec:
+    with patch("services.motion.AxisService.execute_sync_cmd") as mock_exec:
         AxisService().update_settings(1.25, 3000)
 
     assert mock_exec.call_count == 2

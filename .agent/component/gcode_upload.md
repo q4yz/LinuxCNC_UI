@@ -7,7 +7,7 @@
 > `machine_config/m_codes/` (`M104` … `M190`, helpers `M180`–`M183`,
 > all one script; `g28.ngc`), no INI `REMAP` (`backend/system/services/machinetemplates/marlin_mcodes.py`);
 > MDI / macro lines converted by `convert_mdi`; print start
-> `backend/machine/services/PrintStartService.py`; MDI `G28` / `G29`
+> `backend/machine/services/program/PrintStartService.py`; MDI `G28` / `G29`
 > (`StateService.run_mdi`); example start macro `macros/start.ngc`. Tests: `backend/common/tests/test_gcode_converter.py`,
 > `backend/system/tests/test_marlin_mcodes.py`, `test_octoprint.py`.
 >
@@ -28,6 +28,10 @@ A `.gcode` / `.gco` / `.g` upload is converted and stored as `.ngc`
 | `G4 S2` / `G4 P500` (ms) | `G4 P2` / `G4 P0.5` |
 | `M117 text` | `(MSG, text)` |
 | `start 60 215`, `PRINT_START BED=60 EXTRUDER=215` | `o<start> call [60] [215]` — when `macros/start.ngc` exists, values in order; otherwise commented out |
+| A bare `G10` / `G11` | the `[firmware_retraction]` A move (commented out without one); `G10 L…` stays |
+| `M221 S<%>` / `SET_GCODE_OFFSET Z=` / `Z_ADJUST=` | `M184 P<%>` / `M185 P<mm> Q0` / `Q1` (user M-codes → `PrintTuningService`) |
+| `M600` | kept: REMAP=M600 → `m_codes/m600.ngc` (`[FILAMENT_CHANGE]` in the INI) |
+| Object labels (`EXCLUDE_OBJECT_START NAME=`, `M486 S<n>`, `; printing object`, `; OBJECT_ID:`) | each object's part wrapped in `o<exclude_N> if [#<_hal[webgui.exclude-object-K]> GT 0]` (skip branch: the non-moves, `G92 A<end>`, `F`), objects in `; LINUXCNC_UI_OBJECTS: [...]`; `G92.1` first |
 | A line over 252 characters (LinuxCNC's limit: `LINELEN` 255, and `fgets` counts the `\n`) | cut to its first 249 and `...` — the cut falls in a comment; a line whose code alone is that long is commented out |
 | `G28` / `G29` in the start G-code (before the first extruding X/Y move) | commented out, and listed in a first line `; LINUXCNC_UI_PRESTART: home level` — run before the program (§ 1a) |
 | `G28 X` later (end G-code parking) | `o<g28> call [1] [0] [0]` — a move to the home position (`[UI_HOME]` in the INI): a program cannot home |

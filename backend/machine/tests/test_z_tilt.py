@@ -2,12 +2,14 @@
 tilted bed whose probed heights follow the applied motor offsets."""
 from __future__ import annotations
 
+from dtos.z_tilt.ZTiltDto import ZTiltPins
+
 import re
 
 import pytest
 
-import services.MacroExecutionService as macro_module
-import services.ZTiltService as module
+import services.program.MacroExecutionService as macro_module
+import services.motion.ZTiltService as module
 from core.z_tilt import fit_heights
 from exceptions import BadRequestError
 from hardware.Connection import MachineState
@@ -83,7 +85,7 @@ def rig(monkeypatch):
             stat.probed_position = (position["x"], position["y"], bed(position["x"], position["y"]) - correction)
         return None
 
-    import services.Probing as probing
+    import services.motion.Probing as probing
 
     monkeypatch.setattr(probing, "dispatch_mdi", dispatch_mdi)
     monkeypatch.setattr(module, "read_hal_pin", lambda name: pins[int(name.rsplit("-", 1)[1].split(".")[0])].value)
@@ -100,7 +102,7 @@ def rig(monkeypatch):
 
     def service(**overrides):
         s = module.ZTiltService(config=FakeConfig(**overrides))
-        s._pins = pins
+        s._pins = ZTiltPins(offsets=tuple(pins))
         return s
 
     return type("R", (), {"stat": stat, "lines": lines, "pins": pins, "events": events, "levels": levels,

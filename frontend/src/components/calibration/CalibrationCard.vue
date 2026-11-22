@@ -1,0 +1,333 @@
+<script setup lang="ts">
+// One calibration on the Calibration tab: last tested, result, reminder
+// (once), benefit, instructions, its parameters and Start. Bed mesh opens
+// its details in a pop-up; Probe Z offset shows the paper-test buttons
+// while its session runs.
+import { computed, ref, watch } from "vue";
+import type { CalibrationItem } from "../../facades/calibrationFacade";
+import { CALIBRATIONS, REMINDER_PRESETS, addDays, relativeDate } from "../../config/calibrations";
+import { BaseButton, Icon } from "../../ui";
+import BaseCard from "../../ui/BaseCard.vue";
+import CalibrationFigure from "./CalibrationFigure.vue";
+
+const props = defineProps<{ item: CalibrationItem; busy?: boolean }>();
+const emit = defineEmits<{
+  start: [params: Record<string, number>];
+  reminder: [date: string | null];
+  clear: [];
+  details: [];
+  command: [line: string];
+  submit: [values: Record<string, number>];
+  liveZ: [delta: number | null];
+  threshold: [value: number];
+}>();
+
+const text = computed(() => CALIBRATIONS[props.item.kind] ?? {
+  title: props.item.id, benefit: "", steps: [], saves: "",
+});
+const title = computed(() => (props.item.label ? `${text.value.title}: ${props.item.label}` : text.value.title));
+const showSteps = ref(false);
+const editingReminder = ref(false);
+const reminderDate = ref(props.item.remind_at ?? "");
+watch(() => props.item.remind_at, (v) => (reminderDate.value = v ?? ""));
+
+const params = ref<Record<string, number>>({});
+watch(
+  () => props.item.params,
+  (list) => {
+    for (const p of list ?? []) if (params.value[p.name] === undefined) params.value[p.name] = p.default;
+  },
+  { immediate: true },
+);
+
+// guided calibrations: what was measured on the test print
+const measured = ref<Record<string, number | null>>({});
+const measuredComplete = computed(() =>
+  (props.item.inputs ?? []).every((p) => typeof measured.value[p.name] === "number" && !Number.isNaN(measured.value[p.name])),
+);
+function submitMeasured() {
+  const values: Record<string, number> = {};
+  for (const p of props.item.inputs ?? []) values[p.name] = Number(measured.value[p.name]);
+  emit("submit", values);
+}
+
+const liveOffset = computed(() => {
+  const v = props.item.values?.live_offset;
+  return typeof v === "number" ? `${v >= 0 ? "+" : ""}${v.toFixed(3)}` : "—";
+});
+
+// sensorless homing: the next threshold to try (the backend's halving)
+const nextThreshold = ref<number>(Number(props.item.values?.suggestion ?? props.item.values?.loaded ?? 100));
+watch(() => props.item.values?.suggestion, (v) => { if (typeof v === "number") nextThreshold.value = v; });
+
+const session = computed(() => props.item.kind === "probe_z_offset" && !!props.item.values?.session);
+const startLabel = computed(() => {
+  const busyNow = props.item.running || session.value;
+  if (props.item.kind === "sensorless") return busyNow ? "Homing…" : `Home ${props.item.label}`;
+  if (busyNow) return props.item.guided ? "Printing…" : "Running…";
+  return props.item.guided ? "Print test" : "Start";
+});
+
+const clearable = computed(() =>
+  ["probe_z_offset", "pid", "input_shaper", "skew", "pressure_advance", "flow", "extruder_steps", "retraction",
+   "sensorless"].includes(props.item.kind),
+);
+const status = computed(() => {
+  if (!props.item.available) return { text: "not on this machine", cls: "bg-gray-700 text-gray-400" };
+  if (props.item.running || session.value) return { text: "running", cls: "bg-blue-700/60 text-blue-100" };
+  if (props.item.due) return { text: "due", cls: "bg-amber-600/70 text-amber-50" };
+  return null;
+});
+
+const inUse = computed(() => {
+  const v = props.item.values ?? {};
+  const fmt = (x: unknown, d = 3) => (typeof x === "number" ? x.toFixed(d) : "—");
+  switch (props.item.kind) {
+    case "pid":
+      return `Kp ${fmt(v.kp)}  Ki ${fmt(v.ki)}  Kd ${fmt(v.kd)}${v.calibrated ? " (calibrated)" : " (profile)"}`;
+    case "probe_z_offset":
+      return `z_offset ${fmt(v.z_offset)} mm`;
+    case "skew":
+      return `factor ${fmt(v.factor, 6)}`;
+    case "pressure_advance":
+      return `K ${fmt(v.advance, 4)}`;
+    case "extruder_steps":
+      return typeof v.scale === "number" ? `SCALE ${fmt(v.scale)} steps/mm` : "SCALE — (LinuxCNC not running)";
+    case "flow":
+      return `flow ${fmt(v.flow, 1)} %`;
+    case "retraction":
+      return typeof v.length === "number" ? `retract ${fmt(v.length, 2)} mm at ${fmt(v.speed, 0)} mm/s` : "no firmware retraction";
+    case "sensorless":
+      return `threshold ${v.loaded ?? "—"} in the driver${v.saved != null && v.saved !== v.loaded ? `, ${v.saved} after a restart` : ""}`;
+    case "first_layer":
+      return `live Z ${liveOffset.value} mm → ${v.target === "probe" ? "probe z_offset" : "Z home"}`;
+    case "input_shaper":
+      return `X ${v.type_x ?? "—"} ${fmt(v.freq_x, 1)} Hz, Y ${v.type_y ?? "—"} ${fmt(v.freq_y, 1)} Hz`;
+    default:
+      return "";
+  }
+});
+
+function setPreset(days: number) {
+  emit("reminder", addDays(days));
+  editingReminder.value = false;
+}
+function saveReminder() {
+  emit("reminder", reminderDate.value || null);
+  editingReminder.value = false;
+}
+</script>
+
+<template>
+  <!-- BaseCard: its header moves its right side clear of the STOP box -->
+  <BaseCard
+    :title="title"
+    :stagger="false"
+    class="flex w-80 max-w-[calc(100vw-6rem)] shrink-0 snap-start flex-col"
+    :class="item.due && item.available ? 'ring-1 ring-amber-500/70' : ''"
+    :data-testid="`calibration-card-${item.id}`"
+  >
+    <template #header-actions>
+      <span v-if="status" class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase" :class="status.cls">
+        {{ status.text }}
+      </span>
+    </template>
+
+    <div class="flex h-full flex-col gap-3 p-4 text-sm">
+      <dl class="grid grid-cols-[6.5rem_1fr] gap-x-2 gap-y-1">
+        <dt class="text-gray-500">Last tested</dt>
+        <dd class="text-gray-200" :title="item.last_tested ?? ''" data-testid="calibration-last">
+          {{ relativeDate(item.last_tested) }}
+        </dd>
+        <dt class="text-gray-500">Result</dt>
+        <dd class="break-words font-mono text-xs text-gray-200" data-testid="calibration-result">
+          {{ item.result || "—" }}
+        </dd>
+        <template v-if="inUse">
+          <dt class="text-gray-500">In use</dt>
+          <dd class="font-mono text-xs text-gray-300">{{ inUse }}</dd>
+        </template>
+        <dt class="text-gray-500">Reminder</dt>
+        <dd class="text-gray-200">
+          <button
+            v-if="!editingReminder"
+            type="button"
+            class="text-left underline decoration-dotted underline-offset-2 hover:text-white"
+            :class="item.due ? 'text-amber-300' : ''"
+            data-testid="calibration-reminder"
+            @click="editingReminder = true"
+          >{{ item.remind_at ? `${item.remind_at}${item.due ? " (due)" : ""}` : "none — set" }}</button>
+          <div v-else class="space-y-1">
+            <input
+              v-model="reminderDate"
+              type="date"
+              class="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-200"
+              data-testid="calibration-reminder-date"
+            />
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="preset in REMINDER_PRESETS"
+                :key="preset.days"
+                type="button"
+                class="rounded bg-gray-700 px-1.5 py-0.5 text-[11px] text-gray-200 hover:bg-gray-600"
+                @click="setPreset(preset.days)"
+              >{{ preset.label }}</button>
+            </div>
+            <div class="flex gap-1">
+              <BaseButton size="sm" variant="primary" @click="saveReminder">Save</BaseButton>
+              <BaseButton v-if="item.remind_at" size="sm" variant="ghost" @click="emit('reminder', null); editingReminder = false">Remove</BaseButton>
+              <BaseButton size="sm" variant="ghost" @click="editingReminder = false">Cancel</BaseButton>
+            </div>
+          </div>
+        </dd>
+      </dl>
+
+      <p class="text-gray-400">{{ text.benefit }}</p>
+
+      <div>
+        <button
+          type="button"
+          class="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-200"
+          @click="showSteps = !showSteps"
+        >
+          <Icon name="chevronDown" class="h-3 w-3 transition-transform" :class="showSteps ? '' : '-rotate-90'" />
+          Instructions
+        </button>
+        <ol v-if="showSteps" class="mt-2 list-decimal space-y-1 pl-5 text-xs text-gray-300" data-testid="calibration-steps">
+          <li v-for="(step, k) in text.steps" :key="k">{{ step }}</li>
+        </ol>
+        <p v-if="showSteps && text.saves" class="mt-2 text-xs text-gray-500">Saved: {{ text.saves }}</p>
+      </div>
+
+      <p v-if="!item.available" class="rounded bg-gray-900/60 p-2 text-xs text-gray-400">{{ item.reason }}</p>
+
+      <div v-if="session" class="space-y-2 rounded border border-blue-700/60 bg-blue-900/20 p-2" data-testid="calibration-paper-test">
+        <p class="text-xs text-blue-100">Lower the nozzle until the paper just drags:</p>
+        <div class="grid grid-cols-4 gap-1">
+          <BaseButton v-for="dz in [-0.1, -0.01, 0.01, 0.1]" :key="dz" size="sm" variant="secondary" :disabled="busy || item.running"
+                      @click="emit('command', `TESTZ Z=${dz}`)">{{ dz > 0 ? "+" : "" }}{{ dz }}</BaseButton>
+        </div>
+        <div class="flex gap-2">
+          <BaseButton size="sm" variant="success" :disabled="busy || item.running" @click="emit('command', 'ACCEPT')">Accept</BaseButton>
+          <BaseButton size="sm" variant="danger" :disabled="busy" @click="emit('command', 'ABORT')">Abort</BaseButton>
+        </div>
+      </div>
+
+      <div class="mt-auto space-y-2">
+        <h3 v-if="item.guided && item.params?.length" class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Test print
+        </h3>
+        <label v-for="p in item.params" :key="p.name" class="flex items-center justify-between gap-2 text-xs text-gray-400">
+          <span class="capitalize">{{ p.name }}</span>
+          <span class="flex items-center gap-1">
+            <input
+              v-model.number="params[p.name]"
+              type="number"
+              step="any"
+              :min="p.minimum ?? undefined"
+              :max="p.maximum ?? undefined"
+              class="w-20 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-right font-mono text-gray-200"
+              :data-testid="`calibration-param-${item.id}-${p.name}`"
+            />
+            <span class="w-6">{{ p.unit }}</span>
+          </span>
+        </label>
+        <div class="flex flex-wrap gap-2">
+          <BaseButton
+            variant="primary"
+            size="sm"
+            :disabled="busy || !item.available || item.running || session"
+            :data-testid="`calibration-start-${item.id}`"
+            @click="emit('start', { ...params })"
+          >{{ startLabel }}</BaseButton>
+          <BaseButton
+            v-if="item.kind === 'bed_mesh'"
+            variant="secondary"
+            size="sm"
+            data-testid="calibration-details-bed_mesh"
+            @click="emit('details')"
+          ><Icon name="mesh" class="mr-1" /> Details</BaseButton>
+          <BaseButton
+            v-if="clearable && item.available"
+            variant="ghost"
+            size="sm"
+            :disabled="busy || item.running"
+            title="Remove the saved values: back to the profile's"
+            @click="emit('clear')"
+          >Clear</BaseButton>
+        </div>
+      </div>
+
+      <section
+        v-if="item.kind === 'sensorless' && item.available"
+        class="space-y-2 rounded border border-gray-700 bg-gray-900/40 p-2"
+        :data-testid="`calibration-sensorless-${item.id}`"
+      >
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">After homing {{ item.label }}</h3>
+        <div class="grid grid-cols-3 gap-1">
+          <BaseButton size="sm" variant="secondary" :disabled="busy || item.running" title="Too sensitive: lower"
+                      @click="emit('submit', { verdict: -1 })">Stopped early</BaseButton>
+          <BaseButton size="sm" variant="secondary" :disabled="busy || item.running" title="Not sensitive enough: raise"
+                      @click="emit('submit', { verdict: 1 })">Ground at end</BaseButton>
+          <BaseButton size="sm" variant="success" :disabled="busy || item.running" @click="emit('submit', { verdict: 0 })">Good</BaseButton>
+        </div>
+        <p class="text-xs text-gray-500">Range {{ item.values?.low }} … {{ item.values?.high }}</p>
+        <label class="flex items-center justify-between gap-2 text-xs text-gray-400">
+          <span>Next threshold</span>
+          <input
+            v-model.number="nextThreshold"
+            type="number"
+            min="1"
+            max="255"
+            class="w-20 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-right font-mono text-gray-200"
+            :data-testid="`calibration-threshold-${item.id}`"
+          />
+        </label>
+        <BaseButton size="sm" variant="primary" :disabled="busy || item.running || !(nextThreshold >= 1 && nextThreshold <= 255)"
+                    :data-testid="`calibration-threshold-save-${item.id}`" @click="emit('threshold', nextThreshold)">
+          Save &amp; restart LinuxCNC
+        </BaseButton>
+      </section>
+
+      <section
+        v-if="item.guided && item.available && item.kind !== 'sensorless'"
+        class="mt-1 space-y-2 rounded border border-gray-700 bg-gray-900/40 p-2"
+        :data-testid="`calibration-measure-${item.id}`"
+      >
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Measure the test print</h3>
+        <CalibrationFigure :figure="item.figure ?? ''" class="mx-auto" />
+        <label v-for="p in item.inputs" :key="p.name" class="flex items-center justify-between gap-2 text-xs text-gray-400">
+          <span class="uppercase">{{ p.name }}</span>
+          <span class="flex items-center gap-1">
+            <input
+              v-model.number="measured[p.name]"
+              type="number"
+              step="0.01"
+              :min="p.minimum ?? undefined"
+              :max="p.maximum ?? undefined"
+              :placeholder="String(p.default)"
+              class="w-24 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-right font-mono text-gray-200"
+              :data-testid="`calibration-input-${item.id}-${p.name}`"
+            />
+            <span class="w-6">{{ p.unit }}</span>
+          </span>
+        </label>
+        <div v-if="item.kind === 'first_layer'" class="space-y-1" data-testid="calibration-live-z">
+          <p class="text-xs text-gray-400">Live Z offset (+ = nozzle up): <span class="font-mono text-gray-200" data-testid="calibration-live-z-value">{{ liveOffset }} mm</span></p>
+          <div class="grid grid-cols-5 gap-1">
+            <BaseButton v-for="dz in [-0.05, -0.01, 0.01, 0.05]" :key="dz" size="sm" variant="secondary" :disabled="busy"
+                        @click="emit('liveZ', dz)">{{ dz > 0 ? "+" : "" }}{{ dz }}</BaseButton>
+            <BaseButton size="sm" variant="ghost" :disabled="busy" title="Back to 0" @click="emit('liveZ', null)">0</BaseButton>
+          </div>
+        </div>
+        <BaseButton
+          variant="success"
+          size="sm"
+          :disabled="busy || !measuredComplete || (item.kind === 'first_layer' && item.running)"
+          :data-testid="`calibration-submit-${item.id}`"
+          @click="submitMeasured"
+        >{{ item.inputs?.length ? "Calculate & save" : "Save live offset" }}</BaseButton>
+      </section>
+    </div>
+  </BaseCard>
+</template>

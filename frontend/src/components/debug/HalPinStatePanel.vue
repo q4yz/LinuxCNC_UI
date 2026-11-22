@@ -13,11 +13,12 @@
 
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from "vue";
 import { BaseButton } from "../../ui";
+import BaseCard from "../../ui/BaseCard.vue";
 import PinTreeItem from "../../views/hal-visual-editor/PinTreeItem.vue";
 import { buildPinTree, collectAutoExpandPaths, type PinTreeNode } from "../../views/hal-visual-editor/pinTree";
 import { loadHalLayout } from "../../views/hal-visual-editor/loadHalData";
 import type { HalPin } from "../../views/hal-visual-editor/types";
-import HalVisualService from "../../facades/halFacade";
+import { halFacade } from "../../facades/halFacade";
 import { useConsoleStore } from "../../stores/console";
 import { storeToRefs } from "pinia";
 import { useHalScopeStore } from "../../stores/halScopeStore";
@@ -104,7 +105,7 @@ function toggleScope(pin: HalPin): void {
 
 async function refreshValues(): Promise<void> {
   const ids = shownPinIds.value;
-  const result = await HalVisualService.readPinValues(ids);
+  const result = await halFacade.readPinValues(ids);
   if (!result) {
     error.value = "Could not read the HAL pin values.";
     return;
@@ -179,25 +180,22 @@ const liveLabel = computed(() => {
 </script>
 
 <template>
-  <div ref="root" class="rounded-lg border border-gray-700 bg-gray-800 p-4 space-y-3" data-test="hal-pin-state-panel">
-    <header class="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 class="text-lg font-semibold text-gray-100">HAL pins</h2>
-        <p class="text-xs text-gray-400" data-test="hal-pin-state-summary">
-          {{ visiblePins.length }} pin(s), {{ trueCount }} bit(s) TRUE · {{ shownPinIds.length }} on screen ·
-          read {{ readAtLabel }} ({{ liveLabel }})
-        </p>
-      </div>
-      <div class="flex items-center gap-2">
-        <label class="flex items-center gap-1.5 text-xs text-gray-300">
-          <input v-model="live" type="checkbox" data-test="hal-pin-state-live" />
-          Live
-        </label>
-        <BaseButton variant="secondary" size="sm" :loading="loading" data-test="hal-pin-state-refresh" @click="load">
-          Refresh values
-        </BaseButton>
-      </div>
-    </header>
+  <BaseCard title="HAL pins" :stagger="false" data-test="hal-pin-state-panel">
+    <template #header-actions>
+      <label class="flex items-center gap-1.5 text-xs text-gray-300">
+        <input v-model="live" type="checkbox" data-test="hal-pin-state-live" />
+        Live
+      </label>
+      <BaseButton variant="secondary" size="sm" :loading="loading" data-test="hal-pin-state-refresh" @click="load">
+        Refresh values
+      </BaseButton>
+    </template>
+
+  <div ref="root" class="p-4 space-y-3">
+    <p class="text-xs text-gray-400" data-test="hal-pin-state-summary">
+      {{ visiblePins.length }} pin(s), {{ trueCount }} bit(s) TRUE · {{ shownPinIds.length }} on screen ·
+      read {{ readAtLabel }} ({{ liveLabel }})
+    </p>
 
     <HalScope v-model="scopePins" />
 
@@ -245,4 +243,5 @@ const liveLabel = computed(() => {
       <p v-if="!loading && visiblePins.length === 0" class="py-4 text-center text-xs text-gray-500">No pins.</p>
     </div>
   </div>
+  </BaseCard>
 </template>

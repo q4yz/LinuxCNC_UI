@@ -33,12 +33,14 @@ from typing import Any
 DEFAULT_FIRMWARE_BOARD = "BIGTREETECH OCTOPUS"
 
 
+from models.machineconfig.HardwareJsonModels import McuInfo
+
 class RemoraFirmwareConfigMapper:
     """Builds the `{"Board", "Modules"}` root object for one MCU's `config.txt`."""
 
     @staticmethod
-    def to_config(mcu: dict[str, Any], modules: list[dict[str, object]]) -> dict[str, Any]:
-        config: dict[str, Any] = {"Board": mcu.get("board") or DEFAULT_FIRMWARE_BOARD}
+    def to_config(mcu: McuInfo | None, modules: list[dict[str, object]]) -> dict[str, Any]:
+        config: dict[str, Any] = {"Board": (mcu.board if mcu is not None else None) or DEFAULT_FIRMWARE_BOARD}
         threads = RemoraFirmwareConfigMapper.threads(mcu)
         if threads:
             config["Threads"] = threads
@@ -46,14 +48,13 @@ class RemoraFirmwareConfigMapper:
         return config
 
     @staticmethod
-    def threads(mcu: dict[str, Any]) -> list[dict[str, object]]:
+    def threads(mcu: McuInfo | None) -> list[dict[str, object]]:
         """The firmware `"Threads"` block: the base thread at the MCU's
         `PRU_base_freq` (the same value as the driver line), `[]` when
         none is declared (firmware and driver keep their defaults)."""
-        base = mcu.get("pru_base_freq")
-        if not base:
+        if mcu is None or not mcu.pru_base_freq:
             return []
-        return [{"Thread": "Base", "Frequency": int(base)}]
+        return [{"Thread": "Base", "Frequency": mcu.pru_base_freq}]
 
 
 __all__ = ["DEFAULT_FIRMWARE_BOARD", "RemoraFirmwareConfigMapper"]

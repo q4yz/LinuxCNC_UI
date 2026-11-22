@@ -3,7 +3,7 @@
 > **Implemented status:** parser (`MachineConfigParser._parse_temperature_sensor`),
 > `hardware_json_generator`, `TemperatureSensorHalMapper` /
 > `TemperatureSensorWebguiMapper`, the validator rules and
-> `hal_pin_diagnostics` below. The runtime and the temperature plot
+> `HalPinValidator.diagnostics` below. The runtime and the temperature plot
 > needed no change: every `temperature_sensors[]` record no heater
 > claims becomes a read-only `webgui.<id>` pin
 > (`TemperatureService.preload_hal_pins`) and a line in the plot.
