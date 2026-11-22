@@ -40,7 +40,9 @@ A web-based operator interface for LinuxCNC. The backend wraps the LinuxCNC Pyth
 
 ## Install
 
-Just execute `install.sh` on the LinuxCNC machine:
+**Easiest: a ready-made SD card image** for the BigTreeTech CB1 or a Raspberry Pi 3 / 4 / 400 / 5 (CM4 / CM5) with Armbian, a PREEMPT_RT kernel, LinuxCNC 2.9.4, the UI and the Remora HAL components: download it from the [latest image release](https://github.com/q4yz/LinuxCNC_UI-images/releases/latest) and flash it with balenaEtcher, Raspberry Pi Imager (*Use custom*) or Rufus (DD mode). Login `remora` / `remora`, UI at <http://remora.local>; change the passwords after the first login. The images are not yet tested on hardware. Details: [Installation](docs/getting-started/installation.md).
+
+On your own LinuxCNC system, execute `install.sh`:
 
 ```bash
 sudo ./install.sh                  # builds the checked-out commit on the board (needs ~2 GB RAM)
