@@ -6,8 +6,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from services.BedMeshProbeService import DEFAULT_PROFILE, get_bed_mesh_probe_service, parse_command
-from services.BedMeshService import get_bed_mesh_service
+from services.motion.BedMeshProbeService import DEFAULT_PROFILE, get_bed_mesh_probe_service, parse_command
+from services.motion.BedMeshService import get_bed_mesh_service
 
 router = APIRouter(prefix="/api/v1/bedmesh", tags=["bedmesh"])
 
@@ -40,10 +40,10 @@ class BedMeshCalibrateStatus(BaseModel):
              summary="Probe the bed mesh (BED_MESH_CALIBRATE), save and activate it",
              responses={400: {"description": "No [bed_mesh], not homed, ..."}, 409: {"description": "Busy."}})
 def calibrate(payload: BedMeshCalibrate) -> BedMeshCalibrateStatus:
-    from services import LevelingService
-    from services.HomingRoutineService import get_homing_routine_service
-    from services.MacroExecutionService import get_macro_execution_service
-    from services.ZTiltService import get_z_tilt_service
+    from services.motion import LevelingService
+    from services.motion.HomingRoutineService import get_homing_routine_service
+    from services.program.MacroExecutionService import get_macro_execution_service
+    from services.motion.ZTiltService import get_z_tilt_service
 
     profile = parse_command(f"BED_MESH_CALIBRATE PROFILE={payload.profile}") or DEFAULT_PROFILE
     busy = (get_macro_execution_service().is_running() or get_homing_routine_service().is_running()

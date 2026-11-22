@@ -26,7 +26,7 @@ def reseed_from_hardware_json(path: Optional[Path] = None) -> None:
     A missing file is logged, not raised, so a fresh checkout still starts.
     """
     if path is None:
-        from services.HardwareConfigService import HardwareConfigService
+        from services.machine.HardwareConfigService import HardwareConfigService
 
         mock_system.register_hardware(HardwareConfigService().load_payload())
         return

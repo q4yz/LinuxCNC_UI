@@ -14,7 +14,7 @@ else that used to live on the historical
 ``backend.services.machine_service::machine_control_router``.
 
 Each handler is a thin wrapper around :class:`StateService`
-in :mod:`backend.services.StateService`. The router imports only
+in :mod:`backend.services.machine.StateService`. The router imports only
 the singleton accessor (``get_state_service``) — never the
 facade class — so the layer-2 split can evolve independently of the
 HTTP surface.
@@ -30,8 +30,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from services.StateService import get_state_service
-from services.ConsoleLogger import LogLevel, get_console_logger
+from services.machine.StateService import get_state_service
+from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from models.state.StateModels import (
     MdiCommand,
     ModeCommand,

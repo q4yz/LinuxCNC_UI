@@ -38,7 +38,7 @@ section at all.
     z_offset: float // (Optional) nozzle height above the bed when the probe triggers, mm
 ```
 
-The offsets are used by every probing routine (`services/Probing.py`):
+The offsets are used by every probing routine (`services/motion/Probing.py`):
 the bed mesh's `mesh_min` / `mesh_max` are where the probe touches (the
 nozzle goes `x_offset`, `y_offset` away), Z tilt's `points` are nozzle
 positions (the fit uses where the probe touched), and a probed height

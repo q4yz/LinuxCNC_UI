@@ -46,7 +46,7 @@ def test_axis_home_endpoint_dispatches_to_facade(
     client = TestClient(app)
 
     with patch(
-        "services.AxisService.AxisService.home_single_axes"
+        "services.motion.AxisService.AxisService.home_single_axes"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
@@ -72,7 +72,7 @@ def test_axis_home_endpoint_accepts_all_keyword(
     client = TestClient(app)
 
     with patch(
-        "services.AxisService.AxisService.home_single_axes"
+        "services.motion.AxisService.AxisService.home_single_axes"
     ) as mock_home:
         resp = client.post(
             "/api/v1/modules/axis/home",
@@ -97,7 +97,7 @@ def test_axis_home_endpoint_accepts_each_letter(
 
     for letter in ("x", "y", "z"):
         with patch(
-            "services.AxisService.AxisService.home_single_axes"
+            "services.motion.AxisService.AxisService.home_single_axes"
         ) as mock_home:
             resp = client.post(
                 "/api/v1/modules/axis/home",

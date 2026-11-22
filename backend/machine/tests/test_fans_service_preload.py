@@ -16,8 +16,8 @@ registry.
 from __future__ import annotations
 
 from dtos.fans.FanDto import FanPins
-import services.FansService as fans_service_mod
-import services.ToolsService as tools_service_mod
+import services.io.FansService as fans_service_mod
+import services.tools.ToolsService as tools_service_mod
 
 _STANDALONE_FAN = {"id": "fans_test_standalone", "kind": "part", "pin": "PA8"}
 _HEATER_FAN = {"id": "fans_test_heater_owned", "kind": "part", "pin": "PA9"}

@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
-from services.ServoThreadService import get_servo_thread_service
+from services.machine.ServoThreadService import get_servo_thread_service
 
 logger = logging.getLogger("backend.routers.servo_thread")
 router = APIRouter(prefix="/ws", tags=["Telemetry WebSockets"])

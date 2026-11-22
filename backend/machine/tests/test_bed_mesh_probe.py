@@ -7,9 +7,9 @@ import re
 
 import pytest
 
-import services.BedMeshProbeService as module
-import services.MacroExecutionService as macro_module
-import services.Probing as probing
+import services.motion.BedMeshProbeService as module
+import services.program.MacroExecutionService as macro_module
+import services.motion.Probing as probing
 from exceptions import BadRequestError
 from hardware.Connection import MachineState
 
@@ -143,7 +143,7 @@ def test_bilinear():
 
 
 def test_leveling_runs_what_the_machine_has(monkeypatch):
-    import services.LevelingService as leveling
+    import services.motion.LevelingService as leveling
 
     calls = []
 
@@ -157,7 +157,7 @@ def test_leveling_runs_what_the_machine_has(monkeypatch):
         def run(self, stat, *a, **k):
             calls.append(self.name)
 
-    import services.ZTiltService as z
+    import services.motion.ZTiltService as z
     monkeypatch.setattr(z, "get_z_tilt_service", lambda: Svc("z_tilt", True))
     monkeypatch.setattr(module, "get_bed_mesh_probe_service", lambda: Svc("mesh", True))
     monkeypatch.setattr(leveling, "get_console_logger", lambda: type("C", (), {"log_event": lambda *a, **k: None})())

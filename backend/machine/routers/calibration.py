@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from services.CalibrationService import get_calibration_service
+from services.calibration.CalibrationService import get_calibration_service
 
 router = APIRouter(prefix="/api/v1/calibration", tags=["calibration"])
 

@@ -32,8 +32,8 @@ from models.HalModels import (
     HalPinStatesResponse,
     HalSignalResource,
 )
-from services import hal_signal_file
-from services.HalPinSignalService import get_hal_pin_signal_service
+from services.hal import hal_signal_file
+from services.hal.HalPinSignalService import get_hal_pin_signal_service
 
 logger = logging.getLogger("backend.routers.hal")
 

@@ -8,7 +8,7 @@ lives in ``test_hal_file_signals.py``.
 from __future__ import annotations
 
 from models.HalModels import HalFileSignalWrite
-from services.hal_signal_file import (
+from services.hal.hal_signal_file import (
     MARKER_BEGIN,
     MARKER_END,
     apply_signals,

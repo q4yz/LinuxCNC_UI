@@ -6,8 +6,8 @@ import statistics
 
 import pytest
 
-import services.ProbeAccuracyService as module
-import services.Probing as probing
+import services.motion.ProbeAccuracyService as module
+import services.motion.Probing as probing
 from exceptions import BadRequestError
 from hardware.Connection import MachineState
 

@@ -42,9 +42,9 @@ from models.tools.ExtruderModels import ExtruderCommand
 from models.tools.HeaterModels import HeaterCommand, HeaterCommandStateResponse
 from models.tools.SpindleDigitalModels import SpindleDigitalCommand, SpindleDigitalStateResponse
 from models.tools.ToolModels import ToolCommandResponse
-from services.ExtruderService import get_extruder_service
-from services.HeaterService import get_heater_service
-from services.SpindleDigitalService import get_spindle_digital_service
+from services.tools.ExtruderService import get_extruder_service
+from services.temperature.HeaterService import get_heater_service
+from services.tools.SpindleDigitalService import get_spindle_digital_service
 
 logger = logging.getLogger("backend.tools_service")
 

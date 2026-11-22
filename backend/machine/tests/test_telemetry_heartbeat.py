@@ -33,7 +33,7 @@ def _drive_loop(ticks_of_sleep: int) -> list[str]:
     """Run ``telemetry_loop`` long enough for the requested number of
     event-loop yields and return every broadcast payload (raw JSON).
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     async def drive():
         svc = ServoThreadService()
@@ -97,7 +97,7 @@ def test_heartbeat_skipped_without_clients():
     """With no connected clients the loop must not bother building
     heartbeat payloads (broadcast is a no-op anyway).
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     async def drive():
         svc = ServoThreadService()

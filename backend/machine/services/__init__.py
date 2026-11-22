@@ -29,12 +29,12 @@ from domain_file_services import (
     reset_service_cache,
 )
 
-from .remora_signal_map import (
+from .hal.remora_signal_map import (
     get_pv_index,
     get_sp_index,
     invalidate_cache as reset_remora_signal_map_cache,
 )
-from .line_count_cache import (
+from .program.line_count_cache import (
     count_lines,
     lookup as lookup_line_count,
     register as register_line_count,

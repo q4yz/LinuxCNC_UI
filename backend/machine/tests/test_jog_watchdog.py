@@ -46,7 +46,7 @@ def _install_watchdog_test_environment(monkeypatch, tmp_path):
     map before each test so a previous run cannot leak.
     """
     from hal_service import JogService as jog
-    from services import jog_watchdog
+    from services.motion import jog_watchdog
     import importlib
 
     # Re-import the watch-dog module so each test gets a fresh task
@@ -182,7 +182,7 @@ def test_keepalive_refresh_blocks_force_stop():
 
 def test_stop_watchdog_is_idempotent():
     """Calling ``stop_watchdog`` twice in a row is a no-op."""
-    from services import jog_watchdog
+    from services.motion import jog_watchdog
 
     # First call is a no-op because no task has been started.
     jog_watchdog.stop_watchdog()
@@ -214,7 +214,7 @@ def test_real_watchdog_loop_still_stops_a_jog_after_hours_of_uptime(monkeypatch)
     real :func:`jog_watchdog._loop`.
     """
     from hal_service import JogService as jog
-    from services import jog_watchdog
+    from services.motion import jog_watchdog
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(jog_watchdog.time, "monotonic", lambda: clock["now"])

@@ -5,7 +5,7 @@
 > an unconditional HAL binding, same split as E-stop:
 >
 > * `ProgramService.pause_inspect()`/`resume_program()`
->   (`backend/machine/services/ProgramService.py`) drive
+>   (`backend/machine/services/program/ProgramService.py`) drive
 >   `webgui.inspect-z-lift`/`webgui.inspect-spindle-inhibit` as plain
 >   0/1 toggles through a `PauseInspectPin` container
 >   (`backend/common/dtos/PauseInspect.py`), the same

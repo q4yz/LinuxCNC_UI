@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-import services.HalPinSignalService as module
+import services.hal.HalPinSignalService as module
 
 BACKEND = Path(__file__).resolve().parents[2]
 

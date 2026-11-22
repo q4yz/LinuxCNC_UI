@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-import services.LedService as module
+import services.io.LedService as module
 from core.led_color import SetLed
 from exceptions import BadRequestError, NotFoundError
 
@@ -68,8 +68,8 @@ def test_run_command(service):
 
 
 def test_mdi_and_macro(service, monkeypatch):
-    from services.MacroExecutionService import MacroExecutionService
-    from services.StateService import StateService
+    from services.program.MacroExecutionService import MacroExecutionService
+    from services.machine.StateService import StateService
 
     monkeypatch.setattr(module, "get_led_service", lambda: service)
     assert StateService._ui_command("SET_LED LED=sb RED=1")

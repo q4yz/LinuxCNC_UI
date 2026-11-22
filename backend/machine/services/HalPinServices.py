@@ -12,21 +12,21 @@ from services.HalPinService import HalPinService
 
 
 def hal_pin_services() -> List[HalPinService]:
-    from services.AxisService import get_axis_service
-    from services.BedMeshService import get_bed_mesh_service
-    from services.FansService import get_fans_service
-    from services.IoService import get_io_service
-    from services.LedService import get_led_service
-    from services.McuService import get_mcu_service
-    from services.PidCalibrateService import get_pid_calibrate_service
-    from services.PrintTuningService import get_print_tuning_service
-    from services.ProgramService import get_program_lifecycle_service
-    from services.ResonanceService import get_resonance_service
-    from services.ShaperService import get_shaper_service
-    from services.StateService import get_state_service
-    from services.TemperatureService import get_temperature_service
-    from services.ToolsService import get_tools_service
-    from services.ZTiltService import get_z_tilt_service
+    from services.motion.AxisService import get_axis_service
+    from services.motion.BedMeshService import get_bed_mesh_service
+    from services.io.FansService import get_fans_service
+    from services.io.IoService import get_io_service
+    from services.io.LedService import get_led_service
+    from services.machine.McuService import get_mcu_service
+    from services.calibration.PidCalibrateService import get_pid_calibrate_service
+    from services.program.PrintTuningService import get_print_tuning_service
+    from services.program.ProgramService import get_program_lifecycle_service
+    from services.calibration.ResonanceService import get_resonance_service
+    from services.calibration.ShaperService import get_shaper_service
+    from services.machine.StateService import get_state_service
+    from services.temperature.TemperatureService import get_temperature_service
+    from services.tools.ToolsService import get_tools_service
+    from services.motion.ZTiltService import get_z_tilt_service
 
     return [
         get_tools_service(),

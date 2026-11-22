@@ -4,9 +4,9 @@ The OOP refactor split the historical monolithic machine module
 into :mod:`modules.axis`, :mod:`modules.state` and
 :mod:`modules.program`; the old ``machine.service``
 entry point no longer exists. Command-dispatch for axis motion now
-lives on :class:`services.AxisService.AxisService`, machine-task
-state on :class:`services.StateService.StateService`, and program
-lifecycle on :class:`services.ProgramService.ProgramService`. The
+lives on :class:`services.motion.AxisService.AxisService`, machine-task
+state on :class:`services.machine.StateService.StateService`, and program
+lifecycle on :class:`services.program.ProgramService.ProgramService`. The
 hardware-layer :class:`services.machine_service.MachineService`
 remains the single gateway to the NML command channel that all of
 them dispatch through.
@@ -53,7 +53,7 @@ from hardware.Connection import (
     DeviceConfigMapper,
     execute_gcode,
 )
-from services.MachineService import MachineService
+from services.machine.MachineService import MachineService
 
 
 # ────────────────────────────────────────────────────────────────────── #

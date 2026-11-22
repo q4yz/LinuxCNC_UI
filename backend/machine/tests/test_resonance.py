@@ -7,8 +7,8 @@ import math
 import numpy as np
 import pytest
 
-import services.ResonanceService as module
-from services.Adxl345 import decode, parse_axes_map
+import services.calibration.ResonanceService as module
+from services.calibration.Adxl345 import decode, parse_axes_map
 
 
 def test_a_shaper_cancels_its_own_frequency():
@@ -47,7 +47,7 @@ def test_power_spectrum_finds_a_sine():
 
 
 def test_measure_with_a_synthetic_accelerometer(monkeypatch):
-    import services.ShaperService as shaper_module
+    import services.calibration.ShaperService as shaper_module
 
     calls = []
 
@@ -87,7 +87,7 @@ def test_adxl_decoding_and_axes_map():
 
 
 def test_sampler_lines():
-    from services.Adxl345 import parse_sampler_line
+    from services.calibration.Adxl345 import parse_sampler_line
 
     assert parse_sampler_line("17 12.5 -3\n") == (17, 12.5, -3.0)
     assert parse_sampler_line("garbage") is None and parse_sampler_line("1 x 2") is None
@@ -98,7 +98,7 @@ def test_node_accelerometer_reads_halsampler(monkeypatch, tmp_path):
     import os
     import time as _time
 
-    from services.Adxl345 import NodeAdxl345
+    from services.calibration.Adxl345 import NodeAdxl345
 
     script = tmp_path / "halsampler"
     # waits first: open() drops what is in the FIFO before recording starts
@@ -125,7 +125,7 @@ def test_node_accelerometer_reads_halsampler(monkeypatch, tmp_path):
 
 def test_measure_picks_the_node_accelerometer(monkeypatch):
     service = module.ResonanceService()
-    from services.Adxl345 import Adxl345, NodeAdxl345
+    from services.calibration.Adxl345 import Adxl345, NodeAdxl345
 
     assert isinstance(service.accelerometer({"cs_pin": "ebb:PB12"}), NodeAdxl345)
     assert isinstance(service.accelerometer({"spi_device": "/dev/spidev1.1"}), Adxl345)

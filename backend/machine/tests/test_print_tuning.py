@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-import services.PrintTuningService as module
+import services.program.PrintTuningService as module
 from exceptions import BadRequestError
 
 
@@ -55,7 +55,7 @@ def test_set_gcode_offset_console_command(service, monkeypatch):
         def log_event(self, *a, **k):
             pass
 
-    import services.ConsoleLogger as console_module
+    import services.machine.ConsoleLogger as console_module
     monkeypatch.setattr(console_module, "get_console_logger", lambda: Console())
     assert service.run_command("SET_GCODE_OFFSET Z=0.2") and service.z_offset == 0.2
     assert service.run_command("set_gcode_offset Z_ADJUST=-0.05 MOVE=1") and service.z_offset == pytest.approx(0.15)
@@ -121,7 +121,7 @@ def test_pressure_advance(service, monkeypatch):
         def log_event(self, *a, **k):
             pass
 
-    import services.ConsoleLogger as console_module
+    import services.machine.ConsoleLogger as console_module
     monkeypatch.setattr(console_module, "get_console_logger", lambda: Console())
     assert service.run_command("SET_PRESSURE_ADVANCE ADVANCE=0.045") and service.pressure_advance == 0.045
     assert service._pins["pressure-advance"].value == 0.045
@@ -132,7 +132,7 @@ def test_pressure_advance(service, monkeypatch):
 
 
 def test_configured_pressure_advance(monkeypatch):
-    import services.HardwareConfigService as hw
+    import services.machine.HardwareConfigService as hw
 
     class Config:
         def load_payload(self):

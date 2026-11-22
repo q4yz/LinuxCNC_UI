@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import services.PrintStartService as module
+import services.program.PrintStartService as module
 from core.gcode_converter import convert
 
 
@@ -31,8 +31,8 @@ def rig(monkeypatch, tmp_path):
         def run(self, stat): rec.calls.append("z_tilt")
 
     homing, z_tilt = Homing(), ZTilt()
-    import services.HomingRoutineService as homing_module
-    import services.LevelingService as leveling
+    import services.motion.HomingRoutineService as homing_module
+    import services.motion.LevelingService as leveling
     monkeypatch.setattr(homing_module, "get_homing_routine_service", lambda: homing)
 
     def level(stat):
@@ -90,8 +90,8 @@ def test_prestart_steps_read_from_the_file(tmp_path):
 
 
 def test_mdi_g28_runs_the_homing(monkeypatch):
-    import services.HomingRoutineService as homing_module
-    from services.StateService import StateService
+    import services.motion.HomingRoutineService as homing_module
+    from services.machine.StateService import StateService
 
     started = []
 

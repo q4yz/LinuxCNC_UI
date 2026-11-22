@@ -54,7 +54,7 @@ def test_get_current_state_includes_errors():
         text = "joint 2 on limit switch error",
         time = "2026-08-11T19:38:55.948363"
     )
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     svc = ServoThreadService()
     snap = svc.get_current_state()
@@ -76,7 +76,7 @@ def test_get_current_state_returns_a_copy_not_a_live_reference():
         time="2026-08-11T19:38:43.542555"
     )
 
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     svc = ServoThreadService()
     snap = svc.get_current_state()
@@ -93,7 +93,7 @@ def test_telemetry_loop_pushes_into_history_before_broadcast():
     bounded history is current at the next ``full_state`` snapshot.
     """
     reset_error_history()
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     svc = ServoThreadService()
     captured = []
@@ -203,7 +203,7 @@ def test_telemetry_loop_broadcasts_error_envelope():
     toast layer never fired. Pin the new contract so a regression
     is caught at CI.
     """
-    from services.ServoThreadService import ServoThreadService
+    from services.machine.ServoThreadService import ServoThreadService
 
     async def drive_loop_once():
         """Run :func:`telemetry_loop` for a single tick and then

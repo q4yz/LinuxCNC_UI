@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from hardware import get_stat_channel
-from services.PrintTuningService import get_print_tuning_service
+from services.program.PrintTuningService import get_print_tuning_service
 
 router = APIRouter(prefix="/api/v1/print-tuning", tags=["print-tuning"])
 

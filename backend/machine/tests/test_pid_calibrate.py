@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-import services.PidCalibrateService as module
+import services.calibration.PidCalibrateService as module
 from exceptions import BadRequestError
 
 HEATER = {"id": "heater_extruder", "type": "extruder", "control": "pid", "max_temp": 280, "max_power": 1.0}

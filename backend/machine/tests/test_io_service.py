@@ -10,8 +10,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from exceptions import BadRequestError, NotFoundError, register_command_error_handler
-from services import IoService as io_module
-from services.IoService import IoService
+from services.io import IoService as io_module
+from services.io.IoService import IoService
 
 
 class FakePin:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import services.ProbeCalibrateService as module
-import services.Probing as probing
+import services.calibration.ProbeCalibrateService as module
+import services.motion.Probing as probing
 from exceptions import BadRequestError
 from hardware.Connection import MachineState
 
@@ -99,7 +99,7 @@ def test_testz_and_accept_give_the_z_offset(rig):
     level, text = rig.events[-1]
     assert level == "INFO" and "z_offset: 1.700" in text and "calibration.ini" in text
     assert service.session is None and service.last_z_offset == pytest.approx(1.70)
-    import services.CalibrationService as calibration
+    import services.calibration.CalibrationService as calibration
 
     store = calibration.calibration_file()
     assert store.number("PROBE_Z_OFFSET") == pytest.approx(1.70)

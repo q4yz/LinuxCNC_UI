@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-import services.CalibrationService as module
+import services.calibration.CalibrationService as module
 from exceptions import BadRequestError, NotFoundError
 
 PAYLOAD = {
@@ -23,8 +23,8 @@ PAYLOAD = {
 
 @pytest.fixture
 def svc(monkeypatch):
-    import services.HardwareConfigService as hw
-    import services.ShaperService as shaper
+    import services.machine.HardwareConfigService as hw
+    import services.calibration.ShaperService as shaper
 
     monkeypatch.setattr(hw.HardwareConfigService, "load_payload", lambda self: PAYLOAD)
     monkeypatch.setattr(shaper.ShaperService, "available", lambda self: False)
@@ -34,7 +34,7 @@ def svc(monkeypatch):
         def run_mdi(self, command):
             sent.append(command)
 
-    import services.StateService as state
+    import services.machine.StateService as state
 
     monkeypatch.setattr(state, "get_state_service", lambda: State())
     service = module.CalibrationService()
@@ -109,7 +109,7 @@ def test_input_shaper_result(monkeypatch):
     calls, shaped = [], []
     monkeypatch.setattr(module, "halcmd_setp", lambda name, value: calls.append((name, value)) or True)
     monkeypatch.setattr(module, "_axis_joints", lambda axis: [0] if axis == "x" else [1])
-    import services.ShaperService as shaper
+    import services.calibration.ShaperService as shaper
 
     monkeypatch.setattr(shaper.ShaperService, "set_shaper", lambda self, axis, freq: shaped.append((axis, freq)))
     module.record_input_shaper("x", "ei", 52.44, 0.04)
@@ -139,7 +139,7 @@ def test_router(svc):
 @pytest.fixture
 def guided(svc, monkeypatch):
     """Skew available (jointshape), test prints captured instead of run."""
-    import services.ShaperService as shaper
+    import services.calibration.ShaperService as shaper
 
     monkeypatch.setattr(shaper.ShaperService, "available", lambda self: True)
     shaper_service = shaper.ShaperService()
@@ -147,7 +147,7 @@ def guided(svc, monkeypatch):
     applied = {}
     monkeypatch.setattr(shaper_service, "set_skew", lambda f: applied.__setitem__("skew", f))
     monkeypatch.setattr(shaper, "get_shaper_service", lambda: shaper_service)
-    import services.PrintTuningService as tuning
+    import services.program.PrintTuningService as tuning
 
     class Tuning:
         flow = 100.0
@@ -212,7 +212,7 @@ def test_automatic_calibrations_take_no_measurements(svc):
 
 def test_start_test_print_converts_loads_and_starts(monkeypatch, tmp_path):
     import hardware
-    import services.ProgramService as program
+    import services.program.ProgramService as program
     from domain_file_services import paths
     from hardware.Connection import MachineState
 
@@ -281,7 +281,7 @@ def test_first_layer_into_the_probe_z_offset(guided):
 
 
 def test_first_layer_into_z_home_offset(guided, monkeypatch):
-    import services.HardwareConfigService as hw
+    import services.machine.HardwareConfigService as hw
 
     no_probe = {k: v for k, v in PAYLOAD.items() if k != "probe"}
     monkeypatch.setattr(hw.HardwareConfigService, "load_payload", lambda self: no_probe)
@@ -305,7 +305,7 @@ def test_retraction(guided):
 
 
 def test_sensorless_halves_the_range(guided, monkeypatch):
-    import services.HardwareConfigService as hw
+    import services.machine.HardwareConfigService as hw
 
     payload = {**PAYLOAD,
                "joints": [*PAYLOAD["joints"], {"id": "stepper_x", "driver": "driver_stepper_x", "joint_number": 0}],

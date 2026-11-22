@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from core.led_color import SetLed
 from models.LedModels import Led, LedSegment
-from services.LedService import get_led_service
+from services.io.LedService import get_led_service
 
 router = APIRouter(prefix="/api/v1/leds", tags=["leds"])
 

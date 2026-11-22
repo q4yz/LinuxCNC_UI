@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Path
 
 from models.IoModels import IoSetRequest, IoState
-from services.IoService import get_io_service
+from services.io.IoService import get_io_service
 
 router = APIRouter(prefix="/api/v1/modules/io", tags=["modules:io"])
 

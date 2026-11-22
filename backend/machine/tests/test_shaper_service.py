@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-import services.ShaperService as module
+import services.calibration.ShaperService as module
 from exceptions import BadRequestError
 
 
@@ -26,7 +26,7 @@ def service(monkeypatch):
         def log_event(self, *a, **k):
             pass
 
-    import services.ConsoleLogger as console_module
+    import services.machine.ConsoleLogger as console_module
     monkeypatch.setattr(console_module, "get_console_logger", lambda: Console())
     return s
 
@@ -72,7 +72,7 @@ def test_test_signal(service):
 
 def test_available_on_corexy_too(monkeypatch):
     """CoreXY shapes X / Y before the belt mixing (CoreXyHalMapper)."""
-    from services.ShaperService import ShaperService
+    from services.calibration.ShaperService import ShaperService
 
     svc = ShaperService()
     monkeypatch.setattr(ShaperService, "_payload", staticmethod(lambda: {"kinematics": "corexy", "skew_correction": {}}))

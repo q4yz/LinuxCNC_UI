@@ -72,10 +72,10 @@ def inspect_signature(method) -> str:
 def test_preloading_writes_nothing(monkeypatch):
     """The four services that wrote in preload now only create pins."""
     from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
-    from services.PidCalibrateService import get_pid_calibrate_service
-    from services.PrintTuningService import get_print_tuning_service
-    from services.ResonanceService import get_resonance_service
-    from services.ShaperService import get_shaper_service
+    from services.calibration.PidCalibrateService import get_pid_calibrate_service
+    from services.program.PrintTuningService import get_print_tuning_service
+    from services.calibration.ResonanceService import get_resonance_service
+    from services.calibration.ShaperService import get_shaper_service
 
     writes: list[str] = []
     monkeypatch.setattr(ReadWriteDynamicHalPin, "set_value", lambda self, value: writes.append(self.pin))

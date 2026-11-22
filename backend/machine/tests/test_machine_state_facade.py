@@ -46,7 +46,7 @@ conn_mod = importlib.import_module("hardware.Connection")
 # maps cleanly.
 linuxcnc = conn_mod.linuxcnc
 
-from services.StateService import (  # noqa: E402
+from services.machine.StateService import (  # noqa: E402
     MachineState,
     StateService,
 )
@@ -507,8 +507,8 @@ class TestActivateEstop:
             )
 
 
-# Resolve ``services.StateService`` once for the fall-back assertion above.
-services_StateService_mod = importlib.import_module("services.StateService")
+# Resolve ``services.machine.StateService`` once for the fall-back assertion above.
+services_StateService_mod = importlib.import_module("services.machine.StateService")
 
 
 # ---------------------------------------------------------------------- #

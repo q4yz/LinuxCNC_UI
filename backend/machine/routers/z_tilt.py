@@ -6,9 +6,9 @@ from typing import List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from services.HomingRoutineService import get_homing_routine_service
-from services.MacroExecutionService import get_macro_execution_service
-from services.ZTiltService import get_z_tilt_service
+from services.motion.HomingRoutineService import get_homing_routine_service
+from services.program.MacroExecutionService import get_macro_execution_service
+from services.motion.ZTiltService import get_z_tilt_service
 
 router = APIRouter(prefix="/api/v1/ztilt", tags=["ztilt"])
 

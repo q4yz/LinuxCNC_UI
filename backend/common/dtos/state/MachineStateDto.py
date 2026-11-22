@@ -5,7 +5,7 @@ class MachineState(str, Enum):
     """Operator-facing machine state.
 
     Mirrors ``frontend/src/stores/stateFacade.js::SystemState``. This
-    is the canonical home — ``services.StateService`` re-exports it
+    is the canonical home — ``services.machine.StateService`` re-exports it
     for its existing importers (``SpindleDigitalService``, tests)
     rather than defining its own copy.
     """

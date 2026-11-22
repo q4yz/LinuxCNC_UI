@@ -5,7 +5,7 @@ The UI half — `webgui.estop` -> `halui.estop.activate` — no longer
 lives here at all; it's a plain passthrough net in
 `webgui_connections.hal` via `EstopWebguiMapper` (see
 `test_estop_webgui_mapper.py`), since `StateService.activate_estop()`
-(`machine/services/StateService.py`) now generates its own pulse
+(`machine/services/machine/StateService.py`) now generates its own pulse
 (assert, hold briefly, reset) instead of relying on a HAL-side
 `oneshot`. This file covers only the physical chain, grounded in the
 real reference machine, `machine_config/example/PrintNC-WEBGUI/

@@ -7,7 +7,7 @@
 > `machine_config/m_codes/` (`M104` … `M190`, helpers `M180`–`M183`,
 > all one script; `g28.ngc`), no INI `REMAP` (`backend/system/services/machinetemplates/marlin_mcodes.py`);
 > MDI / macro lines converted by `convert_mdi`; print start
-> `backend/machine/services/PrintStartService.py`; MDI `G28` / `G29`
+> `backend/machine/services/program/PrintStartService.py`; MDI `G28` / `G29`
 > (`StateService.run_mdi`); example start macro `macros/start.ngc`. Tests: `backend/common/tests/test_gcode_converter.py`,
 > `backend/system/tests/test_marlin_mcodes.py`, `test_octoprint.py`.
 >

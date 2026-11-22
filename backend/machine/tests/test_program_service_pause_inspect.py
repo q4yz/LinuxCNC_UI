@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from dtos.PauseInspect import PauseInspectPin
-from services.ProgramService import ProgramService
+from services.program.ProgramService import ProgramService
 
 
 def _service_with_fake_pins() -> tuple[ProgramService, MagicMock, MagicMock]:
@@ -35,7 +35,7 @@ def _service_with_fake_pins() -> tuple[ProgramService, MagicMock, MagicMock]:
 
 @pytest.fixture(autouse=True)
 def _no_real_hardware_dispatch(monkeypatch):
-    monkeypatch.setattr("services.ProgramService.execute_sync_cmd", lambda *a, **k: None)
+    monkeypatch.setattr("services.program.ProgramService.execute_sync_cmd", lambda *a, **k: None)
 
 
 def test_pause_program_no_longer_touches_the_spindle():
@@ -81,7 +81,7 @@ def test_resume_program_clears_spindle_inhibit_before_z_lift(monkeypatch):
     async def fake_sleep(seconds):
         sleeps.append(seconds)
 
-    monkeypatch.setattr("services.ProgramService.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("services.program.ProgramService.asyncio.sleep", fake_sleep)
 
     asyncio.run(service.resume_program())
 
@@ -96,11 +96,11 @@ def test_resume_program_dispatches_auto_resume_after_clearing_pins(monkeypatch):
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr("services.ProgramService.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("services.program.ProgramService.asyncio.sleep", fake_sleep)
 
     calls = []
     monkeypatch.setattr(
-        "services.ProgramService.execute_sync_cmd",
+        "services.program.ProgramService.execute_sync_cmd",
         lambda *a, **k: calls.append(a),
     )
 
@@ -117,7 +117,7 @@ def test_resume_program_lazily_initializes_pins_when_not_preloaded(monkeypatch):
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr("services.ProgramService.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("services.program.ProgramService.asyncio.sleep", fake_sleep)
 
     asyncio.run(service.resume_program())  # must not raise
 
