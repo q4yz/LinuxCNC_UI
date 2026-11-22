@@ -20,8 +20,9 @@ import re
 from typing import Any, Optional
 
 from core.skew import skew_factor
-from dtos.pins.HalPin import HalDataType
-from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.HalPin import HalPin
+from dtos.calibration.CalibrationPinsDto import ShaperPins
+from mappers.calibration.CalibrationPinsMapper import ShaperMapper
 from exceptions import BadRequestError
 from services.HalPinService import HalPinService
 
@@ -29,18 +30,14 @@ logger = logging.getLogger("backend.services.shaper")
 
 MAX_SHAPER_FREQ = 300.0
 _PARAM = re.compile(r"([A-Za-z_]+)\s*=\s*([^\s]+)")
-_PINS = ("shaper-freq-x", "shaper-freq-y", "skew-xy", "resonance-amp-x", "resonance-amp-y", "resonance-freq")
-
-
 class ShaperService(HalPinService):
     def __init__(self) -> None:
         self.freq = {"x": 0.0, "y": 0.0}
         self.skew = 0.0
-        self._pins: dict[str, ReadWriteDynamicHalPin[Any]] = {}
+        self._pins: Optional[ShaperPins] = None
 
     def preload_hal_pins(self) -> None:
-        for name in _PINS:
-            self._pins[name] = ReadWriteDynamicHalPin(name, HalDataType.FLOAT, f"jointshape: {name}")
+        self._pins = ShaperMapper.create_ShaperPins()
         payload = self._payload()
         shaper = payload.get("input_shaper") or {}
         self.freq = {"x": float(shaper.get("freq_x") or 0.0), "y": float(shaper.get("freq_y") or 0.0)}
@@ -48,9 +45,10 @@ class ShaperService(HalPinService):
 
     def apply_initial(self) -> None:
         """Write the start values (after ``HalPin.initialize_component``)."""
-        for axis in ("x", "y"):
-            self._write(f"shaper-freq-{axis}", self.freq[axis])
-        self._write("skew-xy", self.skew)
+        if self._pins is not None:
+            for axis in ("x", "y"):
+                self._write(self._pins.shaper_freq(axis), self.freq[axis])
+            self._write(self._pins.skew_xy, self.skew)
         self.stop_test()
 
     @staticmethod
@@ -65,10 +63,9 @@ class ShaperService(HalPinService):
         payload = self._payload()
         return any(isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
 
-    def _write(self, pin: str, value: float) -> None:
-        handle = self._pins.get(pin)
-        if handle is not None:
-            handle.set_value(float(value))
+    @staticmethod
+    def _write(pin: HalPin[float], value: float) -> None:
+        pin.set_value(float(value))
 
     # -- input shaper ------------------------------------------------------- #
 
@@ -76,7 +73,8 @@ class ShaperService(HalPinService):
         if not 0.0 <= freq <= MAX_SHAPER_FREQ:
             raise BadRequestError(f"Shaper frequency {freq:g} Hz is outside 0 … {MAX_SHAPER_FREQ:g}.")
         self.freq[axis] = round(float(freq), 2)
-        self._write(f"shaper-freq-{axis}", self.freq[axis])
+        if self._pins is not None:
+            self._write(self._pins.shaper_freq(axis), self.freq[axis])
 
     # -- skew --------------------------------------------------------------- #
 
@@ -84,19 +82,24 @@ class ShaperService(HalPinService):
         if abs(factor) > 0.2:
             raise BadRequestError(f"Skew factor {factor:g} is implausibly large (more than 0.2).")
         self.skew = float(factor)
-        self._write("skew-xy", self.skew)
+        if self._pins is not None:
+            self._write(self._pins.skew_xy, self.skew)
 
     # -- resonance test ------------------------------------------------------ #
 
     def test_signal(self, axis: str, amp_mm: float, freq: float) -> None:
-        self._write("resonance-freq", freq)
-        self._write(f"resonance-amp-{axis}", amp_mm)
-        self._write(f"resonance-amp-{'y' if axis == 'x' else 'x'}", 0.0)
+        if self._pins is None:
+            return
+        self._write(self._pins.resonance_freq, freq)
+        self._write(self._pins.resonance_amp(axis), amp_mm)
+        self._write(self._pins.resonance_amp("y" if axis == "x" else "x"), 0.0)
 
     def stop_test(self) -> None:
-        self._write("resonance-amp-x", 0.0)
-        self._write("resonance-amp-y", 0.0)
-        self._write("resonance-freq", 0.0)
+        if self._pins is None:
+            return
+        self._write(self._pins.resonance_amp_x, 0.0)
+        self._write(self._pins.resonance_amp_y, 0.0)
+        self._write(self._pins.resonance_freq, 0.0)
 
     # -- console ------------------------------------------------------------- #
 

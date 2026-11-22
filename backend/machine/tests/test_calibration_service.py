@@ -2,6 +2,8 @@
 reminders in calibration.ini, start, clear; the REST routes."""
 from __future__ import annotations
 
+from dtos.print_tuning.PrintTuningDto import PrintTuningStateDTO
+
 import datetime as dt
 
 import pytest
@@ -154,7 +156,7 @@ def guided(svc, monkeypatch):
         z_offset = 0.0
 
         def state(self, path, line):
-            return {"pressure_advance": 0.03}
+            return PrintTuningStateDTO(z_offset=0.0, flow=100.0, pressure_advance=0.03)
 
         def set_pressure_advance(self, k):
             applied["pa"] = k

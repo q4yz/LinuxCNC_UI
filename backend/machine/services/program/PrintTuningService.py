@@ -28,9 +28,10 @@ from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
 from core.gcode_converter import MAX_OBJECTS, read_objects
-from dtos.pins.HalPin import HalDataType
-from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.pins.HalPin import HalPin
+from dtos.print_tuning.PrintTuningDto import PrintTuningPins, PrintTuningStateDTO
 from exceptions import BadRequestError
+from mappers.print_tuning.PrintTuningMapper import PrintTuningMapper
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.print_tuning")
@@ -83,30 +84,23 @@ class PrintTuningService(HalPinService):
         self._flow = 100.0
         self._pressure_advance = 0.0
         self._excluded: set[int] = set()
-        self._pins: dict[str, ReadWriteDynamicHalPin[Any]] = {}
+        self._pins: Optional[PrintTuningPins] = None
         self._lock = threading.Lock()
         self._file_cache: Tuple[str, float, List[str], List[Tuple[int, Optional[float], Optional[float]]]] | None = None
 
     # -- HAL --------------------------------------------------------------- #
 
     def preload_hal_pins(self) -> None:
-        self._pins["z-offset"] = ReadWriteDynamicHalPin(
-            "z-offset", HalDataType.FLOAT, "Live Z offset (mm), added to Z's external offset")
-        self._pins["flow"] = ReadWriteDynamicHalPin(
-            "flow", HalDataType.FLOAT, "Flow (%): the extruder component scales the extruder's moves")
-        for k in range(MAX_OBJECTS):
-            self._pins[f"exclude-object-{k}"] = ReadWriteDynamicHalPin(
-                f"exclude-object-{k}", HalDataType.BIT, f"Exclude object {k} of the loaded print")
-        self._pins["pressure-advance"] = ReadWriteDynamicHalPin(
-            "pressure-advance", HalDataType.FLOAT, "Pressure advance (mm per mm/s) for the extruder component")
+        self._pins = PrintTuningMapper.create_PrintTuningPins(MAX_OBJECTS)
         self._pressure_advance = self._configured_pressure_advance()
         self._flow = self._configured_flow()
 
     def apply_initial(self) -> None:
         """Write the start values (after ``HalPin.initialize_component``)."""
-        self._write("flow", self._flow)
-        self._write("z-offset", self._z_offset)
-        self._write("pressure-advance", self._pressure_advance)
+        if self._pins is not None:
+            self._write(self._pins.flow, self._flow)
+            self._write(self._pins.z_offset, self._z_offset)
+            self._write(self._pins.pressure_advance, self._pressure_advance)
 
     @staticmethod
     def _configured_pressure_advance() -> float:
@@ -128,10 +122,13 @@ class PrintTuningService(HalPinService):
                 return float(tool["flow"])
         return 100.0
 
-    def _write(self, pin: str, value: Any) -> None:
-        handle = self._pins.get(pin)
-        if handle is not None:
-            handle.set_value(value)
+    @staticmethod
+    def _write(pin: HalPin[Any], value: Any) -> None:
+        pin.set_value(value)
+
+    def _write_object(self, index: int, excluded: bool) -> None:
+        if self._pins is not None and 0 <= index < len(self._pins.exclude_objects):
+            self._write(self._pins.exclude_objects[index], excluded)
 
     # -- Z offset / flow ---------------------------------------------------- #
 
@@ -147,7 +144,8 @@ class PrintTuningService(HalPinService):
         if abs(value) > Z_OFFSET_LIMIT_MM:
             raise BadRequestError(f"Z offset {value:g} mm is beyond ±{Z_OFFSET_LIMIT_MM:g} mm.")
         self._z_offset = round(float(value), 4)
-        self._write("z-offset", self._z_offset)
+        if self._pins is not None:
+            self._write(self._pins.z_offset, self._z_offset)
         logger.info("Live Z offset: %+.3f mm", self._z_offset)
         return self._z_offset
 
@@ -158,7 +156,8 @@ class PrintTuningService(HalPinService):
         if not FLOW_MIN <= percent <= FLOW_MAX:
             raise BadRequestError(f"Flow {percent:g} % is outside {FLOW_MIN:g} … {FLOW_MAX:g} %.")
         self._flow = round(float(percent), 2)
-        self._write("flow", self._flow)
+        if self._pins is not None:
+            self._write(self._pins.flow, self._flow)
         logger.info("Flow: %.1f %%", self._flow)
         return self._flow
 
@@ -170,7 +169,8 @@ class PrintTuningService(HalPinService):
         if not 0.0 <= value <= PRESSURE_ADVANCE_MAX:
             raise BadRequestError(f"Pressure advance {value:g} is outside 0 … {PRESSURE_ADVANCE_MAX:g}.")
         self._pressure_advance = round(float(value), 4)
-        self._write("pressure-advance", self._pressure_advance)
+        if self._pins is not None:
+            self._write(self._pins.pressure_advance, self._pressure_advance)
         logger.info("Pressure advance: %.4f", self._pressure_advance)
         return self._pressure_advance
 
@@ -234,7 +234,7 @@ class PrintTuningService(HalPinService):
             raise BadRequestError(f"The loaded program has no object {index}.")
         with self._lock:
             (self._excluded.add if excluded else self._excluded.discard)(index)
-        self._write(f"exclude-object-{index}", bool(excluded))
+        self._write_object(index, bool(excluded))
         logger.info("Object %d (%s) %s", index, objects[index], "excluded" if excluded else "included again")
 
     def reset_objects(self) -> None:
@@ -244,20 +244,16 @@ class PrintTuningService(HalPinService):
 
     def _reset_objects_locked(self) -> None:
         for k in list(self._excluded):
-            self._write(f"exclude-object-{k}", False)
+            self._write_object(k, False)
         self._excluded.clear()
 
-    def state(self, path: str, line: int) -> dict[str, Any]:
+    def state(self, path: str, line: int) -> PrintTuningStateDTO:
         objects, index = self._file(path) if path else ([], [])
         progress = progress_at(index, line) if index else None
-        return {
-            "z_offset": self._z_offset,
-            "flow": self._flow,
-            "pressure_advance": self._pressure_advance,
-            "objects": [{"index": k, "name": name, "excluded": k in self._excluded} for k, name in enumerate(objects)],
-            "progress": None if progress is None else {"percent": progress.percent,
-                                                       "remaining_min": progress.remaining_min},
-        }
+        return PrintTuningMapper.to_state_dto(
+            self._z_offset, self._flow, self._pressure_advance, objects, set(self._excluded),
+            None if progress is None else (progress.percent, progress.remaining_min),
+        )
 
 
 _SERVICE: Optional[PrintTuningService] = None

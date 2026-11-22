@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 import services.program.PrintTuningService as module
+from dtos.print_tuning.PrintTuningDto import PrintProgressDTO, PrintTuningPins
 from exceptions import BadRequestError
 
 
@@ -18,8 +19,8 @@ class Pin:
 @pytest.fixture
 def service():
     s = module.PrintTuningService()
-    s._pins = {name: Pin() for name in ["z-offset", "flow", "pressure-advance",
-                                        *[f"exclude-object-{k}" for k in range(32)]]}
+    s._pins = PrintTuningPins(z_offset=Pin(), flow=Pin(), pressure_advance=Pin(),
+                              exclude_objects=tuple(Pin() for _ in range(32)))
     return s
 
 
@@ -37,14 +38,14 @@ M2
 
 
 def test_z_offset_set_adjust_and_limit(service):
-    assert service.set_z_offset(0.1) == 0.1 and service._pins["z-offset"].value == 0.1
+    assert service.set_z_offset(0.1) == 0.1 and service._pins.z_offset.value == 0.1
     assert service.adjust_z_offset(-0.05) == pytest.approx(0.05)
     with pytest.raises(BadRequestError):
         service.set_z_offset(3)
 
 
 def test_flow_limits(service):
-    assert service.set_flow(95) == 95 and service._pins["flow"].value == 95
+    assert service.set_flow(95) == 95 and service._pins.flow.value == 95
     for bad in (5, 600):
         with pytest.raises(BadRequestError):
             service.set_flow(bad)
@@ -68,18 +69,18 @@ def test_objects_and_progress_of_the_loaded_file(service, tmp_path):
     path = tmp_path / "print.ngc"
     path.write_text(PRINT)
     state = service.state(str(path), 1)
-    assert [o["name"] for o in state["objects"]] == ["box", "cyl"]
-    assert state["progress"] is None  # before the first M73
-    assert service.state(str(path), 6)["progress"] == {"percent": 0.0, "remaining_min": 10.0}
-    assert service.state(str(path), 9)["progress"] == {"percent": 50.0, "remaining_min": 5.0}
+    assert [o.name for o in state.objects] == ["box", "cyl"]
+    assert state.progress is None  # before the first M73
+    assert service.state(str(path), 6).progress == PrintProgressDTO(0.0, 10.0)
+    assert service.state(str(path), 9).progress == PrintProgressDTO(50.0, 5.0)
     service.set_excluded(1, True, str(path))
-    assert service._pins["exclude-object-1"].value is True
-    assert service.state(str(path), 9)["objects"][1]["excluded"] is True
+    assert service._pins.exclude_objects[1].value is True
+    assert service.state(str(path), 9).objects[1].excluded is True
     with pytest.raises(BadRequestError):
         service.set_excluded(5, True, str(path))
     service.reset_objects()
-    assert service._pins["exclude-object-1"].value is False
-    assert not any(o["excluded"] for o in service.state(str(path), 9)["objects"])
+    assert service._pins.exclude_objects[1].value is False
+    assert not any(o.excluded for o in service.state(str(path), 9).objects)
 
 
 def test_a_different_file_resets_the_exclusions(service, tmp_path):
@@ -87,7 +88,7 @@ def test_a_different_file_resets_the_exclusions(service, tmp_path):
     first.write_text(PRINT)
     second.write_text(PRINT)
     service.set_excluded(0, True, str(first))
-    assert service.state(str(second), 1)["objects"][0]["excluded"] is False
+    assert service.state(str(second), 1).objects[0].excluded is False
 
 
 def test_m73_index_and_progress_at():
@@ -124,7 +125,7 @@ def test_pressure_advance(service, monkeypatch):
     import services.machine.ConsoleLogger as console_module
     monkeypatch.setattr(console_module, "get_console_logger", lambda: Console())
     assert service.run_command("SET_PRESSURE_ADVANCE ADVANCE=0.045") and service.pressure_advance == 0.045
-    assert service._pins["pressure-advance"].value == 0.045
+    assert service._pins.pressure_advance.value == 0.045
     with pytest.raises(BadRequestError):
         service.set_pressure_advance(3)
     with pytest.raises(BadRequestError):

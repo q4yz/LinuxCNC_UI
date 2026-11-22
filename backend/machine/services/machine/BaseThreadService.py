@@ -162,20 +162,22 @@ class BaseThreadSnapshotService:
 
     @staticmethod
     def _io_state() -> Optional[IoState]:
+        from mappers.io.IoMapper import IoMapper
         from services.io.IoService import get_io_service
 
         try:
-            return get_io_service().state()
+            return IoMapper.to_response(get_io_service().state())
         except Exception as exc:  # noqa: BLE001 - one block must not cost the snapshot
             logger.warning("base_thread.snapshot: io state failed: %s", exc)
             return None
 
     @staticmethod
     def _led_state() -> Optional[List[Led]]:
+        from mappers.leds.LedMapper import LedMapper
         from services.io.LedService import get_led_service
 
         try:
-            return [Led(**led) for led in get_led_service().state()]
+            return [LedMapper.to_response(led) for led in get_led_service().state()]
         except Exception as exc:  # noqa: BLE001
             logger.warning("base_thread.snapshot: led state failed: %s", exc)
             return None

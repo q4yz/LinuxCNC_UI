@@ -7,6 +7,7 @@ import math
 import pytest
 
 import services.calibration.PidCalibrateService as module
+from dtos.calibration.CalibrationPinsDto import PidCalibratePins, PidTunePins
 from exceptions import BadRequestError
 
 HEATER = {"id": "heater_extruder", "type": "extruder", "control": "pid", "max_temp": 280, "max_power": 1.0}
@@ -27,15 +28,25 @@ class Plant:
         self.t += self.dt
 
 
+class RecPin:
+    """Records every write as (``<heater>-<enable|duty>``, value)."""
+
+    def __init__(self, svc, key):
+        self.svc, self.key = svc, key
+
+    def set_value(self, value):
+        self.svc.writes.append((self.key, value))
+        if self.key.endswith("-duty"):
+            self.svc.plant.duty = value
+
+
 class Svc(module.PidCalibrateService):
     def __init__(self, plant):
         super().__init__()
         self.plant, self.writes = plant, []
-
-    def _write(self, key, value):
-        self.writes.append((key, value))
-        if key.endswith("-duty"):
-            self.plant.duty = value
+        self._pins = PidCalibratePins(heaters=tuple(
+            PidTunePins(heater_id=h["id"], enable=RecPin(self, f"{h['id']}-enable"), duty=RecPin(self, f"{h['id']}-duty"))
+            for h in self._heaters()))
 
     @staticmethod
     def _heaters():

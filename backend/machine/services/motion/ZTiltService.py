@@ -24,8 +24,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core.z_tilt import motor_adjustments
-from dtos.pins.HalPin import HalDataType
-from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.z_tilt.ZTiltDto import ZTiltPins, ZTiltStateDTO
+from mappers.z_tilt.ZTiltMapper import ZTiltMapper
 from exceptions import BadRequestError, ConflictError
 from hardware import get_stat_channel
 from hardware.Connection import MachineState, read_hal_pin
@@ -51,7 +51,7 @@ class ZTiltError(RuntimeError):
 class ZTiltService(HalPinService):
     def __init__(self, config: Optional[HardwareConfigService] = None) -> None:
         self._config = config or HardwareConfigService()
-        self._pins: List[ReadWriteDynamicHalPin[float]] = []
+        self._pins = ZTiltPins()
         self._worker: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self.last_result: Dict[str, Any] = {}
@@ -65,19 +65,20 @@ class ZTiltService(HalPinService):
     def preload_hal_pins(self) -> None:
         """One target pin per Z motor (``webgui.ztilt-<k>``). Call before
         ``HalPin.initialize_component()``."""
-        if self._pins:
+        if self._pins.offsets:
             return
         settings = self.settings()
         if settings is None:
             return
-        self._pins = [
-            ReadWriteDynamicHalPin[float](f"ztilt-{k}", HalDataType.FLOAT, f"Z tilt: motor {k} offset (mm)")
-            for k in range(len(settings["joints"]))
-        ]
+        self._pins = ZTiltMapper.create_ZTiltPins(len(settings["joints"]))
 
     def offsets(self) -> List[float]:
         """The target offset per motor (mm), 0 while unset."""
-        return [float(pin.get_value() or 0.0) for pin in self._pins]
+        return list(ZTiltMapper.offsets(self._pins))
+
+    def state(self) -> ZTiltStateDTO:
+        return ZTiltMapper.to_state_dto(self.settings() is not None, self.is_running(), self._pins,
+                                        self.last_result.get("spread"))
 
     # -- running ---------------------------------------------------------- #
 
@@ -184,7 +185,7 @@ class ZTiltService(HalPinService):
         settings = self.settings()
         if settings is None:
             raise BadRequestError("This machine has no [z_tilt] section.")
-        if len(self._pins) != len(settings["joints"]):
+        if len(self._pins.offsets) != len(settings["joints"]):
             raise BadRequestError("Z tilt pins are not set up — restart the machine backend after regenerating.")
         return settings
 
@@ -234,7 +235,7 @@ class ZTiltService(HalPinService):
     def _apply(self, targets: List[float]) -> None:
         """Write the targets and wait until the ramps reached them."""
         current = self.offsets()
-        for pin, target in zip(self._pins, targets):
+        for pin, target in zip(self._pins.offsets, targets):
             pin.set_value(float(target))
         travel = max((abs(t - c) for t, c in zip(targets, current)), default=0.0)
         deadline = time.monotonic() + travel / RAMP_MM_PER_S + 2.0

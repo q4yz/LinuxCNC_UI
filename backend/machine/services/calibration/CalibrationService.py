@@ -491,7 +491,7 @@ def guided_calibrations(payload: Mapping[str, Any]) -> List[Calibration]:
     def print_pa(p: Mapping[str, float]) -> str:
         from services.program.PrintTuningService import get_print_tuning_service
 
-        restore = get_print_tuning_service().state("", 0).get("pressure_advance", 0.0)
+        restore = get_print_tuning_service().state("", 0).pressure_advance
         text = pa_tower(settings_from_payload(payload, p["hotend"], p["bed"]), height=p["height"], start=p["start"],
                         factor=p["factor"], speed=p["speed"], restore=float(restore or 0.0))
         message = start_test_print("pressure_advance_tower", text)
@@ -518,7 +518,7 @@ def guided_calibrations(payload: Mapping[str, Any]) -> List[Calibration]:
 
     from services.program.PrintTuningService import get_print_tuning_service
 
-    advance = float(get_print_tuning_service().state("", 0).get("pressure_advance") or 0.0)
+    advance = float(get_print_tuning_service().state("", 0).pressure_advance or 0.0)
     pa = Calibration(
         "pressure_advance", "pressure_advance", "", has_extruder, no_extruder,
         params=heaters + [Param("start", 0.0, "", 0, 1), Param("factor", 0.005, "/mm", 0.0005, 0.05),

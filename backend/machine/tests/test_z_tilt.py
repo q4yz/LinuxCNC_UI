@@ -2,6 +2,8 @@
 tilted bed whose probed heights follow the applied motor offsets."""
 from __future__ import annotations
 
+from dtos.z_tilt.ZTiltDto import ZTiltPins
+
 import re
 
 import pytest
@@ -100,7 +102,7 @@ def rig(monkeypatch):
 
     def service(**overrides):
         s = module.ZTiltService(config=FakeConfig(**overrides))
-        s._pins = pins
+        s._pins = ZTiltPins(offsets=tuple(pins))
         return s
 
     return type("R", (), {"stat": stat, "lines": lines, "pins": pins, "events": events, "levels": levels,

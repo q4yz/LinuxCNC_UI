@@ -26,8 +26,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple
 
-from dtos.pins.HalPin import HalDataType
-from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.calibration.CalibrationPinsDto import PidCalibratePins
+from mappers.calibration.CalibrationPinsMapper import PidCalibrateMapper
 from exceptions import BadRequestError, ConflictError
 from services.HalPinService import HalPinService
 
@@ -112,7 +112,7 @@ def parse_command(line: str) -> Optional[dict[str, str]]:
 
 class PidCalibrateService(HalPinService):
     def __init__(self) -> None:
-        self._pins: dict[str, ReadWriteDynamicHalPin[Any]] = {}
+        self._pins = PidCalibratePins()
         self._worker: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -130,26 +130,18 @@ class PidCalibrateService(HalPinService):
                 and (t.get("control") or "pid").strip().lower() == "pid"]
 
     def preload_hal_pins(self) -> None:
-        for heater in self._heaters():
-            hid = str(heater["id"])
-            self._pins[f"{hid}-enable"] = ReadWriteDynamicHalPin(
-                f"tune-{hid}-enable", HalDataType.BIT, f"PID_CALIBRATE: {hid} on the relay")
-            self._pins[f"{hid}-duty"] = ReadWriteDynamicHalPin(
-                f"tune-{hid}-duty", HalDataType.FLOAT, f"PID_CALIBRATE: {hid} duty (%)")
+        self._pins = PidCalibrateMapper.from_dict_to_PidCalibratePins(self._heaters())
 
     def apply_initial(self) -> None:
         """Every heater off the relay (after ``HalPin.initialize_component``)."""
         for heater in self._heaters():
             self._release(str(heater["id"]))
 
-    def _write(self, key: str, value: Any) -> None:
-        handle = self._pins.get(key)
-        if handle is not None:
-            handle.set_value(value)
-
     def _release(self, hid: str) -> None:
-        self._write(f"{hid}-duty", 0.0)
-        self._write(f"{hid}-enable", False)
+        pins = self._pins.of(hid)
+        if pins is not None:
+            pins.duty.set_value(0.0)
+            pins.enable.set_value(False)
 
     def resolve(self, name: str) -> dict[str, Any]:
         """``HEATER=``: a tool id, or Klipper's ``extruder`` / ``heater_bed``."""
@@ -242,8 +234,10 @@ class PidCalibrateService(HalPinService):
             level=LogLevel.INFO, source="CMD")
         start = last_peak = clock()
         try:
-            self._write(f"{hid}-duty", tuner.max_duty)
-            self._write(f"{hid}-enable", True)
+            pins = self._pins.of(hid)
+            if pins is not None:
+                pins.duty.set_value(tuner.max_duty)
+                pins.enable.set_value(True)
             while not tuner.done:
                 if self._stop.is_set():
                     raise PidCalibrateError("stopped")
@@ -256,7 +250,9 @@ class PidCalibrateService(HalPinService):
                 if temp > target + OVERSHOOT_LIMIT:
                     raise PidCalibrateError(f"{temp:.1f} °C is {OVERSHOOT_LIMIT:g} °C over the target")
                 count = len(tuner.peaks)
-                self._write(f"{hid}-duty", tuner.update(temp, now))
+                duty = tuner.update(temp, now)
+                if pins is not None:
+                    pins.duty.set_value(duty)
                 if len(tuner.peaks) != count:
                     last_peak = now
                     log(f"{COMMAND}: peak {len(tuner.peaks)}/{PEAKS} at {tuner.peaks[-1][0]:.1f} °C.",

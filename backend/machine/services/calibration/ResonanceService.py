@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from exceptions import BadRequestError, ConflictError
+from dtos.calibration.CalibrationPinsDto import ResonancePins
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.resonance")
@@ -124,28 +125,26 @@ class ResonanceService(HalPinService):
         self._worker: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self.last: dict[str, Any] = {}
+        self._pins = ResonancePins()
 
     def preload_hal_pins(self) -> None:
         """``webgui.accel-record`` (a CAN node's accelerometer: the HAL
         sampler records while it is on)."""
-        from dtos.pins.HalPin import HalDataType
-        from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+        from mappers.calibration.CalibrationPinsMapper import ResonanceMapper
         from services.calibration.Adxl345 import NodeAdxl345, is_node
         from services.machine.HardwareConfigService import HardwareConfigService
 
         adxl = HardwareConfigService().load_payload().get("adxl345")
-        if isinstance(adxl, dict) and is_node(adxl):
-            self._record_pin: ReadWriteDynamicHalPin[bool] = ReadWriteDynamicHalPin(NodeAdxl345.RECORD_PIN, HalDataType.BIT,
-                                                      "Resonance test: record the node accelerometer")
+        node = isinstance(adxl, dict) and is_node(adxl)
+        self._pins = ResonanceMapper.create_ResonancePins(NodeAdxl345.RECORD_PIN if node else None)
 
     def apply_initial(self) -> None:
         """Start with the node not recording (after ``initialize_component``)."""
         self._record(False)
 
     def _record(self, on: bool) -> None:
-        pin = getattr(self, "_record_pin", None)
-        if pin is not None:
-            pin.set_value(bool(on))
+        if self._pins.record is not None:
+            self._pins.record.set_value(bool(on))
 
     def accelerometer(self, config: dict[str, Any]) -> Any:
         """The node's (``cs_pin``) or the host's ADXL345."""

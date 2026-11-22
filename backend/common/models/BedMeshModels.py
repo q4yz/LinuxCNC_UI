@@ -35,3 +35,7 @@ class BedMeshDefaults(BaseModel):
 
 class BedMeshCreateRequest(BedMeshDefaults):
     name: str = Field(..., description="Name of the new, flat (all zero) mesh.")
+
+
+class BedMeshEnable(BaseModel):
+    enabled: bool = Field(..., description="Z compensation from the active mesh is on.")

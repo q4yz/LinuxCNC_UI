@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from dtos.pins.HalPin import HalDataType, HalPin
-from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from dtos.bed_mesh.BedMeshDto import BedMeshPins, BedMeshStateDTO
+from mappers.bed_mesh.BedMeshMapper import BedMeshMapper
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.bed_mesh")
@@ -20,26 +20,26 @@ logger = logging.getLogger("backend.services.bed_mesh")
 
 class BedMeshService(HalPinService):
     def __init__(self) -> None:
-        self._enable: Optional[HalPin[bool]] = None
+        self._pins: Optional[BedMeshPins] = None
 
     def preload_hal_pins(self) -> None:
-        self._enable = ReadWriteDynamicHalPin(
-            "bed-mesh-enable", HalDataType.BIT,
-            "Bed mesh: Z compensation on (compensation.enable-in)",
-        )
+        self._pins = BedMeshMapper.create_BedMeshPins()
 
-    def _pin(self) -> HalPin[bool]:
-        if self._enable is None:
+    def _bed_mesh_pins(self) -> BedMeshPins:
+        if self._pins is None:
             logger.warning("Bed mesh pin used before preload! Forcing late initialization.")
             self.preload_hal_pins()
-        assert self._enable is not None
-        return self._enable
+        assert self._pins is not None
+        return self._pins
+
+    def state(self) -> BedMeshStateDTO:
+        return BedMeshMapper.to_state_dto(self._bed_mesh_pins())
 
     def is_enabled(self) -> bool:
-        return bool(self._pin().get_value())
+        return self.state().enabled
 
     def set_enabled(self, enabled: bool) -> bool:
-        self._pin().set_value(enabled)
+        self._bed_mesh_pins().enable.set_value(enabled)
         return self.is_enabled()
 
 

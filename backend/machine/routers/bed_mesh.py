@@ -6,26 +6,25 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from mappers.bed_mesh.BedMeshMapper import BedMeshMapper
+from models.BedMeshModels import BedMeshEnable
 from services.motion.BedMeshProbeService import DEFAULT_PROFILE, get_bed_mesh_probe_service, parse_command
 from services.motion.BedMeshService import get_bed_mesh_service
 
 router = APIRouter(prefix="/api/v1/bedmesh", tags=["bedmesh"])
 
 
-class BedMeshEnable(BaseModel):
-    enabled: bool = Field(..., description="Z compensation from the active mesh is on.")
-
-
 @router.get("/enable", response_model=BedMeshEnable, operation_id="getBedMeshEnable",
             summary="Is bed mesh compensation on?")
 def get_enable() -> BedMeshEnable:
-    return BedMeshEnable(enabled=get_bed_mesh_service().is_enabled())
+    return BedMeshMapper.to_response(get_bed_mesh_service().state())
 
 
 @router.put("/enable", response_model=BedMeshEnable, operation_id="setBedMeshEnable",
             summary="Switch bed mesh compensation on / off")
 def set_enable(payload: BedMeshEnable) -> BedMeshEnable:
-    return BedMeshEnable(enabled=get_bed_mesh_service().set_enabled(payload.enabled))
+    get_bed_mesh_service().set_enabled(payload.enabled)
+    return BedMeshMapper.to_response(get_bed_mesh_service().state())
 
 
 class BedMeshCalibrate(BaseModel):
