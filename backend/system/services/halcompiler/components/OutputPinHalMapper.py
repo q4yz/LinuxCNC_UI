@@ -8,10 +8,9 @@ the webgui half is `OutputPinWebguiMapper`).
 """
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest, PinRole
+from models.machineconfig.HardwareJsonModels import OutputPin
 from models.machineconfig.InputPinActionModels import HalpinSetAction
 
 from .OutputLatchHalMapper import OutputLatchHalMapper
@@ -22,19 +21,19 @@ SP_FULL_SCALE = 100.0
 
 class OutputPinHalMapper:
     @staticmethod
-    def to_fragment(output_pin: dict[str, Any], sets: list[HalpinSetAction] | None = None) -> HalFragment:
+    def to_fragment(output_pin: OutputPin, sets: list[HalpinSetAction] | None = None) -> HalFragment:
         """``sets``: the input edges targeting this output — it is then
         latched (`OutputLatchHalMapper`) instead of fed by webgui."""
-        pin_id = str(output_pin["id"])
-        pin = PinStringMapper.from_string(str(output_pin["pin"]))
+        pin_id = output_pin.id
+        pin = PinStringMapper.from_string(output_pin.pin)
         fragment = OutputLatchHalMapper.to_fragment(output_pin, sets) if sets else HalFragment()
-        if not output_pin.get("pwm"):
+        if not output_pin.pwm:
             fragment.requests.append(
                 PinRequest(signal=f"{pin_id}-out", role=PinRole.DIGITAL_OUT, pin=pin, owner=pin_id)
             )
             return fragment
         scale = f"{pin_id}-scale"
-        gain = SP_FULL_SCALE / float(output_pin.get("scale") or 1.0)
+        gain = SP_FULL_SCALE / output_pin.scale
         fragment.loadrt.append(f"loadrt scale names={scale}")
         fragment.addf.append(Addf(scale, SERVO_THREAD, order=1))
         fragment.setp.append(f"setp {scale}.gain {gain:g}")

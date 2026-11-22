@@ -25,21 +25,23 @@ happens to reference one (`.agent/component/fan.md`).
 
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import Tool
+
+from .HeaterHalMapper import HeaterHalMapper
 
 
 class HeaterWebguiMapper:
     """`net` lines binding one heater's setpoint/reading onto `webgui.*`."""
 
     @staticmethod
-    def to_lines(heater: dict[str, Any]) -> list[str]:
-        heater_id = str(heater["id"])
+    def to_lines(heater: Tool) -> list[str]:
+        heater_id = heater.id
         suffix = heater_id.replace("heater", "", 1)
         lines = [f"# Heater: {heater_id}"]
 
         lines.append(f"net {heater_id}-SP <= webgui.target-temperature{suffix}")
 
-        sensor_id = heater.get("sensor")
+        sensor_id = heater.sensor
         if sensor_id:
             lines.append(f"net {sensor_id}-PV => webgui.{sensor_id}")
 
@@ -47,12 +49,12 @@ class HeaterWebguiMapper:
         return lines
 
     @staticmethod
-    def pid_tune_lines(heater: dict[str, Any]) -> list[str]:
+    def pid_tune_lines(heater: Tool) -> list[str]:
         """``webgui_connections.hal``: the PID_CALIBRATE relay pins of a PID
         heater (machine.hal's ``tune-<id>`` / ``tune-ok-<id>``)."""
-        if (heater.get("control") or "pid").strip().lower() != "pid":
+        if HeaterHalMapper.control(heater) != "pid":
             return []
-        heater_id = str(heater["id"])
+        heater_id = heater.id
         return [
             f"# PID_CALIBRATE: {heater_id}",
             f"net {heater_id}-tune-enable webgui.tune-{heater_id}-enable => tune-ok-{heater_id}.in0",

@@ -24,6 +24,8 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from exceptions import BadRequestError, ConflictError
 from dtos.calibration.CalibrationPinsDto import ResonancePins
+from models.machineconfig.HardwareJsonModels import Adxl345 as Adxl345Settings
+from models.machineconfig.HardwareRecords import HardwareRecords
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.resonance")
@@ -134,8 +136,8 @@ class ResonanceService(HalPinService):
         from services.calibration.Adxl345 import NodeAdxl345, is_node
         from services.machine.HardwareConfigService import HardwareConfigService
 
-        adxl = HardwareConfigService().load_payload().get("adxl345")
-        node = isinstance(adxl, dict) and is_node(adxl)
+        adxl = HardwareRecords.adxl345(HardwareConfigService().load_payload())
+        node = adxl is not None and is_node(adxl)
         self._pins = ResonanceMapper.create_ResonancePins(NodeAdxl345.RECORD_PIN if node else None)
 
     def apply_initial(self) -> None:
@@ -146,7 +148,7 @@ class ResonanceService(HalPinService):
         if self._pins.record is not None:
             self._pins.record.set_value(bool(on))
 
-    def accelerometer(self, config: dict[str, Any]) -> Any:
+    def accelerometer(self, config: Adxl345Settings) -> Any:
         """The node's (``cs_pin``) or the host's ADXL345."""
         from services.calibration.Adxl345 import Adxl345, NodeAdxl345, is_node
 
@@ -157,11 +159,11 @@ class ResonanceService(HalPinService):
         return worker is not None and worker.is_alive()
 
     @staticmethod
-    def _config() -> dict[str, Any]:
+    def _config() -> Adxl345Settings:
         from services.machine.HardwareConfigService import HardwareConfigService
 
-        adxl = HardwareConfigService().load_payload().get("adxl345")
-        if not isinstance(adxl, dict):
+        adxl = HardwareRecords.adxl345(HardwareConfigService().load_payload())
+        if adxl is None:
             raise BadRequestError("No [adxl345] in the profile (an ADXL345 on the host's SPI).")
         return adxl
 
@@ -212,7 +214,7 @@ class ResonanceService(HalPinService):
         if getattr(stat, "interp_state", 1) != 1:
             raise ConflictError("A program or MDI command is running.")
 
-    def _query(self, config: dict[str, Any]) -> None:
+    def _query(self, config: Adxl345Settings) -> None:
         from services.calibration.Adxl345 import Adxl345Error, is_node
         from services.machine.ConsoleLogger import LogLevel, get_console_logger
 
@@ -238,7 +240,7 @@ class ResonanceService(HalPinService):
             text = f"Accelerometer: x {x:.0f}, y {y:.0f}, z {z:.0f} mm/s²"
         get_console_logger().log_event(text, level=LogLevel.INFO, source="CMD")
 
-    def _run_worker(self, config: dict[str, Any], axes: List[str]) -> None:
+    def _run_worker(self, config: Adxl345Settings, axes: List[str]) -> None:
         from services.machine.ConsoleLogger import LogLevel, get_console_logger
 
         console = get_console_logger()
@@ -253,17 +255,15 @@ class ResonanceService(HalPinService):
             console.log_event(f"Resonance test aborted: {getattr(exc, 'detail', None) or exc}", level=LogLevel.ERROR,
                               source="CMD")
 
-    def measure(self, config: dict[str, Any], axis: str, log: Callable[..., None],
+    def measure(self, config: Adxl345Settings, axis: str, log: Callable[..., None],
                 source: Optional[Callable[[], Any]] = None) -> ShaperFit:
         """Sweep ``axis``, record, fit; ``source`` (tests) replaces the
         accelerometer: a callable returning the samples since the last call."""
         from services.machine.ConsoleLogger import LogLevel
         from services.calibration.ShaperService import get_shaper_service
 
-        min_f = float(config.get("min_freq") or 5.0)
-        max_f = float(config.get("max_freq") or 133.0)
-        rate_hz = float(config.get("hz_per_sec") or 1.0)
-        accel_per_hz = float(config.get("accel_per_hz") or 75.0)
+        min_f, max_f = config.min_freq, config.max_freq
+        rate_hz, accel_per_hz = config.hz_per_sec, config.accel_per_hz
         shaper = get_shaper_service()
         chip = None
         if source is None:

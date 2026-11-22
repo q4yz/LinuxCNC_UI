@@ -23,7 +23,13 @@ from the same parser output.
 """
 
 from .HardwareJsonModels import (
+    Adxl345 as HardwareAdxl345,
     Axis as HardwareAxis,
+    FilamentChange as HardwareFilamentChange,
+    FirmwareRetraction as HardwareFirmwareRetraction,
+    InputShaper as HardwareInputShaper,
+    SkewCorrection as HardwareSkewCorrection,
+    ZVirtualEndstop as HardwareZVirtualEndstop,
     Driver as HardwareDriver,
     Endstop as HardwareEndstop,
     Estop as HardwareEstop,
@@ -87,7 +93,13 @@ __all__ = [
     "Estop",
     "Extruder",
     "Fan",
+    "HardwareAdxl345",
     "HardwareAxis",
+    "HardwareFilamentChange",
+    "HardwareFirmwareRetraction",
+    "HardwareInputShaper",
+    "HardwareSkewCorrection",
+    "HardwareZVirtualEndstop",
     "HardwareDriver",
     "HardwareEndstop",
     "HardwareEstop",

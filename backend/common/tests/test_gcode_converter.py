@@ -1,6 +1,8 @@
 """Marlin / slicer G-code -> LinuxCNC NGC (`core.gcode_converter`)."""
 from __future__ import annotations
 
+from models.machineconfig.HardwareJsonModels import FirmwareRetraction
+
 import pytest
 
 from core.gcode_converter import convert, needs_conversion, ngc_name, read_prestart
@@ -203,7 +205,7 @@ def test_convert_mdi_marlin_codes():
         assert convert_mdi(line) == line
 
 
-RETRACTION = {"retract_length": 0.8, "retract_speed": 35, "unretract_extra_length": 0.1, "unretract_speed": 30}
+RETRACTION = FirmwareRetraction(retract_length=0.8, retract_speed=35, unretract_extra_length=0.1, unretract_speed=30)
 
 
 def test_firmware_retraction_becomes_an_a_move_and_keeps_the_feed():

@@ -32,7 +32,7 @@ see `.agent/component/digital_spindle.md`.
 
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import Tool
 
 #: (hardware.json field, machine.hal signal, webgui pin) — only
 #: emitted when the machine.hal side actually created that signal
@@ -52,9 +52,9 @@ class SpindleWebguiMapper:
     """`net` lines binding one spindle's status onto its `webgui.*` pins."""
 
     @staticmethod
-    def to_lines(spindle: dict[str, Any]) -> list[str]:
-        spindle_id = str(spindle["id"])
-        n = int(spindle.get("spindle_number") or 0)
+    def to_lines(spindle: Tool) -> list[str]:
+        spindle_id = spindle.id
+        n = spindle.spindle_number or 0
         suffix = spindle_id.replace("spindle_digital", "", 1)
 
         lines = [
@@ -70,17 +70,17 @@ class SpindleWebguiMapper:
         # should track that, not a value the drive is ignoring.
         lines.append(f"net {spindle_id}-target-rpm => webgui.TargetRpm{suffix}")
 
-        if spindle.get("speed_fb_pin"):
+        if spindle.speed_fb_pin:
             lines.append(f"net spindle-speed-fb => webgui.rpm-out{suffix}")
 
-        if spindle.get("at_speed_pin") or spindle.get("speed_fb_pin"):
+        if spindle.at_speed_pin or spindle.speed_fb_pin:
             # Either wired straight from the drive's own bit, or
             # derived by the `near` component — both name the signal
             # `spindle-at-speed` (see `DigitalSpindleHalMapper`).
             lines.append(f"net spindle-at-speed => webgui.spindle-at-speed{suffix}")
 
         for field, signal_template, pin in _READOUTS:
-            if not spindle.get(field):
+            if not getattr(spindle, field):
                 continue
             signal = signal_template.format(id=spindle_id)
             lines.append(f"net {signal} => webgui.{pin}{suffix}")

@@ -2,6 +2,8 @@
 with a synthetic accelerometer, and the ADXL345 data decoding."""
 from __future__ import annotations
 
+from models.machineconfig.HardwareJsonModels import Adxl345 as Adxl345Settings
+
 import math
 
 import numpy as np
@@ -70,7 +72,7 @@ def test_measure_with_a_synthetic_accelerometer(monkeypatch):
         return samples
 
     logs = []
-    config = {"min_freq": 20, "max_freq": 80, "hz_per_sec": 120, "accel_per_hz": 75}
+    config = Adxl345Settings(min_freq=20, max_freq=80, hz_per_sec=120, accel_per_hz=75)
     best = module.ResonanceService().measure(config, "x", lambda m, **k: logs.append(m), source=source)
     assert calls[-1] == "stop" and calls[0][0] == "x"
     assert calls[0][1] == pytest.approx(75 / (4 * math.pi ** 2 * 20), rel=0.2)  # a / (2πf)², per Hz
@@ -109,7 +111,7 @@ def test_node_accelerometer_reads_halsampler(monkeypatch, tmp_path):
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     record = []
-    chip = NodeAdxl345({"cs_pin": "ebb:PB12"}, record.append, period_s=0.001)
+    chip = NodeAdxl345(Adxl345Settings(cs_pin="ebb:PB12"), record.append, period_s=0.001)
     monkeypatch.setattr(_time, "sleep", lambda s: None)  # open() would drop the fake's samples
     chip.open()
     deadline = _time.monotonic() + 5
@@ -127,5 +129,5 @@ def test_measure_picks_the_node_accelerometer(monkeypatch):
     service = module.ResonanceService()
     from services.calibration.Adxl345 import Adxl345, NodeAdxl345
 
-    assert isinstance(service.accelerometer({"cs_pin": "ebb:PB12"}), NodeAdxl345)
-    assert isinstance(service.accelerometer({"spi_device": "/dev/spidev1.1"}), Adxl345)
+    assert isinstance(service.accelerometer(Adxl345Settings(cs_pin="ebb:PB12")), NodeAdxl345)
+    assert isinstance(service.accelerometer(Adxl345Settings(spi_device="/dev/spidev1.1")), Adxl345)

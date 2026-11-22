@@ -13,7 +13,7 @@ runtime does not register (a HAL load error).
 
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import McuInfo
 
 from mappers.mcu.McuMapper import McuMapper
 
@@ -22,12 +22,13 @@ class McuResetWebguiMapper:
     """`net` line binding `webgui.<id>-reset` onto `remora.PRU-reset`."""
 
     @staticmethod
-    def to_lines(mcu: dict[str, Any]) -> list[str]:
-        if not McuMapper.is_resettable(mcu):
+    def to_lines(mcu: McuInfo) -> list[str]:
+        # McuMapper's rule (shared with the runtime, which reads dicts)
+        if not McuMapper.is_resettable(mcu.model_dump()):
             return []
-        signal = McuMapper.reset_pin_name(str(mcu["id"]))
+        signal = McuMapper.reset_pin_name(mcu.id)
         return [
-            f"# MCU reset ({mcu['id']})",
+            f"# MCU reset ({mcu.id})",
             f"net {signal} webgui.{signal} => remora.PRU-reset",
             "",
         ]

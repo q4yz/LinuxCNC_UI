@@ -2,15 +2,15 @@
 abort onto halui, the flow % and pressure advance from the machine backend."""
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import Tool
 
 from .ExtruderGuardHalMapper import ExtruderGuardHalMapper
 
 
 class ExtruderGuardWebguiMapper:
     @staticmethod
-    def to_lines(tool: dict[str, Any]) -> list[str]:
-        tool_id = str(tool["id"])
+    def to_lines(tool: Tool) -> list[str]:
+        tool_id = tool.id
         comp = ExtruderGuardHalMapper.component(tool_id)
         return [
             f"# Cold-extrusion guard: {tool_id} (machine.hal's extruder-{tool_id})",

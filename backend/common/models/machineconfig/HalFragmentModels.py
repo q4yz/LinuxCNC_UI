@@ -11,6 +11,7 @@ assembly and ordering are the assembler's job
 
 from __future__ import annotations
 
+from typing import Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -121,6 +122,23 @@ class FirmwareModuleRequest:
 
     mcu_id: str
     module: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RouterMcu:
+    """One MCU as its router's ``base_fragment`` sees it: the record plus
+    what the assembler knows from the rest of the machine (a bare MCU
+    record has no notion of which spindle rides it or which E-stop input
+    it reads)."""
+
+    mcu: Any  # HardwareJsonModels.McuInfo (kept untyped: no import cycle)
+    #: A CAN hub: the input bit that is 1 while every mandatory node runs.
+    can_status_bit: int | None = None
+    #: The ``[estop] fault_pin`` is read through this MCU.
+    estop_fault: bool = False
+    #: The spindle routed to this MCU (a VFD): its RPM range.
+    spindle_min_rpm: float | None = None
+    spindle_max_rpm: float | None = None
 
 
 @dataclass

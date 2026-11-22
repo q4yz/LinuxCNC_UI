@@ -50,6 +50,8 @@ FLOW = "FLOW"                           # % — the print tuning's flow at start
 RETRACT_LENGTH = "RETRACT_LENGTH"       # mm — [firmware_retraction] (G10 / G11 at upload)
 RETRACT_SPEED = "RETRACT_SPEED"         # mm/s
 STALL = "STALL_{joint}"                 # a TMC2209's StallGuard threshold (sensorless homing)
+#: The shaper types the jointshape component knows (``InputShaper.type_x``).
+SHAPER_TYPES = ("zv", "mzv", "zvd", "ei")
 #: Klipper's [firmware_retraction] defaults, for a profile without one.
 _RETRACTION_DEFAULTS = {"retract_length": 0.0, "retract_speed": 20.0, "unretract_extra_length": 0.0,
                         "unretract_speed": 10.0}
@@ -291,8 +293,8 @@ def overlay_payload(payload: Dict[str, Any], values: Mapping[str, str]) -> Dict[
             freq = number(SHAPER_FREQ.format(axis=axis.upper()))
             if freq is not None:
                 out["input_shaper"][f"freq_{axis}"] = freq
-            kind = values.get(SHAPER_TYPE.format(axis=axis.upper()))
-            if kind:
+            kind = (values.get(SHAPER_TYPE.format(axis=axis.upper())) or "").strip().lower()
+            if kind in SHAPER_TYPES:  # anything else would not load (InputShaper)
                 out["input_shaper"][f"type_{axis}"] = kind
     skew = number(SKEW_XY)
     if skew is not None and any(isinstance(out.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345")):

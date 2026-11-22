@@ -8,13 +8,24 @@ from __future__ import annotations
 from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.StepperHalMapper import StepperHalMapper
 
+from tests import typed_records as typed
+
+
+def _stepper_fragment(axis, joints, endstops_by_id, *args):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return StepperHalMapper.to_fragment(
+        typed.axis(axis), typed.joints(joints),
+        {k: typed.Endstop.model_validate(v) for k, v in endstops_by_id.items()}, *args,
+    )
+
+
 X_JOINT = {"id": "stepper_x", "joint_number": 0, "step_pin": "mcu:08", "dir_pin": "mcu:!09"}
 X_AXIS = {"id": "x", "joint_numbers": [0], "endstop": "endstop_xz"}
 XZ_ENDSTOP = {"id": "endstop_xz", "pin": "mcu:!13"}
 
 
 def test_per_joint_position_loop_and_stepgen_config():
-    fragment = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {})
+    fragment = _stepper_fragment(X_AXIS, [X_JOINT], {})
 
     assert "setp stepgen.0.position-scale [JOINT_0]SCALE" in fragment.setp
     assert "setp stepgen.0.steplen 1" in fragment.setp
@@ -28,7 +39,7 @@ def test_per_joint_position_loop_and_stepgen_config():
 
 
 def test_step_and_dir_are_exported_as_requests_with_correct_invert():
-    fragment = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {})
+    fragment = _stepper_fragment(X_AXIS, [X_JOINT], {})
 
     assert "net stepper_x-step <= stepgen.0.step" in fragment.nets
     assert "net stepper_x-dir <= stepgen.0.dir" in fragment.nets
@@ -53,13 +64,13 @@ def test_stepgen_enable_net_is_unconditional_but_the_physical_pin_is_optional():
     while `position-cmd` moves, and FERROR trips within milliseconds
     of a jog or homing move — a position error before a single real
     step happens."""
-    without = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {})
+    without = _stepper_fragment(X_AXIS, [X_JOINT], {})
     assert "net stepper_x-enable joint.0.amp-enable-out => stepgen.0.enable" in without.nets
     # No PinRequest, though — no physical pin was declared to route.
     assert not any(r.role is PinRole.ENABLE for r in without.requests)
 
     joint = dict(X_JOINT, enable_pin="mcu:!14")
-    withit = StepperHalMapper.to_fragment(X_AXIS, [joint], {})
+    withit = _stepper_fragment(X_AXIS, [joint], {})
     assert "net stepper_x-enable joint.0.amp-enable-out => stepgen.0.enable" in withit.nets
     request = next(r for r in withit.requests if r.role is PinRole.ENABLE)
     assert request.signal == "stepper_x-enable" and request.pin.pin_id == "14"
@@ -75,10 +86,10 @@ def test_endstop_signal_is_named_from_the_endstop_not_the_axis():
     a HAL load error.
     """
     endstops_by_id = {"endstop_xz": XZ_ENDSTOP}
-    x_fragment = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], endstops_by_id)
+    x_fragment = _stepper_fragment(X_AXIS, [X_JOINT], endstops_by_id)
     z_axis = {"id": "z", "joint_numbers": [3], "endstop": "endstop_xz"}
     z_joint = {"id": "stepper_z", "joint_number": 3, "step_pin": "mcu:06", "dir_pin": "mcu:07"}
-    z_fragment = StepperHalMapper.to_fragment(z_axis, [z_joint], endstops_by_id)
+    z_fragment = _stepper_fragment(z_axis, [z_joint], endstops_by_id)
 
     assert "net endstop_xz-sw => joint.0.home-sw-in" in x_fragment.nets
     assert "net endstop_xz-sw => joint.3.home-sw-in" in z_fragment.nets
@@ -91,7 +102,7 @@ def test_endstop_signal_is_named_from_the_endstop_not_the_axis():
 
 
 def test_axis_with_no_endstop_emits_no_home_wiring():
-    fragment = StepperHalMapper.to_fragment(X_AXIS, [X_JOINT], {})
+    fragment = _stepper_fragment(X_AXIS, [X_JOINT], {})
     assert not any("home-sw" in n for n in fragment.nets)
     assert not any(r.role is PinRole.ENDSTOP for r in fragment.requests)
 
@@ -108,7 +119,7 @@ def test_a_dual_motor_axis_wires_the_shared_endstop_into_both_joints():
     ]
     endstops_by_id = {"endstop_y": {"id": "endstop_y", "pin": "mcu:12"}}
 
-    fragment = StepperHalMapper.to_fragment(y_axis, joints, endstops_by_id)
+    fragment = _stepper_fragment(y_axis, joints, endstops_by_id)
 
     assert "net endstop_y-sw => joint.1.home-sw-in" in fragment.nets
     assert "net endstop_y-sw => joint.2.home-sw-in" in fragment.nets
@@ -144,7 +155,7 @@ def test_a_dual_motor_axis_wires_each_joint_to_its_own_distinct_endstop():
         "endstop_y1_min": {"id": "endstop_y1_min", "pin": "mcu:11"},
     }
 
-    fragment = StepperHalMapper.to_fragment(y_axis, joints, endstops_by_id)
+    fragment = _stepper_fragment(y_axis, joints, endstops_by_id)
 
     assert "net endstop_y_min-sw => joint.1.home-sw-in" in fragment.nets
     assert "net endstop_y1_min-sw => joint.2.home-sw-in" in fragment.nets
@@ -172,7 +183,7 @@ def test_a_dual_motor_axis_gives_its_second_joint_its_own_position_signal():
     ]
     endstops_by_id = {"endstop_y": {"id": "endstop_y", "pin": "mcu:12"}}
 
-    fragment = StepperHalMapper.to_fragment(y_axis, joints, endstops_by_id)
+    fragment = _stepper_fragment(y_axis, joints, endstops_by_id)
 
     assert "net ypos-cmd joint.1.motor-pos-cmd => stepgen.1.position-cmd" in fragment.nets
     assert "net ypos-fb stepgen.1.position-fb => joint.1.motor-pos-fb" in fragment.nets

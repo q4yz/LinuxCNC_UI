@@ -22,6 +22,8 @@ from typing import Any, Optional
 from core.skew import skew_factor
 from dtos.pins.HalPin import HalPin
 from dtos.calibration.CalibrationPinsDto import ShaperPins
+from models.machineconfig.HardwareJsonModels import InputShaper, SkewCorrection
+from models.machineconfig.HardwareRecords import HardwareRecords
 from mappers.calibration.CalibrationPinsMapper import ShaperMapper
 from exceptions import BadRequestError
 from services.HalPinService import HalPinService
@@ -39,9 +41,9 @@ class ShaperService(HalPinService):
     def preload_hal_pins(self) -> None:
         self._pins = ShaperMapper.create_ShaperPins()
         payload = self._payload()
-        shaper = payload.get("input_shaper") or {}
-        self.freq = {"x": float(shaper.get("freq_x") or 0.0), "y": float(shaper.get("freq_y") or 0.0)}
-        self.skew = float((payload.get("skew_correction") or {}).get("xy_factor") or 0.0)
+        shaper = HardwareRecords.input_shaper(payload) or InputShaper()
+        self.freq = {"x": shaper.freq_x, "y": shaper.freq_y}
+        self.skew = (HardwareRecords.skew_correction(payload) or SkewCorrection()).xy_factor
 
     def apply_initial(self) -> None:
         """Write the start values (after ``HalPin.initialize_component``)."""
@@ -61,7 +63,14 @@ class ShaperService(HalPinService):
         """The machine has the jointshape component on X / Y (Cartesian, or
         CoreXY: there it shapes X / Y before the belt mixing)."""
         payload = self._payload()
-        return any(isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
+        return any(
+            record is not None
+            for record in (
+                HardwareRecords.input_shaper(payload),
+                HardwareRecords.skew_correction(payload),
+                HardwareRecords.adxl345(payload),
+            )
+        )
 
     @staticmethod
     def _write(pin: HalPin[float], value: float) -> None:

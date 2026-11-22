@@ -15,7 +15,9 @@ E-stop latch. It defaults to bit 15 once the hub has a mandatory node.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Mapping
+
+from models.machineconfig.HardwareJsonModels import Fan, McuInfo, Tool
 
 DEFAULT_BITRATE = 1_000_000
 #: Node PWM periods (the node makes the PWM itself, 0 ... 100 % from
@@ -31,48 +33,60 @@ MAX_NODE = 15
 
 class RemoraCanMapper:
     @staticmethod
-    def is_node(mcu: dict[str, Any] | None) -> bool:
-        return mcu is not None and mcu.get("connection") == "remora-can"
+    # Topology on plain values: MachineValidator calls these with the raw
+    # payload's dicts, the compiler with typed McuInfo records.
 
     @staticmethod
-    def hub_id(node: dict[str, Any], mcus_by_id: dict[str, dict[str, Any]]) -> str | None:
-        """``can_hub``, or the machine's only ``remora-spi`` MCU; ``None`` if neither resolves."""
-        declared = node.get("can_hub")
-        if declared:
-            hub = mcus_by_id.get(str(declared))
-            return str(declared) if hub and hub.get("connection") == "remora-spi" else None
-        hubs = [mcu_id for mcu_id, mcu in mcus_by_id.items() if mcu.get("connection") == "remora-spi"]
+    def is_node(connection: str | None) -> bool:
+        return connection == "remora-can"
+
+    @staticmethod
+    def hub_id(can_hub: str | None, connections: Mapping[str, str | None]) -> str | None:
+        """A node's hub: ``can_hub``, or the machine's only ``remora-spi``
+        MCU; ``None`` if neither resolves. ``connections``: MCU id ->
+        ``connection``."""
+        if can_hub:
+            return can_hub if connections.get(can_hub) == "remora-spi" else None
+        hubs = [mcu_id for mcu_id, connection in connections.items() if connection == "remora-spi"]
         return hubs[0] if len(hubs) == 1 else None
 
     @staticmethod
-    def nodes_of(hub_id: str, mcus_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    def connections(mcus_by_id: Mapping[str, McuInfo]) -> dict[str, str | None]:
+        return {mcu_id: mcu.connection for mcu_id, mcu in mcus_by_id.items()}
+
+    @staticmethod
+    def hub_of(node: McuInfo, mcus_by_id: Mapping[str, McuInfo]) -> str | None:
+        return RemoraCanMapper.hub_id(node.can_hub, RemoraCanMapper.connections(mcus_by_id))
+
+    @staticmethod
+    def nodes_of(hub_id: str, mcus_by_id: Mapping[str, McuInfo]) -> list[McuInfo]:
         """The hub's nodes, in declaration order."""
         return [
             mcu for mcu in mcus_by_id.values()
-            if RemoraCanMapper.is_node(mcu) and RemoraCanMapper.hub_id(mcu, mcus_by_id) == hub_id
+            if RemoraCanMapper.is_node(mcu.connection) and RemoraCanMapper.hub_of(mcu, mcus_by_id) == hub_id
         ]
 
     @staticmethod
-    def node_numbers(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    def node_numbers(nodes: list[McuInfo]) -> dict[str, int]:
         """Declared ``can_node`` numbers, the rest next free 1 ... 15 in order."""
-        taken = {int(n["can_node"]) for n in nodes if n.get("can_node")}
+        taken = {n.can_node for n in nodes if n.can_node}
         numbers: dict[str, int] = {}
         free = (n for n in range(1, MAX_NODE + 1) if n not in taken)
         for node in nodes:
-            numbers[str(node["id"])] = int(node["can_node"]) if node.get("can_node") else next(free, 0)
+            numbers[node.id] = node.can_node if node.can_node else next(free, 0)
         return numbers
 
     @staticmethod
-    def status_bit(hub: dict[str, Any], nodes: list[dict[str, Any]]) -> int | None:
+    def status_bit(hub: McuInfo, nodes: list[McuInfo]) -> int | None:
         """Declared ``can_status_bit``, else 15 once a node is mandatory (the default)."""
-        if hub.get("can_status_bit") is not None:
-            return int(hub["can_status_bit"])
-        if any(node.get("mandatory") is not False for node in nodes):
+        if hub.can_status_bit is not None:
+            return hub.can_status_bit
+        if any(node.mandatory is not False for node in nodes):
             return DEFAULT_STATUS_BIT
         return None
 
     @staticmethod
-    def node_module(module: dict[str, object], node: dict[str, Any]) -> dict[str, object]:
+    def node_module(module: dict[str, object]) -> dict[str, object]:
         """A module the hub router built, in the node's dialect.
 
         Pin and ``"Modifier"`` pass through as the hub router wrote them
@@ -96,8 +110,8 @@ class RemoraCanMapper:
     @staticmethod
     def pwm_settings(
         module: dict[str, object],
-        tools_by_id: dict[str, dict[str, Any]],
-        fans_by_id: dict[str, dict[str, Any]],
+        tools_by_id: Mapping[str, Tool],
+        fans_by_id: Mapping[str, Fan],
     ) -> dict[str, object]:
         """A node ``"PWM"`` module with its ``"Period us"`` and its
         ``"Safe Duty"`` — the duty after boot, while LinuxCNC is gone and
@@ -111,33 +125,31 @@ class RemoraCanMapper:
         if owner in tools_by_id:
             period, safe_duty = HEATER_PERIOD_US, 0
         else:
-            hotend_fan = (fans_by_id.get(owner) or {}).get("kind") == "heater"
+            fan = fans_by_id.get(owner)
+            hotend_fan = fan is not None and fan.kind == "heater"
             period, safe_duty = FAN_PERIOD_US, 100 if hotend_fan else 0
         # an [output_pin]'s own cycle_time is already on the module
         return {**module, "Period us": module.get("Period us", period), "Safe Duty": safe_duty}
 
     @staticmethod
     def can_block(
-        hub: dict[str, Any],
-        nodes: list[dict[str, Any]],
+        hub: McuInfo,
+        nodes: list[McuInfo],
         modules_by_node: dict[str, list[dict[str, object]]],
     ) -> dict[str, object]:
         """The hub ``config.txt``'s top-level ``"CAN"`` object."""
         numbers = RemoraCanMapper.node_numbers(nodes)
-        block: dict[str, object] = {"Bitrate": int(hub.get("can_bitrate") or DEFAULT_BITRATE)}
+        block: dict[str, object] = {"Bitrate": hub.can_bitrate or DEFAULT_BITRATE}
         status_bit = RemoraCanMapper.status_bit(hub, nodes)
         if status_bit is not None:
             block["Status Bit"] = status_bit
         block["Nodes"] = [
             {
-                "UUID": node["canbus_uuid"],
-                "Node": numbers[str(node["id"])],
-                "Comment": str(node["id"]),
-                "Mandatory": "False" if node.get("mandatory") is False else "True",
-                "Modules": [
-                    RemoraCanMapper.node_module(module, node)
-                    for module in modules_by_node.get(str(node["id"]), [])
-                ],
+                "UUID": node.canbus_uuid,
+                "Node": numbers[node.id],
+                "Comment": node.id,
+                "Mandatory": "False" if node.mandatory is False else "True",
+                "Modules": [RemoraCanMapper.node_module(module) for module in modules_by_node.get(node.id, [])],
             }
             for node in nodes
         ]

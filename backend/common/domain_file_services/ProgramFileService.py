@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from pathlib import Path
 
 from core.gcode_converter import convert, needs_conversion, ngc_name
+from models.machineconfig.HardwareRecords import HardwareRecords
 
 from .FileService import FileService, FileMetadata
 from . import paths
@@ -93,9 +94,9 @@ class ProgramFileService(FileService):
     def _convert_and_store(self, filename: str, data: bytes, macro_names: Optional[Iterable[str]]) -> str:
         names = list(macro_names) if macro_names is not None else self._macro_names()
         payload = self._machine_payload()
-        retraction = payload.get("firmware_retraction") if payload else None
+        retraction = HardwareRecords.firmware_retraction(payload) if payload else None
         result = convert(data.decode("utf-8", errors="replace"), names, self._led_names(payload),
-                         self._part_fans(payload), retraction if isinstance(retraction, dict) else None)
+                         self._part_fans(payload), retraction)
         stored = ngc_name(filename)
         target = self.safe_join(stored)
         if target.exists() and self._is_path_read_only(target):

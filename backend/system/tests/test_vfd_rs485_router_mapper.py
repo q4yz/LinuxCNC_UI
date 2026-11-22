@@ -8,20 +8,28 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import PinRequest, PinRole
 from services.halcompiler.mcus.VfdRs485RouterMapper import UnknownVfdPinError, VfdRs485RouterMapper
 
+from tests import typed_records as typed
+
+
+def _base_fragment(mcu):
+    """The router takes a typed RouterMcu; the fixtures stay readable dicts."""
+    return VfdRs485RouterMapper.base_fragment(typed.router_mcu(mcu, 'vfd_rs485'))
+
+
 
 def _request(pin_string: str, owner: str = "spindle_digital", role: PinRole = PinRole.SPINDLE_OUT) -> PinRequest:
     return PinRequest(signal="spindle-forward", role=role, pin=PinStringMapper.from_string(pin_string), owner=owner)
 
 
 def test_base_fragment_loads_vfdmod_with_a_wait_flag():
-    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    fragment = _base_fragment({"id": "vfd0"})
     assert fragment.loadusr == ["loadusr -W vfdmod vfd_vfd0.ini"]
     assert fragment.addf == []  # class C: no realtime thread at all
 
 
 def test_base_fragment_has_no_realtime_component():
     """A VFD link must never carry anything safety- or motion-critical."""
-    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    fragment = _base_fragment({"id": "vfd0"})
     assert fragment.loadrt == []
     assert fragment.addf == []
 
@@ -37,7 +45,7 @@ def test_ini_sidecar_reads_the_ingested_serial_fields():
         "node_id": 3,
         "baud_rate": 19200,
     }
-    fragment = VfdRs485RouterMapper.base_fragment(mcu)
+    fragment = _base_fragment(mcu)
     ini = fragment.files["vfd_vfd0.ini"]
     assert "SerialDevice=/dev/ttyUSB0" in ini
     assert "SlaveAddress=3" in ini
@@ -50,7 +58,7 @@ def test_ini_sidecar_reads_the_spindle_rpm_range_stitched_in_by_the_assembler():
     ``_spindle_max_rpm`` onto the MCU dict before calling this
     (see ``HalAssembler._enrich_mcu_for_base``)."""
     mcu = {"id": "vfd0", "_spindle_min_rpm": 3000, "_spindle_max_rpm": 18000}
-    fragment = VfdRs485RouterMapper.base_fragment(mcu)
+    fragment = _base_fragment(mcu)
     ini = fragment.files["vfd_vfd0.ini"]
     assert "MaxSpeedRPM=18000" in ini
     assert "MinSpeedRPM=3000" in ini
@@ -59,7 +67,7 @@ def test_ini_sidecar_reads_the_spindle_rpm_range_stitched_in_by_the_assembler():
 def test_ini_sidecar_falls_back_to_the_reference_machines_known_good_defaults():
     """No MCU/spindle fields at all — every value falls back to
     ``machine_config/example/PrintNC-WEBGUI/vfd.ini``'s own numbers."""
-    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    fragment = _base_fragment({"id": "vfd0"})
     ini = fragment.files["vfd_vfd0.ini"]
     assert "MaxSpeedRPM=24000" in ini
     assert "MinSpeedRPM=5000" in ini
@@ -75,7 +83,7 @@ def test_ini_sidecar_carries_the_reference_register_map_verbatim():
     """The Modbus register map is drive-specific and not ingested
     from the profile yet — every value here must come straight from
     the reference machine, unedited."""
-    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    fragment = _base_fragment({"id": "vfd0"})
     ini = fragment.files["vfd_vfd0.ini"]
     assert "[Control]" in ini
     assert "Address=0x2000" in ini
@@ -144,7 +152,7 @@ def test_inverted_input_gets_a_not_stage_after_the_pin():
 def test_ini_sidecar_is_valid_ini_text():
     import configparser
 
-    fragment = VfdRs485RouterMapper.base_fragment({"id": "vfd0"})
+    fragment = _base_fragment({"id": "vfd0"})
     # ``;`` comments and duplicate-looking keys across sections
     # (vfdmod's own style) parse fine as long as the file is
     # well-formed INI — this is the check that would have caught the

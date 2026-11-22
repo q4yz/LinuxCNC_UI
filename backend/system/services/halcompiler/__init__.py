@@ -17,9 +17,11 @@ live in ``.agent/component/``.
 """
 
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Fan
 
 from .HalAssembler import HalAssembler, UnsupportedMcuError, assemble_machine
 from .HalPinValidator import HalPinValidator
+from models.machineconfig.HardwareRecords import HardwareRecords
 from .components.Adxl345WebguiMapper import Adxl345WebguiMapper
 from .components.BedMeshWebguiMapper import BedMeshWebguiMapper
 from .components.EstopWebguiMapper import EstopWebguiMapper
@@ -96,61 +98,54 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
         str(p) for p in (payload.get("duplicate_pin_overrides") or [])
     }
 
-    def _fan_pin_is_shared(fan: dict[str, object]) -> bool:
-        pin = fan.get("pin")
-        if not pin:
+    def _fan_pin_is_shared(fan: Fan) -> bool:
+        if not fan.pin:
             return False
         try:
-            return PinStringMapper.from_string(str(pin)).qualified in duplicate_pin_overrides
+            return PinStringMapper.from_string(fan.pin).qualified in duplicate_pin_overrides
         except ValueError:
             return False
 
     lines: list[str] = []
-    estop = payload.get("estop")
-    if isinstance(estop, dict):
+    if HardwareRecords.estop(payload) is not None:
         lines.extend(EstopWebguiMapper.to_lines())
         # Pause & Inspect is machine-level (every machine has a Z axis
         # — `[machine]` compilation only accepts `kinematics:
         # cartesian`), not tied to any tool entry, so it rides the same
         # "is this a real machine payload" gate as Estop rather than a
         # `tools[]`/`fans[]` presence check.
-        bed_mesh = isinstance(payload.get("bed_mesh"), dict)
+        bed_mesh = HardwareRecords.bed_mesh(payload) is not None
         lines.extend(PauseInspectWebguiMapper.to_lines(bed_mesh=bed_mesh))
         if bed_mesh:
             lines.extend(BedMeshWebguiMapper.to_lines())
-    for tool in payload.get("tools", []) or []:
-        if not isinstance(tool, dict):
-            continue
-        if tool.get("type") == "spindle_digital":
+    joints = HardwareRecords.joints(payload)
+    for tool in HardwareRecords.tools(payload):
+        if tool.type == "spindle_digital":
             lines.extend(SpindleWebguiMapper.to_lines(tool))
-        elif tool.get("type") in ("extruder", "heated_bed"):
+        elif tool.type in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
             lines.extend(HeaterWebguiMapper.pid_tune_lines(tool))
             # halui.abort exists only once halui runs: the guard's other half.
-            if ExtruderGuardHalMapper.guarded_joint(payload, tool) is not None:
+            if ExtruderGuardHalMapper.guarded_joint(tool, joints) is not None:
                 lines.extend(ExtruderGuardWebguiMapper.to_lines(tool))
-    for led in payload.get("leds") or []:
-        if isinstance(led, dict):
-            lines.extend(LedWebguiMapper.to_lines(led))
-    z_tilt = payload.get("z_tilt")
-    if isinstance(z_tilt, dict):
+    for led in HardwareRecords.leds(payload):
+        lines.extend(LedWebguiMapper.to_lines(led))
+    z_tilt = HardwareRecords.z_tilt(payload)
+    if z_tilt is not None:
         lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
     lines.extend(JointShapeWebguiMapper.to_lines(JointShapeHalMapper.shaped_joints(payload)))
-    lines.extend(Adxl345WebguiMapper.to_lines(payload))
+    lines.extend(Adxl345WebguiMapper.to_lines(HardwareRecords.adxl345(payload)))
     for sensor in TemperatureSensorHalMapper.unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
-    for fan in payload.get("fans", []) or []:
-        if not isinstance(fan, dict):
-            continue
-        if fan.get("kind", "part") == "part" and not _fan_pin_is_shared(fan):
+    for fan in HardwareRecords.fans(payload):
+        if fan.kind == "part" and not _fan_pin_is_shared(fan):
             lines.extend(FanWebguiMapper.to_lines(fan))
-    for mcu in payload.get("mcus", []) or []:
-        if isinstance(mcu, dict):
-            lines.extend(McuResetWebguiMapper.to_lines(mcu))
-    input_pins = payload.get("input_pins") or []
+    for mcu in HardwareRecords.mcus(payload):
+        lines.extend(McuResetWebguiMapper.to_lines(mcu))
+    input_pins = HardwareRecords.input_pins(payload)
     latched = InputPinHalMapper.latched_output_ids(input_pins)
-    for output_pin in payload.get("output_pins") or []:
-        lines.extend(OutputPinWebguiMapper.to_lines(output_pin, output_pin.get("id") in latched))
+    for output_pin in HardwareRecords.output_pins(payload):
+        lines.extend(OutputPinWebguiMapper.to_lines(output_pin, output_pin.id in latched))
     commands = InputPinHalMapper.mdi_commands(input_pins)
     for input_pin in input_pins:
         lines.extend(InputPinWebguiMapper.to_lines(input_pin, commands))

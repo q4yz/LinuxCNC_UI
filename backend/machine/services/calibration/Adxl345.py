@@ -8,6 +8,8 @@ VCC 3.3 V, GND. Needs the ``spidev`` Python module (``python3-spidev``).
 """
 from __future__ import annotations
 
+from models.machineconfig.HardwareJsonModels import Adxl345 as Adxl345Settings
+
 import queue
 import re
 import shutil
@@ -57,11 +59,11 @@ def decode(raw: List[int], axes: List[Tuple[int, float]]) -> Tuple[float, float,
 
 
 class Adxl345:
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: Adxl345Settings) -> None:
         self._config = config
         self._spi: Any = None
-        self._axes = parse_axes_map(str(config.get("axes_map") or "x,y,z"))
-        self.rate = int(config.get("rate") or 3200)
+        self._axes = parse_axes_map(config.axes_map)
+        self.rate = config.rate
         if self.rate not in RATE_CODES:
             raise Adxl345Error(f"rate {self.rate}: one of {sorted(RATE_CODES)}")
 
@@ -70,7 +72,7 @@ class Adxl345:
             import spidev
         except ImportError as exc:
             raise Adxl345Error("the spidev Python module is missing (apt install python3-spidev)") from exc
-        device = str(self._config.get("spi_device") or "/dev/spidev1.1")
+        device = self._config.spi_device
         match = re.fullmatch(r"/dev/spidev(\d+)\.(\d+)", device)
         if not match:
             raise Adxl345Error(f"spi_device {device!r}: /dev/spidev<bus>.<cs>")
@@ -80,7 +82,7 @@ class Adxl345:
         except OSError as exc:
             raise Adxl345Error(f"cannot open {device}: {exc}") from exc
         spi.mode = 3
-        spi.max_speed_hz = int(self._config.get("spi_speed") or 5_000_000)
+        spi.max_speed_hz = self._config.spi_speed
         self._spi = spi
         devid = self._read(DEVID, 1)[0]
         if devid != DEVID_ADXL345:
@@ -129,7 +131,7 @@ class NodeAdxl345:
     #: ``sampler.0.enable``, netted in webgui_connections.hal.
     RECORD_PIN = "accel-record"
 
-    def __init__(self, config: dict[str, Any], record: Callable[[bool], None],
+    def __init__(self, config: Adxl345Settings, record: Callable[[bool], None],
                  period_s: Optional[float] = None) -> None:
         self._config = config
         self._record = record
@@ -223,8 +225,9 @@ def servo_period_s() -> float:
     return 0.001
 
 
-def is_node(config: dict[str, Any]) -> bool:
-    return bool(config.get("cs_pin"))
+def is_node(config: Adxl345Settings) -> bool:
+    """On a CAN node (``cs_pin``), not the host's SPI."""
+    return bool(config.cs_pin)
 
 
 __all__ = ["Adxl345", "Adxl345Error", "NodeAdxl345", "Sample", "decode", "is_node", "parse_axes_map",

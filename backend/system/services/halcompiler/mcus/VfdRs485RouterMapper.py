@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest
+from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest, RouterMcu
 
 #: `pin_id` -> (the real `vfdmod` pin, direction). Verified against
 #: `machine_config/example/PrintNC-WEBGUI/webgui_connections.hal`, a
@@ -386,7 +386,7 @@ class VfdRs485RouterMapper:
     """Routes :class:`PinRequest` entries whose ``pin.mcu_id`` is this MCU."""
 
     @staticmethod
-    def base_fragment(mcu: dict[str, Any]) -> HalFragment:
+    def base_fragment(target: RouterMcu) -> HalFragment:
         """§ 3 — the userspace component load plus its `vfd.ini` sidecar.
 
         Class C: no `addf` at all. `vfdmod` polls the bus at its own
@@ -397,24 +397,25 @@ class VfdRs485RouterMapper:
         ``hardware.json`` MCU record (``interface``, ``baud_rate``,
         ``node_id`` — ingested from the `[mcu]` section); the spindle
         RPM range comes from the spindle tool routed to this MCU
-        (``_spindle_min_rpm``/``_spindle_max_rpm``, stitched in by the
+        (:class:`RouterMcu` ``spindle_min_rpm`` / ``spindle_max_rpm``, from the
         assembler — see ``HalAssembler._route``, since a bare MCU
         record has no notion of "which spindle rides this bus").
         Anything undeclared falls back to the reference machine's own
         known-good values.
         """
-        mcu_id = str(mcu.get("id", "mcu"))
+        mcu = target.mcu
+        mcu_id = mcu.id
 
-        min_speed_rpm = mcu.get("_spindle_min_rpm")
-        max_speed_rpm = mcu.get("_spindle_max_rpm")
+        min_speed_rpm = target.spindle_min_rpm
+        max_speed_rpm = target.spindle_max_rpm
 
         config_file = f"vfd_{mcu_id}.ini"
         ini = _VFD_INI_REFERENCE.format(
             max_speed_rpm=int(max_speed_rpm) if max_speed_rpm else _DEFAULT_MAX_SPEED_RPM,
             min_speed_rpm=int(min_speed_rpm) if min_speed_rpm else _DEFAULT_MIN_SPEED_RPM,
-            slave_address=mcu.get("node_id") or _DEFAULT_SLAVE_ADDRESS,
-            serial_device=mcu.get("interface") or _DEFAULT_SERIAL_DEVICE,
-            baud_rate=mcu.get("baud_rate") or _DEFAULT_BAUD_RATE,
+            slave_address=mcu.node_id or _DEFAULT_SLAVE_ADDRESS,
+            serial_device=mcu.interface or _DEFAULT_SERIAL_DEVICE,
+            baud_rate=mcu.baud_rate or _DEFAULT_BAUD_RATE,
         )
 
         return HalFragment(

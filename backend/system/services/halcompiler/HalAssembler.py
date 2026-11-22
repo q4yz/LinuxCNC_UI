@@ -18,11 +18,13 @@ import json
 from typing import Any
 
 from mappers.machineconfig import PinStringMapper
-from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, combine
+from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, RouterMcu, combine
+from models.machineconfig.HardwareJsonModels import McuInfo
 from models.machineconfig.PinModels import CapabilityClass
 
 from domain_file_services.paths import ACTIVE_BED_MESH_FILE
 
+from models.machineconfig.HardwareRecords import HardwareRecords
 from .components.BedMeshHalMapper import BedMeshHalMapper
 from .components.CoreXyHalMapper import CoreXyHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
@@ -79,24 +81,23 @@ class HalAssembler:
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
-        self._joints_by_number = {
-            j["joint_number"]: j for j in payload.get("joints", []) if "joint_number" in j
-        }
-        self._endstops_by_id = {e["id"]: e for e in payload.get("endstops", []) if e.get("id")}
-        self._mcus_by_id = {m["id"]: m for m in payload.get("mcus", []) if m.get("id")}
+        self._axes = HardwareRecords.axes(payload)
+        self._joints_by_number = {j.joint_number: j for j in HardwareRecords.joints(payload)}
+        self._endstops_by_id = {e.id: e for e in HardwareRecords.endstops(payload)}
+        self._mcus_by_id = {m.id: m for m in HardwareRecords.mcus(payload)}
         # X / Y joints behind the jointshape component (input shaper, skew)
         self._shaped: dict[int, str] = {}
-        self._sensors_by_id = {
-            s["id"]: s for s in payload.get("temperature_sensors", []) if s.get("id")
-        }
-        self._fans_by_id = {f["id"]: f for f in payload.get("fans", []) if f.get("id")}
-        self._output_pins_by_id = {
-            str(p["id"]): p for p in payload.get("output_pins") or [] if isinstance(p, dict) and p.get("id")
-        }
-        self._tools_by_id = {
-            t["id"]: t for t in payload.get("tools", []) if isinstance(t, dict) and t.get("id")
-        }
-        self._drivers_by_id = {d["id"]: d for d in payload.get("drivers", []) if d.get("id")}
+        # Typed records (HardwareRecords); the payload itself stays a dict.
+        self._tools = HardwareRecords.tools(payload)
+        self._joints = list(self._joints_by_number.values())
+        self._sensors_by_id = {s.id: s for s in HardwareRecords.temperature_sensors(payload)}
+        self._fans = HardwareRecords.fans(payload)
+        self._fans_by_id = {f.id: f for f in self._fans}
+        self._output_pins = HardwareRecords.output_pins(payload)
+        self._input_pins = HardwareRecords.input_pins(payload)
+        self._output_pins_by_id = {p.id: p for p in self._output_pins}
+        self._tools_by_id = {t.id: t for t in self._tools}
+        self._drivers_by_id = {d.id: d for d in HardwareRecords.drivers(payload)}
         # ``[duplicate_pin_override]``'s allowlist — see
         # ``_merge_override_duplicates``. The validator trusts this
         # list to skip ``E_PIN_CONFLICT``; the assembler is what makes
@@ -112,16 +113,16 @@ class HalAssembler:
             + self._spindle_fragments()
             + self._heater_fragments()
             + self._sensor_fragments()
-            + [LedHalMapper.to_fragment(led) for led in self._payload.get("leds") or [] if isinstance(led, dict)]
-            + [Adxl345HalMapper.to_fragment(self._payload)]
+            + [LedHalMapper.to_fragment(led) for led in HardwareRecords.leds(self._payload)]
+            + [Adxl345HalMapper.to_fragment(HardwareRecords.adxl345(self._payload))]
             + self._fan_fragments()
             + self._driver_fragments(capability_class)
             + [self._estop_fragment(), self._probe_fragment()]
             + self._bed_mesh_fragments()
             + self._io_pin_fragments()
         )
-        z_tilt = self._payload.get("z_tilt")
-        if isinstance(z_tilt, dict):
+        z_tilt = HardwareRecords.z_tilt(self._payload)
+        if z_tilt is not None:
             # After every stepper mapper: it rewrites their Z position nets.
             component_fragments.append(ZTiltHalMapper.to_fragment(z_tilt, component_fragments))
         self._merge_override_duplicates(component_fragments)
@@ -152,15 +153,14 @@ class HalAssembler:
         says nothing about which one carries joints. A CAN node's joint
         is its hub's (``remora.joint.N`` through the hub).
         """
-        for joint in self._joints_by_number.values():
-            step_pin = joint.get("step_pin")
-            if not step_pin:
+        for joint in self._joints:
+            if not joint.step_pin:
                 continue
-            mcu_id = self._routing_mcu_id(PinStringMapper.from_string(step_pin).mcu_id)
+            mcu_id = self._routing_mcu_id(PinStringMapper.from_string(joint.step_pin).mcu_id)
             mcu = self._mcus_by_id.get(mcu_id)
             if mcu is None:
                 continue
-            resolved = CapabilityClass.for_connection(mcu.get("connection"))
+            resolved = CapabilityClass.for_connection(mcu.connection)
             if resolved is not None:
                 return resolved
         return CapabilityClass.STEP_DIR
@@ -174,10 +174,9 @@ class HalAssembler:
         call site for why that matters on class B.
         """
         ids: set[str] = set()
-        for joint in self._joints_by_number.values():
-            step_pin = joint.get("step_pin")
-            if step_pin:
-                ids.add(self._routing_mcu_id(PinStringMapper.from_string(step_pin).mcu_id))
+        for joint in self._joints:
+            if joint.step_pin:
+                ids.add(self._routing_mcu_id(PinStringMapper.from_string(joint.step_pin).mcu_id))
         return ids
 
     # -- pass 1: components ---------------------------------------------- #
@@ -187,15 +186,15 @@ class HalAssembler:
         (validated: one joint each, `MachineValidator._check_corexy`)."""
         if self._payload.get("kinematics") != "corexy":
             return None
-        by_id = {str(a.get("id")): a.get("joint_numbers") or [] for a in self._payload.get("axes", [])}
-        return int(by_id["x"][0]), int(by_id["y"][0])
+        by_id = {a.id: a.joint_numbers for a in self._axes}
+        return by_id["x"][0], by_id["y"][0]
 
     def _flow_joints(self, capability_class: CapabilityClass) -> frozenset[int]:
         """Extruder joints whose position goes through the Remora
         ``extruder`` component (flow %) — Remora boards only."""
         if _STEPPER_MAPPERS.get(capability_class, StepperHalMapper) is not RemoraStepperHalMapper:
             return frozenset()
-        joints = (ExtruderGuardHalMapper.guarded_joint(self._payload, t) for t in self._payload.get("tools", []) if isinstance(t, dict))
+        joints = (ExtruderGuardHalMapper.guarded_joint(t, self._joints) for t in self._tools)
         return frozenset(j for j in joints if j is not None)
 
     def _component_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
@@ -203,12 +202,8 @@ class HalAssembler:
         self._shaped = JointShapeHalMapper.shaped_joints(self._payload)
         corexy = self._corexy_joints()
         fragments: list[HalFragment] = []
-        for axis in self._payload.get("axes", []):
-            joints = [
-                self._joints_by_number[n]
-                for n in axis.get("joint_numbers", [])
-                if n in self._joints_by_number
-            ]
+        for axis in self._axes:
+            joints = [self._joints_by_number[n] for n in axis.joint_numbers if n in self._joints_by_number]
             if not joints:
                 continue
             # The full endstops-by-id map, not one axis-level lookup —
@@ -228,7 +223,8 @@ class HalAssembler:
         # sums, emission order decides, and the sums need the shaped X / Y.
         shaped_corexy = bool(corexy) and set(corexy) <= set(self._shaped)
         if self._shaped:
-            fragments.append(JointShapeHalMapper.to_fragment(self._payload, self._shaped, corexy=shaped_corexy))
+            fragments.append(JointShapeHalMapper.to_fragment(
+                HardwareRecords.input_shaper(self._payload), self._shaped, corexy=shaped_corexy))
         if corexy:
             fragments.append(CoreXyHalMapper.to_fragment(*corexy, shaped=shaped_corexy))
         return fragments
@@ -241,9 +237,7 @@ class HalAssembler:
         absence has no bearing on which stepper mapper the joints get.
         """
         return [
-            DigitalSpindleHalMapper.to_fragment(tool)
-            for tool in self._payload.get("tools", [])
-            if isinstance(tool, dict) and tool.get("type") == "spindle_digital"
+            DigitalSpindleHalMapper.to_fragment(tool) for tool in self._tools if tool.type == "spindle_digital"
         ]
 
     def _heater_fragments(self) -> list[HalFragment]:
@@ -257,14 +251,14 @@ class HalAssembler:
         watermark loop and the sensor/fan wiring, never step/dir.
         """
         fragments: list[HalFragment] = []
-        for tool in self._payload.get("tools", []):
-            if not isinstance(tool, dict) or tool.get("type") not in ("extruder", "heated_bed"):
+        for tool in self._tools:
+            if tool.type not in ("extruder", "heated_bed"):
                 continue
-            sensor = self._sensors_by_id.get(tool.get("sensor"))
-            fan = self._fans_by_id.get(tool.get("fan"))
+            sensor = self._sensors_by_id.get(tool.sensor or "")
+            fan = self._fans_by_id.get(tool.fan or "")
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
             # An extruder's cold-extrusion guard (min_extrude_temp).
-            joint = ExtruderGuardHalMapper.guarded_joint(self._payload, tool)
+            joint = ExtruderGuardHalMapper.guarded_joint(tool, self._joints)
             if joint is not None:
                 flow = joint in self._flow_joints(self._capability_class())
                 fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint, flow=flow))
@@ -287,9 +281,7 @@ class HalAssembler:
         not two different ones sharing a pin).
         """
         return [
-            FanHalMapper.to_fragment(fan, self._tools_by_id, self._sensors_by_id)
-            for fan in self._payload.get("fans", [])
-            if isinstance(fan, dict)
+            FanHalMapper.to_fragment(fan, self._tools_by_id, self._sensors_by_id) for fan in self._fans
         ]
 
     def _estop_fragment(self) -> HalFragment:
@@ -297,19 +289,14 @@ class HalAssembler:
         chain needs no hardware, and the optional physical chain
         decides its own MCU-class gating internally (see
         ``EstopHalMapper._owns_iocontrol_chain``)."""
-        estop = self._payload.get("estop")
-        return EstopHalMapper.to_fragment(
-            estop if isinstance(estop, dict) else {}, self._mcus_by_id
-        )
+        return EstopHalMapper.to_fragment(HardwareRecords.estop(self._payload), self._mcus_by_id)
 
     def _io_pin_fragments(self) -> list[HalFragment]:
         """``[output_pin]`` / ``[input_pin]``, any MCU that can route them."""
-        input_pins = self._payload.get("input_pins") or []
-        sets = InputPinHalMapper.halpin_sets(input_pins)
+        sets = InputPinHalMapper.halpin_sets(self._input_pins)
         return [
-            OutputPinHalMapper.to_fragment(p, [s for s in sets if s.output_id == p["id"]])
-            for p in self._payload.get("output_pins") or []
-        ] + [InputPinHalMapper.to_fragment(p) for p in input_pins]
+            OutputPinHalMapper.to_fragment(p, [s for s in sets if s.output_id == p.id]) for p in self._output_pins
+        ] + [InputPinHalMapper.to_fragment(p) for p in self._input_pins]
 
     def _with_output_pin_period(self, module: dict[str, object]) -> dict[str, object]:
         """An ``[output_pin]`` PWM module gets ``"Period us"`` from its
@@ -317,11 +304,11 @@ class HalAssembler:
         output_pin = self._output_pins_by_id.get(str(module.get("Comment", "")))
         if module.get("Type") != "PWM" or output_pin is None:
             return module
-        return {**module, "Period us": round(float(output_pin.get("cycle_time") or 0.1) * 1_000_000)}
+        return {**module, "Period us": round(output_pin.cycle_time * 1_000_000)}
 
     def _bed_mesh_fragments(self) -> list[HalFragment]:
         """The bed mesh compensation, only with ``[bed_mesh]``."""
-        if not isinstance(self._payload.get("bed_mesh"), dict):
+        if HardwareRecords.bed_mesh(self._payload) is None:
             return []
         return [BedMeshHalMapper.to_fragment(ACTIVE_BED_MESH_FILE.as_posix())]
 
@@ -329,18 +316,16 @@ class HalAssembler:
         """A no-op empty fragment when the machine declared no
         ``[probe]`` at all — unlike estop, that's the normal case, not
         something to fall back to a default object for."""
-        probe = self._payload.get("probe")
-        sensor = self._payload.get("tool_length_sensor")
         # probe:z_virtual_endstop: the probe is also the home switch of
         # every Z joint (LinuxCNC's own homing, AxisBuilder._home_z_on_probe).
         z_home_joints: list[int] = []
-        if isinstance(self._payload.get("z_virtual_endstop"), dict):
-            for axis in self._payload.get("axes") or []:
-                if isinstance(axis, dict) and str(axis.get("id", "")).lower() == "z":
-                    z_home_joints = [int(j) for j in axis.get("joint_numbers") or []]
+        if HardwareRecords.z_virtual_endstop(self._payload) is not None:
+            for axis in self._axes:
+                if axis.id.lower() == "z":
+                    z_home_joints = list(axis.joint_numbers)
         return ProbeHalMapper.to_fragment(
-            probe if isinstance(probe, dict) else None,
-            sensor if isinstance(sensor, dict) else None,
+            HardwareRecords.probe(self._payload),
+            HardwareRecords.tool_length_sensor(self._payload),
             z_home_joints=z_home_joints,
         )
 
@@ -355,8 +340,7 @@ class HalAssembler:
         """
         if capability_class is not CapabilityClass.POSITION:
             return []
-        joints = list(self._joints_by_number.values())
-        fragment = RemoraDriverFirmwareMapper.to_fragment(joints, self._drivers_by_id)
+        fragment = RemoraDriverFirmwareMapper.to_fragment(self._joints, self._drivers_by_id)
         return [fragment] if fragment.firmware_modules else []
 
     def _merge_override_duplicates(self, fragments: list[HalFragment]) -> None:
@@ -436,19 +420,19 @@ class HalAssembler:
                 for module in by_mcu.pop(mcu_id)
             ]
             for mcu_id in list(by_mcu)
-            if RemoraCanMapper.is_node(self._mcus_by_id.get(mcu_id))
+            if self._is_node(mcu_id)
         }
         hubs = {
             hub_id for mcu in self._mcus_by_id.values()
-            if RemoraCanMapper.is_node(mcu) and (hub_id := RemoraCanMapper.hub_id(mcu, self._mcus_by_id))
+            if RemoraCanMapper.is_node(mcu.connection) and (hub_id := RemoraCanMapper.hub_of(mcu, self._mcus_by_id))
         }
         for hub_id in hubs:
             by_mcu.setdefault(hub_id, [])
 
         for mcu_id, modules in by_mcu.items():
-            mcu = self._mcus_by_id.get(mcu_id) or {}
+            mcu = self._mcus_by_id.get(mcu_id)
             config = RemoraFirmwareConfigMapper.to_config(mcu, modules)
-            if mcu_id in hubs:
+            if mcu is not None and mcu_id in hubs:
                 config["CAN"] = RemoraCanMapper.can_block(
                     mcu, RemoraCanMapper.nodes_of(mcu_id, self._mcus_by_id), node_modules
                 )
@@ -456,7 +440,7 @@ class HalAssembler:
             fragment.files[config_file] = json.dumps(config, indent=2)
             # The file exists now, so the board can be synced from it at
             # every LinuxCNC start (relative: HAL runs in this folder).
-            if mcu.get("connection") == "remora-spi":
+            if mcu is not None and mcu.connection == "remora-spi":
                 sync = RemoraRouterMapper.config_sync_line(mcu, config_file)
                 if sync:
                     fragment.preload.append(sync)
@@ -484,13 +468,17 @@ class HalAssembler:
         """A CAN node's pins route through its hub (one shared bit-space,
         `RemoraCanMapper`); every other MCU routes its own."""
         mcu = self._mcus_by_id.get(mcu_id)
-        if RemoraCanMapper.is_node(mcu):
-            return RemoraCanMapper.hub_id(mcu, self._mcus_by_id) or mcu_id
+        if mcu is not None and RemoraCanMapper.is_node(mcu.connection):
+            return RemoraCanMapper.hub_of(mcu, self._mcus_by_id) or mcu_id
         return mcu_id
 
+    def _is_node(self, mcu_id: str) -> bool:
+        mcu = self._mcus_by_id.get(mcu_id)
+        return mcu is not None and RemoraCanMapper.is_node(mcu.connection)
+
     def _can_status_bit(self, mcu_id: str) -> int | None:
-        mcu = self._mcus_by_id.get(mcu_id) or {}
-        if mcu.get("connection") != "remora-spi":
+        mcu = self._mcus_by_id.get(mcu_id)
+        if mcu is None or mcu.connection != "remora-spi":
             return None
         return RemoraCanMapper.status_bit(mcu, RemoraCanMapper.nodes_of(mcu_id, self._mcus_by_id))
 
@@ -516,54 +504,45 @@ class HalAssembler:
             mcu = self._mcus_by_id.get(mcu_id)
             if mcu is None:
                 continue  # E_UNKNOWN_MCU is the validator's job, not this one's.
-            router = _ROUTERS.get(mcu.get("connection"))
+            router = _ROUTERS.get(mcu.connection)
             if router is None:
                 raise UnsupportedMcuError(
                     f"no HAL router implemented yet for MCU {mcu_id!r} "
-                    f"(connection={mcu.get('connection')!r})"
+                    f"(connection={mcu.connection!r})"
                 )
-            bases.append(router.base_fragment(self._enrich_mcu_for_base(mcu, mcu_requests)))
+            bases.append(router.base_fragment(self._router_mcu(mcu, mcu_requests)))
             if router is RemoraRouterMapper:
                 routes.append(router.route(mcu_requests, reserved_input=self._can_status_bit(mcu_id)))
             else:
                 routes.append(router.route(mcu_requests))
         return bases, routes
 
-    def _enrich_mcu_for_base(
-        self, mcu: dict[str, Any], mcu_requests: list[PinRequest]
-    ) -> dict[str, Any]:
-        """Stitch spindle RPM limits onto the MCU record for ``base_fragment``.
+    def _router_mcu(self, mcu: McuInfo, mcu_requests: list[PinRequest]) -> RouterMcu:
+        """The MCU for its router's ``base_fragment``, with what the rest of
+        the machine says about it.
 
-        A bare ``hardware.json`` MCU record has no notion of "which
-        spindle rides this bus" — that lives on the tool, not the
-        MCU — so ``VfdRs485RouterMapper.base_fragment`` (the only
+        A bare MCU record has no notion of "which spindle rides this bus"
+        — that lives on the tool — so ``VfdRs485RouterMapper`` (the only
         router that needs it, for ``vfd.ini``'s ``MaxSpeedRPM`` /
-        ``MinSpeedRPM``) can't read it off ``mcu`` alone. Per the "one
-        drive per MCU" rule (``mcu_vfd_rs485.md`` § 4), every request
-        routed to a given VFD MCU belongs to the same spindle, so the
-        first request's ``owner`` names it. Harmless no-op for every
-        other router: they don't look for these keys.
+        ``MinSpeedRPM``) gets it here. Per the "one drive per MCU" rule
+        (``mcu_vfd_rs485.md`` § 4), every request routed to a given VFD
+        MCU belongs to the same spindle, so the first request's ``owner``
+        names it.
 
-        Also flags ``_estop_fault`` when the `[estop]` ``fault_pin`` is
-        read through this MCU: a class-B router (Remora) owns
-        ``iocontrol.0.emc-enable-in`` for its link health and must gate
-        it on that input itself (``EstopHalMapper`` skips the chain there).
+        ``estop_fault``: the ``[estop]`` ``fault_pin`` is read through this
+        MCU — a class-B router (Remora) owns ``iocontrol.0.emc-enable-in``
+        for its link health and must gate it on that input itself
+        (``EstopHalMapper`` skips the chain there). ``can_status_bit``: a
+        CAN hub gates LinuxCNC's enable on its nodes' status bit.
         """
-        enriched = dict(mcu)
-        # A CAN hub gates LinuxCNC's enable on its nodes' status bit.
-        status_bit = self._can_status_bit(str(mcu.get("id")))
-        if status_bit is not None:
-            enriched["_can_status_bit"] = status_bit
-        if not mcu_requests:
-            return enriched
-        if any(request.signal == "estop-fault" for request in mcu_requests):
-            enriched["_estop_fault"] = True
-        spindle = self._tools_by_id.get(mcu_requests[0].owner)
-        if spindle:
-            enriched["_spindle_min_rpm"] = spindle.get("min_rpm")
-            enriched["_spindle_max_rpm"] = spindle.get("max_rpm")
-        return enriched
-
+        spindle = self._tools_by_id.get(mcu_requests[0].owner) if mcu_requests else None
+        return RouterMcu(
+            mcu=mcu,
+            can_status_bit=self._can_status_bit(mcu.id),
+            estop_fault=any(request.signal == "estop-fault" for request in mcu_requests),
+            spindle_min_rpm=spindle.min_rpm if spindle else None,
+            spindle_max_rpm=spindle.max_rpm if spindle else None,
+        )
 
 def assemble_machine(payload: dict[str, Any]) -> HalFragment:
     """Convenience wrapper — one call, the fully joined fragment."""

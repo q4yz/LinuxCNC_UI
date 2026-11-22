@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 from domain_file_services import paths
 from mappers.machineconfig import heater_ini_section
 
+from models.machineconfig.HardwareJsonModels import FilamentChange
 from models.machineconfig.LinuxCNCModels import Axis
 
 #: Documented defaults for PID fields no schema carries yet — see
@@ -200,7 +201,7 @@ def render_ini_template(
     corexy: bool = False,
     homing_override: bool = False,
     remaps: List[str] | None = None,
-    filament_change: Dict[str, Any] | None = None,
+    filament_change: FilamentChange | None = None,
     shaper_types: Dict[str, int] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
@@ -287,7 +288,7 @@ def render_ini_template(
         *_ui_home(axes),
         "",
         # M600 (m_codes/m600.ngc reads these; REMAP=M600 above).
-        *(["[FILAMENT_CHANGE]", *(f"{k.upper()} = {_fmt(float(v))}" for k, v in filament_change.items()), ""]
+        *(["[FILAMENT_CHANGE]", *(f"{k.upper()} = {_fmt(v)}" for k, v in filament_change.model_dump().items()), ""]
           if filament_change else []),
         "[EMCMOT]",
         "EMCMOT = motmod",

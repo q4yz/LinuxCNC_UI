@@ -59,6 +59,7 @@ from MachineConfigParser import parse_config
 from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
+from models.machineconfig.HardwareRecords import HardwareRecords
 from services.halcompiler.components.InputPinHalMapper import InputPinHalMapper
 from services.halcompiler.components.JointShapeHalMapper import JointShapeHalMapper
 from services.halcompiler import (
@@ -471,11 +472,11 @@ def _write_machine(
 ) -> "GenerateResult":
     """Every file of the machine, into the cleared ``configs_dir``."""
     # [input_pin] edges: halui MDI commands calling generated subroutines.
-    input_commands = InputPinHalMapper.mdi_commands(payload.get("input_pins") or [])
+    input_commands = InputPinHalMapper.mdi_commands(HardwareRecords.input_pins(payload))
     # Marlin's heater / fan M-codes need nothing here: they are user
     # M-code programs in machine_config/m_codes/ (USER_M_PATH), see
     # marlin_mcodes. M600 (> M199) is a REMAP to m_codes/m600.ngc.
-    filament_change = payload.get("filament_change")
+    filament_change = HardwareRecords.filament_change(payload)
     remaps = [M600_REMAP] if filament_change else None
 
     # 1. Verbatim source copy (provenance).
@@ -498,8 +499,8 @@ def _write_machine(
             corexy=payload.get("kinematics") == "corexy",
             # NO_FORCE_HOMING: the routine, or a Z homed on the probe,
             # moves before every joint is homed.
-            homing_override=isinstance(payload.get("homing_override"), dict)
-            or isinstance(payload.get("z_virtual_endstop"), dict),
+            homing_override=HardwareRecords.homing_override(payload) is not None
+            or HardwareRecords.z_virtual_endstop(payload) is not None,
             remaps=remaps,
             filament_change=filament_change,
             shaper_types=JointShapeHalMapper.ini_shaper_types(payload),
@@ -529,7 +530,7 @@ def _write_machine(
 
     # 4c. The compensation component loads the active bed mesh at start:
     # a first-time [bed_mesh] machine gets a flat one.
-    if isinstance(payload.get("bed_mesh"), dict):
+    if HardwareRecords.bed_mesh(payload) is not None:
         get_bed_mesh_service().ensure_active(payload)
 
     # 5. custom.hal always loads webgui and sources the file below —

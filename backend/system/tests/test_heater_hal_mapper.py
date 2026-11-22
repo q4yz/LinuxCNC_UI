@@ -10,13 +10,30 @@ from __future__ import annotations
 
 from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.HeaterHalMapper import HeaterHalMapper
+from models.machineconfig.HardwareJsonModels import Fan, TemperatureSensor, Tool
+
+
+def _heater_fragment(heater, sensor, fan):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return HeaterHalMapper.to_fragment(
+        Tool.model_validate({"type": "extruder", **heater}),
+        TemperatureSensor.model_validate(sensor) if sensor is not None else None,
+        Fan.model_validate(fan) if fan is not None else None,
+    )
+
+
+def _pid_tune_lines(heater):
+    from services.halcompiler.components.HeaterWebguiMapper import HeaterWebguiMapper
+
+    return HeaterWebguiMapper.pid_tune_lines(Tool.model_validate({"type": "extruder", **heater}))
+
 
 BED = {"id": "heater_bed", "type": "heated_bed", "sensor": "bed", "heater_pin": "PB7", "control": "pid"}
 BED_SENSOR = {"id": "bed", "pin": "PA0"}
 
 
 def test_pid_loop_matches_the_reference_machine_shape():
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
 
     assert "loadrt PIDcontroller names=PID-heater_bed" in fragment.loadrt
     assert "net heater_bed-heat-ok => PID-heater_bed.auto" in fragment.nets
@@ -34,7 +51,7 @@ def test_pid_setp_block_references_the_ini_section_by_full_tool_id():
     construction for multiple heaters/extruders since `tools[].id`
     already has to be (`ini_template_generator.heater_ini_section` is
     the one shared function both the HAL and INI sides use)."""
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
     assert "setp PID-heater_bed.pOnM [HEATER_BED]PID_PONM" in fragment.setp
     assert "setp PID-heater_bed.direction [HEATER_BED]PID_DIR" in fragment.setp
     assert "setp PID-heater_bed.SPmax [HEATER_BED]PID_SPMAX" in fragment.setp
@@ -42,7 +59,7 @@ def test_pid_setp_block_references_the_ini_section_by_full_tool_id():
 
 
 def test_pid_compute_is_addf_on_servo_thread():
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
     addf = next(a for a in fragment.addf if a.func == "PID-heater_bed.compute")
     assert addf.thread == "servo-thread"
 
@@ -52,17 +69,17 @@ def test_a_second_extruder_gets_its_own_distinct_ini_section():
     unique (`heater.md` § 2's `E_HEATER_ID_COLLISION`), so the derived
     section is too."""
     extruder = dict(BED, id="heater_extruder", sensor="extruder")
-    fragment = HeaterHalMapper.to_fragment(extruder, {"id": "extruder", "pin": "PA1"}, None)
+    fragment = _heater_fragment(extruder, {"id": "extruder", "pin": "PA1"}, None)
     assert "setp PID-heater_extruder.KP [HEATER_EXTRUDER]PID_KP" in fragment.setp
 
     second = dict(BED, id="heater_extruder_test", sensor="extruder_test")
-    fragment = HeaterHalMapper.to_fragment(second, {"id": "extruder_test", "pin": "PA2"}, None)
+    fragment = _heater_fragment(second, {"id": "extruder_test", "pin": "PA2"}, None)
     assert "setp PID-heater_extruder_test.KP [HEATER_EXTRUDER_TEST]PID_KP" in fragment.setp
 
 
 def test_watermark_loop_uses_a_comp_block_not_pid():
     heater = dict(BED, control="watermark")
-    fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
+    fragment = _heater_fragment(heater, BED_SENSOR, None)
 
     assert "loadrt comp names=comp-heater_bed" in fragment.loadrt
     assert not any("PIDcontroller" in line for line in fragment.loadrt)
@@ -79,7 +96,7 @@ def test_watermark_loop_converts_the_comparator_bit_to_a_duty_float():
     plus a `scale` stage fixes it, landing "on" at `max_power` percent
     so it matches the PID branch's own `CVmax` convention."""
     heater = dict(BED, control="watermark")
-    fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
+    fragment = _heater_fragment(heater, BED_SENSOR, None)
 
     assert "loadrt conv_bit_float names=conv-heater_bed" in fragment.loadrt
     assert "loadrt scale names=duty-heater_bed" in fragment.loadrt
@@ -95,19 +112,19 @@ def test_watermark_loop_converts_the_comparator_bit_to_a_duty_float():
 
 def test_watermark_duty_ceiling_honours_max_power():
     heater = dict(BED, control="watermark", max_power=0.8)  # Klipper: 0.0-1.0
-    fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
+    fragment = _heater_fragment(heater, BED_SENSOR, None)
     assert "setp duty-heater_bed.gain 80.0" in fragment.setp
 
 
 def test_heater_pin_is_requested_as_analog_out():
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
     request = next(r for r in fragment.requests if r.signal == "heater_bed-heater-SP")
     assert request.role is PinRole.ANALOG_OUT
     assert request.pin.pin_id == "PB7"
 
 
 def test_sensor_pin_is_requested_as_analog_in():
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
     request = next(r for r in fragment.requests if r.signal == "bed-PV")
     assert request.role is PinRole.ANALOG_IN
     assert request.pin.pin_id == "PA0"
@@ -115,7 +132,7 @@ def test_sensor_pin_is_requested_as_analog_in():
 
 def test_a_heater_without_a_sensor_still_compiles():
     """A tool can declare no sensor yet — the loop just runs open-loop."""
-    fragment = HeaterHalMapper.to_fragment(BED, None, None)
+    fragment = _heater_fragment(BED, None, None)
     assert not any("-PV" in n for n in fragment.nets)
     assert not any(r.role is PinRole.ANALOG_IN for r in fragment.requests)
     # The setpoint/output wiring is unaffected.
@@ -128,7 +145,7 @@ def test_referenced_fan_is_a_plain_analog_out_passthrough():
     needs schema fields `fans[]` doesn't carry yet."""
     heater = dict(BED, fan="fan_heater_bed")
     fan = {"id": "fan_heater_bed", "pin": "PB1"}
-    fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, fan)
+    fragment = _heater_fragment(heater, BED_SENSOR, fan)
 
     request = next(r for r in fragment.requests if r.signal == "fan_heater_bed-SP")
     assert request.role is PinRole.ANALOG_OUT
@@ -137,7 +154,7 @@ def test_referenced_fan_is_a_plain_analog_out_passthrough():
 
 
 def test_no_fan_reference_means_no_fan_request():
-    fragment = HeaterHalMapper.to_fragment(BED, BED_SENSOR, None)
+    fragment = _heater_fragment(BED, BED_SENSOR, None)
     assert not any(r.signal.endswith("-SP") and r.owner == "heater_bed" and "heater-SP" not in r.signal for r in fragment.requests)
 
 
@@ -146,7 +163,7 @@ def test_a_fan_referenced_but_not_resolved_is_skipped_not_crashed():
     `fans[]` — validated input wouldn't hit this, but the mapper must
     not blow up on it either."""
     heater = dict(BED, fan="ghost_fan")
-    fragment = HeaterHalMapper.to_fragment(heater, BED_SENSOR, None)
+    fragment = _heater_fragment(heater, BED_SENSOR, None)
     assert not any(r.signal == "ghost_fan-SP" for r in fragment.requests)
 
 
@@ -154,7 +171,7 @@ def test_an_estop_or_a_dead_link_turns_every_heater_off():
     """`heat-ok-<id>` = board answers AND machine out of E-stop; the PID
     runs only while it holds (manual mode outputs 0)."""
     for control in ("pid", "watermark"):
-        fragment = HeaterHalMapper.to_fragment({**BED, "control": control}, BED_SENSOR, None)
+        fragment = _heater_fragment({**BED, "control": control}, BED_SENSOR, None)
         assert "loadrt and2 names=heat-ok-heater_bed" in fragment.loadrt
         assert "net remora-status => heat-ok-heater_bed.in0" in fragment.nets
         assert "net user-enable-out => heat-ok-heater_bed.in1" in fragment.nets
@@ -164,7 +181,7 @@ def test_an_estop_or_a_dead_link_turns_every_heater_off():
 def test_pid_tune_lines():
     from services.halcompiler.components.HeaterWebguiMapper import HeaterWebguiMapper
 
-    lines = HeaterWebguiMapper.pid_tune_lines({"id": "heater_bed", "control": "pid"})
+    lines = _pid_tune_lines({"id": "heater_bed", "control": "pid"})
     assert "net heater_bed-tune-enable webgui.tune-heater_bed-enable => tune-ok-heater_bed.in0" in lines
     assert "net heater_bed-tune-duty webgui.tune-heater_bed-duty => tune-heater_bed.in1" in lines
-    assert HeaterWebguiMapper.pid_tune_lines({"id": "heater_bed", "control": "watermark"}) == []
+    assert _pid_tune_lines({"id": "heater_bed", "control": "watermark"}) == []

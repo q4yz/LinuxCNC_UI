@@ -33,9 +33,10 @@ only on the MCU that pin actually targets, never the whole machine.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Mapping
 
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Estop, McuInfo
 from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
@@ -53,17 +54,15 @@ class EstopHalMapper:
 
     @staticmethod
     def to_fragment(
-        estop: dict[str, Any], mcus_by_id: dict[str, dict[str, Any]]
+        estop: Estop | None, mcus_by_id: Mapping[str, McuInfo]
     ) -> HalFragment:
         fragment = HalFragment()
-
-        fault_pin = estop.get("fault_pin")
-        if fault_pin:
-            EstopHalMapper._fault_chain(fragment, fault_pin, mcus_by_id)
-
-        out_pin = estop.get("out_pin")
-        if out_pin:
-            EstopHalMapper._out_chain(fragment, out_pin, mcus_by_id)
+        if estop is None:
+            return fragment
+        if estop.fault_pin:
+            EstopHalMapper._fault_chain(fragment, estop.fault_pin, mcus_by_id)
+        if estop.out_pin:
+            EstopHalMapper._out_chain(fragment, estop.out_pin, mcus_by_id)
 
         return fragment
 
@@ -71,7 +70,7 @@ class EstopHalMapper:
 
     @staticmethod
     def _fault_chain(
-        fragment: HalFragment, fault_pin: str, mcus_by_id: dict[str, dict[str, Any]]
+        fragment: HalFragment, fault_pin: str, mcus_by_id: Mapping[str, McuInfo]
     ) -> None:
         fragment.requests.append(
             PinRequest(
@@ -99,7 +98,7 @@ class EstopHalMapper:
     def _out_chain(
         fragment: HalFragment,
         out_pin: str,
-        mcus_by_id: dict[str, dict[str, Any]],
+        mcus_by_id: Mapping[str, McuInfo],
     ) -> None:
         # A Remora board already puts iocontrol.0.user-enable-out on its
         # own `user-enable-out` signal (link enable) and a HAL pin can sit
@@ -118,16 +117,17 @@ class EstopHalMapper:
 
     @staticmethod
     def _owns_iocontrol_chain(
-        pin_string: str, mcus_by_id: dict[str, dict[str, Any]]
+        pin_string: str, mcus_by_id: Mapping[str, McuInfo]
     ) -> bool:
         """False when the MCU this pin targets already claims
         `iocontrol.0`'s enable chain for its own link-health wiring.
         A CAN node's pin counts as its hub's — it routes through it."""
         mcu_id = PinStringMapper.from_string(pin_string).mcu_id
-        mcu = mcus_by_id.get(mcu_id) or {}
-        if RemoraCanMapper.is_node(mcu):
-            mcu = mcus_by_id.get(RemoraCanMapper.hub_id(mcu, mcus_by_id) or "") or {}
-        return CapabilityClass.for_connection(mcu.get("connection")) is not CapabilityClass.POSITION
+        mcu = mcus_by_id.get(mcu_id)
+        if mcu is not None and RemoraCanMapper.is_node(mcu.connection):
+            mcu = mcus_by_id.get(RemoraCanMapper.hub_of(mcu, mcus_by_id) or "")
+        connection = mcu.connection if mcu is not None else None
+        return CapabilityClass.for_connection(connection) is not CapabilityClass.POSITION
 
 
 __all__ = ["EstopHalMapper"]

@@ -10,6 +10,7 @@ import pytest
 from MachineConfigParser import InvalidValueError, MachineConfigParser
 from services.halcompiler import compile_machine_hal, render_webgui_connections, validate_machine
 from services.halcompiler.HalAssembler import HalAssembler
+from models.machineconfig.HardwareRecords import HardwareRecords
 from services.halcompiler.components.InputPinHalMapper import InputPinHalMapper
 from services.machinetemplates.ini_template_generator import render_ini_template
 
@@ -114,7 +115,7 @@ def test_webgui_drives_outputs_reads_inputs_and_fires_the_edges(tmp_path):
 
 
 def test_the_edges_are_halui_mdi_commands_calling_subroutines(tmp_path):
-    commands = InputPinHalMapper.mdi_commands(_payload(tmp_path)["input_pins"])
+    commands = InputPinHalMapper.mdi_commands(HardwareRecords.input_pins(_payload(tmp_path)))
     assert [c.ini_line for c in commands] == [
         "MDI_COMMAND = o<my_custom_button_rising> call",
         "MDI_COMMAND = o<my_custom_button_falling> call",

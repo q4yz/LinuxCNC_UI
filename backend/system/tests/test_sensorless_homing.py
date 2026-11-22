@@ -9,6 +9,16 @@ from MachineConfigParser import InvalidValueError, MachineConfigParser
 from services.halcompiler.components.RemoraDriverFirmwareMapper import RemoraDriverFirmwareMapper
 from services.machineconfig.hardware_json_generator import build_hardware_json
 
+from tests import typed_records as typed
+
+
+def _driver_fragment(joints, drivers_by_id):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return RemoraDriverFirmwareMapper.to_fragment(
+        typed.joints(joints), {k: typed.Driver.model_validate(v) for k, v in drivers_by_id.items()}
+    )
+
+
 CFG = """
 [mcu]
 connection: remora-spi
@@ -54,7 +64,7 @@ def test_virtual_endstop_is_the_diag_pin_and_the_firmware_gets_sgthrs():
     driver = next(d for d in payload["drivers"] if d.get("uart_pin"))
     assert driver["diag_pin"] == "^PG6" and driver["stall_sensitivity"] == 100
     joints = [j for j in payload["joints"] if j.get("driver") == driver["id"]]
-    module = RemoraDriverFirmwareMapper.to_fragment(joints, {driver["id"]: driver}).firmware_modules[0].module
+    module = _driver_fragment(joints, {driver["id"]: driver}).firmware_modules[0].module
     assert module["Stall sensitivity"] == 100 and module["Stealth chop"] == "on"
 
 

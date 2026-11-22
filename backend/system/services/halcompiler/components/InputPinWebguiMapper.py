@@ -3,15 +3,14 @@
 `InputPinHalMapper`)."""
 from __future__ import annotations
 
-from typing import Any
-
+from models.machineconfig.HardwareJsonModels import InputPin
 from models.machineconfig.InputPinActionModels import MdiCommand
 
 
 class InputPinWebguiMapper:
     @staticmethod
-    def to_lines(input_pin: dict[str, Any], commands: list[MdiCommand]) -> list[str]:
-        pin_id = str(input_pin["id"])
+    def to_lines(input_pin: InputPin, commands: list[MdiCommand]) -> list[str]:
+        pin_id = input_pin.id
         lines = [f"# Input pin: {pin_id}", f"net {pin_id}-in => webgui.{pin_id}"]
         for command in commands:
             if command.input_id != pin_id:

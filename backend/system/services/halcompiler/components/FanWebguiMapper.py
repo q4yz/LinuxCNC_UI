@@ -9,15 +9,15 @@ operator never does.
 
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import Fan
 
 
 class FanWebguiMapper:
     """`net` line binding one `kind: "part"` fan onto `webgui.<id>`."""
 
     @staticmethod
-    def to_lines(fan: dict[str, Any]) -> list[str]:
-        fan_id = str(fan["id"])
+    def to_lines(fan: Fan) -> list[str]:
+        fan_id = fan.id
         return [
             f"# Fan: {fan_id}",
             f"net {fan_id}-SP <= webgui.{fan_id}",

@@ -39,8 +39,9 @@ without a motion joint gets no guard.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Iterable, Optional
 
+from models.machineconfig.HardwareJsonModels import Stepper, Tool
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment
 
 #: Klipper's default ``min_extrude_temp`` (°C).
@@ -54,33 +55,28 @@ class ExtruderGuardHalMapper:
         return f"extruder-{tool_id}"
 
     @staticmethod
-    def guarded_joint(payload: dict[str, Any], tool: dict[str, Any]) -> Optional[int]:
+    def guarded_joint(tool: Tool, joints: Iterable[Stepper]) -> Optional[int]:
         """The extruder ``tool``'s joint number when it gets a guard (a sensor
         and a motion joint), else ``None``."""
-        if tool.get("type") != "extruder" or not tool.get("sensor"):
+        if tool.type != "extruder" or not tool.sensor:
             return None
-        for joint in payload.get("joints") or []:
-            if isinstance(joint, dict) and joint.get("id") == tool.get("id") and joint.get("joint_number") is not None:
-                return int(joint["joint_number"])
-        return None
+        return next((j.joint_number for j in joints if j.id == tool.id), None)
 
     @staticmethod
-    def to_fragment(tool: dict[str, Any], joint_number: int, flow: bool = False) -> HalFragment:
+    def to_fragment(tool: Tool, joint_number: int, flow: bool = False) -> HalFragment:
         """``flow``: route the joint's position through the component
         (Remora: `RemoraStepperHalMapper` leaves those nets out)."""
-        tool_id = str(tool["id"])
+        tool_id = tool.id
         comp = ExtruderGuardHalMapper.component(tool_id)
-        min_temp = tool.get("min_extrude_temp")
-        min_temp = DEFAULT_MIN_EXTRUDE_TEMP if min_temp is None else float(min_temp)
+        min_temp = DEFAULT_MIN_EXTRUDE_TEMP if tool.min_extrude_temp is None else tool.min_extrude_temp
         fragment = HalFragment()
         fragment.loadrt.append(f"loadrt extruder names={comp}")
         # after motion (order 1): reads this period's vel-cmd
         fragment.addf.append(Addf(comp, SERVO_THREAD, order=2))
         fragment.setp.append(f"setp {comp}.min-extrude-temp {min_temp:g}")
-        smooth = tool.get("pressure_advance_smooth_time")
-        if smooth is not None:
-            fragment.setp.append(f"setp {comp}.pa-smooth-time {float(smooth):g}")
-        fragment.nets.append(f"net {tool['sensor']}-PV => {comp}.current-temp")
+        if tool.pressure_advance_smooth_time is not None:
+            fragment.setp.append(f"setp {comp}.pa-smooth-time {tool.pressure_advance_smooth_time:g}")
+        fragment.nets.append(f"net {tool.sensor}-PV => {comp}.current-temp")
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
         # homing sets the position in place: no guard meanwhile
         fragment.nets.append(f"net {tool_id}-homing joint.{joint_number}.homing => {comp}.homing")

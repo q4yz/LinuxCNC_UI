@@ -2,9 +2,8 @@
 per HAL signal, so it is latched — see :class:`OutputLatchHalMapper`."""
 from __future__ import annotations
 
-from typing import Any
-
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment
+from models.machineconfig.HardwareJsonModels import OutputPin
 from models.machineconfig.InputPinActionModels import HalpinSetAction
 
 
@@ -16,8 +15,8 @@ class OutputLatchHalMapper:
     A switched output is ``<id>-latched`` > 0.5."""
 
     @staticmethod
-    def to_fragment(output_pin: dict[str, Any], sets: list[HalpinSetAction]) -> HalFragment:
-        pin_id = str(output_pin["id"])
+    def to_fragment(output_pin: OutputPin, sets: list[HalpinSetAction]) -> HalFragment:
+        pin_id = output_pin.id
         ui_edge = f"{pin_id}-ui-edge"
         stages = [f"{pin_id}-set{k}" for k in range(len(sets) + 1)]
         outs = [f"{pin_id}-x{k}" for k in range(len(sets))] + [f"{pin_id}-latched"]
@@ -37,7 +36,7 @@ class OutputLatchHalMapper:
                 fragment.setp.append(f"setp {stage}.in1 {hal_set.value:g}")
                 fragment.nets.append(f"net {hal_set.pulse} => {stage}.sel")
                 fragment.nets.append(f"net {outs[k - 1]} => {stage}.in0")
-        if not output_pin.get("pwm"):
+        if not output_pin.pwm:
             on = f"{pin_id}-on"
             fragment.loadrt.append(f"loadrt comp names={on}")
             fragment.addf.append(Addf(on, SERVO_THREAD, order=1))

@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
+from models.machineconfig.HardwareJsonModels import Tool
+
+
+def _spindle_fragment(spindle):
+    return DigitalSpindleHalMapper.to_fragment(Tool.model_validate({"type": "spindle_digital", **spindle}))
+
 
 FULL_SPINDLE = {
     "id": "spindle_digital",
@@ -34,7 +40,7 @@ def _signals(fragment):
 
 
 def test_unscaled_speed_command_binds_directly_no_scale_block():
-    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    fragment = _spindle_fragment(FULL_SPINDLE)
     assert "net spindle-speed-cmd spindle.0.speed-out" in fragment.nets
     assert not any("scale-spindle_digital-cmd" in line for line in fragment.loadrt)
 
@@ -44,7 +50,7 @@ def test_unscaled_speed_command_binds_directly_no_scale_block():
 
 def test_scaled_speed_command_gets_its_own_scale_block_and_signal():
     spindle = dict(FULL_SPINDLE, rpm_scale=2.5)
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
 
     assert "net spindle-speed-cmd spindle.0.speed-out => scale-spindle_digital-cmd.in" in fragment.nets
     assert "loadrt scale names=scale-spindle_digital-cmd" in fragment.loadrt
@@ -56,7 +62,7 @@ def test_scaled_speed_command_gets_its_own_scale_block_and_signal():
 
 
 def test_speed_command_always_gets_a_mux2_selector_between_gcode_and_web_override():
-    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    fragment = _spindle_fragment(FULL_SPINDLE)
     assert "loadrt mux2 names=mux2-spindle_digital" in fragment.loadrt
     assert any(a.func == "mux2-spindle_digital" for a in fragment.addf)
     assert "net spindle-speed-cmd => mux2-spindle_digital.in0" in fragment.nets
@@ -67,25 +73,25 @@ def test_speed_command_always_gets_a_mux2_selector_between_gcode_and_web_overrid
 
 def test_scaled_speed_command_feeds_the_scaled_signal_into_mux2_in0():
     spindle = dict(FULL_SPINDLE, rpm_scale=2.5)
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     assert "net spindle_digital-speed-out => mux2-spindle_digital.in0" in fragment.nets
 
 
 def test_run_pin_always_requested_reverse_pin_only_when_declared():
-    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    fragment = _spindle_fragment(FULL_SPINDLE)
     assert "net spindle-forward spindle.0.forward" in fragment.nets
     assert "net spindle-reverse spindle.0.reverse" in fragment.nets
     assert {"spindle-forward", "spindle-reverse"} <= _signals(fragment)
 
     no_reverse = dict(FULL_SPINDLE)
     del no_reverse["reverse_pin"]
-    fragment = DigitalSpindleHalMapper.to_fragment(no_reverse)
+    fragment = _spindle_fragment(no_reverse)
     assert not any("reverse" in n for n in fragment.nets)
     assert "spindle-reverse" not in _signals(fragment)
 
 
 def test_at_speed_pin_present_wires_the_drives_own_bit():
-    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    fragment = _spindle_fragment(FULL_SPINDLE)
     assert "net spindle-at-speed => spindle.0.at-speed" in fragment.nets
     assert not any(line.startswith("loadrt near") for line in fragment.loadrt)
 
@@ -93,7 +99,7 @@ def test_at_speed_pin_present_wires_the_drives_own_bit():
 def test_speed_fb_only_derives_at_speed_with_a_near_component():
     spindle = dict(FULL_SPINDLE, min_rpm=5000.0)
     del spindle["at_speed_pin"]
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
 
     assert "loadrt near names=near-spindle_digital-at-speed" in fragment.loadrt
     assert "setp near-spindle_digital-at-speed.scale 1.02" in fragment.setp
@@ -105,14 +111,14 @@ def test_speed_fb_only_derives_at_speed_with_a_near_component():
 
 def test_no_feedback_at_all_forces_at_speed_true():
     spindle = {"id": "spindle_digital", "run_pin": "vfd0:run-forward", "speed_pin": "vfd0:rpm-in"}
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     assert "setp spindle.0.at-speed true" in fragment.setp
     assert not any("at-speed" in n for n in fragment.nets)
     assert not any(line.startswith("loadrt near") for line in fragment.loadrt)
 
 
 def test_health_pins_get_requests_but_no_component_side_net():
-    fragment = DigitalSpindleHalMapper.to_fragment(FULL_SPINDLE)
+    fragment = _spindle_fragment(FULL_SPINDLE)
     signals = _signals(fragment)
     assert {"spindle_digital-fault", "spindle_digital-is-connected", "spindle_digital-error-count"} <= signals
     for signal in ("spindle_digital-fault", "spindle_digital-is-connected", "spindle_digital-error-count"):
@@ -122,7 +128,7 @@ def test_health_pins_get_requests_but_no_component_side_net():
 def test_health_pins_are_independently_optional():
     spindle = dict(FULL_SPINDLE)
     del spindle["fault_pin"]
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     signals = _signals(fragment)
     assert "spindle_digital-fault" not in signals
     assert {"spindle_digital-is-connected", "spindle_digital-error-count"} <= signals
@@ -130,19 +136,19 @@ def test_health_pins_are_independently_optional():
 
 def test_spindle_number_selects_the_linuxcnc_spindle_index():
     spindle = dict(FULL_SPINDLE, id="spindle_digital_test", spindle_number=1)
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     assert "net spindle-forward spindle.1.forward" in fragment.nets
     assert "net spindle-speed-cmd spindle.1.speed-out" in fragment.nets
 
 
 def test_mux2_instance_is_named_per_spindle_to_avoid_multi_spindle_collisions():
     spindle = dict(FULL_SPINDLE, id="spindle_digital_test", spindle_number=1)
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     assert "loadrt mux2 names=mux2-spindle_digital_test" in fragment.loadrt
     assert "net spindle_digital_test-target-rpm mux2-spindle_digital_test.out" in fragment.nets
 
 
 def test_missing_spindle_number_defaults_to_zero():
     spindle = {"id": "spindle_digital", "run_pin": "vfd0:run-forward", "speed_pin": "vfd0:rpm-in"}
-    fragment = DigitalSpindleHalMapper.to_fragment(spindle)
+    fragment = _spindle_fragment(spindle)
     assert "net spindle-forward spindle.0.forward" in fragment.nets

@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from core.calibration_file import (FLOW, INPUT_SHAPER_SECTION, PRESSURE_ADVANCE, RETRACT_LENGTH, RETRACT_SPEED, STALL, PROBE_Z_OFFSET, SHAPER_FREQ, SHAPER_TYPE,
                                    SKEW_XY, VALUES, CalibrationFile, calibration_path)
 from exceptions import BadRequestError, ConflictError, NotFoundError
+from models.machineconfig.HardwareRecords import HardwareRecords
 
 logger = logging.getLogger("backend.services.calibration")
 
@@ -734,13 +735,13 @@ def _retraction(payload: Mapping[str, Any], heaters: List[Param], store: Calibra
         return (result + " — used for the G10 / G11 of files uploaded from now on (slicer: firmware retraction); "
                 "upload earlier files again.")
 
-    current = (payload.get("firmware_retraction") or {}) if isinstance(payload.get("firmware_retraction"), dict) else {}
+    current = HardwareRecords.firmware_retraction(payload)
     return Calibration(
         "retraction", "retraction", "", bool(_extruder(payload)), "The profile has no [extruder].",
         params=heaters + [Param("start", 0.0, "mm", 0, 10), Param("factor", 0.05, "/mm", 0.005, 0.5),
                           Param("height", 30, "mm", 5, 80), Param("speed", 35, "mm/s", 10, 120)],
         running=_printing("retraction_tower"),
-        values={"length": current.get("retract_length"), "speed": current.get("retract_speed")},
+        values={"length": current.retract_length if current else None, "speed": current.retract_speed if current else None},
         print_test=print_retraction, submit=submit_retraction, figure="retraction",
         inputs=[Param("height", 10, "mm", 0, 80)],
     )

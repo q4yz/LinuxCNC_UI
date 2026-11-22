@@ -3,16 +3,16 @@
 ``IoService`` (machine backend) owns the ``webgui.<id>`` pins."""
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import OutputPin
 
 
 class OutputPinWebguiMapper:
     @staticmethod
-    def to_lines(output_pin: dict[str, Any], latched: bool = False) -> list[str]:
+    def to_lines(output_pin: OutputPin, latched: bool = False) -> list[str]:
         """``latched``: inputs set this output too — the UI is one more
         event into its latch (value + a toggled ``-set``) and reads the
         result back from ``webgui.<id>-state``."""
-        pin_id = str(output_pin["id"])
+        pin_id = output_pin.id
         if latched:
             return [
                 f"# Output pin: {pin_id} (latched: the UI and input edges set it)",
@@ -21,7 +21,7 @@ class OutputPinWebguiMapper:
                 f"net {pin_id}-latched => webgui.{pin_id}-state",
                 "",
             ]
-        if output_pin.get("pwm"):
+        if output_pin.pwm:
             return [f"# Output pin: {pin_id} (PWM)", f"net {pin_id}-value webgui.{pin_id} => {pin_id}-scale.in", ""]
         return [f"# Output pin: {pin_id}", f"net {pin_id}-out <= webgui.{pin_id}", ""]
 

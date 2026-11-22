@@ -26,8 +26,10 @@ from typing import Any
 
 from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
+from models.machineconfig.HardwareJsonModels import TemperatureSensor
 from models.machineconfig.PinModels import ParsedPin
 
+from models.machineconfig.HardwareRecords import HardwareRecords
 from ..mcus.RemoraRouterMapper import MCU_TEMP_SENSOR_TYPE
 
 HAL = "hal"
@@ -44,63 +46,50 @@ class TemperatureSensorHalMapper:
     """`machine.hal` side: where the reading comes from."""
 
     @staticmethod
-    def sensor_kind(sensor: dict[str, Any]) -> str:
+    def sensor_kind(sensor_type: str | None) -> str:
         """``hal`` / ``temperature_host`` / ``temperature_mcu``, or
-        ``thermistor`` for a board pin."""
-        kind = str(sensor.get("type") or "").strip().lower()
+        ``thermistor`` for a board pin (any other ``type``)."""
+        kind = str(sensor_type or "").strip().lower()
         return kind if kind in (HAL, HOST, MCU) else "thermistor"
 
-
     @staticmethod
-    def is_hal_sensor(sensor: dict[str, Any]) -> bool:
+    def is_hal_sensor(sensor_type: str | None) -> bool:
         """``type: hal`` — ``pin`` is a HAL name, not a board pin."""
-        return TemperatureSensorHalMapper.sensor_kind(sensor) == HAL
-
+        return TemperatureSensorHalMapper.sensor_kind(sensor_type) == HAL
 
     @staticmethod
-    def is_board_sensor(sensor: dict[str, Any]) -> bool:
+    def is_board_sensor(sensor_type: str | None) -> bool:
         """A thermistor on a board pin — the only kind whose ``pin`` is one."""
-        return TemperatureSensorHalMapper.sensor_kind(sensor) == "thermistor"
-
+        return TemperatureSensorHalMapper.sensor_kind(sensor_type) == "thermistor"
 
     @staticmethod
-    def sensor_signal(sensor: dict[str, Any]) -> str:
+    def sensor_signal(sensor: TemperatureSensor) -> str:
         """The HAL signal carrying the reading: the operator's own signal for
         ``type: hal`` with no dot, ``<id>-PV`` otherwise."""
-        pin = str(sensor.get("pin") or "")
-        if TemperatureSensorHalMapper.is_hal_sensor(sensor) and "." not in pin:
-            return pin
-        return f"{sensor['id']}-PV"
-
+        if TemperatureSensorHalMapper.is_hal_sensor(sensor.type) and "." not in sensor.pin:
+            return sensor.pin
+        return f"{sensor.id}-PV"
 
     @staticmethod
-    def host_load_line(sensor: dict[str, Any]) -> str:
+    def host_load_line(sensor: TemperatureSensor) -> str:
         """``loadusr -Wn rpi-monitor ...`` for a ``temperature_host`` sensor;
         ``thermal_zone`` pins the zone (the component's own default is zone
         0, which on the BTT CB1 is the GPU, not the CPU)."""
-        zone = sensor.get("thermal_zone")
-        env = f"env RPI_MONITOR_TEMP_FILE=/sys/class/thermal/thermal_zone{int(zone)}/temp " if zone is not None else ""
+        zone = sensor.thermal_zone
+        env = f"env RPI_MONITOR_TEMP_FILE=/sys/class/thermal/thermal_zone{zone}/temp " if zone is not None else ""
         return f"loadusr -Wn rpi-monitor {env}{RPI_MONITOR_COMMAND}"
 
-
     @staticmethod
-    def unclaimed_sensors(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def unclaimed_sensors(payload: dict[str, Any]) -> list[TemperatureSensor]:
         """``temperature_sensors[]`` no ``tools[].sensor`` references."""
-        claimed = {
-            t.get("sensor") for t in payload.get("tools") or [] if isinstance(t, dict)
-        }
-        return [
-            s
-            for s in payload.get("temperature_sensors") or []
-            if isinstance(s, dict) and s.get("id") and s.get("pin") and s["id"] not in claimed
-        ]
+        claimed = {t.sensor for t in HardwareRecords.tools(payload)}
+        return [s for s in HardwareRecords.temperature_sensors(payload) if s.id and s.pin and s.id not in claimed]
 
     @staticmethod
-    def to_fragment(sensor: dict[str, Any]) -> HalFragment:
+    def to_fragment(sensor: TemperatureSensor) -> HalFragment:
         fragment = HalFragment()
-        sensor_id = str(sensor["id"])
-        pin = str(sensor["pin"])
-        kind = TemperatureSensorHalMapper.sensor_kind(sensor)
+        sensor_id, pin = sensor.id, sensor.pin
+        kind = TemperatureSensorHalMapper.sensor_kind(sensor.type)
         if kind == MCU:
             # ``pin`` is the Remora board's MCU id (hardware_json_generator).
             fragment.requests.append(
@@ -125,7 +114,7 @@ class TemperatureSensorHalMapper:
                 role=PinRole.ANALOG_IN,
                 pin=PinStringMapper.from_string(pin),
                 owner=sensor_id,
-                sensor_type=sensor.get("type"),
+                sensor_type=sensor.type,
             )
         )
         return fragment

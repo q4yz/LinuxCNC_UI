@@ -17,6 +17,14 @@ from __future__ import annotations
 from models.machineconfig.HalFragmentModels import PinRole
 from services.halcompiler.components.EstopHalMapper import EstopHalMapper
 
+from tests import typed_records as typed
+
+
+def _estop_fragment(estop, mcus_by_id):
+    """The mapper takes typed records; the fixtures stay readable dicts."""
+    return EstopHalMapper.to_fragment(typed.estop(estop), typed.mcus_by_id(mcus_by_id))
+
+
 _PARPORT_MCU = {"mcu": {"id": "mcu", "connection": "parallelport"}}
 _REMORA_MCU = {"mcu": {"id": "mcu", "connection": "remora-spi"}}
 
@@ -24,7 +32,7 @@ _REMORA_MCU = {"mcu": {"id": "mcu", "connection": "remora-spi"}}
 def test_no_physical_pins_means_an_entirely_empty_fragment():
     """The empty-[estop] / UI-only case — this mapper contributes
     nothing to `machine.hal` at all once the UI half moved out."""
-    fragment = EstopHalMapper.to_fragment({}, {})
+    fragment = _estop_fragment({}, {})
     assert fragment.loadrt == []
     assert fragment.addf == []
     assert fragment.setp == []
@@ -33,14 +41,14 @@ def test_no_physical_pins_means_an_entirely_empty_fragment():
 
 
 def test_no_physical_pins_means_no_requests_and_no_latch():
-    fragment = EstopHalMapper.to_fragment({"fault_pin": None, "out_pin": None}, _PARPORT_MCU)
+    fragment = _estop_fragment({"fault_pin": None, "out_pin": None}, _PARPORT_MCU)
     assert fragment.requests == []
     assert not any("estop_latch" in line for line in fragment.loadrt)
 
 
 def test_fault_pin_on_a_class_a_mcu_gets_the_full_latch_chain():
     """Matches the real reference machine's wiring exactly."""
-    fragment = EstopHalMapper.to_fragment({"fault_pin": "10"}, _PARPORT_MCU)
+    fragment = _estop_fragment({"fault_pin": "10"}, _PARPORT_MCU)
 
     assert "loadrt estop_latch" in fragment.loadrt
     assert fragment.addf[-1].func == "estop-latch.0"
@@ -59,7 +67,7 @@ def test_fault_pin_on_a_class_a_mcu_gets_the_full_latch_chain():
 
 
 def test_out_pin_on_a_class_a_mcu_mirrors_the_enable_state():
-    fragment = EstopHalMapper.to_fragment({"out_pin": "14"}, _PARPORT_MCU)
+    fragment = _estop_fragment({"out_pin": "14"}, _PARPORT_MCU)
 
     assert "net estop-out <= iocontrol.0.user-enable-out" in fragment.nets
     [request] = fragment.requests
@@ -70,10 +78,10 @@ def test_out_pin_on_a_class_a_mcu_mirrors_the_enable_state():
 
 def test_fault_pin_and_out_pin_are_independent():
     """Declaring one does not require or imply the other."""
-    fault_only = EstopHalMapper.to_fragment({"fault_pin": "10"}, _PARPORT_MCU)
+    fault_only = _estop_fragment({"fault_pin": "10"}, _PARPORT_MCU)
     assert not any("user-enable-out" in n for n in fault_only.nets)
 
-    out_only = EstopHalMapper.to_fragment({"out_pin": "14"}, _PARPORT_MCU)
+    out_only = _estop_fragment({"out_pin": "14"}, _PARPORT_MCU)
     assert not any("estop_latch" in line for line in out_only.loadrt)
     assert not any("fault-in" in n for n in out_only.nets)
 
@@ -86,7 +94,7 @@ def test_class_b_mcu_gets_the_physical_pin_routed_but_not_the_iocontrol_chain():
     The physical pin still routes (a real `config.txt` module), only
     the core iocontrol linkage is skipped — the output joins the board's
     own `user-enable-out` signal instead (one HAL pin, one signal)."""
-    fragment = EstopHalMapper.to_fragment(
+    fragment = _estop_fragment(
         {"fault_pin": "PG6", "out_pin": "PG7"}, _REMORA_MCU
     )
 
@@ -107,7 +115,7 @@ def test_gating_is_per_pin_not_per_machine():
         "remora": {"id": "remora", "connection": "remora-spi"},
         "par0": {"id": "par0", "connection": "parallelport"},
     }
-    fragment = EstopHalMapper.to_fragment(
+    fragment = _estop_fragment(
         {"fault_pin": "remora:PG6", "out_pin": "par0:14"}, mcus
     )
     assert not any("emc-enable-in" in n for n in fragment.nets)
@@ -119,5 +127,5 @@ def test_unknown_mcu_id_is_treated_as_not_owning_iocontrol():
     (E_UNKNOWN_MCU) — this mapper trusts a validated payload and
     simply doesn't find a POSITION-class match, so it wires the
     iocontrol chain (the class-A-shaped default) rather than raising."""
-    fragment = EstopHalMapper.to_fragment({"out_pin": "ghost:14"}, {})
+    fragment = _estop_fragment({"out_pin": "ghost:14"}, {})
     assert "net estop-out <= iocontrol.0.user-enable-out" in fragment.nets

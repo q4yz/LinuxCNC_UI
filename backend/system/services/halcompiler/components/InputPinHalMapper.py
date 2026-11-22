@@ -19,66 +19,65 @@
 """
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest, PinRole
+from models.machineconfig.HardwareJsonModels import HalpinSet as HardwareHalpinSet, InputPin
 from models.machineconfig.InputPinActionModels import HalpinSetAction, MdiCommand
 
 
 class InputPinHalMapper:
     @staticmethod
-    def halpin_sets(input_pins: list[dict[str, Any]]) -> list[HalpinSetAction]:
+    def halpin_set(pin: InputPin, edge: str) -> list[HardwareHalpinSet]:
+        return pin.rising_halpin_set if edge == "rising" else pin.falling_halpin_set
+
+    @staticmethod
+    def halpin_sets(input_pins: list[InputPin]) -> list[HalpinSetAction]:
         """Every ``*_halpin_set`` entry, in declaration order (= latch order)."""
         return [
-            HalpinSetAction(str(pin["id"]), edge, str(entry["output"]), float(entry["value"]))
+            HalpinSetAction(pin.id, edge, entry.output, entry.value)
             for pin in input_pins
             for edge in ("rising", "falling")
-            for entry in pin.get(f"{edge}_halpin_set") or []
+            for entry in InputPinHalMapper.halpin_set(pin, edge)
         ]
 
-
     @staticmethod
-    def latched_output_ids(input_pins: list[dict[str, Any]]) -> set[str]:
+    def latched_output_ids(input_pins: list[InputPin]) -> set[str]:
         return {s.output_id for s in InputPinHalMapper.halpin_sets(input_pins)}
 
-
     @staticmethod
-    def mdi_commands(input_pins: list[dict[str, Any]]) -> list[MdiCommand]:
+    def mdi_commands(input_pins: list[InputPin]) -> list[MdiCommand]:
         """Every input edge with G-code, in declaration order — the INI's
         ``MDI_COMMAND`` order is the ``halui.mdi-command-NN`` numbering, so
         the INI renderer and `InputPinWebguiMapper` both read this one list."""
         commands: list[MdiCommand] = []
         for pin in input_pins:
             for edge in ("rising", "falling"):
-                gcode = pin.get(f"{edge}_ngc")
+                gcode = pin.rising_ngc if edge == "rising" else pin.falling_ngc
                 if gcode:
-                    commands.append(
-                        MdiCommand(len(commands), str(pin["id"]), edge, f"{pin['id']}_{edge}".lower(), str(gcode))
-                    )
+                    commands.append(MdiCommand(len(commands), pin.id, edge, f"{pin.id}_{edge}".lower(), gcode))
         return commands
 
     @staticmethod
-    def to_fragment(input_pin: dict[str, Any]) -> HalFragment:
-        pin_id = str(input_pin["id"])
+    def to_fragment(input_pin: InputPin) -> HalFragment:
+        pin_id = input_pin.id
         fragment = HalFragment(
             requests=[
                 PinRequest(
                     signal=f"{pin_id}-in",
                     role=PinRole.DIGITAL_IN,
-                    pin=PinStringMapper.from_string(str(input_pin["pin"])),
+                    pin=PinStringMapper.from_string(input_pin.pin),
                     owner=pin_id,
                 )
             ]
         )
-        if input_pin.get("falling_ngc"):
+        if input_pin.falling_ngc:
             released = f"{pin_id}-released"
             fragment.loadrt.append(f"loadrt not names={released}")
             fragment.addf.append(Addf(released, SERVO_THREAD, order=1))
             fragment.nets.append(f"net {pin_id}-in => {released}.in")
         # One pulse per edge that sets an output (``HalpinSetAction.pulse``).
         for edge in ("rising", "falling"):
-            if not input_pin.get(f"{edge}_halpin_set"):
+            if not InputPinHalMapper.halpin_set(input_pin, edge):
                 continue
             detector = f"{pin_id}-{edge}-edge"
             fragment.loadrt.append(f"loadrt edge names={detector}")

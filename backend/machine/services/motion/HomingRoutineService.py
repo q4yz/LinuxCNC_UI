@@ -27,6 +27,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from core.homing_routine import HomingStep, parse_homing_routine
+from models.machineconfig.HardwareJsonModels import ZVirtualEndstop
 from exceptions import BadRequestError, ConflictError
 from hardware import dispatch_mdi, get_stat_channel, linuxcnc
 from hardware.Connection import MachineState, execute_sync_cmd
@@ -219,11 +220,12 @@ class HomingRoutineService:
             return f"LinuxCNC refused it ({exc})."
         return MacroExecutionService._wait_until_idle(stat, serial)
 
-    def virtual_z(self) -> Optional[Dict[str, Any]]:
+    def virtual_z(self) -> Optional[ZVirtualEndstop]:
         """``hardware.json``'s ``z_virtual_endstop`` (Z homes on the
         probe), or ``None``."""
-        value = self._config.load_payload().get("z_virtual_endstop")
-        return value if isinstance(value, dict) else None
+        from models.machineconfig.HardwareRecords import HardwareRecords
+
+        return HardwareRecords.z_virtual_endstop(self._config.load_payload())
 
     def _home(self, stat: Any, step: HomingStep) -> Optional[str]:
         virtual = self.virtual_z()

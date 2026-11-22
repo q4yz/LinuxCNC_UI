@@ -23,9 +23,8 @@ no HAL at all.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Adxl345
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment, PinRequest, PinRole
 
 SIGNAL = "adxl345"
@@ -34,30 +33,27 @@ SAMPLER = "sampler.0"
 SAMPLER_DEPTH = 4000
 
 
-def _bare(pin: Any) -> str | None:
-    return PinStringMapper.from_string(str(pin)).pin_id if pin else None
+def _bare(pin: str | None) -> str | None:
+    return PinStringMapper.from_string(pin).pin_id if pin else None
 
 
 class Adxl345HalMapper:
     @staticmethod
-    def node_adxl345(payload: dict[str, Any]) -> dict[str, Any] | None:
-        """The ``[adxl345]`` section when it sits on a CAN node (``cs_pin``)."""
-        adxl = payload.get("adxl345")
-        return adxl if isinstance(adxl, dict) and adxl.get("cs_pin") else None
+    def on_node(adxl: Adxl345 | None) -> bool:
+        """The accelerometer sits on a CAN node (``cs_pin``), not the host's SPI."""
+        return adxl is not None and bool(adxl.cs_pin)
 
     @staticmethod
-    def to_fragment(payload: dict[str, Any]) -> HalFragment:
+    def to_fragment(adxl: Adxl345 | None) -> HalFragment:
         fragment = HalFragment()
-        adxl = Adxl345HalMapper.node_adxl345(payload)
-        if adxl is None:
+        if adxl is None or not adxl.cs_pin:
             return fragment
         fragment.requests.append(PinRequest(
             signal=SIGNAL,
             role=PinRole.ACCEL,
-            pin=PinStringMapper.from_string(str(adxl["cs_pin"])),
+            pin=PinStringMapper.from_string(adxl.cs_pin),
             owner="adxl345",
-            accel=(str(adxl.get("axes_map") or "x,y,z"), int(adxl.get("rate") or 3200),
-                   _bare(adxl.get("sclk_pin")), _bare(adxl.get("mosi_pin")), _bare(adxl.get("miso_pin"))),
+            accel=(adxl.axes_map, adxl.rate, _bare(adxl.sclk_pin), _bare(adxl.mosi_pin), _bare(adxl.miso_pin)),
         ))
         fragment.loadrt.append(f"loadrt sampler depth={SAMPLER_DEPTH} cfg=ff")
         fragment.addf.append(Addf(SAMPLER, SERVO_THREAD, order=2))

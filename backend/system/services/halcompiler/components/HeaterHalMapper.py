@@ -21,9 +21,8 @@ parallel port, `E_NO_ANALOG_INPUT`).
 
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper, heater_ini_section
+from models.machineconfig.HardwareJsonModels import Fan, TemperatureSensor, Tool
 from models.machineconfig.HalFragmentModels import (
     SERVO_THREAD,
     Addf,
@@ -48,36 +47,27 @@ class HeaterHalMapper:
 
     @staticmethod
     def to_fragment(
-        heater: dict[str, Any],
-        sensor: dict[str, Any] | None,
-        fan: dict[str, Any] | None,
+        heater: Tool,
+        sensor: TemperatureSensor | None,
+        fan: Fan | None,
     ) -> HalFragment:
         fragment = HalFragment()
-        heater_id = str(heater["id"])
-        sensor_id = str(sensor["id"]) if sensor else None
+        heater_id = heater.id
+        sensor_id = sensor.id if sensor else None
 
         HeaterHalMapper._heat_ok(fragment, heater_id)
-        control = (heater.get("control") or "pid").strip().lower()
-        if control == "watermark":
+        if HeaterHalMapper.control(heater) == "watermark":
             HeaterHalMapper._watermark_loop(fragment, heater, heater_id, sensor_id)
         else:
             HeaterHalMapper._pid_loop(fragment, heater_id, sensor_id)
 
-        HeaterHalMapper._request(
-            fragment, heater, "heater_pin", f"{heater_id}-heater-SP", PinRole.ANALOG_OUT, heater_id
-        )
+        HeaterHalMapper._request(fragment, heater.heater_pin, f"{heater_id}-heater-SP", PinRole.ANALOG_OUT, heater_id)
         if sensor is not None:
             HeaterHalMapper._request(
-                fragment,
-                sensor,
-                "pin",
-                f"{sensor_id}-PV",
-                PinRole.ANALOG_IN,
-                sensor_id,
-                sensor_type=sensor.get("type"),
+                fragment, sensor.pin, f"{sensor_id}-PV", PinRole.ANALOG_IN, sensor.id, sensor_type=sensor.type
             )
 
-        fan_ref = heater.get("fan")
+        fan_ref = heater.fan
         if fan_ref and fan is not None:
             # Passthrough only — matches the reference machine, which
             # wires a referenced fan as a plain SP channel with no
@@ -86,11 +76,14 @@ class HeaterHalMapper:
             # gating needs schema fields `fans[]` doesn't carry yet
             # (that file's own § 2 admission) — future work, not a
             # regression from what ender3 actually does today.
-            HeaterHalMapper._request(
-                fragment, fan, "pin", f"{fan_ref}-SP", PinRole.ANALOG_OUT, heater_id
-            )
+            HeaterHalMapper._request(fragment, fan.pin, f"{fan_ref}-SP", PinRole.ANALOG_OUT, heater_id)
 
         return fragment
+
+    @staticmethod
+    def control(heater: Tool) -> str:
+        """``pid`` (Klipper's default) or ``watermark``."""
+        return (heater.control or "pid").strip().lower()
 
     # -- E-stop gate --------------------------------------------------------- #
 
@@ -153,7 +146,7 @@ class HeaterHalMapper:
 
     @staticmethod
     def _watermark_loop(
-        fragment: HalFragment, heater: dict[str, Any], heater_id: str, sensor_id: str | None
+        fragment: HalFragment, heater: Tool, heater_id: str, sensor_id: str | None
     ) -> None:
         """`comp` alone is not enough here: its `.out` is a HAL **bit**
         (on/off), but `<id>-heater-SP` is routed straight into
@@ -170,9 +163,10 @@ class HeaterHalMapper:
         gate = f"heat-gate-{heater_id}"
         conv = f"conv-{heater_id}"
         duty = f"duty-{heater_id}"
-        hysteresis = heater.get("hysteresis", _DEFAULT_HYSTERESIS)
-        # Klipper's max_power is 0.0-1.0; the duty channel is 0-100 %.
-        max_power = _DEFAULT_MAX_POWER * float(heater.get("max_power") or 1.0)
+        # hardware.json has no hysteresis (Klipper's max_delta) yet: the default.
+        hysteresis = _DEFAULT_HYSTERESIS
+        # Klipper's max_power is 0.0-1.0 (None: 1.0); the duty channel is 0-100 %.
+        max_power = _DEFAULT_MAX_POWER * (1.0 if heater.max_power is None else heater.max_power)
 
         fragment.loadrt.extend(
             [
@@ -207,14 +201,12 @@ class HeaterHalMapper:
     @staticmethod
     def _request(
         fragment: HalFragment,
-        record: dict[str, Any],
-        field: str,
+        raw: str | None,
         signal: str,
         role: PinRole,
         owner: str,
         sensor_type: str | None = None,
     ) -> None:
-        raw = record.get(field)
         if not raw:
             return
         fragment.requests.append(

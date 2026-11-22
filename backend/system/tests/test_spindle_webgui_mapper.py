@@ -9,6 +9,12 @@ capitalised exactly that way, everything else lower-hyphenated.
 from __future__ import annotations
 
 from services.halcompiler.components.SpindleWebguiMapper import SpindleWebguiMapper
+from models.machineconfig.HardwareJsonModels import Tool
+
+
+def _spindle_lines(spindle):
+    return SpindleWebguiMapper.to_lines(Tool.model_validate({"type": "spindle_digital", **spindle}))
+
 
 FULL_SPINDLE = {
     "id": "spindle_digital",
@@ -24,18 +30,18 @@ FULL_SPINDLE = {
 
 
 def test_commanded_speed_is_always_bound():
-    lines = SpindleWebguiMapper.to_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
+    lines = _spindle_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
     assert "net spindle_digital-target-rpm => webgui.TargetRpm" in lines
 
 
 def test_absolute_override_pins_are_always_wired_onto_the_mux2_signals():
-    lines = SpindleWebguiMapper.to_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
+    lines = _spindle_lines({"id": "spindle_digital", "run_pin": "vfd0:run-forward"})
     assert "net spindle_digital-web-target-rpm webgui.absolute-master-override => mux2-spindle_digital.in1" in lines
     assert "net spindle_digital-use-web-rpm webgui.absolute-master-override-enable => mux2-spindle_digital.sel" in lines
 
 
 def test_absolute_override_pins_get_a_suffixed_pin_for_a_second_spindle():
-    lines = SpindleWebguiMapper.to_lines(
+    lines = _spindle_lines(
         {"id": "spindle_digital_test", "run_pin": "vfd0:run-forward"}
     )
     assert "net spindle_digital_test-web-target-rpm webgui.absolute-master-override_test => mux2-spindle_digital_test.in1" in lines
@@ -43,7 +49,7 @@ def test_absolute_override_pins_get_a_suffixed_pin_for_a_second_spindle():
 
 
 def test_full_spindle_binds_every_readout():
-    lines = SpindleWebguiMapper.to_lines(FULL_SPINDLE)
+    lines = _spindle_lines(FULL_SPINDLE)
     assert "net spindle-speed-fb => webgui.rpm-out" in lines
     assert "net spindle-at-speed => webgui.spindle-at-speed" in lines
     assert "net spindle-forward => webgui.spindle-forward" in lines
@@ -55,7 +61,7 @@ def test_full_spindle_binds_every_readout():
 
 
 def test_second_spindle_gets_a_suffixed_pin_never_colliding_with_the_first():
-    lines = SpindleWebguiMapper.to_lines(dict(FULL_SPINDLE, id="spindle_digital_test"))
+    lines = _spindle_lines(dict(FULL_SPINDLE, id="spindle_digital_test"))
     assert "net spindle_digital_test-target-rpm => webgui.TargetRpm_test" in lines
     assert "net spindle-at-speed => webgui.spindle-at-speed_test" in lines
     assert "net spindle_digital_test-is-connected => webgui.is-connected_test" in lines
@@ -68,13 +74,13 @@ def test_at_speed_only_bound_when_the_signal_actually_exists():
     forces `at-speed` true via `setp`, no `spindle-at-speed` signal at
     all — binding it here would reference a signal nothing wrote."""
     minimal = {"id": "spindle_digital", "run_pin": "vfd0:run-forward"}
-    lines = SpindleWebguiMapper.to_lines(minimal)
+    lines = _spindle_lines(minimal)
     assert not any("spindle-at-speed" in line for line in lines)
 
 
 def test_optional_pins_are_independently_optional():
     minimal = {"id": "spindle_digital", "run_pin": "vfd0:run-forward"}
-    lines = SpindleWebguiMapper.to_lines(minimal)
+    lines = _spindle_lines(minimal)
     assert not any("reverse" in line for line in lines)
     assert not any("is-connected" in line for line in lines)
     assert not any("error-count" in line for line in lines)

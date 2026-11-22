@@ -68,10 +68,10 @@ class HalPinValidator:
                     for word in words[2:]:
                         wired.setdefault(word, source)
         for sensor in TemperatureSensorHalMapper.unclaimed_sensors(payload):
-            pin = str(sensor.get("pin") or "")
-            if not TemperatureSensorHalMapper.is_hal_sensor(sensor) or "." not in pin:
+            pin = sensor.pin
+            if not TemperatureSensorHalMapper.is_hal_sensor(sensor.type) or "." not in pin:
                 continue
-            owner = str(sensor["id"])
+            owner = sensor.id
             prefix = pin.split(".", 1)[0]
             if prefix not in components:
                 found.append(Diagnostic(

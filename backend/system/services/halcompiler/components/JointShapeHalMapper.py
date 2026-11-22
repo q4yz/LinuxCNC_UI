@@ -35,8 +35,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from models.machineconfig.HardwareJsonModels import InputShaper
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment
 from models.machineconfig.PinModels import CapabilityClass
+
+from models.machineconfig.HardwareRecords import HardwareRecords
 
 SHAPER_TYPES = {"zv": 1, "mzv": 2, "zvd": 3, "ei": 4}
 INI_SECTION = "INPUT_SHAPER"
@@ -52,7 +55,14 @@ class JointShapeHalMapper:
     def shaped_joints(payload: dict[str, Any]) -> dict[int, str]:
         """Joint number -> ``"x"`` / ``"y"`` for the joints that get a
         ``jointshape`` (empty when the machine wants none or cannot have it)."""
-        wanted = any(isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
+        wanted = any(
+            record is not None
+            for record in (
+                HardwareRecords.input_shaper(payload),
+                HardwareRecords.skew_correction(payload),
+                HardwareRecords.adxl345(payload),
+            )
+        )
         if not wanted:
             return {}
         from ..HalAssembler import HalAssembler
@@ -60,11 +70,11 @@ class JointShapeHalMapper:
         if HalAssembler(payload)._capability_class() is not CapabilityClass.POSITION:
             return {}
         joints: dict[int, str] = {}
-        for axis in payload.get("axes") or []:
-            letter = str(axis.get("id", "")).lower()
+        for axis in HardwareRecords.axes(payload):
+            letter = axis.id.lower()
             if letter in ("x", "y"):
-                for number in axis.get("joint_numbers") or []:
-                    joints[int(number)] = letter
+                for number in axis.joint_numbers:
+                    joints[number] = letter
         return joints
 
     @staticmethod
@@ -73,16 +83,16 @@ class JointShapeHalMapper:
         machine with the component, else ``None``."""
         if not JointShapeHalMapper.shaped_joints(payload):
             return None
-        shaper = payload.get("input_shaper") or {}
-        return {letter: SHAPER_TYPES.get(str(shaper.get(f"type_{letter}", "mzv")), 2) for letter in ("x", "y")}
+        shaper = HardwareRecords.input_shaper(payload) or InputShaper()
+        return {"x": SHAPER_TYPES[shaper.type_x], "y": SHAPER_TYPES[shaper.type_y]}
 
     @staticmethod
-    def to_fragment(payload: dict[str, Any], joints: dict[int, str], corexy: bool = False) -> HalFragment:
+    def to_fragment(shaper: InputShaper | None, joints: dict[int, str], corexy: bool = False) -> HalFragment:
         """``corexy``: the shapers feed the CoreXY mixing (see the module docstring)."""
         fragment = HalFragment()
         if not joints:
             return fragment
-        shaper = payload.get("input_shaper") or {}
+        shaper = shaper or InputShaper()
         names = ",".join(JointShapeHalMapper.component(n) for n in sorted(joints))
         fragment.loadrt.append(f"loadrt jointshape names={names}")
         y_joints = sorted(n for n, letter in joints.items() if letter == "y")
@@ -92,7 +102,8 @@ class JointShapeHalMapper:
             fragment.addf.append(Addf(comp, SERVO_THREAD, order=2))
             # machine.ini [INPUT_SHAPER] (calibration.ini overrides it at start)
             fragment.setp.append(f"setp {comp}.shaper-type [{INI_SECTION}]TYPE_{letter.upper()}")
-            fragment.setp.append(f"setp {comp}.damping {float(shaper.get(f'damping_{letter}', 0.1)):g}")
+            damping = shaper.damping_x if letter == "x" else shaper.damping_y
+            fragment.setp.append(f"setp {comp}.damping {damping:g}")
             if corexy:
                 stepgen = [f"net j{n}pos-cmd-shaped {comp}.pos-cmd-out", f"net j{n}pos-fb => {comp}.pos-fb-in"]
             else:

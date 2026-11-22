@@ -71,6 +71,8 @@ LinuxCNC reads ``;`` as a comment.
 """
 from __future__ import annotations
 
+from models.machineconfig.HardwareJsonModels import FirmwareRetraction
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -136,7 +138,7 @@ class _State:
     prestart: list[str] = field(default_factory=list)
     leds: list[str] = field(default_factory=list)
     part_fans: int | None = None  # None: not known, every fan line kept
-    retraction: dict[str, float] | None = None  # [firmware_retraction]
+    retraction: FirmwareRetraction | None = None  # [firmware_retraction]
     retracted: bool = False
     feed: float | None = None  # the file's last F (restored after a retraction)
     uses_m600: bool = False
@@ -165,14 +167,13 @@ def _words(code: str) -> list[tuple[str, str]]:
 
 def convert(
     text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = (), part_fans: int | None = None,
-    retraction: dict[str, float] | None = None,
+    retraction: FirmwareRetraction | None = None,
 ) -> ConversionResult:
     """Convert a whole file (see the module docstring). ``led_names``:
     the machine's ``[neopixel]`` names, in declaration order;
     ``part_fans``: how many part fans ``M106`` / ``M107`` can reach
     (``None``: unknown, every fan line is kept); ``retraction``: the
-    machine's ``[firmware_retraction]`` (``retract_length``,
-    ``retract_speed``, ``unretract_extra_length``, ``unretract_speed``)."""
+    machine's ``[firmware_retraction]``."""
     macros = {name.lower() for name in macro_names}
     state = _State(leds=[name.lower() for name in led_names], part_fans=part_fans, retraction=retraction)
     out: list[str] = []
@@ -377,19 +378,19 @@ def _track_feed(words: list[tuple[str, str]], move: bool, state: _State) -> None
 
 def _retraction(stripped: str, state: _State, comment: str, unretract: bool) -> tuple[str, str | None]:
     """A bare ``G10`` / ``G11``: the ``[firmware_retraction]`` move on A."""
-    config = state.retraction or {}
-    length = float(config.get("retract_length") or 0.0)
-    if length <= 0:
+    config = state.retraction
+    length = config.retract_length if config is not None else 0.0
+    if config is None or length <= 0:
         return _commented(stripped, "firmware retraction: no [firmware_retraction]", comment), \
             f"{stripped!r}: no [firmware_retraction] retract_length"
     if unretract != state.retracted:
         return _commented(stripped, "already " + ("unretracted" if unretract else "retracted"), comment), None
     if unretract:
-        delta = length + float(config.get("unretract_extra_length") or 0.0)
-        speed = float(config.get("unretract_speed") or 10.0)
+        delta = length + config.unretract_extra_length
+        speed = config.unretract_speed
     else:
         delta = -length
-        speed = float(config.get("retract_speed") or 20.0)
+        speed = config.retract_speed
     state.retracted = not unretract
     state.a_total += delta
     a = delta if state.xyz_relative else state.a_total

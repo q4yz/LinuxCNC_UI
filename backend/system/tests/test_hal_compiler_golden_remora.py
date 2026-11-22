@@ -61,7 +61,7 @@ PAYLOAD: dict[str, Any] = {
             "connection": "remora-spi",
             "board": "BIGTREETECH OCTOPUS",
             "board_reset_pin": "PC15",
-            "parameters": {"spi_clk_div": 64},
+            "spi_clk_div": 64,
         }
     ],
     "axes": [

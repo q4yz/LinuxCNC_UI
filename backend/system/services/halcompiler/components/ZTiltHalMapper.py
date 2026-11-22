@@ -15,9 +15,8 @@ Z joint (whichever driver they feed — ``remora.joint.N`` or
 """
 from __future__ import annotations
 
-from typing import Any
-
 from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragment
+from models.machineconfig.HardwareJsonModels import ZTilt
 
 #: How fast a correction is applied (mm/s): slow enough for any driver.
 RAMP_MM_PER_S = 2.0
@@ -38,11 +37,11 @@ class ZTiltHalMapper:
         return f"ztilt-{index}"
 
     @staticmethod
-    def to_fragment(z_tilt: dict[str, Any], fragments: list[HalFragment]) -> HalFragment:
+    def to_fragment(z_tilt: ZTilt, fragments: list[HalFragment]) -> HalFragment:
         """Splice the offsets into ``fragments`` (in place); the new
         components as their own fragment."""
-        joints = [int(j) for j in z_tilt.get("joints") or []]
-        limit = float(z_tilt.get("max_adjust") or 5.0)
+        joints = z_tilt.joints
+        limit = z_tilt.max_adjust
         offsets = [ZTiltHalMapper.offset_name(k) for k in range(len(joints))]
         ramps = [ZTiltHalMapper.ramp_name(k) for k in range(len(joints))]
         fragment = HalFragment(

@@ -1,6 +1,8 @@
 """[firmware_retraction] and [filament_change] / M600."""
 from __future__ import annotations
 
+from models.machineconfig.HardwareRecords import HardwareRecords
+
 from pathlib import Path
 
 import pytest
@@ -48,7 +50,7 @@ def test_ini_gets_the_m600_remap_and_its_values():
     payload = build_hardware_json(graph, "m")
     axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
     ini = render_ini_template("m", axes, payload["tools"], remaps=[M600_REMAP],
-                              filament_change=payload["filament_change"])
+                              filament_change=HardwareRecords.filament_change(payload))
     assert "REMAP=M600 modalgroup=10 ngc=m600" in ini
     section = ini.split("[FILAMENT_CHANGE]", 1)[1].split("\n\n", 1)[0]
     for key in ("PARK_X", "PARK_Y", "Z_LIFT", "UNLOAD_LENGTH", "UNLOAD_SPEED", "LOAD_LENGTH", "LOAD_SPEED",

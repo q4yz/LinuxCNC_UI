@@ -9,9 +9,8 @@ a CAN node).
 """
 from __future__ import annotations
 
-from typing import Any
-
 from mappers.machineconfig import PinStringMapper
+from models.machineconfig.HardwareJsonModels import Led
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
 
 
@@ -26,18 +25,22 @@ class LedHalMapper:
         return f"led-{led_id}-{index}"
 
     @staticmethod
-    def to_fragment(led: dict[str, Any]) -> HalFragment:
+    def segments(led: Led) -> list[list[int]]:
+        """``[first, count]`` per colour channel; no segments: the whole chain."""
+        return led.segments or [[1, led.chain_count]]
+
+    @staticmethod
+    def to_fragment(led: Led) -> HalFragment:
         fragment = HalFragment()
-        led_id = str(led["id"])
-        pin = PinStringMapper.from_string(str(led["pin"]))
-        for k, (first, count) in enumerate(led.get("segments") or [[1, int(led.get("chain_count") or 1)]]):
+        pin = PinStringMapper.from_string(led.pin)
+        for k, (first, count) in enumerate(LedHalMapper.segments(led)):
             fragment.requests.append(
                 PinRequest(
-                    signal=LedHalMapper.segment_signal(led_id, k),
+                    signal=LedHalMapper.segment_signal(led.id, k),
                     role=PinRole.RGB,
                     pin=pin,
-                    owner=led_id,
-                    led=(int(led.get("chain_count") or 1), str(led.get("color_order") or "GRB"), int(first), int(count)),
+                    owner=led.id,
+                    led=(led.chain_count, led.color_order, int(first), int(count)),
                 )
             )
         return fragment

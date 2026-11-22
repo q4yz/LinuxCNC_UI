@@ -2,15 +2,15 @@
 backend's record pin (``ResonanceService``) onto the sampler."""
 from __future__ import annotations
 
-from typing import Any
+from models.machineconfig.HardwareJsonModels import Adxl345
 
 from .Adxl345HalMapper import SAMPLER, SIGNAL, Adxl345HalMapper
 
 
 class Adxl345WebguiMapper:
     @staticmethod
-    def to_lines(payload: dict[str, Any]) -> list[str]:
-        if Adxl345HalMapper.node_adxl345(payload) is None:
+    def to_lines(adxl: Adxl345 | None) -> list[str]:
+        if not Adxl345HalMapper.on_node(adxl):
             return []
         return [
             "# Accelerometer on the CAN node: recording for the resonance test",

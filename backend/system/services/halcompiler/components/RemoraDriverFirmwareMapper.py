@@ -33,9 +33,10 @@ Remora advice that doesn't hold for this actual firmware target:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Mapping
 
 from mappers.machineconfig import PinStringMapper, RemoraFirmwarePinMapper
+from models.machineconfig.HardwareJsonModels import Driver, Stepper
 from models.machineconfig.HalFragmentModels import FirmwareModuleRequest, HalFragment
 
 #: `driver.sense_resistor`'s documented fallback — the value every
@@ -61,24 +62,16 @@ class RemoraDriverFirmwareMapper:
     """One `TMC2209` firmware module per joint whose driver has a UART pin."""
 
     @staticmethod
-    def to_fragment(joints: list[dict[str, Any]], drivers_by_id: dict[str, dict[str, Any]]) -> HalFragment:
+    def to_fragment(joints: list[Stepper], drivers_by_id: Mapping[str, Driver]) -> HalFragment:
         fragment = HalFragment()
         for joint in joints:
-            driver_id = joint.get("driver")
-            if not driver_id:
-                continue
-            driver = drivers_by_id.get(driver_id)
-            if driver is None or driver.get("type") != "TMC2209":
-                continue
-            uart_pin = driver.get("uart_pin")
-            if not uart_pin:
+            driver = drivers_by_id.get(joint.driver) if joint.driver else None
+            if driver is None or driver.type != "TMC2209" or not driver.uart_pin:
                 continue
 
-            joint_id = str(joint["id"])
-            parsed = PinStringMapper.from_string(uart_pin)
-            run_current_a = driver.get("run_current")
-            if run_current_a is None:
-                run_current_a = _DEFAULT_RUN_CURRENT_A
+            joint_id = joint.id
+            parsed = PinStringMapper.from_string(driver.uart_pin)
+            run_current_a = _DEFAULT_RUN_CURRENT_A if driver.run_current is None else driver.run_current
 
             # In Klipper `microsteps` is a key of [stepper_x], not of
             # [tmc2209 stepper_x]: the joint carries it, and the axis
@@ -86,21 +79,21 @@ class RemoraDriverFirmwareMapper:
             # run exactly that resolution or the axis moves the wrong
             # distance (this used to read the driver record only and sent
             # 16 for every driver: a Z with 32 moved half the distance).
-            microsteps = joint.get("microsteps") or driver.get("microsteps") or _DEFAULT_MICROSTEPS
+            microsteps = joint.microsteps or driver.microsteps or _DEFAULT_MICROSTEPS
 
-            stall = int(driver.get("stall_sensitivity") or _DEFAULT_STALL_SENSITIVITY)
+            stall = driver.stall_sensitivity or _DEFAULT_STALL_SENSITIVITY
             module = {
                 "Name": f"driver_{joint_id}",
                 "Thread": "On load",
                 "Type": "TMC2209",
                 "Comment": f"{joint_id} TMC driver",
                 "RX pin": RemoraFirmwarePinMapper.to_firmware_pin(parsed.pin_id),
-                "RSense": driver.get("sense_resistor") or _DEFAULT_RSENSE,
+                "RSense": driver.sense_resistor or _DEFAULT_RSENSE,
                 "Current": round(run_current_a * _AMPS_TO_MILLIAMPS),
                 "Microsteps": microsteps,
                 # StallGuard (sensorless homing) works in StealthChop only:
                 # the firmware sets SGTHRS when both are on.
-                "Stealth chop": "on" if driver.get("stealthchop_threshold") or stall else "off",
+                "Stealth chop": "on" if driver.stealthchop_threshold or stall else "off",
                 "Stall sensitivity": stall,
             }
             fragment.firmware_modules.append(
