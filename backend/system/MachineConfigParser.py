@@ -455,6 +455,23 @@ def _wrap_configparser_error(exc: configparser.Error) -> MalformedConfigError:
 #: or directly after the ``<mcu>:`` prefix, in any combination.
 _PIN_MODIFIERS = frozenset("!^~")
 
+#: ``[mcu] board`` names of LPC1768 / LPC1769 boards (Remora's LPC
+#: firmware targets; every other Remora board is an STM32): the BTT SKR
+#: v1.1 - v1.4 / v1.4 Turbo, MKS SBASE / SGEN L, Smoothieboard, Re-ARM,
+#: Azteeg X5. Matched case-insensitively anywhere in the name, as Remora's
+#: own config.txt writes it ("BIGTREETECH SKR v1.3 & v1.4", "MKS SBASE v1.3").
+_LPC_BOARD = re.compile(
+    r"\bSKR\s*V?1\.[1-4]\b|\bSBASE\b|\bSGEN[\s_-]*L\b|SMOOTHIE|\bRE[\s_-]?ARM\b|\bAZTEEG\b|\bLPC\s*17\d\d\b",
+    re.IGNORECASE,
+)
+
+
+def chip_for_board(board: str | None) -> str | None:
+    """``"lpc17xx"`` for an LPC1768 / LPC1769 board name, else ``None``
+    (STM32, the default): the Remora router loads ``remora_lpc`` instead
+    of ``remora-spi`` and skips the SD-card config sync for it."""
+    return "lpc17xx" if board and _LPC_BOARD.search(board) else None
+
 
 def split_pin(pin: str | None) -> tuple[str | None, str | None]:
     """Split a Klipper multi-MCU pin reference into ``(mcu_name, raw)``.
@@ -1810,6 +1827,7 @@ class MachineConfigParser:
             reset_pin=self._optional_string(section, "reset_pin"),
             reset_chip=self._optional_string(section, "reset_chip"),
             sync_config=sync_config,
+            chip=chip_for_board(self._optional_string(section, "board")) if connection_raw == "remora-spi" else None,
             **can,
         )
 

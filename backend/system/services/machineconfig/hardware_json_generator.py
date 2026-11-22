@@ -1258,7 +1258,7 @@ def build_hardware_json(
         # what was declared.
         for key in (
             "board_reset_pin", "spi_freq", "spi_clk_div", "pru_base_freq",
-            "spi_cs_pin", "spi_cs_chip", "reset_pin", "reset_chip", "sync_config",
+            "spi_cs_pin", "spi_cs_chip", "reset_pin", "reset_chip", "sync_config", "chip",
             "can_bitrate", "can_status_bit", "canbus_uuid", "can_node", "can_hub",
             "mandatory",
         ):

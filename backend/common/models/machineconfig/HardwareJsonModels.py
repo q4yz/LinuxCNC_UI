@@ -604,8 +604,9 @@ class McuInfo(BaseModel):
     reset_pin: str | None = None
     reset_chip: str | None = None
     sync_config: bool | None = None
-    # The board's MCU family: "lpc17xx" (SKR 1.3 / 1.4) loads remora_lpc
-    # and has no SD-card config sync; None: STM32 (remora-spi).
+    # The board's MCU family, derived from `board` by the parser
+    # (`chip_for_board`): "lpc17xx" (SKR v1.3 / v1.4, MKS SBASE, ...) loads
+    # remora_lpc and has no SD-card config sync; None: STM32 (remora-spi).
     chip: Literal["stm32", "lpc17xx"] | None = None
     # CAN — a remora-spi hub's `can_bitrate` / `can_status_bit`, a
     # remora-can node's `canbus_uuid` / `can_node` / `can_hub` /

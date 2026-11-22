@@ -30,9 +30,12 @@
 [mcu <identifier>]
     connection: string // Must be "remora-spi" (the default when a bare [mcu] omits it)
     board: string // (Optional) firmware target, e.g. "BIGTREETECH OCTOPUS" / "SKR v1.4".
-                   // Never autofilled — an absent board stays absent; HAL generation
-                   // cares about protocols and device paths, not PCB names. Klipper
-                   // needs a board to compile firmware; this HAL pipeline does not.
+                   // Never autofilled — an absent board stays absent. It picks the
+                   // firmware family: an LPC1768 / LPC1769 name (SKR v1.1 - v1.4, MKS
+                   // SBASE / SGEN L, Smoothieboard, Re-ARM, Azteeg X5;
+                   // MachineConfigParser.chip_for_board) becomes hardware.json
+                   // `chip: "lpc17xx"` -> `loadrt remora_lpc`, no config sync;
+                   // anything else (or none) is STM32 -> `loadrt remora-spi`.
     interface: string // (Optional) transport selector, e.g. a spidev path
     servo_period: integer // (Optional) ns per servo cycle, default 1000000
     board_reset_pin: string // (Optional) a pin on the Remora board itself. Real, not invented:

@@ -587,6 +587,9 @@ class MCU:
       not the board-side ``board_reset_pin`` above).
     * ``sync_config`` — ``False`` drops the ``remora-upload --sync``
       line (firmware without SD upload); ``None`` means on.
+    * ``chip`` — derived from ``board``, never declared: ``"lpc17xx"``
+      for an LPC1768 / LPC1769 board (``loadrt remora_lpc``, no SD-card
+      config sync), ``None`` for everything else (STM32).
     * ``can_bitrate`` / ``can_status_bit`` — a ``remora-spi`` hub's CAN
       bus (the firmware ``"CAN"`` block); ``canbus_uuid`` / ``can_node``
       / ``can_hub`` / ``mandatory`` — a ``remora-can``
@@ -613,6 +616,9 @@ class MCU:
     reset_pin: str | None = None
     reset_chip: str | None = None
     sync_config: bool | None = None
+    #: ``"lpc17xx"`` when ``board`` names an LPC1768 / LPC1769 board
+    #: (:func:`MachineConfigParser.chip_for_board`); ``None``: STM32.
+    chip: str | None = None
     can_bitrate: int | None = None
     can_status_bit: int | None = None
     canbus_uuid: str | None = None

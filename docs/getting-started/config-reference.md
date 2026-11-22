@@ -18,7 +18,10 @@ The board (a Remora board on SPI, Ethernet, a CAN node, a VFD). One `[mcu]`; mor
 #   How the host reaches the board: remora-spi, remora-eth, remora-can (a CAN node behind a
 #   remora-spi hub), parallelport, vfd_rs485, ethercat, usb_arduino, dummy.
 #board:
-#   The board's name, for your information (e.g. BIGTREETECH OCTOPUS).
+#   The board's name (e.g. BIGTREETECH OCTOPUS). On remora-spi it also picks the
+#   firmware family: an LPC1768 / LPC1769 board (SKR v1.1 - v1.4, MKS SBASE / SGEN L,
+#   Smoothieboard, Re-ARM, Azteeg X5) loads remora_lpc and gets no SD-card config
+#   sync; any other name (or none) is an STM32 board.
 #interface:
 #   The transport's device: the spidev path for remora-spi, socket:// for remora-eth, a
 #   serial port for vfd_rs485.
