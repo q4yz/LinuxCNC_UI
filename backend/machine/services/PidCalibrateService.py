@@ -29,6 +29,7 @@ from typing import Any, Callable, List, Optional, Tuple
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from exceptions import BadRequestError, ConflictError
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.pid_calibrate")
 
@@ -109,7 +110,7 @@ def parse_command(line: str) -> Optional[dict[str, str]]:
     return {k.upper(): v for k, v in _PARAM.findall(text[len(head):])}
 
 
-class PidCalibrateService:
+class PidCalibrateService(HalPinService):
     def __init__(self) -> None:
         self._pins: dict[str, ReadWriteDynamicHalPin[Any]] = {}
         self._worker: Optional[threading.Thread] = None

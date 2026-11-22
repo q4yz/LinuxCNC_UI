@@ -23,6 +23,7 @@ from core.skew import skew_factor
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from exceptions import BadRequestError
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.shaper")
 
@@ -31,7 +32,7 @@ _PARAM = re.compile(r"([A-Za-z_]+)\s*=\s*([^\s]+)")
 _PINS = ("shaper-freq-x", "shaper-freq-y", "skew-xy", "resonance-amp-x", "resonance-amp-y", "resonance-freq")
 
 
-class ShaperService:
+class ShaperService(HalPinService):
     def __init__(self) -> None:
         self.freq = {"x": 0.0, "y": 0.0}
         self.skew = 0.0

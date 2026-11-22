@@ -8,9 +8,10 @@ from factories.temperature.TemperatureStateFactory import TemperatureStateFactor
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 from dtos.tools import ExtruderPins, HeaterStateDTO, HeaterPins
 from services.ToolsService import get_tools_service
+from services.HalPinService import HalPinService
 
 
-class TemperatureService:
+class TemperatureService(HalPinService):
 
 
     def __init__(self):

@@ -31,6 +31,7 @@ from core.gcode_converter import MAX_OBJECTS, read_objects
 from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from exceptions import BadRequestError
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.print_tuning")
 
@@ -76,7 +77,7 @@ def progress_at(index: List[Tuple[int, Optional[float], Optional[float]]], line:
     return Progress(percent, remaining) if found else None
 
 
-class PrintTuningService:
+class PrintTuningService(HalPinService):
     def __init__(self) -> None:
         self._z_offset = 0.0
         self._flow = 100.0

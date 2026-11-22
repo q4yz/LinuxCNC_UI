@@ -15,7 +15,7 @@ to ``webgui.<id>`` (float), then toggle ``webgui.<id>-set`` — and the
 latched result comes back on ``webgui.<id>-state``.
 
 Outputs start at their profile ``value`` once the component is up
-(``apply_start_values``).
+(``apply_initial``).
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from exceptions import BadRequestError, NotFoundError
 from models.IoModels import IoFan, IoInput, IoOutput, IoState
 from services.FansService import get_fans_service
 from services.HardwareConfigService import HardwareConfigService
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.io")
 
@@ -43,18 +44,18 @@ class _Latch:
         self.state: ReadOnlyDynamicHalPin[float] = ReadOnlyDynamicHalPin(f"{pin_id}-state", HalDataType.FLOAT, f"Output pin {pin_id}: value")
 
 
-class IoService:
+class IoService(HalPinService):
     def __init__(self) -> None:
         self._outputs: Dict[str, tuple[Dict[str, Any], HalPin[Any]]] = {}
         self._latches: Dict[str, _Latch] = {}
         self._inputs: Dict[str, HalPin[bool]] = {}
         self._preloaded = False
 
-    def preload_hal_pins(self, payload: Optional[Dict[str, Any]] = None) -> None:
+    def preload_hal_pins(self) -> None:
         """Queue the output / input pins. Call before ``HalPin.initialize_component()``."""
         if self._preloaded:
             return
-        payload = payload if payload is not None else HardwareConfigService().load_payload()
+        payload = HardwareConfigService().load_payload()
         latched = {
             str(entry.get("output"))
             for inp in payload.get("input_pins") or []
@@ -75,7 +76,7 @@ class IoService:
         self._preloaded = True
         logger.info("Preloaded %d output and %d input pins.", len(self._outputs), len(self._inputs))
 
-    def apply_start_values(self) -> None:
+    def apply_initial(self) -> None:
         """Each output's profile ``value`` — after ``HalPin.initialize_component()``."""
         for pin_id, (out, _pin) in self._outputs.items():
             try:

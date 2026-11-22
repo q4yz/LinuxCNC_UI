@@ -22,11 +22,12 @@ from mappers.axis.AxisMapper import AxisMapper
 from mappers.axis.SpeedOverrideMapper import SpeedOverrideMapper
 from services.HardwareConfigService import HardwareConfigService
 from hal_service.JogService import jog_keepalive, jog_axis, jog_stop
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.AxisService")
 
 
-class AxisService:
+class AxisService(HalPinService):
     """Axis-motion facade (homing).
 
     The ``MODE_MANUAL`` pre-switch is the only behavioural difference

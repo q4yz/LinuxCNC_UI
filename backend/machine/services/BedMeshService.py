@@ -13,11 +13,12 @@ from typing import Optional
 
 from dtos.pins.HalPin import HalDataType, HalPin
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.bed_mesh")
 
 
-class BedMeshService:
+class BedMeshService(HalPinService):
     def __init__(self) -> None:
         self._enable: Optional[HalPin[bool]] = None
 

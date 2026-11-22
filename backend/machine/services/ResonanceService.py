@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from exceptions import BadRequestError, ConflictError
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.resonance")
 
@@ -118,7 +119,7 @@ def fit_shapers(freqs: Any, psd: Any, min_freq: float, max_freq: float) -> Tuple
     return fits, min(fits, key=lambda fit: fit.score)
 
 
-class ResonanceService:
+class ResonanceService(HalPinService):
     def __init__(self) -> None:
         self._worker: Optional[threading.Thread] = None
         self._lock = threading.Lock()

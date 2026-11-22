@@ -6,6 +6,7 @@ from exceptions import ConflictError
 from dtos.mcu.McuDto import McuPins
 from mappers.mcu.McuMapper import McuMapper
 from services.mcu_config_mapper import get_mcus
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.mcu")
 
@@ -14,7 +15,7 @@ logger = logging.getLogger("backend.services.mcu")
 RESET_PULSE_S = 0.05
 
 
-class McuService:
+class McuService(HalPinService):
     """Owns every ``hardware.json`` MCU's runtime surface.
 
     Registers ``webgui.<id>-reset`` for each resettable (Remora +

@@ -32,6 +32,7 @@ from hardware.Connection import MachineState, read_hal_pin
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
 from services.Probing import ProbeError, ProbeOffsets, probe_points
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.ZTiltService")
 
@@ -47,7 +48,7 @@ class ZTiltError(RuntimeError):
     """Why a Z tilt adjust stopped."""
 
 
-class ZTiltService:
+class ZTiltService(HalPinService):
     def __init__(self, config: Optional[HardwareConfigService] = None) -> None:
         self._config = config or HardwareConfigService()
         self._pins: List[ReadWriteDynamicHalPin[float]] = []

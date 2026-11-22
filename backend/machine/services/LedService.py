@@ -16,11 +16,12 @@ from dtos.pins.HalPin import HalDataType
 from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from exceptions import BadRequestError, NotFoundError
 from services.HardwareConfigService import HardwareConfigService
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.LedService")
 
 
-class LedService:
+class LedService(HalPinService):
     def __init__(self, config: Optional[HardwareConfigService] = None) -> None:
         self._config = config or HardwareConfigService()
         self._leds: List[Dict[str, Any]] = []

@@ -34,6 +34,7 @@ from hardware import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_chann
     get_error_channel
 from hardware.Connection import message_severity, read_error_history
 from models.state.StateModels import StateSnapshotResponse
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.StateService")
 
@@ -42,7 +43,7 @@ logger = logging.getLogger("backend.services.StateService")
 # Service
 # ---------------------------------------------------------------------------
 
-class StateService:
+class StateService(HalPinService):
     """Machine-business facade for state / mode / MDI.
 
     Each method is a thin wrapper over :func:`execute_sync_cmd` /

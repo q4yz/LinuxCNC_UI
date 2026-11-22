@@ -6,9 +6,10 @@ from dtos.tools import ExtruderPins, HeaterPins
 from mappers.fans.FanMapper import FanMapper
 from services.fans_config_mapper import get_fans
 from services.ToolsService import get_tools_service
+from services.HalPinService import HalPinService
 
 
-class FansService:
+class FansService(HalPinService):
     """Registers every standalone ``part`` fan's ``webgui.<id>`` HAL pin.
 
     ``webgui_connections.hal`` (``FanWebguiMapper``) always emits

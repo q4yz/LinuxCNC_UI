@@ -17,12 +17,13 @@ from dtos.tools import SpindleDigitalStateDTO, SpindleAnalogStateDTO, HeaterStat
 from factories.tools.ToolPinTypeFactory import ToolPinTypeFactory
 from factories.tools.ToolStateFactory import ToolStateFactory
 from factories.tools.ToolHalPinFactory import ToolHalPinFactory
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.tools_service")
 
 T = TypeVar('T', bound=ToolPins)
 
-class ToolsService:
+class ToolsService(HalPinService):
 
     def __init__(self):
         self._halpins_cache: Optional[List[ToolPins]] = None

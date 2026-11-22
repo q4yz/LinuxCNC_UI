@@ -41,7 +41,7 @@ def service(monkeypatch):
 
 def test_outputs_start_at_their_profile_value(service):
     io, _fan = service
-    io.apply_start_values()
+    io.apply_initial()
     state = io.state()
     assert {o.id: o.value for o in state.outputs} == {"case_light": 1.0, "dimmable_light": 25.0}
     assert [(o.id, o.pwm, o.scale) for o in state.outputs] == [
@@ -84,10 +84,11 @@ def test_preload_creates_bit_pins_for_switches_and_float_pins_for_pwm(monkeypatc
 
     monkeypatch.setattr(io_module, "ReadWriteDynamicHalPin", fake_pin("rw"))
     monkeypatch.setattr(io_module, "ReadOnlyDynamicHalPin", fake_pin("ro"))
-    IoService().preload_hal_pins({
+    monkeypatch.setattr(io_module, "HardwareConfigService", lambda: SimpleNamespace(load_payload=lambda: {
         "output_pins": [{"id": "case_light"}, {"id": "dimmable_light", "pwm": True}],
         "input_pins": [{"id": "my_custom_button"}],
-    })
+    }))
+    IoService().preload_hal_pins()
     assert created == [
         ("rw", "case_light", "BIT"), ("rw", "dimmable_light", "FLOAT"), ("ro", "my_custom_button", "BIT"),
     ]
@@ -122,13 +123,14 @@ def test_a_latched_output_is_one_event_and_reads_back_its_state(monkeypatch):
     monkeypatch.setattr(io_module, "ReadOnlyDynamicHalPin", make)
     monkeypatch.setattr(io_module, "get_fans_service", lambda: SimpleNamespace(get_halpins=lambda: []))
     io = IoService()
-    io.preload_hal_pins({
+    monkeypatch.setattr(io_module, "HardwareConfigService", lambda: SimpleNamespace(load_payload=lambda: {
         "output_pins": [{"id": "case_light", "value": 1}],
         "input_pins": [{"id": "door", "rising_halpin_set": [{"output": "case_light", "value": 1}]}],
-    })
+    }))
+    io.preload_hal_pins()
     assert set(pins) == {"case_light", "case_light-set", "case_light-state", "door"}
 
-    io.apply_start_values()
+    io.apply_initial()
     assert (pins["case_light"].value, pins["case_light-set"].value) == (1.0, True)
     io.set_value("case_light", 0)
     assert (pins["case_light"].value, pins["case_light-set"].value) == (0.0, False)  # toggled again

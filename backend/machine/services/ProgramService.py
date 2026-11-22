@@ -23,11 +23,12 @@ from dtos.pins.ReadWriteDynamicHalPin import ReadWriteDynamicHalPin
 from hardware.Connection import execute_sync_cmd, linuxcnc, get_stat_channel, get_cmd_channel
 from models.program.ProgramModels import ProgramProgressResponse
 from services.line_count_cache import lookup as lookup_line_count
+from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.ProgramService")
 
 
-class ProgramService:
+class ProgramService(HalPinService):
     """G-code program lifecycle facade.
 
     Owns the canonical two-step program lifecycle:
