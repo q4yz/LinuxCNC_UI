@@ -68,3 +68,14 @@ def test_test_signal(service):
     assert service._pins["resonance-freq"].value == 40.0
     service.stop_test()
     assert service._pins["resonance-amp-y"].value == 0.0
+
+
+def test_available_on_corexy_too(monkeypatch):
+    """CoreXY shapes X / Y before the belt mixing (CoreXyHalMapper)."""
+    from services.ShaperService import ShaperService
+
+    svc = ShaperService()
+    monkeypatch.setattr(ShaperService, "_payload", staticmethod(lambda: {"kinematics": "corexy", "skew_correction": {}}))
+    assert svc.available()
+    monkeypatch.setattr(ShaperService, "_payload", staticmethod(lambda: {"kinematics": "corexy"}))
+    assert not svc.available()

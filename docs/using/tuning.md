@@ -55,8 +55,8 @@ node needs the Remora-m8p firmware with the ADXL345 module, and two free process
 on the hub (temperatures use them too).
 
 `SET_INPUT_SHAPER SHAPER_FREQ_X=<Hz> SHAPER_FREQ_Y=<Hz>` tries a frequency; a change
-applies once the axis stands still. Input shaping and the test need a Cartesian Remora
-machine (not CoreXY).
+applies once the axis stands still. Input shaping and the test need a Remora machine,
+Cartesian or CoreXY (there they act on X / Y before the belt mixing).
 
 ## Skew correction
 

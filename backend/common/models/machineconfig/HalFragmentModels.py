@@ -69,7 +69,8 @@ class Addf:
 
     ``order`` is the tie-break within one thread, per the role tiers
     README § 4 documents (base: read=0, make-pulses=1, write=2,
-    reset=3; servo: read=0, motion=1, write=2) — never a raw line
+    reset=3; servo: read=0, motion=1, processing motion's output=2,
+    write=3) — never a raw line
     index, since two mappers contributing to the same thread don't
     know about each other's position.
     """

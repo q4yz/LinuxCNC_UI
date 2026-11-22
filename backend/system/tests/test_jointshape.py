@@ -60,6 +60,17 @@ def test_jointshape_between_x_y_joints_and_their_stepgens():
     assert f"net resonance-freq webgui.resonance-freq => shape-j{x}.test-freq shape-j{y}.test-freq" in webgui
 
 
+def test_shapers_run_before_the_board_write():
+    """Tied in one tier, remora.write ran first and the board got last
+    period's shaped position; the write is now last."""
+    payload = _payload(SHAPER)
+    addf = [line.split()[1] for line in compile_machine_hal(payload).splitlines() if line.startswith("addf ")]
+    x = next(a["joint_numbers"][0] for a in payload["axes"] if a["id"] == "x")
+    assert addf.index("motion-controller") < addf.index(f"shape-j{x}") < addf.index("remora.write")
+    assert addf[-1] in ("remora.write", "remora.update-freq") or addf.index("remora.write") > max(
+        i for i, f in enumerate(addf) if f.startswith(("shape-j", "extruder-")))
+
+
 def test_nothing_without_the_sections():
     payload = _payload()
     assert "jointshape" not in compile_machine_hal(payload)

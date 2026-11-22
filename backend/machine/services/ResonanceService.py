@@ -199,7 +199,7 @@ class ResonanceService:
         from services.ShaperService import get_shaper_service
 
         if not get_shaper_service().available():
-            raise BadRequestError("The test signal needs the jointshape component (a Cartesian Remora machine).")
+            raise BadRequestError("The test signal needs the jointshape component (a Remora machine, Cartesian or CoreXY).")
         stat = get_stat_channel()
         if stat is None:
             raise BadRequestError("LinuxCNC is not running.")

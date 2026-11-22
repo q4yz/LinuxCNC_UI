@@ -59,10 +59,10 @@ class ShaperService:
         return HardwareConfigService().load_payload()
 
     def available(self) -> bool:
-        """The machine has the jointshape component on X / Y."""
+        """The machine has the jointshape component on X / Y (Cartesian, or
+        CoreXY: there it shapes X / Y before the belt mixing)."""
         payload = self._payload()
-        return payload.get("kinematics") != "corexy" and any(
-            isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
+        return any(isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
 
     def _write(self, pin: str, value: float) -> None:
         handle = self._pins.get(pin)
@@ -106,7 +106,7 @@ class ShaperService:
             return False
         if not self.available():
             raise BadRequestError(f"{head}: the profile has no [input_shaper] / [skew_correction] (on a "
-                                  "Cartesian Remora machine) — add one and generate the machine.")
+                                  "Remora machine, Cartesian or CoreXY) — add one and generate the machine.")
         params = {k.upper(): v for k, v in _PARAM.findall(text[len(head):])}
         if head == "SET_INPUT_SHAPER":
             for axis in ("x", "y"):

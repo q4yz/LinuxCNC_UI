@@ -221,10 +221,15 @@ class HalAssembler:
                 fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id, routed))
             else:
                 fragments.append(mapper.to_fragment(axis, joints, self._endstops_by_id))
-        if corexy:
-            fragments.append(CoreXyHalMapper.to_fragment(*corexy))
+        # On CoreXY the shapers act on X / Y before the mixing (both mappers
+        # agree on the j<n>pos-cmd-shaped / j<n>pos-fb signals between them).
+        # The shapers first: in the same servo tier (2) as the CoreXY motor
+        # sums, emission order decides, and the sums need the shaped X / Y.
+        shaped_corexy = bool(corexy) and set(corexy) <= set(self._shaped)
         if self._shaped:
-            fragments.append(JointShapeHalMapper.to_fragment(self._payload, self._shaped))
+            fragments.append(JointShapeHalMapper.to_fragment(self._payload, self._shaped, corexy=shaped_corexy))
+        if corexy:
+            fragments.append(CoreXyHalMapper.to_fragment(*corexy, shaped=shaped_corexy))
         return fragments
 
     def _spindle_fragments(self) -> list[HalFragment]:

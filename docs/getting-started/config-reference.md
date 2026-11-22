@@ -344,8 +344,9 @@ points:
 ## Motion tuning
 
 Input shaping, skew correction and the resonance test run in the Remora `jointshape`
-component between the X / Y joints and their step generators — Cartesian Remora machines
-(not CoreXY). {doc}`../using/tuning`.
+component on the X / Y joints of a Remora machine. On a Cartesian machine it sits between
+the joints and their step generators; on CoreXY before the belt mixing (A = X + Y,
+B = X - Y), so it shapes the Cartesian X and Y as Klipper does. {doc}`../using/tuning`.
 
 ### [input_shaper]
 

@@ -93,8 +93,12 @@ class RemoraRouterMapper:
             ],
             addf=[
                 Addf("remora.read", SERVO_THREAD, order=0),
-                Addf("remora.update-freq", SERVO_THREAD, order=2),
-                Addf("remora.write", SERVO_THREAD, order=2),
+                # last (tier 3): after every component that works on motion's
+                # output in tier 2 (jointshape, the extruder component, the
+                # CoreXY mixing) — tied in tier 2 they ran after the write and
+                # the board got last period's positions.
+                Addf("remora.update-freq", SERVO_THREAD, order=3),
+                Addf("remora.write", SERVO_THREAD, order=3),
             ],
         )
 

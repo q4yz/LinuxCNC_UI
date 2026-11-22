@@ -47,13 +47,13 @@ def test_base_fragment_wires_the_spi_estop_watchdog_chain():
 
 def test_base_fragment_addf_order_sandwiches_motion_at_order_one():
     """`remora.read`(0) -> motion(1, from MotionSystemHalMapper) ->
-    `remora.update-freq`/`remora.write`(2) — matches the real
-    `ender3.hal` thread-attachment block exactly."""
+    `remora.update-freq`/`remora.write`(3, after the tier-2 components that
+    work on motion's output) — the order of the real `ender3.hal`."""
     fragment = RemoraRouterMapper.base_fragment({"id": "mcu"})
     by_func = {a.func: a.order for a in fragment.addf}
     assert by_func["remora.read"] == 0
-    assert by_func["remora.update-freq"] == 2
-    assert by_func["remora.write"] == 2
+    assert by_func["remora.update-freq"] == 3
+    assert by_func["remora.write"] == 3
     assert all(a.thread == "servo-thread" for a in fragment.addf)
 
 

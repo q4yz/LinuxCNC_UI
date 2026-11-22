@@ -244,7 +244,7 @@ class CalibrationService:
         has_adxl = isinstance(payload.get("adxl345"), dict)
         items.append(Calibration(
             "input_shaper", "input_shaper", "", has_adxl and get_shaper_service().available(),
-            "Needs [adxl345] and a Cartesian Remora machine (the jointshape component).",
+            "Needs [adxl345] on a Remora machine (Cartesian or CoreXY: the jointshape component).",
             command=lambda p: "SHAPER_CALIBRATE", running=get_resonance_service().is_running,
             values={k: shaper.get(k) for k in ("freq_x", "type_x", "freq_y", "type_y")}))
         items.extend(guided_calibrations(payload))
@@ -478,8 +478,8 @@ def guided_calibrations(payload: Mapping[str, Any]) -> List[Calibration]:
     side = Param("size", 100, "mm", 40, 200)
     skew = Calibration(
         "skew", "skew", "", skew_available,
-        "Needs the jointshape component: add an empty [skew_correction] section to the profile (Cartesian "
-        "Remora machine) and generate the machine.",
+        "Needs the jointshape component: add an empty [skew_correction] section to the profile (a Remora "
+        "machine, Cartesian or CoreXY) and generate the machine.",
         params=heaters + [side],
         running=_printing("skew_square"),
         values={"factor": get_shaper_service().skew},

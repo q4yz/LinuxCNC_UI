@@ -22,7 +22,14 @@ The live values come from the UI (``webgui_connections.hal``): the shaper
 frequencies (``webgui.shaper-freq-x`` / ``-y``), the skew factor
 (``webgui.skew-xy``) and the resonance test (``webgui.resonance-amp-x`` /
 ``-y``, ``webgui.resonance-freq``) — ``ShaperService`` starts them at the
-profile's values. Not on CoreXY (its X / Y joints feed the CoreXY mixing).
+profile's values.
+
+On CoreXY the shapers act on the Cartesian X / Y *before* the CoreXY mixing
+(`CoreXyHalMapper` with ``shaped``): ``pos-cmd-out`` feeds the mixing
+instead of a step generator, ``pos-fb-in`` takes the recovered X / Y::
+
+    net j0pos-cmd-shaped shape-j0.pos-cmd-out     (=> corexy-a / -b inputs)
+    net j0pos-fb => shape-j0.pos-fb-in             (<= corexy-x.out)
 """
 from __future__ import annotations
 
@@ -53,7 +60,7 @@ def shaped_joints(payload: dict[str, Any]) -> dict[int, str]:
     """Joint number -> ``"x"`` / ``"y"`` for the joints that get a
     ``jointshape`` (empty when the machine wants none or cannot have it)."""
     wanted = any(isinstance(payload.get(k), dict) for k in ("input_shaper", "skew_correction", "adxl345"))
-    if not wanted or payload.get("kinematics") == "corexy":
+    if not wanted:
         return {}
     from ..HalAssembler import HalAssembler
 
@@ -70,7 +77,8 @@ def shaped_joints(payload: dict[str, Any]) -> dict[int, str]:
 
 class JointShapeHalMapper:
     @staticmethod
-    def to_fragment(payload: dict[str, Any], joints: dict[int, str]) -> HalFragment:
+    def to_fragment(payload: dict[str, Any], joints: dict[int, str], corexy: bool = False) -> HalFragment:
+        """``corexy``: the shapers feed the CoreXY mixing (see the module docstring)."""
         fragment = HalFragment()
         if not joints:
             return fragment
@@ -85,10 +93,17 @@ class JointShapeHalMapper:
             # machine.ini [INPUT_SHAPER] (calibration.ini overrides it at start)
             fragment.setp.append(f"setp {comp}.shaper-type [{INI_SECTION}]TYPE_{letter.upper()}")
             fragment.setp.append(f"setp {comp}.damping {float(shaper.get(f'damping_{letter}', 0.1)):g}")
+            if corexy:
+                stepgen = [f"net j{n}pos-cmd-shaped {comp}.pos-cmd-out", f"net j{n}pos-fb => {comp}.pos-fb-in"]
+            else:
+                stepgen = [
+                    f"net j{n}pos-cmd-shaped {comp}.pos-cmd-out => remora.joint.{n}.pos-cmd",
+                    f"net j{n}pos-fb remora.joint.{n}.pos-fb => {comp}.pos-fb-in",
+                ]
             fragment.nets.extend([
                 f"net j{n}pos-cmd joint.{n}.motor-pos-cmd => {comp}.pos-cmd-in",
-                f"net j{n}pos-cmd-shaped {comp}.pos-cmd-out => remora.joint.{n}.pos-cmd",
-                f"net j{n}pos-fb remora.joint.{n}.pos-fb => {comp}.pos-fb-in",
+                stepgen[0],
+                stepgen[1],
                 f"net j{n}pos-fb-shaped {comp}.pos-fb-out => joint.{n}.motor-pos-fb",
             ])
             if letter == "x" and y_joints:
