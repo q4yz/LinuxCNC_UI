@@ -1,4 +1,4 @@
-// services/ServoThreadService.ts
+// Servo-thread facade: the telemetry WebSocket (full state + deltas into the servo-thread store) and jog commands.
 import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
 import { describeError } from '../core/error-format';
@@ -61,7 +61,7 @@ function emitLinuxCNCError(
     surfaceLinuxCNCEntry(consoleStore, payload);
 }
 
-export class ServoThreadService {
+export class ServoThreadFacade {
     private ws: WebSocket | null = null;
     private reconnectTimer: number | null = null;
 
@@ -300,4 +300,6 @@ export class ServoThreadService {
     }
 }
 
-export const servoThreadService = new ServoThreadService();
+export const servoThreadFacade = new ServoThreadFacade();
+
+export default servoThreadFacade;

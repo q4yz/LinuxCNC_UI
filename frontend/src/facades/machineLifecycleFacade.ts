@@ -18,12 +18,12 @@
 //     system service's, every line tagged "LinuxCNC: " / "UI: ", so the
 //     UI can show why a session crashed without shell access.
 //
-// Raw ``fetch`` instead of the generated client: ``generated/api/``
-// is regenerated from the live backends and still carries the old
-// ``profile``-based switch contract; these routes gained the
-// ``machine`` body afterwards. When the client is next regenerated
-// these four functions can migrate onto
-// ``SystemMachineLifecycleService`` unchanged.
+// On the generated ``SystemMachineLifecycleService``; failures keep the
+// shape callers rely on: an ``Error`` whose message is the backend's
+// ``detail`` and whose ``status`` is the HTTP status (0: unreachable).
+
+import { SystemMachineLifecycleService } from "../../generated/api/services/SystemMachineLifecycleService";
+import { describeError, errorStatus } from "../core/error-format";
 
 /** Session state reported by the system service. */
 export type MachineSessionState = "stopped" | "starting" | "running" | "stopping";
@@ -56,72 +56,37 @@ export interface MachineConsoleLog {
 }
 
 /**
- * JSON request with FastAPI error surfacing: the ``detail`` string
- * becomes the Error message and the HTTP status is attached as
- * ``err.status`` so callers can special-case 404 / 409.
+ * The call's result; a failure becomes ``Error(detail)`` with ``status``
+ * (the HTTP status, 0 when the system service did not answer) so callers
+ * can special-case 404 / 409 and show the backend's reason.
  */
-async function machineRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
+async function lifecycle<T>(call: () => Promise<unknown>): Promise<T> {
   try {
-    response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      ...init,
-    });
+    return (await call()) as T;
   } catch (err: unknown) {
-    // Network-level failure (system service unreachable).
-    throw Object.assign(
-      new Error(
-        `Machine lifecycle request failed: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      { status: 0 },
-    );
+    const status = errorStatus(err);
+    const message = status === null
+      ? `Machine lifecycle request failed: ${err instanceof Error ? err.message : String(err)}`
+      : describeError(err);
+    throw Object.assign(new Error(message), { status: status ?? 0 });
   }
-
-  if (!response.ok) {
-    let detail = `HTTP ${response.status}`;
-    try {
-      const body = (await response.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      // Non-JSON error body — keep the generic message.
-    }
-    throw Object.assign(new Error(detail), { status: response.status });
-  }
-
-  return (await response.json()) as T;
 }
 
-export class MachineLifecycleFacade {
-  static getStatus(): Promise<MachineStatus> {
-    return machineRequest<MachineStatus>("/api/v1/system/machine");
-  }
+export const machineLifecycleFacade = {
+  getStatus: (): Promise<MachineStatus> =>
+    lifecycle(() => SystemMachineLifecycleService.getMachineSessionStatus()),
 
-  static startMachine(machine?: string): Promise<MachineStatus> {
-    return machineRequest<MachineStatus>("/api/v1/system/machine/start", {
-      method: "POST",
-      body: JSON.stringify(machine ? { machine } : {}),
-    });
-  }
+  startMachine: (machine?: string): Promise<MachineStatus> =>
+    lifecycle(() => SystemMachineLifecycleService.startMachineSession(machine ? { machine } : {})),
 
-  static setDefaultMachine(machine: string): Promise<MachineStatus> {
-    return machineRequest<MachineStatus>("/api/v1/system/machine/default", {
-      method: "POST",
-      body: JSON.stringify({ machine }),
-    });
-  }
+  setDefaultMachine: (machine: string): Promise<MachineStatus> =>
+    lifecycle(() => SystemMachineLifecycleService.setDefaultMachine({ machine })),
 
-  static stopMachine(): Promise<MachineStatus> {
-    return machineRequest<MachineStatus>("/api/v1/system/machine/stop", {
-      method: "POST",
-    });
-  }
+  stopMachine: (): Promise<MachineStatus> =>
+    lifecycle(() => SystemMachineLifecycleService.stopMachineSession()),
 
-  static getConsoleLog(lines = 200): Promise<MachineConsoleLog> {
-    return machineRequest<MachineConsoleLog>(
-      `/api/v1/system/machine/log?lines=${lines}`,
-    );
-  }
+  getConsoleLog: (lines = 200): Promise<MachineConsoleLog> =>
+    lifecycle(() => SystemMachineLifecycleService.getMachineConsoleLog(lines)),
+};
 
-}
-
-export default MachineLifecycleFacade;
+export default machineLifecycleFacade;

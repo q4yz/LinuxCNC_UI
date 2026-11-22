@@ -5,6 +5,7 @@
 import {
   ProgramFilesService,
 } from "../../generated/api/index";
+import type { FileThumbnailResponse } from "../../generated/api/models/FileThumbnailResponse";
 import { CommandResult } from "../entities/common/CommandResult";
 import { FileEntry } from "../entities/files/FileEntry";
 import { toFileListing } from "../mappers/filesMapper";
@@ -85,8 +86,20 @@ async function copyEntry(source: string, destination: string): Promise<CommandRe
   );
 }
 
+/** A file's slicer-embedded thumbnail (``data_url`` null without one). */
+function thumbnail(name: string): Promise<FileThumbnailResponse> {
+  return ProgramFilesService.getFileThumbnail(name);
+}
+
+/** Overwrite (or create) one program file with ``content``. */
+async function writeFile(name: string, content: string): Promise<CommandResult> {
+  return _commandResultFrom(ProgramFilesService.writeFile(name, { content }), `write:${name}`);
+}
+
 export const filesFacade = Object.freeze({
   listFiles,
+  writeFile,
+  thumbnail,
   readFile,
   uploadFile,
   deleteFile,

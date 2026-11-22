@@ -19,10 +19,14 @@ let session: Reply = "network-error";
 (globalThis as any).fetch = async (url: string) => {
   const reply = String(url).includes("/api/v1/health") ? health : session;
   if (reply === "network-error") throw new TypeError("fetch failed");
+  // Enough of a Response for a raw fetch and for the generated client.
   return {
     ok: reply.status >= 200 && reply.status < 300,
     status: reply.status,
+    statusText: "",
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
     json: async () => reply.body ?? {},
+    text: async () => JSON.stringify(reply.body ?? {}),
   };
 };
 

@@ -94,21 +94,17 @@ endpoints). Domain stores under `frontend/src/stores/` should
 import the service and call its static methods rather than
 hand-rolling `fetch`.
 
-**One exception.** `frontend/src/core/settings/createModuleSettings.ts`
-is deliberately hand-rolled `fetch` so callers keep working when
-`generated/api/` is stale — e.g. a fresh checkout before
-`npm run generate-api` has run. The exception is the **settings**
-endpoint, not the data endpoints.
-
-**Tripwire.** No `fetch(...)` call in a store file outside of
-`createModuleSettings.ts`. Enforced by
-`frontend/tests/test-no-hand-rolled-fetch.ts`, which regex-bans a
-stray `fetch(` across every file in `frontend/src/stores/` (read via
-`readdirSync`, not a hardcoded list, so a brand-new store is covered
-automatically). This test caught `cameraStore.ts` hand-rolling
-`fetch()` against three endpoints (`/devices`, `/status`,
-`/stream/diagnostic`) that already had generated-client counterparts
-— migrated to `ModulesCameraService` alongside adding the guard.
+**Tripwire.** Only `frontend/src/facades/` talks to the backends: no
+generated `*Service` import, `fetch(`, `new WebSocket(`, `new EventSource(`
+or `XMLHttpRequest` anywhere else in `frontend/src/` (types from
+`generated/api` are fine). Enforced by
+`frontend/tests/test-facade-boundary.ts` (it replaced
+`test-no-hand-rolled-fetch.ts`, which only covered `stores/` and so
+missed the camera store, the macro button editor, the editor store, the
+machine-online composable and the thumbnail helper). The one raw
+`fetch` left is the machine backend's reachability probe
+(`machineStateFacade.health`): the generated client cannot time out or
+skip the HTTP cache, and a heartbeat needs both.
 
 ### 2.5 Strict-null idempotency gate silently disables the poll
 

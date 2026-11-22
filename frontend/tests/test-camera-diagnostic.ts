@@ -23,8 +23,8 @@ test("store exposes a probe action that hits /stream/diagnostic", () => {
 
   assert.match(
     text,
-    /ModulesCameraService\.diagnoseCameraStream\(/,
-    "store must call the generated diagnostic-endpoint method",
+    /cameraFacade\.diagnose\(/,
+    "store must call the camera facade's diagnosis",
   );
   assert.match(
     text,
@@ -59,8 +59,8 @@ test("probe is single-flight and passes the camera id as a query param", () => {
   // rather than dropped (e.g. via a hardcoded call with no argument).
   assert.match(
     text,
-    /ModulesCameraService\.diagnoseCameraStream\(id \|\| undefined\)/,
-    "the camera id must be passed through to diagnoseCameraStream, not dropped",
+    /cameraFacade\.diagnose\(id \|\| undefined\)/,
+    "the camera id must be passed through to the diagnosis, not dropped",
   );
   assert.doesNotMatch(
     text,

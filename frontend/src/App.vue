@@ -22,7 +22,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useBaseThreadStore } from './stores/baseThread'
-import { servoThreadService } from './facades/servoThreadFacade'
+import { servoThreadFacade } from './facades/servoThreadFacade'
 import { useMachineOnline } from './composables/useMachineOnline'
 import AppSidebar from './components/AppSidebar.vue'
 import ModalConfirmHost from './components/ModalConfirmHost.vue'
@@ -85,7 +85,7 @@ function startMachineTraffic(): void {
   // Idempotent per design (poll handle guard, singleton socket
   // service) — safe to call repeatedly as online flaps.
   baseThread.start()
-  servoThreadService.connect()
+  servoThreadFacade.connect()
 }
 
 function stopMachineTraffic(): void {
@@ -94,7 +94,7 @@ function stopMachineTraffic(): void {
     connectTimer = null
   }
   baseThread.stop()
-  servoThreadService.disconnect()
+  servoThreadFacade.disconnect()
 }
 
 watch(isMachineOnline, (next) => {

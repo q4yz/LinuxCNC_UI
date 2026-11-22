@@ -17,7 +17,7 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, computed } from "vue";
 
-import { BaseThreadService } from "../facades/baseThreadFacade";
+import { baseThreadFacade } from "../facades/baseThreadFacade";
 import { useConsoleStore } from "./console";
 import { useMachineOnline } from "../composables/useMachineOnline";
 
@@ -133,8 +133,8 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
 
   async function refresh(): Promise<void> {
     try {
-      // The BaseThreadService handles all data extraction and mappers now
-      const snapshot = await BaseThreadService.fetchSnapshot();
+      // The baseThreadFacade handles all data extraction and mappers now
+      const snapshot = await baseThreadFacade.fetchSnapshot();
 
       // Entity Surface. ``axes`` is deliberately NOT reassigned here
       // — it's wholly static data, sourced once by fetchStaticAxes()
@@ -171,7 +171,7 @@ export const useBaseThreadStore = defineStore("baseThread", () => {
     if (staticAxesLoadPromise) return staticAxesLoadPromise;
     staticAxesLoadPromise = (async () => {
       try {
-        const snapshot = await BaseThreadService.fetchStatic();
+        const snapshot = await baseThreadFacade.fetchStatic();
         axes.value = snapshot.axes;
         mcus.value = snapshot.mcus;
         if (maxAxisVelocity.value === null) {

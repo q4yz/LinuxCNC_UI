@@ -26,7 +26,7 @@ import {
   deserializePreferences,
   serializePreferences,
 } from "./cameraPreferenceCodec";
-import { ModulesCameraService } from "../../generated/api/services/ModulesCameraService";
+import { cameraFacade } from "../facades/cameraFacade";
 import { useConsoleStore } from "./console";
 import type {
   CameraDevice,
@@ -127,7 +127,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
     error.value = "";
 
     try {
-      const payload = (await ModulesCameraService.listCameraDevices()) as { devices?: unknown };
+      const payload = (await cameraFacade.listDevices()) as { devices?: unknown };
       if (!Array.isArray(payload?.devices)) {
         throw new Error("Camera device response did not contain a devices list");
       }
@@ -209,7 +209,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
    */
   async function refreshStreamMessage(): Promise<string> {
     try {
-      const payload = (await ModulesCameraService.getCameraStatus()) as { message?: unknown };
+      const payload = (await cameraFacade.status()) as { message?: unknown };
       const message = typeof payload?.message === "string" ? payload.message : "";
       streamMessage.value = message;
       if (message && message !== lastReportedStreamMessage) {
@@ -267,7 +267,7 @@ export const useCameraStore = defineStore(STORE_ID, () => {
         // non-existent ``params`` option, which would silently drop
         // it, always probing the default device instead of the
         // selected one.
-        const payload = (await ModulesCameraService.diagnoseCameraStream(id || undefined)) as {
+        const payload = (await cameraFacade.diagnose(id || undefined)) as {
           ok?: unknown;
           message?: unknown;
         };

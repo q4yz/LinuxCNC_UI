@@ -38,35 +38,21 @@ test("machineLifecycleFacade wraps the system lifecycle routes", () => {
   const text = readFileSync(path, "utf-8");
 
   for (const fn of ["getStatus", "startMachine", "setDefaultMachine", "stopMachine", "getConsoleLog"]) {
-    assert.match(text, new RegExp(`static ${fn}\\(`), `facade must define ${fn}()`);
+    assert.match(text, new RegExp(`\\b${fn}: \\(`), `facade must define ${fn}()`);
   }
-
-  for (const route of [
-    '"/api/v1/system/machine"',
-    '"/api/v1/system/machine/start"',
-    '"/api/v1/system/machine/default"',
-    '"/api/v1/system/machine/stop"',
+  // On the generated client (no hand-rolled fetch), one call per route.
+  assert.ok(!/\bfetch\(/.test(text), "no raw fetch: the generated client");
+  for (const call of [
+    "getMachineSessionStatus()",
+    "startMachineSession(machine ? { machine } : {})",
+    "setDefaultMachine({ machine })",
+    "stopMachineSession()",
+    "getMachineConsoleLog(lines)",
   ]) {
-    assert.match(text, new RegExp(route.replace(/\//g, "\\$&")), `facade must call ${route}`);
+    assert.ok(text.includes(`SystemMachineLifecycleService.${call}`), `facade must call ${call}`);
   }
-  assert.match(
-    text,
-    /\/api\/v1\/system\/machine\/log/,
-    "facade must call the console-log tail route",
-  );
-
-  // The generated client is stale (no machine body) — the facade
-  // must pass the machine name itself.
-  assert.match(
-    text,
-    /JSON\.stringify\(machine \? \{ machine \} : \{\}\)/,
-    "startMachine must send the optional machine body",
-  );
-  assert.match(
-    text,
-    /status:\s*response\.status/,
-    "HTTP errors must carry .status so callers can special-case 404/409",
-  );
+  // Errors keep .status (404 / 409) and the backend's detail as message.
+  assert.match(text, /Object\.assign\(new Error\(message\), \{ status: status \?\? 0 \}\)/);
 });
 
 // ------------------------------------------------------------------ //
@@ -85,9 +71,9 @@ test("MachinesExplorer: root-level folders get Start + Set main", () => {
   assert.match(text, /v-if="isMachineFolder\(entry\)"/, "row must gate the lifecycle actions");
 
   // Actions wire to the facade (persist-default + start semantics).
-  assert.match(text, /MachineLifecycleFacade\.startMachine\(entry\.name\)/, "Start must pass the machine name");
-  assert.match(text, /MachineLifecycleFacade\.setDefaultMachine\(entry\.name\)/, "Set main must pass the machine name");
-  assert.match(text, /MachineLifecycleFacade\.getStatus\(\)/, "badge needs the status poll");
+  assert.match(text, /machineLifecycleFacade\.startMachine\(entry\.name\)/, "Start must pass the machine name");
+  assert.match(text, /machineLifecycleFacade\.setDefaultMachine\(entry\.name\)/, "Set main must pass the machine name");
+  assert.match(text, /machineLifecycleFacade\.getStatus\(\)/, "badge needs the status poll");
 
   // "main" badge on the current default.
   assert.match(text, /v-if="defaultMachine === entry\.name"/, "default machine must be badged");
@@ -112,17 +98,17 @@ test("UpdateManager adds Start-default-machine and Stop-machine controls", () =>
 
   assert.match(
     text,
-    /MachineLifecycleFacade\.startMachine\(\)/,
+    /machineLifecycleFacade\.startMachine\(\)/,
     "Start default machine must call startMachine WITHOUT a machine name",
   );
   assert.match(
     text,
-    /MachineLifecycleFacade\.stopMachine\(\)/,
+    /machineLifecycleFacade\.stopMachine\(\)/,
     "Stop machine must call the stop route",
   );
   assert.match(
     text,
-    /MachineLifecycleFacade\.getStatus\(\)/,
+    /machineLifecycleFacade\.getStatus\(\)/,
     "status line must be fed by the facade",
   );
 
@@ -166,7 +152,7 @@ test("editor store wires machine_log as a read-only source fed by getConsoleLog(
   );
   assert.match(
     text,
-    /MachineLifecycleFacade\.getConsoleLog\(\)/,
+    /machineLifecycleFacade\.getConsoleLog\(\)/,
     "readMachineLogContent must call the facade's getConsoleLog()",
   );
 });

@@ -84,10 +84,24 @@ async function start(
   );
 }
 
+/** A macro's text through the JSON content endpoint (the editor's). */
+async function readContent(name: string, kind: MacroKind): Promise<string> {
+  return (await ModulesMacrosService.readMacroContent(name, kind))?.content ?? "";
+}
+
+async function writeContent(name: string, content: string, kind: MacroKind): Promise<CommandResult> {
+  return _commandResultFrom(
+    ModulesMacrosService.writeMacroContent(name, { content }, kind),
+    `write-content:${kind}:${name}`,
+  );
+}
+
 export const macrosFacade = Object.freeze({
   list,
   read,
+  readContent,
   write,
+  writeContent,
   remove,
   start,
 });

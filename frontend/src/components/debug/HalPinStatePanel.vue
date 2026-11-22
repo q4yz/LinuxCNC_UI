@@ -18,7 +18,7 @@ import PinTreeItem from "../../views/hal-visual-editor/PinTreeItem.vue";
 import { buildPinTree, collectAutoExpandPaths, type PinTreeNode } from "../../views/hal-visual-editor/pinTree";
 import { loadHalLayout } from "../../views/hal-visual-editor/loadHalData";
 import type { HalPin } from "../../views/hal-visual-editor/types";
-import HalVisualService from "../../facades/halFacade";
+import { halFacade } from "../../facades/halFacade";
 import { useConsoleStore } from "../../stores/console";
 import { storeToRefs } from "pinia";
 import { useHalScopeStore } from "../../stores/halScopeStore";
@@ -105,7 +105,7 @@ function toggleScope(pin: HalPin): void {
 
 async function refreshValues(): Promise<void> {
   const ids = shownPinIds.value;
-  const result = await HalVisualService.readPinValues(ids);
+  const result = await halFacade.readPinValues(ids);
   if (!result) {
     error.value = "Could not read the HAL pin values.";
     return;

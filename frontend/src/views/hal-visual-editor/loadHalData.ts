@@ -11,10 +11,10 @@
 // `file` is the `.hal` file's path relative to `machine_config/machines/`
 // (the same shape `MachinesExplorer.vue` already emits) — omitting it
 // loads pins only, with an empty signal set (nothing to seed from).
-// Saving is a separate call — see `HalVisualService.saveLayout` in
+// Saving is a separate call — see `halFacade.saveLayout` in
 // ../../facades/halFacade.ts.
 
-import HalVisualService from "../../facades/halFacade";
+import { halFacade } from "../../facades/halFacade";
 import type { HalPinResource, HalSignalResource } from "../../../generated/api";
 import type { HalPin, PinType } from "./types";
 
@@ -76,7 +76,7 @@ function seedSignalFromResource(res: HalSignalResource): SeedSignal | null {
  * transport failure (caller renders an error state with a Retry).
  */
 export async function loadHalLayout(file?: string): Promise<HalLayoutData | null> {
-  const layout = await HalVisualService.fetchLayout(file);
+  const layout = await halFacade.fetchLayout(file);
   if (!layout) return null;
 
   const pins: HalPin[] = [];

@@ -4,12 +4,7 @@
 // — never reactive: the canvas reads it every animation frame and Vue
 // proxies would cost more than the drawing.
 
-export interface ScopeFrame {
-  pins: string[];
-  t: number[];
-  v: (number | null)[][];
-  missed?: number;
-}
+import type { ScopeFrame } from "../../../entities/hal/ScopeFrame";
 
 export class ScopeBuffer {
   readonly maxSeconds: number;

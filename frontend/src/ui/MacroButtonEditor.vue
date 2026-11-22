@@ -35,7 +35,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import type { PropType } from "vue";
 
-import { ModulesMacrosService } from "../../generated/api";
+import { macrosFacade } from "../facades/macrosFacade";
 import type { MacroButtonDescriptor, MacroButtonSlotDef } from "./macroButtonTypes";
 import { PANELS } from "../layout/pagePanels";
 import useBaseThreadStore from "../stores/baseThread";
@@ -114,9 +114,8 @@ const draft = ref<MacroButtonRow[]>(normaliseDraft(props.modelValue, props.slots
 // back → re-mount input → focus loss" loop.
 const dirty = ref(new Set<string>());
 
-// Macro dropdown source — fetched directly from the backend via
-// the generated ``ModulesMacrosService`` rather than going through
-// the macros module's Pinia store. Bypassing the store keeps the
+// Macro dropdown source — fetched through ``macrosFacade.list`` rather
+// than the macros module's Pinia store. Bypassing the store keeps the
 // editor decoupled from the macros module's lifecycle (the store
 // is constructed lazily on first use of the macros store, so a  
 // settings tab that mounts before any dashboard panel can mount
@@ -132,8 +131,8 @@ async function loadMacroOptions() {
   macroLoadError.value = "";
   try {
     const [macroResp, ngcResp] = await Promise.all([
-      ModulesMacrosService.listMacros("macro"),
-      ModulesMacrosService.listMacros("ngc"),
+      macrosFacade.list("macro"),
+      macrosFacade.list("ngc"),
     ]);
     // Each ``MacroListItem`` is the shared file DTO: ``name`` is the
     // file name (``probe.ngc``), ``macro_name`` the bare name the run

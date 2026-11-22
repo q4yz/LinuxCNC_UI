@@ -1,40 +1,38 @@
-import { BaseThreadService as ApiBaseThreadService } from "../../generated/api/services/BaseThreadService";
+// Base-thread facade: the 1 Hz snapshot (``GET /api/v1/base-thread/snapshot``)
+// mapped into a typed ``Snapshot``.
+
+import { BaseThreadService } from "../../generated/api/services/BaseThreadService";
 import { Snapshot } from "../entities/baseThread/Snapshot";
 import { toSnapshot } from "../mappers/baseThreadMapper";
 
-export class BaseThreadService {
-  /**
-   * Fetch the latest base thread snapshot from the API and map it
-   * into a fully typed Snapshot domain entity.
-   */
-  static async fetchSnapshot(): Promise<Snapshot> {
-    try {
-      const wire = await ApiBaseThreadService.getBaseThreadSnapshot();
-      return toSnapshot(wire);
-    } catch (err: unknown) {
-      // Log the error but let the caller (the Pinia store) handle
-      // the UI error state rather than returning a half-built object.
-      console.error("[BaseThreadService] Failed to fetch snapshot", err);
-      throw err;
-    }
-  }
-
-  /**
-   * Fetch the STATIC tier only (`?mode=static`) — machine
-   * configuration that's baked into `hardware.json` at compile time
-   * (axis travel limits, joint numbers, ...) and cached by the
-   * backend's own service singletons for the life of the machine
-   * session. Every dynamic field comes back null/omitted; reuses the
-   * same `toSnapshot` mapper since it already defaults missing
-   * fields rather than crashing on them.
-   */
-  static async fetchStatic(): Promise<Snapshot> {
-    try {
-      const wire = await ApiBaseThreadService.getBaseThreadSnapshot("static");
-      return toSnapshot(wire);
-    } catch (err: unknown) {
-      console.error("[BaseThreadService] Failed to fetch static snapshot", err);
-      throw err;
-    }
+/**
+ * The latest snapshot. A failure is logged and rethrown: the store owns
+ * the error state rather than getting a half-built object.
+ */
+async function fetchSnapshot(): Promise<Snapshot> {
+  try {
+    return toSnapshot(await BaseThreadService.getBaseThreadSnapshot());
+  } catch (err: unknown) {
+    console.error("[baseThreadFacade] Failed to fetch snapshot", err);
+    throw err;
   }
 }
+
+/**
+ * The STATIC tier only (``?mode=static``) — configuration baked into
+ * ``hardware.json`` (axis travel limits, joint numbers, ...) that the
+ * backend caches for the session. Every dynamic field comes back
+ * null / omitted; ``toSnapshot`` defaults them.
+ */
+async function fetchStatic(): Promise<Snapshot> {
+  try {
+    return toSnapshot(await BaseThreadService.getBaseThreadSnapshot("static"));
+  } catch (err: unknown) {
+    console.error("[baseThreadFacade] Failed to fetch static snapshot", err);
+    throw err;
+  }
+}
+
+export const baseThreadFacade = Object.freeze({ fetchSnapshot, fetchStatic });
+
+export default baseThreadFacade;

@@ -115,6 +115,6 @@ test("retraction and sensorless homing cards", () => {
   assert.match(card, /emit\('threshold', nextThreshold\)/);
   assert.match(card, /`Home \$\{props\.item\.label\}`/);
   const view = read("views/CalibrationView.vue");
-  assert.match(view, /calibrationFacade\.submit\(item\.id, \{ threshold: value \}\)[\s\S]*MachineLifecycleFacade\.stopMachine\(\)[\s\S]*MachineLifecycleFacade\.startMachine\(\)/,
+  assert.match(view, /calibrationFacade\.submit\(item\.id, \{ threshold: value \}\)[\s\S]*machineLifecycleFacade\.stopMachine\(\)[\s\S]*machineLifecycleFacade\.startMachine\(\)/,
     "the threshold reaches the driver at the next LinuxCNC start");
 });

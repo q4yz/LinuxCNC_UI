@@ -68,14 +68,16 @@ test("useMachineOnline composable exists with the three-state contract", () => {
 
 test("probe uses the health route with a short hard timeout", () => {
   const text = read("composables/useMachineOnline.ts");
-  assert.match(text, /\/api\/v1\/health/, "probe must hit /api/v1/health on the machine backend");
+  assert.match(text, /machineStateFacade\.health\(PROBE_TIMEOUT_MS\)/, "probe goes through the facade with its timeout");
+  assert.match(text, /PROBE_TIMEOUT_MS\s*=\s*2_000/, "probe timeout must be 2 s");
+  const facade = read("facades/machineStateFacade.ts");
+  assert.match(facade, /\/api\/v1\/health/, "probe must hit /api/v1/health on the machine backend");
   assert.match(
-    text,
-    /AbortSignal\.timeout\(PROBE_TIMEOUT_MS\)/,
+    facade,
+    /AbortSignal\.timeout\(timeoutMs\)/,
     "probe must carry AbortSignal.timeout so a hang cannot stall the heartbeat",
   );
-  assert.match(text, /PROBE_TIMEOUT_MS\s*=\s*2_000/, "probe timeout must be 2 s");
-  assert.match(text, /cache:\s*"no-store"/, "probe must bypass cache");
+  assert.match(facade, /cache:\s*"no-store"/, "probe must bypass cache");
 });
 
 test("heartbeat cadence: 3 s normal, 1 Hz while waking, 30 s give-up", () => {
@@ -94,7 +96,7 @@ test("wakeMachine spawns via the always-up system service and reports a 409", ()
   const text = read("composables/useMachineOnline.ts");
   assert.match(
     text,
-    /SystemMachineLifecycleService\.startMachineSession\(\)/,
+    /machineLifecycleFacade\.startMachine\(\)/,
     "wake must call the :8001 system service, never the dead machine backend",
   );
   // 409 = LinuxCNC already runs (e.g. started from another process) or a
@@ -151,7 +153,7 @@ test("App.vue runs the heartbeat and gates machine traffic on it", () => {
   assert.match(text, /baseThread\.stop\(\)/, "offline must stop the 1 Hz poll");
   assert.match(
     text,
-    /servoThreadService\.disconnect\(\)/,
+    /servoThreadFacade\.disconnect\(\)/,
     "offline must close the telemetry WebSocket",
   );
 
@@ -162,7 +164,7 @@ test("App.vue runs the heartbeat and gates machine traffic on it", () => {
     /setTimeout\(/,
     "going online must connect through a settle timeout",
   );
-  assert.match(text, /servoThreadService\.connect\(\)/, "online must (re)open the WebSocket");
+  assert.match(text, /servoThreadFacade\.connect\(\)/, "online must (re)open the WebSocket");
   assert.match(text, /baseThread\.start\(\)/, "online must (re)start the 1 Hz poll");
 });
 

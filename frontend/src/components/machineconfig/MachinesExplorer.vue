@@ -15,7 +15,7 @@ import { useDirectoryQuery } from "../../composables/useDirectoryQuery";
 import { useConsoleStore } from "../../stores/console";
 import type { FileEntry } from "../../entities/files";
 import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
-import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
+import { machineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
 import { ActionMenu, BaseButton, DragBin, FileDropZone, Icon } from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
@@ -84,7 +84,7 @@ async function uploadToBoard(entry: FileEntry): Promise<void> {
 
 async function refreshLifecycleStatus(): Promise<void> {
   try {
-    const status = await MachineLifecycleFacade.getStatus();
+    const status = await machineLifecycleFacade.getStatus();
     defaultMachine.value = status.default_machine;
   } catch {
     // The explorer stays fully usable without lifecycle info —
@@ -102,7 +102,7 @@ async function startMachine(entry: FileEntry): Promise<void> {
   // reason (e.g. started from another process) is shown below.
   startingPath.value = entry.path;
   try {
-    const status = await MachineLifecycleFacade.startMachine(entry.name);
+    const status = await machineLifecycleFacade.startMachine(entry.name);
     defaultMachine.value = status.default_machine;
     consoleStore.success(
       `Machine ${entry.name} started (pid ${status.started_pid ?? "?"})`,
@@ -136,7 +136,7 @@ async function selectAsMain(entry: FileEntry): Promise<void> {
 
   settingMainPath.value = entry.path;
   try {
-    const status = await MachineLifecycleFacade.setDefaultMachine(entry.name);
+    const status = await machineLifecycleFacade.setDefaultMachine(entry.name);
     defaultMachine.value = status.default_machine;
     consoleStore.success(`${entry.name} is now the default machine`);
   } catch (err: unknown) {

@@ -281,19 +281,18 @@ test("MacroButtonEditor stores the bare macro name, not the file name", () => {
   assert.match(editorText, /stripExtension\(r\.macroName, macroKind\)/, "old rows with an extension are cleaned up");
 });
 
-test("MacroButtonEditor fetches macro options via the generated client", () => {
+test("MacroButtonEditor fetches macro options via the macros facade", () => {
   // Regression guard for the "dropdown does nothing" bug: the
   // editor used to source options from the macros Pinia store,
   // which is only populated when the macros module has booted.
   // Settings tabs that mount before ``useMacrosStore()`` ran
-  // ended up with an empty dropdown. The fix is to call the
-  // generated OpenAPI client directly via
-  // ``ModulesMacrosService.listMacros`` so the editor no longer
-  // depends on the macros module's lifecycle.
+  // ended up with an empty dropdown. The fix is to list them through
+  // ``macrosFacade.list`` (no store) so the editor no longer depends on
+  // the macros module's lifecycle.
   assert.match(
     editorText,
-    /import\s*\{[^}]*\bModulesMacrosService\b[^}]*\}\s*from\s*["'][^"']*generated\/api["']/,
-    "MacroButtonEditor must import ModulesMacrosService from the generated client",
+    /import\s*\{[^}]*\bmacrosFacade\b[^}]*\}\s*from\s*["'][^"']*facades\/macrosFacade["']/,
+    "MacroButtonEditor must import macrosFacade",
   );
   // The two calls — ``macro`` for the .macro dropdown and
   // ``ngc`` for the .ngc dropdown — must both be present. ``mcode``
@@ -301,17 +300,17 @@ test("MacroButtonEditor fetches macro options via the generated client", () => {
   // .macro files instead).
   assert.match(
     editorText,
-    /listMacros\(\s*["']macro["']\s*\)/,
-    "MacroButtonEditor must call listMacros('macro')",
+    /macrosFacade\.list\(\s*["']macro["']\s*\)/,
+    "MacroButtonEditor must list the 'macro' kind",
   );
   assert.match(
     editorText,
-    /listMacros\(\s*["']ngc["']\s*\)/,
-    "MacroButtonEditor must call listMacros('ngc')",
+    /macrosFacade\.list\(\s*["']ngc["']\s*\)/,
+    "MacroButtonEditor must list the 'ngc' kind",
   );
   assert.doesNotMatch(
     editorText,
-    /listMacros\(\s*["']mcode["']\s*\)/,
+    /\.list\(\s*["']mcode["']\s*\)/,
     "MacroButtonEditor must not request the mcode list",
   );
   // And the editor must NOT depend on the macros Pinia store.

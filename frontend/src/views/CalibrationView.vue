@@ -6,7 +6,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { calibrationFacade, type CalibrationItem } from "../facades/calibrationFacade";
 import { printTuningFacade } from "../facades/printTuningFacade";
-import { MachineLifecycleFacade } from "../facades/machineLifecycleFacade";
+import { machineLifecycleFacade } from "../facades/machineLifecycleFacade";
 import CalibrationCard from "../components/calibration/CalibrationCard.vue";
 import BedMeshView from "./BedMeshView.vue";
 import { BaseButton, Icon } from "../ui";
@@ -120,8 +120,8 @@ async function threshold(item: CalibrationItem, value: number) {
   if (!response) return;
   consoleStore.info(response.result);
   const restarted = await act("restarting LinuxCNC", async () => {
-    await MachineLifecycleFacade.stopMachine();
-    return MachineLifecycleFacade.startMachine();
+    await machineLifecycleFacade.stopMachine();
+    return machineLifecycleFacade.startMachine();
   });
   if (restarted) consoleStore.success(`LinuxCNC restarted with threshold ${value} — switch on and home ${item.label}.`);
   await refresh();

@@ -142,12 +142,8 @@ test("file list shows an upload date and sorts newest-first", () => {
 
 test("thumbnail helper targets the thumbnail endpoint and caches per file", () => {
   const text = read("helpers/fileThumbnails.ts");
-  assert.match(
-    text,
-    /\/api\/v1\/programs\/thumbnail\//,
-    "helper must hit the thumbnail endpoint",
-  );
-  assert.match(text, /encodeURIComponent/, "filenames must be URL-encoded");
+  assert.match(text, /filesFacade\.thumbnail\(filename\)/, "helper goes through the files facade");
+  assert.ok(!/\bfetch\(/.test(text), "no raw fetch: the generated client encodes the filename");
   assert.match(text, /cache/, "per-filename session cache must exist");
   assert.ok(
     !/"data:image\/png/.test(text),

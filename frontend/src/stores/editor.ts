@@ -33,13 +33,13 @@
 
 import { defineStore } from 'pinia'
 
-import {
-  ProgramFilesService,
-  ModulesMachineconfigService,
-  ModulesMacrosService,
-} from '../../generated/api/index'
-import { ApiError } from '../../generated/api/core/ApiError'
-import { MachineLifecycleFacade } from '../facades/machineLifecycleFacade'
+import { describeErrorOr, errorStatus } from '../core/error-format'
+import type { CommandResult } from '../entities/common/CommandResult'
+import { filesFacade } from '../facades/filesFacade'
+import { machineconfigFacade } from '../facades/machineconfigFacade'
+import { macrosFacade } from '../facades/macrosFacade'
+import type { MacroKind } from './macrosTypes'
+import { machineLifecycleFacade } from '../facades/machineLifecycleFacade'
 
 // ---------------------------------------------------------------------- //
 // Source enum                                                              //
@@ -160,62 +160,58 @@ export function modeForFilename(filename: string): string {
 // refactor. Adding a new source means one new branch + a new entry
 // in :data:`EDITOR_SOURCES`.
 
+/** A failed write throws, like a failed read: the editor shows it. */
+function orThrow(result: CommandResult): void {
+  if (!result.ok) throw new Error(result.failureReason ?? 'Save failed')
+}
+
 async function readProfileContent(name: string): Promise<string> {
-  const envelope = await ModulesMachineconfigService
-    .readProfileApiV1ModulesMachineconfigProfilesContentGet(name)
-  return envelope?.content ?? ''
+  return (await machineconfigFacade.readProfile(name))?.content ?? ''
 }
 
 async function writeProfileContent(name: string, content: string): Promise<void> {
-  await ModulesMachineconfigService
-    .saveProfileApiV1ModulesMachineconfigProfilesContentPut(name, { content })
+  orThrow(await machineconfigFacade.writeProfile(name, content))
 }
 
 async function readMachineContent(name: string): Promise<string> {
-  const envelope = await ModulesMachineconfigService
-    .readMachineFileApiV1ModulesMachineconfigMachinesContentGet(name)
-  return envelope?.content ?? ''
+  return (await machineconfigFacade.readMachine(name))?.content ?? ''
 }
 
 async function writeMachineContent(name: string, content: string): Promise<void> {
-  await ModulesMachineconfigService
-    .saveMachineFileApiV1ModulesMachineconfigMachinesContentPut(name, { content })
+  orThrow(await machineconfigFacade.writeMachine(name, content))
 }
 
 async function readMCodeContent(name: string): Promise<string> {
-  const envelope = await ModulesMachineconfigService.readMCode(name)
-  return envelope?.content ?? ''
+  return machineconfigFacade.readMCode(name)
 }
 
 async function writeMCodeContent(name: string, content: string): Promise<void> {
-  await ModulesMachineconfigService.writeMCode(name, { content })
+  orThrow(await machineconfigFacade.writeMCode(name, content))
 }
 
 async function readProgramContent(name: string): Promise<string> {
-  // ``ProgramFilesService.readFile`` throws ``ApiError`` on 404 —
-  // the editor treats that as "brand-new file" and mounts with
-  // empty content. Anything else bubbles up.
+  // A 404 is a brand-new file: the editor mounts with empty content.
+  // Anything else bubbles up.
   try {
-    return await ProgramFilesService.readFile(name)
+    return await filesFacade.readFile(name)
   } catch (error: unknown) {
-    if (error instanceof ApiError && error.status === 404) return ''
+    if (errorStatus(error) === 404) return ''
     throw error
   }
 }
 
 async function writeProgramContent(name: string, content: string): Promise<void> {
-  await ProgramFilesService.writeFile(name, { content })
+  orThrow(await filesFacade.writeFile(name, content))
 }
 
 async function readMacroContent(name: string): Promise<string> {
   const { baseName, kind } = _macroSplitName(name)
-  const envelope = await ModulesMacrosService.readMacroContent(baseName, kind)
-  return envelope?.content ?? ''
+  return macrosFacade.readContent(baseName, kind)
 }
 
 async function writeMacroContent(name: string, content: string): Promise<void> {
   const { baseName, kind } = _macroSplitName(name)
-  await ModulesMacrosService.writeMacroContent(baseName, { content }, kind)
+  orThrow(await macrosFacade.writeContent(baseName, content, kind))
 }
 
 // Macros have two on-disk extensions (``.macro`` and ``.ngc``).
@@ -226,7 +222,7 @@ async function writeMacroContent(name: string, content: string): Promise<void> {
 // only signal the dispatch ever consults; bare names default to
 // ``macro`` so the legacy ``M<num>`` bare-name flow keeps working
 // when ``kind`` cannot be inferred.
-function _macroSplitName(name: string): { baseName: string; kind: string } {
+function _macroSplitName(name: string): { baseName: string; kind: MacroKind } {
   const lower = (name || '').toLowerCase()
   if (lower.endsWith('.ngc')) {
     return { baseName: name.slice(0, -4), kind: 'ngc' }
@@ -238,7 +234,7 @@ function _macroSplitName(name: string): { baseName: string; kind: string } {
 }
 
 async function readMachineLogContent(): Promise<string> {
-  const result = await MachineLifecycleFacade.getConsoleLog()
+  const result = await machineLifecycleFacade.getConsoleLog()
   return result.exists
     ? result.log || '(log file is empty — nothing has been written to it yet)'
     : 'No console log yet — start the machine to generate one.'
@@ -274,18 +270,7 @@ async function dispatchWrite(source: EditorSource, name: string, content: string
 // ---------------------------------------------------------------------- //
 
 function describeError(error: unknown): string {
-  if (!error) return 'Unknown error'
-  if (error instanceof ApiError) {
-    return (
-      error.body?.detail ||
-      error.body?.message ||
-      error.statusText ||
-      error.message ||
-      `HTTP ${error.status}`
-    )
-  }
-  if (error instanceof Error) return error.message
-  return String(error)
+  return describeErrorOr(error, 'Unknown error')
 }
 
 // ---------------------------------------------------------------------- //

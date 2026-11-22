@@ -25,27 +25,15 @@ const generatedPath = resolve(
   "frontend/generated/api/index.ts",
 );
 
-test("module surface: TemperatureService class + default export", () => {
-  // The static class is the facade's real surface —
-  // ``temperatureFacade``, a positional-argument wrapper object for
-  // pre-OOP call sites, was removed once its last consumer
-  // (``stores/temperatureStore.ts``) migrated to calling
-  // ``TemperatureService`` directly.
-  assert.match(source, /export\s+class\s+TemperatureService\s*\{/);
-  assert.match(source, /export\s+default\s+TemperatureService/);
-});
-
-test("facade exposes fetchReadings()", () => {
-  assert.match(source, /static\s+async\s+fetchReadings\s*\(/);
+test("module surface: temperatureFacade object + default export", () => {
+  // The readings come with the base-thread snapshot; this facade only
+  // sets a heater's target.
+  assert.match(source, /export\s+const\s+temperatureFacade\s*=\s*Object\.freeze\(\{\s*setTarget\s*\}\)/);
+  assert.match(source, /export\s+default\s+temperatureFacade/);
 });
 
 test("facade exposes setTarget(request: HeaterControlRequest)", () => {
-  assert.match(source, /static\s+async\s+setTarget\s*\(\s*request\s*:\s*HeaterControlRequest\s*\)/);
-});
-
-test("facade delegates fetchReadings to BaseThreadService.getBaseThreadSnapshot", () => {
-  assert.match(source, /BaseThreadService\.getBaseThreadSnapshot/);
-  assert.match(source, /toReadingSet/);
+  assert.match(source, /async\s+function\s+setTarget\s*\(\s*request\s*:\s*HeaterControlRequest\s*\)/);
 });
 
 test("facade delegates setTarget to ModulesToolsService.setToolTarget", () => {
