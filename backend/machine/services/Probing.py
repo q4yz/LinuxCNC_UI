@@ -17,6 +17,7 @@ finished (``MacroExecutionService._wait_until_idle``).
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
@@ -29,6 +30,45 @@ from services.MacroExecutionService import MacroExecutionService
 #: exceed Z's negative limit"), and the 4-decimal distance can round
 #: past an exact one.
 LIMIT_MARGIN_MM = 0.01
+
+#: The probe's own signal, before the gate that passes it to
+#: ``motion.probe-input`` only during G38 moves (``ProbeHalMapper``).
+PROBE_SIGNAL = "probe-in"
+#: How long a probe may take to report released after a move (s).
+RELEASE_WAIT_S = 0.3
+
+
+def probe_triggered() -> Optional[bool]:
+    """The probe's own signal now, or ``None`` when it cannot be read."""
+    from hardware.Connection import read_hal_pin
+
+    value = read_hal_pin(PROBE_SIGNAL)
+    return None if value is None else bool(value)
+
+
+def wait_released(timeout: Optional[float] = None) -> Optional[bool]:
+    """``True`` once the probe reports released, ``False`` if it is still
+    triggered after ``timeout``, ``None`` when its signal cannot be read.
+
+    LinuxCNC refuses a G38.2 that starts with ``motion.probe-input``
+    already tripped, but the probe reaches that pin only *during* a probe
+    move (the gate), so that check never fires: a probe still triggered —
+    one whose release point lies above the retract (capacitive and
+    inductive probes can have 1-2 mm of hysteresis) — would "trip" the
+    moment the next probe move starts and report the start height as the
+    bed. Checking the probe's own signal before each probe move brings
+    that check back.
+    """
+    deadline = time.monotonic() + (RELEASE_WAIT_S if timeout is None else timeout)
+    while True:
+        state = probe_triggered()
+        if state is None:
+            return None
+        if not state:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
 
 
 def probe_distance(from_z: float, bottom: float) -> float:
@@ -83,6 +123,11 @@ def probe_points(
     heights: List[float] = []
     for k, (x, y) in enumerate(points):
         mdi(stat, f"G53 G1 X{x - offsets.x:.4f} Y{y - offsets.y:.4f} F{travel_mm_s * 60.0:.1f}")
+        if wait_released() is False:
+            raise ProbeError(
+                f"the probe is still triggered at X{x:g} Y{y:g} Z{safe_z:g}, before probing — raise the travel "
+                "height (horizontal_move_z) above its release point, or check the probe."
+            )
         mdi(stat, "G91")
         try:
             mdi(stat, f"G38.2 Z-{probe_distance(safe_z, bottom):.4f} F{probe_mm_s * 60.0:.1f}")
@@ -98,4 +143,7 @@ def probe_points(
     return heights
 
 
-__all__ = ["LIMIT_MARGIN_MM", "ProbeError", "ProbeOffsets", "mdi", "probe_distance", "probe_points"]
+__all__ = [
+    "LIMIT_MARGIN_MM", "PROBE_SIGNAL", "ProbeError", "ProbeOffsets", "mdi", "probe_distance", "probe_points",
+    "probe_triggered", "wait_released",
+]

@@ -5,7 +5,11 @@ deviation in the console (each sample under DEBUG, the result under INFO).
 
 ``PROBE_ACCURACY [SAMPLES=10] [SAMPLE_RETRACT_DIST=2] [PROBE_SPEED=5]``
 — MDI, a macro line. The probe move is relative (LinuxCNC allows
-``G53`` with ``G0`` / ``G1`` only), down to ``[stepper_z] position_min``.
+``G53`` with ``G0`` / ``G1`` only), down to ``[stepper_z] position_min``;
+between samples Z goes to the absolute machine height trigger point +
+``SAMPLE_RETRACT_DIST`` (``G53 G0``). Before each probe move the probe
+must report released (:func:`services.Probing.wait_released`): one that
+is still triggered would otherwise "trip" at the start of the move.
 Z must be homed.
 """
 from __future__ import annotations
@@ -22,12 +26,17 @@ from hardware import get_stat_channel
 from hardware.Connection import MachineState
 from services.ConsoleLogger import LogLevel, get_console_logger
 from services.HardwareConfigService import HardwareConfigService
-from services.Probing import LIMIT_MARGIN_MM, ProbeError, mdi, probe_distance
+from services.Probing import LIMIT_MARGIN_MM, ProbeError, mdi, probe_distance, wait_released
 
 logger = logging.getLogger("backend.services.ProbeAccuracyService")
 
 COMMAND = "PROBE_ACCURACY"
 MAX_SAMPLES = 100
+#: A sample this close below its start height tripped where the move began.
+INSTANT_TRIP_MM = 0.005
+#: How much further than SAMPLE_RETRACT_DIST to back up for a probe that is
+#: still triggered, 1 mm at a time, before giving up (mm).
+MAX_EXTRA_RETRACT_MM = 8.0
 _PARAM = re.compile(r"([A-Za-z_]+)\s*=\s*(\S+)")
 
 
@@ -108,6 +117,7 @@ class ProbeAccuracyService:
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
         self.last_result: Optional[ProbeAccuracyResult] = None
+        self._warned_release = False
 
     def is_running(self) -> bool:
         worker = self._worker
@@ -150,6 +160,7 @@ class ProbeAccuracyService:
     def run(self, stat: Any, request: ProbeAccuracyRequest) -> ProbeAccuracyResult:
         self._check_machine(stat)
         console = get_console_logger()
+        self._warned_release = False
         bottom = self._probe_bottom()
         stat.poll()
         start_z = self._commanded_z(stat)
@@ -162,19 +173,32 @@ class ProbeAccuracyService:
         )
         samples: List[float] = []
         try:
-            mdi(stat, "G91")
+            mdi(stat, "G90")
             for k in range(request.samples):
-                stat.poll()
-                distance = probe_distance(self._commanded_z(stat), bottom)
-                mdi(stat, f"G38.2 Z-{distance:.4f} F{request.speed * 60.0:.1f}")
+                start_z = self._released_start(stat, start_z, request.retract, console)
+                mdi(stat, "G91")
+                try:
+                    mdi(stat, f"G38.2 Z-{probe_distance(start_z, bottom):.4f} F{request.speed * 60.0:.1f}")
+                finally:
+                    mdi(stat, "G90")
                 stat.poll()
                 if not getattr(stat, "probe_tripped", False):
                     raise ProbeAccuracyError(f"the probe did not trigger above Z{bottom:g} (sample {k + 1}).")
                 z = float(stat.probed_position[2])
+                if z >= start_z - INSTANT_TRIP_MM:
+                    # Tripped where the move began: still triggered from the
+                    # last sample, not the bed (see Probing.wait_released).
+                    raise ProbeAccuracyError(
+                        f"sample {k + 1} triggered at its start (Z{start_z:.3f}): the probe was still triggered. "
+                        f"Its release point is above SAMPLE_RETRACT_DIST={request.retract:g} mm — use a larger one."
+                    )
                 samples.append(z)
                 console.log_event(f"{COMMAND}: sample {k + 1}/{request.samples} at Z {z:.6f}", level=LogLevel.DEBUG,
                                   source="CMD")
-                mdi(stat, f"G0 Z{request.retract:.4f}")
+                # Back up to an absolute height above the trigger point: the
+                # next probe distance is known, not read back from LinuxCNC.
+                start_z = z + request.retract
+                mdi(stat, f"G53 G0 Z{start_z:.4f}")
         except ProbeError as exc:
             raise ProbeAccuracyError(str(exc)) from exc
         finally:
@@ -190,6 +214,29 @@ class ProbeAccuracyService:
                                  f"({len(result.samples)} samples)")
         console.log_event(result.summary(), level=LogLevel.INFO, source="CMD")
         return result
+
+    def _released_start(self, stat: Any, start_z: float, retract: float, console: Any) -> float:
+        """``start_z``, or higher: while the probe still reports triggered,
+        back up another millimetre (up to :data:`MAX_EXTRA_RETRACT_MM`) and
+        say once which retract it needs."""
+        extra = 0.0
+        while wait_released() is False:
+            if extra >= MAX_EXTRA_RETRACT_MM:
+                raise ProbeAccuracyError(
+                    f"the probe is still triggered {retract + extra:g} mm above where it last triggered (Z{start_z:.3f}) "
+                    "— check the probe and its wiring."
+                )
+            extra += 1.0
+            start_z += 1.0
+            mdi(stat, f"G53 G0 Z{start_z:.4f}")
+        if extra and not self._warned_release:
+            self._warned_release = True
+            console.log_event(
+                f"{COMMAND}: the probe released only {retract + extra:g} mm above its trigger point; continuing from "
+                f"there (use SAMPLE_RETRACT_DIST={retract + extra:g} to skip this).",
+                level=LogLevel.WARNING, source="CMD",
+            )
+        return start_z
 
     @staticmethod
     def _commanded_z(stat: Any) -> float:
