@@ -26,6 +26,7 @@ import {confirmDelete, downloadText, suggestCopyPath} from './machineconfig/expl
 import {sortEntries, type SortDir, type SortKey} from './machineconfig/entryDrag'
 import {useEntryDragDrop} from '../composables/useEntryDragDrop'
 import {Icon} from "../ui";
+import BaseCard from "../ui/BaseCard.vue";
 import { useFileThumbnails } from '../composables/useFileThumbnails'
 import { useMachineOnline } from '../composables/useMachineOnline'
 import ToolpathViewer from './ToolpathViewer.vue'
@@ -412,29 +413,23 @@ onMounted(() => {
       :target="currentDirectory || 'G-code files'"
       :accept="ACCEPTED"
       :disabled="isUploading"
-      class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden w-full h-full flex flex-col"
+      class="w-full h-full flex flex-col"
       @files="uploadFiles"
       @rejected="rejectFiles"
   >
-    <!-- Header & Upload -->
-    <div class="bg-gray-700/50 px-4 py-3 border-b border-gray-600 flex  items-center shrink-0">
-      <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-        <Icon name="folder" class="mr-2" /> G-Code Files
-      </h2>
+  <BaseCard title="G-Code Files" icon="folder" class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+    <template #header-actions>
+      <BaseButton
+          variant="primary"
+          :loading="isUploading"
+          data-test="file-upload"
+          @click="openPicker"
+      >
+        <Icon name="upload" class="mr-1" /> {{ isUploading ? 'Uploading...' : 'Upload' }}
+      </BaseButton>
+    </template>
 
-      <div>
-        <BaseButton
-            variant="primary"
-            class="ml-4"
-            :loading="isUploading"
-            data-test="file-upload"
-            @click="openPicker"
-        >
-          <Icon name="upload" class="mr-1" /> {{ isUploading ? 'Uploading...' : 'Upload' }}
-        </BaseButton>
-      </div>
-    </div>
-
+    <div class="flex h-full min-h-0 flex-col">
     <!-- Folder path -->
     <nav class="flex min-h-11 shrink-0 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm" data-test="programs-breadcrumbs">
       <span
@@ -625,6 +620,8 @@ onMounted(() => {
         </div>
       </form>
     </div>
+    </div>
+  </BaseCard>
 
     <DragBin
         :visible="drag.dragging.value !== null"

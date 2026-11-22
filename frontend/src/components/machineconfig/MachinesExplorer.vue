@@ -18,6 +18,7 @@ import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 import { MachineLifecycleFacade } from "../../facades/machineLifecycleFacade";
 import { openInEditor, EDITOR_SOURCES } from "../../helpers/openInEditor";
 import { ActionMenu, BaseButton, DragBin, FileDropZone, Icon } from "../../ui/index.ts";
+import BaseCard from "../../ui/BaseCard.vue";
 import { useEntryDragDrop } from "../../composables/useEntryDragDrop";
 import type { ActionMenuItem } from "../../ui/ActionMenu.vue";
 import { confirmDelete, downloadText, suggestCopyPath } from "./explorerActions";
@@ -285,19 +286,18 @@ async function downloadMachineFile(entry: FileEntry) {
     v-slot="{ openPicker }"
     :target="currentDirectory || 'machines'"
     :disabled="isBusy"
-    class="flex min-h-[360px] flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-800"
+    class="flex min-h-[360px] flex-col"
     @files="uploadFiles"
   >
-    <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Machines</h2>
-      <div class="flex items-center gap-3">
-        <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
-        <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="machines-upload" @click="openPicker">
-          <Icon name="upload" class="mr-1" /> Upload
-        </BaseButton>
-      </div>
-    </div>
+  <BaseCard title="Machines" class="relative flex flex-1 flex-col overflow-hidden" :min-height="360">
+    <template #header-actions>
+      <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+      <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="machines-upload" @click="openPicker">
+        <Icon name="upload" class="mr-1" /> Upload
+      </BaseButton>
+    </template>
 
+    <div class="flex h-full min-h-0 flex-col">
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
       <span
         class="rounded"
@@ -406,6 +406,7 @@ async function downloadMachineFile(entry: FileEntry) {
     </div>
 
     <button type="button" class="sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
+    </div>
 
     <div v-if="createOpen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-4" @click.self="createOpen = false">
       <form class="w-full max-w-sm space-y-4 rounded-lg border border-gray-600 bg-gray-800 p-4" @submit.prevent="onCreate">
@@ -421,6 +422,7 @@ async function downloadMachineFile(entry: FileEntry) {
         </div>
       </form>
     </div>
+  </BaseCard>
   <DragBin
     :visible="drag.dragging.value !== null"
     :active="drag.over.value === '__bin__'"

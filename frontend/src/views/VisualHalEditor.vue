@@ -852,7 +852,7 @@ function pinNodeType(node: HalNode): Exclude<PinType, "auto"> | null {
             enter-from-class="opacity-0 translate-y-2"
             leave-to-class="opacity-0 translate-y-2"
           >
-            <div v-if="menuOpen" class="rounded-lg border border-gray-700 bg-gray-800 overflow-hidden w-48" data-test="hal-block-menu">
+            <div v-if="menuOpen" class="rounded-lg border border-gray-600 bg-gray-800 overflow-hidden w-48" data-test="hal-block-menu">
               <button
                 v-for="kind in BLOCK_MENU"
                 :key="kind"

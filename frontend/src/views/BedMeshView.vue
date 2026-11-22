@@ -193,13 +193,12 @@ onBeforeUnmount(() => {
   </header>
 
   <div class="grid grid-cols-1 gap-6 pb-8 lg:grid-cols-[18rem_1fr]">
-    <BaseCard class="flex flex-col">
-      <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Meshes</h2>
+    <BaseCard title="Meshes" class="flex flex-col">
+      <template #header-actions>
         <BaseButton variant="primary" size="sm" :disabled="busy" data-testid="bed-mesh-new" @click="openCreate">
           <Icon name="plus" class="mr-1" /> New
         </BaseButton>
-      </div>
+      </template>
       <ul v-if="names.length" class="space-y-1 p-2" data-testid="bed-mesh-list">
         <li
           v-for="name in names"
@@ -237,21 +236,18 @@ onBeforeUnmount(() => {
       <p v-else class="p-6 text-center text-sm text-gray-500">No meshes yet — create one with New.</p>
     </BaseCard>
 
-    <BaseCard class="flex flex-col">
-      <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-        <h2 class="font-mono text-sm font-semibold text-gray-300">{{ shown?.name ?? "No mesh selected" }}</h2>
-        <div v-if="shown" class="flex gap-2">
-          <template v-if="draft">
-            <BaseButton variant="secondary" size="sm" :disabled="busy" @click="draft = null">Cancel</BaseButton>
-            <BaseButton variant="success" size="sm" :disabled="busy" data-testid="bed-mesh-save" @click="saveEdit">
-              <Icon name="save" class="mr-1" /> Save
-            </BaseButton>
-          </template>
-          <BaseButton v-else variant="secondary" size="sm" :disabled="busy" data-testid="bed-mesh-edit" @click="startEdit">
-            <Icon name="edit" class="mr-1" /> Edit
+    <BaseCard :title="shown?.name ?? 'No mesh selected'" class="flex flex-col">
+      <template v-if="shown" #header-actions>
+        <template v-if="draft">
+          <BaseButton variant="secondary" size="sm" :disabled="busy" @click="draft = null">Cancel</BaseButton>
+          <BaseButton variant="success" size="sm" :disabled="busy" data-testid="bed-mesh-save" @click="saveEdit">
+            <Icon name="save" class="mr-1" /> Save
           </BaseButton>
-        </div>
-      </div>
+        </template>
+        <BaseButton v-else variant="secondary" size="sm" :disabled="busy" data-testid="bed-mesh-edit" @click="startEdit">
+          <Icon name="edit" class="mr-1" /> Edit
+        </BaseButton>
+      </template>
       <div class="p-4">
         <BedMeshHeatmap v-if="shown" :grid="shown" :editable="!!draft" @update:cell="setCell" />
         <p v-else class="p-6 text-center text-sm text-gray-500">Select a mesh on the left.</p>

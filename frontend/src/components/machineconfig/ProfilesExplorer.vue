@@ -161,17 +161,15 @@ async function downloadProfile(entry: FileEntry) {
     class="flex min-h-[360px] flex-col"
     @files="uploadFiles"
   >
-  <BaseCard class="relative flex flex-1 flex-col">
-    <div class="flex items-center justify-between border-b border-gray-600 bg-gray-700/50 px-4 py-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-300">Profiles</h2>
-      <div class="flex items-center gap-3">
-        <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
-        <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="profiles-upload" @click="openPicker">
-          <Icon name="upload" class="mr-1" /> Upload
-        </BaseButton>
-      </div>
-    </div>
+  <BaseCard title="Profiles" class="relative flex flex-1 flex-col overflow-hidden" :min-height="360">
+    <template #header-actions>
+      <span class="font-mono text-xs text-gray-400">{{ entries.length }} items</span>
+      <BaseButton variant="primary" size="sm" :disabled="isBusy" data-test="profiles-upload" @click="openPicker">
+        <Icon name="upload" class="mr-1" /> Upload
+      </BaseButton>
+    </template>
 
+    <div class="flex h-full min-h-0 flex-col">
     <nav class="flex min-h-11 items-center gap-2 border-b border-gray-700 px-3 py-2 text-sm">
       <span
         class="rounded"
@@ -261,6 +259,7 @@ async function downloadProfile(entry: FileEntry) {
     <div v-else class="flex-1 p-8 text-center text-sm text-gray-500">This folder is empty. Drop files here or use + to create one.</div>
 
     <button type="button" class=" block sticky bottom-4 ml-auto mr-4 mb-4 h-12 w-12 rounded-full bg-blue-600 text-3xl text-white hover:bg-blue-500" title="Create file or folder" @click="createOpen = true">+</button>
+    </div>
 
     <Teleport to="body">
     <div
