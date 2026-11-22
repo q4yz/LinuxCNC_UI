@@ -2,9 +2,9 @@ import logging
 from typing import List, Optional, Union
 
 from dtos.sensors.TemperatureDto import TemperatureStateDto, TemperaturePin
-from services.temperature.temperature_config_mapper import get_temperature_sensors
+from services.temperature.temperature_config import get_temperature_sensors
 
-from factories.temperature.TemperatureStateFactory import TemperatureStateFactory
+from mappers.temperature.TemperatureStateMapper import TemperatureStateMapper
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 from dtos.tools import ExtruderPins, HeaterStateDTO, HeaterPins
 from services.tools.ToolsService import get_tools_service
@@ -68,7 +68,7 @@ class TemperatureService(HalPinService):
         return self._halpins_cache or []
 
     def get_states(self) -> list[HeaterStateDTO | TemperatureStateDto]:
-        states = (TemperatureStateFactory.create(halpin) for halpin in self.get_halpins())
+        states = (TemperatureStateMapper.to_state_dto(halpin) for halpin in self.get_halpins())
         return [state for state in states if state is not None]
 
 

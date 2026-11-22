@@ -37,10 +37,10 @@ from mappers.tools.HeaterMapper import HeaterMapper
 # Define the Union for the return type
 
 
-class ToolStateFactory:
+class ToolStateMapper:
 
     @staticmethod
-    def create(pins: ToolPins) -> Optional[ToolStateDTO]:
+    def to_state_dto(pins: ToolPins) -> Optional[ToolStateDTO]:
 
         if isinstance(pins, SpindleDigitalPins):
             return SpindleDigitalMapper.to_state_dto(pins)
@@ -56,4 +56,4 @@ class ToolStateFactory:
 
         return None
 
-__all__ = ["ToolStateFactory", "ToolStateDTO"]
+__all__ = ["ToolStateMapper", "ToolStateDTO"]

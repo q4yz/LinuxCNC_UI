@@ -4,7 +4,7 @@ from typing import List, Optional
 from dtos.fans.FanDto import FanPins
 from dtos.tools import ExtruderPins, HeaterPins
 from mappers.fans.FanMapper import FanMapper
-from services.io.fans_config_mapper import get_fans
+from services.io.fans_config import get_fans
 from services.tools.ToolsService import get_tools_service
 from services.HalPinService import HalPinService
 

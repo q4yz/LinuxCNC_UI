@@ -14,7 +14,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from hardware.Connection import (
-    DeviceConfigMapper,
+    DeviceConfigReader,
     execute_gcode,
     execute_sync_cmd,
     is_linuxcnc_connected, ensure_mdi_mode,
@@ -33,7 +33,7 @@ class MachineService:
     LinuxCNC command channel.
     """
 
-    def __init__(self, mapper: DeviceConfigMapper) -> None:
+    def __init__(self, mapper: DeviceConfigReader) -> None:
         self.mapper = mapper
 
     def safe_execute_gcode(self, command: str, timeout: float = 2.0) -> Dict[str, Any]:
@@ -65,11 +65,11 @@ def get_machine_service() -> MachineService:
     Mirrors the :class:`backend.hardware.connection._LazyChannel`
     pattern: the instance survives across requests and resets on
     ``uvicorn --reload``. The first call composes a default
-    :class:`DeviceConfigMapper`.
+    :class:`DeviceConfigReader`.
     """
     global _machine_service
     if _machine_service is None:
-        _machine_service = MachineService(mapper=DeviceConfigMapper())
+        _machine_service = MachineService(mapper=DeviceConfigReader())
     return _machine_service
 
 

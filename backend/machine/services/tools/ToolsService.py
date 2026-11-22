@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Type, Any, TypeVar
 
-from services.tools.tools_config_mapper import get_tools
+from services.tools.tools_config import get_tools
 from tools_constants import (
     DEFAULT_SPINDLE_OVERRIDE_PIN,
     G1_EXTRUDE,
@@ -14,9 +14,9 @@ from tools_constants import (
     M5_STOP,
 )
 from dtos.tools import SpindleDigitalStateDTO, SpindleAnalogStateDTO, HeaterStateDTO, ExtruderStateDTO, ToolPins
-from factories.tools.ToolPinTypeFactory import ToolPinTypeFactory
-from factories.tools.ToolStateFactory import ToolStateFactory
-from factories.tools.ToolHalPinFactory import ToolHalPinFactory
+from mappers.tools.ToolPinsMapper import ToolPinsMapper
+from mappers.tools.ToolStateMapper import ToolStateMapper
+from mappers.tools.ToolPinsMapper import ToolPinsMapper
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.tools_service")
@@ -39,7 +39,7 @@ class ToolsService(HalPinService):
 
         out: List[ToolPins] = []
         for tool in get_tools():  # Assuming get_tools() reads your JSON config
-            pin_map = ToolHalPinFactory.create(tool)
+            pin_map = ToolPinsMapper.from_dict_to_ToolPins(tool)
             if pin_map is not None:
                 out.append(pin_map)
 
@@ -55,7 +55,7 @@ class ToolsService(HalPinService):
         return self._halpins_cache or []
 
     def get_states(self) -> list[SpindleDigitalStateDTO | SpindleAnalogStateDTO | HeaterStateDTO | ExtruderStateDTO]:
-        states = (ToolStateFactory.create(halpin) for halpin in self.get_halpins())
+        states = (ToolStateMapper.to_state_dto(halpin) for halpin in self.get_halpins())
         return [state for state in states if state is not None]
 
     def get_halpin(self, tool_id: str, expected_type: Type[T]) -> Optional[T]:
@@ -64,7 +64,7 @@ class ToolsService(HalPinService):
         """
         for pin_map in self.get_halpins():
             if getattr(pin_map, "id", None) == tool_id:
-                extracted_pin = ToolPinTypeFactory.create(pin_map, expected_type)
+                extracted_pin = ToolPinsMapper.of_type(pin_map, expected_type)
                 if isinstance(extracted_pin, expected_type):
                     return extracted_pin
 
@@ -81,7 +81,7 @@ class ToolsService(HalPinService):
         """
         pin_map = self.get_halpin(tool_id, expected_pin_type)
         if pin_map:
-            return ToolStateFactory.create(pin_map)
+            return ToolStateMapper.to_state_dto(pin_map)
         return None
 
 _tools_service: Optional[ToolsService] = None

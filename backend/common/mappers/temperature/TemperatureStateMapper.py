@@ -1,7 +1,7 @@
 from typing import Optional, Union
 
 from dtos.sensors.TemperatureDto import TemperaturePin
-from factories.temperature.TemperatureResponseFactory import TemperatureStateDTO
+from mappers.temperature.TemperatureResponseMapper import TemperatureStateDTO
 from mappers.temperature.TemperatureSensorMapper import TemperatureSensorMapper
 # Adjust these imports based on your actual project structure
 from dtos.tools.HeaterDto import HeaterPins, HeaterStateDTO
@@ -14,11 +14,11 @@ TemperaturePins = Union[HeaterPins, TemperaturePin]
 AllTemperatureStateDTO = Union[HeaterStateDTO, TemperatureStateDTO]
 
 
-class TemperatureStateFactory:
-    """Factory to translate hardware pins into runtime state DTOs for the temperature module."""
+class TemperatureStateMapper:
+    """Pins -> state DTO for the temperature module (heater or plain sensor)."""
 
     @staticmethod
-    def create(pins: TemperaturePins) -> Optional[AllTemperatureStateDTO]:
+    def to_state_dto(pins: TemperaturePins) -> Optional[AllTemperatureStateDTO]:
 
         if isinstance(pins, HeaterPins):
             return HeaterMapper.to_state_dto(pins)
@@ -29,4 +29,4 @@ class TemperatureStateFactory:
         return None
 
 
-__all__ = ["TemperatureStateFactory", "TemperaturePins", "TemperatureStateDTO"]
+__all__ = ["TemperatureStateMapper", "TemperaturePins", "TemperatureStateDTO"]

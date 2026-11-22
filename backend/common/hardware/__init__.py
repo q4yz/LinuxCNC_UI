@@ -1,7 +1,7 @@
 from .Connection import (
     HAS_HAL,
     USE_MOCK,
-    DeviceConfigMapper,
+    DeviceConfigReader,
     execute_gcode,
     dispatch_mdi,
     execute_sync_cmd,
@@ -25,7 +25,7 @@ __all__ = [
     "execute_gcode",
     "dispatch_mdi",
 
-    "DeviceConfigMapper",
+    "DeviceConfigReader",
     "hal",
     "linuxcnc"
     # Note: ``MachineService`` / ``machine_service`` / ``default_mapper``

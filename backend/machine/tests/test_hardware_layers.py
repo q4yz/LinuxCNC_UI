@@ -13,7 +13,7 @@ them dispatch through.
 
 This suite covers:
 
-  * :class:`DeviceConfigMapper` — .cfg parsing, endstop-pin extraction,
+  * :class:`DeviceConfigReader` — .cfg parsing, endstop-pin extraction,
     fallback pins.
   * :class:`MachineService` (hardware-layer) — ``get_endstop`` and
     ``get_endstop_state_subscription`` — including the M114 fallback
@@ -50,14 +50,14 @@ conn_mod = importlib.import_module("hardware.Connection")
 # ``conn_mod``.
 cmd_mod = importlib.import_module("hardware.Connection.channel_cmd")
 from hardware.Connection import (
-    DeviceConfigMapper,
+    DeviceConfigReader,
     execute_gcode,
 )
 from services.machine.MachineService import MachineService
 
 
 # ────────────────────────────────────────────────────────────────────── #
-# DeviceConfigMapper                                                      #
+# DeviceConfigReader                                                      #
 # ────────────────────────────────────────────────────────────────────── #
 
 
@@ -77,7 +77,7 @@ class TestDeviceConfigMapper:
         returns the canonical three-axis fallback so a freshly-booted
         backend without a ``.cfg`` doesn't crash.
         """
-        mapper = DeviceConfigMapper()
+        mapper = DeviceConfigReader()
         pins = mapper.get_endstop_hal_pin_list()
         assert pins == [
             "joint.0.home-sw-in",
@@ -97,7 +97,7 @@ class TestDeviceConfigMapper:
             "Y_HOME = joint.1.home-sw-in\n"
             "Z_HOME = joint.2.home-sw-in\n"
         )
-        mapper = DeviceConfigMapper(str(cfg))
+        mapper = DeviceConfigReader(str(cfg))
         pins = mapper.get_endstop_hal_pin_list()
         assert pins == [
             "joint.0.home-sw-in",
@@ -120,7 +120,7 @@ class TestDeviceConfigMapper:
             "[EMCIO]\n"  # section without HOME_SWITCH_PIN — must be ignored
             "EMCIOENCODING = ascii\n"
         )
-        mapper = DeviceConfigMapper(str(cfg))
+        mapper = DeviceConfigReader(str(cfg))
         assert mapper.get_endstop_hal_pin_list() == [
             "joint.0.home-sw-in",
             "joint.1.home-sw-in",
@@ -136,7 +136,7 @@ class TestDeviceConfigMapper:
         """
         cfg = tmp_path / "machine.cfg"
         cfg.write_text("[EMCIO]\nEMCIOENCODING = ascii\n")
-        mapper = DeviceConfigMapper(str(cfg))
+        mapper = DeviceConfigReader(str(cfg))
         assert mapper.get_endstop_hal_pin_list() == [
             "joint.0.home-sw-in",
             "joint.1.home-sw-in",
@@ -149,7 +149,7 @@ class TestDeviceConfigMapper:
         """Constructor tolerates a missing ``.cfg`` — important
         for the test environment where the file may not exist.
         """
-        mapper = DeviceConfigMapper(str(tmp_path / "nope.cfg"))
+        mapper = DeviceConfigReader(str(tmp_path / "nope.cfg"))
         assert mapper.get_endstop_hal_pin_list() == [
             "joint.0.home-sw-in",
             "joint.1.home-sw-in",

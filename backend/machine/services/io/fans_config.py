@@ -1,6 +1,6 @@
 """Shared helper for reading the active ``hardware.json``'s ``fans[]``.
 
-Same pattern as ``temperature_config_mapper.get_temperature_sensors`` —
+Same pattern as ``temperature_config.get_temperature_sensors`` —
 one thin, testable wrapper over :class:`HardwareConfigService` so a
 missing file or corrupt JSON returns an empty list instead of
 crashing the caller.

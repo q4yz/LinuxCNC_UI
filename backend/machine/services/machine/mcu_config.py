@@ -1,6 +1,6 @@
 """Shared helper for reading the active ``hardware.json``'s ``mcus[]``.
 
-Same pattern as ``fans_config_mapper.get_fans`` — one thin, testable
+Same pattern as ``fans_config.get_fans`` — one thin, testable
 wrapper over :class:`HardwareConfigService` so a missing file or
 corrupt JSON returns an empty list instead of crashing the caller.
 """

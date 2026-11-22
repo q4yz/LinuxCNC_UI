@@ -15,10 +15,10 @@ from services.machine.McuService import get_mcu_service
 from services.motion.AxisService import get_axis_service
 from models.program.ProgramModels import ProgramProgressResponse
 from services.program.ProgramService import get_program_lifecycle_service
-from factories.temperature.TemperatureResponseFactory import TemperatureResponseFactory
+from mappers.temperature.TemperatureResponseMapper import TemperatureResponseMapper
 from models.TemperatureStateResponse import TemperatureStateResponse
 from services.temperature.TemperatureService import get_temperature_service
-from factories.tools.ToolResponseFactory import ToolResponseFactory, ToolStateResponseModel
+from mappers.tools.ToolResponseMapper import ToolResponseMapper, ToolStateResponseModel
 from models.tools.HeaterModels import HeaterStateResponse
 from services.tools.ToolsService import get_tools_service
 from core.NonRepeatingLogger import NonRepeatingLogger
@@ -109,7 +109,7 @@ class BaseThreadSnapshotService:
         return progress
 
     def _tools_snapshot(self, mode: ResponseTier) -> Dict[str, ToolStateResponseModel]:
-        """Build the operator-facing tool list via the OOP factories."""
+        """Build the operator-facing tool list via the tool mappers."""
         logger.info("base_thread.snapshot: building tools overlay")
         out: Dict[str, ToolStateResponseModel] = {}
 
@@ -118,7 +118,7 @@ class BaseThreadSnapshotService:
 
         for state in states:
             # Pass the mode down to the factory!
-            response_model: ToolStateResponseModel = ToolResponseFactory.create(state, mode)
+            response_model: ToolStateResponseModel = ToolResponseMapper.to_response(state, mode)
             if response_model is not None:
                 out[response_model.id] = response_model
 
@@ -139,7 +139,7 @@ class BaseThreadSnapshotService:
 
         for state in states:
             # Pass the mode down to the factory!
-            response_model = TemperatureResponseFactory.create(state, mode)
+            response_model = TemperatureResponseMapper.to_response(state, mode)
             if response_model is not None:
                 out[response_model.id] = response_model
 

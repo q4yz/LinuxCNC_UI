@@ -15,11 +15,11 @@ TemperatureStateDTO = Union[HeaterStateDTO, TemperatureStateDto]
 TemperatureResponseModel = Union[HeaterStateResponse, TemperatureStateResponse]
 
 
-class TemperatureResponseFactory:
-    """Factory to translate internal temperature state DTOs into HTTP Response models."""
+class TemperatureResponseMapper:
+    """State DTO -> response model for the temperature module."""
 
     @staticmethod
-    def create(state: TemperatureStateDTO ,r : ResponseTier = ResponseTier.ALL) -> Optional[TemperatureResponseModel]:
+    def to_response(state: TemperatureStateDTO ,r : ResponseTier = ResponseTier.ALL) -> Optional[TemperatureResponseModel]:
 
         if isinstance(state, HeaterStateDTO):
             return HeaterMapper.to_response(state, r)
@@ -30,4 +30,4 @@ class TemperatureResponseFactory:
         return None
 
 
-__all__ = ["TemperatureResponseFactory", "TemperatureStateDTO", "TemperatureResponseModel"]
+__all__ = ["TemperatureResponseMapper", "TemperatureStateDTO", "TemperatureResponseModel"]

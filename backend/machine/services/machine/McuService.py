@@ -5,7 +5,7 @@ from typing import List, Optional
 from exceptions import ConflictError
 from dtos.mcu.McuDto import McuPins
 from mappers.mcu.McuMapper import McuMapper
-from services.machine.mcu_config_mapper import get_mcus
+from services.machine.mcu_config import get_mcus
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.mcu")

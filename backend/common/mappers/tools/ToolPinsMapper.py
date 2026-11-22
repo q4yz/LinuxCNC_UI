@@ -14,19 +14,26 @@ type only needs one branch added here.
 """
 
 from __future__ import annotations
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type, TypeVar, Union
 from dtos.tools import (
+    ExtruderPins,
+    HeaterPins,
+    SpindleAnalogPins,
+    SpindleDigitalPins,
     ToolPins,
 )
+
+T = TypeVar("T")
+AnyToolPin = Union[ExtruderPins, HeaterPins, SpindleAnalogPins, SpindleDigitalPins]
 from mappers.tools.SpindleAnalogMapper import SpindleAnalogMapper
 from mappers.tools.SpindleDigitalMapper import SpindleDigitalMapper
 from mappers.tools.ExtruderMapper import ExtruderMapper
 from mappers.tools.HeaterMapper import HeaterMapper
 
 
-class ToolHalPinFactory:
+class ToolPinsMapper:
     @staticmethod
-    def create(data: Dict[str, Any]) -> Optional[ToolPins]:
+    def from_dict_to_ToolPins(data: Dict[str, Any]) -> Optional[ToolPins]:
         tool_type = data.get("type")
         tool_id = data.get("id")
 
@@ -47,5 +54,28 @@ class ToolHalPinFactory:
 
         return None
 
+    @staticmethod
+    def of_type(data: AnyToolPin, expected_type: Type[T]) -> Optional[T]:
 
-__all__ = ["ToolHalPinFactory", "ToolPins"]
+        if expected_type is ExtruderPins:
+            if isinstance(data, ExtruderPins):
+                return data
+
+        if expected_type is HeaterPins:
+            if isinstance(data, ExtruderPins):
+                return data.heater
+            if isinstance(data, HeaterPins):
+                return data
+
+        if expected_type is SpindleDigitalPins:
+            if isinstance(data, SpindleDigitalPins):
+                return data
+
+        if expected_type is SpindleAnalogPins:
+            if isinstance(data, SpindleAnalogPins):
+                return data
+
+        return None
+
+
+__all__ = ["AnyToolPin", "ToolPinsMapper", "ToolPins"]

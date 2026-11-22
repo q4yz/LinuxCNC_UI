@@ -6,7 +6,7 @@ import os
 from typing import Optional, List
 
 
-class DeviceConfigMapper:
+class DeviceConfigReader:
     """Parses ``.cfg`` configuration files to extract HAL pins.
 
     Two naming conventions are accepted because LinuxCNC

@@ -26,7 +26,7 @@ from dtos.tools.ExtruderDto import HeaterPins, ExtruderPins, ExtruderStateDTO
 from dtos.tools.HeaterDto import HeaterStateDTO
 
 # Union of every concrete tool-pin record the factory can return.
-# Used as the return-type annotation of ``ToolHalPinFactory.create``.
+# Used as the return-type annotation of ``ToolPinsMapper.create``.
 ToolPins = SpindleDigitalPins | SpindleAnalogPins | HeaterPins | ExtruderPins
 
 ToolStateDTO =  SpindleDigitalStateDTO | SpindleAnalogStateDTO | HeaterStateDTO | ExtruderStateDTO

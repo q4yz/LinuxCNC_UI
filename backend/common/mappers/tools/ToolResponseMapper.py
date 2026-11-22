@@ -17,11 +17,11 @@ ToolStateResponseModel = Union[
 ]
 
 
-class ToolResponseFactory:
+class ToolResponseMapper:
     """Translates internal Tool Domain DTOs into flattened HTTP Response models."""
 
     @staticmethod
-    def create(state_dto, mode: ResponseTier = ResponseTier.ALL) -> Optional[ToolStateResponseModel]:
+    def to_response(state_dto, mode: ResponseTier = ResponseTier.ALL) -> Optional[ToolStateResponseModel]:
         """The master factory engine with mode projection."""
 
         # Note: Swap these to `isinstance(state_dto, YourDTOClass)` using your actual DTO classes
@@ -41,11 +41,11 @@ class ToolResponseFactory:
     # --- Quality-of-Life Wrappers ---
 
     @staticmethod
-    def create_base(state_dto) -> Optional[ToolStateResponseModel]:
+    def to_base_response(state_dto) -> Optional[ToolStateResponseModel]:
         """Generates ONLY the 1Hz live dynamic fields for the tool."""
-        return ToolResponseFactory.create(state_dto, ResponseTier.BASE)
+        return ToolResponseMapper.to_response(state_dto, ResponseTier.BASE)
 
     @staticmethod
-    def create_static(state_dto) -> Optional[ToolStateResponseModel]:
+    def to_static_response(state_dto) -> Optional[ToolStateResponseModel]:
         """Generates ONLY the static configuration fields for the tool."""
-        return ToolResponseFactory.create(state_dto, ResponseTier.STATIC)
+        return ToolResponseMapper.to_response(state_dto, ResponseTier.STATIC)
