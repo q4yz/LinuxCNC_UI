@@ -222,7 +222,7 @@ def render_ini_template(
             parameter existed.
         mdi_commands: ``[HALUI] MDI_COMMAND`` lines, in
             ``halui.mdi-command-NN`` order (an ``[input_pin]``'s edges,
-            ``IoPinHalMapper.mdi_commands``); their subroutines live in
+            ``InputPinHalMapper.mdi_commands``); their subroutines live in
             the config's ``subroutines/`` folder.
         corexy: CoreXY kinematics instead of ``trivkins``.
         homing_override: The machine homes with a ``[homing_override]``

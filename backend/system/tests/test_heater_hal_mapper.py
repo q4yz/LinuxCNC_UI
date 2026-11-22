@@ -161,10 +161,10 @@ def test_an_estop_or_a_dead_link_turns_every_heater_off():
         assert "net heater_bed-heat-ok <= heat-ok-heater_bed.out" in fragment.nets
 
 
-def test_pid_tune_webgui_lines():
-    from services.halcompiler.components.HeaterHalMapper import pid_tune_webgui_lines
+def test_pid_tune_lines():
+    from services.halcompiler.components.HeaterWebguiMapper import HeaterWebguiMapper
 
-    lines = pid_tune_webgui_lines({"id": "heater_bed", "control": "pid"})
+    lines = HeaterWebguiMapper.pid_tune_lines({"id": "heater_bed", "control": "pid"})
     assert "net heater_bed-tune-enable webgui.tune-heater_bed-enable => tune-ok-heater_bed.in0" in lines
     assert "net heater_bed-tune-duty webgui.tune-heater_bed-duty => tune-heater_bed.in1" in lines
-    assert pid_tune_webgui_lines({"id": "heater_bed", "control": "watermark"}) == []
+    assert HeaterWebguiMapper.pid_tune_lines({"id": "heater_bed", "control": "watermark"}) == []

@@ -47,28 +47,29 @@ from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragme
 DEFAULT_MIN_EXTRUDE_TEMP = 170.0
 
 
-def _component(tool_id: str) -> str:
-    return f"extruder-{tool_id}"
-
-
-def guarded_joint(payload: dict[str, Any], tool: dict[str, Any]) -> Optional[int]:
-    """The extruder ``tool``'s joint number when it gets a guard (a sensor
-    and a motion joint), else ``None``."""
-    if tool.get("type") != "extruder" or not tool.get("sensor"):
-        return None
-    for joint in payload.get("joints") or []:
-        if isinstance(joint, dict) and joint.get("id") == tool.get("id") and joint.get("joint_number") is not None:
-            return int(joint["joint_number"])
-    return None
-
-
 class ExtruderGuardHalMapper:
+    @staticmethod
+    def component(tool_id: str) -> str:
+        """The tool's ``extruder`` component instance."""
+        return f"extruder-{tool_id}"
+
+    @staticmethod
+    def guarded_joint(payload: dict[str, Any], tool: dict[str, Any]) -> Optional[int]:
+        """The extruder ``tool``'s joint number when it gets a guard (a sensor
+        and a motion joint), else ``None``."""
+        if tool.get("type") != "extruder" or not tool.get("sensor"):
+            return None
+        for joint in payload.get("joints") or []:
+            if isinstance(joint, dict) and joint.get("id") == tool.get("id") and joint.get("joint_number") is not None:
+                return int(joint["joint_number"])
+        return None
+
     @staticmethod
     def to_fragment(tool: dict[str, Any], joint_number: int, flow: bool = False) -> HalFragment:
         """``flow``: route the joint's position through the component
         (Remora: `RemoraStepperHalMapper` leaves those nets out)."""
         tool_id = str(tool["id"])
-        comp = _component(tool_id)
+        comp = ExtruderGuardHalMapper.component(tool_id)
         min_temp = tool.get("min_extrude_temp")
         min_temp = DEFAULT_MIN_EXTRUDE_TEMP if min_temp is None else float(min_temp)
         fragment = HalFragment()
@@ -93,18 +94,5 @@ class ExtruderGuardHalMapper:
             ])
         return fragment
 
-    @staticmethod
-    def webgui_lines(tool: dict[str, Any]) -> list[str]:
-        tool_id = str(tool["id"])
-        return [
-            f"# Cold-extrusion guard: {tool_id} (machine.hal's extruder-{tool_id})",
-            f"net {tool_id}-cold-extrude {_component(tool_id)}.cold-extrude => halui.abort",
-            # the flow % (M221, the UI) — scales the moves on a Remora board
-            f"net {tool_id}-flow webgui.flow => {_component(tool_id)}.flow-percent",
-            # pressure advance (the profile's value, SET_PRESSURE_ADVANCE, M900)
-            f"net {tool_id}-pressure-advance webgui.pressure-advance => {_component(tool_id)}.pressure-advance",
-            "",
-        ]
 
-
-__all__ = ["DEFAULT_MIN_EXTRUDE_TEMP", "ExtruderGuardHalMapper", "guarded_joint"]
+__all__ = ["DEFAULT_MIN_EXTRUDE_TEMP", "ExtruderGuardHalMapper"]

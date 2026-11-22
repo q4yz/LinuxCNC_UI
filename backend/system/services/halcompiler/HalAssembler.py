@@ -27,9 +27,10 @@ from .components.BedMeshHalMapper import BedMeshHalMapper
 from .components.CoreXyHalMapper import CoreXyHalMapper
 from .components.DigitalSpindleHalMapper import DigitalSpindleHalMapper
 from .components.EstopHalMapper import EstopHalMapper
-from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
-from .components.JointShapeHalMapper import JointShapeHalMapper, shaped_joints
-from .components.IoPinHalMapper import InputPinHalMapper, OutputPinHalMapper, halpin_sets
+from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper
+from .components.JointShapeHalMapper import JointShapeHalMapper
+from .components.InputPinHalMapper import InputPinHalMapper
+from .components.OutputPinHalMapper import OutputPinHalMapper
 from .components.FanHalMapper import FanHalMapper
 from .components.HeaterHalMapper import HeaterHalMapper
 from .components.MotionSystemHalMapper import MotionSystemHalMapper
@@ -41,7 +42,7 @@ from .components.Adxl345HalMapper import Adxl345HalMapper
 from .components.LedHalMapper import LedHalMapper
 from .components.StepperHalMapper import StepperHalMapper
 from .components.ZTiltHalMapper import ZTiltHalMapper
-from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper, unclaimed_sensors
+from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper
 from .mcus.ParportRouterMapper import ParportRouterMapper
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
@@ -122,7 +123,7 @@ class HalAssembler:
         z_tilt = self._payload.get("z_tilt")
         if isinstance(z_tilt, dict):
             # After every stepper mapper: it rewrites their Z position nets.
-            component_fragments.append(ZTiltHalMapper.apply(component_fragments, z_tilt))
+            component_fragments.append(ZTiltHalMapper.to_fragment(z_tilt, component_fragments))
         self._merge_override_duplicates(component_fragments)
         motion = MotionSystemHalMapper.to_fragment(len(self._joints_by_number), capability_class)
 
@@ -194,12 +195,12 @@ class HalAssembler:
         ``extruder`` component (flow %) — Remora boards only."""
         if _STEPPER_MAPPERS.get(capability_class, StepperHalMapper) is not RemoraStepperHalMapper:
             return frozenset()
-        joints = (guarded_joint(self._payload, t) for t in self._payload.get("tools", []) if isinstance(t, dict))
+        joints = (ExtruderGuardHalMapper.guarded_joint(self._payload, t) for t in self._payload.get("tools", []) if isinstance(t, dict))
         return frozenset(j for j in joints if j is not None)
 
     def _component_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         mapper = _STEPPER_MAPPERS.get(capability_class, StepperHalMapper)
-        self._shaped = shaped_joints(self._payload)
+        self._shaped = JointShapeHalMapper.shaped_joints(self._payload)
         corexy = self._corexy_joints()
         fragments: list[HalFragment] = []
         for axis in self._payload.get("axes", []):
@@ -263,7 +264,7 @@ class HalAssembler:
             fan = self._fans_by_id.get(tool.get("fan"))
             fragments.append(HeaterHalMapper.to_fragment(tool, sensor, fan))
             # An extruder's cold-extrusion guard (min_extrude_temp).
-            joint = guarded_joint(self._payload, tool)
+            joint = ExtruderGuardHalMapper.guarded_joint(self._payload, tool)
             if joint is not None:
                 flow = joint in self._flow_joints(self._capability_class())
                 fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint, flow=flow))
@@ -272,7 +273,7 @@ class HalAssembler:
     def _sensor_fragments(self) -> list[HalFragment]:
         """One fragment per temperature sensor no heater reads — a heater's
         own sensor is already wired by ``HeaterHalMapper``."""
-        return [TemperatureSensorHalMapper.to_fragment(s) for s in unclaimed_sensors(self._payload)]
+        return [TemperatureSensorHalMapper.to_fragment(s) for s in TemperatureSensorHalMapper.unclaimed_sensors(self._payload)]
 
     def _fan_fragments(self) -> list[HalFragment]:
         """One fragment per fan — always its own direct pin route.
@@ -304,7 +305,7 @@ class HalAssembler:
     def _io_pin_fragments(self) -> list[HalFragment]:
         """``[output_pin]`` / ``[input_pin]``, any MCU that can route them."""
         input_pins = self._payload.get("input_pins") or []
-        sets = halpin_sets(input_pins)
+        sets = InputPinHalMapper.halpin_sets(input_pins)
         return [
             OutputPinHalMapper.to_fragment(p, [s for s in sets if s.output_id == p["id"]])
             for p in self._payload.get("output_pins") or []

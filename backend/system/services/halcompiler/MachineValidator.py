@@ -21,7 +21,7 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.DiagnosticModels import Diagnostic, Severity
 from models.machineconfig.PinModels import CapabilityClass, ParsedPin
 
-from .components.TemperatureSensorHalMapper import HOST, MCU, is_board_sensor, is_hal_sensor, sensor_kind
+from .components.TemperatureSensorHalMapper import HOST, MCU, TemperatureSensorHalMapper
 from .mcus.RemoraCanMapper import RemoraCanMapper
 from .mcus.RemoraRouterMapper import RemoraRouterMapper
 
@@ -139,7 +139,7 @@ class MachineValidator:
                 raw = record.get(field)
                 if not raw:
                     continue
-                if list_name == "temperature_sensors" and not is_board_sensor(record):
+                if list_name == "temperature_sensors" and not TemperatureSensorHalMapper.is_board_sensor(record):
                     continue  # a HAL name or MCU id, not a board pin
                 owner = str(record.get("id", list_name))
                 try:
@@ -390,7 +390,7 @@ class MachineValidator:
         sensor without one would read nothing at all."""
         sensors_per_node: dict[str, list[str]] = {}
         for sensor in self._records("temperature_sensors"):
-            if not is_board_sensor(sensor):
+            if not TemperatureSensorHalMapper.is_board_sensor(sensor):
                 continue
             try:
                 pin = PinStringMapper.from_string(sensor["pin"]) if sensor.get("pin") else None
@@ -482,7 +482,7 @@ class MachineValidator:
         hands out itself."""
         sensors = self._records("temperature_sensors")
         mcus = {str(m["id"]): m for m in self._records("mcus") if m.get("id")}
-        mcu_owners = [s for s in sensors if sensor_kind(s) == MCU]
+        mcu_owners = [s for s in sensors if TemperatureSensorHalMapper.sensor_kind(s) == MCU]
         for sensor in mcu_owners:
             if (mcus.get(str(sensor.get("pin"))) or {}).get("connection") != "remora-spi":
                 self._error(
@@ -493,12 +493,12 @@ class MachineValidator:
                 )
         for kind, code, what in ((MCU, "E_MCU_TEMP_SHARED", "the MCU temperature"),
                                  (HOST, "E_HOST_TEMP_SHARED", "the host temperature")):
-            owners = [str(s.get("id", "?")) for s in sensors if sensor_kind(s) == kind]
+            owners = [str(s.get("id", "?")) for s in sensors if TemperatureSensorHalMapper.sensor_kind(s) == kind]
             if len(owners) > 1:
                 self._error(code, f"{what} is read by {', '.join(owners)}; declare it once.", owners[1])
         for sensor in sensors:
             pin = str(sensor.get("pin") or "")
-            if is_hal_sensor(sensor) and pin.startswith("remora."):
+            if TemperatureSensorHalMapper.is_hal_sensor(sensor) and pin.startswith("remora."):
                 self._error(
                     "E_HAL_PIN_GENERATED",
                     f"sensor_pin {pin!r}: the generator hands out the remora.* pins itself (a "
@@ -599,7 +599,7 @@ class MachineValidator:
         endstops = self._ids("endstops")
         tools = self._ids("tools")
         hal_sensors = {
-            str(s["id"]) for s in self._records("temperature_sensors") if s.get("id") and not is_board_sensor(s)
+            str(s["id"]) for s in self._records("temperature_sensors") if s.get("id") and not TemperatureSensorHalMapper.is_board_sensor(s)
         }
 
         for tool in self._records("tools"):

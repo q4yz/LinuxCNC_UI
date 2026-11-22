@@ -34,20 +34,21 @@ SAMPLER = "sampler.0"
 SAMPLER_DEPTH = 4000
 
 
-def node_adxl345(payload: dict[str, Any]) -> dict[str, Any] | None:
-    adxl = payload.get("adxl345")
-    return adxl if isinstance(adxl, dict) and adxl.get("cs_pin") else None
-
-
 def _bare(pin: Any) -> str | None:
     return PinStringMapper.from_string(str(pin)).pin_id if pin else None
 
 
 class Adxl345HalMapper:
     @staticmethod
+    def node_adxl345(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """The ``[adxl345]`` section when it sits on a CAN node (``cs_pin``)."""
+        adxl = payload.get("adxl345")
+        return adxl if isinstance(adxl, dict) and adxl.get("cs_pin") else None
+
+    @staticmethod
     def to_fragment(payload: dict[str, Any]) -> HalFragment:
         fragment = HalFragment()
-        adxl = node_adxl345(payload)
+        adxl = Adxl345HalMapper.node_adxl345(payload)
         if adxl is None:
             return fragment
         fragment.requests.append(PinRequest(
@@ -64,15 +65,5 @@ class Adxl345HalMapper:
         fragment.nets.append(f"net {SIGNAL}-y => {SAMPLER}.pin.1")
         return fragment
 
-    @staticmethod
-    def webgui_lines(payload: dict[str, Any]) -> list[str]:
-        if node_adxl345(payload) is None:
-            return []
-        return [
-            "# Accelerometer on the CAN node: recording for the resonance test",
-            f"net {SIGNAL}-record webgui.accel-record => {SAMPLER}.enable",
-            "",
-        ]
 
-
-__all__ = ["Adxl345HalMapper", "SAMPLER", "SAMPLER_DEPTH", "SIGNAL", "node_adxl345"]
+__all__ = ["Adxl345HalMapper", "SAMPLER", "SAMPLER_DEPTH", "SIGNAL"]

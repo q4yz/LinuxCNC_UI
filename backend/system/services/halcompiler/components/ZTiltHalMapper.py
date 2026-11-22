@@ -23,28 +23,28 @@ from models.machineconfig.HalFragmentModels import SERVO_THREAD, Addf, HalFragme
 RAMP_MM_PER_S = 2.0
 
 
-def offset_name(index: int) -> str:
-    return f"ztilt-{index}"
-
-
-def ramp_name(index: int) -> str:
-    return f"ztilt-ramp-{index}"
-
-
-def target_pin(index: int) -> str:
-    """The machine backend's pin (``webgui.<this>``) for motor ``index``."""
-    return f"ztilt-{index}"
-
-
 class ZTiltHalMapper:
     @staticmethod
-    def apply(fragments: list[HalFragment], z_tilt: dict[str, Any]) -> HalFragment:
+    def offset_name(index: int) -> str:
+        return f"ztilt-{index}"
+
+    @staticmethod
+    def ramp_name(index: int) -> str:
+        return f"ztilt-ramp-{index}"
+
+    @staticmethod
+    def target_pin(index: int) -> str:
+        """The machine backend's pin (``webgui.<this>``) for motor ``index``."""
+        return f"ztilt-{index}"
+
+    @staticmethod
+    def to_fragment(z_tilt: dict[str, Any], fragments: list[HalFragment]) -> HalFragment:
         """Splice the offsets into ``fragments`` (in place); the new
         components as their own fragment."""
         joints = [int(j) for j in z_tilt.get("joints") or []]
         limit = float(z_tilt.get("max_adjust") or 5.0)
-        offsets = [offset_name(k) for k in range(len(joints))]
-        ramps = [ramp_name(k) for k in range(len(joints))]
+        offsets = [ZTiltHalMapper.offset_name(k) for k in range(len(joints))]
+        ramps = [ZTiltHalMapper.ramp_name(k) for k in range(len(joints))]
         fragment = HalFragment(
             loadrt=[f"loadrt offset names={','.join(offsets)}", f"loadrt limit2 names={','.join(ramps)}"],
         )
@@ -93,15 +93,4 @@ class ZTiltHalMapper:
             raise ValueError(f"z_tilt: no position command / feedback nets for joint {joint} to put the offset in")
 
 
-class ZTiltWebguiMapper:
-    """The machine backend's target pin per motor onto its ramp."""
-
-    @staticmethod
-    def to_lines(z_tilt: dict[str, Any]) -> list[str]:
-        lines = ["# Z tilt: per-motor offset targets"]
-        for k in range(len(z_tilt.get("joints") or [])):
-            lines.append(f"net ztilt-{k}-target webgui.{target_pin(k)} => {ramp_name(k)}.in")
-        return lines + [""]
-
-
-__all__ = ["RAMP_MM_PER_S", "ZTiltHalMapper", "ZTiltWebguiMapper", "offset_name", "ramp_name", "target_pin"]
+__all__ = ["RAMP_MM_PER_S", "ZTiltHalMapper"]

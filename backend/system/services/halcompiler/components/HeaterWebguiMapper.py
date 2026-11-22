@@ -46,5 +46,19 @@ class HeaterWebguiMapper:
         lines.append("")
         return lines
 
+    @staticmethod
+    def pid_tune_lines(heater: dict[str, Any]) -> list[str]:
+        """``webgui_connections.hal``: the PID_CALIBRATE relay pins of a PID
+        heater (machine.hal's ``tune-<id>`` / ``tune-ok-<id>``)."""
+        if (heater.get("control") or "pid").strip().lower() != "pid":
+            return []
+        heater_id = str(heater["id"])
+        return [
+            f"# PID_CALIBRATE: {heater_id}",
+            f"net {heater_id}-tune-enable webgui.tune-{heater_id}-enable => tune-ok-{heater_id}.in0",
+            f"net {heater_id}-tune-duty webgui.tune-{heater_id}-duty => tune-{heater_id}.in1",
+            "",
+        ]
+
 
 __all__ = ["HeaterWebguiMapper"]

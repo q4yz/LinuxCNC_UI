@@ -1,7 +1,8 @@
 """HAL compiler: hardware.json -> a functional ``machine.hal``.
 
-:mod:`.validator` answers "can this machine be compiled, and if not,
-why not" (Phase 0 — no emission). :func:`.compile_machine_hal` is the
+:class:`.MachineValidator` answers "can this machine be compiled, and if
+not, why not" (Phase 0 — no emission); :class:`.HalPinValidator` checks
+``type: hal`` sensor pins against the generated HAL. :func:`.compile_machine_hal` is the
 emitter: it assembles every component/MCU mapper's contribution and
 renders the result. **Callers must validate first** — the assembler
 trusts a zero-error payload and does not re-check referential or
@@ -9,7 +10,7 @@ motion-class rules.
 
 Phase 1 covers class A (step/dir realtime, parallel port); Phase 2
 adds class B (position-command, Remora SPI). A
-:class:`.assembler.UnsupportedMcuError` on any other MCU connection
+:class:`.HalAssembler.UnsupportedMcuError` on any other MCU connection
 type — including ``remora-eth``, still unrouted — is the honest "not
 implemented yet" rather than silently wrong output. Component specs
 live in ``.agent/component/``.
@@ -18,26 +19,26 @@ live in ``.agent/component/``.
 from mappers.machineconfig import PinStringMapper
 
 from .HalAssembler import HalAssembler, UnsupportedMcuError, assemble_machine
+from .HalPinValidator import HalPinValidator
+from .components.Adxl345WebguiMapper import Adxl345WebguiMapper
 from .components.BedMeshWebguiMapper import BedMeshWebguiMapper
 from .components.EstopWebguiMapper import EstopWebguiMapper
-from .components.IoPinHalMapper import latched_output_ids, mdi_commands
-from .components.IoPinWebguiMapper import IoPinWebguiMapper
+from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper
+from .components.ExtruderGuardWebguiMapper import ExtruderGuardWebguiMapper
 from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
+from .components.InputPinHalMapper import InputPinHalMapper
+from .components.InputPinWebguiMapper import InputPinWebguiMapper
+from .components.JointShapeHalMapper import JointShapeHalMapper
+from .components.JointShapeWebguiMapper import JointShapeWebguiMapper
+from .components.LedWebguiMapper import LedWebguiMapper
 from .components.McuResetWebguiMapper import McuResetWebguiMapper
+from .components.OutputPinWebguiMapper import OutputPinWebguiMapper
 from .components.PauseInspectWebguiMapper import PauseInspectWebguiMapper
-from .components.ExtruderGuardHalMapper import ExtruderGuardHalMapper, guarded_joint
-from .components.Adxl345HalMapper import Adxl345HalMapper
-from .components.HeaterHalMapper import pid_tune_webgui_lines
-from .components.JointShapeHalMapper import JointShapeHalMapper, shaped_joints
 from .components.SpindleWebguiMapper import SpindleWebguiMapper
-from .components.ZTiltHalMapper import ZTiltWebguiMapper
-from .components.LedHalMapper import LedWebguiMapper
-from .components.TemperatureSensorHalMapper import (
-    TemperatureSensorWebguiMapper,
-    hal_pin_diagnostics,
-    unclaimed_sensors,
-)
+from .components.TemperatureSensorHalMapper import TemperatureSensorHalMapper
+from .components.TemperatureSensorWebguiMapper import TemperatureSensorWebguiMapper
+from .components.ZTiltWebguiMapper import ZTiltWebguiMapper
 from .renderer import render_hal
 from .MachineValidator import MachineValidator, validate_machine
 
@@ -47,14 +48,14 @@ def compile_machine_hal(payload: dict[str, object], user_hal: str = "") -> str:
 
     Raises :class:`ValueError` (with every diagnostic's text) if the
     payload has any error-level finding, including the ``type: hal``
-    sensor pins :func:`hal_pin_diagnostics` checks against the result
+    sensor pins :class:`HalPinValidator` checks against the result
     and ``user_hal``; warnings do not block.
     """
     diagnostics = validate_machine(payload)
     hal = ""
     if not MachineValidator.has_errors(diagnostics):
         hal = render_hal(assemble_machine(payload))
-        diagnostics += hal_pin_diagnostics(payload, hal, user_hal)
+        diagnostics += HalPinValidator.diagnostics(payload, hal, user_hal)
     if MachineValidator.has_errors(diagnostics):
         details = "\n".join(str(d) for d in diagnostics if d.is_error)
         raise ValueError(f"machine does not compile:\n{details}")
@@ -124,19 +125,19 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
             lines.extend(SpindleWebguiMapper.to_lines(tool))
         elif tool.get("type") in ("extruder", "heated_bed"):
             lines.extend(HeaterWebguiMapper.to_lines(tool))
-            lines.extend(pid_tune_webgui_lines(tool))
+            lines.extend(HeaterWebguiMapper.pid_tune_lines(tool))
             # halui.abort exists only once halui runs: the guard's other half.
-            if guarded_joint(payload, tool) is not None:
-                lines.extend(ExtruderGuardHalMapper.webgui_lines(tool))
+            if ExtruderGuardHalMapper.guarded_joint(payload, tool) is not None:
+                lines.extend(ExtruderGuardWebguiMapper.to_lines(tool))
     for led in payload.get("leds") or []:
         if isinstance(led, dict):
             lines.extend(LedWebguiMapper.to_lines(led))
     z_tilt = payload.get("z_tilt")
     if isinstance(z_tilt, dict):
         lines.extend(ZTiltWebguiMapper.to_lines(z_tilt))
-    lines.extend(JointShapeHalMapper.webgui_lines(shaped_joints(payload)))
-    lines.extend(Adxl345HalMapper.webgui_lines(payload))
-    for sensor in unclaimed_sensors(payload):
+    lines.extend(JointShapeWebguiMapper.to_lines(JointShapeHalMapper.shaped_joints(payload)))
+    lines.extend(Adxl345WebguiMapper.to_lines(payload))
+    for sensor in TemperatureSensorHalMapper.unclaimed_sensors(payload):
         lines.extend(TemperatureSensorWebguiMapper.to_lines(sensor))
     for fan in payload.get("fans", []) or []:
         if not isinstance(fan, dict):
@@ -147,12 +148,12 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
         if isinstance(mcu, dict):
             lines.extend(McuResetWebguiMapper.to_lines(mcu))
     input_pins = payload.get("input_pins") or []
-    latched = latched_output_ids(input_pins)
+    latched = InputPinHalMapper.latched_output_ids(input_pins)
     for output_pin in payload.get("output_pins") or []:
-        lines.extend(IoPinWebguiMapper.output_lines(output_pin, output_pin.get("id") in latched))
-    commands = mdi_commands(input_pins)
+        lines.extend(OutputPinWebguiMapper.to_lines(output_pin, output_pin.get("id") in latched))
+    commands = InputPinHalMapper.mdi_commands(input_pins)
     for input_pin in input_pins:
-        lines.extend(IoPinWebguiMapper.input_lines(input_pin, commands))
+        lines.extend(InputPinWebguiMapper.to_lines(input_pin, commands))
     if not lines:
         return ""
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -164,7 +165,7 @@ __all__ = [
     "UnsupportedMcuError",
     "assemble_machine",
     "compile_machine_hal",
-    "hal_pin_diagnostics",
+    "HalPinValidator",
     "render_hal",
     "render_webgui_connections",
     "validate_machine",

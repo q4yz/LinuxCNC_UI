@@ -59,13 +59,13 @@ from MachineConfigParser import parse_config
 from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
-from services.halcompiler.components.IoPinHalMapper import mdi_commands
-from services.halcompiler.components.JointShapeHalMapper import ini_shaper_types
+from services.halcompiler.components.InputPinHalMapper import InputPinHalMapper
+from services.halcompiler.components.JointShapeHalMapper import JointShapeHalMapper
 from services.halcompiler import (
     MachineValidator,
     UnsupportedMcuError,
     assemble_machine,
-    hal_pin_diagnostics,
+    HalPinValidator,
     render_hal,
     render_webgui_connections,
     validate_machine,
@@ -232,7 +232,7 @@ def _compile_machine(
     body = render_hal(fragment)
     # A ``type: hal`` sensor pin that nothing creates, or that is already
     # wired, would abort LinuxCNC at start — refuse it here instead.
-    pin_errors = hal_pin_diagnostics(payload, body, user_hal)
+    pin_errors = HalPinValidator.diagnostics(payload, body, user_hal)
     if pin_errors:
         raise MachineInvalidError(machine_name, pin_errors)
     hal_text = MACHINE_HAL_HEADER.format(machine_name=machine_name) + "\n" + body
@@ -471,7 +471,7 @@ def _write_machine(
 ) -> "GenerateResult":
     """Every file of the machine, into the cleared ``configs_dir``."""
     # [input_pin] edges: halui MDI commands calling generated subroutines.
-    input_commands = mdi_commands(payload.get("input_pins") or [])
+    input_commands = InputPinHalMapper.mdi_commands(payload.get("input_pins") or [])
     # Marlin's heater / fan M-codes need nothing here: they are user
     # M-code programs in machine_config/m_codes/ (USER_M_PATH), see
     # marlin_mcodes. M600 (> M199) is a REMAP to m_codes/m600.ngc.
@@ -502,7 +502,7 @@ def _write_machine(
             or isinstance(payload.get("z_virtual_endstop"), dict),
             remaps=remaps,
             filament_change=filament_change,
-            shaper_types=ini_shaper_types(payload),
+            shaper_types=JointShapeHalMapper.ini_shaper_types(payload),
         ),
         encoding="utf-8",
     )

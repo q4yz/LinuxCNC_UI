@@ -44,10 +44,10 @@ def test_jointshape_between_x_y_joints_and_their_stepgens():
     assert f"net j{y}pos-cmd => shape-j{x}.skew-ref" in hal
     assert f"setp shape-j{x}.shaper-type [INPUT_SHAPER]TYPE_X" in hal
     assert f"setp shape-j{y}.shaper-type [INPUT_SHAPER]TYPE_Y" in hal
-    from services.halcompiler.components.JointShapeHalMapper import ini_shaper_types
+    from services.halcompiler.components.JointShapeHalMapper import JointShapeHalMapper
     from services.machinetemplates.ini_template_generator import render_ini_template
 
-    types = ini_shaper_types(payload)
+    types = JointShapeHalMapper.ini_shaper_types(payload)
     assert types == {"x": 2, "y": 4}
     ini = render_ini_template("m", [], [], shaper_types=types).splitlines()
     assert "[INPUT_SHAPER]" in ini and "TYPE_X = 2" in ini and "TYPE_Y = 4" in ini

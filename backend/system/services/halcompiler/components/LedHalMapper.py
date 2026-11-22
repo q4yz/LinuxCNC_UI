@@ -15,16 +15,16 @@ from mappers.machineconfig import PinStringMapper
 from models.machineconfig.HalFragmentModels import HalFragment, PinRequest, PinRole
 
 
-def segment_signal(led_id: str, index: int) -> str:
-    return f"{led_id}-rgb{index}"
-
-
-def segment_pin(led_id: str, index: int) -> str:
-    """The machine backend's pin (``webgui.<this>``) for one segment."""
-    return f"led-{led_id}-{index}"
-
-
 class LedHalMapper:
+    @staticmethod
+    def segment_signal(led_id: str, index: int) -> str:
+        return f"{led_id}-rgb{index}"
+
+    @staticmethod
+    def segment_pin(led_id: str, index: int) -> str:
+        """The machine backend's pin (``webgui.<this>``) for one segment."""
+        return f"led-{led_id}-{index}"
+
     @staticmethod
     def to_fragment(led: dict[str, Any]) -> HalFragment:
         fragment = HalFragment()
@@ -33,7 +33,7 @@ class LedHalMapper:
         for k, (first, count) in enumerate(led.get("segments") or [[1, int(led.get("chain_count") or 1)]]):
             fragment.requests.append(
                 PinRequest(
-                    signal=segment_signal(led_id, k),
+                    signal=LedHalMapper.segment_signal(led_id, k),
                     role=PinRole.RGB,
                     pin=pin,
                     owner=led_id,
@@ -43,14 +43,4 @@ class LedHalMapper:
         return fragment
 
 
-class LedWebguiMapper:
-    @staticmethod
-    def to_lines(led: dict[str, Any]) -> list[str]:
-        led_id = str(led["id"])
-        lines = [f"# LED: {led_id}"]
-        for k in range(len(led.get("segments") or [[1, 1]])):
-            lines.append(f"net {segment_signal(led_id, k)} <= webgui.{segment_pin(led_id, k)}")
-        return lines + [""]
-
-
-__all__ = ["LedHalMapper", "LedWebguiMapper", "segment_pin", "segment_signal"]
+__all__ = ["LedHalMapper"]
