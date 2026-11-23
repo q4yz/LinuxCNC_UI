@@ -51,6 +51,20 @@ class HeaterService:
         pins.target_temperature.set_value(target)
         return f"target_temperature={target}"
 
+    def all_off(self) -> list[str]:
+        """Every heater's target to 0 (the stand-alone heaters and every
+        extruder's); the ids of those that had one."""
+        turned_off: list[str] = []
+        for pins in tool_service.get_halpins():
+            heater = pins if isinstance(pins, HeaterPins) else getattr(pins, "heater", None)
+            if not isinstance(heater, HeaterPins):
+                continue
+            if (heater.target_temperature.get_value() or 0.0) > 0.0:
+                turned_off.append(heater.id)
+            heater.target_temperature.set_value(0.0)
+        return turned_off
+
+
 _heater_service: Optional[HeaterService] = None
 
 def get_heater_service() -> HeaterService:

@@ -12,6 +12,7 @@ from dtos.ServoThreadState import ServoThreadStateDTO
 from services.motion.AxisService import get_axis_service
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from services.machine.StateService import get_state_service
+from services.temperature.HeaterSafetyService import get_heater_safety_service
 from core.NonRepeatingLogger import NonRepeatingLogger
 from hardware.Connection import message_severity
 
@@ -34,6 +35,7 @@ class ServoThreadService:
         self._last_broadcast_state: Optional[ServoThreadStateDTO] = None
         self.state_service = get_state_service()
         self.axis_service = get_axis_service()
+        self.heater_safety = get_heater_safety_service()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -128,6 +130,11 @@ class ServoThreadService:
                 # 1. Fetch hardware state safely
                 stat = self.state_service.get_polled_stat()
                 history = self.state_service.get_error_history()
+
+                # 1b. Heaters off when the machine leaves ON (E-stop, power
+                # off, a fault) — before anything else can fail this tick.
+                if stat is not None:
+                    self.heater_safety.observe(int(getattr(stat, "task_state", 0) or 0))
 
                 # 2. Process and broadcast new errors instantly
                 new_errors = self.state_service.drain_new_errors()

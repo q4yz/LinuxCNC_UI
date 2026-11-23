@@ -75,4 +75,8 @@ under it moves its buttons left so nothing is covered.
 - The unit (°C, °F, K) is a setting: **Settings → Temperature**. A target typed in °F or K is
   converted; the machine always works in °C.
 - **Cool all** in the card header switches every heater off.
+- When the machine leaves *on* — E-stop, power off, or a fault such as a joint following error —
+  every heater target is set to 0. Turning the machine back on does **not** heat again: set the
+  temperatures again (or start the print, whose M104 / M140 set them). The console says which
+  heaters were switched off.
 - The eye button hides a sensor from the chart.
