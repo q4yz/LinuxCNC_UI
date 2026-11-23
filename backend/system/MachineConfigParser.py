@@ -1197,6 +1197,9 @@ class MachineConfigParser:
             filament_diameter=self._optional_float(
                 section_name, section, "filament_diameter"
             ),
+            max_extrude_only_velocity=self._positive_or_none(section_name, section, "max_extrude_only_velocity"),
+            max_extrude_only_accel=self._positive_or_none(section_name, section, "max_extrude_only_accel"),
+            max_extrude_cross_section=self._positive_or_none(section_name, section, "max_extrude_cross_section"),
             heater_pin=self._optional_string(section, "heater_pin"),
             sensor_type=self._optional_string(section, "sensor_type"),
             sensor_pin=self._optional_string(section, "sensor_pin"),
@@ -2158,6 +2161,12 @@ class MachineConfigParser:
         value = self._optional_bool(section, key)
         if value is None and self._optional_string(section, key) is not None:
             raise InvalidValueError(section_name, key, str(section[key]), "true or false")
+        return value
+
+    def _positive_or_none(self, section_name: str, section: configparser.SectionProxy, key: str) -> float | None:
+        value = self._optional_float(section_name, section, key)
+        if value is not None and value <= 0:
+            raise InvalidValueError(section_name, key, str(value), "a number above 0")
         return value
 
     def _non_negative(self, section_name: str, section: configparser.SectionProxy, key: str, default: float) -> float:

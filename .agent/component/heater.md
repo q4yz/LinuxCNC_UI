@@ -191,6 +191,9 @@ net <id>-heat-ok    <= heat-ok-<id>.out
 
 # auto: manual mode outputs 0 (PIDcontroller), so a dead MCU or an
 # E-stop turns the heater off instead of latching its last value.
+# The SP itself is cleared by the machine backend when the machine
+# leaves STATE_ON (HeaterSafetyService, fed by the telemetry loop), so
+# powering back on does not resume heating unattended.
 net <id>-heat-ok   => PID-<id>.auto
 net <id>-SP        => PID-<id>.SP     # setpoint, from the UI
 net <sensor.id>-PV => PID-<id>.PV     # reading, from the MCU

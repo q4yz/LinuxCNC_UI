@@ -190,6 +190,12 @@ class Extruder(Heater):
     pressure_advance_smooth_time: float = 0.040
     nozzle_diameter: float | None = None
     filament_diameter: float | None = None
+    #: Klipper's limits for extruder-only moves (retract, unretract,
+    #: loading), mm/s and mm/s^2, and the cross section their defaults come
+    #: from (mm^2); ``None``: Klipper's defaults (AxisBuilder).
+    max_extrude_only_velocity: float | None = None
+    max_extrude_only_accel: float | None = None
+    max_extrude_cross_section: float | None = None
 
 
 @dataclass(slots=True)

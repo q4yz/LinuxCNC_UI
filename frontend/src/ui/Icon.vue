@@ -225,6 +225,12 @@ const ICONS = {
     path: "M4 20h16 M6 20V10 M10 20V6 M14 20v-8 M18 20V4 M3 4l3 3 3-3",
     stroke: true,
   },
+  speed: {
+    label: "Speed",
+    // a gauge: the dial and its needle
+    path: "M4 16a8 8 0 1 1 16 0 M12 16l4-5 M8 16h.01 M16 16h.01",
+    stroke: true,
+  },
   probing: {
     label: "Probing",
     path: "M12 2v3 M12 19v3 M2 12h3 M19 12h3 M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0",

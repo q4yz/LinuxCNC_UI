@@ -189,6 +189,12 @@ class HalAssembler:
         by_id = {a.id: a.joint_numbers for a in self._axes}
         return by_id["x"][0], by_id["y"][0]
 
+    def _xy_joints(self) -> tuple[int, int] | None:
+        """The first X and Y joint (Cartesian joints, before any CoreXY
+        mixing): their ``vel-cmd`` is the head's X / Y speed."""
+        first = {a.id.lower(): a.joint_numbers[0] for a in self._axes if a.joint_numbers}
+        return (first["x"], first["y"]) if "x" in first and "y" in first else None
+
     def _flow_joints(self, capability_class: CapabilityClass) -> frozenset[int]:
         """Extruder joints whose position goes through the Remora
         ``extruder`` component (flow %) — Remora boards only."""
@@ -261,7 +267,7 @@ class HalAssembler:
             joint = ExtruderGuardHalMapper.guarded_joint(tool, self._joints)
             if joint is not None:
                 flow = joint in self._flow_joints(self._capability_class())
-                fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint, flow=flow))
+                fragments.append(ExtruderGuardHalMapper.to_fragment(tool, joint, flow=flow, xy_joints=self._xy_joints()))
         return fragments
 
     def _sensor_fragments(self) -> list[HalFragment]:

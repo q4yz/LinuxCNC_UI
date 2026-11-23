@@ -175,6 +175,9 @@ EXTRUDER_KEYS = frozenset(
         # Klipper's pressure advance (the Remora extruder component).
         "pressure_advance",
         "pressure_advance_smooth_time",
+        "max_extrude_only_velocity",
+        "max_extrude_only_accel",
+        "max_extrude_cross_section",
         "nozzle_diameter",
         "filament_diameter",
     }

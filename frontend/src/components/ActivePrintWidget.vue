@@ -30,7 +30,10 @@ import {reportCommandFailure, describeErrorOr} from "../core/error-format";
 import {FileEntry} from "../entities/files";
 import {BaseButton, Icon} from "../ui/index.ts";
 import BaseCard from "../ui/BaseCard.vue";
-import PrintTuning from "./print/PrintTuning.vue";
+import PrintObjects from "./print/PrintObjects.vue";
+import PrintObjectList from "./print/PrintObjectList.vue";
+import {usePrintTuning} from "../composables/usePrintTuning";
+import {useFileThumbnails} from "../composables/useFileThumbnails";
 
 
 const facade = useMachineStore();
@@ -93,12 +96,37 @@ const isRunning = computed(() => systemState.value === SystemState.RUNNING);
 // --- Loaded-file lookup (shared with the G-code file list) -------------
 // Files are addressed by their path under nc_files/ (programs may live
 // in project folders), so "loaded" is matched by path, not base name.
-const { loadedPathAmong } = useLoadedProgram();
+const { loadedPathAmong, loadedRelativePath } = useLoadedProgram();
 const loadedPath = computed(() => loadedPathAmong(files.value.filter((f) => f.isFile).map((f) => f.path)));
 const isLoadedFile = (path: string): boolean => loadedPath.value === path;
 
 // --- Print-in-flight state ----------------------------------------------
 const isLoading = ref<boolean>(false);
+
+// The loaded / running program's slicer thumbnail (generic icon without one).
+const { thumbnails, ensure: ensureThumbnail } = useFileThumbnails();
+watch(loadedRelativePath, (path) => {
+  if (path) void ensureThumbnail(path);
+}, { immediate: true });
+const programThumbnail = computed(() =>
+    loadedRelativePath.value ? thumbnails.value[loadedRelativePath.value]?.dataUrl ?? null : null);
+
+// The objects sub-menu (exclude objects) is open.
+const objectsOpen = ref(false);
+watch(isActive, (active) => {
+  if (!active) objectsOpen.value = false;
+});
+
+// The header says what the machine does with the program.
+const cardTitle = computed(() => (isPaused.value ? "Paused" : isRunning.value ? "Printing" : "Programs"));
+
+// The slicer's own progress (M73), when the file has it: then it is the only
+// one shown — percent, bar and time left — instead of the line count and
+// the estimate from the elapsed time.
+const { state: tuning } = usePrintTuning();
+const slicerPercent = computed<number | null>(() => tuning.value?.progress?.percent ?? null);
+const slicerRemainingMin = computed<number | null>(() => tuning.value?.progress?.remaining_min ?? null);
+const hasSlicerProgress = computed(() => slicerPercent.value !== null || slicerRemainingMin.value !== null);
 
 const progressFraction = computed(() =>
     progress.value && typeof progress.value.fraction === "number"
@@ -145,6 +173,25 @@ const remainingMs = computed<number | null>(() => {
   if (!Number.isFinite(elapsed) || elapsed <= 0) return null;
   const total = elapsed / fraction;
   return Math.max(0, total - elapsed);
+});
+
+/** The bar's fill (%): the slicer's percent when it has one, else the line count's. */
+const barPercent = computed(() => slicerPercent.value ?? progressFraction.value);
+
+/** One line under the program name: the slicer's "45 % · 1h 2m left" when
+ *  the file has M73, else "12.3 % · line 120 / 3400 · 5m 20s left". */
+const progressLine = computed(() => {
+  const parts: string[] = [];
+  if (hasSlicerProgress.value) {
+    if (slicerPercent.value !== null) parts.push(`${slicerPercent.value.toFixed(0)} %`);
+    if (slicerRemainingMin.value !== null) parts.push(`${formatRemaining(slicerRemainingMin.value * 60_000)} left`);
+    return parts.join(" · ");
+  }
+  if (progressFraction.value > 0) parts.push(`${progressPercent.value} %`);
+  parts.push(`line ${progress.value.currentLine} / ${progress.value.totalLines || "?"}`);
+  if (remainingMs.value !== null) parts.push(`${formatRemaining(remainingMs.value)} left`);
+  else if (isRunning.value) parts.push("estimating…");
+  return parts.join(" · ");
 });
 
 const formatRemaining = (ms: number): string => {
@@ -306,176 +353,114 @@ async function stopPrint() {
 </script>
 
 <template>
-  <BaseCard title="Programs" icon="folder">
-    <!-- Top-bar: Start button. (Hidden while active) -->
+  <BaseCard :title="cardTitle" :icon="isActive ? 'running' : 'folder'">
 
-    <template #header-actions>
-      <div v-if="!isActive" class="w-48" >
-        <BaseButton
-            variant="success"
+    <!-- The loaded / running program:
+           [thumbnail]  name + progress    | objects
+           [thumbnail]  Start · Pause / Resume · Inspect · Stop -->
+    <div
+        v-if="isLoaded || isActive"
+        class="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 px-4 py-3"
+        data-testid="active-print-program"
+    >
+      <img
+          v-if="programThumbnail"
+          :src="programThumbnail"
+          :alt="`Preview of ${loadedRelativePath}`"
+          class="row-span-2 h-full max-h-24 w-24 self-center rounded border border-gray-600 bg-gray-900 object-contain"
+          data-testid="active-print-thumbnail"
+      />
+      <span
+          v-else
+          class="row-span-2 flex h-full max-h-24 w-24 items-center justify-center self-center rounded border border-gray-600 bg-gray-900"
+          title="No embedded thumbnail"
+          data-testid="active-print-thumbnail"
+      ><Icon name="file" size="h-7 w-7" class="text-gray-500" /></span>
 
-            class="w-full"
-            :disabled="!isLoaded"
-            @click="startLoadedProgram"
-        >Start
-        </BaseButton>
+      <div class="flex min-w-0 items-start gap-3">
+        <div class="min-w-0 flex-1 space-y-1.5">
+          <div class="truncate font-mono text-sm text-gray-200" :title="status.file">
+            {{ loadedRelativePath || status.file || "(unknown file)" }}
+          </div>
+          <div v-if="isLoaded" class="text-xs text-gray-500">Loaded — ready to start.</div>
+          <template v-else>
+            <div class="font-mono text-xs text-gray-400" data-testid="active-print-progress-line">{{ progressLine }}</div>
+            <div class="h-2 w-full overflow-hidden rounded border border-gray-700 bg-gray-900" data-testid="active-print-bar">
+              <div
+                  class="h-full transition-all duration-300"
+                  :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
+                  :style="{ width: `${barPercent}%` }"
+              ></div>
+            </div>
+          </template>
+        </div>
+        <!-- Exclude objects: a sub-menu (the list opens below) -->
+        <PrintObjects v-if="isActive" v-model:open="objectsOpen" />
       </div>
-    </template>
-    <template #footer-actions>
 
-    </template>
+      <div class="flex flex-wrap items-center gap-2" data-testid="active-print-buttons">
+        <BaseButton v-if="isLoaded" size="sm" variant="success" class="w-24" @click="startLoadedProgram">Start</BaseButton>
+        <template v-else>
+          <BaseButton
+              size="sm"
+              class="w-24"
+              :variant="isPaused ? 'success' : 'primary'"
+              @click="isPaused ? resumePrint() : pausePrint()"
+          >{{ isPaused ? "Resume" : "Pause" }}</BaseButton>
+          <BaseButton
+              v-if="isPaused && !isInspecting"
+              size="sm"
+              class="w-24"
+              variant="secondary"
+              title="Lift the tool clear of the work and inhibit the spindle"
+              data-testid="pause-inspect-button"
+              @click="pauseInspectAction"
+          >Inspect</BaseButton>
+          <BaseButton size="sm" class="w-24" variant="danger" title="Stop / cancel the program" @click="stopPrint">Stop</BaseButton>
+        </template>
+      </div>
+    </div>
 
-
-    <!-- File list (Hidden while active) -->
-    <div v-if="!isActive" class=" border-b border-gray-700">
-
-
-
+    <!-- File list (not while a program runs) -->
+    <div v-if="!isActive" class="px-2 py-2">
       <ul v-if="printableFiles.length > 0" class="divide-y divide-gray-700/60">
         <li
             v-for="file in printableFiles"
             :key="file.path"
-            class="flex items-center justify-between py-2 gap-3 rounded px-2"
+            class="flex items-center justify-between gap-3 rounded px-2 py-1.5"
             :class="isLoadedFile(file.path) ? 'bg-blue-900/40 ring-1 ring-blue-500/40' : ''"
         >
           <span
-              class="text-sm font-mono truncate"
-              :class="isLoadedFile(file.path) ? 'text-blue-300 font-semibold' : 'text-gray-200'"
+              class="truncate font-mono text-sm"
+              :class="isLoadedFile(file.path) ? 'font-semibold text-blue-300' : 'text-gray-200'"
               :title="file.path"
-          >
-            {{ file.path }}
-          </span>
+          >{{ file.path }}</span>
           <BaseButton
               :variant="isLoadedFile(file.path) ? 'danger' : 'primary'"
               size="sm"
               class="shrink-0"
               :loading="isLoading && !isLoadedFile(file.path)"
-              :disabled="isLoading || (systemState === SystemState.RUNNING || systemState === SystemState.PAUSED)"
+              :disabled="isLoading"
               @click="isLoadedFile(file.path) ? unloadProgram() : loadFile(file.path)"
-          >
-            <span v-if="isLoadedFile(file.path)">Unload</span>
-            <span v-else>Load</span>
-          </BaseButton>
+          >{{ isLoadedFile(file.path) ? "Unload" : "Load" }}</BaseButton>
         </li>
       </ul>
-
-      <div v-else-if="isLoadingList" class="text-xs text-gray-500 italic">
-        Loading program list…
-      </div>
-      <div v-else-if="loadError" class="text-xs text-red-400 italic">
-        Failed to load program list: {{ loadError }}
-      </div>
-      <div v-else class="text-xs text-gray-500 italic">
-        No printable G-code files found. Upload one from the Files view.
-      </div>
+      <div v-else-if="isLoadingList" class="px-2 text-xs italic text-gray-500">Loading program list…</div>
+      <div v-else-if="loadError" class="px-2 text-xs italic text-red-400">Failed to load program list: {{ loadError }}</div>
+      <div v-else class="px-2 text-xs italic text-gray-500">No printable G-code files found. Upload one from the Files view.</div>
     </div>
 
-    <!-- Standby hint -->
+    <!-- Running / paused -->
+    <div v-else class="space-y-2 px-4 pb-3 empty:hidden">
+      <div
+          v-if="isPaused && isInspecting"
+          class="rounded border border-yellow-700 bg-yellow-900/30 px-2 py-1.5 text-center text-xs text-yellow-300"
+          role="status"
+          data-testid="pause-inspect-active"
+      >Inspecting — tool lifted, spindle inhibited</div>
 
-
-    <!-- Loaded hint -->
-    <div
-        v-else-if="isLoaded"
-        class="p-4 flex flex-col space-y-2"
-    >
-      <p class="text-xs text-gray-500 text-center">
-        Press <span class="font-semibold text-blue-300">Start</span> above
-        to begin the run.
-      </p>
-    </div>
-
-    <!-- Active view -->
-    <div v-else class="p-4 flex flex-col space-y-4">
-      <div class="flex items-center">
-        <h2 class="font-semibold text-gray-300 uppercase tracking-wider text-sm flex items-center">
-          <Icon name="running" class="mr-2" />
-          {{ isPaused ? "Paused" : "Printing" }}
-        </h2>
-      </div>
-
-      <div class="text-sm text-gray-200 font-mono truncate" :title="status.file">
-        {{ status.file || "(unknown file)" }}
-      </div>
-
-      <div class="space-y-2">
-        <div class="flex items-center justify-between text-xs text-gray-400">
-          <span>Progress</span>
-          <span class="font-mono">{{ progressPercent }}%</span>
-        </div>
-        <div class="w-full h-3 bg-gray-900 rounded overflow-hidden border border-gray-700">
-          <div
-              class="h-full transition-all duration-300"
-              :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
-              :style="{ width: `${progressFraction}%` }"
-          ></div>
-        </div>
-        <div class="flex items-center justify-between text-[10px] text-gray-500 font-mono">
-          <span>Line {{ progress.currentLine }}</span>
-          <span>of {{ progress.totalLines || "?" }}</span>
-        </div>
-        <div
-            v-if="remainingMs !== null"
-            class="flex items-center justify-between text-[10px] text-gray-400 font-mono"
-            data-testid="active-print-remaining"
-        >
-          <span>Est. remaining</span>
-          <span>{{ formatRemaining(remainingMs) }}</span>
-        </div>
-        <div
-            v-else-if="isRunning"
-            class="text-[10px] text-gray-500 font-mono italic"
-        >
-          Estimating…
-        </div>
-      </div>
-
-      <div class="flex items-center gap-2 pt-2">
-        <BaseButton
-            class="flex-1"
-            :variant="isPaused ? 'success' : 'primary'"
-            @click="isPaused ? resumePrint() : pausePrint()"
-        >
-          {{ isPaused ? "Resume" : "Pause" }}
-        </BaseButton>
-        <BaseButton
-            variant="danger"
-            class="flex-1"
-            @click="stopPrint"
-        >
-          Stop / Cancel
-        </BaseButton>
-      </div>
-
-      <!-- Live Z offset, flow, objects, the slicer's time left -->
-      <PrintTuning />
-
-      <!-- Pause & Inspect — only offered once a Pause is already
-           active (see pauseInspectAction's guard); Resume above
-           reverses it regardless of whether it was engaged. -->
-      <div v-if="isPaused" class="flex items-center gap-2" data-testid="pause-inspect-row">
-        <BaseButton
-            v-if="!isInspecting"
-            class="flex-1"
-            variant="secondary"
-            title="Lift the tool clear of the work and inhibit the spindle"
-            data-testid="pause-inspect-button"
-            @click="pauseInspectAction"
-        >
-          Inspect
-        </BaseButton>
-        <div
-            v-else
-            class="flex-1 rounded border border-yellow-700 bg-yellow-900/30 px-2 py-1.5 text-center text-xs text-yellow-300"
-            role="status"
-            data-testid="pause-inspect-active"
-        >
-          Inspecting — tool lifted, spindle inhibited
-        </div>
-      </div>
-
-      <span v-if="!isRunning && !isPaused" class="text-xs text-gray-500 italic">
-        Program loaded but not yet running.
-      </span>
+      <!-- The objects sub-menu's list -->
+      <PrintObjectList v-if="objectsOpen" />
     </div>
   </BaseCard>
 </template>

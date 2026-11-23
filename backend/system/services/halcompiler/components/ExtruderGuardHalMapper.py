@@ -63,9 +63,13 @@ class ExtruderGuardHalMapper:
         return next((j.joint_number for j in joints if j.id == tool.id), None)
 
     @staticmethod
-    def to_fragment(tool: Tool, joint_number: int, flow: bool = False) -> HalFragment:
+    def to_fragment(
+        tool: Tool, joint_number: int, flow: bool = False, xy_joints: tuple[int, int] | None = None,
+    ) -> HalFragment:
         """``flow``: route the joint's position through the component
-        (Remora: `RemoraStepperHalMapper` leaves those nets out)."""
+        (Remora: `RemoraStepperHalMapper` leaves those nets out).
+        ``xy_joints``: the X / Y joints, whose ``vel-cmd`` tell pressure
+        advance when the head moves (none: PA never applies)."""
         tool_id = tool.id
         comp = ExtruderGuardHalMapper.component(tool_id)
         min_temp = DEFAULT_MIN_EXTRUDE_TEMP if tool.min_extrude_temp is None else tool.min_extrude_temp
@@ -80,6 +84,13 @@ class ExtruderGuardHalMapper:
         fragment.nets.append(f"net {tool_id}-vel-cmd joint.{joint_number}.vel-cmd => {comp}.vel-cmd")
         # homing sets the position in place: no guard meanwhile
         fragment.nets.append(f"net {tool_id}-homing joint.{joint_number}.homing => {comp}.homing")
+        # Pressure advance only while X / Y move, and never pushing the
+        # stepgen past the joint's MAX_VELOCITY (a CAN node's step-rate limit).
+        if xy_joints is not None:
+            x, y = xy_joints
+            fragment.nets.append(f"net {tool_id}-vel-x joint.{x}.vel-cmd => {comp}.vel-x")
+            fragment.nets.append(f"net {tool_id}-vel-y joint.{y}.vel-cmd => {comp}.vel-y")
+        fragment.setp.append(f"setp {comp}.max-velocity [JOINT_{joint_number}]MAX_VELOCITY")
         if flow:
             n = joint_number
             fragment.nets.extend([
