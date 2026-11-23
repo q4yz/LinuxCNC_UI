@@ -28,9 +28,7 @@ test("Z offset / flow / PA on the Tuning card, objects on the Programs card, one
   for (const id of ["print-tuning-z", "print-tuning-flow", "print-tuning-pa"]) assert.match(controls, new RegExp(`data-testid="${id}"`));
 
   const card = read("components/ActivePrintWidget.vue");
-  assert.match(card, /<PrintObjects \/>/);
   assert.doesNotMatch(card, /print-tuning-z|print-tuning-flow/, "no tuning controls on the Programs card");
-  assert.match(read("components/print/PrintObjects.vue"), /exclude\(object\.index, !object\.excluded\)/);
 
   // One poll for both cards (ref-counted), stopped when neither is shown.
   const shared = read("composables/usePrintTuning.ts");
@@ -49,15 +47,19 @@ test("Programs card: state in the header, the program's thumbnail, the slicer's 
   assert.match(card, /if \(hasSlicerProgress\.value\) \{/);
   assert.match(card, /const barPercent = computed\(\(\) => slicerPercent\.value \?\? progressFraction\.value\)/);
   assert.doesNotMatch(card, />\s*Progress\s*</, "no separate 'Progress' row");
-  // Name + progress on the left, the thumbnail right of it, the run buttons right of the thumbnail.
+  // [thumbnail] name + progress | objects ; [thumbnail] Start · Pause / Resume · Inspect · Stop
   const thumb = card.indexOf('data-testid="active-print-thumbnail"');
-  assert.ok(card.indexOf('data-testid="active-print-progress-line"') < thumb, "progress left of the thumbnail");
-  assert.ok(card.indexOf('data-testid="active-print-buttons"') > thumb, "buttons right of the thumbnail");
-  // Objects: a collapsed sub-menu.
-  const objects = read("components/print/PrintObjects.vue");
-  assert.match(objects, /const open = ref\(false\)/);
-  assert.match(objects, /:aria-expanded="open"/);
-  assert.match(objects, /<div v-if="open"/);
+  const line = card.indexOf('data-testid="active-print-progress-line"');
+  const toggle = card.indexOf('<PrintObjects v-if="isActive" v-model:open="objectsOpen" />');
+  const buttons = card.indexOf('data-testid="active-print-buttons"');
+  assert.ok(thumb > 0 && thumb < line && line < toggle && toggle < buttons, "thumbnail, progress, objects, buttons");
+  assert.match(card, /class="row-span-2/, "the thumbnail spans both rows");
+  assert.match(card, /<BaseButton v-if="isLoaded" size="sm" variant="success" class="w-24" @click="startLoadedProgram">Start<\/BaseButton>/);
+  assert.doesNotMatch(card, /#header-actions/, "Start is in the button row, not the header");
+  // Objects: a sub-menu — a toggle in the progress row, its list below.
+  assert.match(read("components/print/PrintObjects.vue"), /defineModel<boolean>\("open"/);
+  assert.match(card, /<PrintObjectList v-if="objectsOpen" \/>/);
+  assert.match(read("components/print/PrintObjectList.vue"), /exclude\(object\.index, !object\.excluded\)/);
 });
 
 test("console suggestions for the new commands", () => {
