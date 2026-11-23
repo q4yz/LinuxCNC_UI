@@ -267,7 +267,7 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   // and the run controls (``v-else``) while it runs or is paused.
   assert.match(text, /v-if="isLoaded \|\| isActive"/, "the program row while loaded or active");
   assert.match(text, /v-if="!isActive"/, "the file list while nothing runs");
-  assert.match(text, /v-else class="space-y-3/, "the run controls while active");
+  assert.match(text, /v-else class="space-y-2/, "the run extras while active");
   // ``consoleStore.debug`` drives the operator log trail.
   assert.match(text, /consoleStore\.debug\(/);
 });

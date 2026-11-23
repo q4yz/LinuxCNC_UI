@@ -357,27 +357,55 @@ async function stopPrint() {
       >Start</BaseButton>
     </template>
 
-    <!-- The loaded / running program: its slicer thumbnail and name -->
-    <div v-if="isLoaded || isActive" class="flex items-center gap-3 px-4 pt-3" data-testid="active-print-program">
-      <img
-          v-if="programThumbnail"
-          :src="programThumbnail"
-          :alt="`Preview of ${loadedRelativePath}`"
-          class="h-14 w-20 shrink-0 rounded border border-gray-600 bg-gray-900 object-contain"
-          data-testid="active-print-thumbnail"
-      />
-      <span
-          v-else
-          class="flex h-14 w-20 shrink-0 items-center justify-center rounded border border-gray-600 bg-gray-900"
-          title="No embedded thumbnail"
-          data-testid="active-print-thumbnail"
-      ><Icon name="file" size="h-7 w-7" class="text-gray-500" /></span>
-      <div class="min-w-0 flex-1">
+    <!-- The loaded / running program: name and progress, its slicer
+         thumbnail, and (while it runs) the run buttons right of it -->
+    <div v-if="isLoaded || isActive" class="flex items-start gap-3 px-4 py-3" data-testid="active-print-program">
+      <div class="min-w-0 flex-1 space-y-1.5 pt-1">
         <div class="truncate font-mono text-sm text-gray-200" :title="status.file">
           {{ loadedRelativePath || status.file || "(unknown file)" }}
         </div>
         <div v-if="isLoaded" class="text-xs text-gray-500">Loaded — press <span class="font-semibold text-green-400">Start</span>.</div>
-        <div v-else class="font-mono text-xs text-gray-400" data-testid="active-print-progress-line">{{ progressLine }}</div>
+        <template v-else>
+          <div class="font-mono text-xs text-gray-400" data-testid="active-print-progress-line">{{ progressLine }}</div>
+          <div class="h-2 w-full overflow-hidden rounded border border-gray-700 bg-gray-900" data-testid="active-print-bar">
+            <div
+                class="h-full transition-all duration-300"
+                :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
+                :style="{ width: `${barPercent}%` }"
+            ></div>
+          </div>
+        </template>
+      </div>
+
+      <img
+          v-if="programThumbnail"
+          :src="programThumbnail"
+          :alt="`Preview of ${loadedRelativePath}`"
+          class="h-16 w-24 shrink-0 rounded border border-gray-600 bg-gray-900 object-contain"
+          data-testid="active-print-thumbnail"
+      />
+      <span
+          v-else
+          class="flex h-16 w-24 shrink-0 items-center justify-center rounded border border-gray-600 bg-gray-900"
+          title="No embedded thumbnail"
+          data-testid="active-print-thumbnail"
+      ><Icon name="file" size="h-7 w-7" class="text-gray-500" /></span>
+
+      <div v-if="isActive" class="flex w-24 shrink-0 flex-col gap-1" data-testid="active-print-buttons">
+        <BaseButton
+            size="sm"
+            :variant="isPaused ? 'success' : 'primary'"
+            @click="isPaused ? resumePrint() : pausePrint()"
+        >{{ isPaused ? "Resume" : "Pause" }}</BaseButton>
+        <BaseButton
+            v-if="isPaused && !isInspecting"
+            size="sm"
+            variant="secondary"
+            title="Lift the tool clear of the work and inhibit the spindle"
+            data-testid="pause-inspect-button"
+            @click="pauseInspectAction"
+        >Inspect</BaseButton>
+        <BaseButton size="sm" variant="danger" title="Stop / cancel the program" @click="stopPrint">Stop</BaseButton>
       </div>
     </div>
 
@@ -411,31 +439,7 @@ async function stopPrint() {
     </div>
 
     <!-- Running / paused -->
-    <div v-else class="space-y-3 p-4 pt-3">
-      <div class="h-2 w-full overflow-hidden rounded border border-gray-700 bg-gray-900" data-testid="active-print-bar">
-        <div
-            class="h-full transition-all duration-300"
-            :class="isPaused ? 'bg-yellow-500' : 'bg-blue-500'"
-            :style="{ width: `${barPercent}%` }"
-        ></div>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <BaseButton
-            class="flex-1"
-            :variant="isPaused ? 'success' : 'primary'"
-            @click="isPaused ? resumePrint() : pausePrint()"
-        >{{ isPaused ? "Resume" : "Pause" }}</BaseButton>
-        <BaseButton
-            v-if="isPaused && !isInspecting"
-            class="flex-1"
-            variant="secondary"
-            title="Lift the tool clear of the work and inhibit the spindle"
-            data-testid="pause-inspect-button"
-            @click="pauseInspectAction"
-        >Inspect</BaseButton>
-        <BaseButton variant="danger" class="flex-1" @click="stopPrint">Stop / Cancel</BaseButton>
-      </div>
+    <div v-else class="space-y-2 px-4 pb-3">
       <div
           v-if="isPaused && isInspecting"
           class="rounded border border-yellow-700 bg-yellow-900/30 px-2 py-1.5 text-center text-xs text-yellow-300"
@@ -443,7 +447,7 @@ async function stopPrint() {
           data-testid="pause-inspect-active"
       >Inspecting — tool lifted, spindle inhibited</div>
 
-      <!-- Exclude objects of the running print -->
+      <!-- Exclude objects of the running print (a sub-menu) -->
       <PrintObjects />
     </div>
   </BaseCard>

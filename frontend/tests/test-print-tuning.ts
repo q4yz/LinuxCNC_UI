@@ -49,6 +49,15 @@ test("Programs card: state in the header, the program's thumbnail, the slicer's 
   assert.match(card, /if \(hasSlicerProgress\.value\) \{/);
   assert.match(card, /const barPercent = computed\(\(\) => slicerPercent\.value \?\? progressFraction\.value\)/);
   assert.doesNotMatch(card, />\s*Progress\s*</, "no separate 'Progress' row");
+  // Name + progress on the left, the thumbnail right of it, the run buttons right of the thumbnail.
+  const thumb = card.indexOf('data-testid="active-print-thumbnail"');
+  assert.ok(card.indexOf('data-testid="active-print-progress-line"') < thumb, "progress left of the thumbnail");
+  assert.ok(card.indexOf('data-testid="active-print-buttons"') > thumb, "buttons right of the thumbnail");
+  // Objects: a collapsed sub-menu.
+  const objects = read("components/print/PrintObjects.vue");
+  assert.match(objects, /const open = ref\(false\)/);
+  assert.match(objects, /:aria-expanded="open"/);
+  assert.match(objects, /<div v-if="open"/);
 });
 
 test("console suggestions for the new commands", () => {
