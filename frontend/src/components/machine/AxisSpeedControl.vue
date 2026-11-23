@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// The Tuning card: speed multiplier and max speed, and — while a program
+// runs or is paused — its live Z offset, flow and pressure advance.
 import {storeToRefs} from "pinia";
 import useMachineStore from "../../stores/machine";
 import {useBaseThreadStore} from "../../stores/baseThread";
@@ -6,11 +8,16 @@ import {useConsoleStore} from "../../stores/console";
 import {computed} from "vue";
 import BaseRange from "../../ui/BaseRange.vue";
 import BaseCard from "../../ui/BaseCard.vue";
+import PrintTuningControls from "../print/PrintTuningControls.vue";
+import {SystemState, useMachineStore as useStateFacadeStore} from "../../stores/stateFacade";
 
 const store = useMachineStore()
 const consoleStore = useConsoleStore()
 const {  isMachineOn } = storeToRefs(store)
 const { maxAxisVelocity, speedOverride } = storeToRefs(useBaseThreadStore())
+const { systemState } = storeToRefs(useStateFacadeStore())
+const isProgramActive = computed(() =>
+    systemState.value === SystemState.RUNNING || systemState.value === SystemState.PAUSED)
 
 // Slider top = max of all axis velocity limits (mm/s → mm/min), the
 // machine's own [AXIS_*] MAX_VELOCITY. ``null`` until known — the
@@ -50,7 +57,8 @@ function handleMaxSpeedChange(value: number) {
 <template>
 
 
-  <BaseCard class="p-4">
+  <BaseCard title="Tuning" icon="speed">
+   <div class="space-y-3 p-4">
     <!-- Speed Multiplier (Feed Override) -->
     <div>
       <BaseRange
@@ -93,6 +101,9 @@ function handleMaxSpeedChange(value: number) {
       </BaseRange>
     </div>
 
+    <!-- The running program's Z offset, flow, pressure advance -->
+    <PrintTuningControls v-if="isProgramActive" />
+   </div>
   </BaseCard>
 
 </template>

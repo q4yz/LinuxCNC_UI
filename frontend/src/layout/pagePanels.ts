@@ -59,7 +59,7 @@ export const PANELS: readonly PanelDef[] = Object.freeze([
   { id: "io", label: "I/O", gate: "I/O" },
   { id: "leds", label: "LEDs", gate: "LEDs" },
   { id: "job", label: "Job status", gate: "Job status" },
-  { id: "axis_speed", label: "Axis speed", gate: "Axis speed" },
+  { id: "axis_speed", label: "Tuning (speed, Z offset, flow)", gate: "Tuning" },
   { id: "console", label: "Console", gate: null },
   { id: "camera", label: "Camera", gate: "Camera" },
   { id: "macros", label: "Macros & NGC", gate: "Macros" },

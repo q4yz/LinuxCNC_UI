@@ -262,25 +262,12 @@ test("ActivePrintWidget mocks Print/Pause/Resume/Stop click handlers", () => {
   ]) {
     assert.match(text, new RegExp(`progressFacade\\.${serviceCall}\\b`));
   }
-  // The widget must host three top-level lifecycle branches
-  // (Standby / Loaded / Active). The file list is now always
-  // visible — the branches only carry the lifecycle-specific
-  // hint text. ``!isActive`` appears in the Standby branch's
-  // ``v-if`` (sometimes combined with ``!isLoaded``); the Loaded
-  // branch uses ``v-else-if="isLoaded"``; the Active branch uses
-  // ``v-else``. We do simple substring checks for the three
-  // directives — robust to CRLF + multiline attribute quirks.
-  assert.match(
-    text,
-    /v-if\s*=\s*["'][^"']*!isActive[^"']*["']/,
-    "Standby branch (v-if with !isActive) must be present",
-  );
-  assert.match(
-    text,
-    /v-else-if\s*=\s*["']isLoaded["']/,
-    "Loaded branch (v-else-if=\"isLoaded\") must be present",
-  );
-  assert.match(text, /v-else/);
+  // Lifecycle: the loaded / running program's row (thumbnail + name)
+  // while one is loaded or active, the file list while nothing runs,
+  // and the run controls (``v-else``) while it runs or is paused.
+  assert.match(text, /v-if="isLoaded \|\| isActive"/, "the program row while loaded or active");
+  assert.match(text, /v-if="!isActive"/, "the file list while nothing runs");
+  assert.match(text, /v-else class="space-y-3/, "the run controls while active");
   // ``consoleStore.debug`` drives the operator log trail.
   assert.match(text, /consoleStore\.debug\(/);
 });
@@ -358,11 +345,12 @@ test("ActivePrintWidget reads progress from the base-thread store", () => {
     text,
     /const\s*\{\s*progress\s*\}\s*=\s*storeToRefs\s*\(\s*baseThread\s*\)/,
   );
-  assert.match(text, /\{\{\s*progress\.currentLine\s*\}\}/);
+  // The progress line (without the slicer's M73) renders the polled lines.
+  assert.match(text, /progress\.value\.currentLine/);
   assert.match(
     text,
-    /\{\{\s*progress\.totalLines[^}]*\}\}/,
-    "template must render the polled totalLines (with '?' fallback)",
+    /progress\.value\.totalLines \|\| "\?"/,
+    "the progress line must render the polled totalLines (with '?' fallback)",
   );
   // The widget must NOT own a polling interval — the base-thread
   // store owns that.

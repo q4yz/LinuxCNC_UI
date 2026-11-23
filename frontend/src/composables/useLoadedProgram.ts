@@ -31,6 +31,15 @@ export function matchLoadedPath(loadedFile: string | null | undefined, relativeP
   return best;
 }
 
+/** The program's path relative to nc_files/ (what the files API takes):
+ *  the part after the last ``/nc_files/``, else the base name. */
+export function programRelativePath(path: string | null | undefined): string {
+  if (typeof path !== "string") return "";
+  const normalized = path.replace(/\\/g, "/");
+  const marker = normalized.lastIndexOf("/nc_files/");
+  return marker >= 0 ? normalized.slice(marker + "/nc_files/".length) : programBaseName(normalized);
+}
+
 export function useLoadedProgram() {
   const { systemState, status } = storeToRefs(useMachineStore());
 
@@ -50,5 +59,11 @@ export function useLoadedProgram() {
     return matchLoadedPath(status.value?.file, relativePaths);
   }
 
-  return { loadedName, isLoadedFile, loadedPathAmong };
+  /** The loaded program relative to nc_files/, or `null` when none is loaded. */
+  const loadedRelativePath = computed<string | null>(() => {
+    if (systemState.value === SystemState.IDLE) return null;
+    return programRelativePath(status.value?.file) || null;
+  });
+
+  return { loadedName, loadedRelativePath, isLoadedFile, loadedPathAmong };
 }
