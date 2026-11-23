@@ -200,8 +200,18 @@ rotation_distance:
 #   ignored). 0 switches the guard off.
 #pressure_advance: 0.0
 #   mm of filament per mm/s of extrusion speed (SET_PRESSURE_ADVANCE, M900 at runtime).
+#   Like Klipper, only while the head moves in X / Y — not on retracts, unretracts or
+#   loading — and never faster than the extruder joint's MAX_VELOCITY.
 #pressure_advance_smooth_time: 0.040
 #   Seconds the advance is smoothed over.
+#max_extrude_only_velocity:
+#max_extrude_only_accel:
+#   The extruder axis's limits (mm/s, mm/s^2). Default as Klipper: max_velocity /
+#   max_accel x max_extrude_cross_section / the filament's area (with nozzle_diameter and
+#   filament_diameter; else max_velocity / max_accel). Never above 90 % of what its step
+#   generator can step: a CAN node 20 kHz, a remora-spi board its PRU_base_freq.
+#max_extrude_cross_section:
+#   mm^2, default 4 x nozzle_diameter^2 (only for the defaults above).
 heater_pin:
 sensor_type:
 sensor_pin:

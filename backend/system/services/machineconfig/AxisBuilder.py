@@ -20,6 +20,7 @@ Why a builder rather than direct conversion?
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -66,6 +67,19 @@ FULL_STEPS_PER_REVOLUTION = 200
 #: axis letter not listed here (e.g. the extruder's synthetic "A")
 #: shares Z's first phase, as before.
 _HOME_SEQUENCE_BY_AXIS: dict[str, int] = {"Z": 1, "Y": 2, "X": 3}
+#: The extruder's following-error allowance (mm, FERROR / MIN_FERROR):
+#: wider than a positioning axis's 2 / 1 — filament is not a position, and
+#: a false trip ends the print.
+EXTRUDER_FERROR = 5.0
+EXTRUDER_MIN_FERROR = 2.0
+#: Highest step rate (steps/s) of a Remora step generator: a CAN node's
+#: (Remora-m8p CAN_PROTOCOL.md: 40 kHz base thread, at most 20 kHz) and a
+#: remora-spi board's (its base thread, PRU_base_freq; 40 kHz by default).
+NODE_MAX_STEP_RATE = 20_000.0
+REMORA_DEFAULT_BASE_FREQ = 40_000.0
+#: The extruder joint plans at most this share of that step rate: room for
+#: pressure advance (extruder.comp max-velocity) and the stepgen's own loop.
+STEP_RATE_MARGIN = 0.9
 #: An extruder's travel (`.agent/component/exturder.md` § 3): filament
 #: is continuous, there is nothing to hit.
 EXTRUDER_MIN_LIMIT = -9999.0
@@ -525,6 +539,17 @@ class AxisBuilder:
             gear_ratio=getattr(extruder, "gear_ratio", None),
         )
         joint = self._make_joint(stub, "A", joint_number=joint_number)
+        # Its own limits, not X / Y's: Klipper's extrude-only velocity /
+        # accel, and never faster than its step generator can step.
+        velocity, accel = self._extrude_only_limits(extruder)
+        cap = self._step_rate_velocity_cap(extruder.step_pin, abs(joint.scale))
+        if cap is not None:
+            velocity = min(velocity, cap)
+        joint.max_velocity = velocity
+        joint.max_acceleration = accel
+        joint.stepgen_maxaccel = accel * 1.1
+        joint.ferror = EXTRUDER_FERROR
+        joint.min_ferror = EXTRUDER_MIN_FERROR
         # Filament is continuous and there is no endstop (exturder.md § 3):
         # unbounded travel, and "homed" in place at once (search velocity
         # 0) in the first phase — a soft limit of 0..0, or a switch search
@@ -537,6 +562,47 @@ class AxisBuilder:
         joint.home_latch_vel = 0.0
         joint.home_sequence = 0
         return joint
+
+    def _extrude_only_limits(self, extruder) -> tuple[float, float]:
+        """Klipper's ``max_extrude_only_velocity`` / ``_accel`` (mm/s,
+        mm/s^2), else its defaults: the printer's ``max_velocity`` /
+        ``max_accel`` times ``max_extrude_cross_section`` (default 4 x
+        nozzle_diameter^2) / the filament's area; without nozzle /
+        filament diameter, the printer's own."""
+        velocity = extruder.max_extrude_only_velocity
+        accel = extruder.max_extrude_only_accel
+        if velocity is None or accel is None:
+            ratio = None
+            filament = extruder.filament_diameter
+            cross_section = extruder.max_extrude_cross_section
+            if cross_section is None and extruder.nozzle_diameter:
+                cross_section = 4.0 * extruder.nozzle_diameter ** 2
+            if cross_section and filament:
+                ratio = cross_section / (math.pi * (filament / 2.0) ** 2)
+            if velocity is None:
+                velocity = self._printer_velocity() * ratio if ratio else self._printer_velocity()
+            if accel is None:
+                accel = self._printer_accel() * ratio if ratio else self._printer_accel()
+        return float(velocity), float(accel)
+
+    def _step_rate_velocity_cap(self, step_pin: str | None, steps_per_mm: float) -> float | None:
+        """The fastest the extruder's Remora step generator can go (mm/s),
+        with STEP_RATE_MARGIN: a CAN node's 20 kHz, a remora-spi board's
+        base thread. ``None`` for any other MCU (its own limits apply)."""
+        if not steps_per_mm:
+            return None
+        from MachineConfigParser import split_pin
+
+        mcu_name, _ = split_pin(step_pin)
+        mcu = self.graph.mcus.get(mcu_name or "mcu")
+        connection = getattr(mcu, "connection", None)
+        if connection == "remora-can":
+            rate = NODE_MAX_STEP_RATE
+        elif connection == "remora-spi":
+            rate = float(getattr(mcu, "pru_base_freq", None) or REMORA_DEFAULT_BASE_FREQ)
+        else:
+            return None
+        return STEP_RATE_MARGIN * rate / steps_per_mm
 
     # ----- Velocity helpers ---------------------------------------- #
 
