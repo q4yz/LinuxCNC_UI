@@ -121,8 +121,9 @@ def stop_program():
     operation_id="unloadProgram",
 )
 def unload_program():
-    service = get_program_service()
-    target = service.safe_join("EmptyProgram.ngc")
+    # A valid empty program, written if missing or broken (an empty file:
+    # "File ended with no percent sign", then "can't open").
+    target = get_program_service().ensure_empty_program()
 
     try:
         get_program_lifecycle_service().load_program(str(target))
