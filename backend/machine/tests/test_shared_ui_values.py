@@ -37,7 +37,7 @@ def test_ui_value_is_broadcast_to_every_client():
     async def fake_broadcast(message: str) -> None:
         sent.append(message)
 
-    svc.broadcast = fake_broadcast  # type: ignore[method-assign]
+    svc.broadcast = fake_broadcast
     asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "jog.speed", "value": 25}))
     asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "no spaces", "value": 1}))
     assert [json.loads(m) for m in sent] == [{"type": "ui_value", "data": {"key": "jog.speed", "value": 25}}]
