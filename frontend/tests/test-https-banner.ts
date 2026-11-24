@@ -137,3 +137,9 @@ test("AppSidebar exposes a config entry", () => {
   // direct sidebar link now rather than staying route-only.
   assert.match(sidebar, /id:\s*['"]config['"]/);
 });
+
+test("HttpsBanner wraps inside a narrow column, buttons stay in the card (#129)", () => {
+  // the layout follows the banner's width: no screen-width row, no unbreakable buttons
+  assert.match(banner, /flex flex-wrap items-center gap-4/);
+  assert.doesNotMatch(banner, /md:flex-row|sm:flex-row|whitespace-nowrap/);
+});

@@ -69,21 +69,23 @@ test("MacroButton hides itself when the descriptor is missing or disabled", () =
     "MacroButton must gate the output control on isVisible",
   );
   assert.match(buttonText, /v-else-if="isVisible"/, "MacroButton must gate the button on isVisible");
-  assert.match(
-    buttonText,
-    /descriptor != null/,
-    "MacroButton must null-check the descriptor",
-  );
-  assert.match(
-    buttonText,
-    /descriptor\.enabled === true/,
-    "MacroButton must check descriptor.enabled === true",
-  );
-  assert.match(
-    buttonText,
-    /descriptor\.macroName \?\? ""\)\.length > 0/,
-    "MacroButton must check descriptor.macroName is non-empty",
-  );
+  assert.match(buttonText, /isMacroButtonComplete\(props\.descriptor\)/);
+});
+
+test("a button without a label or an action is not shown and is flagged red (#126)", async () => {
+  const { isMacroButtonComplete, macroButtonProblems } = await import(pathToFileURL(typesPath).href);
+  const full = { slot: "a", enabled: true, name: "Light", macroName: "light" };
+  assert.equal(isMacroButtonComplete(full), true);
+  assert.equal(isMacroButtonComplete({ ...full, enabled: false }), false);
+  assert.equal(isMacroButtonComplete({ ...full, name: "  " }), false);
+  assert.equal(isMacroButtonComplete({ ...full, macroName: "" }), false);
+  assert.equal(isMacroButtonComplete(null), false);
+  assert.deepEqual(macroButtonProblems({ name: "", macroName: "" }), { missingLabel: true, missingAction: true });
+  // the editor flags only enabled rows, on the name input and the action select
+  assert.match(editorText, /row\?\.enabled \? macroButtonProblems\(row\) : NO_PROBLEMS/);
+  assert.match(editorText, /problemsFor\(slot\)\.missingLabel \? INVALID : VALID/);
+  assert.match(editorText, /problemsFor\(slot\)\.missingAction \? INVALID : VALID/);
+  assert.match(editorText, /macro-button-problem-/);
 });
 
 test("MacroButton dispatches via useMacrosStore.runMacroOfKind", () => {

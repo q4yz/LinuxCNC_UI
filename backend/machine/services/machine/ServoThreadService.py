@@ -12,6 +12,7 @@ from dtos.ServoThreadState import ServoThreadStateDTO
 from services.motion.AxisService import get_axis_service
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from services.machine.StateService import get_state_service
+from services.machine.SharedUiValues import get_shared_ui_values
 from services.temperature.HeaterSafetyService import get_heater_safety_service
 from core.NonRepeatingLogger import NonRepeatingLogger
 from hardware.Connection import message_severity
@@ -36,6 +37,7 @@ class ServoThreadService:
         self.state_service = get_state_service()
         self.axis_service = get_axis_service()
         self.heater_safety = get_heater_safety_service()
+        self.shared_values = get_shared_ui_values()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -86,6 +88,10 @@ class ServoThreadService:
         self._last_broadcast_state = current_dto
         return envelope.model_dump_json(exclude_none=True)
 
+    def get_shared_values_json(self) -> str:
+        """Every shared UI value, for a newly connected client (#128)."""
+        return json.dumps({"type": "ui_values", "data": self.shared_values.snapshot()})
+
     def get_current_state(self) -> Dict[str, Any]:
         """Return the full ``full_state`` payload as a dict."""
         stat = self.state_service.get_polled_stat()
@@ -97,6 +103,18 @@ class ServoThreadService:
 
     async def dispatch_inbound(self, websocket: WebSocket, msg: Dict[str, Any]) -> None:
         """Route a JSON command received over the telemetry socket."""
+
+        # A shared UI value (a slider every client shows the same, #128):
+        # kept, and sent to every client at once — the sender included,
+        # which takes the echo as the confirmation.
+        if msg.get("type") == "ui_value":
+            accepted = self.shared_values.set(msg.get("key"), msg.get("value"))
+            if accepted is None:
+                logger.warning("ignoring invalid ui_value: %r", msg)
+                return
+            key, value = accepted
+            await self.broadcast(json.dumps({"type": "ui_value", "data": {"key": key, "value": value}}))
+            return
 
         # Pass the message to the AxisService.
         # If it handles it, we are done.

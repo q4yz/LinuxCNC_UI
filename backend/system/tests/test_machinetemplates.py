@@ -924,6 +924,22 @@ def test_regenerate_keeps_user_hal(isolated_roots):
     assert user_hal.read_text(encoding="utf-8") == "loadusr -Wn mysensor mysensor-program\n"
 
 
+def test_regenerate_keeps_calibration_ini(isolated_roots):
+    """calibration.ini holds measured values: a regenerate keeps it (#130)."""
+    from domain_file_services import ConfigFileService, MachineFileService
+    from services.machinetemplates import generate_machine_templates
+
+    kwargs = dict(
+        config_service=ConfigFileService(root=isolated_roots["profiles"]),
+        machine_service=MachineFileService(root=isolated_roots["machines"]),
+    )
+    generate_machine_templates("my_machine.cfg", **kwargs)
+    calibration = isolated_roots["machines"] / "my_machine" / "configs" / "calibration.ini"
+    calibration.write_text("[PROBE]\nZ_OFFSET = 1.234\n", encoding="utf-8")
+    generate_machine_templates("my_machine.cfg", confirm_override=True, **kwargs)
+    assert calibration.read_text(encoding="utf-8") == "[PROBE]\nZ_OFFSET = 1.234\n"
+
+
 def test_ini_lists_shared_m_codes_and_home_positions():
     from domain_file_services import paths
     from services.machinetemplates.ini_template_generator import render_ini_template

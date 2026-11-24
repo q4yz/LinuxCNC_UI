@@ -45,6 +45,8 @@ async def websocket_telemetry(websocket: WebSocket):
         # Send full initial state immediately upon connection
         initial_payload = service.get_initial_state_json()
         await websocket.send_text(initial_payload)
+        # The sliders every client shows the same (jog speed, ...).
+        await websocket.send_text(service.get_shared_values_json())
 
         # Listen for inbound commands
         while True:

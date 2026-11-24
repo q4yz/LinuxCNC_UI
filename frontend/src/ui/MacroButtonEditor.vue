@@ -36,7 +36,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import type { PropType } from "vue";
 
 import { macrosFacade } from "../facades/macrosFacade";
-import type { MacroButtonDescriptor, MacroButtonSlotDef } from "./macroButtonTypes";
+import { macroButtonProblems } from "./macroButtonTypes";
+import type { MacroButtonDescriptor, MacroButtonProblems, MacroButtonSlotDef } from "./macroButtonTypes";
 import { PANELS } from "../layout/pagePanels";
 import useBaseThreadStore from "../stores/baseThread";
 import { outputTargets } from "./outputTargets";
@@ -99,7 +100,7 @@ const props = defineProps({
   description: {
     type: String,
     default:
-      "Add a custom button to this surface. Leave the macro empty to hide the button.",
+      "Add a custom button to this surface. An enabled button needs a label and an action before it is shown.",
   },
 });
 
@@ -309,6 +310,16 @@ function onChangeMacro(row: MacroButtonRow) {
   commitRow(row);
 }
 
+// An enabled row without a label or an action is flagged red and not
+// shown on its surface (#126); a disabled row is not flagged.
+const NO_PROBLEMS: MacroButtonProblems = { missingLabel: false, missingAction: false };
+function problemsFor(slot: MacroButtonSlotDef): MacroButtonProblems {
+  const row = descriptorFor(slot);
+  return row?.enabled ? macroButtonProblems(row) : NO_PROBLEMS;
+}
+const INVALID = "border-red-500 bg-red-950/40";
+const VALID = "border-gray-600 bg-gray-900";
+
 function descriptorFor(slot: MacroButtonSlotDef): MacroButtonRow | undefined {
   return draft.value.find((r) => r.slot === slot.id);
 }
@@ -369,6 +380,14 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
           >
             <td class="px-3 py-2 align-top font-mono text-xs text-gray-400">
               {{ slot.label || slot.id }}
+              <p
+                v-if="problemsFor(slot).missingLabel || problemsFor(slot).missingAction"
+                class="mt-1 font-sans text-[11px] text-red-400"
+                role="alert"
+                :data-test="`macro-button-problem-${slot.id}`"
+              >
+                Hidden: needs {{ [problemsFor(slot).missingLabel ? 'a label' : '', problemsFor(slot).missingAction ? 'an action' : ''].filter(Boolean).join(' and ') }}
+              </p>
             </td>
             <td class="px-3 py-2 align-top">
               <input
@@ -391,7 +410,9 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
                 type="text"
                 :value="descriptorFor(slot)?.name ?? ''"
                 placeholder="Button label"
-                class="w-full min-w-[8rem] rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
+                :aria-invalid="problemsFor(slot).missingLabel"
+                :class="problemsFor(slot).missingLabel ? INVALID : VALID"
+                class="w-full min-w-[8rem] rounded border px-2 py-1 text-xs text-gray-100 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-name-${slot.id}`"
                 @input="
                   (event) => {
@@ -458,7 +479,9 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
             <td class="px-3 py-2 align-top">
               <select
                 :value="descriptorFor(slot)?.macroName ?? ''"
-                class="w-full min-w-[10rem] rounded border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+                :aria-invalid="problemsFor(slot).missingAction"
+                :class="problemsFor(slot).missingAction ? INVALID : VALID"
+                class="w-full min-w-[10rem] rounded border px-2 py-1 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
                 :data-test="`macro-button-macro-${slot.id}`"
                 @change="
                   (event) => {

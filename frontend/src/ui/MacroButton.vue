@@ -13,11 +13,11 @@
 //   * ``descriptor == null``           → render nothing.
 //   * ``descriptor.enabled === false`` → render nothing.
 //   * ``descriptor.macroName === ""``  → render nothing.
+//   * ``descriptor.name`` empty/blank  → render nothing.
 //
-// That last rule lets the operator keep an enabled-but-unfilled row
-// in the settings editor without a phantom button appearing in the
-// host surface. The settings editor shows a helper hint to that
-// effect.
+// The last two rules (``isMacroButtonComplete``) keep an enabled but
+// unfilled row out of the host surface: no phantom or unlabelled
+// button. The settings editor flags such a row red (#126).
 //
 // Dispatch path:
 //
@@ -64,6 +64,7 @@ import BaseButton from "./BaseButton.vue";
 import Icon from "./Icon.vue";
 import { useMacrosStore, MACRO_KIND } from "../stores/macrosStore";
 import { useMachineStore } from "../stores/machine";
+import { isMacroButtonComplete } from "./macroButtonTypes";
 import type { MacroButtonDescriptor } from "./macroButtonTypes";
 import { useFloatingPanels } from "../composables/useFloatingPanels";
 import { panelDef } from "../layout/pagePanels";
@@ -123,12 +124,9 @@ const machineStore = useMachineStore();
 // local flag gives the user per-button feedback.
 const isRunning = ref(false);
 
-const isVisible = computed(
-  () =>
-    props.descriptor != null &&
-    props.descriptor.enabled === true &&
-    (props.descriptor.macroName ?? "").length > 0,
-);
+// enabled, with a label and an action (descriptor != null,
+// descriptor.enabled === true, a name and a macroName: see the helper)
+const isVisible = computed(() => isMacroButtonComplete(props.descriptor));
 
 // kind "component": opens a panel in a floating window — harmless, so
 // never blocked by the E-stop or a running macro
