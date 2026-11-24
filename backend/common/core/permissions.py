@@ -253,7 +253,6 @@ SYSTEM_ROUTES: Mapping[tuple[str, str], Permission] = {
     # Accounts (#131): logging in is for everyone, managing users for admins
     ("GET", "/api/v1/auth/me"): P.ACCOUNT,
     ("POST", "/api/v1/auth/login"): P.ACCOUNT,
-    ("POST", "/api/v1/auth/setup"): P.ACCOUNT,
     ("PUT", "/api/v1/auth/password"): P.ACCOUNT,
     ("POST", "/api/v1/auth/logout-everywhere"): P.ACCOUNT,
     ("GET", "/api/v1/users"): P.USERS_MANAGE,

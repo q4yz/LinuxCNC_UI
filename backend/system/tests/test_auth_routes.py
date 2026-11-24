@@ -1,4 +1,4 @@
-"""Accounts and logins over HTTP (#131): setup, login, roles, users."""
+"""Accounts and logins over HTTP (#131): the default admin, login, roles, users."""
 from __future__ import annotations
 
 import pytest
@@ -25,19 +25,18 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_setup_login_and_roles(client):
-    # no account yet: everyone is the local admin, setup is offered
-    me = client.get("/api/v1/auth/me").json()
-    assert me["role"] == "admin" and me["accounts_exist"] is False and me["authenticated"] is False
+def _login(client, name="remora", password="remora"):
+    return client.post("/api/v1/auth/login", json={"username": name, "password": password}).json()
 
-    admin = client.post("/api/v1/auth/setup", json={"username": "boss", "password": "secret1"}).json()
-    assert admin["user"]["role"] == "admin"
-    # a second setup is refused
-    assert client.post("/api/v1/auth/setup", json={"username": "x", "password": "secret1"}).status_code == 400
+
+def test_default_admin_login_and_roles(client):
+    # like SSH: the default admin, flagged while its password is the default
+    admin = _login(client)
+    assert admin["user"]["role"] == "admin" and admin["user"]["default_password"] is True
 
     # without a login: a viewer, who may not manage users
     me = client.get("/api/v1/auth/me").json()
-    assert me["role"] == "viewer" and me["accounts_exist"] is True
+    assert me["role"] == "viewer" and me["authenticated"] is False
     assert me["permissions"]["machine.read"] == "allow" and me["permissions"]["machine.motion"] == "deny"
     assert client.get("/api/v1/users").status_code == 403
 
@@ -51,31 +50,31 @@ def test_setup_login_and_roles(client):
     assert client.get("/api/v1/users", headers=_bearer(login["token"])).status_code == 403
 
     listed = client.get("/api/v1/users", headers=headers).json()
-    assert [u["name"] for u in listed["users"]] == ["boss", "worker"]
+    assert [u["name"] for u in listed["users"]] == ["remora", "worker"]
     assert listed["roles"] == ["admin", "user", "viewer"]
 
     # the last admin stays an admin
-    assert client.put("/api/v1/users/boss", json={"role": "user"}, headers=headers).status_code == 400
+    assert client.put("/api/v1/users/remora", json={"role": "user"}, headers=headers).status_code == 400
     assert client.delete("/api/v1/users/worker", headers=headers).status_code == 204
     assert client.get("/api/v1/auth/me", headers=_bearer(login["token"])).json()["role"] == "viewer"
 
 
 def test_wrong_passwords_get_slow(client):
-    client.post("/api/v1/auth/setup", json={"username": "boss", "password": "secret1"})
     for _ in range(auth_router.MAX_FAILURES):
-        assert client.post("/api/v1/auth/login", json={"username": "boss", "password": "nope"}).status_code == 401
+        assert client.post("/api/v1/auth/login", json={"username": "remora", "password": "nope"}).status_code == 401
     # even the right password waits now
-    assert client.post("/api/v1/auth/login", json={"username": "boss", "password": "secret1"}).status_code == 429
+    assert client.post("/api/v1/auth/login", json={"username": "remora", "password": "remora"}).status_code == 429
 
 
 def test_change_password_ends_other_sessions(client):
-    first = client.post("/api/v1/auth/setup", json={"username": "boss", "password": "secret1"}).json()["token"]
-    second = client.post("/api/v1/auth/login", json={"username": "boss", "password": "secret1"}).json()["token"]
+    first = _login(client)["token"]
+    second = _login(client)["token"]
     wrong = client.put("/api/v1/auth/password", json={"current_password": "bad", "new_password": "secret9"},
                        headers=_bearer(first))
     assert wrong.status_code == 400
-    changed = client.put("/api/v1/auth/password", json={"current_password": "secret1", "new_password": "secret9"},
+    changed = client.put("/api/v1/auth/password", json={"current_password": "remora", "new_password": "secret9"},
                          headers=_bearer(first)).json()
+    assert changed["user"]["default_password"] is False
     assert client.get("/api/v1/auth/me", headers=_bearer(second)).json()["role"] == "viewer"
     assert client.get("/api/v1/auth/me", headers=_bearer(changed["token"])).json()["role"] == "admin"
     # a viewer has no account to change

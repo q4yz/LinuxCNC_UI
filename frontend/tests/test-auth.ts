@@ -40,17 +40,18 @@ test("every request carries the token: the generated client and both sockets", (
   assert.match(read("facades/halScopeFacade.ts"), /new WebSocket\(withToken\(socketUrl\(\)\)\)/);
 });
 
-test("the account control: setup until an account exists, then log in / out", () => {
+test("the account control: log in / out, the default password is flagged", () => {
   const menu = read("components/account/AccountMenu.vue");
-  assert.match(menu, /if \(auth\.needsSetup\) dialog\.value = "setup"/);
-  assert.match(menu, /else if \(!auth\.authenticated\) dialog\.value = "login"/);
+  assert.match(menu, /if \(!auth\.authenticated\) dialog\.value = "login"/);
+  assert.match(menu, /default password!/);
+  assert.doesNotMatch(read("stores/authStore.ts"), /needsSetup|setup\(/);
   assert.match(read("components/AppSidebar.vue"), /<AccountMenu :collapsed="isCollapsed" \/>/);
   // a token the backend no longer takes is dropped
-  assert.match(read("stores/authStore.ts"), /current\.accounts_exist && !current\.authenticated[\s\S]*?setToken\(null\)/);
+  assert.match(read("stores/authStore.ts"), /getToken\(\) && !current\.authenticated\) \{[\s\S]*?setToken\(null\)/);
 });
 
 test("admins get the Users tab", () => {
   const view = read("views/SettingsView.vue");
-  assert.match(view, /auth\.accountsExist && auth\.can\("users\.manage"\) \? \[USERS_TAB\]/);
+  assert.match(view, /auth\.authenticated && auth\.can\("users\.manage"\) \? \[USERS_TAB\]/);
   assert.match(view, /<UsersPanel \/>/);
 });

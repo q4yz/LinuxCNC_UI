@@ -8,9 +8,8 @@ of that exact request (:mod:`core.agent_approval`).
 
 Who calls (:func:`current_user`, #131): the agent with the agent
 token; an account with its session token (:mod:`core.session_token`,
-accounts in :mod:`core.users_db`); anyone else is a viewer. Until the
-first account exists, every caller is the local admin — an installation
-works as before until its admin creates the first account.
+accounts in :mod:`core.users_db`, which starts with the default admin
+``remora`` / ``remora``); anyone else is a viewer.
 """
 from __future__ import annotations
 
@@ -33,7 +32,7 @@ class User:
 
 logger = logging.getLogger("core.auth")
 
-#: Every caller while no account exists (a fresh or upgraded installation).
+#: An admin caller (tests, in-process callers).
 LOCAL_ADMIN = User(name="local", role="admin")
 #: The assistant, calling through the MCP server (``core.agent_token``).
 AGENT = User(name="agent", role="agent")
@@ -62,7 +61,7 @@ def presented_token(connection: HTTPConnection) -> str:
 
 def current_user(connection: HTTPConnection) -> User:
     """Who is calling: the agent (agent token), an account (session
-    token), the local admin while no account exists, else a viewer."""
+    token), else a viewer."""
     from core.agent_token import is_agent_token
     from core.session_token import verify
     from core.users_db import get_user_store
@@ -72,8 +71,6 @@ def current_user(connection: HTTPConnection) -> User:
         return AGENT
     store = get_user_store()
     try:
-        if not store.has_accounts():
-            return LOCAL_ADMIN
         account = verify(token, store) if token else None
     except sqlite3.Error as exc:
         logger.error("user database unreadable (%s): treating the caller as a viewer", exc)

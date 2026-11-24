@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Log in, create the first (admin) account, or change your password
-// (#131). One small modal, three modes.
+// Log in or change your password (#131).
 import { computed, ref, watch } from "vue";
 
 import BaseButton from "../../ui/BaseButton.vue";
@@ -8,7 +7,7 @@ import BaseInput from "../../ui/BaseInput.vue";
 import { useAuthStore } from "../../stores/authStore";
 import { useConsoleStore } from "../../stores/console";
 
-export type AuthDialogMode = "login" | "setup" | "password";
+export type AuthDialogMode = "login" | "password";
 
 const props = defineProps<{ mode: AuthDialogMode | null }>();
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -31,13 +30,9 @@ watch(() => props.mode, () => {
   error.value = "";
 });
 
-const title = computed(() => ({
-  login: "Log in",
-  setup: "Create the admin account",
-  password: "Change password",
-}[props.mode ?? "login"]));
+const title = computed(() => (props.mode === "password" ? "Change password" : "Log in"));
 
-const needsRepeat = computed(() => props.mode === "setup" || props.mode === "password");
+const needsRepeat = computed(() => props.mode === "password");
 
 async function submit(): Promise<void> {
   if (busy.value || !props.mode) return;
@@ -49,7 +44,6 @@ async function submit(): Promise<void> {
   busy.value = true;
   try {
     if (props.mode === "login") await auth.login(username.value.trim(), password.value);
-    else if (props.mode === "setup") await auth.setup(username.value.trim(), password.value);
     else await auth.changePassword(current.value, password.value);
     consoleStore.success(props.mode === "password" ? "Password changed" : `Logged in as ${auth.name} (${auth.role})`);
     emit("close");
@@ -74,8 +68,8 @@ async function submit(): Promise<void> {
       @submit.prevent="submit"
     >
       <h2 class="text-lg font-bold text-gray-100">{{ title }}</h2>
-      <p v-if="mode === 'setup'" class="text-xs text-gray-400">
-        After this, anyone who is not logged in can only watch. Keep the password safe: it is the only admin.
+      <p v-if="mode === 'password' && auth.defaultPassword" class="text-xs text-amber-300">
+        This account still has the default password: anyone on the network could log in as admin.
       </p>
       <label v-if="mode !== 'password'" class="block text-xs text-gray-400">
         User name

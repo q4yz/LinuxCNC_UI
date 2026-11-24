@@ -11,11 +11,14 @@ Who may do what is decided by a **role**:
 
 The full table: {doc}`../reference/permissions`.
 
-## The first account
+## The default login
 
-A new or updated installation has no accounts: everyone is an admin, as before. The account
-button at the bottom of the sidebar says **Create admin** — create the admin account there.
-From then on **anyone who is not logged in is a viewer**: they can watch, not control.
+Like SSH on a fresh system, there is always a login: user **`remora`**, password **`remora`**,
+role admin. **Anyone who is not logged in is a viewer**: they can watch, not control.
+
+Log in with it once and change the password (account menu → **Change password**): while it is
+still `remora`, the account button shows *default password!* — anyone on the network could log in
+as admin. Then add your own users.
 
 ## Logging in
 
@@ -30,7 +33,7 @@ role, set a new password (that user's logins end) or delete the account. The las
 lose the admin role or be deleted.
 
 The accounts live in `backend/data/users.db` (SQLite; passwords are stored as scrypt hashes).
-Locked out? Stop the backends and delete `users.db`: the installation is back to "no accounts".
+Locked out? Stop the backends and delete `users.db`: it starts again with only `remora` / `remora`.
 
 ## Slicer upload
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The account control at the bottom of the sidebar (#131):
-//   * no account yet  -> "Create admin" (everyone is admin until then)
-//   * not logged in   -> "Log in" (watching only: the viewer role)
+//   * not logged in   -> "Log in" (watching only: the viewer role;
+//                        the default admin is remora / remora)
 //   * logged in       -> name + role; change password, the slicer API key,
 //                        log out, log out on every device.
 import { computed, onMounted, ref } from "vue";
@@ -22,21 +22,16 @@ onMounted(() => {
   void auth.refresh();
 });
 
-const label = computed(() => {
-  if (auth.needsSetup) return "Create admin";
-  if (!auth.authenticated) return "Log in";
-  return auth.name;
-});
+const label = computed(() => (auth.authenticated ? auth.name : "Log in"));
 
 const sublabel = computed(() => {
-  if (auth.needsSetup) return "no accounts yet";
   if (!auth.authenticated) return "viewer: watching only";
+  if (auth.defaultPassword) return `${auth.role} · default password!`;
   return auth.role;
 });
 
 function onClick(): void {
-  if (auth.needsSetup) dialog.value = "setup";
-  else if (!auth.authenticated) dialog.value = "login";
+  if (!auth.authenticated) dialog.value = "login";
   else menuOpen.value = !menuOpen.value;
 }
 
@@ -76,7 +71,7 @@ function openPassword(): void {
       class="flex w-full items-center px-4 py-3 text-left outline-none transition-colors hover:bg-gray-700"
       :class="[
         collapsed ? 'justify-center' : 'justify-start',
-        auth.needsSetup ? 'text-amber-300' : auth.authenticated ? 'text-gray-200' : 'text-gray-400',
+        auth.defaultPassword ? 'text-amber-300' : auth.authenticated ? 'text-gray-200' : 'text-gray-400',
       ]"
       :title="collapsed ? `${label} (${sublabel})` : ''"
       data-testid="account-button"
@@ -98,8 +93,13 @@ function openPassword(): void {
       class="absolute bottom-full left-2 z-50 mb-1 w-56 rounded-lg border border-gray-700 bg-gray-900 py-1 text-sm"
       data-testid="account-actions"
     >
-      <button type="button" class="block w-full px-4 py-2 text-left hover:bg-gray-800" @click="openPassword">
-        Change password
+      <button
+        type="button"
+        class="block w-full px-4 py-2 text-left hover:bg-gray-800"
+        :class="auth.defaultPassword ? 'text-amber-300' : ''"
+        @click="openPassword"
+      >
+        Change password{{ auth.defaultPassword ? ' (still the default)' : '' }}
       </button>
       <button type="button" class="block w-full px-4 py-2 text-left hover:bg-gray-800" @click="copyApiKey">
         Copy API key (slicer upload)

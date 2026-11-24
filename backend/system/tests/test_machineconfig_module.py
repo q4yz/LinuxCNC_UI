@@ -657,6 +657,9 @@ def test_real_main_app_ships_the_parser_error_envelope(
     )
 
     with TestClient(system_main.app) as client:
+        # the real app checks permissions: log in as the default admin (#131)
+        login = client.post("/api/v1/auth/login", json={"username": "remora", "password": "remora"})
+        client.headers["Authorization"] = f"Bearer {login.json()['token']}"
         resp = _generate(client, profile_path="legacy_type_key.cfg")
 
     assert resp.status_code == 400, resp.text

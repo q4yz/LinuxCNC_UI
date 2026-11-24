@@ -167,14 +167,23 @@ def _conn(headers: dict[str, str] | None = None, *, ws_token: str = ""):
     return HTTPConnection({"type": "http", "headers": raw, "query_string": b""})
 
 
-def test_everyone_is_admin_until_the_first_account(users):
-    assert auth.current_user(_conn()) == auth.LOCAL_ADMIN  # only the agent token makes the agent
+def test_a_fresh_database_has_the_default_admin(users):
+    from core.users_db import DEFAULT_USER
+
+    assert DEFAULT_USER == ("remora", "remora", "admin")
+    account = users.authenticate("remora", "remora")
+    assert account is not None and account.role == "admin"
+    assert users.uses_default_password("remora")
+    users.set_password("remora", "better")
+    assert not users.uses_default_password("remora")
+    # without a login: a viewer — there is no open mode
+    assert auth.current_user(_conn()) == auth.GUEST
 
 
-def test_with_accounts_a_login_decides_and_the_rest_watch(users):
+def test_a_login_decides_and_the_rest_watch(users):
     from core.session_token import issue
 
-    admin = users.create_first_admin("boss", "secret1")
+    admin = users.create("boss", "secret1", "admin")
     worker = users.create("worker", "secret2", "user")
     assert auth.current_user(_conn()) == auth.GUEST
     assert auth.current_user(_conn({"Authorization": "Bearer junk"})) == auth.GUEST
@@ -196,13 +205,17 @@ def test_with_accounts_a_login_decides_and_the_rest_watch(users):
 def test_the_last_admin_stays(users):
     from core.users_db import UserError
 
-    users.create_first_admin("boss", "secret1")
+    # remora is the only admin of a fresh database
     with pytest.raises(UserError):
-        users.set_role("boss", "user")
+        users.set_role("remora", "user")
+    with pytest.raises(UserError):
+        users.delete("remora")
+    users.create("boss", "secret1", "admin")
+    users.delete("remora")
     with pytest.raises(UserError):
         users.delete("boss")
     with pytest.raises(UserError):
-        users.create_first_admin("other", "secret1")
+        users.create("Boss", "secret1", "user")  # names ignore case
 
 
 @pytest.mark.parametrize(

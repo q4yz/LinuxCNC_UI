@@ -21,7 +21,6 @@ async function call<T>(action: () => Promise<T>): Promise<T> {
 export const authFacade = {
   me: () => call(() => AuthService.authMe()),
   login: (username: string, password: string) => call(() => AuthService.authLogin({ username, password })),
-  setup: (username: string, password: string) => call(() => AuthService.authSetup({ username, password })),
   changePassword: (currentPassword: string, newPassword: string) =>
     call(() => AuthService.authChangePassword({ current_password: currentPassword, new_password: newPassword })),
   logoutEverywhere: () => call(() => AuthService.authLogoutEverywhere()),

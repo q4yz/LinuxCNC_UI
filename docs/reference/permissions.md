@@ -110,7 +110,6 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/auth/logout-everywhere` | `account` | yes |
 | GET | `/api/v1/auth/me` | `account` | yes |
 | PUT | `/api/v1/auth/password` | `account` | yes |
-| POST | `/api/v1/auth/setup` | `account` | yes |
 | GET | `/api/v1/agent/confirmations` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/approve` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/deny` | `agent.approve` | - |

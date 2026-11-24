@@ -1,8 +1,9 @@
 """``/api/v1/auth`` and ``/api/v1/users`` — accounts and logins (#131).
 
 * Anyone without a login is a viewer (``core.auth.current_user``).
-* ``POST /auth/setup`` creates the first account (an admin) — only while
-  none exists; until then every caller is the local admin, as before.
+* Like SSH there is always a login: the default admin ``remora`` /
+  ``remora`` (``core.users_db.DEFAULT_USER``) — ``/auth/me`` and the
+  login say when its password is still the default.
 * ``POST /auth/login`` trades a user name and password for a session
   token (``core.session_token``) that does not expire; it ends with a
   password change, ``POST /auth/logout-everywhere`` or the account's
@@ -59,7 +60,7 @@ class CurrentUserResponse(BaseModel):
     name: str
     role: str = Field(..., description="admin, user, viewer or agent.")
     authenticated: bool = Field(..., description="Logged in with an account.")
-    accounts_exist: bool = Field(..., description="False: no account yet, every caller is the local admin.")
+    default_password: bool = Field(False, description="The default account still has its default password.")
     permissions: dict[str, str] = Field(..., description="Permission -> allow / confirm / deny for this role.")
 
 
@@ -99,15 +100,16 @@ class UserUpdate(BaseModel):
     password: str | None = Field(None, description="A new password (ends the user's sessions).")
 
 
-def _me(name: str, role: str, authenticated: bool, accounts_exist: bool) -> CurrentUserResponse:
+def _me(name: str, role: str, authenticated: bool) -> CurrentUserResponse:
+    default = authenticated and get_user_store().uses_default_password(name)
     return CurrentUserResponse(
-        name=name, role=role, authenticated=authenticated, accounts_exist=accounts_exist,
+        name=name, role=role, authenticated=authenticated, default_password=default,
         permissions={p.value: level(role, p).value for p in Permission},
     )
 
 
 def _account_me(account: Account) -> CurrentUserResponse:
-    return _me(account.name, account.role, True, True)
+    return _me(account.name, account.role, True)
 
 
 def _bad(exc: UserError) -> HTTPException:
@@ -128,7 +130,7 @@ def me(request: Request) -> CurrentUserResponse:
     user = current_user(request)
     store = get_user_store()
     authenticated = user.name not in ("local", "guest", "agent") and store.get(user.name) is not None
-    return _me(user.name, user.role, authenticated, store.has_accounts())
+    return _me(user.name, user.role, authenticated)
 
 
 @router.post("/api/v1/auth/login", response_model=LoginResponse, operation_id="authLogin",
@@ -144,17 +146,6 @@ def login(body: Credentials) -> LoginResponse:
         _failures.failed(body.username, now)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong user name or password")
     _failures.succeeded(body.username)
-    return LoginResponse(token=issue(account), user=_account_me(account))
-
-
-@router.post("/api/v1/auth/setup", response_model=LoginResponse, operation_id="authSetup",
-             summary="Create the first account (an admin)",
-             responses={400: {"description": "An account exists already, or the name / password is invalid."}})
-def setup(body: Credentials) -> LoginResponse:
-    try:
-        account = get_user_store().create_first_admin(body.username, body.password)
-    except UserError as exc:
-        raise _bad(exc) from None
     return LoginResponse(token=issue(account), user=_account_me(account))
 
 

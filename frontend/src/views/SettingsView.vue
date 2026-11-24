@@ -22,7 +22,7 @@ import UsersPanel from "../components/account/UsersPanel.vue";
 import { useAuthStore } from "../stores/authStore";
 
 const VIEWER_TAB = "3D Viewer";
-// Accounts (#131): admins, once the first account exists.
+// Accounts (#131): admins.
 const USERS_TAB = "Users";
 const auth = useAuthStore();
 // Preferred tab order; categories not listed follow alphabetically.
@@ -37,7 +37,7 @@ const tabs = computed(() => {
     if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     return a.localeCompare(b);
   });
-  return [...names, VIEWER_TAB, ...(auth.accountsExist && auth.can("users.manage") ? [USERS_TAB] : [])];
+  return [...names, VIEWER_TAB, ...(auth.authenticated && auth.can("users.manage") ? [USERS_TAB] : [])];
 });
 
 const activeTab = ref<string>("");

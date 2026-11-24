@@ -3,8 +3,8 @@
 // ``refresh()`` asks the backend (``/auth/me``): the role and what it may
 // do (``can``). A stored token the backend no longer accepts (password
 // changed elsewhere, account deleted) is dropped — the client is a
-// viewer again. Until the first account exists every caller is the
-// local admin and ``needsSetup`` offers to create it.
+// viewer again. Like SSH there is always a login: the default admin
+// ``remora`` / ``remora``; ``defaultPassword`` asks to change it.
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
@@ -18,10 +18,10 @@ export const useAuthStore = defineStore("auth", () => {
   const role = computed(() => me.value?.role ?? "viewer");
   const name = computed(() => me.value?.name ?? "");
   const authenticated = computed(() => me.value?.authenticated === true);
-  const accountsExist = computed(() => me.value?.accounts_exist === true);
-  const needsSetup = computed(() => loaded.value && !accountsExist.value);
-  /** Watching without a login (accounts exist, none logged in). */
-  const isGuest = computed(() => loaded.value && accountsExist.value && !authenticated.value);
+  /** Logged in with the default account's default password. */
+  const defaultPassword = computed(() => me.value?.default_password === true);
+  /** Watching without a login. */
+  const isGuest = computed(() => loaded.value && !authenticated.value);
 
   /** The role may do it without asking (``core/permissions.py``). Before the
    * first answer nothing is withheld — the backend decides anyway. */
@@ -33,7 +33,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function refresh(): Promise<void> {
     try {
       const current = await authFacade.me();
-      if (getToken() && current.accounts_exist && !current.authenticated) {
+      if (getToken() && !current.authenticated) {
         // the backend no longer takes this token
         setToken(null);
       }
@@ -55,10 +55,6 @@ export const useAuthStore = defineStore("auth", () => {
     apply(await authFacade.login(username, password));
   }
 
-  async function setup(username: string, password: string): Promise<void> {
-    apply(await authFacade.setup(username, password));
-  }
-
   async function changePassword(current: string, next: string): Promise<void> {
     apply(await authFacade.changePassword(current, next));
   }
@@ -74,7 +70,7 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   return {
-    me, loaded, role, name, authenticated, accountsExist, needsSetup, isGuest,
-    can, refresh, login, setup, changePassword, logout, logoutEverywhere,
+    me, loaded, role, name, authenticated, defaultPassword, isGuest,
+    can, refresh, login, changePassword, logout, logoutEverywhere,
   };
 });

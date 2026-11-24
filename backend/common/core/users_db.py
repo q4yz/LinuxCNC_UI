@@ -5,7 +5,10 @@ system backend creates and changes accounts; the machine backend only
 reads them to check a session token (:mod:`core.session_token`).
 
 An account is a name, a password (scrypt) and a role (``admin``,
-``user`` or ``viewer``; :mod:`core.permissions`). ``token_version``
+``user`` or ``viewer``; :mod:`core.permissions`). Like SSH on a fresh
+system there is always a login: an empty database gets the default
+admin ``remora`` / ``remora`` (change its password). Deleting
+``users.db`` brings that default back — the way out when locked out. ``token_version``
 revokes every session token of the account when it changes (password
 changed, "log out everywhere"); a deleted account's tokens fail too.
 """
@@ -33,6 +36,9 @@ ACCOUNT_ROLES = ("admin", "user", "viewer")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 MIN_PASSWORD = 4
 MAX_PASSWORD = 256
+
+#: The account an empty database starts with (name, password, role).
+DEFAULT_USER = ("remora", "remora", "admin")
 
 # scrypt cost: ~16 MiB, well under a second on a Raspberry Pi
 _N, _R, _P = 2**14, 8, 1
@@ -110,6 +116,11 @@ class UserStore:
         if not self._ready:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(_SCHEMA)
+            if conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None:
+                name, password, role = DEFAULT_USER
+                # OR IGNORE: both backends may start on an empty database together
+                conn.execute("INSERT OR IGNORE INTO users (name, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                             (name, hash_password(password), role, time.time()))
             conn.commit()
             try:
                 os.chmod(self.path, 0o600)
@@ -129,9 +140,6 @@ class UserStore:
                 conn.close()
 
     # -- reading ----------------------------------------------------------- #
-
-    def has_accounts(self) -> bool:
-        return bool(self._query("SELECT 1 FROM users LIMIT 1"))
 
     def get(self, name: str) -> Account | None:
         rows = self._query("SELECT name, role, token_version FROM users WHERE name = ?", (name,))
@@ -169,11 +177,10 @@ class UserStore:
         assert account is not None
         return account
 
-    def create_first_admin(self, name: str, password: str) -> Account:
-        """The first account (setup): only while there is none."""
-        if self.has_accounts():
-            raise UserError("An account exists already: log in as an admin to add users")
-        return self.create(name, password, "admin")
+    def uses_default_password(self, name: str) -> bool:
+        """The default account still has its default password (warn)."""
+        default_name, default_password, _ = DEFAULT_USER
+        return name.lower() == default_name and self.authenticate(name, default_password) is not None
 
     def set_password(self, name: str, password: str) -> None:
         """New password; every session token of the account ends."""
@@ -226,6 +233,6 @@ def set_user_store(store: UserStore | None) -> None:
 
 
 __all__ = [
-    "ACCOUNT_ROLES", "Account", "UserError", "UserStore", "get_user_store", "hash_password", "set_user_store",
+    "ACCOUNT_ROLES", "DEFAULT_USER", "Account", "UserError", "UserStore", "get_user_store", "hash_password", "set_user_store",
     "verify_password",
 ]
