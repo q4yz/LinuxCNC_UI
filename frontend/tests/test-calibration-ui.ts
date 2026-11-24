@@ -50,6 +50,10 @@ test("the probe Z offset card runs the paper test", () => {
   const card = read("components/calibration/CalibrationCard.vue");
   assert.match(card, /data-testid="calibration-paper-test"/);
   assert.match(card, /emit\('command', `TESTZ Z=\$\{dz\}`\)/);
+  // coarse steps too (the nozzle starts mm above the bed), and the live z_offset
+  assert.match(card, /const PAPER_STEPS = \[-1, -0\.5, -0\.1, -0\.01, 0\.01, 0\.1, 0\.5, 1\];/);
+  assert.match(card, /data-testid="calibration-paper-values"/);
+  assert.match(card, /Accept \{\{ fmtMm\(item\.values\?\.offset_now\) \}\}/);
   assert.match(card, /emit\('command', 'ACCEPT'\)/);
 });
 

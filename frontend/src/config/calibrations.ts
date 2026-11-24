@@ -38,9 +38,9 @@ export const CALIBRATIONS: Record<string, CalibrationText> = {
     benefit: "The right nozzle height for the first layer: how far the nozzle is below the probe's trigger.",
     steps: [
       "Home all axes, clean the nozzle.",
-      "Start: the probe touches the bed, the nozzle moves over that spot.",
-      "Put a sheet of paper under the nozzle and lower it with the buttons until the paper just drags.",
-      "Accept saves the offset.",
+      "Start: the probe measures the bed, lifts, and the nozzle moves over the spot the probe touched (by the probe's X / Y offset) at the trigger height.",
+      "Put a sheet of paper under the nozzle and lower it with the buttons (−1 mm to get close, −0.01 for the paper) until the paper just drags.",
+      "Accept saves the z_offset shown (the trigger height minus the nozzle's).",
     ],
     saves: "calibration.ini: used for probing at once; for homing Z on the probe at the next start.",
   },

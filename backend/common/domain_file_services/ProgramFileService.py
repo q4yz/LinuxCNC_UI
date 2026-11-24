@@ -163,6 +163,23 @@ class ProgramFileService(FileService):
 
     #: Loaded by "unload" (the machine backend's empty program) — never deleted.
     EMPTY_PROGRAM = "EmptyProgram.ngc"
+    #: Its content: LinuxCNC refuses an empty file ("File ended with no
+    #: percent sign") — a %-delimited program that does nothing.
+    EMPTY_PROGRAM_TEXT = "%\n(Empty program: loaded to unload the previous one)\n%\n"
+
+    def ensure_empty_program(self) -> Path:
+        """The empty program's path, (re)written when it is missing or not
+        exactly :data:`EMPTY_PROGRAM_TEXT` (an empty or edited file would
+        make unloading fail)."""
+        path = self.safe_join(self.EMPTY_PROGRAM)
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            current = None
+        if current != self.EMPTY_PROGRAM_TEXT:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(self.EMPTY_PROGRAM_TEXT, encoding="utf-8", newline="\n")
+        return path
 
     def delete_file(self, filename: str, recursive: bool = False) -> None:
         if self.safe_join(filename) == self.safe_join(self.EMPTY_PROGRAM):
