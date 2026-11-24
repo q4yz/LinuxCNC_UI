@@ -3,6 +3,7 @@ import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
 import { describeError } from '../core/error-format';
 import { emitBackendConsole } from '../core/backendConsole';
+import { setSharedValueSender, useSharedValuesStore, type SharedValue } from '../stores/sharedValues';
 import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; // Adjust path if needed
 import {
     formatLinuxCNCError,
@@ -156,6 +157,18 @@ export class ServoThreadFacade {
                         // macros): measurements under debug, results info.
                         emitBackendConsole(consoleStore, envelope.data);
                         break;
+                    case 'ui_values':
+                        // every shared UI value (sliders all clients show
+                        // the same, #128), sent once on connect
+                        useSharedValuesStore().replaceAll(
+                            (envelope.data ?? {}) as unknown as Record<string, SharedValue>);
+                        break;
+                    case 'ui_value': {
+                        // one client moved a shared slider: every client follows
+                        const { key, value } = envelope.data as unknown as { key: string; value: SharedValue };
+                        if (typeof key === 'string') useSharedValuesStore().apply(key, value);
+                        break;
+                    }
                     case 'heartbeat':
                         // Liveness-only frame (~1 Hz from the
                         // backend's telemetry loop). The timestamp
@@ -194,6 +207,11 @@ export class ServoThreadFacade {
         } else {
             console.warn("Cannot send message, WebSocket is not open", payload);
         }
+    }
+
+    /** Send a shared UI value to every client (the backend relays it, #128). */
+    publishSharedValue(key: string, value: SharedValue) {
+        this.send({ type: 'ui_value', key, value });
     }
 
     // --- Jogging Methods ---
@@ -301,5 +319,7 @@ export class ServoThreadFacade {
 }
 
 export const servoThreadFacade = new ServoThreadFacade();
+// shared UI values (#128) go out over this socket
+setSharedValueSender((key, value) => servoThreadFacade.publishSharedValue(key, value));
 
 export default servoThreadFacade;

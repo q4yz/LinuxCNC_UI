@@ -9,6 +9,7 @@ import { SystemState, useMachineStore as useMachineFacade } from '../../stores/s
 import BaseRange from "../../ui/BaseRange.vue";
 import {BaseButton} from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
+import { useSharedValue } from '../../composables/useSharedValue'
 
 
 
@@ -53,6 +54,18 @@ watch([defaultJogVelocity, maxSliderPos], ([velocity, max]) => {
 }, { immediate: true })
 const jogSpeed = computed<number | null>(() => (sliderPos.value === null ? null : Math.pow(10, sliderPos.value)))
 
+// The jog speed every client shows (#128): sent as mm/s, so another
+// client clamps it to its own axis limit. A received speed counts as
+// touched — the stored default no longer re-seeds it.
+const sharedJogSpeed = ref<number | null>(null)
+const { publish: publishJogSpeed } = useSharedValue('jog.speed', sharedJogSpeed)
+watch(sharedJogSpeed, (velocity) => {
+  if (velocity === null || !(velocity > 0) || maxSliderPos.value === null) return
+  if (jogSpeed.value !== null && Math.abs(jogSpeed.value - velocity) < 1e-9) return
+  sliderTouched.value = true
+  sliderPos.value = clampSlider(Math.log10(velocity), maxSliderPos.value)
+})
+
 // The jog speed is local UI state — nothing reads it back from the
 // backend — so a slider change is confirmed by assigning it here
 // (the "wire the optimistic value in" half of BaseRange's contract).
@@ -60,6 +73,8 @@ const setSliderPos = (value: number) => {
   if (maxSliderPos.value === null) return
   sliderTouched.value = true
   sliderPos.value = clampSlider(value, maxSliderPos.value)
+  sharedJogSpeed.value = Math.pow(10, sliderPos.value)
+  publishJogSpeed()
 }
 
 // +/- keys: scale from the current speed; nothing to scale while unsynced.

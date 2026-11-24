@@ -38,6 +38,14 @@ function seedFromTool() {
 seedFromTool();
 watch(() => props.tool?.id, seedFromTool);
 
+// Follow the commanded speed another client set (#128) — the snapshot's
+// ``set_speed`` — except while this operator drags the slider.
+const dragging = ref(false);
+watch(() => props.tool?.set_speed, (speed) => {
+  if (dragging.value || typeof speed !== "number") return;
+  setSpeed.value = speed;
+});
+
 // HTML range inputs require a definitive max value. Fall back to
 // 24000 (a common spindle max) when the backend omits ``max_rpm``.
 const minRpm = computed(() => props.tool?.min_rpm ?? 0);
@@ -49,6 +57,7 @@ const isRunning = computed(() => setSpeed.value > 0);
 
 // Send the command when the user releases the slider knob.
 function onSliderChange() {
+  dragging.value = false;
   if (setSpeed.value > 0) {
     toolStore.sendSpindleCommand(
       props.tool.id,
@@ -94,6 +103,7 @@ function stopSpindle() {
       <input
         v-model.number="setSpeed"
         type="range"
+        @input="dragging = true"
         :min="minRpm"
         :max="maxRpm"
         class="w-full h-3 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"

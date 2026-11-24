@@ -20,6 +20,7 @@ import { useToolStore } from "../../stores/toolsStore";
 import HeaterControls from "./HeaterControls.vue";
 import { BaseButton } from "../../ui/index.ts";
 import BaseInput from "../../ui/BaseInput.vue";
+import { useSharedValue } from "../../composables/useSharedValue";
 
 const props = defineProps<{ tool: Extruder }>();
 
@@ -42,6 +43,16 @@ function seedFromTool() {
 }
 seedFromTool();
 watch(() => props.tool?.id, seedFromTool);
+
+// Speed and distance are the same on every client (#128): a change is
+// sent on commit, another client's change is taken over.
+const { publish: publishSpeed } = useSharedValue(() => `extruder.${props.tool.id}.speed`, setSpeed, {
+  accept: (v) => (typeof v === "number" && v > 0 ? v : undefined),
+});
+const { publish: publishDistance } = useSharedValue(() => `extruder.${props.tool.id}.distance`, distanceIndex, {
+  accept: (v) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < EXTRUDER_DISTANCE_OPTIONS.length
+    ? (v as number) : undefined),
+});
 
 function distanceFor() {
   return EXTRUDER_DISTANCE_OPTIONS[distanceIndex.value];
@@ -70,6 +81,7 @@ function handleExtruder(action: "extrude" | "retract") {
           v-model.number="setSpeed"
           type="number"
           class="w-full"
+          @change="publishSpeed()"
         />
       </div>
       <div class="flex items-end gap-2">
@@ -98,6 +110,7 @@ function handleExtruder(action: "extrude" | "retract") {
         :max="EXTRUDER_DISTANCE_OPTIONS.length - 1"
         step="1"
         class="w-full accent-blue-500"
+        @change="publishDistance()"
       >
       <div class="flex justify-between text-xs text-gray-500 mt-2 font-mono px-1">
         <span v-for="val in EXTRUDER_DISTANCE_OPTIONS" :key="val">
