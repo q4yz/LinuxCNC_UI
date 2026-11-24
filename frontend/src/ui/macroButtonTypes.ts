@@ -35,3 +35,25 @@ export function normaliseMacroButtons(raw: unknown): MacroButtonDescriptor[] {
       row !== null && typeof row === "object" && typeof (row as Record<string, unknown>).slot === "string",
   );
 }
+
+/** What an enabled button still lacks before it is shown: a label
+ * (``name``, not only blanks) and an action (``macroName``). A button
+ * with a problem is flagged red in the editor and never rendered (#126). */
+export interface MacroButtonProblems {
+  missingLabel: boolean;
+  missingAction: boolean;
+}
+
+export function macroButtonProblems(row: Pick<MacroButtonDescriptor, "name" | "macroName">): MacroButtonProblems {
+  return {
+    missingLabel: (row.name ?? "").trim().length === 0,
+    missingAction: (row.macroName ?? "").length === 0,
+  };
+}
+
+/** An enabled button with a label and an action: the only one a host shows. */
+export function isMacroButtonComplete(row: MacroButtonDescriptor | null | undefined): boolean {
+  if (row == null || row.enabled !== true) return false;
+  const p = macroButtonProblems(row);
+  return !p.missingLabel && !p.missingAction;
+}
