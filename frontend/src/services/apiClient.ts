@@ -8,6 +8,7 @@
 // sufficient; service classes read `OpenAPI` lazily at request time.
 
 import { OpenAPI } from '../../generated/api';
+import { getToken } from '../core/authToken';
 
 const configuredBase = (() => {
   if (typeof window === 'undefined') {
@@ -45,5 +46,8 @@ const configuredBase = (() => {
 })();
 
 OpenAPI.BASE = configuredBase;
+// The logged-in account's session token on every request (#131); none =
+// a viewer. Read per request, so a login applies at once.
+OpenAPI.TOKEN = async () => getToken() ?? '';
 
 export { OpenAPI };

@@ -2,6 +2,7 @@
 import { useServoThreadStore } from '../stores/servoThread';
 import { useConsoleStore } from '../stores/console';
 import { describeError } from '../core/error-format';
+import { onTokenChange, withToken } from '../core/authToken';
 import { emitBackendConsole } from '../core/backendConsole';
 import { setSharedValueSender, useSharedValuesStore, type SharedValue } from '../stores/sharedValues';
 import {ServoThreadState, WSEnvelope} from '../entities/servoThread/Telemetry'; // Adjust path if needed
@@ -84,7 +85,7 @@ export class ServoThreadFacade {
 
         this.manualClose = false;
         store.setConnectionStatus('connecting');
-        this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry`);
+        this.ws = new WebSocket(withToken(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry`));
 
         this.ws.onopen = () => {
             store.setConnectionStatus('connected');
@@ -169,6 +170,13 @@ export class ServoThreadFacade {
                         if (typeof key === 'string') useSharedValuesStore().apply(key, value);
                         break;
                     }
+                    case 'denied':
+                        // a command this login may not send (#131): e.g. a
+                        // viewer jogging
+                        consoleStore.warning(
+                            `Not allowed: ${(envelope.data as unknown as { message?: string })?.message ?? ''} — log in`,
+                            { popup: true });
+                        break;
                     case 'heartbeat':
                         // Liveness-only frame (~1 Hz from the
                         // backend's telemetry loop). The timestamp
@@ -207,6 +215,11 @@ export class ServoThreadFacade {
         } else {
             console.warn("Cannot send message, WebSocket is not open", payload);
         }
+    }
+
+    /** Close an open socket so it reconnects with the current token. */
+    reconnectWithNewToken() {
+        if (this.ws && !this.manualClose) this.ws.close();
     }
 
     /** Send a shared UI value to every client (the backend relays it, #128). */
@@ -319,6 +332,9 @@ export class ServoThreadFacade {
 }
 
 export const servoThreadFacade = new ServoThreadFacade();
+// A login or logout changes what this socket may send: reconnect with the
+// new token (the close handler reconnects unless it was closed on purpose).
+onTokenChange(() => servoThreadFacade.reconnectWithNewToken());
 // shared UI values (#128) go out over this socket
 setSharedValueSender((key, value) => servoThreadFacade.publishSharedValue(key, value));
 

@@ -18,8 +18,13 @@ import { computed, ref, watch } from "vue";
 import { settingsRegistry } from "../settings";
 import SettingRow from "../settings/components/SettingRow.vue";
 import ViewerSettingsPanel from "../components/viewer/ViewerSettingsPanel.vue";
+import UsersPanel from "../components/account/UsersPanel.vue";
+import { useAuthStore } from "../stores/authStore";
 
 const VIEWER_TAB = "3D Viewer";
+// Accounts (#131): admins, once the first account exists.
+const USERS_TAB = "Users";
+const auth = useAuthStore();
 // Preferred tab order; categories not listed follow alphabetically.
 const CATEGORY_ORDER = ["Machine", "Page layout", "Macro Buttons", "Temperature", "Camera"];
 
@@ -32,7 +37,7 @@ const tabs = computed(() => {
     if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     return a.localeCompare(b);
   });
-  return [...names, VIEWER_TAB];
+  return [...names, VIEWER_TAB, ...(auth.accountsExist && auth.can("users.manage") ? [USERS_TAB] : [])];
 });
 
 const activeTab = ref<string>("");
@@ -86,6 +91,10 @@ const inactiveClasses = "text-gray-400 hover:bg-gray-700 hover:text-gray-200 bor
       <div v-if="activeTab === VIEWER_TAB" class="p-6" role="tabpanel">
         <ViewerSettingsPanel />
         <p class="mt-4 text-xs text-gray-500">Stored in this browser only (not shared with other clients).</p>
+      </div>
+
+      <div v-else-if="activeTab === USERS_TAB" class="p-6" role="tabpanel">
+        <UsersPanel />
       </div>
 
       <div v-else class="p-6 space-y-3" role="tabpanel">

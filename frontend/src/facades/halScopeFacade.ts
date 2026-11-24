@@ -4,6 +4,7 @@
 // caller's (``components/debug/scope/useHalScopeStream``).
 
 import type { ScopeFrame } from "../entities/hal/ScopeFrame";
+import { withToken } from "../core/authToken";
 
 export interface HalScopeHandlers {
   /** The socket is open: configure it. */
@@ -35,7 +36,7 @@ function socketUrl(location: Pick<Location, "protocol" | "host"> = window.locati
 }
 
 function connect(handlers: HalScopeHandlers): HalScopeConnection {
-  const ws = new WebSocket(socketUrl());
+  const ws = new WebSocket(withToken(socketUrl()));
   const send = (message: object): void => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   };

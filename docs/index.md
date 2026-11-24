@@ -38,6 +38,7 @@ using/calibration
 using/tuning
 using/programs
 using/hal-tools
+using/accounts
 ```
 
 ```{toctree}

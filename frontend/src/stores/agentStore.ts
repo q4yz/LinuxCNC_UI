@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 
 import { agentConfirmationsFacade, type AgentConfirmation } from "../facades/agentConfirmationsFacade";
 import { useConsoleStore } from "./console";
+import { useAuthStore } from "./authStore";
 import { createBackendTransport } from "../agent/backendTransport";
 import { assistantFacade } from "../facades/assistantFacade";
 import {
@@ -107,6 +108,11 @@ export const useAgentStore = defineStore("agent", () => {
   }
 
   async function refreshConfirmations(): Promise<void> {
+    // only who may answer them sees them (#131): a viewer would get 403s
+    if (!useAuthStore().can("agent.approve")) {
+      confirmations.value = [];
+      return;
+    }
     try {
       confirmations.value = await agentConfirmationsFacade.list();
     } catch {

@@ -1,0 +1,38 @@
+# Accounts and logins
+
+Who may do what is decided by a **role**:
+
+| Role | May |
+|------|-----|
+| viewer | watch: state, camera, programs, settings — and press the E-stop |
+| user | run the machine: jog, home, programs, heaters, calibration, files |
+| admin | everything, including configuration, updates and users |
+| agent | the assistant: reads, and asks before anything that moves or heats |
+
+The full table: {doc}`../reference/permissions`.
+
+## The first account
+
+A new or updated installation has no accounts: everyone is an admin, as before. The account
+button at the bottom of the sidebar says **Create admin** — create the admin account there.
+From then on **anyone who is not logged in is a viewer**: they can watch, not control.
+
+## Logging in
+
+The account button says **Log in**. A login lasts on that device (the browser keeps it); there
+is no timeout. It ends when you log out, when the password changes, with **Log out on every
+device**, or when an admin deletes the account.
+
+## Users
+
+Admins manage accounts in **Settings → Users**: add a user (name, password, role), change a
+role, set a new password (that user's logins end) or delete the account. The last admin cannot
+lose the admin role or be deleted.
+
+The accounts live in `backend/data/users.db` (SQLite; passwords are stored as scrypt hashes).
+Locked out? Stop the backends and delete `users.db`: the installation is back to "no accounts".
+
+## Slicer upload
+
+A slicer's *Send to printer* (OctoPrint upload) needs an account that may write files. In the
+account menu choose **Copy API key** and paste it as the slicer's OctoPrint **API key**.
