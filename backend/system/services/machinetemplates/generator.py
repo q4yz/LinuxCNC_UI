@@ -18,6 +18,8 @@ Generates the per-machine template set from a profile ``.cfg``:
                                postgui_call_list.hal     (empty placeholder; referenced by machine.ini)
                                user.hal                  (the operator's own HAL — kept across
                                                            regenerations, see USER_HAL_TEMPLATE)
+                               calibration.ini           (measured calibration values — kept across
+                                                           regenerations)
                                tool.tbl                  (tools 1-99 pre-registered, Z/D zeroed —
                                                            see TOOL_TABLE_TEMPLATE)
 
@@ -56,6 +58,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from MachineConfigParser import parse_config
+from core.calibration_file import calibration_path
 from domain_file_services import paths
 from domain_file_services.ConfigFileService import ConfigFileService
 from domain_file_services.MachineFileService import MachineFileService
@@ -422,6 +425,10 @@ def generate_machine_templates(
     # cleared) and its components count when the sensor pins are checked.
     user_hal_file = configs_dir / USER_HAL
     user_hal = user_hal_file.read_text(encoding="utf-8") if user_hal_file.is_file() else USER_HAL_TEMPLATE
+    # calibration.ini holds the measured values (probe offset, flow, shaper,
+    # skew, ...): a regenerate must not throw the calibration away (#130).
+    calibration_file = calibration_path(configs_dir)
+    calibration = calibration_file.read_bytes() if calibration_file.is_file() else None
 
     # Compiled before anything is touched: an invalid profile must not
     # replace a working machine with a broken one.
@@ -431,6 +438,8 @@ def generate_machine_templates(
     try:
         machine_service.clear_directory(configs_dir)
         (configs_dir / USER_HAL).write_text(user_hal, encoding="utf-8")
+        if calibration is not None:
+            calibration_file.write_bytes(calibration)
         result = _write_machine(
             configs_dir, configs_rel, machine_name, target_folder, source, payload, axes, hal_text,
             mcu_sidecar_files,
