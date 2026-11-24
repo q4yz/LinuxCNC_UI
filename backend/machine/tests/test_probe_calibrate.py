@@ -168,3 +168,31 @@ def test_probe_offsets_from_payload():
     assert probing.ProbeOffsets.from_payload({}) == probing.ProbeOffsets()
     assert probing.ProbeOffsets.from_payload({"probe": {"x_offset": 1, "z_offset": 2.5}}) == \
         probing.ProbeOffsets(1.0, 0.0, 2.5)
+
+
+def test_snapshot_for_the_card_while_the_paper_test_waits(rig, monkeypatch):
+    """The Calibration tab's paper test: the session is open but nothing
+    moves — its buttons (TESTZ, ACCEPT) must stay usable, and it shows the
+    z_offset ACCEPT would save."""
+    service = module.ProbeCalibrateService(Config())
+    monkeypatch.setattr(module, "get_stat_channel", lambda: rig.stat)
+    assert service.snapshot() == {"session": False, "moving": False}
+    service.start(rig.stat)
+    service.testz(rig.stat, -1.5)
+    snap = service.snapshot()
+    assert snap["session"] is True and snap["moving"] is False
+    assert snap["trigger_z"] == TRIGGER_Z and snap["nozzle_z"] == pytest.approx(0.5)
+    assert snap["offset_now"] == pytest.approx(1.5)
+    assert (snap["x_offset"], snap["y_offset"]) == (-25.0, 10.0)
+
+
+def test_the_calibration_item_is_not_running_while_the_paper_test_waits():
+    """It was ``running`` for the whole session, which disabled the card's
+    TESTZ and Accept buttons: the paper test could not move down or save."""
+    import inspect
+
+    import services.calibration.CalibrationService as calibration
+
+    source = inspect.getsource(calibration)
+    assert "running=calibrate.is_running," in source
+    assert "**calibrate.snapshot()" in source

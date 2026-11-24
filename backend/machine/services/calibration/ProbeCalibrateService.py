@@ -235,6 +235,27 @@ class ProbeCalibrateService:
         )
         return z_offset
 
+    def snapshot(self) -> dict[str, Any]:
+        """The paper test for the Calibration tab: ``session`` (waiting for
+        TESTZ / ACCEPT), ``moving``, and while a session is open the probe's
+        trigger height, the nozzle's Z now, the z_offset ACCEPT would save
+        and the probe offset the nozzle moved by."""
+        session = self.session
+        out: dict[str, Any] = {"session": session is not None, "moving": self.is_running()}
+        if session is None:
+            return out
+        out.update(trigger_z=round(session.trigger_z, 4), x_offset=session.offsets.x, y_offset=session.offsets.y)
+        try:
+            stat = get_stat_channel()
+            if stat is None:
+                return out
+            stat.poll()
+            nozzle_z = self._checks._commanded_z(stat)
+            out.update(nozzle_z=round(nozzle_z, 4), offset_now=round(session.z_offset(nozzle_z), 4))
+        except Exception:  # noqa: BLE001 - the card shows what it has
+            pass
+        return out
+
     def abort(self) -> None:
         self.session = None
         get_console_logger().log_event(f"{COMMAND} aborted: no z_offset taken.", level=LogLevel.INFO, source="CMD")

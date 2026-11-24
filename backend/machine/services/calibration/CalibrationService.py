@@ -222,9 +222,11 @@ class CalibrationService:
                         running=get_probe_accuracy_service().is_running),
             Calibration("probe_z_offset", "probe_z_offset", "", probe, no_probe,
                         command=lambda p: "PROBE_CALIBRATE",
-                        running=lambda: calibrate.is_running() or calibrate.session is not None,
+                        # running = moving; the paper test between the moves
+                        # is ``session`` (its buttons must stay usable)
+                        running=calibrate.is_running,
                         values={"z_offset": (payload.get("probe") or {}).get("z_offset"),
-                                "session": calibrate.session is not None}),
+                                **calibrate.snapshot()}),
         ]
         from mappers.machineconfig import heater_ini_section
 

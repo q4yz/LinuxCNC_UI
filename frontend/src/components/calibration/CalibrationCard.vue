@@ -61,6 +61,11 @@ const nextThreshold = ref<number>(Number(props.item.values?.suggestion ?? props.
 watch(() => props.item.values?.suggestion, (v) => { if (typeof v === "number") nextThreshold.value = v; });
 
 const session = computed(() => props.item.kind === "probe_z_offset" && !!props.item.values?.session);
+/** Paper test steps (mm): the nozzle starts at the probe's trigger height,
+ *  a few mm above the bed — coarse to get close, fine for the paper. */
+const PAPER_STEPS = [-1, -0.5, -0.1, -0.01, 0.01, 0.1, 0.5, 1];
+const fmtMm = (v: unknown, signed = false): string =>
+  typeof v === "number" ? `${signed && v >= 0 ? "+" : ""}${v.toFixed(3)} mm` : "—";
 const startLabel = computed(() => {
   const busyNow = props.item.running || session.value;
   if (props.item.kind === "sensorless") return busyNow ? "Homing…" : `Home ${props.item.label}`;
@@ -202,13 +207,26 @@ function saveReminder() {
       <p v-if="!item.available" class="rounded bg-gray-900/60 p-2 text-xs text-gray-400">{{ item.reason }}</p>
 
       <div v-if="session" class="space-y-2 rounded border border-blue-700/60 bg-blue-900/20 p-2" data-testid="calibration-paper-test">
-        <p class="text-xs text-blue-100">Lower the nozzle until the paper just drags:</p>
+        <p class="text-xs text-blue-100">
+          The probe measured the bed; the nozzle is now over that spot<template v-if="item.values?.x_offset || item.values?.y_offset">
+          (moved by the probe offset X {{ item.values?.x_offset }} / Y {{ item.values?.y_offset }} mm)</template>
+          at the probe's trigger height. Lower it until a sheet of paper just drags:
+        </p>
+        <dl class="grid grid-cols-3 gap-1 text-center font-mono text-xs" data-testid="calibration-paper-values">
+          <div><dt class="font-sans text-[10px] uppercase text-gray-400">Probe trigger</dt><dd class="text-gray-200">{{ fmtMm(item.values?.trigger_z) }}</dd></div>
+          <div><dt class="font-sans text-[10px] uppercase text-gray-400">Nozzle Z</dt><dd class="text-gray-200">{{ fmtMm(item.values?.nozzle_z) }}</dd></div>
+          <div><dt class="font-sans text-[10px] uppercase text-gray-400">z_offset</dt><dd class="font-bold text-blue-300">{{ fmtMm(item.values?.offset_now) }}</dd></div>
+        </dl>
         <div class="grid grid-cols-4 gap-1">
-          <BaseButton v-for="dz in [-0.1, -0.01, 0.01, 0.1]" :key="dz" size="sm" variant="secondary" :disabled="busy || item.running"
+          <BaseButton v-for="dz in PAPER_STEPS" :key="dz" size="sm" :variant="dz < 0 ? 'primary' : 'secondary'"
+                      :disabled="busy || item.running"
+                      :title="`Nozzle ${dz < 0 ? 'down' : 'up'} ${Math.abs(dz)} mm`"
+                      :data-testid="`calibration-testz-${dz}`"
                       @click="emit('command', `TESTZ Z=${dz}`)">{{ dz > 0 ? "+" : "" }}{{ dz }}</BaseButton>
         </div>
         <div class="flex gap-2">
-          <BaseButton size="sm" variant="success" :disabled="busy || item.running" @click="emit('command', 'ACCEPT')">Accept</BaseButton>
+          <BaseButton size="sm" variant="success" :disabled="busy || item.running" data-testid="calibration-accept"
+                      @click="emit('command', 'ACCEPT')">Accept {{ fmtMm(item.values?.offset_now) }}</BaseButton>
           <BaseButton size="sm" variant="danger" :disabled="busy" @click="emit('command', 'ABORT')">Abort</BaseButton>
         </div>
       </div>
