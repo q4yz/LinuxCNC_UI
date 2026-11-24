@@ -65,3 +65,15 @@ def test_m600_subroutine_reads_every_ini_value():
                 "PURGE_LENGTH", "PURGE_SPEED"):
         assert f"#<_ini[FILAMENT_CHANGE]{key}>" in ngc, key
     assert "M0" in ngc and "G92 A#<a>" in ngc and "M70" in ngc and "M72" in ngc
+
+
+def test_ini_keeps_corners_within_0_02_mm():
+    """LinuxCNC's default G64 (no P) rounds corners as far as speed asks;
+    the extrusion stays, so a dense infill's U-turns overextruded (ridges,
+    blobs). Every program starts within 0.02 mm of its path."""
+    graph = MachineConfigParser().parse_string(PRINTER)
+    payload = build_hardware_json(graph, "m")
+    axes = AxisBuilder(graph, policy=AxisMappingPolicy.SPLIT_INTO_MULTIPLE_JOINTS).build()
+    ini = render_ini_template("m", axes, payload["tools"])
+    section = ini.split("[RS274NGC]", 1)[1].split("\n\n", 1)[0]
+    assert "RS274NGC_STARTUP_CODE = G64 P0.02 Q0.01" in section.splitlines()

@@ -84,6 +84,17 @@ DEFAULT_SPINDLE_SPEED = 6000
 """
 
 
+#: Path blending for every program and MDI line (RS274NGC_STARTUP_CODE):
+#: G64 P = the most a corner may deviate from the programmed path (mm), Q =
+#: collinear segments merged within (mm). Plain G64 (LinuxCNC's default)
+#: rounds a corner as much as speed asks while the extrusion (A) stays the
+#: same: a dense infill's U-turns got their plastic on a shorter path
+#: (ridges the nozzle drags on, blobs at the walls).
+PATH_TOLERANCE_MM = 0.02
+PATH_MERGE_MM = 0.01
+PATH_MODE = f"G64 P{PATH_TOLERANCE_MM:g} Q{PATH_MERGE_MM:g}"
+
+
 def _fmt(value: float) -> str:
     """Format a float without noisy trailing precision (``100.0``, not
     ``100.00000001`` or a bare ``100``)."""
@@ -275,6 +286,7 @@ def render_ini_template(
         "",
         "[RS274NGC]",
         "PARAMETER_FILE = linuxcnc.var",
+        f"RS274NGC_STARTUP_CODE = {PATH_MODE}",
         f"USER_M_PATH = {_posix(paths.M_CODES_DIR)}",
         # ``o<name> call`` (macros / probing cycles) looks subroutines up
         # here; m_codes/ holds g28.ngc (and the Marlin user M-codes).
