@@ -49,6 +49,7 @@ from routers import (
     ui_settings as ui_settings_router,
     agent_confirmations as agent_confirmations_router,
     agent_chat as agent_chat_router,
+    auth as auth_router,
 )
 
 
@@ -144,6 +145,8 @@ register_machineconfig_exception_handlers(app)
 
 # System surface: version / update / machine lifecycle.
 app.include_router(SystemRouter.router)
+# Accounts and logins (#131).
+app.include_router(auth_router.router)
 
 # Central UI settings (single settings.json) — lives here so it stays
 # available while the machine backend is offline.

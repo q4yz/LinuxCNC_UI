@@ -56,8 +56,10 @@ def _ws_dispatch(msg: dict[str, Any]) -> None:
     """
     from services.machine.ServoThreadService import ServoThreadService
 
+    from core.auth import LOCAL_ADMIN
+
     svc = ServoThreadService()
-    _run(svc.dispatch_inbound(None, msg))
+    _run(svc.dispatch_inbound(None, msg, LOCAL_ADMIN))
 
 
 def test_ws_keepalive_dispatches_to_watchdog(machine_app):

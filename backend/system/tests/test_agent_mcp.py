@@ -168,7 +168,7 @@ def test_the_agent_cannot_approve_itself():
 
     for key in [k for k in SYSTEM_ROUTES if k[1].startswith("/api/v1/agent/confirmations")]:
         assert level("agent", SYSTEM_ROUTES[key]) is Level.DENY
-        assert level("operator", SYSTEM_ROUTES[key]) is Level.ALLOW
+        assert level("user", SYSTEM_ROUTES[key]) is Level.ALLOW
 
 
 def test_a_backend_that_is_down_has_no_tools():

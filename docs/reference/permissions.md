@@ -9,7 +9,7 @@ For now every web user is **admin** (there are no logins yet).
 
 ## Roles
 
-| Permission | What | admin | operator | viewer | agent |
+| Permission | What | admin | user | viewer | agent |
 |---|---|---|---|---|---|
 | `machine.read` | machine state, positions, temperatures, I/O, progress | yes | yes | yes | yes |
 | `camera.view` | camera images | yes | yes | yes | yes |
@@ -40,6 +40,7 @@ For now every web user is **admin** (there are no logins yet).
 | `users.manage` | users and roles | yes | - | - | - |
 | `agent.approve` | approve or deny the assistant's actions | yes | yes | - | - |
 | `agent.chat` | chat with the in-app assistant | yes | yes | - | - |
+| `account` | log in, own account and password | yes | yes | yes | yes |
 
 ## Routes: machine backend
 
@@ -105,6 +106,11 @@ For now every web user is **admin** (there are no logins yet).
 
 | Method | Path | Permission | agent |
 |---|---|---|---|
+| POST | `/api/v1/auth/login` | `account` | yes |
+| POST | `/api/v1/auth/logout-everywhere` | `account` | yes |
+| GET | `/api/v1/auth/me` | `account` | yes |
+| PUT | `/api/v1/auth/password` | `account` | yes |
+| POST | `/api/v1/auth/setup` | `account` | yes |
 | GET | `/api/v1/agent/confirmations` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/approve` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/deny` | `agent.approve` | - |
@@ -185,3 +191,7 @@ For now every web user is **admin** (there are no logins yet).
 | GET | `/api/v1/system/version` | `system.read` | yes |
 | GET | `/api/version` | `system.read` | yes |
 | POST | `/api/v1/system/update` | `system.update` | - |
+| GET | `/api/v1/users` | `users.manage` | - |
+| POST | `/api/v1/users` | `users.manage` | - |
+| DELETE | `/api/v1/users/{name}` | `users.manage` | - |
+| PUT | `/api/v1/users/{name}` | `users.manage` | - |

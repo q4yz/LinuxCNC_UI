@@ -15,6 +15,8 @@ from services.machine.StateService import get_state_service
 from services.machine.SharedUiValues import get_shared_ui_values
 from services.temperature.HeaterSafetyService import get_heater_safety_service
 from core.NonRepeatingLogger import NonRepeatingLogger
+from core.auth import User
+from core.permissions import Level, Permission, level
 from hardware.Connection import message_severity
 
 logger = logging.getLogger("backend.services.servo_thread")
@@ -26,6 +28,15 @@ loop_logger = NonRepeatingLogger("backend.services.servo_thread.loop")
 #: stalled browser (Wi-Fi gone, tab frozen, full TCP buffer) used to
 #: block every other client and the whole loop on its send.
 SEND_TIMEOUT_S = 1.0
+
+
+#: What each command over the telemetry socket needs; ``jog_stop`` (and
+#: anything not listed) needs nothing beyond watching.
+INBOUND_PERMISSIONS: Dict[str, Permission] = {
+    "jog_axis": Permission.MACHINE_MOTION,
+    "jog_keepalive": Permission.MACHINE_MOTION,
+    "ui_value": Permission.MACHINE_TUNE,
+}
 
 
 class ServoThreadService:
@@ -101,8 +112,19 @@ class ServoThreadService:
         full_response = ServoThreadStateMapper.to_response(current_dto)
         return full_response.model_dump(exclude_none=True)
 
-    async def dispatch_inbound(self, websocket: WebSocket, msg: Dict[str, Any]) -> None:
-        """Route a JSON command received over the telemetry socket."""
+    async def dispatch_inbound(self, websocket: WebSocket, msg: Dict[str, Any], user: User) -> None:
+        """Route a JSON command received over the telemetry socket.
+
+        The socket itself only needs ``machine.read`` (anyone may watch);
+        each command checks the caller's role (#131). Stopping a jog is
+        never refused."""
+        needed = INBOUND_PERMISSIONS.get(str(msg.get("type")))
+        if needed is not None and level(user.role, needed) is not Level.ALLOW:
+            detail = f"role '{user.role}' may not '{needed.value}'"
+            logger.info("refused WS %s from %s: %s", msg.get("type"), user.name, detail)
+            if websocket is not None:
+                await self._send(websocket, json.dumps({"type": "denied", "data": {"message": detail}}))
+            return
 
         # A shared UI value (a slider every client shows the same, #128):
         # kept, and sent to every client at once — the sender included,

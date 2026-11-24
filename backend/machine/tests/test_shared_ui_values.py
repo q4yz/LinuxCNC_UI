@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+from core.auth import GUEST, LOCAL_ADMIN
 from services.machine.SharedUiValues import MAX_KEYS, SharedUiValues
 
 
@@ -38,8 +39,28 @@ def test_ui_value_is_broadcast_to_every_client():
         sent.append(message)
 
     svc.broadcast = fake_broadcast
-    asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "jog.speed", "value": 25}))
-    asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "no spaces", "value": 1}))
+    asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "jog.speed", "value": 25}, LOCAL_ADMIN))
+    asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "no spaces", "value": 1}, LOCAL_ADMIN))
+    # a viewer may watch, not move the sliders (#131)
+    asyncio.run(svc.dispatch_inbound(None, {"type": "ui_value", "key": "jog.speed", "value": 99}, GUEST))
     assert [json.loads(m) for m in sent] == [{"type": "ui_value", "data": {"key": "jog.speed", "value": 25}}]
     # a client connecting later gets the whole set
     assert json.loads(svc.get_shared_values_json()) == {"type": "ui_values", "data": {"jog.speed": 25}}
+
+
+def test_a_viewer_cannot_jog_but_can_stop_a_jog(monkeypatch):
+    from services.machine.ServoThreadService import ServoThreadService
+
+    svc = ServoThreadService()
+    handled: list[str] = []
+
+    async def fake_axis(msg):
+        handled.append(msg["type"])
+        return True
+
+    monkeypatch.setattr(svc.axis_service, "dispatch_inbound", fake_axis)
+    for kind in ("jog_axis", "jog_keepalive", "jog_stop"):
+        asyncio.run(svc.dispatch_inbound(None, {"type": kind}, GUEST))
+    assert handled == ["jog_stop"]
+    asyncio.run(svc.dispatch_inbound(None, {"type": "jog_axis"}, LOCAL_ADMIN))
+    assert handled == ["jog_stop", "jog_axis"]

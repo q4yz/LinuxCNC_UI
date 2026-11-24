@@ -1,3 +1,12 @@
+# Accounts (#131): tests never touch the installation's user database or
+# session key — each run gets its own (core.users_db / core.session_token).
+import os as _os
+import tempfile as _tempfile
+
+_AUTH_DIR = _tempfile.mkdtemp(prefix="linuxcnc-ui-auth-")
+_os.environ.setdefault("LINUXCNC_UI_USERS_DB", _os.path.join(_AUTH_DIR, "users.db"))
+_os.environ.setdefault("LINUXCNC_UI_SESSION_SECRET", "test-session-secret")
+
 """Shared pytest fixtures for the system-service tests.
 
 Makes both the app directory (``backend/system/``) and the shared
