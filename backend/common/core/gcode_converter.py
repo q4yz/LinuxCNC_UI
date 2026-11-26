@@ -51,6 +51,10 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
 * ``M900 K<k>`` / ``SET_PRESSURE_ADVANCE ADVANCE=<k>`` -> ``M186 P<k>``
   (pressure advance, a user M-code).
 * ``M600`` (filament change) stays: the machine REMAPs it (``m600.ngc``).
+* A filament unit (``tool_slots``, the ACE Pro's 4): the slicer's tool
+  change ``T<n>`` (and the ACE drivers' ``ACE_CHANGE_TOOL TOOL=<n>``)
+  becomes ``M640 P<n>`` — REMAPped to ``ace_change.ngc`` (LinuxCNC's own
+  ``T0`` means "no tool"). Without one ``T<n>`` is commented out.
 * Objects (Klipper's ``EXCLUDE_OBJECT_START NAME=`` / ``_END``, Marlin's
   ``M486 S<n>`` / ``S-1``, slicer comments ``; printing object`` /
   ``; stop printing object``, ``; OBJECT_ID:`` and Cura's ``;MESH:<name>`` /
@@ -60,7 +64,8 @@ position"). Every uploaded ``.gcode`` file is converted line by line:
   run) and sets A to where the moves would have left it (``G92 A``). The
   objects are listed in a header line, ``; LINUXCNC_UI_OBJECTS: [...]``
   (``read_objects``); at most :data:`MAX_OBJECTS`. A file with objects or
-  ``M600`` starts with ``G92.1`` (an earlier print's A offset cleared).
+  ``M600`` / ``M640`` starts with ``G92.1`` (an earlier print's A offset
+  cleared).
 * A line longer than :data:`MAX_LINE` (252) characters is cut to its
   first 249 and ``...`` (LinuxCNC refuses longer lines). The cut always
   falls in a comment; a line whose *code* is that long is commented out
@@ -141,7 +146,8 @@ class _State:
     retraction: FirmwareRetraction | None = None  # [firmware_retraction]
     retracted: bool = False
     feed: float | None = None  # the file's last F (restored after a retraction)
-    uses_m600: bool = False
+    uses_m600: bool = False  # M600 / M640: they set A with G92
+    tool_slots: int | None = None  # a filament unit's slots: T<n> -> M640 P<n>
     objects: list[str] = field(default_factory=list)
     x: float | None = None  # the XY position (absolute moves)
     y: float | None = None
@@ -167,15 +173,17 @@ def _words(code: str) -> list[tuple[str, str]]:
 
 def convert(
     text: str, macro_names: Iterable[str] = (), led_names: Sequence[str] = (), part_fans: int | None = None,
-    retraction: FirmwareRetraction | None = None,
+    retraction: FirmwareRetraction | None = None, tool_slots: int | None = None,
 ) -> ConversionResult:
     """Convert a whole file (see the module docstring). ``led_names``:
     the machine's ``[neopixel]`` names, in declaration order;
     ``part_fans``: how many part fans ``M106`` / ``M107`` can reach
     (``None``: unknown, every fan line is kept); ``retraction``: the
-    machine's ``[firmware_retraction]``."""
+    machine's ``[firmware_retraction]``; ``tool_slots``: a filament unit's
+    slots (``T<n>`` -> ``M640 P<n>``), ``None`` without one."""
     macros = {name.lower() for name in macro_names}
-    state = _State(leds=[name.lower() for name in led_names], part_fans=part_fans, retraction=retraction)
+    state = _State(leds=[name.lower() for name in led_names], part_fans=part_fans, retraction=retraction,
+                   tool_slots=tool_slots)
     out: list[str] = []
     notes: list[str] = []
     block: dict[str, int] | None = None  # the open object block: start index in out, object index
@@ -436,9 +444,27 @@ def _convert_line(raw: str, state: _State, macros: set[str],
                           parsed[2] if parsed is not None else _words(stripped))
 
 
+def _tool_change(stripped: str, tool: str | None, state: _State, comment: str) -> tuple[str, str | None]:
+    """``T<n>`` -> ``M640 P<n>`` on a machine with a filament unit."""
+    if not state.tool_slots:
+        return _commented(stripped, "extruder select: one extruder", comment), None
+    try:
+        slot = int(float(tool or ""))
+    except ValueError:
+        return _commented(stripped, "tool change without a number", comment), None
+    if not 0 <= slot < state.tool_slots:
+        return _commented(stripped, f"no slot {slot}: the filament unit has {state.tool_slots}", comment), \
+            f"T{slot} commented out (no such slot)"
+    state.uses_m600 = True
+    return f"M640 P{slot}" + (f"  {comment}" if comment else ""), None
+
+
 def _special_line(stripped: str, upper: str, state: _State, comment: str,
                   macros: set[str]) -> tuple[str, str | None] | None:
     """Klipper keywords, a macro call, M117 — ``None`` for anything else."""
+    if upper.startswith("ACE_CHANGE_TOOL"):
+        tool = re.search(r"TOOL\s*=\s*(-?\d+)", stripped, re.IGNORECASE)
+        return _tool_change(stripped, tool.group(1) if tool else None, state, comment)
     if upper.startswith("SET_LED"):
         return _set_led(stripped, state, comment)
     if upper.startswith("SET_GCODE_OFFSET"):
@@ -491,7 +517,7 @@ def _convert_words(raw: str, code: str, stripped: str, comment: str, state: _Sta
     if 4 in gcodes:
         return _dwell(words, comment), None
     if "T" in letters and not mcodes and not gcodes:
-        return _commented(stripped, "extruder select: one extruder", comment), None
+        return _tool_change(stripped, dict(words).get("T"), state, comment)
 
     if mcodes:
         m = int(mcodes[0])

@@ -96,6 +96,8 @@ img/
 /backend/data/users.db-wal
 /backend/data/users.db-shm
 /backend/data/session.secret
+# The ACE Pro's loaded slot (services/filament/AceService.py).
+/backend/data/ace_state.json
 /machine_config/example/goal/machine.cfg
 /machine_config/example/goal/machine.hal
 /machine_config/m_codes/M101

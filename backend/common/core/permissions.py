@@ -157,6 +157,14 @@ MACHINE_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("POST", "/api/v1/ztilt/adjust"): P.CALIBRATION_RUN,
     ("PUT", "/api/v1/calibration/{calibration_id}/reminder"): P.CALIBRATION_MANAGE,
     ("DELETE", "/api/v1/calibration/{calibration_id}/values"): P.CALIBRATION_MANAGE,
+    # The ACE Pro: a tool change moves the machine; feeding / drying is the unit
+    ("GET", "/api/v1/ace"): P.MACHINE_READ,
+    ("POST", "/api/v1/ace/change"): P.MACHINE_MOTION,
+    ("POST", "/api/v1/ace/slots/{index}/feed"): P.HEATERS,
+    ("POST", "/api/v1/ace/slots/{index}/unwind"): P.HEATERS,
+    ("POST", "/api/v1/ace/dryer"): P.HEATERS,
+    ("DELETE", "/api/v1/ace/dryer"): P.HEATERS,
+    ("PUT", "/api/v1/ace/current"): P.MACHINE_TUNE,
     ("POST", "/api/v1/modules/program/parse"): P.CONFIG_WRITE,
     ("POST", "/api/v1/modules/mcu/reset"): P.CONFIG_WRITE,
 }

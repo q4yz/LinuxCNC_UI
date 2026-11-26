@@ -67,6 +67,7 @@ from routers import (
     z_tilt as z_tilt_router,
     leds as leds_router,
     print_tuning as print_tuning_router,
+    ace as ace_router,
     calibration as calibration_router,
     mcu as mcu_router,
     program as program_router,
@@ -171,6 +172,13 @@ async def lifespan(app: FastAPI):
 
     # Per-domain lifecycle hooks.
     start_watchdog_if_available()
+    # The ACE Pro link and its tool change hand-over (only with an [ace]).
+    from services.filament.AceService import get_ace_service
+
+    try:
+        await get_ace_service().start()
+    except Exception as exc:  # noqa: BLE001 - the machine must come up without its filament unit
+        logger.error("ACE start failed: %s", exc)
 
     # Probe OpenAPI schema generation now that every router is
     # mounted. A regression that triggers a silent partial
@@ -194,6 +202,10 @@ async def lifespan(app: FastAPI):
     _shutting_down = True
     logger.info("Shutting down LinuxCNC background tasks...")
     stop_watchdog_if_running()
+    try:
+        await asyncio.wait_for(get_ace_service().stop(), timeout=3.0)
+    except Exception as exc:  # noqa: BLE001 - defensive
+        logger.warning("ACE shutdown failed: %s", exc)
     task_telemetry.cancel()
     try:
         await asyncio.wait_for(task_telemetry, timeout=2.0)
@@ -297,6 +309,8 @@ app.include_router(io_router.router)
 app.include_router(z_tilt_router.router)
 app.include_router(leds_router.router)
 app.include_router(print_tuning_router.router)
+# The ACE Pro filament unit ([ace]).
+app.include_router(ace_router.router)
 app.include_router(calibration_router.router)
 
 

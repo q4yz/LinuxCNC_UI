@@ -486,7 +486,10 @@ def _write_machine(
     # M-code programs in machine_config/m_codes/ (USER_M_PATH), see
     # marlin_mcodes. M600 (> M199) is a REMAP to m_codes/m600.ngc.
     filament_change = HardwareRecords.filament_change(payload)
-    remaps = [M600_REMAP] if filament_change else None
+    ace = HardwareRecords.ace(payload)
+    from core import ace_contract
+
+    remaps = [*([M600_REMAP] if filament_change else []), *([ace_contract.REMAP] if ace else [])] or None
 
     # 1. Verbatim source copy (provenance).
     (configs_dir / "machine.cfg").write_bytes(source.read_bytes())
@@ -512,6 +515,7 @@ def _write_machine(
             or HardwareRecords.z_virtual_endstop(payload) is not None,
             remaps=remaps,
             filament_change=filament_change,
+            ace=ace,
             shaper_types=JointShapeHalMapper.ini_shaper_types(payload),
         ),
         encoding="utf-8",

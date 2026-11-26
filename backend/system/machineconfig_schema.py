@@ -68,6 +68,7 @@ class SectionKind(str, Enum):
     SKEW_CORRECTION = "skew_correction"
     ADXL345 = "adxl345"
     FILAMENT_CHANGE = "filament_change"
+    ACE = "ace"
     HOMING_OVERRIDE = "homing_override"
     Z_TILT = "z_tilt"
     NEOPIXEL = "neopixel"
@@ -261,6 +262,16 @@ FILAMENT_CHANGE_KEYS = frozenset({
     "park_x", "park_y", "z_lift", "unload_length", "unload_speed",
     "load_length", "load_speed", "purge_length", "purge_speed",
 })
+# Not Klipper core: the Anycubic ACE Pro filament unit (services/filament,
+# machine_config/m_codes/ace_change.ngc). The sensors are [input_pin] names.
+ACE_KEYS = frozenset({
+    "serial", "toolhead_sensor", "hub_sensor",
+    "bowden_length", "feed_speed", "retract_speed", "approach_length", "approach_speed", "unload_length",
+    "timeout",
+    "park_x", "park_y", "z_lift",
+    "cutter_start_x", "cutter_start_y", "cutter_end_x", "cutter_end_y", "cutter_speed", "cut_retract",
+    "sensor_to_nozzle", "load_speed", "purge_length", "purge_speed",
+})
 BED_MESH_KEYS = frozenset({
     "probe_count", "mesh_min", "mesh_max", "speed", "horizontal_move_z",
     "probe_speed", "zero_reference_position",
@@ -431,6 +442,7 @@ SECTION_SCHEMAS: dict[SectionKind, frozenset[str]] = {
     SectionKind.SKEW_CORRECTION: SKEW_CORRECTION_KEYS,
     SectionKind.ADXL345: ADXL345_KEYS,
     SectionKind.FILAMENT_CHANGE: FILAMENT_CHANGE_KEYS,
+    SectionKind.ACE: ACE_KEYS,
     SectionKind.HOMING_OVERRIDE: HOMING_OVERRIDE_KEYS,
     SectionKind.Z_TILT: Z_TILT_KEYS,
     SectionKind.NEOPIXEL: NEOPIXEL_KEYS,
@@ -553,6 +565,9 @@ def schema_for_section(section: str) -> SectionSchema | None:
 
     if section == "filament_change":
         return SectionSchema(SectionKind.FILAMENT_CHANGE, FILAMENT_CHANGE_KEYS, "filament_change")
+
+    if section == "ace":
+        return SectionSchema(SectionKind.ACE, ACE_KEYS, "ace")
 
     if section == "homing_override":
         return SectionSchema(SectionKind.HOMING_OVERRIDE, HOMING_OVERRIDE_KEYS, "homing_override")

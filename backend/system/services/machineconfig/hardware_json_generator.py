@@ -388,6 +388,46 @@ def _filament_change_payload(graph: MachineConfigGraph) -> dict[str, Any] | None
     }
 
 
+def _ace_payload(graph: MachineConfigGraph) -> dict[str, Any] | None:
+    """The ACE Pro (``[ace]``): the backend's values and the tool change's
+    (``ace_change.ngc`` via the INI). The park spot defaults to the X / Y
+    minimum, ``unload_length`` to ``bowden_length`` + 50."""
+    ace = graph.ace
+    if ace is None:
+        return None
+
+    def low(letter: str) -> float:
+        return float(getattr(graph.steppers.get(letter), "position_min", None) or 0.0)
+
+    cutter = ace.cutter_start_x is not None
+    return {
+        "serial": ace.serial,
+        "toolhead_sensor": ace.toolhead_sensor,
+        "hub_sensor": ace.hub_sensor,
+        "bowden_length": ace.bowden_length,
+        "feed_speed": ace.feed_speed,
+        "retract_speed": ace.retract_speed,
+        "approach_length": ace.approach_length,
+        "approach_speed": ace.approach_speed,
+        "unload_length": ace.unload_length if ace.unload_length is not None else ace.bowden_length + 50.0,
+        "timeout": ace.timeout,
+        "park_x": ace.park_x if ace.park_x is not None else low("x"),
+        "park_y": ace.park_y if ace.park_y is not None else low("y"),
+        "z_lift": ace.z_lift,
+        "cutter": cutter,
+        "cutter_start_x": ace.cutter_start_x or 0.0,
+        "cutter_start_y": ace.cutter_start_y or 0.0,
+        "cutter_end_x": ace.cutter_end_x or 0.0,
+        "cutter_end_y": ace.cutter_end_y or 0.0,
+        "cutter_speed": ace.cutter_speed,
+        "cut_retract": ace.cut_retract,
+        "sensor_to_nozzle": ace.sensor_to_nozzle,
+        "load_speed": ace.load_speed,
+        "purge_length": ace.purge_length,
+        "purge_speed": ace.purge_speed,
+    }
+
+
 def _bed_mesh_payload(bed_mesh, graph: MachineConfigGraph | None = None) -> dict[str, Any] | None:
     """The top-level ``bed_mesh`` object, or ``None`` without ``[bed_mesh]``.
     ``mesh_min`` / ``mesh_max`` default to the X / Y travel;
@@ -1288,6 +1328,7 @@ def build_hardware_json(
         "skew_correction": ({"xy_factor": graph.skew_xy_factor} if graph.skew_xy_factor is not None else None),
         "adxl345": _adxl345_payload(graph),
         "filament_change": _filament_change_payload(graph),
+        "ace": _ace_payload(graph),
         "z_tilt": _z_tilt_payload(graph, axes_records),
         "z_virtual_endstop": _z_virtual_endstop_payload(graph),
         "leds": [

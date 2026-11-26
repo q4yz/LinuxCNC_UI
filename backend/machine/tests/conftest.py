@@ -6,6 +6,7 @@ import tempfile as _tempfile
 _AUTH_DIR = _tempfile.mkdtemp(prefix="linuxcnc-ui-auth-")
 _os.environ.setdefault("LINUXCNC_UI_USERS_DB", _os.path.join(_AUTH_DIR, "users.db"))
 _os.environ.setdefault("LINUXCNC_UI_SESSION_SECRET", "test-session-secret")
+_os.environ.setdefault("LINUXCNC_UI_ACE_STATE", _os.path.join(_AUTH_DIR, "ace_state.json"))
 
 """Shared pytest fixtures for the machine-backend tests.
 

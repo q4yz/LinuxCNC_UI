@@ -6,6 +6,10 @@ by ``time_scale``), a dryer counting down, slots with filament, and the
 real unit's quirks — it drops the link after 3 s without a complete
 frame, and can be told to lose answers or emit garbage. For tests, and
 for working on the UI before the hardware is there.
+
+It also models where each slot's filament tip is (mm past the unit's
+outlet, moving with feeds and unwinds), so simulated filament sensors
+can trigger: :meth:`SimulatedAce.filament_at`.
 """
 from __future__ import annotations
 
@@ -61,6 +65,11 @@ class SimulatedAce:
         self._dry: dict[str, Any] = {}
         self.feed_assist: set[int] = set()
         self._last_frame = 0.0
+        #: Each slot's filament tip, mm past the outlet (0: parked in the unit).
+        self.tip = [0.0] * len(self.slots)
+        self._motion: dict[str, Any] | None = None  # slot, sign, speed, length, start, base
+        #: A slot whose filament jams after this many mm (tests).
+        self.jam_after: dict[int, float] = {}
 
     # -- the transport side ---------------------------------------------- #
 
@@ -103,13 +112,38 @@ class SimulatedAce:
         return time.monotonic()
 
     def _busy(self) -> bool:
+        self._advance()
         if self._busy_until and self._now() >= self._busy_until:
             self._busy_until, self._action = 0.0, ""
         return bool(self._busy_until)
 
-    def _start(self, action: str, length: float, speed: float) -> None:
+    def _start(self, action: str, length: float, speed: float, slot: int = 0) -> None:
+        self._advance()
         self._action = action
         self._busy_until = self._now() + (length / speed) * self.time_scale
+        self._motion = {"slot": slot, "sign": 1 if action == "feeding" else -1, "speed": speed, "length": length,
+                        "start": self._now(), "base": self.tip[slot]}
+
+    def _advance(self, stop: bool = False) -> None:
+        """Move the tip of the slot that is feeding / unwinding to now."""
+        m = self._motion
+        if m is None:
+            return
+        elapsed = (self._now() - m["start"]) / max(self.time_scale, 1e-9)
+        moved = min(m["length"], m["speed"] * elapsed)
+        tip = max(0.0, m["base"] + m["sign"] * moved)
+        jam = self.jam_after.get(m["slot"])
+        if jam is not None and m["sign"] > 0:
+            tip = min(tip, jam)
+        self.tip[m["slot"]] = tip
+        if stop or moved >= m["length"]:
+            self._motion = None
+
+    def filament_at(self, distance: float) -> bool:
+        """Is any slot's filament at least ``distance`` mm past the outlet
+        (a sensor there would see it)?"""
+        self._advance()
+        return any(t >= distance for t in self.tip)
 
     def _status(self) -> dict[str, Any]:
         drying = self._dry_until > self._now()
@@ -147,9 +181,10 @@ class SimulatedAce:
             if method == "feed_filament" and self.slots[index].status != "ready":
                 return 2, "slot empty", None
             self._start("feeding" if method == "feed_filament" else "unwinding",
-                        float(params["length"]), float(params["speed"]))
+                        float(params["length"]), float(params["speed"]), index)
             return 0, "success", None
         if method in ("stop_feed_filament", "stop_unwind_filament"):
+            self._advance(stop=True)
             self._busy_until, self._action = 0.0, ""
             return 0, "success", None
         if method in ("update_feeding_speed", "update_unwinding_speed"):

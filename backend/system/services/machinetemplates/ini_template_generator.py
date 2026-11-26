@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 from domain_file_services import paths
 from mappers.machineconfig import heater_ini_section
 
-from models.machineconfig.HardwareJsonModels import FilamentChange
+from models.machineconfig.HardwareJsonModels import Ace, FilamentChange
 from models.machineconfig.LinuxCNCModels import Axis
 
 #: Documented defaults for PID fields no schema carries yet — see
@@ -204,6 +204,31 @@ def _ui_home(axes: List[Axis]) -> List[str]:
     return lines
 
 
+#: [ace] values the tool change's NGC reads (the rest is the backend's).
+_ACE_NGC_KEYS = (
+    "park_x", "park_y", "z_lift", "cutter_start_x", "cutter_start_y", "cutter_end_x", "cutter_end_y",
+    "cutter_speed", "cut_retract", "sensor_to_nozzle", "load_speed", "purge_length", "purge_speed", "timeout",
+)
+
+
+def _ace_section(ace: Ace) -> List[str]:
+    """``[ACE]`` for ``ace_change.ngc``: positions and lengths, the cutter
+    flag, and the motion I/O channels of the backend handshake."""
+    from core import ace_contract
+
+    values = ace.model_dump()
+    return [
+        "[ACE]",
+        *(f"{k.upper()} = {_fmt(values[k])}" for k in _ACE_NGC_KEYS),
+        f"CUTTER = {1 if ace.cutter else 0}",
+        f"REQUEST_OUTPUT = {ace_contract.REQUEST_DOUT}",
+        f"SLOT_OUTPUT = {ace_contract.SLOT_AOUT}",
+        f"DONE_INPUT = {ace_contract.DONE_DIN}",
+        f"ERROR_INPUT = {ace_contract.ERROR_DIN}",
+        "",
+    ]
+
+
 def render_ini_template(
     machine_name: str,
     axes: List[Axis],
@@ -213,6 +238,7 @@ def render_ini_template(
     homing_override: bool = False,
     remaps: List[str] | None = None,
     filament_change: FilamentChange | None = None,
+    ace: Ace | None = None,
     shaper_types: Dict[str, int] | None = None,
 ) -> str:
     """Render a live, loadable ``machine.ini``.
@@ -302,6 +328,8 @@ def render_ini_template(
         # M600 (m_codes/m600.ngc reads these; REMAP=M600 above).
         *(["[FILAMENT_CHANGE]", *(f"{k.upper()} = {_fmt(v)}" for k, v in filament_change.model_dump().items()), ""]
           if filament_change else []),
+        # M640 P<slot> (m_codes/ace_change.ngc reads these; the backend the rest).
+        *(_ace_section(ace) if ace else []),
         "[EMCMOT]",
         "EMCMOT = motmod",
         "COMM_TIMEOUT = 30.0",

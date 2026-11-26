@@ -92,6 +92,8 @@ class AceClient:
         self._task: asyncio.Task[None] | None = None
         self._last_sent = 0.0
         self._connected = asyncio.Event()
+        #: The port is open for requests (``connected`` follows once info and status came back).
+        self._link = False
         self.info: AceInfo | None = None
         self.status: AceStatus | None = None
         self.last_error = ""
@@ -128,9 +130,11 @@ class AceClient:
                 self._decoder.reset()
                 reader = asyncio.create_task(self._read_loop())
                 try:
-                    self._set_connected(True)
+                    self._link = True
                     self.info = AceInfo.parse(await self.request("get_info"))
                     logger.info("ACE connected: %s, firmware %s", self.info.model, self.info.firmware)
+                    await self.get_status()  # the slots at once, not after the first keep-alive
+                    self._set_connected(True)
                     await self._keepalive_loop(reader)
                 finally:
                     reader.cancel()
@@ -154,6 +158,7 @@ class AceClient:
             self._on_connection(connected)
 
     async def _disconnect(self, why: str) -> None:
+        self._link = False
         self._set_connected(False)
         for future in self._pending.values():
             if not future.done():
@@ -199,7 +204,7 @@ class AceClient:
         if params:
             message["params"] = params
         async with self._lock:
-            if not self.connected:
+            if not self._link:
                 raise AceUnavailable(self.last_error or "not connected")
             request_id = next(self._ids)
             frame = encode_frame({"id": request_id, **message})

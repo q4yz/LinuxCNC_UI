@@ -27,6 +27,7 @@ def hal_pin_services() -> List[HalPinService]:
     from services.temperature.TemperatureService import get_temperature_service
     from services.tools.ToolsService import get_tools_service
     from services.motion.ZTiltService import get_z_tilt_service
+    from services.filament.AceService import get_ace_service
 
     return [
         get_tools_service(),
@@ -44,6 +45,7 @@ def hal_pin_services() -> List[HalPinService]:
         get_shaper_service(),
         get_pid_calibrate_service(),
         get_resonance_service(),
+        get_ace_service(),
     ]
 
 

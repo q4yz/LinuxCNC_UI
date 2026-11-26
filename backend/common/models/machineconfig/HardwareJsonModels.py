@@ -459,6 +459,40 @@ class FilamentChange(BaseModel):
     purge_speed: float = 2.0
 
 
+class Ace(BaseModel):
+    """The ACE Pro filament unit (``[ace]``; mm, mm/s, s; machine
+    coordinates). The backend reads ``serial`` / the sensors / the feed
+    values; ``ace_change.ngc`` reads the motion values from the INI's
+    ``[ACE]``. ``cutter`` is false without the ``cutter_*`` positions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    serial: str
+    toolhead_sensor: str
+    hub_sensor: str | None = None
+    bowden_length: float = Field(gt=0)
+    feed_speed: float = Field(gt=0)
+    retract_speed: float = Field(gt=0)
+    approach_length: float = Field(gt=0)
+    approach_speed: float = Field(gt=0)
+    unload_length: float = Field(gt=0)
+    timeout: float = Field(gt=0)
+    park_x: float
+    park_y: float
+    z_lift: float = Field(ge=0)
+    cutter: bool = False
+    cutter_start_x: float = 0.0
+    cutter_start_y: float = 0.0
+    cutter_end_x: float = 0.0
+    cutter_end_y: float = 0.0
+    cutter_speed: float = Field(gt=0)
+    cut_retract: float = Field(ge=0)
+    sensor_to_nozzle: float = Field(ge=0)
+    load_speed: float = Field(gt=0)
+    purge_length: float = Field(ge=0)
+    purge_speed: float = Field(gt=0)
+
+
 class ZVirtualEndstop(BaseModel):
     """Z homes on the probe (``probe:z_virtual_endstop``): a probe move
     down over ``distance`` at ``speed``, back ``retract``, again at
@@ -802,6 +836,8 @@ class HardwareJson(BaseModel):
     skew_correction: "SkewCorrection | None" = None
     adxl345: "Adxl345 | None" = None
     filament_change: "FilamentChange | None" = None
+    # [ace]: the ACE Pro filament unit (services/filament, M640).
+    ace: "Ace | None" = None
 
     # ``None`` without ``[homing_override]``. See :class:`HomingOverride`.
     homing_override: "HomingOverride | None" = None
@@ -1047,6 +1083,7 @@ __all__ = [
     "Adxl345",
     "Axis",
     "FilamentChange",
+    "Ace",
     "FirmwareRetraction",
     "InputShaper",
     "SkewCorrection",

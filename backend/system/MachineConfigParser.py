@@ -12,6 +12,7 @@ from typing import Any
 from models.machineconfig import (
     Adxl345,
     BedMesh,
+    Ace,
     FilamentChange,
     FirmwareRetraction,
     InputShaper,
@@ -801,6 +802,8 @@ class MachineConfigParser:
                 graph.firmware_retraction = self._parse_float_section(section_name, section, FirmwareRetraction())
             elif section_schema.kind is SectionKind.FILAMENT_CHANGE:
                 graph.filament_change = self._parse_float_section(section_name, section, FilamentChange())
+            elif section_schema.kind is SectionKind.ACE:
+                graph.ace = self._parse_ace(section_name, section)
             elif section_schema.kind is SectionKind.OUTPUT_PIN:
                 output_pin = self._parse_output_pin(section_name, section_schema.object_name, section)
                 graph.output_pins[output_pin.name] = output_pin
@@ -838,6 +841,7 @@ class MachineConfigParser:
         self._validate_temperature_sensor_uniqueness(graph)
         self._validate_stepper_pins(graph)
         self._validate_all_pin_mcu_references(graph)
+        self._validate_ace(graph)
 
         return graph
 
@@ -1656,6 +1660,53 @@ class MachineConfigParser:
                 raise InvalidValueError(section_name, f.name, str(value), "a number not below 0")
             setattr(target, f.name, value)
         return target
+
+    #: [ace] keys that may be negative (machine coordinates).
+    _ACE_SIGNED = frozenset({"park_x", "park_y", "cutter_start_x", "cutter_start_y", "cutter_end_x", "cutter_end_y"})
+    #: [ace] keys that must be above 0 (speeds, lengths a move divides by).
+    _ACE_POSITIVE = frozenset({
+        "bowden_length", "feed_speed", "retract_speed", "approach_length", "approach_speed", "unload_length",
+        "timeout", "cutter_speed", "load_speed", "purge_speed",
+    })
+
+    def _parse_ace(self, section_name: str, section: configparser.SectionProxy) -> Ace:
+        """``[ace]``: the strings, then every number (see :class:`Ace`)."""
+        import dataclasses
+
+        ace = Ace(toolhead_sensor=self._required_string(section_name, section, "toolhead_sensor"))
+        ace.hub_sensor = self._optional_string(section, "hub_sensor")
+        ace.serial = self._optional_string(section, "serial") or ace.serial
+        for f in dataclasses.fields(ace):
+            if f.name in ("toolhead_sensor", "hub_sensor", "serial"):
+                continue
+            value = self._optional_float(section_name, section, f.name)
+            if value is None:
+                continue
+            if f.name in self._ACE_POSITIVE and value <= 0:
+                raise InvalidValueError(section_name, f.name, str(value), "a number above 0")
+            if f.name not in self._ACE_SIGNED and value < 0:
+                raise InvalidValueError(section_name, f.name, str(value), "a number not below 0")
+            setattr(ace, f.name, value)
+        cutter = [ace.cutter_start_x, ace.cutter_start_y, ace.cutter_end_x, ace.cutter_end_y]
+        if any(v is not None for v in cutter) and any(v is None for v in cutter):
+            raise InvalidValueError(section_name, "cutter_start_x", "incomplete",
+                                    "all four of cutter_start_x / _y and cutter_end_x / _y, or none")
+        if ace.approach_length >= ace.bowden_length:
+            raise InvalidValueError(section_name, "approach_length", str(ace.approach_length),
+                                    "shorter than bowden_length")
+        return ace
+
+    @staticmethod
+    def _validate_ace(graph: Any) -> None:
+        """The [ace] sensors must be [input_pin] sections (they are read as
+        ``webgui.<name>``)."""
+        ace = graph.ace
+        if ace is None:
+            return
+        for key in ("toolhead_sensor", "hub_sensor"):
+            name = getattr(ace, key)
+            if name and name not in graph.input_pins:
+                raise InvalidValueError("ace", key, name, "the name of an [input_pin] section (the filament switch)")
 
     def _parse_bed_mesh(
         self,
