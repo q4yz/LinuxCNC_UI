@@ -117,7 +117,13 @@ def configured(monkeypatch):
 
 def service(script, catalog=None):
     client = FakeClient(script)
-    svc = AssistantChatService(catalog=lambda: catalog or FakeCatalog(), client_factory=lambda cfg: client)
+    snapshots = iter(f"<machine_state>snapshot {i}</machine_state>" for i in range(1, 1000))
+
+    async def summary() -> str:
+        return next(snapshots)
+
+    svc = AssistantChatService(catalog=lambda: catalog or FakeCatalog(), client_factory=lambda cfg: client,
+                               summary=summary)
     return svc, client
 
 
@@ -169,9 +175,15 @@ def test_tools_run_through_the_catalog_and_results_go_back():
         assert roles(conv) == [("user", "state?"), ("assistant", "Let me check."), ("tool", "Read Machine State"),
                                ("assistant", "It is on.")]
         assert conv.entries[2].status == "done"
+        first = client.calls[0]["messages"]
+        # the operator's message carries the machine as it is now
+        assert first[0] == {"role": "user", "content": [
+            {"type": "text", "text": "<machine_state>snapshot 1</machine_state>"}, {"type": "text", "text": "state?"}]}
         second = client.calls[1]["messages"]
+        # the tool results carry a fresh look (the tool may have changed the machine)
         assert second[-1] == {"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "tu1", "content": '{"state": "on"}', "is_error": False}]}
+            {"type": "tool_result", "tool_use_id": "tu1", "content": '{"state": "on"}', "is_error": False},
+            {"type": "text", "text": "<machine_state>snapshot 2</machine_state>"}]}
         # history is append-only: the first turn's messages are a prefix of the second's
         assert client.calls[1]["messages"][: len(client.calls[0]["messages"])] == client.calls[0]["messages"]
 
@@ -322,3 +334,66 @@ def test_the_routes_never_return_the_key(tmp_path, monkeypatch):
     assert got["configured"] and got["effort"] == "low" and [m["id"] for m in got["models"]][0] == "claude-opus-5-5"
     assert client.put("/api/v1/agent/config", json={"model": "nope"}).status_code == 400
     assert client.get("/api/v1/agent/chat/unknown").status_code == 404
+
+
+def test_every_new_message_gets_a_fresh_snapshot_and_a_failing_one_does_not_break_the_reply():
+    async def go():
+        svc, client = service([message(text("E-stop is engaged.")), message(text("Now it is released."))])
+        conv = await finish(svc, svc.send(None, "estop?"))
+        await finish(svc, svc.send(conv.id, "and now?"))
+        texts = [m["content"][0]["text"] for m in client.calls[1]["messages"] if m["role"] == "user"]
+        assert texts == ["<machine_state>snapshot 1</machine_state>", "<machine_state>snapshot 2</machine_state>"]
+
+        async def broken() -> str:
+            raise RuntimeError("down")
+
+        svc._summary = broken
+        await finish(svc, svc.send(conv.id, "again?"))
+        assert "unknown" in client.calls[-1]["messages"][-1]["content"][0]["text"]
+
+    asyncio.run(go())
+
+
+def test_the_summary_text():
+    from services.MachineSummaryService import render
+
+    text = render(
+        {"state": "running", "raw_estop": 0, "homed": [1, 1, 1, 0], "file": "/nc/benchy.ngc"},
+        {"progress": {"motion_line": 50, "total_lines": 200},
+         "sensors": {"e0": {"type": "heater", "id": "extruder", "actual": 209.6, "target": 210},
+                     "bed": {"type": "heater", "id": "heater_bed", "actual": 24.0, "target": 0},
+                     "mcu": {"type": "sensor", "id": "mcu", "actual": 41.2}}},
+        now=0,
+    )
+    assert "State: ON, program RUNNING" in text and "E-stop: released" in text
+    assert "Homed: X Y Z" in text and "Loaded program: /nc/benchy.ngc" in text
+    assert "line 50 of 200 (25 %)" in text
+    assert "extruder 209.6 °C (target 210.0)" in text and "heater_bed 24.0 °C (target off)" in text
+    assert "mcu 41.2 °C" in text
+    assert "E-STOP ENGAGED" in render({"state": "estop", "raw_estop": 1, "homed": []}, None)
+    assert "not running" in render(None, None)
+
+
+def test_the_summary_reads_the_machine_backend_with_the_agent_token():
+    import httpx
+
+    from core.agent_token import agent_token
+    from services.MachineSummaryService import machine_summary
+
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, request.headers.get("authorization", "")))
+        if request.url.path.endswith("/state"):
+            return httpx.Response(200, json={"state": "idle", "raw_estop": 0, "homed": [1, 1, 1], "file": ""})
+        return httpx.Response(200, json={"sensors": {}})
+
+    text = asyncio.run(machine_summary("http://machine", httpx.MockTransport(handler)))
+    assert "State: ON, idle" in text
+    assert {p for p, _ in seen} == {"/api/v1/modules/machine_state/state", "/api/v1/base-thread/snapshot"}
+    assert all(a == f"Bearer {agent_token()}" for _, a in seen)
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    assert "not running" in asyncio.run(machine_summary("http://machine", httpx.MockTransport(down)))

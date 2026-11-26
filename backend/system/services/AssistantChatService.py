@@ -10,6 +10,12 @@ the panel). The UI polls the conversation for the reply as it streams.
 The API history is append-only (Claude Opus 5.5 checks replayed
 thinking against it); the only edit is the documented one after a
 mid-output refusal fallback (:func:`echo_content`).
+
+Every user turn sent to the model — the operator's message and each
+round of tool results — carries a fresh ``<machine_state>`` block
+(:mod:`services.MachineSummaryService`), stored with that turn: the
+operator acts on the machine between messages, and the assistant must
+not answer from an E-stop it saw earlier.
 """
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import anthropic
 
@@ -55,6 +61,11 @@ they approve. Before calling such a tool, say in one sentence what you will do a
 comes back as an error with their reason: accept it, and do not retry the action unless they ask. \
 Never try to work around a denial or a permission error.
 
+Every operator message and every round of tool results comes with a <machine_state> block taken \
+just then (state, E-stop, homing, program, temperatures). It is the current truth: it supersedes \
+earlier tool results and earlier snapshots, so never assume an older state (e.g. an E-stop that \
+has since been reset). Do not repeat it back unless it matters for the answer.
+
 The machine is physical. Before suggesting motion, think about homing, the E-stop, temperatures, \
 clamps and tool clearance; when unsure, explain rather than act. If something looks dangerous, \
 engage the E-stop.
@@ -78,6 +89,8 @@ class ChatEntry:
 class Conversation:
     id: str
     history: list[dict[str, Any]] = field(default_factory=list)
+    #: The operator's message waiting to go into the history (with its snapshot).
+    pending: str = ""
     entries: list[ChatEntry] = field(default_factory=list)
     busy: bool = False
     partial: str = ""
@@ -138,8 +151,10 @@ class AssistantChatService:
         self,
         catalog: Callable[[], Any] | None = None,
         client_factory: Callable[[AssistantConfig], Any] | None = None,
+        summary: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         self._catalog = catalog or _mcp_catalog
+        self._summary = summary or _machine_summary
         self._client_factory: Callable[[AssistantConfig], Any] = client_factory or _anthropic_client
         self._conversations: dict[str, Conversation] = {}
 
@@ -176,7 +191,8 @@ class AssistantChatService:
         conv = self._conversations[conversation_id] if conversation_id else self._new()
         if conv.busy:
             raise ConversationBusy("The assistant is still answering.")
-        conv.history.append({"role": "user", "content": text})
+        # into the history at the start of the run, with a machine snapshot
+        conv.pending = text
         conv.add("user", text)
         conv.busy, conv.partial, conv.model = True, "", config.model
         task = asyncio.get_running_loop().create_task(self._run(conv, config))
@@ -211,7 +227,18 @@ class AssistantChatService:
         finally:
             conv.busy, conv.partial, conv.task = False, "", None
 
+    async def _state_block(self) -> dict[str, Any]:
+        """The ``<machine_state>`` text block for the next user turn."""
+        try:
+            text = await self._summary()
+        except Exception as exc:  # noqa: BLE001 - the reply must not fail on it
+            logger.warning("machine summary failed: %s", exc)
+            text = "<machine_state>unknown (could not be read)</machine_state>"
+        return {"type": "text", "text": text}
+
     async def _loop(self, conv: Conversation, config: AssistantConfig) -> None:
+        text, conv.pending = conv.pending, ""
+        conv.history.append({"role": "user", "content": [await self._state_block(), {"type": "text", "text": text}]})
         catalog = self._catalog()
         if catalog is None:
             conv.add("error", "The MCP server is not running, so the assistant has no tools.")
@@ -308,7 +335,8 @@ class AssistantChatService:
                 text_out = "\n".join(getattr(c, "text", "") for c in result.content) or "(no output)"
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": text_out,
                                 "is_error": bool(result.is_error)})
-            conv.history.append({"role": "user", "content": results})
+            # the tools may have changed the machine: a fresh look with the results
+            conv.history.append({"role": "user", "content": [*results, await self._state_block()]})
         conv.add("error", f"Stopped after {MAX_ROUNDS} tool rounds.")
 
     @staticmethod
@@ -330,6 +358,12 @@ class AssistantChatService:
 
 def _anthropic_client(config: AssistantConfig) -> anthropic.AsyncAnthropic:
     return anthropic.AsyncAnthropic(api_key=config.api_key)
+
+
+async def _machine_summary() -> str:
+    from services.MachineSummaryService import machine_summary
+
+    return await machine_summary()
 
 
 def _mcp_catalog() -> Any:
