@@ -367,7 +367,7 @@ class AceService(HalPinService):
                 raise BadRequestError(f"{word} INDEX=<0-3> LENGTH=<mm> [SPEED=<mm/s>]")
             speed = params.get("SPEED", 25.0)
             coro = self.feed(index, length, speed) if word == "ACE_FEED" else self.unwind(index, length, speed)
-            text = f"{'Feeding' if word == 'ACE_FEED' else 'Winding back'} slot {index + 1}: {length:g} mm"
+            text = f"{'Feeding' if word == 'ACE_FEED' else 'Winding back'} T{index}: {length:g} mm"
         elif word == "ACE_START_DRYING":
             if "TEMP" not in params or "DURATION" not in params:
                 raise BadRequestError("ACE_START_DRYING TEMP=<°C> DURATION=<min>")

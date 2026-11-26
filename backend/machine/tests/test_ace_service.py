@@ -75,7 +75,7 @@ def test_the_ngc_hand_over(tmp_path):
         # a failing change: slot 2 is empty -> done with error, and a message
         pins.slot.value, pins.request.value = 2.0, True
         await until(lambda: pins.done.value)
-        assert pins.error.value is True and "Slot 3 has no filament" in service.last_error
+        assert pins.error.value is True and "T2 has no filament" in service.last_error
         assert service.state().last_error == service.last_error
         pins.request.value = False
         await until(lambda: not pins.error.value and not pins.done.value)

@@ -120,7 +120,7 @@ class AceChanger:
 
     async def unload(self, slot: int) -> None:
         cfg = self.config
-        self.step = f"unloading slot {slot + 1}"
+        self.step = f"unloading T{slot}"
         logger.info("ACE: unload slot %d", slot)
         try:
             await self.client.stop_feed_assist(slot)
@@ -129,30 +129,30 @@ class AceChanger:
         await self.client.unwind(slot, cfg.unload_length, cfg.retract_speed)
         await self.client.wait_ready(cfg.unload_length / cfg.retract_speed + MOVE_MARGIN_S)
         if self.toolhead_loaded():
-            raise AceChangeError(f"Slot {slot + 1} was wound back but the toolhead sensor still sees filament "
+            raise AceChangeError(f"T{slot} was wound back but the toolhead sensor still sees filament "
                                  "(not cut through, or stuck in the extruder)")
         if self.hub_loaded():
-            raise AceChangeError(f"Slot {slot + 1} was wound back but the hub sensor still sees filament")
+            raise AceChangeError(f"T{slot} was wound back but the hub sensor still sees filament")
         self.set_current(NO_SLOT)
 
     async def load(self, slot: int) -> None:
         cfg = self.config
-        self.step = f"loading slot {slot + 1}"
+        self.step = f"loading T{slot}"
         logger.info("ACE: load slot %d", slot)
         status = await self.client.get_status()
         slots = {s.index: s for s in status.slots}
         if slot not in slots or not slots[slot].has_filament:
-            raise AceChangeError(f"Slot {slot + 1} has no filament")
+            raise AceChangeError(f"T{slot} has no filament")
         fast = cfg.bowden_length - cfg.approach_length
         await self.client.feed(slot, fast, cfg.feed_speed)
         await self.client.wait_ready(fast / cfg.feed_speed + MOVE_MARGIN_S)
         if not self.toolhead_loaded():
             if self.hub_loaded() is False:
                 await self._unwind_after_failure(slot, fast)
-                raise AceChangeError(f"Slot {slot + 1}: the filament did not reach the hub sensor")
+                raise AceChangeError(f"T{slot}: the filament did not reach the hub sensor")
             if not await self._approach(slot):
                 await self._unwind_after_failure(slot, cfg.bowden_length)
-                raise AceChangeError(f"Slot {slot + 1}: the filament did not reach the toolhead sensor")
+                raise AceChangeError(f"T{slot}: the filament did not reach the toolhead sensor")
         await self.client.start_feed_assist(slot)
         self.set_current(slot)
 

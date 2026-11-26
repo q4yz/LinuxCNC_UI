@@ -66,11 +66,19 @@ hand-over between the program and the backend in HAL.
 
 If a step fails (empty slot, jam, filament still at a sensor, the ACE not answering) the print
 **pauses** with a message in the console. Fix it and press **Resume**: the change runs again.
-If you took filament out or put it in by hand, tell the backend which slot is loaded
-(`PUT /api/v1/ace/current`, or the ACE card once it exists).
+If you took filament out or put it in by hand, tell it which slot is loaded: the ACE card
+shows the error with a "Loaded now" choice.
 
 In the slicer, set four extruders/filaments and a **prime tower** (it cleans the nozzle after
 the change; the purge here only pushes out the cut piece).
+
+## The ACE card
+
+On the Running page (add it to other pages in Settings → Page layout): the four slots as the
+slicer numbers them, **T0 … T3**, with the colour and material from the RFID tag; **Load**
+(the same tool change as in a print, only while the machine is on and idle) and **Unload**; the
+change's progress and its errors; the filament sensors; the dryer; a manual feed / wind back
+for setting up. It only shows on machines with an `[ace]`.
 
 ## Commands
 

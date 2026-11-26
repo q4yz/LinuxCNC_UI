@@ -83,7 +83,7 @@ def test_change_unwinds_the_old_slot_first():
 def test_an_empty_slot_is_refused_before_anything_moves():
     async def go():
         sim, client, changer, _ = await rig()
-        with pytest.raises(AceChangeError, match="Slot 3 has no filament"):
+        with pytest.raises(AceChangeError, match="T2 has no filament"):
             await changer.change(2)
         assert "feed_filament" not in sim.log.methods
         await client.stop()
