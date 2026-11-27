@@ -472,6 +472,9 @@ def _probe_payload(probe) -> dict[str, Any] | None:
         "x_offset": probe.x_offset or None,
         "y_offset": probe.y_offset or None,
         "z_offset": probe.z_offset,
+        # two-pass probing, only when set (the backend has defaults)
+        **({"second_speed": probe.second_speed} if probe.second_speed is not None else {}),
+        **({"second_retract": probe.second_retract} if probe.second_retract is not None else {}),
     }
 
 

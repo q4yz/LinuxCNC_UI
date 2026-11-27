@@ -329,11 +329,37 @@ class HalAssembler:
             for axis in self._axes:
                 if axis.id.lower() == "z":
                     z_home_joints = list(axis.joint_numbers)
+        probe = HardwareRecords.probe(self._payload)
         return ProbeHalMapper.to_fragment(
-            HardwareRecords.probe(self._payload),
+            probe,
             HardwareRecords.tool_length_sensor(self._payload),
             z_home_joints=z_home_joints,
+            latch_joint=self._probe_latch_joint(probe.pin if probe is not None else None),
         )
+
+    def _probe_latch_joint(self, probe_pin: str | None) -> int | None:
+        """Z's first joint when the probe pin and that joint's step generator
+        are on the same Remora SPI board (the board latches the step count at
+        the trigger edge); ``None`` otherwise — a probe on a CAN node or
+        another board cannot see Z's step count."""
+        if not probe_pin:
+            return None
+        z_axis = next((a for a in self._axes if a.id.lower() == "z"), None)
+        if z_axis is None or not z_axis.joint_numbers:
+            return None
+        number = z_axis.joint_numbers[0]
+        joint = self._joints_by_number.get(number)
+        if joint is None or not joint.step_pin:
+            return None
+        try:
+            probe_mcu = PinStringMapper.from_string(probe_pin).mcu_id
+            z_mcu = PinStringMapper.from_string(joint.step_pin).mcu_id
+        except ValueError:
+            return None
+        mcu = self._mcus_by_id.get(z_mcu)
+        if probe_mcu != z_mcu or mcu is None or mcu.connection != "remora-spi":
+            return None
+        return number
 
     def _driver_fragments(self, capability_class: CapabilityClass) -> list[HalFragment]:
         """A `TMC2209` firmware module per joint whose driver has a UART pin.

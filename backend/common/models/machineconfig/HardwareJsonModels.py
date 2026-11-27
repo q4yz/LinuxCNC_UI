@@ -569,6 +569,10 @@ class Probe(BaseModel):
     x_offset: float | None = None
     y_offset: float | None = None
     z_offset: float | None = None
+    #: Two-pass probing (services.motion.Probing): the slow pass's speed
+    #: (mm/s, 0 = one pass) and start above the first trigger (mm).
+    second_speed: float | None = None
+    second_retract: float | None = None
 
 
 class ToolLengthSensor(BaseModel):

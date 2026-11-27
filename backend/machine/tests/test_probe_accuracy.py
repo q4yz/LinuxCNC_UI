@@ -17,7 +17,8 @@ TRIGGERS = [0.012, 0.010, 0.011, 0.013, 0.010]
 class Config:
     def __init__(self, probe=True):
         self.payload = {
-            "probe": {"pin": "PB6"} if probe else None,
+            # one pass: these tests follow LinuxCNC's own moves (test_probe_two_pass: two)
+            "probe": {"pin": "PB6", "second_speed": 0} if probe else None,
             "axes": [{"id": "z", "joint_numbers": [2], "position_min": -2.0}],
         }
 
@@ -103,7 +104,7 @@ def test_probe_moves_relative_retracts_absolute(rig):
     # back up to an absolute height: the trigger point + the retract
     assert f"G53 G0 Z{TRIGGERS[0] + 2.0:.4f}" in rig.lines
     # the next probe starts from that known height, not from a read-back position
-    assert f"G38.2 Z-{module.probe_distance(TRIGGERS[0] + 2.0, -2.0):.4f} F300.0" in rig.lines
+    assert f"G38.2 Z-{probing.probe_distance(TRIGGERS[0] + 2.0, -2.0):.4f} F300.0" in rig.lines
 
 
 def test_parse_command():

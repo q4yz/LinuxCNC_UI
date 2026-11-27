@@ -107,6 +107,10 @@ class PinRequest:
     #: ``PinRole.ACCEL`` only: ``(axes_map, rate, sck, mosi, miso)``, the
     #: SPI pins bare (``PB10``) or ``None`` for the node's defaults.
     accel: tuple[str, int, str | None, str | None, str | None] | None = None
+    #: The touch probe on the same Remora board as Z's step generator: Z's
+    #: joint number — the router adds a "Probe Latch" module (the exact step
+    #: count at the trigger edge, on ``probe-latch``).
+    latch_joint: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

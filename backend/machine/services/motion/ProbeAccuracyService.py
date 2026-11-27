@@ -26,7 +26,15 @@ from hardware import get_stat_channel
 from hardware.Connection import MachineState
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from services.machine.HardwareConfigService import HardwareConfigService
-from services.motion.Probing import LIMIT_MARGIN_MM, ProbeError, mdi, probe_distance, wait_released
+from services.motion.Probing import (
+    LIMIT_MARGIN_MM,
+    ProbeError,
+    ProbeLatch,
+    ProbeSettings,
+    mdi,
+    probe_down,
+    wait_released,
+)
 
 logger = logging.getLogger("backend.services.motion.ProbeAccuracyService")
 
@@ -42,6 +50,25 @@ _PARAM = re.compile(r"([A-Za-z_]+)\s*=\s*(\S+)")
 
 class ProbeAccuracyError(RuntimeError):
     """Why the test stopped."""
+
+
+#: The Remora SPI driver's counters (``remora-spi.c``): replies with a bad
+#: header / count, and the longest run of them since start.
+SPI_BAD_PINS = ("remora.SPI-bad-header", "remora.SPI-bad-count")
+SPI_RUN_MAX_PIN = "remora.SPI-bad-run-max"
+
+
+def spi_counters() -> Optional[Dict[str, int]]:
+    """``{"bad": ..., "run_max": ...}``, or ``None`` without a Remora SPI board."""
+    from hardware.Connection import read_hal_pin
+
+    values = [read_hal_pin(p) for p in (*SPI_BAD_PINS, SPI_RUN_MAX_PIN)]
+    if any(v is None for v in values):
+        return None
+    try:
+        return {"bad": int(values[0]) + int(values[1]), "run_max": int(values[2])}
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -172,20 +199,25 @@ class ProbeAccuracyService:
             level=LogLevel.DEBUG, source="CMD",
         )
         samples: List[float] = []
+        payload = self._config.load_payload()
+        settings = ProbeSettings.from_payload(payload)
+        latch = ProbeLatch.from_payload(payload)
+        spi_before = spi_counters()
+        latched = 0
+        passes = 1
         try:
             mdi(stat, "G90")
             for k in range(request.samples):
                 start_z = self._released_start(stat, start_z, request.retract, console)
-                mdi(stat, "G91")
                 try:
-                    mdi(stat, f"G38.2 Z-{probe_distance(start_z, bottom):.4f} F{request.speed * 60.0:.1f}")
-                finally:
-                    mdi(stat, "G90")
-                stat.poll()
-                if not getattr(stat, "probe_tripped", False):
-                    raise ProbeAccuracyError(f"the probe did not trigger above Z{bottom:g} (sample {k + 1}).")
-                z = float(stat.probed_position[2])
-                if z >= start_z - INSTANT_TRIP_MM:
+                    reading = probe_down(stat, start_z, bottom, request.speed, settings=settings, latch=latch,
+                                         where=f" (sample {k + 1})")
+                except ProbeError as exc:
+                    raise ProbeAccuracyError(str(exc)) from exc
+                latched += reading.latched
+                passes = reading.passes
+                z = reading.z
+                if reading.first_z >= start_z - INSTANT_TRIP_MM:
                     # Tripped where the move began: still triggered from the
                     # last sample, not the bed (see Probing.wait_released).
                     raise ProbeAccuracyError(
@@ -212,7 +244,8 @@ class ProbeAccuracyService:
 
         record("probe_accuracy", f"range {result.range:.4f} mm, std dev {result.stddev:.4f} mm "
                                  f"({len(result.samples)} samples)")
-        console.log_event(result.summary(), level=LogLevel.INFO, source="CMD")
+        note = self._method_note(request, settings, passes, latched, len(samples), spi_before)
+        console.log_event(f"{result.summary()}. {note}", level=LogLevel.INFO, source="CMD")
         return result
 
     def _released_start(self, stat: Any, start_z: float, retract: float, console: Any) -> float:
@@ -237,6 +270,24 @@ class ProbeAccuracyService:
                 level=LogLevel.WARNING, source="CMD",
             )
         return start_z
+
+    @staticmethod
+    def _method_note(request: ProbeAccuracyRequest, settings: ProbeSettings, passes: int, latched: int,
+                     samples: int, spi_before: Optional[Dict[str, int]]) -> str:
+        """How the samples were taken, and the SPI link's bad replies meanwhile
+        (a broken reply holds the probe input: a late trigger)."""
+        how = (f"two passes ({request.speed:g} then {settings.second_speed:g} mm/s)" if passes == 2
+               else f"one pass at {request.speed:g} mm/s")
+        where = ("the board's latch (exact to 25 us)" if latched == samples
+                 else f"the board's latch for {latched} of {samples}, LinuxCNC's 1 ms sample for the rest" if latched
+                 else "LinuxCNC's 1 ms sample (no probe latch on the board)")
+        note = f"Probed in {how}; trigger heights from {where}"
+        after = spi_counters()
+        if spi_before is not None and after is not None:
+            bad = after["bad"] - spi_before["bad"]
+            note += (f"; SPI: {bad} bad replies during the test (longest run {after['run_max']} frames — the probe "
+                     "input is held meanwhile)" if bad else "; SPI: no bad replies")
+        return note + "."
 
     @staticmethod
     def _commanded_z(stat: Any) -> float:

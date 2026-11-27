@@ -77,6 +77,7 @@ class ProbeHalMapper:
         probe: Probe | None,
         tool_length_sensor: ToolLengthSensor | None = None,
         z_home_joints: list[int] | None = None,
+        latch_joint: int | None = None,
     ) -> HalFragment:
         """``z_home_joints`` (``probe:z_virtual_endstop``): the touch probe
         is also the home switch of these joints — wired ungated::
@@ -89,7 +90,7 @@ class ProbeHalMapper:
         if probe_pin:
             fragment.requests.append(
                 PinRequest(signal=PROBE_SIGNAL, role=PinRole.DIGITAL_IN,
-                           pin=PinStringMapper.from_string(probe_pin), owner="probe")
+                           pin=PinStringMapper.from_string(probe_pin), owner="probe", latch_joint=latch_joint)
             )
         if sensor_pin:
             fragment.requests.append(

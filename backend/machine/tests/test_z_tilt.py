@@ -32,7 +32,8 @@ class FakeConfig:
         }
 
     def load_payload(self):
-        return {"z_tilt": self.z_tilt}
+        # one pass: these tests follow LinuxCNC's own moves (test_probe_two_pass: two)
+        return {"z_tilt": self.z_tilt, "probe": {"second_speed": 0}}
 
     def get_axes(self):
         return [{"id": "x", "joint_numbers": [0]}, {"id": "y", "joint_numbers": [1]},

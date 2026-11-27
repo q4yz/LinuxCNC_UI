@@ -582,6 +582,10 @@ class Probe:
     #: Nozzle height above the bed when the probe triggers (mm);
     #: ``None`` when the ``.cfg`` does not set it.
     z_offset: float | None = None
+    #: The slow second probe move (mm/s; 0: probe once) and how far above the
+    #: first trigger it starts (mm); ``None``: the backend's defaults.
+    second_speed: float | None = None
+    second_retract: float | None = None
 
 
 @dataclass(slots=True)

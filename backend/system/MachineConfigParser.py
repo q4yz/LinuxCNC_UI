@@ -1780,11 +1780,19 @@ class MachineConfigParser:
         as every other component.
         """
         z_offset = self._optional_float(section_name, section, "z_offset")
+        second_speed = self._optional_float(section_name, section, "second_speed")
+        second_retract = self._optional_float(section_name, section, "second_retract")
+        if second_speed is not None and second_speed < 0:
+            raise InvalidValueError(section_name, "second_speed", str(second_speed), "0 (one pass) or above")
+        if second_retract is not None and second_retract <= 0:
+            raise InvalidValueError(section_name, "second_retract", str(second_retract), "a number above 0")
         return Probe(
             pin=self._optional_string(section, "pin"),
             x_offset=self._optional_float(section_name, section, "x_offset") or 0.0,
             y_offset=self._optional_float(section_name, section, "y_offset") or 0.0,
             z_offset=z_offset,
+            second_speed=second_speed,
+            second_retract=second_retract,
         )
 
     def _parse_mcu(

@@ -227,7 +227,9 @@ ESTOP_KEYS = frozenset({"fault_pin", "out_pin"})
 # x_offset / y_offset / z_offset: Klipper's meaning — the probe sits
 # x_offset, y_offset from the nozzle; the nozzle is z_offset above the
 # bed when the probe triggers (`.agent/component/probe.md`).
-PROBE_KEYS = frozenset({"pin", "x_offset", "y_offset", "z_offset"})
+# second_speed / second_retract (not Klipper): every probe point is probed twice,
+# fast to find the bed, then slowly from second_retract above it (0: once).
+PROBE_KEYS = frozenset({"pin", "x_offset", "y_offset", "z_offset", "second_speed", "second_retract"})
 # The tool-length sensor (tool setter) — a second digital input that
 # is OR-ed with the probe into ``motion.probe-input``
 # (`.agent/component/probe.md` § 3). Same single optional ``pin``.

@@ -308,7 +308,17 @@ pin:
 #z_offset:
 #   The nozzle's height above the bed when the probe triggers — measure it with
 #   PROBE_CALIBRATE. With Z homed on the probe it is Z at the trigger point.
+#second_speed: 1
+#   Every probe point is probed twice: fast (the command's speed) to find the bed,
+#   then at this speed (mm/s) from second_retract above it. 0 probes once.
+#second_retract: 1
+#   How far above the first trigger the slow pass starts (mm); raised further,
+#   0.5 mm at a time, while the probe still reports triggered.
 ```
+
+On a Remora board that also drives Z, the probe gets a **probe latch**: the board captures
+Z's step count at the trigger edge (40 kHz), and probing uses that instead of LinuxCNC's
+1 ms sample — see {doc}`../using/probing-levelling`.
 
 ### [tool_length_sensor]
 

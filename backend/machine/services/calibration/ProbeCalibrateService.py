@@ -25,7 +25,15 @@ from exceptions import BadRequestError, ConflictError
 from hardware import get_stat_channel
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from services.machine.HardwareConfigService import HardwareConfigService
-from services.motion.Probing import LIMIT_MARGIN_MM, ProbeError, ProbeOffsets, mdi, probe_distance
+from services.motion.Probing import (
+    LIMIT_MARGIN_MM,
+    ProbeError,
+    ProbeLatch,
+    ProbeOffsets,
+    ProbeSettings,
+    mdi,
+    probe_down,
+)
 
 logger = logging.getLogger("backend.services.calibration.ProbeCalibrateService")
 
@@ -152,7 +160,8 @@ class ProbeCalibrateService:
         self.session = None
         self._checks._check_machine(stat, COMMAND)
         console = get_console_logger()
-        offsets = ProbeOffsets.from_payload(self._config.load_payload())
+        payload = self._config.load_payload()
+        offsets = ProbeOffsets.from_payload(payload)
         bottom = self._checks._probe_bottom()
         stat.poll()
         start_z = self._checks._commanded_z(stat)
@@ -160,16 +169,16 @@ class ProbeCalibrateService:
             raise ProbeCalibrateError(f"Z{start_z:g} is not above the lowest Z{bottom:g} — move Z up first.")
         self._compensation_off(console)
         try:
-            mdi(stat, "G91")
-            mdi(stat, f"G38.2 Z-{probe_distance(start_z, bottom):.4f} F{speed * 60.0:.1f}")
-            stat.poll()
-            if not getattr(stat, "probe_tripped", False):
-                raise ProbeCalibrateError(f"the probe did not trigger above Z{bottom:g}.")
-            trigger_z = float(stat.probed_position[2])
-            mdi(stat, f"G0 Z{LIFT_MM:.4f}")
+            trigger_z = probe_down(stat, start_z, bottom, speed, settings=ProbeSettings.from_payload(payload),
+                                   latch=ProbeLatch.from_payload(payload)).z
+            # to the trigger height above the spot the probe touched (absolute:
+            # the machine stopped below the trigger)
+            mdi(stat, f"G53 G0 Z{trigger_z + LIFT_MM:.4f}")
             if offsets.x or offsets.y:
+                mdi(stat, "G91")
                 mdi(stat, f"G0 X{offsets.x:.4f} Y{offsets.y:.4f}")
-            mdi(stat, f"G0 Z-{LIFT_MM:.4f}")
+                mdi(stat, "G90")
+            mdi(stat, f"G53 G0 Z{trigger_z:.4f}")
         except ProbeError as exc:
             raise ProbeCalibrateError(str(exc)) from exc
         finally:

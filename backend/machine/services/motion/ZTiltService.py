@@ -31,7 +31,7 @@ from hardware import get_stat_channel
 from hardware.Connection import MachineState, read_hal_pin
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from services.machine.HardwareConfigService import HardwareConfigService
-from services.motion.Probing import ProbeError, ProbeOffsets, probe_points
+from services.motion.Probing import ProbeError, ProbeLatch, ProbeOffsets, ProbeSettings, probe_points
 from services.HalPinService import HalPinService
 
 logger = logging.getLogger("backend.services.motion.ZTiltService")
@@ -228,6 +228,8 @@ class ZTiltService(HalPinService):
                 bottom=float(settings.get("probe_min_z") or 0.0),
                 progress=measured,
                 offsets=offsets,
+                settings=ProbeSettings.from_payload(self._config.load_payload()),
+                latch=ProbeLatch.from_payload(self._config.load_payload()),
             )
         except ProbeError as exc:
             raise ZTiltError(str(exc)) from exc

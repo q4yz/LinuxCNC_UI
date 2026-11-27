@@ -15,7 +15,8 @@ TRIGGER_Z = 2.0
 class Config:
     def __init__(self, probe=None):
         self.payload = {
-            "probe": probe if probe is not None else {"pin": "PB6", "x_offset": -25.0, "y_offset": 10.0},
+            "probe": probe if probe is not None else {"pin": "PB6", "x_offset": -25.0, "y_offset": 10.0,
+                                                      "second_speed": 0},
             "axes": [{"id": "z", "joint_numbers": [2], "position_min": -2.0}],
         }
 
@@ -61,6 +62,8 @@ def rig(monkeypatch):
             for word in line.split()[2:]:
                 if word[0] in "XY":
                     stat.position["XY".index(word[0])] = float(word[1:])
+        elif line.startswith("G53 G0 Z"):
+            stat.position[2] = float(line.split("Z")[1])
         elif line.startswith("G0 ") and relative["on"]:
             for word in line.split()[1:]:
                 stat.position["XYZ".index(word[0])] += float(word[1:])
@@ -81,8 +84,9 @@ def test_start_puts_the_nozzle_over_the_probed_spot_at_the_trigger_height(rig):
     service = module.ProbeCalibrateService(Config())
     session = service.start(rig.stat)
     assert session.trigger_z == TRIGGER_Z
-    assert rig.lines == ["G91", "G38.2 Z-11.9900 F300.0", "G0 Z5.0000", "G0 X-25.0000 Y10.0000", "G0 Z-5.0000",
-                         "G90"]
+    # up from the trigger height (absolute: the machine stopped below it), over the spot, down to it
+    assert rig.lines == ["G91", "G38.2 Z-11.9900 F300.0", "G90", "G53 G0 Z7.0000", "G91", "G0 X-25.0000 Y10.0000",
+                         "G90", "G53 G0 Z2.0000", "G90"]
     # the nozzle moved by the probe's offset: it is where the probe touched
     assert rig.stat.position[:3] == [75.0, 110.0, TRIGGER_Z]
     assert rig.events[-1][0] == "INFO" and "ACCEPT" in rig.events[-1][1]

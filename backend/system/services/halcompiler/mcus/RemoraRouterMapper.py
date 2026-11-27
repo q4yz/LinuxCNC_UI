@@ -63,6 +63,9 @@ DEFAULT_SPI_CLK_DIV = 64
 REMORA_SET_POINTS = 6
 #: Process variables (``remora.PV.N``) per board, its CAN nodes included.
 REMORA_PROCESS_VARIABLES = 6
+#: HAL signal of the probe latch's process variable (count * 4 + captures),
+#: read by the machine backend (services.motion.ProbeLatch).
+PROBE_LATCH_SIGNAL = "probe-latch"
 
 
 class RemoraRouterMapper:
@@ -336,6 +339,26 @@ class RemoraRouterMapper:
                 fragment.firmware_modules.append(
                     FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=input_module)
                 )
+                if request.latch_joint is not None:
+                    # The touch probe, on Z's board: the exact Z step count at its
+                    # trigger edge (Remora-m8p modules/probeLatch), on the next PV.
+                    fragment.nets.append(f"net {PROBE_LATCH_SIGNAL} <= remora.PV.{pv_index}")
+                    latch_module: dict[str, object] = {
+                        "Name": "probe_latch",
+                        "Thread": "Base",
+                        "Type": "Probe Latch",
+                        "Comment": request.owner,
+                        "Pin": input_module["Pin"],
+                        "Joint Number": request.latch_joint,
+                        "PV[i]": pv_index,
+                        "Invert": "True" if request.pin.invert else "False",
+                    }
+                    if "Modifier" in input_module:
+                        latch_module["Modifier"] = input_module["Modifier"]
+                    fragment.firmware_modules.append(
+                        FirmwareModuleRequest(mcu_id=request.pin.mcu_id, module=latch_module)
+                    )
+                    pv_index += 1
             elif request.role is PinRole.DIGITAL_OUT:
                 if digital_out_index >= _DIGITAL_BITS:
                     raise ValueError(
@@ -479,4 +502,4 @@ class RemoraRouterMapper:
         return fragment
 
 
-__all__ = ["MCU_TEMP_SENSOR_TYPE", "REMORA_PROCESS_VARIABLES", "REMORA_SET_POINTS", "RemoraRouterMapper"]
+__all__ = ["MCU_TEMP_SENSOR_TYPE", "PROBE_LATCH_SIGNAL", "REMORA_PROCESS_VARIABLES", "REMORA_SET_POINTS", "RemoraRouterMapper"]

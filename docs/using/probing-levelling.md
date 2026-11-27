@@ -11,6 +11,28 @@ PROBE_ACCURACY [SAMPLES=10] [SAMPLE_RETRACT_DIST=2] [PROBE_SPEED=5]
 
 Probes the same spot `SAMPLES` times. Each sample is logged under *Debug*, the result —
 maximum, minimum, range, average, median, standard deviation — under *Info*. Z must be homed.
+The result also says how the samples were taken (one or two passes, the board's latch or
+LinuxCNC's sample) and how many bad SPI replies the link had meanwhile (during a bad reply the
+probe input is held, a trigger then counts late).
+
+## How exact a probe point is
+
+LinuxCNC sees the probe once per servo period (1 ms) and keeps the position of that moment. At
+5 mm/s that is a **0.005 mm grid**, plus the jitter between the board reading the pin and the SPI
+frame (a few ms: 0.005–0.020 mm). Two things make it better:
+
+- **Two passes** (`[probe] second_speed`, default 1 mm/s): fast down to find the bed, back
+  `second_retract`, then slowly — a fifth of the error. Used by every probing command.
+- **The probe latch** (Remora firmware with the "Probe Latch" module, generated when the probe
+  and Z's stepper are on the same board): the board reads the probe in its 40 kHz base thread and
+  captures Z's step count at the trigger edge. Probing uses that height (exact to 25 µs, a fraction
+  of a step) whenever it captured during the move and agrees with LinuxCNC's within 0.5 mm. What
+  is left is the probe's own switching.
+
+A shift between runs that the probing cannot explain (the board's step count is what the motor
+was told) is mechanical or the probe itself: an inductive probe drifts with its temperature, a
+motor can lose steps on the fast retract. Compare samples 1–10 with 91–100 of
+`PROBE_ACCURACY SAMPLES=100`.
 
 ## PROBE_CALIBRATE — measuring z_offset
 
