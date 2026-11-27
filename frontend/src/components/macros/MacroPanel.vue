@@ -29,7 +29,7 @@ import { useMacrosStore, MACRO_KIND } from "../../stores/macrosStore";
 // ``stores/servoThread.ts``); the orchestrator store in
 // ``stores/machine.ts`` exposes ``isEstop`` instead.
 import { useMachineStore as useFacadeStore } from "../../stores/stateFacade";
-import type { MacroEntry, MacroLastRunResult, MacroRunCounters } from "../../stores/macrosTypes";
+import type { MacroEntry, MacroKind, MacroLastRunResult, MacroRunCounters } from "../../stores/macrosTypes";
 import { BaseButton, Icon } from "../../ui/index.ts";
 import BaseCard from "../../ui/BaseCard.vue";
 import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
@@ -37,7 +37,7 @@ import { formatFileDate, formatFileSize } from "../../helpers/fileFormat";
 const store = useMacrosStore();
 const machine = useFacadeStore();
 
-const { isBusy, macroFiles, ngcFiles } = storeToRefs(store);
+const { isBusy, macroFiles, ngcFiles, pyFiles } = storeToRefs(store);
 
 // Per-row transient state — which macro the operator has just
 // clicked and whether a dispatch is in flight. Reset when the user
@@ -51,7 +51,7 @@ const lastResult: Ref<MacroLastRunResult | null> = ref(null);
 // reactive independently so M-code listings never clobber the
 // macro / ngc rows on mount-order changes.
 const sorted = computed<MacroEntry[]>(() =>
-  [...macroFiles.value, ...ngcFiles.value].sort((a, b) =>
+  [...macroFiles.value, ...ngcFiles.value, ...pyFiles.value].sort((a, b) =>
     a.name.localeCompare(b.name),
   ),
 );
@@ -63,13 +63,14 @@ onMounted(async () => {
   await Promise.all([
     store.loadList(MACRO_KIND.MACRO),
     store.loadList(MACRO_KIND.NGC),
+    store.loadList(MACRO_KIND.PY),
   ]);
 });
 
-async function onRun(name: string): Promise<void> {
+async function onRun(name: string, kind: MacroKind = MACRO_KIND.MACRO): Promise<void> {
   runningName.value = name;
   try {
-    const result = await store.runMacro(name);
+    const result = await store.runMacroOfKind(kind, name);
     if (result.ok) {
       // ``runMacro`` returns ``CommandResult.success({ message:
       // JSON.stringify(counter) })`` — parse the counters so the
@@ -101,6 +102,7 @@ function onRefresh(): Promise<unknown> {
   return Promise.all([
     store.loadList(MACRO_KIND.MACRO),
     store.loadList(MACRO_KIND.NGC),
+    store.loadList(MACRO_KIND.PY),
   ]);
 }
 
@@ -152,7 +154,9 @@ function formatResult(entry: MacroLastRunResult | null): string {
               :class="
                 row.kind === 'macro'
                   ? 'bg-blue-700/40 text-blue-200'
-                  : 'bg-purple-700/40 text-purple-200'
+                  : row.kind === 'py'
+                    ? 'bg-amber-700/40 text-amber-200'
+                    : 'bg-purple-700/40 text-purple-200'
               "
             >
               {{ row.kind }}
@@ -167,16 +171,28 @@ function formatResult(entry: MacroLastRunResult | null): string {
                the controller's ``program_open`` flow, not MDI; the
                UI only manages the file content. -->
           <BaseButton
-            v-if="row.kind === 'macro'"
+            v-if="row.kind === 'macro' || row.kind === 'py'"
             variant="success"
             size="sm"
             :loading="runningName === row.name"
-            :disabled="isBusy || machine.isEstopActive"
-            :title="machine.isEstopActive ? 'Cannot run while in E-Stop' : 'Run macro'"
-            @click="onRun(row.name)"
+            :disabled="isBusy || (machine.isEstopActive && row.kind !== 'py')"
+            :title="machine.isEstopActive && row.kind !== 'py' ? 'Cannot run while in E-Stop' : 'Run macro'"
+            :data-test="`macro-run-${row.kind}-${row.name}`"
+            @click="onRun(row.name, row.kind)"
           >
             <span v-if="runningName !== row.name">▶ Run</span>
             <span v-else>Running…</span>
+          </BaseButton>
+          <!-- a Python macro runs in its own process: Stop ends it at once -->
+          <BaseButton
+            v-if="row.kind === 'py'"
+            variant="danger"
+            size="sm"
+            title="Stop the running Python macro (and its move)"
+            :data-test="`macro-stop-${row.name}`"
+            @click="store.stopMacro(row.name)"
+          >
+            ■ Stop
           </BaseButton>
           <span
             v-else

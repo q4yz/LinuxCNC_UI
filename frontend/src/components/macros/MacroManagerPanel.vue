@@ -27,7 +27,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import type { Ref } from "vue";
 import { storeToRefs } from "pinia";
 
-import { useMacrosStore, MACRO_KIND } from "../../stores/macrosStore";
+import { useMacrosStore, MACRO_KIND, PY_MACRO_TEMPLATE } from "../../stores/macrosStore";
 import { ModalButtonStyle, useConfirm } from "../../core/confirm";
 import { validateMacroKindName } from "../../parsers/macrosParser";
 import { openInEditor } from "../../helpers/openInEditor";
@@ -39,7 +39,7 @@ import BaseInput from "../../ui/BaseInput.vue";
 import {Icon} from "../../ui";
 
 const store = useMacrosStore();
-const { macroFiles, ngcFiles, contents, isBusy } = storeToRefs(store);
+const { macroFiles, ngcFiles, pyFiles, contents, isBusy } = storeToRefs(store);
 
 const createOpen: Ref<boolean> = ref(false);
 const createKind: Ref<MacroKind> = ref(MACRO_KIND.MACRO);
@@ -52,6 +52,7 @@ onMounted(async () => {
   await Promise.all([
     store.loadList(MACRO_KIND.MACRO),
     store.loadList(MACRO_KIND.NGC),
+    store.loadList(MACRO_KIND.PY),
   ]);
 });
 
@@ -66,7 +67,7 @@ interface MacroCard {
 // Size and change date come from the listed file record — the same
 // ``FileEntry`` every file list uses.
 const macroCards = computed<MacroCard[]>(() =>
-  [...macroFiles.value, ...ngcFiles.value]
+  [...macroFiles.value, ...ngcFiles.value, ...pyFiles.value]
     .map((row): MacroCard => ({
       kind: row.kind,
       name: row.name,
@@ -82,7 +83,7 @@ const macroCards = computed<MacroCard[]>(() =>
 // push ``/editor?source=macros&name=<displayedFilename>`` here and
 // let the universal editor handle the read/write surface.
 function openInEditorView(kind: MacroKind, name: string): void {
-  const displayedName = kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`;
+  const displayedName = `${name}.${kind}`;
   openInEditor({
     source: 'macros',
     name: displayedName,
@@ -92,7 +93,7 @@ function openInEditorView(kind: MacroKind, name: string): void {
 
 async function deleteMacro(kind: MacroKind, name: string): Promise<void> {
   const display =
-    kind === MACRO_KIND.NGC ? `${name}.ngc` : `${name}.macro`;
+    `${name}.${kind}`;
   const shouldDelete = await useConfirm({
     title: `Delete ${display}`,
     question: `Delete "${display}"? This cannot be undone.`,
@@ -128,7 +129,7 @@ async function commitCreate(): Promise<void> {
   // can both exist in ``<repo>/macros/`` because they differ only
   // by extension. Reject same-name + same-kind pairs at the form.
   const sameKindContainer =
-    createKind.value === MACRO_KIND.MACRO ? macroFiles : ngcFiles;
+    createKind.value === MACRO_KIND.MACRO ? macroFiles : createKind.value === MACRO_KIND.PY ? pyFiles : ngcFiles;
   if (sameKindContainer.value.some((row) => row.name === name)) {
     createError.value = `${name} already exists as a ${createKind.value}.`;
     return;
@@ -136,7 +137,8 @@ async function commitCreate(): Promise<void> {
   // FastAPI rejects zero-byte text/plain bodies with 422. Seed
   // with a newline so the initial PUT succeeds and the editor
   // opens on an effectively blank file.
-  const result = await store.saveMacro(createKind.value, name, "\n");
+  const result = await store.saveMacro(createKind.value, name,
+    createKind.value === MACRO_KIND.PY ? PY_MACRO_TEMPLATE : "\n");
   if (result.ok) {
     createOpen.value = false;
     await openInEditorView(createKind.value, name);
@@ -185,7 +187,9 @@ watch(() => store.lastError, (value) => {
               :class="
                 card.kind === 'macro'
                   ? 'bg-blue-700/40 text-blue-200'
-                  : 'bg-purple-700/40 text-purple-200'
+                  : card.kind === 'py'
+                    ? 'bg-amber-700/40 text-amber-200'
+                    : 'bg-purple-700/40 text-purple-200'
               "
             >
               {{ card.kind }}
@@ -251,6 +255,15 @@ watch(() => store.lastError, (value) => {
                 data-test="macros-create-kind-ngc"
               />
               <span>LinuxCNC NGC (<code>.ngc</code>)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                v-model="createKind"
+                type="radio"
+                value="py"
+                data-test="macros-create-kind-py"
+              />
+              <span>Python (<code>.py</code>)</span>
             </label>
           </div>
         </div>

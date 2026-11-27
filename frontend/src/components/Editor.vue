@@ -20,6 +20,8 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { ini } from '../utils/codemirror-lang-ini'
 import { hal } from '../utils/codemirror-lang-hal'
 import { gcode } from '../utils/codemirror-lang-gcode'
+import { StreamLanguage } from '@codemirror/language'
+import { python } from '@codemirror/legacy-modes/mode/python'
 
 const props = defineProps({
   filename: { type: String, required: true },
@@ -62,6 +64,8 @@ const editorExtensions = computed(() => {
       return [hal(), oneDark]
     case 'gcode':
       return [gcode(), oneDark]
+    case 'python':
+      return [StreamLanguage.define(python), oneDark]
     default:
       return [oneDark]
   }

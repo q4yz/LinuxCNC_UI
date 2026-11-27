@@ -21,7 +21,7 @@ const SYSTEM_TARGET = 'http://localhost:8001';
 // *including* its query string — `start?kind=ngc` must still match,
 // or the request falls through to the system service and 404s.
 const DEV_PROXY = {
-  '^/api/v1/modules/macros/[^/]+/start(\\?.*)?$': { target: MACHINE_TARGET, changeOrigin: true },
+  '^/api/v1/modules/macros/[^/]+/(start|stop)(\\?.*)?$': { target: MACHINE_TARGET, changeOrigin: true },
   // OctoPrint-compatible slicer upload (backend/system/routers/octoprint.py).
   '^/api/(version|server|login|settings|printerprofiles|printer|job|connection|files)(/|\\?|$)': { target: SYSTEM_TARGET, changeOrigin: true },
 

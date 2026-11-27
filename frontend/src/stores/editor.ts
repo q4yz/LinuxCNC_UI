@@ -230,6 +230,9 @@ function _macroSplitName(name: string): { baseName: string; kind: MacroKind } {
   if (lower.endsWith('.macro')) {
     return { baseName: name.slice(0, -6), kind: 'macro' }
   }
+  if (lower.endsWith('.py')) {
+    return { baseName: name.slice(0, -3), kind: 'py' }
+  }
   return { baseName: name, kind: 'macro' }
 }
 

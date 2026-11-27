@@ -151,6 +151,7 @@ MACHINE_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("PUT", "/api/v1/modules/io/{pin_id}"): P.OUTPUTS,
     ("PUT", "/api/v1/leds/{led_id}"): P.OUTPUTS,
     ("POST", "/api/v1/modules/macros/{name}/start"): P.MACROS_RUN,
+    ("POST", "/api/v1/modules/macros/{name}/stop"): P.MACROS_RUN,
     ("POST", "/api/v1/calibration/{calibration_id}/start"): P.CALIBRATION_RUN,
     ("POST", "/api/v1/calibration/{calibration_id}/result"): P.CALIBRATION_RUN,
     ("POST", "/api/v1/bedmesh/calibrate"): P.CALIBRATION_RUN,

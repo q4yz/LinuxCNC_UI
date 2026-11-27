@@ -6,7 +6,7 @@
 
 import type { FileEntry } from "../entities/files";
 
-export type MacroKind = "macro" | "ngc" | "mcode";
+export type MacroKind = "macro" | "ngc" | "mcode" | "py";
 
 /**
  * One listed macro: its own identity (``name`` without extension +

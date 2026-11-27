@@ -71,9 +71,11 @@ class MacroKind:
     MACRO = "macro"
     NGC = "ngc"
     MCODE = "mcode"
+    #: A Python macro, ``run(m)`` in its own process (services/program/PythonMacroService).
+    PY = "py"
 
 
-VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
+VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE, MacroKind.PY)
 
 
 # Map of kind → on-disk extension. ``MacroStorage`` consults this
@@ -83,6 +85,7 @@ VALID_KINDS = (MacroKind.MACRO, MacroKind.NGC, MacroKind.MCODE)
 _EXTENSIONS: Dict[str, str] = {
     MacroKind.MACRO: ".macro",
     MacroKind.NGC: ".ngc",
+    MacroKind.PY: ".py",
 }
 
 # Re-export the legacy constant so existing imports keep working.

@@ -53,15 +53,16 @@ interface MacroButtonRow {
   macroName: string;
 }
 
-type Kind = "macro" | "ngc" | "component" | "output";
+type Kind = "macro" | "ngc" | "py" | "component" | "output";
 const KINDS: { value: Kind; label: string }[] = [
   { value: "macro", label: "macro" },
   { value: "ngc", label: "ngc" },
+  { value: "py", label: "Python" },
   { value: "component", label: "UI component" },
   { value: "output", label: "Output pin" },
 ];
 const asKind = (raw: unknown): Kind =>
-  (raw === "ngc" || raw === "component" || raw === "output" ? raw : "macro");
+  (raw === "ngc" || raw === "py" || raw === "component" || raw === "output" ? raw : "macro");
 // kind "output": the machine's outputs from its live state (the I/O and LED
 // cards' data) — empty while the machine backend is not running
 const baseThread = useBaseThreadStore();
@@ -126,15 +127,20 @@ const dirty = ref(new Set<string>());
 // M-code call wraps it in a ``.macro`` file (see ``MacroButton.vue``).
 const macroEntries = ref<string[]>([]);
 const ngcEntries = ref<string[]>([]);
+const pyEntries = ref<string[]>([]);
 const macroLoadError = ref("");
 
 async function loadMacroOptions() {
   macroLoadError.value = "";
   try {
-    const [macroResp, ngcResp] = await Promise.all([
+    const [macroResp, ngcResp, pyResp] = await Promise.all([
       macrosFacade.list("macro"),
       macrosFacade.list("ngc"),
+      macrosFacade.list("py"),
     ]);
+    pyEntries.value = Array.isArray(pyResp?.macros)
+      ? pyResp.macros.map((row) => row?.macro_name).filter((n): n is string => Boolean(n))
+      : [];
     // Each ``MacroListItem`` is the shared file DTO: ``name`` is the
     // file name (``probe.ngc``), ``macro_name`` the bare name the run
     // endpoint and ``o<name> call`` expect (``probe``). Store the latter.
@@ -151,6 +157,7 @@ async function loadMacroOptions() {
   } catch (requestError) {
     macroEntries.value = [];
     ngcEntries.value = [];
+    pyEntries.value = [];
     macroLoadError.value =
       requestError instanceof Error
         ? requestError.message
@@ -164,6 +171,7 @@ async function loadMacroOptions() {
 const macroOptionsByKind = computed(() => ({
   macro: [...macroEntries.value].sort((a, b) => a.localeCompare(b)),
   ngc: [...ngcEntries.value].sort((a, b) => a.localeCompare(b)),
+  py: [...pyEntries.value].sort((a, b) => a.localeCompare(b)),
 }));
 
 // When the parent replaces the array (e.g. another tab mutated
@@ -339,7 +347,7 @@ function optionsFor(row: MacroButtonRow | null | undefined): { value: string; la
       ? [...listed, { value: stored, label: `${stored} (not listed now)` }]
       : listed;
   }
-  const kind = row?.macroKind === "ngc" ? "ngc" : "macro";
+  const kind = row?.macroKind === "ngc" ? "ngc" : row?.macroKind === "py" ? "py" : "macro";
   return macroOptionsByKind.value[kind].map((name) => ({ value: name, label: name }));
 }
 </script>

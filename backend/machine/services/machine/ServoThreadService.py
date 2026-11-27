@@ -49,6 +49,8 @@ class ServoThreadService:
         self.axis_service = get_axis_service()
         self.heater_safety = get_heater_safety_service()
         self.shared_values = get_shared_ui_values()
+        #: The E-stop's last state: pressing it (rising edge) stops a Python macro.
+        self._was_estop = False
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -175,6 +177,17 @@ class ServoThreadService:
                 # off, a fault) — before anything else can fail this tick.
                 if stat is not None:
                     self.heater_safety.observe(int(getattr(stat, "task_state", 0) or 0))
+                    # ... and pressing the E-stop ends a running Python macro
+                    # (one started while in E-stop keeps running: it may
+                    # switch pins before the machine is on; m.mdi() refuses).
+                    estop = bool(getattr(stat, "estop", 0))
+                    if estop and not self._was_estop:
+                        from services.program.PythonMacroService import get_python_macro_service
+
+                        macro = get_python_macro_service()
+                        if macro.is_running() and not macro.aborting:
+                            macro.stop("stopped by the E-stop")
+                    self._was_estop = estop
 
                 # 2. Process and broadcast new errors instantly
                 new_errors = self.state_service.drain_new_errors()

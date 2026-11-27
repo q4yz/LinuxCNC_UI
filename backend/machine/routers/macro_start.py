@@ -51,13 +51,30 @@ def start_macro(
     name: str = Path(..., description="Macro name without any extension."),
     kind: str = Query(
         MacroKind.MACRO,
-        description="One of ``macro`` / ``ngc`` / ``mcode``."
+        description="One of ``macro`` / ``ngc`` / ``py`` (``mcode`` cannot be started)."
     ),
     args: List[float] = Query(
         [],
-        description="Positional subroutine parameters (``#1``, ``#2``, ...), ``.ngc`` only.",
+        description="``.ngc``: the subroutine's ``#1``, ``#2``, ...; ``.py``: ``m.args``.",
     ),
 ) -> Response:
     """Starts the macro via the CNC machine's MDI channel."""
     get_macro_execution_service().start_macro(name, kind, args)
     return Response(status_code=202)
+
+
+@router.post(
+    "/{name}/stop",
+    status_code=204,
+    summary="Stop the running Python macro",
+    description="Ends the running ``.py`` macro's process at once, and aborts a move it started. "
+                "``409`` when no Python macro runs.",
+    operation_id="stopMacro",
+    responses={409: {"description": "No Python macro is running."}},
+)
+def stop_macro(name: str = Path(..., description="The macro (any name: the running one is stopped).")) -> Response:
+    from exceptions import ConflictError
+
+    if not get_macro_execution_service().stop_macro():
+        raise ConflictError("No Python macro is running.")
+    return Response(status_code=204)

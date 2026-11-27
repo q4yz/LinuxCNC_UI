@@ -76,7 +76,22 @@ export const MACRO_KIND = Object.freeze({
   MACRO: "macro",
   NGC: "ngc",
   MCODE: "mcode",
+  /** A Python macro (``macros/<name>.py``, ``run(m)`` in its own process). */
+  PY: "py",
 } as const);
+
+/** What a new ``.py`` macro starts with. */
+export const PY_MACRO_TEMPLATE = `# A Python macro: run(m) runs in its own process; Stop and the E-stop end it.
+#   m.mdi("G0 X10")          one MDI line, waits until done (machine ON)
+#   m.hal.get(pin) / m.hal.set(pin, value)
+#   m.heater("extruder", 210), m.temp("extruder"), m.state()
+#   m.wait_until(lambda: ..., timeout=60), m.wait_pin(pin, True), m.sleep(1)
+#   m.console("text"), print("text"), m.args (numbers it was started with)
+
+
+def run(m):
+    m.console("Hello from a Python macro")
+`;
 
 const STORE_ID = "macros";
 
@@ -167,6 +182,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
   const macroFiles: Ref<MacroEntry[]> = shallowRef([]);
   const ngcFiles: Ref<MacroEntry[]> = shallowRef([]);
   const mcodeFiles: Ref<MacroEntry[]> = shallowRef([]);
+  const pyFiles: Ref<MacroEntry[]> = shallowRef([]);
 
   /**
    * Cache of fetched payloads. Keyed by ``<kind>:<name>`` so the
@@ -188,6 +204,7 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     macro: macroFiles,
     ngc: ngcFiles,
     mcode: mcodeFiles,
+    py: pyFiles,
   };
 
   function listRefFor(kind: MacroKind): Ref<MacroEntry[]> {
@@ -234,11 +251,13 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
       loadList(MACRO_KIND.MACRO),
       loadList(MACRO_KIND.NGC),
       loadList(MACRO_KIND.MCODE),
+      loadList(MACRO_KIND.PY),
     ]);
     return [
       ...macroFiles.value,
       ...ngcFiles.value,
       ...mcodeFiles.value,
+      ...pyFiles.value,
     ];
   }
 
@@ -392,7 +411,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     const consoleStore = useConsoleStore();
 
     const machine = useFacadeStore();
-    if (machine.isEstopActive) {
+    // a Python macro may run in E-stop (pins, waiting); its m.mdi() refuses
+    if (machine.isEstopActive && kind !== MACRO_KIND.PY) {
       const result = failureFromLegacy(
         "Cannot run macros while the machine is in E-Stop.",
         `start:${kind}:${name}`,
@@ -430,6 +450,17 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     return success;
   }
 
+  /** Stop the running Python macro (and a move it started). */
+  async function stopMacro(name: string): Promise<CommandResult> {
+    const result = await macrosFacade.stop(name);
+    if (result.failed) {
+      reportCommandFailure(`stop macro ${name}`, result);
+    } else {
+      useConsoleStore().warning(`Macro '${name}' stopped.`);
+    }
+    return result;
+  }
+
   // --- public surface ------------------------------------------ //
 
   return {
@@ -437,6 +468,8 @@ export const useMacrosStore = defineStore(STORE_ID, () => {
     macroFiles,
     ngcFiles,
     mcodeFiles,
+    pyFiles,
+    stopMacro,
     contents,
     isBusy,
     lastError,

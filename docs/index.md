@@ -38,6 +38,7 @@ using/calibration
 using/tuning
 using/programs
 using/hal-tools
+using/macros
 using/accounts
 using/ace
 ```

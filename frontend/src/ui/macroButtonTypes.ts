@@ -18,7 +18,7 @@ export interface MacroButtonDescriptor {
    * ``output`` the output it controls (``outputTargets``: ``out:<id>``,
    * ``fan:<id>``, ``led:<id>``). */
   macroName?: string;
-  macroKind?: "macro" | "ngc" | "component" | "output";
+  macroKind?: "macro" | "ngc" | "py" | "component" | "output";
 }
 
 /** One host-declared button position (``id`` unique per host). */

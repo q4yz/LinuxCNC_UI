@@ -84,6 +84,11 @@ async function start(
   );
 }
 
+/** Stop the running Python macro (``POST /api/v1/modules/macros/{name}/stop``). */
+async function stop(name: string): Promise<CommandResult> {
+  return _commandResultFrom(ModulesMacrosService.stopMacro(name), `stop:${name}`);
+}
+
 /** A macro's text through the JSON content endpoint (the editor's). */
 async function readContent(name: string, kind: MacroKind): Promise<string> {
   return (await ModulesMacrosService.readMacroContent(name, kind))?.content ?? "";
@@ -104,6 +109,7 @@ export const macrosFacade = Object.freeze({
   writeContent,
   remove,
   start,
+  stop,
 });
 
 export default macrosFacade;

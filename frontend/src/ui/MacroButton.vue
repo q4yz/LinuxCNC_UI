@@ -89,6 +89,7 @@ const props = defineProps({
         typeof (v as MacroButtonDescriptor).macroName === "string" &&
         ((v as MacroButtonDescriptor).macroKind === MACRO_KIND.MACRO ||
           (v as MacroButtonDescriptor).macroKind === MACRO_KIND.NGC ||
+          (v as MacroButtonDescriptor).macroKind === MACRO_KIND.PY ||
           (v as MacroButtonDescriptor).macroKind === "component" ||
           (v as MacroButtonDescriptor).macroKind === "output")),
   },
@@ -187,7 +188,7 @@ async function onClick() {
   isRunning.value = true;
   try {
     await macrosStore.runMacroOfKind(
-      props.descriptor.macroKind === "ngc" ? "ngc" : "macro",
+      props.descriptor.macroKind === "ngc" ? "ngc" : props.descriptor.macroKind === "py" ? "py" : "macro",
       props.descriptor.macroName ?? "",
     );
   } finally {

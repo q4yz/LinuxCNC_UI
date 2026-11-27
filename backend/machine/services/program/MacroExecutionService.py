@@ -112,6 +112,10 @@ class MacroExecutionService:
         self._validate_kind(kind)
         args = list(args or [])
 
+        if kind == MacroKind.PY:
+            self._start_python(name.removesuffix(".py"), args)
+            return
+
         if kind not in (MacroKind.MACRO, MacroKind.NGC):
             raise BadRequestError(
                 f"Running {kind!r} files from the UI is not supported — "
@@ -142,7 +146,7 @@ class MacroExecutionService:
         if stat.task_state != MachineState.ON.value:
             raise BadRequestError(f"Machine must be ON to execute a macro. Current state: {stat.task_state}")
 
-        if self.is_running():
+        if self.is_running() or self._python().is_running():
             raise ConflictError("Another macro is still running.")
 
         if kind == MacroKind.NGC:
@@ -172,6 +176,31 @@ class MacroExecutionService:
                 daemon=True,
             )
             self._worker.start()
+
+    @staticmethod
+    def _python() -> Any:
+        from services.program.PythonMacroService import get_python_macro_service
+
+        return get_python_macro_service()
+
+    def _start_python(self, name: str, args: List[float]) -> None:
+        """A ``.py`` macro: its own process; no machine-state preflight (it
+        may heat, switch pins or wait before the machine is on — only its
+        ``m.mdi()`` needs it ON)."""
+        for value in args:
+            if not math.isfinite(value):
+                raise BadRequestError(f"Macro argument must be a finite number, got {value!r}")
+        if self.is_running():
+            raise ConflictError("Another macro is still running.")
+        try:
+            path = get_macro_service().safe_join(f"{name}.py")
+        except ValueError as exc:
+            raise BadRequestError(str(exc))
+        self._python().start(name, path, args)
+
+    def stop_macro(self) -> bool:
+        """Stop the running Python macro (and the move it started)."""
+        return bool(self._python().stop("stopped by the operator"))
 
     def _run_worker(self, name: str, blocks: List[MacroBlock]) -> None:
         """Thread entry point — never lets an exception escape silently."""
@@ -211,7 +240,7 @@ class MacroExecutionService:
             if block.type == "python":
                 python_skipped += 1
                 console.log_event(
-                    f"Macro '{name}' block #{index + 1}: python block skipped — interpreter not implemented yet.",
+                    f"Macro '{name}' block #{index + 1}: {{ … }} blocks are not run — write Python as a .py macro.",
                     level=LogLevel.WARNING,
                     source="CMD",
                 )

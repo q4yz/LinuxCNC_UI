@@ -99,6 +99,7 @@ For now every web user is **admin** (there are no logins yet).
 | PUT | `/api/v1/print-tuning` | `machine.tune` | confirm |
 | PUT | `/api/v1/print-tuning/objects/{index}` | `machine.tune` | confirm |
 | POST | `/api/v1/modules/macros/{name}/start` | `macros.run` | confirm |
+| POST | `/api/v1/modules/macros/{name}/stop` | `macros.run` | confirm |
 | PUT | `/api/v1/leds/{led_id}` | `outputs.control` | confirm |
 | PUT | `/api/v1/modules/io/{pin_id}` | `outputs.control` | confirm |
 | POST | `/api/v1/modules/program/load` | `program.run` | confirm |
