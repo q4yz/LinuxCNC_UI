@@ -112,6 +112,16 @@ export abstract class BaseSetting<T> {
     return this._stored.value !== undefined;
   }
 
+  /** The value is this user's own, on top of the admin's shared one. */
+  get isPersonal(): boolean {
+    return settingsRegistry.isPersonal(this.key);
+  }
+
+  /** Machine-wide (read by the backends): only an admin changes it. */
+  get isMachine(): boolean {
+    return settingsRegistry.isMachineKey(this.key);
+  }
+
   /** Identity for duplicate-definition detection. */
   signature(): string {
     return JSON.stringify([
@@ -178,7 +188,8 @@ export abstract class BaseSetting<T> {
     return result;
   }
 
-  /** Remove the stored value — the default applies again. */
+  /** Remove the stored value — for a user their own value goes and the
+   * admin's applies again; for the admin the default applies again. */
   async reset(): Promise<CommandResult> {
     const result = await settingsFacade.reset(this.key);
     if (result.failed) {
@@ -186,7 +197,9 @@ export abstract class BaseSetting<T> {
       return result;
     }
     this.hydrate(undefined);
-    settingsLog("debug", `Setting ${this.key}: reset to default ${fmt(this.defaultValue)}`);
+    // A user's reset falls back to the admin's value, not the default.
+    await settingsRegistry.refetch();
+    settingsLog("debug", `Setting ${this.key}: reset (now ${fmt(this.value)})`);
     return result;
   }
 }

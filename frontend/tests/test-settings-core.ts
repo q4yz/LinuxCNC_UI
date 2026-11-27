@@ -209,3 +209,48 @@ test("quick saves of one setting reach the server in order, the last value wins"
     SettingsService.writeSetting = original;
   }
 });
+
+// --- per-login values (admin's shared set, a user's own on top) ------------
+
+test("personal and machine-wide keys come from the listing", async () => {
+  const shared = { "temperature.colors": "admin" };
+  const own = { "temperature.colors": "mine" };
+  let mine = true;
+  const original = SettingsService.listSettings;
+  SettingsService.listSettings = async () => ({
+    values: mine ? own : shared,
+    personal: mine ? ["temperature.colors"] : [],
+    machine_keys: ["camera.ip_camera_url", "assistant."],
+  });
+  SettingsService.resetSetting = async () => {
+    mine = false;
+  };
+  try {
+    const s = new TextSetting("Temperature", "Colours", "temperature.colors", "default");
+    const cam = new TextSetting("Camera", "URL", "camera.ip_camera_url", "");
+    const chat = new CheckboxSetting("Assistant", "Actions", "assistant.allow_actions", false);
+    await settingsRegistry.fetchAll();
+    assert.equal(s.value, "mine");
+    assert.equal(s.isPersonal, true);
+    assert.equal(cam.isMachine, true);
+    assert.equal(chat.isMachine, true);
+    assert.equal(s.isMachine, false);
+
+    // a user's reset brings back the admin's value, not the default
+    await s.reset();
+    assert.equal(s.value, "admin");
+    assert.equal(s.isPersonal, false);
+  } finally {
+    SettingsService.listSettings = original;
+    SettingsService.resetSetting = async (key: string) => {
+      delete stored[key];
+    };
+  }
+});
+
+test("refetch reloads after a login change", async () => {
+  new CheckboxSetting("Machine", "A", "machine.a", false);
+  await settingsRegistry.fetchAll();
+  await settingsRegistry.refetch();
+  assert.equal(listCalls, 2);
+});

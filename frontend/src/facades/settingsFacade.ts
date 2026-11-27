@@ -22,11 +22,28 @@ export interface SettingWrite {
   value?: unknown;
 }
 
-/** Every stored setting, in one request. Throws on transport failure. */
-async function listAll(): Promise<Record<string, unknown>> {
+export interface SettingsListing {
+  values: Record<string, unknown>;
+  /** Keys the caller set for themselves (a user); the rest are the admin's. */
+  personal: string[];
+  /** Machine-wide keys (exact, or a namespace ending in "."): only an admin changes them. */
+  machineKeys: string[];
+}
+
+/** Every stored setting for this login, in one request. Throws on transport failure. */
+async function listDetailed(): Promise<SettingsListing> {
   const response = await SettingsService.listSettings();
   const values = response?.values;
-  return values && typeof values === "object" ? (values as Record<string, unknown>) : {};
+  return {
+    values: values && typeof values === "object" ? (values as Record<string, unknown>) : {},
+    personal: Array.isArray(response?.personal) ? response.personal : [],
+    machineKeys: Array.isArray(response?.machine_keys) ? response.machine_keys : [],
+  };
+}
+
+/** Every stored setting, in one request. Throws on transport failure. */
+async function listAll(): Promise<Record<string, unknown>> {
+  return (await listDetailed()).values;
 }
 
 /** Fresh read of one key (critical settings). Throws on anything but 404. */
@@ -62,6 +79,6 @@ async function reset(key: string): Promise<CommandResult> {
   }
 }
 
-export const settingsFacade = Object.freeze({ listAll, read, write, reset });
+export const settingsFacade = Object.freeze({ listAll, listDetailed, read, write, reset });
 
 export default settingsFacade;

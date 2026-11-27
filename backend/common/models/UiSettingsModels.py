@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -7,6 +7,10 @@ class UiSettingsListResponse(BaseModel):
     """Every stored UI setting. Keys that were never written are absent —
     the frontend falls back to each setting's own default."""
     values: Dict[str, Any] = Field(default_factory=dict, description="Stored settings keyed by setting key.")
+    personal: List[str] = Field(default_factory=list,
+                                description="Keys the caller set for themselves (the rest are the admin's).")
+    machine_keys: List[str] = Field(default_factory=list,
+                                    description="Machine-wide keys: only an admin changes them, for everyone.")
 
 
 class UiSettingValue(BaseModel):

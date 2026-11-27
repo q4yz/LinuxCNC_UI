@@ -14,12 +14,18 @@
 //   * ``critical`` settings never hydrate from the cache — they are read
 //     fresh via ``setting.load()`` (see BaseSetting).
 //   * ``categories`` — settings grouped for the generated Settings view.
+//   * Per-login values: the admin's values are the shared set, everyone
+//     else (viewers, the agent) sees them; a user's own overrides come on
+//     top. ``personal`` lists the keys the caller set for themselves,
+//     ``machineKeys`` the machine-wide keys only an admin changes. A login
+//     or logout (``onTokenChange``) refetches.
 
 import { computed, ref, shallowReactive } from "vue";
 import type { BaseSetting } from "./BaseSetting";
 import { settingsFacade } from "../../facades/settingsFacade";
 import { describeError } from "../../core/error-format";
 import { settingsLog } from "./settingsLog";
+import { onTokenChange } from "../../core/authToken";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySetting = BaseSetting<any>;
@@ -28,6 +34,12 @@ const settings = shallowReactive(new Map<string, AnySetting>());
 let rawCache: Record<string, unknown> | null = null;
 let fetchPromise: Promise<boolean> | null = null;
 const fetched = ref(false);
+const personal = ref<ReadonlySet<string>>(new Set());
+const machineKeys = ref<readonly string[]>([]);
+
+function isMachineKey(key: string): boolean {
+  return machineKeys.value.some((k) => (k.endsWith(".") ? key.startsWith(k) : key === k));
+}
 
 function hydrateFromCache(setting: AnySetting): void {
   if (rawCache === null || setting.critical) return;
@@ -51,7 +63,10 @@ function fetchAll(): Promise<boolean> {
   if (fetchPromise) return fetchPromise;
   fetchPromise = (async () => {
     try {
-      rawCache = await settingsFacade.listAll();
+      const listing = await settingsFacade.listDetailed();
+      rawCache = listing.values;
+      personal.value = new Set(listing.personal);
+      machineKeys.value = listing.machineKeys;
       settings.forEach(hydrateFromCache);
       fetched.value = true;
       settingsLog("debug", `Settings: loaded ${Object.keys(rawCache).length} stored value(s), ${settings.size} setting(s) defined`);
@@ -65,6 +80,20 @@ function fetchAll(): Promise<boolean> {
   })();
   return fetchPromise;
 }
+
+/** Forget the session cache and load again (login/logout, a user's reset). */
+async function refetch(): Promise<boolean> {
+  if (fetchPromise) await fetchPromise.catch(() => undefined);
+  fetchPromise = null;
+  const ok = await fetchAll();
+  // Critical settings never hydrate from the cache: re-read them too.
+  if (ok) await Promise.all([...settings.values()].filter((s) => s.critical && s.isLoaded).map((s) => s.load()));
+  return ok;
+}
+
+onTokenChange(() => {
+  void refetch();
+});
 
 const categories = computed(() => {
   const groups: Record<string, AnySetting[]> = {};
@@ -80,8 +109,13 @@ const categories = computed(() => {
 export const settingsRegistry = Object.freeze({
   register,
   fetchAll,
+  refetch,
   categories,
   fetched,
+  /** The caller set this key for themselves (a user's own value). */
+  isPersonal: (key: string): boolean => personal.value.has(key),
+  /** Machine-wide: read by the backends, only an admin changes it. */
+  isMachineKey,
   get: (key: string): AnySetting | undefined => settings.get(key),
   all: (): AnySetting[] => [...settings.values()],
   /** Test-only: forget every setting and the cache. */
@@ -90,6 +124,8 @@ export const settingsRegistry = Object.freeze({
     rawCache = null;
     fetchPromise = null;
     fetched.value = false;
+    personal.value = new Set();
+    machineKeys.value = [];
   },
 });
 

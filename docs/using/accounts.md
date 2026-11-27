@@ -35,6 +35,22 @@ lose the admin role or be deleted.
 The accounts live in `backend/data/users.db` (SQLite; passwords are stored as scrypt hashes).
 Locked out? Stop the backends and delete `users.db`: it starts again with only `remora` / `remora`.
 
+## Settings per login
+
+The **admin's** settings are the shared set. Viewers (no login) and the
+assistant agent always see that set.
+
+A **user** starts from the admin's values. What they change is their own:
+it is stored for them in the user database (`backend/data/users.db`), and
+the others still see the admin's value. Such a setting shows a **yours**
+tag, and **use the admin's** drops the user's own value again. Deleting a
+user deletes their settings.
+
+Some settings are machine-wide, because the backends read them: the
+camera URL and default device, the assistant settings (`assistant.*`) and
+the slicer settings (`slicer.*`). Only an admin changes those; a user sees
+them greyed out with "Set by the admin for everyone".
+
 ## Slicer upload
 
 A slicer's *Send to printer* (OctoPrint upload) needs an account that may write files. In the

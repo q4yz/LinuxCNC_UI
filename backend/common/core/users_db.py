@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import hmac
 import os
 import re
@@ -42,6 +43,15 @@ DEFAULT_USER = ("remora", "remora", "admin")
 
 # scrypt cost: ~16 MiB, well under a second on a Raspberry Pi
 _N, _R, _P = 2**14, 8, 1
+
+_SETTINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS user_settings (
+    name TEXT NOT NULL COLLATE NOCASE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (name, key)
+)
+"""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -116,6 +126,7 @@ class UserStore:
         if not self._ready:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(_SCHEMA)
+            conn.execute(_SETTINGS_SCHEMA)
             if conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None:
                 name, password, role = DEFAULT_USER
                 # OR IGNORE: both backends may start on an empty database together
@@ -205,6 +216,27 @@ class UserStore:
         if account.role == "admin" and self._admins() <= 1:
             raise UserError("The last admin cannot be deleted")
         self._query("DELETE FROM users WHERE name = ?", (name,))
+        self._query("DELETE FROM user_settings WHERE name = ?", (name,))
+
+    # -- personal UI settings (services.UiSettingsService) --------------- #
+
+    def settings(self, name: str) -> dict[str, object]:
+        """The account's own settings (JSON values), ``{}`` without any."""
+        rows = self._query("SELECT key, value FROM user_settings WHERE name = ?", (name,))
+        out: dict[str, object] = {}
+        for key, value in rows:
+            try:
+                out[str(key)] = json.loads(str(value))
+            except ValueError:
+                continue
+        return out
+
+    def set_setting(self, name: str, key: str, value: object) -> None:
+        self._query("INSERT OR REPLACE INTO user_settings (name, key, value) VALUES (?, ?, ?)",
+                    (name, key, json.dumps(value)))
+
+    def delete_setting(self, name: str, key: str) -> None:
+        self._query("DELETE FROM user_settings WHERE name = ? AND key = ?", (name, key))
 
     def _require(self, name: str) -> Account:
         account = self.get(name)

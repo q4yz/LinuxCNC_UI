@@ -20,14 +20,14 @@ def client(tmp_path):
 
 
 def test_list_is_empty_until_something_is_written(client):
-    assert client.get("/api/v1/settings").json() == {"values": {}}
+    assert client.get("/api/v1/settings").json()["values"] == {}
 
 
 def test_write_echoes_the_stored_value_and_list_returns_it(client):
     resp = client.put("/api/v1/settings/temperature.unit", json={"value": "kelvin"})
     assert resp.status_code == 200
     assert resp.json() == {"key": "temperature.unit", "value": "kelvin"}
-    assert client.get("/api/v1/settings").json() == {"values": {"temperature.unit": "kelvin"}}
+    assert client.get("/api/v1/settings").json()["values"] == {"temperature.unit": "kelvin"}
 
 
 def test_read_one_is_404_until_set(client):
