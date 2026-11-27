@@ -285,3 +285,16 @@ def test_pressure_advance_conversion():
     lines = convert("M900 K0.05\nM900\nSET_PRESSURE_ADVANCE ADVANCE=0.04 SMOOTH_TIME=0.04\nM2\n").text.splitlines()
     assert lines[0] == "M186 P0.05" and lines[1].startswith("; M900") and lines[2] == "M186 P0.04"
     assert convert_mdi("M900 K0.03") == "M186 P0.03"
+
+
+def test_tool_changes_become_m640_with_a_filament_unit():
+    text = "G1 X1 E1\nT1 ; color 2\nG1 X2 E1\nACE_CHANGE_TOOL TOOL=3\nT7\nT0\n"
+    result = convert(text, tool_slots=4)
+    lines = result.text.splitlines()
+    assert "M640 P1  ; color 2" in lines and "M640 P3" in lines and "M640 P0" in lines
+    assert any(line.startswith("; T7") and "no slot 7" in line for line in lines)
+    assert lines[0].startswith("G92.1")  # M640 sets A with G92: an earlier print's offset is cleared
+    # without a filament unit a T<n> stays commented out
+    plain = convert(text).text.splitlines()
+    assert not any(line.startswith("M640") for line in plain)
+    assert any(line.startswith("; T1") for line in plain)

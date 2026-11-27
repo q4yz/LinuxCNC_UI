@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Icon } from "../ui/index.ts";
 import { useMachineOnline } from "../composables/useMachineOnline.ts";
 import { useCalibrationDue } from "../composables/useCalibrationDue.ts";
+import AccountMenu from "./account/AccountMenu.vue";
 
 const route = useRoute()
 const router = useRouter()
@@ -100,5 +101,8 @@ startPolling();
         <span v-if="!isCollapsed" class="ml-3 font-medium tracking-wide whitespace-nowrap">{{ item.label }}</span>
       </button>
     </nav>
+
+    <!-- Who is logged in (#131): log in / out, the admin setup -->
+    <AccountMenu :collapsed="isCollapsed" />
   </aside>
 </template>

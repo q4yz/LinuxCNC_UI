@@ -168,7 +168,7 @@ def test_the_agent_cannot_approve_itself():
 
     for key in [k for k in SYSTEM_ROUTES if k[1].startswith("/api/v1/agent/confirmations")]:
         assert level("agent", SYSTEM_ROUTES[key]) is Level.DENY
-        assert level("operator", SYSTEM_ROUTES[key]) is Level.ALLOW
+        assert level("user", SYSTEM_ROUTES[key]) is Level.ALLOW
 
 
 def test_a_backend_that_is_down_has_no_tools():
@@ -185,15 +185,15 @@ def test_a_backend_that_is_down_has_no_tools():
 def test_the_agent_token_marks_the_agent(monkeypatch):
     from starlette.requests import HTTPConnection
 
-    from core.auth import AGENT, LOCAL_ADMIN, current_user
+    from core.auth import AGENT, GUEST, current_user
 
     def conn(header: str | None) -> HTTPConnection:
         headers = [(b"authorization", header.encode())] if header else []
         return HTTPConnection({"type": "http", "headers": headers})
 
     assert current_user(conn("Bearer test-token")) == AGENT
-    assert current_user(conn("Bearer nope")) == LOCAL_ADMIN
-    assert current_user(conn(None)) == LOCAL_ADMIN
+    assert current_user(conn("Bearer nope")) == GUEST
+    assert current_user(conn(None)) == GUEST
 
 
 def test_the_confirmation_routes():

@@ -12,8 +12,8 @@ One table, three uses:
   routes its role allows, and asks the operator first for the
   ``CONFIRM`` ones.
 
-Users and logins do not exist yet: every caller is the local admin
-(:func:`core.auth.current_user`).
+Who the caller is: :func:`core.auth.current_user` (accounts and
+logins, #131).
 """
 from __future__ import annotations
 
@@ -56,6 +56,8 @@ class Permission(str, Enum):
     AGENT_APPROVE = "agent.approve"
     #: Chat with the in-app assistant.
     AGENT_CHAT = "agent.chat"
+    #: Log in, see who you are, change your own password — everyone.
+    ACCOUNT = "account"
 
 
 class Level(str, Enum):
@@ -68,7 +70,7 @@ class Level(str, Enum):
 P = Permission
 A, C, D = Level.ALLOW, Level.CONFIRM, Level.DENY
 
-_READ = {P.MACHINE_READ, P.CAMERA_VIEW, P.HAL_READ, P.FILES_READ, P.CONFIG_READ, P.MACROS_READ, P.SETTINGS_READ, P.SYSTEM_READ}
+_READ = {P.ACCOUNT, P.MACHINE_READ, P.CAMERA_VIEW, P.HAL_READ, P.FILES_READ, P.CONFIG_READ, P.MACROS_READ, P.SETTINGS_READ, P.SYSTEM_READ}
 _OPERATE = {
     P.MACHINE_ESTOP, P.MACHINE_POWER, P.MACHINE_MOTION, P.PROGRAM_RUN, P.MACHINE_TUNE, P.HEATERS,
     P.OUTPUTS, P.MACROS_RUN, P.CALIBRATION_RUN, P.FILES_WRITE, P.CALIBRATION_MANAGE, P.BEDMESH_MANAGE,
@@ -83,8 +85,9 @@ def _role(allow: set[Permission], confirm: set[Permission] = set()) -> dict[Perm
 ROLES: Mapping[str, Mapping[Permission, Level]] = {
     "admin": _role(set(Permission)),
     #: Runs the machine; does not change its configuration or the system.
-    "operator": _role(_READ | _OPERATE),
-    #: Watches. The E-stop is never withheld from anyone who can see the machine.
+    "user": _role(_READ | _OPERATE),
+    #: Watches (anyone without a login). The E-stop is never withheld from
+    #: anyone who can see the machine.
     "viewer": _role(_READ | {P.MACHINE_ESTOP}),
     #: The assistant: reads freely, may always stop the machine, asks the
     #: operator before anything that moves, heats or changes a print, and
@@ -154,6 +157,14 @@ MACHINE_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("POST", "/api/v1/ztilt/adjust"): P.CALIBRATION_RUN,
     ("PUT", "/api/v1/calibration/{calibration_id}/reminder"): P.CALIBRATION_MANAGE,
     ("DELETE", "/api/v1/calibration/{calibration_id}/values"): P.CALIBRATION_MANAGE,
+    # The ACE Pro: a tool change moves the machine; feeding / drying is the unit
+    ("GET", "/api/v1/ace"): P.MACHINE_READ,
+    ("POST", "/api/v1/ace/change"): P.MACHINE_MOTION,
+    ("POST", "/api/v1/ace/slots/{index}/feed"): P.HEATERS,
+    ("POST", "/api/v1/ace/slots/{index}/unwind"): P.HEATERS,
+    ("POST", "/api/v1/ace/dryer"): P.HEATERS,
+    ("DELETE", "/api/v1/ace/dryer"): P.HEATERS,
+    ("PUT", "/api/v1/ace/current"): P.MACHINE_TUNE,
     ("POST", "/api/v1/modules/program/parse"): P.CONFIG_WRITE,
     ("POST", "/api/v1/modules/mcu/reset"): P.CONFIG_WRITE,
 }
@@ -247,6 +258,15 @@ SYSTEM_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("GET", "/api/v1/agent/chat/{conversation_id}"): P.AGENT_CHAT,
     ("POST", "/api/v1/agent/chat/{conversation_id}/stop"): P.AGENT_CHAT,
     ("DELETE", "/api/v1/agent/chat/{conversation_id}"): P.AGENT_CHAT,
+    # Accounts (#131): logging in is for everyone, managing users for admins
+    ("GET", "/api/v1/auth/me"): P.ACCOUNT,
+    ("POST", "/api/v1/auth/login"): P.ACCOUNT,
+    ("PUT", "/api/v1/auth/password"): P.ACCOUNT,
+    ("POST", "/api/v1/auth/logout-everywhere"): P.ACCOUNT,
+    ("GET", "/api/v1/users"): P.USERS_MANAGE,
+    ("POST", "/api/v1/users"): P.USERS_MANAGE,
+    ("PUT", "/api/v1/users/{name}"): P.USERS_MANAGE,
+    ("DELETE", "/api/v1/users/{name}"): P.USERS_MANAGE,
 }
 
 #: FastAPI's own pages: open (they describe the API, they do nothing).
@@ -290,6 +310,7 @@ _DESCRIPTIONS = {
     P.USERS_MANAGE: "users and roles",
     P.AGENT_APPROVE: "approve or deny the assistant's actions",
     P.AGENT_CHAT: "chat with the in-app assistant",
+    P.ACCOUNT: "log in, own account and password",
 }
 
 

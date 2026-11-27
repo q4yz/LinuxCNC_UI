@@ -9,7 +9,7 @@ For now every web user is **admin** (there are no logins yet).
 
 ## Roles
 
-| Permission | What | admin | operator | viewer | agent |
+| Permission | What | admin | user | viewer | agent |
 |---|---|---|---|---|---|
 | `machine.read` | machine state, positions, temperatures, I/O, progress | yes | yes | yes | yes |
 | `camera.view` | camera images | yes | yes | yes | yes |
@@ -40,6 +40,7 @@ For now every web user is **admin** (there are no logins yet).
 | `users.manage` | users and roles | yes | - | - | - |
 | `agent.approve` | approve or deny the assistant's actions | yes | yes | - | - |
 | `agent.chat` | chat with the in-app assistant | yes | yes | - | - |
+| `account` | log in, own account and password | yes | yes | yes | yes |
 
 ## Routes: machine backend
 
@@ -63,16 +64,22 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/hal/pins/values` | `hal.read` | yes |
 | WS | `/ws/hal-scope` | `hal.read` | yes |
 | PUT | `/api/v1/hal/layout` | `hal.write` | - |
+| DELETE | `/api/v1/ace/dryer` | `heaters.control` | confirm |
+| POST | `/api/v1/ace/dryer` | `heaters.control` | confirm |
+| POST | `/api/v1/ace/slots/{index}/feed` | `heaters.control` | confirm |
+| POST | `/api/v1/ace/slots/{index}/unwind` | `heaters.control` | confirm |
 | POST | `/api/v1/modules/temperature/sensors/{name}/target` | `heaters.control` | confirm |
 | POST | `/api/v1/modules/tools/extruder` | `heaters.control` | confirm |
 | POST | `/api/v1/modules/tools/spindle` | `heaters.control` | confirm |
 | POST | `/api/v1/modules/tools/tools/{tool_id}/target` | `heaters.control` | confirm |
 | POST | `/api/v1/modules/machine_state/estop/activate` | `machine.estop` | yes |
+| POST | `/api/v1/ace/change` | `machine.motion` | confirm |
 | POST | `/api/v1/modules/axis/home` | `machine.motion` | confirm |
 | POST | `/api/v1/modules/machine_state/mdi` | `machine.motion` | confirm |
 | POST | `/api/v1/modules/machine_state/mode` | `machine.power` | confirm |
 | POST | `/api/v1/modules/machine_state/state` | `machine.power` | confirm |
 | GET | `/` | `machine.read` | yes |
+| GET | `/api/v1/ace` | `machine.read` | yes |
 | GET | `/api/v1/base-thread/snapshot` | `machine.read` | yes |
 | GET | `/api/v1/bedmesh/calibrate` | `machine.read` | yes |
 | GET | `/api/v1/bedmesh/enable` | `machine.read` | yes |
@@ -86,6 +93,7 @@ For now every web user is **admin** (there are no logins yet).
 | GET | `/api/v1/ztilt/status` | `machine.read` | yes |
 | GET | `/ws/_schema/telemetry` | `machine.read` | yes |
 | WS | `/ws/telemetry` | `machine.read` | yes |
+| PUT | `/api/v1/ace/current` | `machine.tune` | confirm |
 | PUT | `/api/v1/bedmesh/enable` | `machine.tune` | confirm |
 | POST | `/api/v1/modules/axis/settings` | `machine.tune` | confirm |
 | PUT | `/api/v1/print-tuning` | `machine.tune` | confirm |
@@ -105,6 +113,10 @@ For now every web user is **admin** (there are no logins yet).
 
 | Method | Path | Permission | agent |
 |---|---|---|---|
+| POST | `/api/v1/auth/login` | `account` | yes |
+| POST | `/api/v1/auth/logout-everywhere` | `account` | yes |
+| GET | `/api/v1/auth/me` | `account` | yes |
+| PUT | `/api/v1/auth/password` | `account` | yes |
 | GET | `/api/v1/agent/confirmations` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/approve` | `agent.approve` | - |
 | POST | `/api/v1/agent/confirmations/{confirmation_id}/deny` | `agent.approve` | - |
@@ -185,3 +197,7 @@ For now every web user is **admin** (there are no logins yet).
 | GET | `/api/v1/system/version` | `system.read` | yes |
 | GET | `/api/version` | `system.read` | yes |
 | POST | `/api/v1/system/update` | `system.update` | - |
+| GET | `/api/v1/users` | `users.manage` | - |
+| POST | `/api/v1/users` | `users.manage` | - |
+| DELETE | `/api/v1/users/{name}` | `users.manage` | - |
+| PUT | `/api/v1/users/{name}` | `users.manage` | - |

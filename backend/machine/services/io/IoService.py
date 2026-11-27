@@ -57,6 +57,17 @@ class IoService(HalPinService):
 
     # -- queries ---------------------------------------------------------- #
 
+    def input_value(self, pin_id: str) -> bool | None:
+        """An ``[input_pin]``'s reading (``None``: no such input, or unreadable)."""
+        pin = next((i for i in self._pins.inputs if i.id == pin_id), None)
+        if pin is None:
+            return None
+        try:
+            value = pin.pin.get_value()
+        except Exception:  # noqa: BLE001 - HAL gone
+            return None
+        return None if value is None else bool(value)
+
     def state(self) -> IoStateDTO:
         return IoMapper.to_state_dto(self._pins, get_fans_service().get_halpins())
 

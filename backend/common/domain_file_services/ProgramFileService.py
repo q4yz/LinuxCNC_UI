@@ -95,8 +95,10 @@ class ProgramFileService(FileService):
         names = list(macro_names) if macro_names is not None else self._macro_names()
         payload = self._machine_payload()
         retraction = HardwareRecords.firmware_retraction(payload) if payload else None
+        # an ACE Pro (4 slots): the slicer's T<n> become M640 P<n> tool changes
+        tool_slots = 4 if payload and HardwareRecords.ace(payload) is not None else None
         result = convert(data.decode("utf-8", errors="replace"), names, self._led_names(payload),
-                         self._part_fans(payload), retraction)
+                         self._part_fans(payload), retraction, tool_slots)
         stored = ngc_name(filename)
         target = self.safe_join(stored)
         if target.exists() and self._is_path_read_only(target):

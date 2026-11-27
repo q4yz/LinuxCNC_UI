@@ -496,6 +496,50 @@ class FilamentChange:
     purge_speed: float = 2.0
 
 
+#: Where udev puts the ACE Pro's USB serial port.
+ACE_DEFAULT_SERIAL = "/dev/serial/by-id/usb-ANYCUBIC_ACE_1-if00"
+
+
+@dataclass(slots=True)
+class Ace:
+    """``[ace]`` — an Anycubic ACE Pro filament unit (mm, mm/s, s; positions
+    in machine coordinates). The backend drives the unit; the tool change
+    (``M640 P<slot>``, ``ace_change.ngc``) parks, cuts, hands over, purges.
+
+    ``toolhead_sensor`` (required) / ``hub_sensor``: ``[input_pin]`` names —
+    a filament switch before the extruder gears, one at the unit's outlet.
+    ``bowden_length``: unit outlet to the toolhead sensor; the last
+    ``approach_length`` of it is fed slowly until the sensor triggers.
+    ``unload_length`` (default ``bowden_length`` + 50) is wound back after
+    the cut. No ``cutter_*`` positions: no cut (tip forming is not done).
+    ``park_x`` / ``park_y`` default to the X / Y minimum (the purge spot).
+    """
+
+    toolhead_sensor: str = ""
+    hub_sensor: str | None = None
+    serial: str = ACE_DEFAULT_SERIAL
+    bowden_length: float = 1000.0
+    feed_speed: float = 25.0
+    retract_speed: float = 25.0
+    approach_length: float = 100.0
+    approach_speed: float = 10.0
+    unload_length: float | None = None
+    timeout: float = 180.0
+    park_x: float | None = None
+    park_y: float | None = None
+    z_lift: float = 5.0
+    cutter_start_x: float | None = None
+    cutter_start_y: float | None = None
+    cutter_end_x: float | None = None
+    cutter_end_y: float | None = None
+    cutter_speed: float = 50.0
+    cut_retract: float = 30.0
+    sensor_to_nozzle: float = 60.0
+    load_speed: float = 5.0
+    purge_length: float = 40.0
+    purge_speed: float = 3.0
+
+
 @dataclass(slots=True)
 class BedMesh:
     """The machine's bed mesh (`.agent/component/bed_mesh.md`).
@@ -675,6 +719,7 @@ class MachineConfigGraph:
     skew_xy_factor: float | None = None
     adxl345: Adxl345 | None = None
     filament_change: FilamentChange | None = None
+    ace: Ace | None = None
     # ``None`` without ``[homing_override]``: plain HOME_SEQUENCE homing.
     homing_override: HomingOverride | None = None
     # ``None`` without ``[z_tilt]``.

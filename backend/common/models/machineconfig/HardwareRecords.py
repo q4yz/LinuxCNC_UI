@@ -27,6 +27,7 @@ from models.machineconfig.HardwareJsonModels import (
     Estop,
     Fan,
     FilamentChange,
+    Ace,
     FirmwareRetraction,
     HomingOverride,
     InputPin,
@@ -136,6 +137,10 @@ class HardwareRecords:
     @staticmethod
     def filament_change(payload: Mapping[str, Any]) -> FilamentChange | None:
         return HardwareRecords.one(payload, "filament_change", FilamentChange)
+
+    @staticmethod
+    def ace(payload: Mapping[str, Any]) -> Ace | None:
+        return HardwareRecords.one(payload, "ace", Ace)
 
     @staticmethod
     def homing_override(payload: Mapping[str, Any]) -> HomingOverride | None:

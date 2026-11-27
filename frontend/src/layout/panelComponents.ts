@@ -9,6 +9,7 @@ import CameraViewer from "../components/camera/CameraViewer.vue";
 import TemperaturePanel from "../components/temperature/TemperaturePanel.vue";
 import IoPanel from "../components/io/IoPanel.vue";
 import LedPanel from "../components/io/LedPanel.vue";
+import AcePanel from "../components/filament/AcePanel.vue";
 import DroPanel from "../components/machine/DroPanel.vue";
 import JogControls from "../components/machine/JogControls.vue";
 import AxisSpeedControl from "../components/machine/AxisSpeedControl.vue";
@@ -27,6 +28,7 @@ export const PANEL_COMPONENTS: Record<string, Component> = {
   temperature: TemperaturePanel,
   io: IoPanel,
   leds: LedPanel,
+  ace: AcePanel,
   job: ActivePrintWidget,
   axis_speed: AxisSpeedControl,
   console: ConsolePanel,

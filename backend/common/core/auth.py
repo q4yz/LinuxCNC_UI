@@ -6,12 +6,15 @@ the route's permission in :mod:`core.permissions` and refuses the call
 (the agent's machine actions) passes only with the operator's approval
 of that exact request (:mod:`core.agent_approval`).
 
-There are no logins yet: :func:`current_user` returns the local admin
-for every request, except the MCP server's calls for the agent (the
-agent token). Logins replace that function only.
+Who calls (:func:`current_user`, #131): the agent with the agent
+token; an account with its session token (:mod:`core.session_token`,
+accounts in :mod:`core.users_db`, which starts with the default admin
+``remora`` / ``remora``); anyone else is a viewer.
 """
 from __future__ import annotations
 
+import logging
+import sqlite3
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, NoReturn
 
@@ -27,22 +30,52 @@ class User:
     role: str
 
 
-#: Every caller, until there are logins.
+logger = logging.getLogger("core.auth")
+
+#: An admin caller (tests, in-process callers).
 LOCAL_ADMIN = User(name="local", role="admin")
 #: The assistant, calling through the MCP server (``core.agent_token``).
 AGENT = User(name="agent", role="agent")
+#: Anyone without (a valid) login once accounts exist.
+GUEST = User(name="guest", role="viewer")
+
+#: WebSockets cannot send headers from a browser: the token comes as a
+#: query parameter there (only there — URLs end up in logs).
+WS_TOKEN_PARAM = "access_token"
+
+
+def presented_token(connection: HTTPConnection) -> str:
+    """The credential the caller sent: ``Authorization: Bearer``, the
+    ``X-Api-Key`` header (slicers' OctoPrint upload), or on a WebSocket
+    the ``access_token`` query parameter."""
+    scheme, _, token = connection.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        return token.strip()
+    api_key = connection.headers.get("x-api-key", "").strip()
+    if api_key:
+        return api_key
+    if connection.scope.get("type") == "websocket":
+        return connection.query_params.get(WS_TOKEN_PARAM, "").strip()
+    return ""
 
 
 def current_user(connection: HTTPConnection) -> User:
-    """Who is calling: the agent when it presents the agent token,
-    otherwise (no logins yet) the local admin."""
-    scheme, _, token = connection.headers.get("authorization", "").partition(" ")
-    if scheme.lower() == "bearer" and token:
-        from core.agent_token import is_agent_token
+    """Who is calling: the agent (agent token), an account (session
+    token), else a viewer."""
+    from core.agent_token import is_agent_token
+    from core.session_token import verify
+    from core.users_db import get_user_store
 
-        if is_agent_token(token.strip()):
-            return AGENT
-    return LOCAL_ADMIN
+    token = presented_token(connection)
+    if token and is_agent_token(token):
+        return AGENT
+    store = get_user_store()
+    try:
+        account = verify(token, store) if token else None
+    except sqlite3.Error as exc:
+        logger.error("user database unreadable (%s): treating the caller as a viewer", exc)
+        return GUEST
+    return User(name=account.name, role=account.role) if account is not None else GUEST
 
 
 def route_key(connection: HTTPConnection) -> tuple[str, str] | None:
@@ -119,4 +152,4 @@ def annotate_openapi(app: object, routes: Mapping[tuple[str, str], Permission]) 
             route.openapi_extra = {**(route.openapi_extra or {}), **extra}
 
 
-__all__ = ["AGENT", "LOCAL_ADMIN", "User", "annotate_openapi", "current_user", "make_authorize", "route_key"]
+__all__ = ["AGENT", "GUEST", "LOCAL_ADMIN", "WS_TOKEN_PARAM", "User", "presented_token", "annotate_openapi", "current_user", "make_authorize", "route_key"]

@@ -85,10 +85,10 @@ def test_roles_are_complete_and_ordered():
     for role in ROLES.values():
         assert set(role) == set(Permission)
     for p in Permission:
-        # nobody below admin has something admin lacks; viewer <= operator
+        # nobody below admin has something admin lacks; viewer <= user
         assert level("admin", p) is Level.ALLOW
         if level("viewer", p) is Level.ALLOW:
-            assert level("operator", p) is Level.ALLOW
+            assert level("user", p) is Level.ALLOW
     assert all(level(r, Permission.MACHINE_ESTOP) is Level.ALLOW for r in ROLES), "E-stop for everyone"
 
 
@@ -148,11 +148,74 @@ def _client(role: str, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
-def test_everyone_is_admin_for_now():
+@pytest.fixture
+def users(tmp_path):
+    from core.users_db import UserStore, set_user_store
+
+    store = UserStore(tmp_path / "users.db")
+    set_user_store(store)
+    yield store
+    set_user_store(None)
+
+
+def _conn(headers: dict[str, str] | None = None, *, ws_token: str = ""):
     from starlette.requests import HTTPConnection
 
-    anyone = HTTPConnection({"type": "http", "headers": []})
-    assert auth.current_user(anyone) == auth.LOCAL_ADMIN  # only the agent token makes the agent
+    raw = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    if ws_token:
+        return HTTPConnection({"type": "websocket", "headers": raw, "query_string": f"access_token={ws_token}".encode()})
+    return HTTPConnection({"type": "http", "headers": raw, "query_string": b""})
+
+
+def test_a_fresh_database_has_the_default_admin(users):
+    from core.users_db import DEFAULT_USER
+
+    assert DEFAULT_USER == ("remora", "remora", "admin")
+    account = users.authenticate("remora", "remora")
+    assert account is not None and account.role == "admin"
+    assert users.uses_default_password("remora")
+    users.set_password("remora", "better")
+    assert not users.uses_default_password("remora")
+    # without a login: a viewer — there is no open mode
+    assert auth.current_user(_conn()) == auth.GUEST
+
+
+def test_a_login_decides_and_the_rest_watch(users):
+    from core.session_token import issue
+
+    admin = users.create("boss", "secret1", "admin")
+    worker = users.create("worker", "secret2", "user")
+    assert auth.current_user(_conn()) == auth.GUEST
+    assert auth.current_user(_conn({"Authorization": "Bearer junk"})) == auth.GUEST
+    assert auth.current_user(_conn({"Authorization": f"Bearer {issue(admin)}"})) == auth.User("boss", "admin")
+    # slicers send the token as X-Api-Key, browsers' WebSockets as a query parameter
+    assert auth.current_user(_conn({"X-Api-Key": issue(worker)})).role == "user"
+    assert auth.current_user(_conn(ws_token=issue(worker))).role == "user"
+    # a role change applies at once; a password change ends the old token
+    token = issue(worker)
+    users.set_role("worker", "viewer")
+    assert auth.current_user(_conn({"Authorization": f"Bearer {token}"})).role == "viewer"
+    users.set_password("worker", "secret3")
+    assert auth.current_user(_conn({"Authorization": f"Bearer {token}"})) == auth.GUEST
+    # a token signed with another key is refused
+    forged = token.rsplit(".", 1)[0] + ".AAAA"
+    assert auth.current_user(_conn({"Authorization": f"Bearer {forged}"})) == auth.GUEST
+
+
+def test_the_last_admin_stays(users):
+    from core.users_db import UserError
+
+    # remora is the only admin of a fresh database
+    with pytest.raises(UserError):
+        users.set_role("remora", "user")
+    with pytest.raises(UserError):
+        users.delete("remora")
+    users.create("boss", "secret1", "admin")
+    users.delete("remora")
+    with pytest.raises(UserError):
+        users.delete("boss")
+    with pytest.raises(UserError):
+        users.create("Boss", "secret1", "user")  # names ignore case
 
 
 @pytest.mark.parametrize(
@@ -160,9 +223,9 @@ def test_everyone_is_admin_for_now():
     [
         ("admin", "/update", 200),
         ("admin", "/unlisted", 200),
-        ("operator", "/mdi", 200),
-        ("operator", "/update", 403),
-        ("operator", "/unlisted", 403),  # fail closed
+        ("user", "/mdi", 200),
+        ("user", "/update", 403),
+        ("user", "/unlisted", 403),  # fail closed
         ("viewer", "/mdi", 403),
         ("agent", "/mdi", 403),  # confirm: refused until the confirmation flow exists
         ("nobody", "/state", 403),

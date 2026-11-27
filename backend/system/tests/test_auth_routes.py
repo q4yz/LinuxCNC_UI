@@ -1,0 +1,81 @@
+"""Accounts and logins over HTTP (#131): the default admin, login, roles, users."""
+from __future__ import annotations
+
+import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+
+from core.auth import make_authorize
+from core.permissions import SYSTEM_ROUTES
+from core.users_db import UserStore, set_user_store
+from routers import auth as auth_router
+
+
+@pytest.fixture
+def client(tmp_path):
+    set_user_store(UserStore(tmp_path / "users.db"))
+    auth_router._failures = auth_router._Failures()
+    app = FastAPI(dependencies=[Depends(make_authorize(SYSTEM_ROUTES))])
+    app.include_router(auth_router.router)
+    yield TestClient(app)
+    set_user_store(None)
+
+
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _login(client, name="remora", password="remora"):
+    return client.post("/api/v1/auth/login", json={"username": name, "password": password}).json()
+
+
+def test_default_admin_login_and_roles(client):
+    # like SSH: the default admin, flagged while its password is the default
+    admin = _login(client)
+    assert admin["user"]["role"] == "admin" and admin["user"]["default_password"] is True
+
+    # without a login: a viewer, who may not manage users
+    me = client.get("/api/v1/auth/me").json()
+    assert me["role"] == "viewer" and me["authenticated"] is False
+    assert me["permissions"]["machine.read"] == "allow" and me["permissions"]["machine.motion"] == "deny"
+    assert client.get("/api/v1/users").status_code == 403
+
+    # the admin adds a user, who logs in
+    headers = _bearer(admin["token"])
+    created = client.post("/api/v1/users", json={"username": "worker", "password": "secret2", "role": "user"},
+                          headers=headers)
+    assert created.status_code == 201
+    login = client.post("/api/v1/auth/login", json={"username": "worker", "password": "secret2"}).json()
+    assert client.get("/api/v1/auth/me", headers=_bearer(login["token"])).json()["role"] == "user"
+    assert client.get("/api/v1/users", headers=_bearer(login["token"])).status_code == 403
+
+    listed = client.get("/api/v1/users", headers=headers).json()
+    assert [u["name"] for u in listed["users"]] == ["remora", "worker"]
+    assert listed["roles"] == ["admin", "user", "viewer"]
+
+    # the last admin stays an admin
+    assert client.put("/api/v1/users/remora", json={"role": "user"}, headers=headers).status_code == 400
+    assert client.delete("/api/v1/users/worker", headers=headers).status_code == 204
+    assert client.get("/api/v1/auth/me", headers=_bearer(login["token"])).json()["role"] == "viewer"
+
+
+def test_wrong_passwords_get_slow(client):
+    for _ in range(auth_router.MAX_FAILURES):
+        assert client.post("/api/v1/auth/login", json={"username": "remora", "password": "nope"}).status_code == 401
+    # even the right password waits now
+    assert client.post("/api/v1/auth/login", json={"username": "remora", "password": "remora"}).status_code == 429
+
+
+def test_change_password_ends_other_sessions(client):
+    first = _login(client)["token"]
+    second = _login(client)["token"]
+    wrong = client.put("/api/v1/auth/password", json={"current_password": "bad", "new_password": "secret9"},
+                       headers=_bearer(first))
+    assert wrong.status_code == 400
+    changed = client.put("/api/v1/auth/password", json={"current_password": "remora", "new_password": "secret9"},
+                         headers=_bearer(first)).json()
+    assert changed["user"]["default_password"] is False
+    assert client.get("/api/v1/auth/me", headers=_bearer(second)).json()["role"] == "viewer"
+    assert client.get("/api/v1/auth/me", headers=_bearer(changed["token"])).json()["role"] == "admin"
+    # a viewer has no account to change
+    assert client.put("/api/v1/auth/password", json={"current_password": "a", "new_password": "bbbb"}).status_code == 401

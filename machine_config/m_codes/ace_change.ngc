@@ -1,0 +1,78 @@
+; ace_change.ngc - M640 P<slot>, ACE Pro filament change (REMAP=M640 in
+; machine.ini; the values in [ACE], from the profile's [ace]). The slicer's
+; T<n> becomes M640 P<n>; P-1 unloads only.
+;   lift Z, cut (cutter_* positions) and pull the stub out of the gears,
+;   park, hand over to the machine backend (it unwinds the old slot and
+;   feeds the new one up to the toolhead sensor), then push to the nozzle,
+;   purge, go back. A failed hand-over pauses: fix it, Resume tries again.
+; The hand-over (core/ace_contract.py): slot on analog out SLOT_OUTPUT,
+; request on digital out REQUEST_OUTPUT, wait for DONE_INPUT, ERROR_INPUT
+; set with it = failed.
+o<ace_change> sub
+#<slot> = #<p>
+M66 E0 L0                            ; no read-ahead: the loaded slot is read now
+#<current> = #<_hal[webgui.ace-current]>
+o<same> if [#<slot> EQ #<current>]
+  o<ace_change> return               ; already loaded
+o<same> endif
+M70                                  ; save G90/G91, feed, ... (M72 restores)
+#<x> = #<_x>
+#<y> = #<_y>
+#<z> = #<_z>
+#<a> = #<_a>
+#<feed> = #<_feed>
+G91
+G1 A-2 F1800                         ; retract
+G0 Z#<_ini[ACE]Z_LIFT>
+G90
+o<unload> if [#<current> NE -1]
+  o<cut> if [#<_ini[ACE]CUTTER> GT 0]
+    G53 G0 X#<_ini[ACE]CUTTER_START_X> Y#<_ini[ACE]CUTTER_START_Y>
+    G53 G1 X#<_ini[ACE]CUTTER_END_X> Y#<_ini[ACE]CUTTER_END_Y> F[#<_ini[ACE]CUTTER_SPEED> * 60]
+    G53 G0 X#<_ini[ACE]CUTTER_START_X> Y#<_ini[ACE]CUTTER_START_Y>
+    G91
+    G1 A[0 - #<_ini[ACE]CUT_RETRACT>] F[#<_ini[ACE]LOAD_SPEED> * 60]   ; the stub out of the gears
+    G90
+  o<cut> else
+    ; no cutter: pull the whole filament back past the gears (needs a clean tip)
+    G91
+    G1 A[0 - #<_ini[ACE]SENSOR_TO_NOZZLE> - #<_ini[ACE]CUT_RETRACT>] F[#<_ini[ACE]LOAD_SPEED> * 60]
+    G90
+  o<cut> endif
+o<unload> endif
+G53 G0 X#<_ini[ACE]PARK_X> Y#<_ini[ACE]PARK_Y>
+#<done> = 0
+o<try> while [#<done> EQ 0]
+  M68 E#<_ini[ACE]SLOT_OUTPUT> Q#<slot>
+  M64 P#<_ini[ACE]REQUEST_OUTPUT>
+  M66 P#<_ini[ACE]DONE_INPUT> L3 Q#<_ini[ACE]TIMEOUT>
+  #<timed_out> = [#5399 EQ -1]
+  M66 P#<_ini[ACE]ERROR_INPUT> L0
+  #<failed> = #5399
+  M65 P#<_ini[ACE]REQUEST_OUTPUT>
+  o<ok> if [#<timed_out> EQ 0 AND #<failed> EQ 0]
+    #<done> = 1
+  o<ok> else
+    (MSG, ACE filament change failed - see the console. Fix it, then Resume to try again)
+    M0
+  o<ok> endif
+o<try> endwhile
+o<load> if [#<slot> GE 0]
+  G91
+  G1 A#<_ini[ACE]SENSOR_TO_NOZZLE> F[#<_ini[ACE]LOAD_SPEED> * 60]
+  G1 A#<_ini[ACE]PURGE_LENGTH> F[#<_ini[ACE]PURGE_SPEED> * 60]
+  G1 A-2 F1800                       ; retract before the travel back
+  G90
+o<load> endif
+G0 X#<x> Y#<y>
+G0 Z#<z>
+o<back> if [#<slot> GE 0]
+  G91
+  G1 A2 F1800                        ; unretract
+  G90
+o<back> endif
+G92 A#<a>                            ; the program's A again: the change's filament does not count
+F#<feed>
+M72
+o<ace_change> endsub
+M2

@@ -31,6 +31,7 @@ from .components.FanWebguiMapper import FanWebguiMapper
 from .components.HeaterWebguiMapper import HeaterWebguiMapper
 from .components.InputPinHalMapper import InputPinHalMapper
 from .components.InputPinWebguiMapper import InputPinWebguiMapper
+from .components.AceWebguiMapper import AceWebguiMapper
 from .components.JointShapeHalMapper import JointShapeHalMapper
 from .components.JointShapeWebguiMapper import JointShapeWebguiMapper
 from .components.LedWebguiMapper import LedWebguiMapper
@@ -149,6 +150,8 @@ def render_webgui_connections(payload: dict[str, object]) -> str:
     commands = InputPinHalMapper.mdi_commands(input_pins)
     for input_pin in input_pins:
         lines.extend(InputPinWebguiMapper.to_lines(input_pin, commands))
+    if HardwareRecords.ace(payload) is not None:
+        lines.extend(AceWebguiMapper.to_lines())
     if not lines:
         return ""
     return "\n".join(lines).rstrip("\n") + "\n"

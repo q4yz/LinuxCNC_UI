@@ -165,6 +165,10 @@ class StateService(HalPinService):
         LinuxCNC's ``G28`` would move to a stored position instead.
         A Marlin heater / fan code is converted (``M104 S200`` ->
         ``M104 P200``): LinuxCNC runs it as a user M-code, P / Q only."""
+        from services.filament.AceService import get_ace_service
+
+        # an ACE: T<n> / ACE_CHANGE_TOOL TOOL=<n> are tool changes (M640 P<n>)
+        command = get_ace_service().translate_mdi(command)
         if self._ui_command(command):
             return
         from core.gcode_converter import convert_mdi
@@ -187,6 +191,10 @@ class StateService(HalPinService):
         from services.io.LedService import get_led_service
 
         if get_led_service().run_command(command):
+            return True
+        from services.filament.AceService import get_ace_service
+
+        if get_ace_service().run_command(command):
             return True
         from services.motion import LevelingService
         from services.motion.BedMeshProbeService import get_bed_mesh_probe_service, parse_command

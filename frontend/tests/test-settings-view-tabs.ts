@@ -22,7 +22,8 @@ test("tabs come from the registry's categories plus the 3D Viewer tab", () => {
   const text = read(viewPath);
   assert.match(text, /settingsRegistry/);
   assert.match(text, /Object\.keys\(categories\.value\)/);
-  assert.match(text, /\[\.\.\.names, VIEWER_TAB\]/);
+  // plus the Users tab for admins (#131)
+  assert.match(text, /\[\.\.\.names, VIEWER_TAB, \.\.\.\(/);
 });
 
 test("each tab button switches activeTab on click", () => {

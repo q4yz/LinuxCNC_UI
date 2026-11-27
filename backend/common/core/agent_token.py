@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import hmac
 import os
-import secrets
 from functools import lru_cache
-from pathlib import Path
+
+from core.secret_file import DATA_DIR, read_or_create
 
 ENV = "LINUXCNC_UI_AGENT_TOKEN"
-TOKEN_FILE = Path(__file__).resolve().parents[2] / "data" / "agent.token"
+TOKEN_FILE = DATA_DIR / "agent.token"
 
 
 @lru_cache(maxsize=1)
@@ -23,22 +23,7 @@ def agent_token() -> str:
     from_env = os.environ.get(ENV, "").strip()
     if from_env:
         return from_env
-    try:
-        token = TOKEN_FILE.read_text(encoding="utf-8").strip()
-        if token:
-            return token
-    except OSError:
-        pass
-    token = secrets.token_urlsafe(32)
-    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive create: two backends starting together agree on one token.
-    try:
-        fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return TOKEN_FILE.read_text(encoding="utf-8").strip()
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(token)
-    return token
+    return read_or_create(TOKEN_FILE)
 
 
 def is_agent_token(presented: str) -> bool:

@@ -10,3 +10,6 @@
 
 # Resonance tests (ResonanceService: the accelerometer spectrum, shaper fit).
 numpy>=1.24
+
+# The Anycubic ACE Pro filament unit (services/filament/ace: USB serial).
+pyserial>=3.5

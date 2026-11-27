@@ -9,6 +9,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.auth import current_user
+
 from models.ServoThreadStateResponse import WSEnvelope, ServoThreadStateResponse
 from services.machine.ServoThreadService import get_servo_thread_service
 
@@ -39,6 +41,8 @@ async def websocket_telemetry(websocket: WebSocket):
     for real-time machine telemetry and to send jog commands.
     """
     service = get_servo_thread_service()
+    # Who is connected decides which commands it may send (#131).
+    user = current_user(websocket)
     await service.connect(websocket)
 
     try:
@@ -62,7 +66,7 @@ async def websocket_telemetry(websocket: WebSocket):
                 continue
 
             try:
-                await service.dispatch_inbound(websocket, payload)
+                await service.dispatch_inbound(websocket, payload, user)
             except Exception as exc:
                 logger.exception("WS inbound dispatch failed: %s", exc)
 

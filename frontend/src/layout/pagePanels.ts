@@ -58,6 +58,7 @@ export const PANELS: readonly PanelDef[] = Object.freeze([
   { id: "temperature", label: "Temperatures", gate: "Temperature" },
   { id: "io", label: "I/O", gate: "I/O" },
   { id: "leds", label: "LEDs", gate: "LEDs" },
+  { id: "ace", label: "ACE Pro (filament)", gate: "ACE" },
   { id: "job", label: "Job status", gate: "Job status" },
   { id: "axis_speed", label: "Tuning (speed, Z offset, flow)", gate: "Tuning" },
   { id: "console", label: "Console", gate: null },
@@ -106,9 +107,9 @@ export const DEFAULT_LAYOUTS: Readonly<Record<PageId, PageLayout>> = Object.free
     [["machine", "dro", "jog", "probe"], ["job", "console", "camera"], ["tools", "temperature", "io", "leds"], [3, 6, 3]],
   ),
   running: pageLayout(
-    ["job", "axis_speed", "tools"],
-    [["job", "axis_speed"], ["tools"], [7, 5]],
-    [["job"], ["axis_speed"], ["tools"], [4, 4, 4]],
+    ["job", "axis_speed", "tools", "ace"],
+    [["job", "axis_speed"], ["tools", "ace"], [7, 5]],
+    [["job"], ["axis_speed"], ["tools", "ace"], [4, 4, 4]],
   ),
 });
 
