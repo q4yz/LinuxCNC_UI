@@ -5,6 +5,7 @@ import FilesView from '../views/FilesView.vue'
 import CameraViewer from '../components/camera/CameraViewer.vue'
 import JoggingView from "../views/JoggingView.vue";
 import RunningView from "../views/RunningView.vue";
+import { installPermissionGuard } from "./guards/permissionGuard";
 
 // Rarely-opened / heavy views load on demand: keeps the main bundle
 // under the PWA's 2 MiB precache limit per file.
@@ -28,14 +29,16 @@ const BUILTIN_ROUTES = [
   {path: '/editor', name: 'editor', component: EditorView, meta: { label: 'Editor' },},
   {path: '/settings', name: 'settings', component: SettingsView, meta: { label: 'Settings' },},
   {path: '/camera', name: 'camera', component: CameraViewer, meta: { label: 'Camera' },},
-  {path: '/hal-editor', name: 'hal-editor', component: VisualHalEditor, meta: { label: 'HAL Editor' },},
-  {path: '/config', name: 'config', component: ConfigView, meta: { label: 'Config' },},
-  {path: '/debug', name: 'debug', component: DebugView, meta: { label: 'Debug' },},
+  // admins only (meta.permission: router/guards/permissionGuard.ts)
+  {path: '/hal-editor', name: 'hal-editor', component: VisualHalEditor, meta: { label: 'HAL Editor', permission: 'hal.write' },},
+  {path: '/config', name: 'config', component: ConfigView, meta: { label: 'Config', permission: 'config.write' },},
+  {path: '/debug', name: 'debug', component: DebugView, meta: { label: 'Debug', permission: 'hal.write' },},
 ];
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: BUILTIN_ROUTES,
 });
+installPermissionGuard(router);
 
 export default router;

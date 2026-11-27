@@ -5,6 +5,9 @@ import { Icon } from "../ui/index.ts";
 import { useMachineOnline } from "../composables/useMachineOnline.ts";
 import { useCalibrationDue } from "../composables/useCalibrationDue.ts";
 import AccountMenu from "./account/AccountMenu.vue";
+import { mayOpen, routePermission } from "../router/guards/permissionGuard";
+import { useAuthStore } from "../stores/authStore";
+import { watch } from "vue";
 
 const route = useRoute()
 const router = useRouter()
@@ -37,9 +40,21 @@ const builtinItems = [
   { id: 'debug', label: 'Debug', icon: 'debug', order: 6, activeMachineOnly: true  },
 ];
 
-const navItems = computed(() =>
-  [...builtinItems].sort((a, b) => (a.order ?? 100) - (b.order ?? 100)),
-);
+// a tab whose route needs a permission (Config, Debug: admins) is hidden
+// from everyone else (router/guards/permissionGuard.ts)
+const auth = useAuthStore();
+const permissionOf = (id: string) => router.getRoutes().find((r) => r.name === id)?.meta?.permission as string | undefined;
+const navItems = computed(() => {
+  void auth.me; // re-evaluate when the login changes
+  return [...builtinItems]
+    .filter((item) => mayOpen(permissionOf(item.id)))
+    .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+});
+
+// logged out (or demoted) while on such a tab: back to the Dashboard
+watch(() => [auth.me, route.name], () => {
+  if (auth.me !== null && !mayOpen(routePermission(route))) void router.replace({ name: 'dashboard' });
+});
 
 const isCollapsed = ref(false);
 
