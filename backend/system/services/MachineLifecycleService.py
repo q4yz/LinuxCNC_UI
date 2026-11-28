@@ -581,6 +581,11 @@ class MachineLifecycleService:
         # LinuxCNC opens its GUI on the console display; a systemd
         # service has no DISPLAY of its own, so default to :0.
         env.setdefault("DISPLAY", ":0")
+        # The G-code's M-code programs (M104, M106, M190 ...) call the
+        # machine backend with it (core.machine_token).
+        from core.machine_token import ENV as MACHINE_TOKEN_ENV, machine_token
+
+        env[MACHINE_TOKEN_ENV] = machine_token()
 
         _CONSOLE_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:

@@ -96,7 +96,10 @@ async def lifespan(app: FastAPI):
     # The device booted: LinuxCNC comes up too, in E-stop (Settings ->
     # Machine -> "Start LinuxCNC with the device").
     if "pytest" not in sys.modules:
+        from core.machine_token import machine_token
         from services.MachineAutostart import start_in_background
+
+        machine_token()  # the file the M-code programs fall back to exists
 
         start_in_background()
 

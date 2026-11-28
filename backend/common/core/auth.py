@@ -66,9 +66,14 @@ def current_user(connection: HTTPConnection) -> User:
     from core.session_token import verify
     from core.users_db import get_user_store
 
+    from core.machine_token import MACHINE_USER, is_machine_token
+
     token = presented_token(connection)
     if token and is_agent_token(token):
         return AGENT
+    if token and is_machine_token(token):
+        # LinuxCNC's own M-code programs (heaters, fans, LEDs while a print runs)
+        return User(name=MACHINE_USER, role="user")
     store = get_user_store()
     try:
         account = verify(token, store) if token else None

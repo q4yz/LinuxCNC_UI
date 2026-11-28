@@ -57,23 +57,27 @@ def _run_helper(tmp_path, name, *args, payload=None):
     script = f"""
 import json, runpy, sys, urllib.request
 calls = []
+auth = []
 class Resp:
     def read(self): return b""
     def __enter__(self): return self
     def __exit__(self, *a): return False
 def urlopen(req, timeout=0):
     calls.append([req.get_method(), req.full_url, json.loads(req.data)])
+    auth.append(req.get_header("Authorization"))
     return Resp()
 urllib.request.urlopen = urlopen
 sys.argv = [{str(M_CODES / name)!r}, *{list(args)!r}]
 try:
     runpy.run_path(sys.argv[0], run_name="__main__")
 except SystemExit as exc:
-    print(json.dumps({{"code": exc.code, "calls": calls}}))
+    print(json.dumps({{"code": exc.code, "calls": calls, "auth": auth}}))
 """
-    env = {**os.environ, "INI_FILE_NAME": str(tmp_path / "machine.ini")}
+    env = {**os.environ, "INI_FILE_NAME": str(tmp_path / "machine.ini"), "LINUXCNC_UI_MACHINE_TOKEN": "machine-secret"}
     out = subprocess.run([sys.executable, "-I", "-c", script], capture_output=True, text=True, env=env, cwd=tmp_path)
-    return json.loads(out.stdout.strip().splitlines()[-1]), out.stderr
+    result = json.loads(out.stdout.strip().splitlines()[-1])
+    _run_helper.auth = result.pop("auth", [])
+    return result, out.stderr
 
 
 def test_helper_sets_a_heater_target(tmp_path):
@@ -144,3 +148,11 @@ def test_print_tuning_helpers(tmp_path):
     ):
         result, err = _run_helper(tmp_path, name, *args)
         assert result == {"code": 0, "calls": [["PUT", url, body]]}, (name, args, err)
+
+
+def test_helpers_send_linuxcncs_credential(tmp_path):
+    """Since logins an anonymous call is refused: the helper failed and
+    LinuxCNC ended the print at its first M106 (about 1 %)."""
+    result, _ = _run_helper(tmp_path, "M106", "0")
+    assert result["code"] in (0, None)
+    assert _run_helper.auth == ["Bearer machine-secret"]
