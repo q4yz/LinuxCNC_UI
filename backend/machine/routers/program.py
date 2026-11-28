@@ -106,6 +106,28 @@ def run_program(line_number: int = 0):
 
 
 @router.post(
+    "/run_powered",
+    response_model=StatusResponse,
+    operation_id="runProgramPowered",
+    summary="Power on, run, power off when it ends",
+    description=(
+        "Release the E-stop and switch the machine on (when it is not on), start the loaded "
+        "program like /run, and switch the machine off once the job ended (finished, stopped "
+        "or failed). The slicer's 'Upload and print' uses it when Settings -> Slicer allows."
+    ),
+    responses={409: {"description": "The E-stop did not release, or the program cannot start."}},
+)
+def run_program_powered(line_number: int = 0):
+    from services.program.JobPowerService import get_job_power_service
+
+    try:
+        get_job_power_service().run_powered(line_number)
+        return StatusResponse(status="success")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post(
     "/stop",
     response_model=StatusResponse,
     operation_id="stopProgram",

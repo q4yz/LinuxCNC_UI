@@ -93,6 +93,13 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - we WANT every error here
         logger.exception("OpenAPI schema generation failed at startup")
 
+    # The device booted: LinuxCNC comes up too, in E-stop (Settings ->
+    # Machine -> "Start LinuxCNC with the device").
+    if "pytest" not in sys.modules:
+        from services.MachineAutostart import start_in_background
+
+        start_in_background()
+
     # The assistant's MCP server (/mcp): tools from the OpenAPI schemas.
     async with mcp_endpoint.run():
         yield

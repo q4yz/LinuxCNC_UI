@@ -136,6 +136,7 @@ MACHINE_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("POST", "/api/v1/modules/program/load"): P.PROGRAM_RUN,
     ("POST", "/api/v1/modules/program/unload"): P.PROGRAM_RUN,
     ("POST", "/api/v1/modules/program/run"): P.PROGRAM_RUN,
+    ("POST", "/api/v1/modules/program/run_powered"): P.MACHINE_POWER,
     ("POST", "/api/v1/modules/program/pause"): P.PROGRAM_RUN,
     ("POST", "/api/v1/modules/program/pause_inspect"): P.PROGRAM_RUN,
     ("POST", "/api/v1/modules/program/resume"): P.PROGRAM_RUN,

@@ -28,7 +28,7 @@ from exceptions import BadRequestError, NotFoundError
 
 #: Machine-wide settings (a backend reads them from the shared set): exact
 #: keys, or a namespace ending in ".".
-MACHINE_KEYS = ("camera.ip_camera_url", "camera.default_device_id", "assistant.", "slicer.")
+MACHINE_KEYS = ("camera.ip_camera_url", "camera.default_device_id", "machine.autostart", "assistant.", "slicer.")
 
 
 def is_machine_key(key: str) -> bool:

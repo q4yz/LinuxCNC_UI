@@ -78,6 +78,7 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/modules/machine_state/mdi` | `machine.motion` | confirm |
 | POST | `/api/v1/modules/machine_state/mode` | `machine.power` | confirm |
 | POST | `/api/v1/modules/machine_state/state` | `machine.power` | confirm |
+| POST | `/api/v1/modules/program/run_powered` | `machine.power` | confirm |
 | GET | `/` | `machine.read` | yes |
 | GET | `/api/v1/ace` | `machine.read` | yes |
 | GET | `/api/v1/base-thread/snapshot` | `machine.read` | yes |

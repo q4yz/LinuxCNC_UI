@@ -5,6 +5,7 @@
 // ``main.ts`` imports this module before mounting the app.
 import "./assistant";
 import "./layout";
+import "./machine";
 import "./probing";
 import "./slicer";
 

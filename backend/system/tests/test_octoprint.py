@@ -17,19 +17,25 @@ class _FakeMachine(SlicerUploadService):
         super().__init__(programs, machine_backend="http://machine.invalid")
         self.running, self.load_ok, self.loaded = running, load_ok, []
         self.allow_start, self.run_ok, self.started = False, True, []
+        self.cycle, self.tokens = False, []
 
     def machine_running(self):
         return self.running
 
-    def load(self, path):
+    def load(self, path, token=""):
         self.loaded.append(path)
+        self.tokens.append(token)
         return self.running and self.load_ok
 
     def start_allowed(self):
         return self.allow_start
 
-    def _post(self, route, body, what):  # only the run route reaches here (load is faked)
+    def power_cycle(self):
+        return self.cycle
+
+    def _post(self, route, body, what, token=""):  # only the run route reaches here (load is faked)
         self.started.append(route)
+        self.tokens.append(token)
         return self.run_ok
 
 
@@ -185,3 +191,16 @@ def test_load_is_skipped_while_linuxcnc_is_off(programs, monkeypatch):
     monkeypatch.setattr(slicer_module.urllib.request, "urlopen", lambda *a, **k: called.append(a))
     assert SlicerUploadService(programs).load("x.gcode") is False
     assert called == []
+
+
+def test_power_cycle_starts_through_run_powered_with_the_slicers_key(client, service):
+    service.running = service.allow_start = service.cycle = True
+    response = client.post(
+        "/api/files/local",
+        files={"file": ("benchy.gcode", b"G1 X1\n")},
+        data={"print": "true"},
+        headers={"X-Api-Key": "slicer-key"},
+    )
+    assert response.json()["effectivePrint"] is True
+    assert service.started == ["/api/v1/modules/program/run_powered"]
+    assert service.tokens == ["slicer-key", "slicer-key"]

@@ -9,8 +9,9 @@ Only the subset the slicers use (the same Moonraker emulates):
     POST /api/login
     POST /api/files/local   multipart: file, path, select, print
 
-Any API key is accepted (the slicers insist on sending one) — like the
-rest of this UI, the API trusts the local network. ``select`` / ``print``
+The API key is an account's token (account menu -> Copy API key): the
+upload needs a login that may write files, and it is passed on to the
+machine backend for the load and start. ``select`` / ``print``
 load the file into LinuxCNC when it runs; ``print`` also starts it when
 the operator allowed that (Settings -> Slicer, off by default;
 ``SlicerUploadService``). Lives in the always-up system service, so
@@ -107,7 +108,8 @@ def connection() -> OctoConnection:
     description=(
         "OctoPrint's upload: 'path' is a folder under nc_files/, an existing file is "
         "overwritten. 'select' / 'print' load the file into LinuxCNC when it runs; "
-        "'print' also starts it when Settings -> Slicer allows it (off by default)."
+        "'print' also starts it when Settings -> Slicer allows it (off by default), "
+        "and with 'Power on for the job' releases the E-stop, powers on and powers off when done."
     ),
     responses={400: {"description": "Invalid file name."}, 415: {"description": "Not a G-code file."}},
 )
@@ -129,11 +131,15 @@ def upload(
     finally:
         file.file.close()
 
+    from core.auth import presented_token
+
+    # The machine backend checks the slicer's login like any other caller.
+    token = presented_token(request)
     loaded = started = False
     if print_ and service.start_allowed():
-        loaded, started = service.start(stored)
+        loaded, started = service.start(stored, token)
     elif select or print_:
-        loaded = service.load(stored)
+        loaded = service.load(stored, token)
     base = str(request.base_url).rstrip("/")
     refs = OctoFileRefs(
         resource=f"{base}/api/files/local/{quote(stored)}",

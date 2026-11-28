@@ -1,5 +1,23 @@
 // Machine-wide UI settings.
+import { CheckboxSetting } from "../types/CheckboxSetting";
 import { MacroButtonsSetting } from "../types/MacroButtonsSetting";
+
+/**
+ * The system service starts LinuxCNC (the default machine) when the
+ * device boots — always in E-stop. Read by the system service
+ * (``services/MachineAutostart.py``); on unless switched off.
+ */
+export const machineAutostart = new CheckboxSetting(
+  "Machine",
+  "Start LinuxCNC with the device",
+  "machine.autostart",
+  true,
+  {
+    description:
+      "When the device boots, LinuxCNC starts with the default machine, in E-stop: nothing moves " +
+      "or heats until the E-stop is released.",
+  },
+);
 
 /**
  * One-click macro buttons next to the DRO axis rows, in the toolpath

@@ -8,8 +8,8 @@ load, rename, move (drag an entry onto a folder), delete.
 The machine answers the OctoPrint API slicers support:
 
 - **OrcaSlicer / PrusaSlicer** — Printer → *Physical printer*, host type **OctoPrint**,
-  hostname `http://<machine-ip>`, any API key.
-- **Cura** — the **OctoPrint Connection** plugin, the machine's IP, port 80, any API key.
+  hostname `http://<machine-ip>`, an account's API key (below).
+- **Cura** — the **OctoPrint Connection** plugin, the machine's IP, port 80, an account's API key.
 
 *Upload* stores the file; *Upload and print* also loads it into LinuxCNC (while it runs).
 
@@ -18,6 +18,17 @@ slicer**, and *Upload and print* starts the print like the Start button: the fil
 `G29` (homing, levelling) run first, then the program. The machine must be on and idle; a
 machine that is off, unhomed or busy only loads the file (the console says why). Off by default:
 then nothing is ever started from the network.
+
+**Power on for the job** — with **Settings → Slicer → Power on for the job, off when done** as
+well, the print does not need the machine on: it releases the E-stop and switches the machine on
+(an E-stop that does not release — the MCU link, an external switch — refuses the start), runs
+the print, and switches the machine off once the G-code ended. It also switches off when the
+print is stopped or fails, or does not start at all. An E-stop pressed during the print stays an
+E-stop. Both Slicer settings are the admin's.
+
+The slicer's API key is an account's (**Copy API key** in the account menu, see
+[Accounts](accounts.md)): starting needs a login that may run programs, and *Power on for the job*
+one that may switch the machine on.
 
 ## What the converter changes
 

@@ -70,6 +70,14 @@ Leave the macro / component / output empty to hide the button.
 The **STOP** button is always in the top-right corner, over the page. A card row that passes
 under it moves its buttons left so nothing is covered.
 
+## When the device boots
+
+The UI's system service starts LinuxCNC with the default machine when the device boots, so the
+machine is ready without pressing *Start*. LinuxCNC always comes up in **E-stop**: nothing moves
+or heats until the E-stop is released (by you, or by a slicer job — see
+[Starting from the slicer](programs.md)). An admin switches this off in **Settings → Machine →
+Start LinuxCNC with the device**. Nothing starts when no default machine is selected yet.
+
 ## Temperatures
 
 - The unit (°C, °F, K) is a setting: **Settings → Temperature**. A target typed in °F or K is
