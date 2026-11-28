@@ -57,8 +57,27 @@ MARLIN = {
 
 
 def fail(message):
-    print("%s: %s" % (os.path.basename(sys.argv[0]), message), file=sys.stderr)
+    code = os.path.basename(sys.argv[0]).upper()
+    print("%s: %s" % (code, message), file=sys.stderr)
+    report(code, message)
     sys.exit(1)
+
+
+def report(code, message):
+    """Tell the UI's console: LinuxCNC ends the program on a failed M-code
+    and its own error does not reach the UI (best effort)."""
+    headers = {"Content-Type": "application/json"}
+    credential = token()
+    if credential:
+        headers["Authorization"] = "Bearer " + credential
+    body = json.dumps({"code": code[:16], "message": str(message)[:500]}).encode("utf-8")
+    req = urllib.request.Request(BACKEND + "/api/v1/modules/machine_state/mcode_error", data=body,
+                                 method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            resp.read()
+    except OSError:
+        pass
 
 
 def hardware():

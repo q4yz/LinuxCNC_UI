@@ -156,3 +156,12 @@ def test_helpers_send_linuxcncs_credential(tmp_path):
     result, _ = _run_helper(tmp_path, "M106", "0")
     assert result["code"] in (0, None)
     assert _run_helper.auth == ["Bearer machine-secret"]
+
+
+def test_a_failed_helper_reports_to_the_ui_console(tmp_path):
+    result, _ = _run_helper(tmp_path, "M109", "200", "3")
+    assert result["code"] == 1
+    method, url, body = result["calls"][-1]
+    assert (method, url) == ("POST", "http://127.0.0.1:8000/api/v1/modules/machine_state/mcode_error")
+    assert body["code"] == "M109" and "no extruder 3" in body["message"]
+    assert _run_helper.auth[-1] == "Bearer machine-secret"

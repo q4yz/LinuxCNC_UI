@@ -20,6 +20,13 @@ class ModeCommand(BaseModel):
         description="Target task mode: 'manual', 'auto', or 'mdi'.",
     )
 
+class McodeErrorReport(BaseModel):
+    """A user M-code program (machine_config/m_codes) that failed."""
+
+    code: str = Field(..., max_length=16, description="The M-code, e.g. 'M106'")
+    message: str = Field(..., max_length=500, description="Why it failed")
+
+
 class MdiCommand(BaseModel):
     command: str = Field(..., description="G-code / MDI command string to execute")
 

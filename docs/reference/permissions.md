@@ -103,6 +103,7 @@ For now every web user is **admin** (there are no logins yet).
 | POST | `/api/v1/modules/macros/{name}/stop` | `macros.run` | confirm |
 | PUT | `/api/v1/leds/{led_id}` | `outputs.control` | confirm |
 | PUT | `/api/v1/modules/io/{pin_id}` | `outputs.control` | confirm |
+| POST | `/api/v1/modules/machine_state/mcode_error` | `program.run` | confirm |
 | POST | `/api/v1/modules/program/load` | `program.run` | confirm |
 | POST | `/api/v1/modules/program/pause` | `program.run` | confirm |
 | POST | `/api/v1/modules/program/pause_inspect` | `program.run` | confirm |

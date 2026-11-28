@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException
 from services.machine.StateService import get_state_service
 from services.machine.ConsoleLogger import LogLevel, get_console_logger
 from models.state.StateModels import (
+    McodeErrorReport,
     MdiCommand,
     ModeCommand,
     StateCommand,
@@ -184,3 +185,22 @@ async def _activate_estop_endpoint() -> StatusResponse:
 
 
 __all__ = ["router"]
+
+@router.post(
+    "/mcode_error",
+    response_model=StatusResponse,
+    operation_id="reportMcodeError",
+    summary="A user M-code program failed",
+    description=(
+        "The M-code helpers (M104, M106, M190 ...) report a failure here before they exit: "
+        "LinuxCNC then ends the program, and its own error does not reach the UI."
+    ),
+)
+def _report_mcode_error_endpoint(report: McodeErrorReport) -> StatusResponse:
+    code = report.code.strip().upper()[:16] or "M-code"
+    get_console_logger().log_event(
+        f"{code} failed: {report.message.strip()} - LinuxCNC stops the program.",
+        level=LogLevel.ERROR,
+        source="CMD",
+    )
+    return StatusResponse(status="success")

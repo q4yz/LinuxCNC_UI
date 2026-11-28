@@ -130,6 +130,7 @@ MACHINE_ROUTES: Mapping[tuple[str, str], Permission] = {
     ("PUT", "/api/v1/hal/layout"): P.HAL_WRITE,
     ("POST", "/api/v1/modules/machine_state/estop/activate"): P.MACHINE_ESTOP,
     ("POST", "/api/v1/modules/machine_state/state"): P.MACHINE_POWER,
+    ("POST", "/api/v1/modules/machine_state/mcode_error"): P.PROGRAM_RUN,
     ("POST", "/api/v1/modules/machine_state/mode"): P.MACHINE_POWER,
     ("POST", "/api/v1/modules/axis/home"): P.MACHINE_MOTION,
     ("POST", "/api/v1/modules/machine_state/mdi"): P.MACHINE_MOTION,
